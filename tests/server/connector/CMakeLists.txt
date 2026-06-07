@@ -19,6 +19,16 @@ add_executable(
     ${CMAKE_CURRENT_SOURCE_DIR}/search_table_marker_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/search_table_sink_writer_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pg_progress_tracker_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pg_serialize_array_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/data_sink_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/data_source_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/primary_key_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/key_utils_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/search_sink_writer_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/sink_with_search_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/search_source_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/search_filter_builder_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/search_test_utils.cpp
 )
 
 target_link_libraries(

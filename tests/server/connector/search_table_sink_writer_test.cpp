@@ -25,7 +25,7 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/columnstore/format.hpp>
+#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/store/memory_directory.hpp>
 

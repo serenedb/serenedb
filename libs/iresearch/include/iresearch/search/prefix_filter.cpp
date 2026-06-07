@@ -71,7 +71,7 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
 }  // namespace
 
 Filter::Query::ptr ByPrefix::prepare(const PrepareContext& ctx,
-                                     std::string_view field, bytes_view prefix,
+                                     irs::field_id id, bytes_view prefix,
                                      size_t scored_terms_limit) {
   // object for collecting order stats
   LimitedSampleCollector<TermFrequency> collector(
@@ -80,7 +80,7 @@ Filter::Query::ptr ByPrefix::prepare(const PrepareContext& ctx,
   MultiTermVisitor mtv{collector, states};
 
   for (const auto& segment : ctx.index) {
-    if (const auto* reader = segment.field(field); reader) {
+    if (const auto* reader = segment.field(id); reader) {
       VisitImpl(segment, *reader, prefix, mtv);
     }
   }

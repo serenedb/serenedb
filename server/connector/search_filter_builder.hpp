@@ -31,7 +31,6 @@
 #include "basics/result.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
-#include "connector/search_field_name.hpp"
 
 namespace sdb::connector {
 
@@ -41,7 +40,10 @@ namespace sdb::connector {
 // single uint64 fits both. Disambiguate via catalog lookup when the kind
 // matters; the writer/printer paths don't need to.
 struct SearchColumnInfo {
-  irs::field_id field_id = 0;
+  irs::field_id field_id = irs::field_limits::invalid();
+  irs::field_id null_field_id = irs::field_limits::invalid();
+  irs::field_id bool_field_id = irs::field_limits::invalid();
+  irs::field_id numeric_field_id = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
 };
@@ -92,5 +94,20 @@ Result MakeSearchFilter(
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, const SearchFilterOptions& options,
   const ExpressionGetter& expr_getter = {});
+
+inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
+                                        duckdb::LogicalTypeId type_id) {
+  const auto pick = [&](irs::field_id per_kind) {
+    return irs::field_limits::valid(per_kind) ? per_kind : column_info.field_id;
+  };
+  const auto kind = catalog::term_dict::Classify(type_id);
+  if (kind == catalog::term_dict::Kind::Bool) {
+    return pick(column_info.bool_field_id);
+  }
+  if (catalog::term_dict::IsNumeric(kind)) {
+    return pick(column_info.numeric_field_id);
+  }
+  return column_info.field_id;
+}
 
 }  // namespace sdb::connector

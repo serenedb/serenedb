@@ -176,7 +176,7 @@ TEST(CatalogPersistence, column_serialized) {
       .compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
       .features = search::Features{},
       .hnsw_config = std::nullopt,
-      .synthetic_column = std::nullopt,
+      .synthetic_column = irs::field_limits::invalid(),
       .row_group_size = 100,
       .norm_row_group_size = 50,
     });
@@ -189,7 +189,7 @@ TEST(CatalogPersistence, expression_serialized) {
                  .pretty_printed = "a + b",
                  .dependent_columns = {ObjectId{1}, ObjectId{2}},
                  .return_type = duckdb::LogicalType::DOUBLE,
-                 .synthetic_column = std::nullopt,
+                 .synthetic_column = irs::field_limits::invalid(),
                  .text_dictionary = ObjectId{3},
                  .field_id = 7,
                  .norm_row_group_size = 9,

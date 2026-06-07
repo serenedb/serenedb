@@ -23,9 +23,9 @@
 #include <algorithm>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/columnstore/format.hpp>
-#include <iresearch/columnstore/read_context.hpp>
-#include <iresearch/formats/column/hnsw_index.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/formats/hnsw/hnsw_writer.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/proxy_filter.hpp>
 #include <limits>
@@ -83,7 +83,7 @@ void ANNSearchSegment(const irs::SubReader& segment_reader, uint32_t segment_id,
                       CompositeScanFilter& composite,
                       SearchAnnScanGlobalState& gstate,
                       SearchAnnScanLocalState& lstate,
-                      irs::columnstore::ReadContext& read_ctx) {
+                      irs::ReadContext& read_ctx) {
   SDB_ASSERT(gstate.scan->top_k > 0);
   const size_t top_k = gstate.scan->top_k;
 
@@ -257,7 +257,7 @@ void RangeSearchSegment(duckdb::ClientContext& context,
                         CompositeScanFilter& composite,
                         SearchRangeScanGlobalState& g,
                         SearchRangeScanLocalState& l,
-                        irs::columnstore::ReadContext& read_ctx) {
+                        irs::ReadContext& read_ctx) {
   l.range_buffer.dis.clear();
   l.range_buffer.ids.clear();
 
@@ -420,7 +420,7 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
     const auto& reader = (*g.reader)[segment];
     composite.Reset(*g.reader, segment);
     if (const auto* cs = reader.CsReader()) {
-      irs::columnstore::ReadContext read_ctx{*cs};
+      irs::ReadContext read_ctx{*cs};
       ANNSearchSegment(reader, segment, composite, g, l, read_ctx);
     }
     processed++;
@@ -493,7 +493,7 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
     const auto& sub = (*g.reader)[segment];
     composite.Reset(*g.reader, segment);
     if (const auto* cs = sub.CsReader()) {
-      irs::columnstore::ReadContext read_ctx{*cs};
+      irs::ReadContext read_ctx{*cs};
       RangeSearchSegment(context, bind_data, sub, segment, composite, g, l,
                          read_ctx);
     }

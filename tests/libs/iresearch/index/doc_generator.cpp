@@ -23,11 +23,13 @@
 
 #include "doc_generator.hpp"
 
+#include <absl/container/flat_hash_map.h>
 #include <rapidjson/istreamwrapper.h>
 #include <rapidjson/rapidjson.h>
 #include <rapidjson/reader.h>
 #include <utf8.h>
 
+#include <cassert>
 #include <iomanip>
 #include <numeric>
 #include <sstream>
@@ -40,6 +42,62 @@
 #include "iresearch/store/store_utils.hpp"
 #include "utils/write_helpers.hpp"
 
+namespace tests {
+
+// Hashmap-backed runtime equivalent of the constexpr `FieldIdFor` if-chain in
+// the header. The JSON factories below call this per doc per field, so an
+// O(1) hash lookup wins over walking 35 string compares. The entries must
+// stay in lockstep with the constexpr table; the debug assert on every hit
+// keeps the two honest.
+irs::field_id FieldIdForRuntime(std::string_view name) {
+  static const absl::flat_hash_map<std::string_view, irs::field_id> kTable = {
+    {"seq", 1},
+    {"name", 2},
+    {"same", 3},
+    {"duplicated", 4},
+    {"value", 5},
+    {"field", 6},
+    {"phrase", 7},
+    {"name_anl", 8},
+    {"name_anl_pay", 9},
+    {"prefix", 10},
+    {"title", 11},
+    {"title_anl", 12},
+    {"title_anl_pay", 13},
+    {"body", 14},
+    {"body_anl", 15},
+    {"body_anl_pay", 16},
+    {"date", 17},
+    {"datestr", 18},
+    {"id", 19},
+    {"idstr", 20},
+    {"test-field", 21},
+    {"test", 22},
+    {"name1", 23},
+    {"phrase_anl", 24},
+    {"foo", 25},
+    {"doc_bytes", 26},
+    {"doc_double", 27},
+    {"doc_float", 28},
+    {"doc_int", 29},
+    {"doc_long", 30},
+    {"doc_string", 31},
+    {"doc_text", 32},
+    {"another_column", 33},
+    {"label", 34},
+    {"updated", 35},
+  };
+  if (auto it = kTable.find(name); it != kTable.end()) {
+    // Sanity: hashmap and constexpr table agree.
+    SDB_ASSERT(it->second == FieldIdFor(name));
+    return it->second;
+  }
+  // Unknown name -- fall through to the constexpr FNV fallback so the two
+  // code paths produce identical ids.
+  return FieldIdFor(name);
+}
+
+}  // namespace tests
 namespace utf8 {
 namespace unchecked {
 
@@ -202,6 +260,25 @@ Ifield* Particle::get(const std::string_view& name) const {
 void Particle::remove(const std::string_view& name) {
   std::erase_if(
     _fields, [&name](const Ifield::ptr& fld) { return name == fld->Name(); });
+}
+
+bool Particle::contains_by_id(irs::field_id id) const noexcept {
+  return absl::c_any_of(
+    _fields, [id](const Ifield::ptr& fld) { return id == fld->Id(); });
+}
+
+Ifield* Particle::get_by_id(irs::field_id id) const noexcept {
+  auto it =
+    std::find_if(_fields.begin(), _fields.end(),
+                 [id](const Ifield::ptr& fld) { return id == fld->Id(); });
+
+  return _fields.end() == it ? nullptr : it->get();
+}
+
+bool Particle::remove_by_id(irs::field_id id) noexcept {
+  return std::erase_if(_fields, [id](const Ifield::ptr& fld) {
+           return id == fld->Id();
+         }) > 0;
 }
 
 DelimDocGenerator::DelimDocGenerator(const std::filesystem::path& file,
@@ -543,24 +620,62 @@ irs::Tokenizer& StringViewField::GetTokens() const {
 
 void EuroparlDocTemplate::init() {
   clear();
-  indexed.push_back(std::make_shared<StringField>("title"));
-  indexed.push_back(std::make_shared<text_ref_field>("title_anl", false));
-  indexed.push_back(std::make_shared<text_ref_field>("title_anl_pay", true));
-  indexed.push_back(std::make_shared<text_ref_field>("body_anl", false));
-  indexed.push_back(std::make_shared<text_ref_field>("body_anl_pay", true));
+  // SegmentWriter buckets fields by `field.Id()`; without a valid id every
+  // field collides on `field_limits::invalid()` and `index(...)` rejects the
+  // doc on the IsSubsetOf-features check. Assign a stable id per name via
+  // the canonical mapping.
+  {
+    auto f = std::make_shared<StringField>("title");
+    f->id = tests::FieldIdFor("title");
+    indexed.push_back(std::move(f));
+  }
+  {
+    auto f = std::make_shared<text_ref_field>("title_anl", false);
+    f->id = tests::FieldIdFor("title_anl");
+    indexed.push_back(std::move(f));
+  }
+  {
+    auto f = std::make_shared<text_ref_field>("title_anl_pay", true);
+    f->id = tests::FieldIdFor("title_anl_pay");
+    indexed.push_back(std::move(f));
+  }
+  {
+    auto f = std::make_shared<text_ref_field>("body_anl", false);
+    f->id = tests::FieldIdFor("body_anl");
+    indexed.push_back(std::move(f));
+  }
+  {
+    auto f = std::make_shared<text_ref_field>("body_anl_pay", true);
+    f->id = tests::FieldIdFor("body_anl_pay");
+    indexed.push_back(std::move(f));
+  }
   {
     insert(std::make_shared<LongField>());
     auto& field = static_cast<LongField&>(indexed.back());
     field.Name("date");
+    field.id = tests::FieldIdFor("date");
   }
-  insert(std::make_shared<StringField>("datestr"));
-  insert(std::make_shared<StringField>("body"));
+  {
+    auto f = std::make_shared<StringField>("datestr");
+    f->id = tests::FieldIdFor("datestr");
+    insert(std::move(f));
+  }
+  {
+    auto f = std::make_shared<StringField>("body");
+    f->id = tests::FieldIdFor("body");
+    insert(std::move(f));
+  }
   {
     insert(std::make_shared<IntField>());
     auto& field = static_cast<IntField&>(indexed.back());
     field.Name("id");
+    field.id = tests::FieldIdFor("id");
   }
-  insert(std::make_shared<StringField>("idstr"));
+  {
+    auto f = std::make_shared<StringField>("idstr");
+    f->id = tests::FieldIdFor("idstr");
+    insert(std::move(f));
+  }
 }
 
 void EuroparlDocTemplate::value(size_t idx, const std::string& value) {
@@ -575,58 +690,77 @@ void EuroparlDocTemplate::value(size_t idx, const std::string& value) {
   switch (idx) {
     case 0:  // title
       _title = value;
-      indexed.get<StringField>("title")->value(_title);
-      indexed.get<text_ref_field>("title_anl")->value(_title);
-      indexed.get<text_ref_field>("title_anl_pay")->value(_title);
+      indexed.get_by_id<StringField>(tests::FieldIdFor("title"))->value(_title);
+      indexed.get_by_id<text_ref_field>(tests::FieldIdFor("title_anl"))
+        ->value(_title);
+      indexed.get_by_id<text_ref_field>(tests::FieldIdFor("title_anl_pay"))
+        ->value(_title);
       break;
     case 1:  // date
-      indexed.get<LongField>("date")->value(gEtTime(value));
-      indexed.get<StringField>("datestr")->value(value);
+      indexed.get_by_id<LongField>(tests::FieldIdFor("date"))
+        ->value(gEtTime(value));
+      indexed.get_by_id<StringField>(tests::FieldIdFor("datestr"))
+        ->value(value);
       break;
     case 2:  // body
       _body = value;
-      indexed.get<StringField>("body")->value(_body);
-      indexed.get<text_ref_field>("body_anl")->value(_body);
-      indexed.get<text_ref_field>("body_anl_pay")->value(_body);
+      indexed.get_by_id<StringField>(tests::FieldIdFor("body"))->value(_body);
+      indexed.get_by_id<text_ref_field>(tests::FieldIdFor("body_anl"))
+        ->value(_body);
+      indexed.get_by_id<text_ref_field>(tests::FieldIdFor("body_anl_pay"))
+        ->value(_body);
       break;
   }
 }
 
 void EuroparlDocTemplate::end() {
   ++_idval;
-  indexed.get<IntField>("id")->value(_idval);
-  indexed.get<StringField>("idstr")->value(std::to_string(_idval));
+  indexed.get_by_id<IntField>(tests::FieldIdFor("id"))->value(_idval);
+  indexed.get_by_id<StringField>(tests::FieldIdFor("idstr"))
+    ->value(std::to_string(_idval));
 }
 
 void EuroparlDocTemplate::reset() { _idval = 0; }
 
 void GenericJsonFieldFactory(Document& doc, const std::string& name,
                              const JsonDocGenerator::JsonValue& data) {
+  // Every JSON-driven field must carry a stable id so the writer can bucket
+  // it (SegmentWriter indexes by `field.Id()`). Look up the canonical id
+  // for `name`; unknown names hash via the FNV-1a fallback inside
+  // `tests::FieldIdForRuntime`. The runtime variant is hashmap-backed for
+  // O(1) lookup on this per-doc, per-field hot path.
+  const auto id = tests::FieldIdForRuntime(name);
   if (JsonDocGenerator::ValueType::STRING == data.vt) {
-    doc.insert(std::make_shared<StringField>(name, data.str));
+    auto f = std::make_shared<StringField>(name, data.str);
+    f->id = id;
+    doc.insert(std::move(f));
   } else if (JsonDocGenerator::ValueType::NIL == data.vt) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
+    field.id = id;
     field.value(
       irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
+    field.id = id;
     field.value(
       irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
+    field.id = id;
     field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_false()));
   } else if (data.is_number()) {
     // 'value' can be interpreted as a double
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();
     field.Name(name);
+    field.id = id;
     field.value(data.as_number<double_t>());
   }
 }
@@ -637,31 +771,40 @@ void PayloadedJsonFieldFactory(Document& doc, const std::string& name,
 
   if (JsonDocGenerator::ValueType::STRING == data.vt) {
     // Analyzed field with payload
-    doc.indexed.push_back(std::make_shared<TextField>(
-      std::string(name.c_str()) + "_anl_pay", data.str, true));
+    const auto anl_pay_name = std::string(name.c_str()) + "_anl_pay";
+    auto anl_pay = std::make_shared<TextField>(anl_pay_name, data.str, true);
+    anl_pay->id = tests::FieldIdForRuntime(anl_pay_name);
+    doc.indexed.push_back(std::move(anl_pay));
 
     // Analyzed field
-    doc.indexed.push_back(std::make_shared<TextField>(
-      std::string(name.c_str()) + "_anl", data.str));
+    const auto anl_name = std::string(name.c_str()) + "_anl";
+    auto anl = std::make_shared<TextField>(anl_name, data.str);
+    anl->id = tests::FieldIdForRuntime(anl_name);
+    doc.indexed.push_back(std::move(anl));
 
     // Not analyzed field
-    doc.insert(std::make_shared<StringField>(name, data.str));
+    auto plain = std::make_shared<StringField>(name, data.str);
+    plain->id = tests::FieldIdForRuntime(name);
+    doc.insert(std::move(plain));
   } else if (JsonDocGenerator::ValueType::NIL == data.vt) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
+    field.id = tests::FieldIdForRuntime(name);
     field.value(
       irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
+    field.id = tests::FieldIdForRuntime(name);
     field.value(
       irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
+    field.id = tests::FieldIdForRuntime(name);
     field.value(
       irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_false()));
   } else if (data.is_number()) {
@@ -669,6 +812,7 @@ void PayloadedJsonFieldFactory(Document& doc, const std::string& name,
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();
     field.Name(name);
+    field.id = tests::FieldIdForRuntime(name);
     field.value(data.as_number<double_t>());
   }
 }
@@ -676,13 +820,17 @@ void PayloadedJsonFieldFactory(Document& doc, const std::string& name,
 void NormalizedStringJsonFieldFactory(Document& doc, const std::string& name,
                                       const JsonDocGenerator::JsonValue& data) {
   if (JsonDocGenerator::ValueType::STRING == data.vt) {
-    doc.insert(
-      std::make_shared<StringField>(name, data.str, irs::IndexFeatures::Norm));
+    auto f =
+      std::make_shared<StringField>(name, data.str, irs::IndexFeatures::Norm);
+    f->id = tests::FieldIdForRuntime(name);
+    doc.insert(std::move(f));
   } else {
     GenericJsonFieldFactory(doc, name, data);
   }
 }
 
+// Short-name alias for NormalizedStringJsonFieldFactory; both names are used
+// by different test suites.
 void NormStringJsonFieldFactory(Document& doc, const std::string& name,
                                 const JsonDocGenerator::JsonValue& data) {
   return NormalizedStringJsonFieldFactory(doc, name, data);

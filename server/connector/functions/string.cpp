@@ -660,8 +660,7 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         case 's': {
           auto val = get_arg(arg_idx);
           formatted = val.value_or("");
-          break;
-        }
+        } break;
         case 'I': {
           auto val = get_arg(arg_idx);
           if (!val) {
@@ -669,8 +668,7 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
               "null values cannot be formatted as an SQL identifier");
           }
           formatted = quote_ident(*val);
-          break;
-        }
+        } break;
         case 'L': {
           auto val = get_arg(arg_idx);
           formatted = quote_literal(val);

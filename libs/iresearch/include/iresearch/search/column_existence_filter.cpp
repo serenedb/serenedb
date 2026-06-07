@@ -33,9 +33,9 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/memory.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/read_context.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_iterator.hpp"
 #include "iresearch/search/cost.hpp"
@@ -49,8 +49,8 @@ static_assert(sizeof(duckdb::validity_t) == sizeof(uint64_t));
 
 class ColumnExistenceIterator : public DocIterator {
  public:
-  ColumnExistenceIterator(const columnstore::ColumnReader& reader,
-                          const columnstore::Reader& cs_reader,
+  ColumnExistenceIterator(const ColumnReader& reader,
+                          const ColReader& cs_reader,
                           CostAttr::Type cost) noexcept
     : _reader{&reader},
       _ctx{cs_reader},
@@ -177,9 +177,9 @@ class ColumnExistenceIterator : public DocIterator {
 
   using Attributes = std::tuple<CostAttr>;
 
-  const columnstore::ColumnReader* _reader;
-  columnstore::ReadContext _ctx;
-  columnstore::ColumnReader::RangeScan _scan;
+  const ColumnReader* _reader;
+  ReadContext _ctx;
+  ColumnReader::RangeScan _scan;
   duckdb::Vector _batch;
   Attributes _attrs;
 

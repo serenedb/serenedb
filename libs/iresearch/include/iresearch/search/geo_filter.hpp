@@ -53,7 +53,7 @@ struct GeoFilterOptionsBase {
   S2RegionTermIndexer::Options options;
   StoredType stored{StoredType::Source};
   sdb::geo::coding::Options coding{sdb::geo::coding::Options::Invalid};
-  field_id store_field_id{0};
+  field_id store_field_id{irs::field_limits::invalid()};
   // For StoredType::Source: whether the force-included source column carries
   // WKB bytes (GEOMETRY column) rather than GeoJSON text (JSON/VARCHAR).
   bool source_is_wkb{false};

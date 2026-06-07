@@ -23,7 +23,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/columnstore/column_writer.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <utility>
 #include <vector>
@@ -31,6 +31,7 @@
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
+#include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "connector/key_utils.hpp"
 #include "connector/search_remove_filter.hpp"
@@ -49,11 +50,11 @@ irs::UnboundedObjectPool<search::AnalyzerImpl::Builder> gPkStreamPool(
 
 }  // namespace
 
-// Minimal verbatim-string field for kPkFieldName. Satisfies the duck-typed
-// surface that irs::IndexWriter::Document::Insert expects (Name,
-// GetIndexFeatures, GetTokens, Write). When CREATE INDEX on search tables
-// lands, this is replaced by the generic Field struct currently nested in
-// SearchSinkInsertBaseImpl -- promoting it to a shared header at that
+// Minimal verbatim-string field for the PK (catalog::term_dict::kPKFieldId).
+// Satisfies the duck-typed surface that irs::IndexWriter::Document::Insert
+// expects (Id, GetIndexFeatures, GetTokens, Write). When CREATE INDEX on
+// search tables lands, this is replaced by the generic Field struct currently
+// nested in SearchSinkInsertBaseImpl -- promoting it to a shared header at that
 // point will turn this into a deleted ~25 lines.
 class SearchTableSinkWriter::PkField {
  public:
@@ -61,7 +62,7 @@ class SearchTableSinkWriter::PkField {
     _analyzer = gPkStreamPool.emplace(search::AnalyzerImpl::StringStreamTag{});
   }
 
-  std::string_view Name() const noexcept { return kPkFieldName; }
+  irs::field_id Id() const noexcept { return catalog::term_dict::kPKFieldId; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::None;
@@ -74,7 +75,7 @@ class SearchTableSinkWriter::PkField {
 
   bool Write(irs::DataOutput& /*out*/) const {
     // PK bytes are reconstructable from the iresearch term; no separate
-    // store column needed (matches kPkFieldName usage in
+    // store column needed (matches kPKFieldId usage in
     // SearchRemoveFilter::execute, where the reader doesn't read stored
     // values for the PK).
     return true;
@@ -91,12 +92,8 @@ class SearchTableSinkWriter::PkField {
 };
 
 SearchTableSinkWriter::SearchTableSinkWriter(
-  irs::IndexWriter::Transaction& trx,
-  IsTextIndexedProvider is_text_indexed_provider,
-  HNSWInfoProvider hnsw_info_provider, TokenizerProvider tokenizer_provider)
+  irs::IndexWriter::Transaction& trx, TokenizerProvider tokenizer_provider)
   : _trx{trx},
-    _is_text_indexed_provider{std::move(is_text_indexed_provider)},
-    _hnsw_info_provider{std::move(hnsw_info_provider)},
     _tokenizer_provider{std::move(tokenizer_provider)},
     _pk_field{std::make_unique<PkField>()} {}
 
@@ -124,22 +121,10 @@ void SearchTableSinkWriter::EnsureDocument() {
 
 void SearchTableSinkWriter::RejectNonTrivialProviders(
   catalog::Column::Id col_id) const {
-  // Initial-cut guard: any non-default provider means the caller wants the
+  // Initial-cut guard: a non-default provider means the caller wants the
   // tokenizer / HNSW / expression branch, which lands when CREATE INDEX
-  // on search tables is unlocked. Replace these throws with the real
+  // on search tables is unlocked. Replace this throw with the real
   // branches at that point.
-  const auto field_id = static_cast<irs::field_id>(col_id);
-  if (_is_text_indexed_provider && _is_text_indexed_provider(field_id)) {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "Text-indexed columns on search tables are not yet supported "
-              "(column id ",
-              col_id, ")");
-  }
-  if (_hnsw_info_provider && _hnsw_info_provider(field_id)) {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "HNSW columns on search tables are not yet supported (column id ",
-              col_id, ")");
-  }
   if (_tokenizer_provider) {
     // tokenizer_provider being set at all -- even an empty tokenizer -- means
     // the caller expects per-column tokenizer dispatch.
@@ -188,7 +173,8 @@ void SearchTableSinkWriter::DeleteRow(std::string_view encoded_pk) {
 
 void SearchTableSinkWriter::Finish() {
   if (!_pending_deletes.empty()) {
-    auto filter = std::make_shared<SearchRemoveFilter>(_pending_deletes.size());
+    auto filter = std::make_shared<SearchRemoveFilter>(
+      _pending_deletes.size(), catalog::term_dict::kPKFieldId);
     for (const auto& pk : _pending_deletes) {
       filter->Add(pk);
     }

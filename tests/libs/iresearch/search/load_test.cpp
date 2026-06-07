@@ -782,7 +782,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
     for (auto& segment : reader) {
       for (auto term_str : terms) {
         auto filter = irs::ByTerm::prepare(
-          {.index = reader, .scorer = &scorer}, "text",
+          {.index = reader, .scorer = &scorer}, bench::kTextFieldId,
           irs::ViewCast<irs::byte_type>(irs::bytes_view{
             reinterpret_cast<const irs::byte_type*>(term_str.data()),
             term_str.size()}));

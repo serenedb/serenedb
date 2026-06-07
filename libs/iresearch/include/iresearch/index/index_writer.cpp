@@ -31,6 +31,8 @@
 #include <type_traits>
 
 #include "basics/assert.h"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "basics/resource_manager.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -399,8 +401,6 @@ MapCandidatesResult MapCandidates(CandidatesMapping& candidates_mapping,
 
 bool MapRemovals(const CandidatesMapping& candidates_mapping,
                  const MergeWriter& merger, DocumentMask& docs_mask) {
-  SDB_ASSERT(merger);
-
   for (auto& mapping : candidates_mapping) {
     const auto& segment_mapping = mapping.second;
     const auto* new_segment = segment_mapping.new_segment;
@@ -1159,6 +1159,10 @@ void IndexWriter::Clear(uint64_t tick) {
 IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
                                    OpenMode mode,
                                    const IndexWriterOptions& options) {
+  SDB_ENSURE(options.db != nullptr, sdb::ERROR_BAD_PARAMETER,
+             "IndexWriterOptions::db must be set; iresearch indexes require a "
+             "duckdb::DatabaseInstance");
+
   IndexLock::ptr lock;
   IndexFileRefs::ref_t lock_ref;
 
@@ -1371,7 +1375,7 @@ CompactionResult IndexWriter::Compact(
   }
 
   auto opts = committed_reader->Options();
-  opts.cs_hnsw_graphs = merger.TakeBuiltHnswGraphs();
+  opts.hnsw_graphs = merger.TakeBuiltHnswGraphs();
   auto pending_reader =
     SegmentReaderImpl::Open(_dir, compaction_segment.meta, opts);
   SDB_ASSERT(pending_reader);
@@ -1473,11 +1477,11 @@ CompactionResult IndexWriter::Compact(
   const auto& pending_segment = ctx->imports.emplace_back(
     std::move(compaction_segment), writer_limits::kMinTick,
     // removals must be applied to the compacted segment
-    std::move(refs),              // do not forget to track refs
-    std::move(candidates),        // compaction context candidates
-    std::move(pending_reader),    // compacted reader
-    std::move(committed_reader),  // compaction context meta
-    *dir.ResourceManager().compactions);
+    std::move(refs),             // do not forget to track refs
+    std::move(candidates),       // compaction context candidates
+    std::move(pending_reader),   // compacted reader
+    std::move(committed_reader)  // compaction context meta
+  );
   // noexcept part: mask compacted segments
   for (const auto* candidate : pending_segment.compaction_ctx.candidates) {
     segment_mask.emplace(candidate->Meta().name);
@@ -1527,7 +1531,7 @@ bool IndexWriter::Import(const IndexReader& reader,
 
   index_utils::FlushIndexSegment(dir, segment);
 
-  options.cs_hnsw_graphs = merger.TakeBuiltHnswGraphs();
+  options.hnsw_graphs = merger.TakeBuiltHnswGraphs();
   auto imported_reader = SegmentReaderImpl::Open(_dir, segment.meta, options);
   SDB_ASSERT(imported_reader);
 
@@ -1542,9 +1546,9 @@ bool IndexWriter::Import(const IndexReader& reader,
   // even if tick is greater than Commit tick
   // TODO(mbkkt) Can be fixed: needs to add overload with external tick and
   // moving not suited import segments to the next FlushContext in PrepareFlush
-  flush->imports.emplace_back(
-    std::move(segment), _tick.load(std::memory_order_relaxed), std::move(refs),
-    std::move(imported_reader), *dir.ResourceManager().compactions);
+  flush->imports.emplace_back(std::move(segment),
+                              _tick.load(std::memory_order_relaxed),
+                              std::move(refs), std::move(imported_reader));
 
   return true;
 }
@@ -1807,8 +1811,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
     const CompactionView candidates{import.compaction_ctx.candidates};
 
-    const auto pending_compaction =
-      static_cast<bool>(import.compaction_ctx.merger);
+    const auto pending_compaction = import.compaction_ctx.merger.has_value();
 
     if (pending_compaction) {
       // Pending compaction request
@@ -1843,8 +1846,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
       // Have some changes, apply removals
       if (has_removals) {
-        const auto success = MapRemovals(mappings, import.compaction_ctx.merger,
-                                         *import_docs_mask);
+        const auto success = MapRemovals(
+          mappings, *import.compaction_ctx.merger, *import_docs_mask);
 
         if (!success) {
           // Compacted segment has docs missing from 'segments'
@@ -2014,7 +2017,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
             // reuse existing reader with initial meta and docs_mask
             return it->second->UpdateMeta(dir, flushed.meta);
           } else {
-            reader_options.cs_hnsw_graphs = std::move(flushed.cs_hnsw_graphs);
+            reader_options.hnsw_graphs = std::move(flushed.hnsw_graphs);
             return SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
           }
         }();

@@ -43,13 +43,22 @@ namespace {
 
 using namespace tests;
 
-inline constexpr irs::field_id kSeq = 1;
-inline constexpr irs::field_id kName = 2;
+// Stable per-name field ids, sourced from `tests::FieldIdFor` so the
+// canonical JSON factories and these tests agree on the id-per-name.
+[[maybe_unused]] inline constexpr irs::field_id kSeq = tests::FieldIdFor("seq");
+[[maybe_unused]] inline constexpr irs::field_id kName =
+  tests::FieldIdFor("name");
+[[maybe_unused]] inline constexpr irs::field_id kField =
+  tests::FieldIdFor("field");
+[[maybe_unused]] inline constexpr irs::field_id kPhraseAnl =
+  tests::FieldIdFor("phrase_anl");
+[[maybe_unused]] inline constexpr irs::field_id kPrefix =
+  tests::FieldIdFor("prefix");
 
 auto StoreSeq() {
   return [](irs::IndexWriter::Document& doc, const tests::Document& src) {
     const auto* seq =
-      dynamic_cast<const tests::StringField*>(src.stored.get("seq"));
+      dynamic_cast<const tests::StringField*>(src.stored.get_by_id(kSeq));
     if (seq) {
       irs::tests::StoreFieldAt(*doc.Columnstore(), kSeq, doc.DocId(), *seq);
     }
@@ -59,7 +68,7 @@ auto StoreSeq() {
 auto StoreName() {
   return [](irs::IndexWriter::Document& doc, const tests::Document& src) {
     const auto* name =
-      dynamic_cast<const tests::StringField*>(src.stored.get("name"));
+      dynamic_cast<const tests::StringField*>(src.stored.get_by_id(kName));
     if (name) {
       irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(), *name);
     }
@@ -101,14 +110,16 @@ void Bm25TestCase::TestQueryNorms() {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str,
-                                                   irs::IndexFeatures::Norm),
-                     true, false);
+          auto field = std::make_shared<StringField>(name, data.str,
+                                                     irs::IndexFeatures::Norm);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value,
-                                                   irs::IndexFeatures::Norm),
-                     false, true);
+          auto field = std::make_shared<StringField>(name, value,
+                                                     irs::IndexFeatures::Norm);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
 
@@ -132,7 +143,7 @@ void Bm25TestCase::TestQueryNorms() {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -190,7 +201,7 @@ void Bm25TestCase::TestQueryNorms() {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -309,11 +320,15 @@ TEST_P(Bm25TestCase, test_phrase) {
 
       if (data.is_string()) {
         // analyzed field
-        doc.indexed.push_back(std::make_shared<TextField>(
-          std::string(name.c_str()) + "_anl", data.str));
+        const auto anl_name = std::string(name.c_str()) + "_anl";
+        auto analyzed = std::make_shared<TextField>(anl_name, data.str);
+        analyzed->id = tests::FieldIdFor(anl_name);
+        doc.indexed.push_back(std::move(analyzed));
 
         // not analyzed field
-        doc.insert(std::make_shared<StringField>(name, data.str));
+        auto field = std::make_shared<StringField>(name, data.str);
+        field->id = tests::FieldIdFor(name);
+        doc.insert(std::move(field));
       }
     };
 
@@ -338,7 +353,7 @@ TEST_P(Bm25TestCase, test_phrase) {
   // "jumps high" with order
   {
     irs::ByPhrase filter;
-    *filter.mutable_field() = "phrase_anl";
+    *filter.mutable_field_id() = kPhraseAnl;
     filter.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("jumps"));
     filter.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -397,14 +412,14 @@ TEST_P(Bm25TestCase, test_phrase) {
   // "cookies ca* p_e bisKuit meringue|marshmallows" with order
   {
     irs::ByPhrase filter;
-    *filter.mutable_field() = "phrase_anl";
+    *filter.mutable_field_id() = kPhraseAnl;
     auto& phrase = *filter.mutable_options();
     phrase.push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("cookies"));
     phrase.push_back<irs::ByPrefixOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("ca"));
-    phrase.push_back<irs::ByWildcardOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("p_e"));
+    phrase.push_back<irs::ByWildcardOptions>() = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("p_e"))};
     auto& lt = phrase.push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("biscuit"));
@@ -473,11 +488,14 @@ TEST_P(Bm25TestCase, test_query) {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str), true,
-                     false);
+          auto field = std::make_shared<StringField>(name, data.str);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value), false, true);
+          auto field = std::make_shared<StringField>(name, value);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
     add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
@@ -500,7 +518,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByTerm filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("7"));
 
@@ -556,11 +574,14 @@ TEST_P(Bm25TestCase, test_query) {
       [](tests::Document& doc, const std::string& name,
          const JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str), true,
-                     false);
+          auto field = std::make_shared<StringField>(name, data.str);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value), false, true);
+          auto field = std::make_shared<StringField>(name, value);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
     auto writer =
@@ -600,7 +621,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto reader =
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     irs::ByTerm filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
 
@@ -667,11 +688,14 @@ TEST_P(Bm25TestCase, test_query) {
       [](tests::Document& doc, const std::string& name,
          const JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str), true,
-                     false);
+          auto field = std::make_shared<StringField>(name, data.str);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value), false, true);
+          auto field = std::make_shared<StringField>(name, value);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
     auto writer =
@@ -714,14 +738,14 @@ TEST_P(Bm25TestCase, test_query) {
     {
       // doc 0, 2, 5
       auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field() = "field";
+      *sub.mutable_field_id() = kField;
       sub.mutable_options()->term =
         irs::ViewCast<irs::byte_type>(std::string_view("6"));
     }
     {
       // doc 3, 7
       auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field() = "field";
+      *sub.mutable_field_id() = kField;
       sub.mutable_options()->term =
         irs::ViewCast<irs::byte_type>(std::string_view("8"));
     }
@@ -787,11 +811,14 @@ TEST_P(Bm25TestCase, test_query) {
       [](tests::Document& doc, const std::string& name,
          const JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str), true,
-                     false);
+          auto field = std::make_shared<StringField>(name, data.str);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value), false, true);
+          auto field = std::make_shared<StringField>(name, value);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
     auto writer =
@@ -831,7 +858,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto reader =
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     irs::ByPrefix filter;
-    *filter.mutable_field() = "prefix";
+    *filter.mutable_field_id() = kPrefix;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view(""));
 
@@ -895,7 +922,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -951,7 +978,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("8"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1007,7 +1034,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1062,7 +1089,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1118,7 +1145,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByPhrase filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("7"));
 
@@ -1387,11 +1414,14 @@ TEST_P(Bm25TestCase, test_order) {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str), true,
-                     false);
+          auto field = std::make_shared<StringField>(name, data.str);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value), false, true);
+          auto field = std::make_shared<StringField>(name, value);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
     add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
@@ -1406,7 +1436,7 @@ TEST_P(Bm25TestCase, test_order) {
   irs::ColumnArgsFetcher fetcher;
 
   irs::ByTerm query;
-  *query.mutable_field() = "field";
+  *query.mutable_field_id() = kField;
 
   irs::BM25 sort25;
   irs::BM25 sort15{irs::BM25::K(), 0.f};

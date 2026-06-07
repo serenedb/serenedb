@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <iresearch/columnstore/column_writer.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <memory>
 #include <optional>
@@ -53,10 +53,10 @@ namespace sdb::connector {
 // duckdb::Vectors directly (no DuckDBColumnSerializer in the operator path).
 // Internals (kPkFieldName injection, columnstore writer registry,
 // per-batch SwitchColumn) follow the same shape as the existing sink, but
-// PR 3.2 keeps only the live code path -- tokenizer / HNSW / expression
-// branches throw NOT_IMPLEMENTED if the corresponding provider reports a
-// non-default result. CREATE INDEX on search tables is rejected up to and
-// including M2; that's when these branches go live.
+// PR 3.2 keeps only the live code path -- a non-default tokenizer provider
+// trips a NOT_IMPLEMENTED branch in SwitchColumn (tokenizer / HNSW /
+// expression columns land when CREATE INDEX on search tables is unlocked;
+// it is rejected up to and including M2).
 //
 // Lifecycle:
 //   Init(batch_size);            // opens an iresearch Document on `trx`
@@ -73,15 +73,12 @@ namespace sdb::connector {
 // aborting / rolling back the underlying iresearch Transaction.
 class SearchTableSinkWriter {
  public:
-  // Providers are kept in the ctor for API stability. Defaults match a
-  // pure-columnstore search table with no inverted-index entries; non-
-  // default providers currently trip a NOT_IMPLEMENTED branch in
-  // SwitchColumn.
-  SearchTableSinkWriter(
-    irs::IndexWriter::Transaction& trx,
-    IsTextIndexedProvider is_text_indexed_provider = NeverTextIndexed(),
-    HNSWInfoProvider hnsw_info_provider = NoHNSW(),
-    TokenizerProvider tokenizer_provider = {});
+  // The tokenizer provider is kept in the ctor for API stability. The default
+  // (empty) matches a pure-columnstore search table with no inverted-index
+  // entries; a non-default provider currently trips a NOT_IMPLEMENTED branch
+  // in SwitchColumn.
+  SearchTableSinkWriter(irs::IndexWriter::Transaction& trx,
+                        TokenizerProvider tokenizer_provider = {});
 
   ~SearchTableSinkWriter();
 
@@ -126,15 +123,13 @@ class SearchTableSinkWriter {
   void EnsureDocument();
 
   irs::IndexWriter::Transaction& _trx;
-  IsTextIndexedProvider _is_text_indexed_provider;
-  HNSWInfoProvider _hnsw_info_provider;
   TokenizerProvider _tokenizer_provider;
 
   std::optional<irs::IndexWriter::Document> _document;
   // Set by Init, consumed by EnsureDocument on first SwitchColumn / Write.
   duckdb::idx_t _pending_batch_size{0};
   std::unique_ptr<PkField> _pk_field;
-  containers::FlatHashMap<irs::field_id, irs::columnstore::ColumnWriter*>
+  containers::FlatHashMap<irs::field_id, irs::ColumnWriter*>
     _columnstore_writers;
   std::vector<std::string> _pending_deletes;
 };

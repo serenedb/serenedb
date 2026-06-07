@@ -35,10 +35,31 @@
 
 namespace {
 
+// Stable per-name field ids for the Levenshtein tests. The on-disk index
+// keys fields by id; tests still address them by JSON key from the
+// resource and translate through this helper.
+// Stable per-name field ids, sourced from `tests::FieldIdFor` so the
+// shared JSON factories and these tests agree on which id a name maps to.
+[[maybe_unused]] inline constexpr irs::field_id kFieldId =
+  tests::FieldIdFor("field");
+[[maybe_unused]] inline constexpr irs::field_id kField1Id =
+  tests::FieldIdFor("field1");
+[[maybe_unused]] inline constexpr irs::field_id kFooId =
+  tests::FieldIdFor("foo");
+[[maybe_unused]] inline constexpr irs::field_id kIdId = tests::FieldIdFor("id");
+[[maybe_unused]] inline constexpr irs::field_id kTitleId =
+  tests::FieldIdFor("title");
+[[maybe_unused]] inline constexpr irs::field_id kPrefixId =
+  tests::FieldIdFor("prefix");
+
+irs::field_id FieldIdFor(std::string_view name) {
+  return tests::FieldIdFor(name);
+}
+
 irs::ByTerm MakeTermFilter(const std::string_view& field,
                            const std::string_view term) {
   irs::ByTerm q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = FieldIdFor(field);
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return q;
 }
@@ -50,7 +71,7 @@ irs::ByEditDistance MakeFilter(const std::string_view& field,
                                bool with_transpositions = false,
                                const std::string_view prefix = "") {
   irs::ByEditDistance q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = FieldIdFor(field);
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   q.mutable_options()->max_distance = max_distance;
   q.mutable_options()->max_terms = max_terms;
@@ -75,7 +96,7 @@ TEST(by_edit_distance_test, ctor) {
   irs::ByEditDistance q;
   ASSERT_EQ(irs::Type<irs::ByEditDistance>::id(), q.type());
   ASSERT_EQ(irs::ByEditDistanceOptions{}, q.options());
-  ASSERT_TRUE(q.field().empty());
+  ASSERT_FALSE(irs::field_limits::valid(q.field_id()));
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 }
 
@@ -90,7 +111,7 @@ TEST(by_edit_distance_test, equal) {
   ASSERT_NE(q, MakeFilter("field", "bar", 1, 0, false));
   {
     irs::ByPrefix rhs;
-    *rhs.mutable_field() = "field";
+    *rhs.mutable_field_id() = kFieldId;
     rhs.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar"));
     ASSERT_NE(q, rhs);
@@ -103,7 +124,7 @@ TEST(by_edit_distance_test, boost) {
   // no boost
   {
     irs::ByEditDistance q;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldId;
     q.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
 
@@ -122,7 +143,7 @@ TEST(by_edit_distance_test, boost) {
     irs::score_t boost = 1.5f;
 
     irs::ByEditDistance q;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldId;
     q.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
     q.boost(boost);
@@ -468,6 +489,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     TextField(irs::analysis::Analyzer& analyzer, std::string value)
       : _value(std::move(value)), _analyzer(&analyzer) {
       this->Name("id");
+      this->id = kIdId;
       this->index_features =
         irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
     }
@@ -514,7 +536,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("end202"));
     opts.max_distance = 2;
@@ -564,7 +586,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("end202"));
     opts.max_distance = 1;
@@ -615,7 +637,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   // with prefix
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.prefix = irs::ViewCast<irs::byte_type>(std::string_view("end"));
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("202"));
@@ -669,7 +691,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("asm212"));
     opts.max_distance = 2;
@@ -742,7 +764,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("et038-pm"));
     opts.max_distance = 3;
@@ -816,7 +838,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   // with prefix
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.prefix = irs::ViewCast<irs::byte_type>(std::string_view("et038"));
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("-pm"));
@@ -896,7 +918,7 @@ TEST_P(ByEditDistanceTestCase, visit) {
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
   }
-  const std::string_view field = "prefix";
+  const irs::field_id field = kPrefixId;
   const auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
   // read segment
   auto index = open_reader(irs::tests::DefaultReaderOptions());

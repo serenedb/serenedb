@@ -30,9 +30,9 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/read_context.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/phrase_filter.hpp"
@@ -92,8 +92,7 @@ class WildcardIterator : public DocIterator {
   // BlobPointReader owns its own scratch + ReadContext and returns a
   // bytes_view per doc that the varint-parsing loop below walks.
   WildcardIterator(std::shared_ptr<RE2> matcher, DocIterator::ptr&& approx,
-                   const columnstore::ColumnReader& stored_field,
-                   const columnstore::Reader& cs_reader)
+                   const ColumnReader& stored_field, const ColReader& cs_reader)
     : _matcher{std::move(matcher)},
       _approx{std::move(approx)},
       _cursor{cs_reader, stored_field} {
@@ -151,7 +150,7 @@ class WildcardIterator : public DocIterator {
 
   std::shared_ptr<RE2> _matcher;
   DocIterator::ptr _approx;
-  columnstore::ColumnReader::BlobPointReader _cursor;
+  ColumnReader::BlobPointReader _cursor;
 };
 
 class WildcardQuery : public Filter::Query {
@@ -169,7 +168,7 @@ class WildcardQuery : public Filter::Query {
     if (!_matcher || approx == DocIterator::empty()) {
       return approx;
     }
-    SDB_ASSERT(_store_field_id != 0);
+    SDB_ASSERT(irs::field_limits::valid(_store_field_id));
     const auto* cs_reader = ctx.segment.CsReader();
     if (!cs_reader) {
       return DocIterator::empty();
@@ -197,7 +196,7 @@ constexpr size_t kDefaultScoredTermsLimit = 1024;
 }  // namespace
 
 Filter::Query::ptr ByWildcardNgram::Prepare(
-  const PrepareContext& ctx, std::string_view field,
+  const PrepareContext& ctx, irs::field_id id,
   const ByWildcardNgramOptions& opts) {
   auto& parts = opts.parts;
   auto size = parts.size();
@@ -206,15 +205,15 @@ Filter::Query::ptr ByWildcardNgram::Prepare(
   if (size == 0) {
     bytes_view token = opts.token;
     if (token.size() != 1 && token.back() == 0xFF) {
-      p = ByTerm::prepare(ctx, field, token);
+      p = ByTerm::prepare(ctx, id, token);
     } else {
       if (token.back() == 0xFF) {
         token = kEmptyStringView<byte_type>;
       }
-      p = ByPrefix::prepare(ctx, field, token, kDefaultScoredTermsLimit);
+      p = ByPrefix::prepare(ctx, id, token, kDefaultScoredTermsLimit);
     }
   } else if (size == 1 && opts.has_pos) {
-    p = ByPhrase::Prepare(ctx, field, parts[0]);
+    p = ByPhrase::Prepare(ctx, id, parts[0]);
   }
 
   if (p) {
@@ -229,7 +228,7 @@ Filter::Query::ptr ByWildcardNgram::Prepare(
   if (opts.has_pos) {
     queries.resize(size);
     for (size_t i = 0; auto& part : parts) {
-      p = ByPhrase::Prepare(ctx, field, part);
+      p = ByPhrase::Prepare(ctx, id, part);
       if (p == Filter::Query::empty()) {
         return p;
       }
@@ -238,8 +237,7 @@ Filter::Query::ptr ByWildcardNgram::Prepare(
   } else {
     for (auto& part : parts) {
       for (const auto& info : part) {
-        p =
-          ByTerm::prepare(ctx, field, std::get<ByTermOptions>(info.part).term);
+        p = ByTerm::prepare(ctx, id, std::get<ByTermOptions>(info.part).term);
         if (p == Filter::Query::empty()) {
           return p;
         }

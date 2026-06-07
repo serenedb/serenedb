@@ -34,7 +34,6 @@
 
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
-#include "catalog/mangling.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_pk_full_scan.hpp"
@@ -201,6 +200,16 @@ std::string_view TableScanBindData::ColumnNameById(
   return {};
 }
 
+duckdb::LogicalType TableScanBindData::ColumnTypeById(
+  catalog::Column::Id col_id) const {
+  for (const auto& col : table->Columns()) {
+    if (col.GetId() == col_id) {
+      return col.type;
+    }
+  }
+  return duckdb::LogicalType::INVALID;
+}
+
 void TableScanBindData::IterateColumns(const ColumnVisitor& cb) const {
   for (const auto& col : table->Columns()) {
     cb(col.GetId(), col.type);
@@ -253,6 +262,16 @@ std::string_view ViewScanBindData::ColumnNameById(
     return info.names[idx];
   }
   return {};
+}
+
+duckdb::LogicalType ViewScanBindData::ColumnTypeById(
+  catalog::Column::Id col_id) const {
+  const auto& info = view->GetInfo();
+  const auto idx = static_cast<size_t>(col_id);
+  if (idx < info.types.size()) {
+    return info.types[idx];
+  }
+  return duckdb::LogicalType::INVALID;
 }
 
 void ViewScanBindData::IterateColumns(const ColumnVisitor& cb) const {
@@ -476,16 +495,22 @@ void AppendVectorSearchSummary(
   duckdb::InsertionOrderPreservingMap<std::string>& out) {
   out.insert("Dims", std::to_string(scan.query_vector.size()));
   if (scan.text_filter_root) {
-    auto col_name = [&](catalog::Column::Id col_id) {
-      auto name = bind.ColumnNameById(col_id);
-      if (!name.empty()) {
-        return std::string{name};
-      }
-      return absl::StrCat("col", col_id);
-    };
     SDB_ASSERT(scan.text_filter_root);
-    out.insert("TextFilter",
-               irs::ToStringDemangled(*scan.text_filter_root, col_name));
+    if (bind.inverted_index) {
+      auto col_name = MakeFieldNameResolver(bind, *bind.inverted_index);
+      out.insert("TextFilter",
+                 irs::ToStringDemangled(*scan.text_filter_root, col_name));
+    } else {
+      auto col_name = [&](catalog::Column::Id col_id) -> std::string {
+        std::string s{bind.ColumnNameById(col_id)};
+        if (s.empty()) {
+          s = absl::StrCat("col", static_cast<irs::field_id>(col_id));
+        }
+        return s;
+      };
+      out.insert("TextFilter",
+                 irs::ToStringDemangled(*scan.text_filter_root, col_name));
+    }
   }
   if (!scan.filter_expression) {
     return;

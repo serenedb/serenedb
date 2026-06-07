@@ -548,7 +548,7 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
 }
 
 Filter::Query::ptr ByGranularRange::prepare(const PrepareContext& ctx,
-                                            std::string_view field,
+                                            irs::field_id id,
                                             const options_type& options) {
   const auto& rng = options.range;
 
@@ -560,7 +560,7 @@ Filter::Query::ptr ByGranularRange::prepare(const PrepareContext& ctx,
       if (rng.min_type == rng.max_type &&
           rng.min_type == BoundType::Inclusive) {
         // degenerated case
-        return ByTerm::prepare(ctx, field, min);
+        return ByTerm::prepare(ctx, id, min);
       }
 
       // can't satisfy condition
@@ -577,7 +577,7 @@ Filter::Query::ptr ByGranularRange::prepare(const PrepareContext& ctx,
   // iterate over the segments
   for (const auto& segment : ctx.index) {
     // get term dictionary for field
-    const TermReader* reader = segment.field(field);
+    const TermReader* reader = segment.field(id);
 
     if (!reader) {
       continue;  // no such field in this reader

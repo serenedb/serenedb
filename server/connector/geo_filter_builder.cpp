@@ -31,7 +31,6 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "catalog/geo_validate.h"
-#include "catalog/mangling.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
 #include "functions/vector.h"
@@ -89,8 +88,9 @@ Result SetupGeoFilter(const SearchColumnInfo& column_info,
     options.source_is_wkb =
       column_info.logical_type.id() == duckdb::LogicalTypeId::GEOMETRY;
   } else {
-    SDB_ASSERT(column_info.tokenizer.tokenizer_column);
-    options.store_field_id = *column_info.tokenizer.tokenizer_column;
+    SDB_ASSERT(
+      irs::field_limits::valid(column_info.tokenizer.tokenizer_column));
+    options.store_field_id = column_info.tokenizer.tokenizer_column;
   }
   return {};
 }
@@ -209,14 +209,10 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
       "Geo distance: field has no analyzer attached"};
   }
 
-  std::string field_name;
-  MakeFieldName(column_info->field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(parent)
                                  : AddFilter<irs::GeoDistanceFilter>(parent);
   geo_filter.boost(ctx.boost);
-  *geo_filter.mutable_field() = std::move(field_name);
+  *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
   if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
@@ -310,14 +306,10 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
             "ST_Distance_Between field has no analyzer attached"};
   }
 
-  std::string field_name;
-  MakeFieldName(column_info->field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(filter)
                                  : AddFilter<irs::GeoDistanceFilter>(filter);
   geo_filter.boost(ctx.boost);
-  *geo_filter.mutable_field() = std::move(field_name);
+  *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
   if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
@@ -393,14 +385,10 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
             ": field has no analyzer attached"};
   }
 
-  std::string field_name;
-  MakeFieldName(column_info->field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& geo_filter = ctx.negated ? Negate<irs::GeoFilter>(filter)
                                  : AddFilter<irs::GeoFilter>(filter);
   geo_filter.boost(ctx.boost);
-  *geo_filter.mutable_field() = std::move(field_name);
+  *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
   if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {

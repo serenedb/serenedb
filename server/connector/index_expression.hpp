@@ -25,6 +25,7 @@
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <span>
 #include <string>
 
@@ -36,7 +37,7 @@ struct IndexedExpression {
   duckdb::unique_ptr<duckdb::Expression> normalized_expr;
   std::string serialized;
   std::vector<catalog::Column::Id> dependent_columns;
-  irs::field_id field_id = 0;
+  irs::field_id field_id = irs::field_limits::invalid();
   bool is_geojson = false;
 };
 

@@ -49,7 +49,7 @@ class MockTermReader final : public irs::BasicTermReader {
     return irs::memory::to_managed<irs::TermIterator>(_it);
   }
   const irs::FieldMeta& meta() const { return _meta; }
-  std::string_view name() const final { return meta().name; }
+  irs::field_id id() const final { return meta().id; }
   irs::FieldProperties properties() const final { return meta(); }
   irs::bytes_view min() const final { return _min_term; }
   irs::bytes_view max() const final { return _max_term; }

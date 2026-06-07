@@ -1,0 +1,61 @@
+# Repro for bug-1-blob-scalar-expression-silently-skipped:
+# An indexed expression whose return type is BLOB silently emits no
+# inverted-index postings (default arm at search_sink_writer.cpp:844-848),
+# while the same BLOB value indexed as a direct column is fully indexed.
+#
+# This test asserts the symmetric expectation: a BLOB column and a BLOB
+# expression carrying the same logical value must both be searchable.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY blob_kw(template = 'keyword');
+
+
+# --- BLOB column-side index (works today) ---------------------------------
+
+statement ok
+CREATE TABLE blob_col(id INTEGER PRIMARY KEY, payload BLOB);
+
+statement ok
+CREATE INDEX blob_col_idx ON blob_col USING inverted(id, payload blob_kw);
+
+statement ok
+INSERT INTO blob_col VALUES (1, '\x68656c6c6f'::BLOB), (2, '\x776f726c64'::BLOB), (3, '\xdeadbeef'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) blob_col;
+
+# Sanity: direct column index finds the BLOB value.
+query
+SELECT id FROM blob_col_idx WHERE payload @@ ts_like('\xdeadbeef'::BLOB) ORDER BY id;
+----
+id
+3
+
+
+# --- BLOB expression-side index (bug: silently no-op) ---------------------
+#
+# decode(encode(payload, 'hex'), 'hex') is the identity on BLOB and returns
+# BLOB. SwitchExpressionImpl receives kind==BLOB and hits the default arm
+# `return false`, so the writer emits zero index entries.
+
+statement ok
+CREATE TABLE blob_expr(id INTEGER PRIMARY KEY, payload BLOB);
+
+statement ok
+CREATE INDEX blob_expr_idx ON blob_expr
+    USING inverted(id, (decode(encode(payload, 'hex'), 'hex')) blob_kw);
+
+statement ok
+INSERT INTO blob_expr VALUES (1, '\x68656c6c6f'::BLOB), (2, '\x776f726c64'::BLOB), (3, '\xdeadbeef'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) blob_expr;
+
+# Same value via the BLOB expression must match the same row.
+query
+SELECT id FROM blob_expr_idx
+WHERE (decode(encode(payload, 'hex'), 'hex')) @@ ts_like('\xdeadbeef'::BLOB)
+ORDER BY id;
+----
+id
+3

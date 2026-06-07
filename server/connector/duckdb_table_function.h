@@ -108,7 +108,6 @@ struct FullTableScan : ScanSource {
   std::unique_ptr<ScanSource> Clone() const final;
 };
 
-// Per-function transform from stored ANN distance to user-facing score.
 enum class ScoreEmit : uint8_t {
   Identity,  // stored as-is (l1, l2_sqr, cosine_distance, negative_ip, l1_norm)
   Sqrt,      // sqrt(stored)        (l2_distance / `<->` / l2_norm)
@@ -156,14 +155,9 @@ struct SearchScan : ScanSource {
   std::shared_ptr<irs::Filter> stored_filter;
   search::InvertedIndexSnapshotPtr snapshot;
 
-  // Match-all is represented as `stored_filter == nullptr`; exec lazily
-  // substitutes the singleton All filter from doc_collector.hpp.
   bool IsMatchAll() const noexcept;
 
-  // Scorer parsed from `ORDER BY BM25(idx.tableoid, ...)` / `TFIDF(...)`.
-  // Empty when the query has no text scoring projection.
   std::optional<catalog::ScorerOptions> scorer;
-  // ANN scorer (`ORDER BY c <-> q ...`). Mutually exclusive with `scorer`.
   std::optional<VectorScorerOptions> vector_scorer;
   std::optional<size_t> score_top_k;
 

@@ -162,6 +162,17 @@ struct ScoreDocsView {
   irs::doc_id_t doc(size_t i) const noexcept { return hits[i].doc; }
   uint32_t seg(size_t i) const noexcept { return hits[i].segment_idx; }
   float score(size_t i) const noexcept { return hits[i].score; }
+  uint64_t operator[](size_t i) const noexcept {
+    return doc(i) - irs::doc_limits::min();
+  }
+  bool IsSorted() const noexcept {
+    for (size_t i = 1; i < size(); ++i) {
+      if ((*this)[i] < (*this)[i - 1]) {
+        return false;
+      }
+    }
+    return true;
+  }
   ScoreDocsView subview(size_t off, size_t n) const noexcept {
     return {hits.subspan(off, n)};
   }
@@ -176,6 +187,17 @@ struct StreamingHitsView {
   irs::doc_id_t doc(size_t i) const noexcept { return docs[i]; }
   uint32_t seg(size_t /*i*/) const noexcept { return fixed_seg; }
   float score(size_t i) const noexcept { return scores[i]; }
+  uint64_t operator[](size_t i) const noexcept {
+    return doc(i) - irs::doc_limits::min();
+  }
+  bool IsSorted() const noexcept {
+    for (size_t i = 1; i < size(); ++i) {
+      if ((*this)[i] < (*this)[i - 1]) {
+        return false;
+      }
+    }
+    return true;
+  }
   StreamingHitsView subview(size_t off, size_t n) const noexcept {
     return {docs.subspan(off, n),
             scores.empty() ? std::span<const float>{} : scores.subspan(off, n),
@@ -208,7 +230,7 @@ void MaterializeIncludeColumnsBatched(CommonScanLocalState& lstate,
   ForEachSegmentRun(view, [&](uint32_t seg_id, size_t begin, auto slice) {
     auto* mat = GetOrOpenSegmentMaterializer(lstate, gstate, reader, seg_id);
     if (mat && mat->HasAny()) {
-      mat->SelectByDocIds(HitDocView{slice}, output, begin);
+      mat->SelectByDocIds(slice, output, begin);
     }
   });
 }
@@ -228,11 +250,6 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
   duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
   duckdb::GlobalTableFunctionState* global_state);
 
-// `row_base` is the produced_rows value at the start of this chunk; caller
-// must obtain it atomically via fetch_add(num_rows) (rowid uniqueness across
-// concurrent emitters depends on this). `view` is empty for the bulk path
-// (contiguous doc-range emit, no per-row hits); score column emission
-// requires it.
 template<class View>
 void WriteVirtualColumns(CommonScanGlobalState& gstate, duckdb::idx_t row_base,
                          duckdb::idx_t num_rows, const View& view,
@@ -312,8 +329,7 @@ void ReadIResearchSegments(Pk& pk, Lstate& l, Gstate& g, const View& view,
       l.pk_lookup.fetcher->Reset(*cs_reader, *pk_col);
     }
     l.pk_lookup.last_seg_idx = seg_id;
-    HitDocView docs{slice};
-    l.pk_lookup.fetcher->Fetch(docs, *l.pk_lookup.seg_pk_vec);
+    l.pk_lookup.fetcher->Fetch(slice, *l.pk_lookup.seg_pk_vec);
     auto* data =
       duckdb::FlatVector::GetData<duckdb::string_t>(*l.pk_lookup.seg_pk_vec);
     // TODO: we can probably remove this cycle by removing redundant buffer.
@@ -325,7 +341,7 @@ void ReadIResearchSegments(Pk& pk, Lstate& l, Gstate& g, const View& view,
     if (include_cs) {
       auto* mat = GetOrOpenSegmentMaterializer(l, g, *g.reader, seg_id);
       if (mat && mat->HasAny()) {
-        mat->SelectByDocIds(docs, output, begin);
+        mat->SelectByDocIds(slice, output, begin);
       }
     }
   });
@@ -382,16 +398,12 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   return num_rows;
 }
 
-// Collect-then-emit: consume all segments via OnSegment, then drain via
-// OnSegmentsExhausted (true = chunk written, false = thread done).
 template<class Gstate, class Lstate>
 void RunCollectThenEmitScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
                             duckdb::DataChunk& output) {
   while (!l.segments_exhausted) {
     const auto seg = g.next_segment.fetch_add(1, std::memory_order_relaxed);
     if (seg < g.total_segments) {
-      // Invariant: iresearch never commits empty segments
-      // (index_writer.cpp drops live_docs_count==0 at flush/commit).
       SDB_ASSERT((*g.reader)[seg].live_docs_count() != 0);
       l.OnSegment(ctx, (*g.reader)[seg], seg, g);
     } else {
@@ -404,9 +416,6 @@ void RunCollectThenEmitScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   output.SetChildCardinality(0);
 }
 
-// Streaming (ANN range, BM25 streaming, BM25 bulk): EmitNextChunk drains the
-// current segment's cursor (true = chunk written); when empty (false), claim
-// the next segment.
 template<class Gstate, class Lstate>
 void RunStreamingScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
                       duckdb::DataChunk& output) {

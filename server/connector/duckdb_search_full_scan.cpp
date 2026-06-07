@@ -90,15 +90,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   if (ss.scorer) {
     state->scorer_obj = catalog::MakeScorer(*ss.scorer);
   }
-  // Prepare once with scorer attached: re-preparing would mis-handle filters
-  // that mutate options() (e.g. GeoFilter).
   const auto& filter = ss.stored_filter ? *ss.stored_filter : MatchAllFilter();
   state->query = filter.prepare({
     .index = ss.snapshot->reader,
     .scorer = state->scorer_obj.get(),
   });
 
-  // parallel_topk must be set before MaxThreads() is called below.
   if (ss.score_top_k && ss.scorer) {
     state->parallel_topk = true;
   }
@@ -124,8 +121,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 
 namespace {
 
-// Per-thread offsets entries -- shared gstate would race in top-K.
-// Used by both TopK and Streaming lstates.
 template<class Lstate>
 void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
                          const SereneDBScanBindData& bd) {
@@ -228,8 +223,6 @@ void IResearchSetScanOrder(
   if (search_scan.score_top_k) {
     return;
   }
-  // BM25/TFIDF: WAND prunes only against an upper bound, so ASC ORDER BY
-  // can't engage top-K.
   if (search_scan.scorer) {
     if (options->order_type != duckdb::OrderType::DESCENDING) {
       return;
@@ -237,8 +230,6 @@ void IResearchSetScanOrder(
     search_scan.score_top_k = options->row_limit.GetIndex();
     return;
   }
-  // ANN: direction must match the function (ORDER BY l2_distance DESC LIMIT K
-  // = "K farthest" is incorrect under ANN top-K, so skip).
   if (search_scan.vector_scorer) {
     if (options->order_type != search_scan.vector_scorer->natural_order) {
       return;
@@ -281,8 +272,6 @@ void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
     collector->SetScoreThreshold(it_threshold->value);
   }
   it->Collect(score_func, score_fetcher, *collector);
-  // Rebind threshold back to the lstate slot (iterator-local one goes
-  // out of scope).
   collector->SetScoreThreshold(local_threshold);
 
   const irs::score_t kth = local_threshold;
@@ -461,7 +450,6 @@ bool SearchFullScanCountLocalState::OnSegmentsExhausted(
   return true;
 }
 
-// Bulk-cs-scan: bypasses iresearch, drains via ColumnSegment::Scan.
 void SearchFullScanBulkLocalState::OnSegment(duckdb::ClientContext& ctx,
                                              const irs::SubReader& seg,
                                              uint32_t seg_idx,

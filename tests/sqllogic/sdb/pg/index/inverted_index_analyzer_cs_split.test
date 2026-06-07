@@ -128,8 +128,8 @@ QUERY PLAN
 │    (string), *, <1000]]   │
 │                           │
 │        Projections:       │
-│            geo            │
-│             pk            │
+│          geo (l)          │
+│           pk (l)          │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -368,8 +368,8 @@ QUERY PLAN
 │; Term:ne\\xff(1, 1); >; ]]]│
 │                           │
 │        Projections:       │
-│             b             │
-│             pk            │
+│           b (l)           │
+│           pk (l)          │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

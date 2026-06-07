@@ -734,7 +734,8 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   }
   bind.scan_source->AppendSummary(bind, result);
   if (!entries.empty()) {
-    const bool annotate = bind.IsInvertedIndexEntry() && (has_index || has_lookup);
+    const bool annotate =
+      bind.IsInvertedIndexEntry() && (has_index || has_lookup);
     result.insert("Projections", FormatProjections(entries, annotate));
   }
   return result;

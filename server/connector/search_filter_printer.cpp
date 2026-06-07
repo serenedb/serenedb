@@ -417,9 +417,8 @@ std::string ToString(const Filter& f) {
 std::string ToStringDemangled(
   const Filter& f,
   const std::function<std::string(field_id)>& field_to_string) {
-  return StringifyFilter(f, [&](field_id id) -> std::string {
-    return field_to_string(id);
-  });
+  return StringifyFilter(
+    f, [&](field_id id) -> std::string { return field_to_string(id); });
 }
 
 }  // namespace irs

@@ -38,8 +38,7 @@
 
 namespace sdb::connector {
 
-inline std::pair<const irs::ColReader*,
-                 const irs::ColumnReader*>
+inline std::pair<const irs::ColReader*, const irs::ColumnReader*>
 SegmentPkColumn(const irs::IndexReader& reader, size_t seg_idx) noexcept {
   if (seg_idx >= reader.size()) {
     return {nullptr, nullptr};
@@ -56,20 +55,6 @@ SegmentPkColumn(const irs::IndexReader& reader, size_t seg_idx) noexcept {
   return {cs_reader, pk_col};
 }
 
-// doc_ids are 1-based; columnstore arrays are 0-based -- subtract 1.
-// View concept: .size() + .doc(i) returning irs::doc_id_t.
-template<class View>
-struct HitDocView {
-  View view;
-  size_t size() const noexcept { return view.size(); }
-  uint64_t operator[](size_t i) const noexcept {
-    return view.doc(i) - irs::doc_limits::min();
-  }
-};
-
-template<class View>
-HitDocView(View) -> HitDocView<View>;
-
 class SegmentPkSequentialFetcher {
  public:
   SegmentPkSequentialFetcher(const irs::ColReader& cs_reader,
@@ -80,8 +65,7 @@ class SegmentPkSequentialFetcher {
   SegmentPkSequentialFetcher& operator=(const SegmentPkSequentialFetcher&) =
     delete;
 
-  void Reset(const irs::ColReader& cs_reader,
-             const irs::ColumnReader& pk_col) {
+  void Reset(const irs::ColReader& cs_reader, const irs::ColumnReader& pk_col) {
     _ctx.Reset(cs_reader);
     _pk_col = &pk_col;
   }
@@ -92,14 +76,7 @@ class SegmentPkSequentialFetcher {
       return;
     }
     SDB_IF_FAILURE("SearchPkFetchFault") { SDB_THROW(ERROR_DEBUG); }
-    SDB_ASSERT([&] {
-      for (size_t i = 1; i < docs.size(); ++i) {
-        if (docs[i] < docs[i - 1]) {
-          return false;
-        }
-      }
-      return true;
-    }());
+    SDB_ASSERT(docs.IsSorted());
     irs::ColumnReader::RangeScan range{*_pk_col, _ctx};
     irs::ColumnReader::ScanRowsBatched(range, docs, out, 0);
   }

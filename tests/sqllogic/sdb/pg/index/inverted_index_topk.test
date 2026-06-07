@@ -71,7 +71,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│             id            │
+│           id (l)          │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
@@ -116,7 +116,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│             id            │
+│           id (l)          │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
@@ -152,7 +152,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│             id            │
+│           id (l)          │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
@@ -184,7 +184,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│             id            │
+│           id (l)          │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
@@ -224,7 +224,7 @@ QUERY PLAN
 │          TopK: 3          │
 │                           │
 │        Projections:       │
-│             id            │
+│           id (l)          │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
@@ -285,7 +285,7 @@ QUERY PLAN
 │          TopK: 3          ││          TopK: 3          │
 │                           ││                           │
 │        Projections:       ││        Projections:       │
-│             id            ││             id            │
+│           id (l)          ││           id (l)          │
 │  sdb_inverted_index_score ││  sdb_inverted_index_score │
 │                           ││                           │
 │           ~1 row          ││           ~1 row          │
@@ -336,7 +336,7 @@ QUERY PLAN
 │          TopK: 3          │
 │                           │
 │        Projections:       │
-│             id            │
+│           id (l)          │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │

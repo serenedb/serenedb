@@ -683,8 +683,8 @@ QUERY PLAN
 │       Offsets: body       │
 │                           │
 │        Projections:       │
-│            body           │
-│             id            │
+│          body (l)         │
+│           id (l)          │
 │ sdb_inverted_index_offsets│
 <slt:ignore>
 │                           │
@@ -730,8 +730,8 @@ QUERY PLAN
 │       Offsets: body       │
 │                           │
 │        Projections:       │
-│            body           │
-│             id            │
+│          body (l)         │
+│           id (l)          │
 │ sdb_inverted_index_offsets│
 <slt:ignore>
 │                           │
@@ -835,11 +835,13 @@ QUERY PLAN
 │    Offsets: title, body   │
 │                           │
 │        Projections:       │
-│           title           │
-│            body           │
-<slt:ignore>
+│         title (l)         │
+│          body (l)         │
+│           id (l)          │
 │ sdb_inverted_index_offsets│
-<slt:ignore>
+│          $2002384         │
+│ sdb_inverted_index_offsets│
+│          $2002385         │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

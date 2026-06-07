@@ -78,7 +78,7 @@ QUERY PLAN
 │  (numeric) >=( \\x0\\x80\\x0 │
 │   \\x0\\xd \\x10\\x80\\x0 ))]  │
 │                           │
-│      Projections: id      │
+│    Projections: id (l)    │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

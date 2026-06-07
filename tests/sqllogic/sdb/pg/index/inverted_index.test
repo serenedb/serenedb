@@ -687,7 +687,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│             a             │
+│           a (l)           │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
@@ -1000,8 +1000,8 @@ QUERY PLAN
 │      :term(1, 1); >]]     │
 │                           │
 │        Projections:       │
-│             b             │
-│             a             │
+│           b (l)           │
+│           a (l)           │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

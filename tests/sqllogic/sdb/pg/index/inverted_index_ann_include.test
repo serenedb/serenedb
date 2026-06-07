@@ -68,8 +68,8 @@ QUERY PLAN
 │          Dims: 3          │
 │                           │
 │        Projections:       │
-│           label           │
-│            tag            │
+│         label (i)         │
+│          tag (i)          │
 │  sdb_inverted_index_score │
 │                           │
 │          ~4 rows          │

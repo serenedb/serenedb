@@ -80,7 +80,7 @@ class PostingIteratorBase : public DocIterator {
   IRS_FORCE_INLINE uint32_t GetFreq() const final {
     if constexpr (IteratorTraits::Frequency()) {
       SDB_ASSERT(_left_in_leaf < doc_limits::kBlockSize);
-      return *(std::end(_freqs) - _left_in_leaf - 1);
+      return *(std::end(_freqs.freq) - _left_in_leaf - 1);
     } else {
       return 0;
     }
@@ -124,13 +124,17 @@ class PostingIteratorBase : public DocIterator {
   const byte_type* _stats = nullptr;
   score_t _boost = kNoBoost;
 
-  uint32_t _enc_buf[doc_limits::kBlockSize];
+  alignas(16) uint32_t _enc_buf[doc_limits::kBlockSize];
   // TODO(gnusi) we don't need collected freqs if we don't compute score
   // But for positions we need freqs, even without score
   [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
     _collected_freqs = nullptr;
+  
+  struct FreqBlock {
+    alignas(16) uint32_t freq[doc_limits::kBlockSize];
+  };
   [[no_unique_address]] utils::Need<IteratorTraits::Frequency(),
-                                    uint32_t[doc_limits::kBlockSize]> _freqs;
+                                    FreqBlock> _freqs;
   doc_id_t _docs[doc_limits::kBlockSize];
 #ifdef __AVX2__
   [[maybe_unused]] doc_id_t _placeholder_for_bitset_materialize[8];
@@ -156,7 +160,7 @@ doc_id_t PostingIteratorBase<IteratorTraits>::advance() {
 
   if constexpr (IteratorTraits::Position()) {
     auto& pos = std::get<Position>(_attrs);
-    const auto freq = *(std::end(_freqs) - _left_in_leaf);
+    const auto freq = *(std::end(_freqs.freq) - _left_in_leaf);
     pos.Notify(freq, freq);
     pos.Clear();
   }
@@ -181,13 +185,13 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
     const auto doc = *(std::end(_docs) - left_in_leaf);
 
     if constexpr (IteratorTraits::Position()) {
-      notify += *(std::end(_freqs) - left_in_leaf);
+      notify += *(std::end(_freqs.freq) - left_in_leaf);
     }
 
     if (target <= doc) {
       if constexpr (IteratorTraits::Position()) {
         auto& pos = std::get<Position>(_attrs);
-        pos.Notify(*(std::end(_freqs) - left_in_leaf), notify);
+        pos.Notify(*(std::end(_freqs.freq) - left_in_leaf), notify);
         pos.Clear();
       }
 
@@ -289,7 +293,7 @@ const score_t* PostingIteratorBase<IteratorTraits>::ScoreBlock(
       fetcher->FetchPostingBlock(docs);
     }
     if constexpr (IteratorTraits::Frequency()) {
-      std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs);
+      std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs.freq);
     }
     auto* p = reinterpret_cast<score_t*>(std::end(_enc_buf) - N);
     score.ScorePostingBlock(p);
@@ -302,7 +306,7 @@ const score_t* PostingIteratorBase<IteratorTraits>::ScoreBlock(
     }
     if constexpr (IteratorTraits::Frequency()) {
       const auto offset = docs.data() - std::data(_docs);
-      std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs) + offset;
+      std::get<FreqBlockAttr>(_attrs).value = std::begin(_freqs.freq) + offset;
     }
     auto* p = reinterpret_cast<score_t*>(std::end(_enc_buf) - docs.size());
     score.Score(p, docs.size());
@@ -528,7 +532,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
     auto* doc = std::end(this->_docs) - 1;
     *doc = doc_limits::min() + term_state.e_single_doc;
     if constexpr (IteratorTraits::Frequency()) {
-      auto* freq = std::end(this->_freqs) - 1;
+      auto* freq = std::end(this->_freqs.freq) - 1;
       *freq = term_state.freq;
 
       this->_collected_freqs = freq;
@@ -739,7 +743,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
   this->_left_in_leaf = tail;
   this->_left_in_list = 0;
   if constexpr (IteratorTraits::Frequency()) {
-    IteratorTraits::ReadTail(tail, GetDocIn(), this->_enc_buf, this->_freqs);
+    IteratorTraits::ReadTail(tail, GetDocIn(), this->_enc_buf, this->_freqs.freq);
   }
 }
 
@@ -753,7 +757,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
   this->_left_in_leaf = doc_limits::kBlockSize;
   this->_left_in_list -= doc_limits::kBlockSize;
   if constexpr (IteratorTraits::Frequency()) {
-    IteratorTraits::ReadBlock(GetDocIn(), this->_enc_buf, this->_freqs);
+    IteratorTraits::ReadBlock(GetDocIn(), this->_enc_buf, this->_freqs.freq);
   } else if constexpr (FieldTraits::Frequency()) {
     IteratorTraits::SkipBlock(GetDocIn());
   }

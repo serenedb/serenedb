@@ -20,18 +20,12 @@
 
 #pragma once
 
+#include <iresearch/search/scorer.hpp>
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/index/index_reader.hpp"
 
 namespace irs {
-
-IRS_FORCE_INLINE score_t CommonReadWandData(const ScoreFunction& func,
-                                            WandSource& ctx, DataInput& in) {
-  const auto size = in.ReadByte();
-  ctx.Read(in, size);
-  return func.Score();
-}
 
 template<typename FormatTraits>
 using WandTraits = IteratorTraitsImpl<FormatTraits, true, false, false>;
@@ -49,6 +43,10 @@ class SingleWandIterator : public DocIterator {
       while (size--) {
         in.ReadByte();
       }
+    }
+
+    void ReadFromWandData(const WandWriter::WandData& data) final {
+      // nop
     }
   };
 
@@ -206,12 +204,41 @@ class SingleWandIterator : public DocIterator {
     IRS_FORCE_INLINE void Read(size_t level, InputType& in) {
       auto& next = _skip_levels[level];
       CopyState<IteratorTraits>(_prev_skip, next);
-      ReadState<FieldTraits>(next, in);
-      if (_skip_wand_below && next.doc < _skip_wand_below) [[unlikely]] {
-        SkipWandData(in);
-      } else {
-        _skip_scores[level] = ReadWandScore(in);
+
+      uint8_t encoding = in.ReadByte();
+      WandWriter::WandData wand_data;
+      ReadFirstSkipPart(encoding, next, wand_data, in);
+      encoding = in.ReadByte();
+      ReadSecondSkipPart<FieldTraits>(encoding, next, in);
+      if constexpr (FieldTraits::Position()) {
+        next.pos_offset = in.ReadByte();
       }
+
+      // uint32_t encoding = static_cast<uint16_t>(in.ReadI16());
+
+      // next.doc += ReadByteSize124((encoding & 3) + 1, in);
+      // next.doc_ptr += ReadByteSize1248ForSkipEntry((encoding >> 2) & 3, in);
+
+      // if constexpr (FieldTraits::Position()) {
+      //   next.pos_ptr += ReadByteSize1248ForSkipEntry((encoding >> 4) & 3, in);
+      //   if constexpr (FieldTraits::Offset()) {
+      //     next.pay_ptr += ReadByteSize1248ForSkipEntry((encoding >> 6) & 3, in);
+      //   }
+      //   next.pos_offset = in.ReadByte();
+      // }
+
+      // auto wand_data = ReadWandImpl((encoding >> 8) & 15, in);
+
+      if (!(_skip_wand_below && next.doc < _skip_wand_below)) [[likely]] {
+        _skip_scores[level] = ReadWandScore(wand_data);
+      }
+
+      // ReadState<FieldTraits>(next, in);
+      // if (_skip_wand_below && next.doc < _skip_wand_below) [[unlikely]] {
+      //   SkipWandData(in);
+      // } else {
+      //   _skip_scores[level] = ReadWandScore(in);
+      // }
     }
 
     void Seal(size_t level) {
@@ -241,12 +268,13 @@ class SingleWandIterator : public DocIterator {
       return _skip_levels.back().doc;
     }
 
-    IRS_FORCE_INLINE score_t ReadWandScore(IndexInput& in) {
-      return CommonReadWandData(_wand_func, *_wand_source, in);
+    IRS_FORCE_INLINE score_t ReadWandScore(const WandWriter::WandData& wand_data) {
+      _wand_source->ReadFromWandData(wand_data);
+      return _wand_func.Score();
     }
 
-    IRS_FORCE_INLINE void SkipWandData(InputType& in) {
-      CommonSkipWandData(true, in);
+    IRS_FORCE_INLINE void SkipWandDataRoot(InputType& in) {
+      ReadWandRoot(in);
     }
 
     SkipState& State() noexcept { return _prev_skip; }
@@ -1003,7 +1031,7 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
     _deferred_skip_docs_count = term_state.docs_count;
   } else if (1 < term_state.docs_count &&
              term_state.docs_count < doc_limits::kBlockSize) {
-    _skip.Reader().SkipWandData(GetDocIn());
+    _skip.Reader().SkipWandDataRoot(GetDocIn());
   }
 }
 
@@ -1044,7 +1072,7 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs,
 
   SDB_ASSERT(!_skip.NumLevels());
   skip_in.Seek(skip_offs);
-  const auto global_max_score = _skip.Reader().ReadWandScore(skip_in);
+  const auto global_max_score = _skip.Reader().ReadWandScore(ReadWandRoot(skip_in));
   _skip.Prepare(std::move(skip_in_ptr), docs_count);
 
   if (const auto num_levels = _skip.NumLevels();

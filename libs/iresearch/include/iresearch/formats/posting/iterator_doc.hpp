@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <cstdint>
+#include <iresearch/formats/posting/common.hpp>
+#include <iresearch/search/scorer.hpp>
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -438,8 +441,47 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       auto& next = _skip_levels[level];
       // Store previous step on the same level
       CopyState<IteratorTraits>(*_prev, next);
-      ReadState<FieldTraits>(next, in);
-      SkipWandData(in);
+
+      uint8_t encoding = in.ReadByte();
+      WandWriter::WandData wand_data;
+      if constexpr (HasWand) {
+        ReadFirstSkipPart(encoding, next, wand_data, in);
+      } else {
+        switch (encoding) {
+          case 0:
+            next.doc += in.ReadByte();
+            break;
+          case 1:
+            next.doc += static_cast<uint16_t>(in.ReadI16());
+            break;
+          case 3:
+            next.doc += static_cast<uint16_t>(in.ReadI16());
+            break;
+          default: SDB_UNREACHABLE();
+        }
+      }
+      encoding = in.ReadByte();
+      ReadSecondSkipPart<FieldTraits>(encoding, next, in);
+      if constexpr (FieldTraits::Position()) {
+        next.pos_offset = in.ReadByte();
+      }
+
+      // uint32_t encoding = static_cast<uint16_t>(in.ReadI16());
+      
+      // next.doc += ReadByteSize124((encoding & 3) + 1, in);
+      // next.doc_ptr += ReadByteSize1248ForSkipEntry((encoding >> 2) & 3, in);
+
+      // if constexpr (FieldTraits::Position()) {
+      //   next.pos_ptr += ReadByteSize1248ForSkipEntry((encoding >> 4) & 3, in);
+      //   if constexpr (FieldTraits::Offset()) {
+      //     next.pay_ptr += ReadByteSize1248ForSkipEntry((encoding >> 6) & 3, in);
+      //   }
+      //   next.pos_offset = in.ReadByte();
+      // }
+
+      // if constexpr (HasWand) {
+      //   ReadWandImpl((encoding >> 8) & 15, in);
+      // }
     }
 
     void Seal(size_t level) {
@@ -467,8 +509,10 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       return _skip_levels.back().doc;
     }
 
-    IRS_FORCE_INLINE void SkipWandData(InputType& in) {
-      CommonSkipWandData(HasWand, in);
+    IRS_FORCE_INLINE void SkipWandDataRoot(InputType& in) {
+      if constexpr (HasWand) {
+        ReadWandRoot(in);
+      }
     }
 
    private:
@@ -561,7 +605,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
     _skip_offs = term_state.doc_start + term_state.e_skip_start;
   } else if (1 < term_state.docs_count &&
              term_state.docs_count < doc_limits::kBlockSize && !wand_enabled) {
-    _skip.Reader().SkipWandData(GetDocIn());
+    _skip.Reader().SkipWandDataRoot(GetDocIn());
   }
   _docs_count = term_state.docs_count;
 }
@@ -813,7 +857,7 @@ bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
 
   SDB_ASSERT(_skip.NumLevels() == 0);
   skip_in.Seek(_skip_offs);
-  _skip.Reader().SkipWandData(skip_in);
+  _skip.Reader().SkipWandDataRoot(skip_in);
   _skip.Prepare(std::move(skip_in_ptr), _docs_count);
 
   // initialize skip levels

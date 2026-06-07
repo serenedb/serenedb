@@ -21,9 +21,9 @@
 #include "pg/pg_catalog/pg_subscription.h"
 
 #include "catalog/catalog.h"
-#include "pg/system_table.h"
 #include "catalog/subscription.h"
 #include "connector/duckdb_client_state.h"
+#include "pg/system_table.h"
 
 namespace sdb::pg {
 

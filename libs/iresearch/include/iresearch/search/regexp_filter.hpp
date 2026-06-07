@@ -20,7 +20,11 @@
 
 #pragma once
 
+#include <memory>
+
+#include "basics/shared.hpp"
 #include "iresearch/search/filter.hpp"
+#include "iresearch/utils/automaton_decl.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -31,33 +35,38 @@ struct FilterVisitor;
 
 struct ByRegexpFilterOptions {
   bstring pattern;
+  RegexpSyntax syntax{RegexpSyntax::Perl};
+  automaton acceptor;
 
-  bool operator==(const ByRegexpFilterOptions&) const noexcept = default;
+  ByRegexpFilterOptions() = default;
+  explicit ByRegexpFilterOptions(bytes_view pattern,
+                                 RegexpSyntax syntax = RegexpSyntax::Perl);
+
+  bool operator==(const ByRegexpFilterOptions& rhs) const noexcept {
+    return pattern == rhs.pattern && syntax == rhs.syntax;
+  }
 };
 
 struct ByRegexpOptions : ByRegexpFilterOptions {
   using FilterType = ByRegexp;
   using filter_options = ByRegexpFilterOptions;
+  using ByRegexpFilterOptions::ByRegexpFilterOptions;
 
   size_t scored_terms_limit{1024};
-  RegexpSyntax syntax{RegexpSyntax::Perl};
 
-  bool operator==(const ByRegexpOptions&) const noexcept = default;
+  bool operator==(const ByRegexpOptions& rhs) const noexcept = default;
 };
+
+Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
+                           RegexpSyntax syntax = RegexpSyntax::Perl,
+                           size_t scored_terms_limit = 1024,
+                           score_t boost = kNoBoost);
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
-                            bytes_view pattern, size_t scored_terms_limit,
-                            RegexpSyntax syntax = RegexpSyntax::Perl);
+  static field_visitor visitor(const automaton& acceptor);
 
-  static field_visitor visitor(bytes_view pattern,
-                               RegexpSyntax syntax = RegexpSyntax::Perl);
-
-  Query::ptr prepare(const PrepareContext& ctx) const final {
-    return prepare(ctx.Boost(Boost()), field_id(), options().pattern,
-                   options().scored_terms_limit, options().syntax);
-  }
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

@@ -188,7 +188,14 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) {
   SDB_ASSERT(meta.codec);
-  SDB_ASSERT(!meta.files.empty());
+  bool has_idx = false;
+  bool has_col = false;
+  dir.exists(has_idx, absl::StrCat(meta.name, ".", kIdxFormatExt));
+  dir.exists(has_col, absl::StrCat(meta.name, ".", kColFormatExt));
+  if (!has_idx && !has_col) {
+    throw IoError{
+      absl::StrCat("Failed to open segment '", meta.name, "': no files")};
+  }
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
   reader->_data = std::make_shared<ColumnData>();

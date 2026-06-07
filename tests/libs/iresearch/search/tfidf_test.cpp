@@ -440,8 +440,8 @@ TEST_P(TfidfTestCase, test_phrase) {
       irs::ViewCast<irs::byte_type>(std::string_view("cookies"));
     phrase.push_back<irs::ByPrefixOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("ca"));
-    phrase.push_back<irs::ByWildcardOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("p_e"));
+    phrase.push_back<irs::ByWildcardOptions>() = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("p_e"))};
     auto& lt = phrase.push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("biscuit"));

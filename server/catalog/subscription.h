@@ -28,12 +28,12 @@ namespace sdb::catalog {
 class Subscription final : public Object {
  public:
   struct Config {
-    // std::string conninfo;
-    // std::vector<std::string> publications;
-    // std::string slot_name;
-    // bool enabled = true;
-    // bool binary = false;
-    // std::string origin_name = "any";
+    std::string conninfo;
+    std::vector<std::string> publications;
+    std::string slot_name;
+    bool enabled = true;
+    bool binary = false;
+    std::string origin_name = "any";
   };
 
   Subscription(ObjectId schema_id, ObjectId id, std::string_view name,

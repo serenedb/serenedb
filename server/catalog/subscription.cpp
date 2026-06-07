@@ -20,6 +20,7 @@
 
 #include "catalog/subscription.h"
 
+#include "basics/serializer.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
@@ -27,14 +28,15 @@ namespace sdb::catalog {
 
 Subscription::Subscription(ObjectId schema_id, ObjectId id,
                            std::string_view name, Config config)
-  : Object{schema_id, id, name, ObjectType::Subscription} {}
+  : Object{schema_id, id, name, ObjectType::Subscription},
+    _config(std::move(config)) {}
 
 std::shared_ptr<Subscription> Subscription::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {
   THROW_SQL_ERROR(ERR_MSG("Deserialize not implemented for Subscription"));
 }
 void Subscription::Serialize(duckdb::Serializer& sink) const {
-  THROW_SQL_ERROR(ERR_MSG("Seserialize not implemented for Subscription"));
+  basics::WriteTuple(sink, _config);
 }
 
 std::shared_ptr<Object> Subscription::Clone() const {

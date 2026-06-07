@@ -5,28 +5,60 @@
 # the PEG grammar accepts all supported syntactic forms without a parse error.
 
 # --- Bare form ---
-statement error
-CREATE SUBSCRIPTION my_sub;
+statement ok
+CREATE SUBSCRIPTION my_sub1;
+
+
+query
+SELECT subname FROM pg_subscription;
 ----
-db error: ERROR: Seserialize not implemented for Subscription
+subname
+my_sub1
 
 
 # --- WITH CONNECTION only ---
 statement error
-CREATE SUBSCRIPTION my_sub CONNECTION 'host=localhost dbname=mydb';
+CREATE SUBSCRIPTION my_sub1;
 ----
-db error: ERROR: Seserialize not implemented for Subscription
+db error: ERROR: duplicate name
+
+
+# --- WITH CONNECTION only ---
+statement ok
+CREATE SUBSCRIPTION my_sub2 CONNECTION 'host=localhost dbname=mydb';
+
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+my_sub1
+my_sub2
 
 
 # --- WITH CONNECTION + single PUBLICATION ---
-statement error
-CREATE SUBSCRIPTION my_sub CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
+statement ok
+CREATE SUBSCRIPTION my_sub3 CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
 ----
-db error: ERROR: Seserialize not implemented for Subscription
+subname
+my_sub1
+my_sub2
+my_sub3
 
 
 # --- WITH CONNECTION + multiple PUBLICATIONs ---
-statement error
-CREATE SUBSCRIPTION my_sub CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1, pub2;
+statement ok
+CREATE SUBSCRIPTION my_sub4 CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1, pub2;
+
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
 ----
-db error: ERROR: Seserialize not implemented for Subscription
+subname
+my_sub1
+my_sub2
+my_sub3
+my_sub4

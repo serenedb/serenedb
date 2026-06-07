@@ -26,7 +26,7 @@
 
 namespace sdb::pg {
 
-void CreateSubscription(ConnectionContext& conn_ctx, std::string_view schema,
-                        std::string_view name);
+void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
+                        std::string_view conninfo);
 
 }  // namespace sdb::pg

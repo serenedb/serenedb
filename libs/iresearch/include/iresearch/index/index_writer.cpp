@@ -229,7 +229,7 @@ bool RemoveFromExistingSegment(DocumentMask& deleted_docs,
 }
 
 bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
-                               IndexWriter::QueryContext& query,
+                               const IndexWriter::QueryContext& query,
                                const SubReader& reader) {
   if (query.filter == nullptr) {
     return false;
@@ -255,7 +255,6 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
       continue;  // the current modification query does not match any records
     }
 
-    query.ForceDone();
     modified = true;
   }
 
@@ -1769,17 +1768,19 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   apply_all_queries([&query_count](QueryContext&) noexcept { ++query_count; });
 
   constexpr uint64_t kMinWork = 10'000;
-  const bool use_executor =
+  const bool use_executor_deleted_docs =
     _executor != nullptr && _executor_parallelism > 0 && active_cnt >= 2 &&
     query_count > 0 &&
     total_live_docs * static_cast<uint64_t>(query_count) >= kMinWork;
 
-  auto make_batches = [&](size_t batch_count) {
+  auto make_batches = [&](std::span<const uint64_t> weights,
+                          size_t batch_count) {
+    const size_t n = weights.size();
     std::vector<size_t> batches_bounds;
     batches_bounds.reserve(batch_count + 1);
     batches_bounds.push_back(0);
     uint64_t l = 0, r = 0;
-    for (uint64_t d : live_docs) {
+    for (uint64_t d : weights) {
       l = std::max(l, d - 1);
       r += d;
     }
@@ -1787,7 +1788,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       const uint64_t mid = l + (r - l) / 2;
       size_t chunks = 1;
       uint64_t acc = 0;
-      for (uint64_t d : live_docs) {
+      for (uint64_t d : weights) {
         if (acc + d > mid) {
           ++chunks;
           acc = d;
@@ -1802,21 +1803,22 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       }
     }
     uint64_t acc = 0;
-    for (size_t k = 0; k < active_cnt; ++k) {
-      if (acc + live_docs[k] > r && batches_bounds.size() < batch_count) {
+    for (size_t k = 0; k < n; ++k) {
+      if (acc + weights[k] > r && batches_bounds.size() < batch_count) {
         batches_bounds.push_back(k);
         acc = 0;
       }
-      acc += live_docs[k];
+      acc += weights[k];
     }
-    batches_bounds.push_back(active_cnt);
+    batches_bounds.push_back(n);
     return batches_bounds;
   };
 
   std::vector<size_t> batch_bnd;
   size_t inline_batch_idx = 0;
-  if (use_executor) {
-    batch_bnd = make_batches(std::min(_executor_parallelism, active_cnt));
+  if (use_executor_deleted_docs) {
+    batch_bnd =
+      make_batches(live_docs, std::min(_executor_parallelism, active_cnt));
 
     uint64_t best_load = std::numeric_limits<uint64_t>::max();
     for (size_t i = 0; i + 1 < batch_bnd.size(); ++i) {
@@ -1851,7 +1853,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   };
 
   progress("Stage 1: Applying removals to existing segments", 0, active_cnt);
-  if (!use_executor) {
+  if (!use_executor_deleted_docs) {
     for (size_t k = 0; k != active_cnt; ++k) {
       process_segment(k);
     }
@@ -1925,119 +1927,174 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   // Stage 2
   // Add pending complete segments registered by import or consolidation
 
-  // Number of candidates that have been registered for pending consolidation
-  size_t current_imports_index = 0;
   size_t import_candidates_count = 0;
   size_t partial_sync_threshold = readers.size();
+  const size_t imports_count = ctx->imports.size();
 
-  for (auto& import : ctx->imports) {
-    progress("Stage 2: Handling consolidated/imported segments",
-             current_imports_index++, ctx->imports.size());
+  std::vector<uint64_t> import_docs(imports_count);
+  uint64_t total_import_docs = 0;
+  for (size_t i = 0; i != imports_count; ++i) {
+    SDB_ASSERT(ctx->imports[i].reader);
+    const auto w = ctx->imports[i].reader->live_docs_count();
+    import_docs[i] = w;
+    total_import_docs += w;
+  }
 
-    SDB_ASSERT(import.reader);  // Ensured by Consolidation/Import
-    auto& meta = import.segment.meta;
-    auto& import_reader = import.reader;
-    auto import_docs_mask = CopyMask(dir, *import_reader);
+  const bool use_executor_imports =
+    _executor != nullptr && _executor_parallelism > 0 && imports_count >= 2 &&
+    query_count > 0 &&
+    total_import_docs * static_cast<uint64_t>(query_count) >= kMinWork;
 
+  std::vector<size_t> import_batch_bnd;
+  size_t import_inline_idx = 0;
+  if (use_executor_imports) {
+    import_batch_bnd =
+      make_batches(import_docs, std::min(_executor_parallelism, imports_count));
+
+    uint64_t best_load = std::numeric_limits<uint64_t>::max();
+    for (size_t i = 0; i + 1 < import_batch_bnd.size(); ++i) {
+      uint64_t load = 0;
+      for (size_t k = import_batch_bnd[i]; k < import_batch_bnd[i + 1]; ++k) {
+        load += import_docs[k];
+      }
+      if (load < best_load) {
+        best_load = load;
+        import_inline_idx = i;
+      }
+    }
+  }
+
+  struct ImportResult {
+    std::shared_ptr<DocumentMask> docs_mask;
+    std::vector<QueryContext*> matched_queries;
+    std::vector<std::string_view> mask_names;
+    size_t candidates_count = 0;
     bool docs_mask_modified = false;
+    bool pending_consolidation = false;
+    bool set_modified = false;
+    bool append = false;
+  };
+  std::vector<ImportResult> import_results(imports_count);
+
+  auto process_import = [&](size_t i) {
+    auto& import = ctx->imports[i];
+    auto& result = import_results[i];
+    const auto& meta = import.segment.meta;
+    auto import_docs_mask = CopyMask(dir, *import.reader);
 
     const ConsolidationView candidates{import.consolidation_ctx.candidates};
-
-    const auto pending_consolidation =
+    result.pending_consolidation =
       static_cast<bool>(import.consolidation_ctx.merger);
 
-    if (pending_consolidation) {
-      // Pending consolidation request
+    if (result.pending_consolidation) {
       CandidatesMapping mappings;
       const auto [count, has_removals] =
         MapCandidates(mappings, candidates, readers);
 
       if (count != candidates.size()) {
-        // At least one candidate is missing in pending meta can't finish
-        // consolidation
-        SDB_DEBUG("xxxxx", sdb::Logger::IRESEARCH,
-                  "Failed to finish merge for segment '", meta.name,
-                  "', found only '", count, "' out of '", candidates.size(),
-                  "' candidates");
-
-        continue;  // Skip this particular consolidation
+        return;
       }
 
-      // Mask mapped candidates segments from the to-be added new segment
+      result.mask_names.reserve(mappings.size());
       for (const auto& mapping : mappings) {
-        const auto* reader = mapping.second.old.segment;
-        SDB_ASSERT(reader);
-        segment_mask.emplace(reader->Meta().name);
+        result.mask_names.push_back(mapping.second.old.segment->Meta().name);
       }
 
-      // Mask mapped (matched) segments from the currently ongoing commit
-      for (const auto& segment : readers) {
-        if (mappings.contains(segment.Meta().name)) {
-          // Important to store the address of implementation
-          segment_mask.emplace(segment.Meta().name);
-        }
-      }
-
-      // Have some changes, apply removals
       if (has_removals) {
-        const auto success = MapRemovals(
-          mappings, import.consolidation_ctx.merger, *import_docs_mask);
-
-        if (!success) {
-          // Consolidated segment has docs missing from 'segments'
-          SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-                   "Failed to finish merge for segment '", meta.name,
-                   "', due to removed documents still present "
-                   "the consolidation candidates");
-
-          continue;  // Skip this particular consolidation
+        if (!MapRemovals(mappings, import.consolidation_ctx.merger,
+                         *import_docs_mask)) {
+          return;
         }
-
-        // We're done with removals for pending consolidation
-        // they have been already applied to candidates above
-        // and successfully remapped to consolidated segment
-        docs_mask_modified |= true;
+        result.docs_mask_modified = true;
       }
 
-      // We've seen at least 1 successfully applied
-      // pending consolidation request
-      import_candidates_count += candidates.size();
+      result.candidates_count = candidates.size();
     } else {
-      // During consolidation doc_mask could be already populated even for just
-      // merged segment. Pending already imported/consolidated segment, apply
-      // removals mask documents matching filters from segment_contexts
-      // (i.e. from new operations)
       apply_all_queries([&](QueryContext& query) {
-        // skip queries which not affect this
         if (import.tick <= query.tick) {
-          // FIXME(gnusi): optimize PK queries
-          docs_mask_modified |=
-            RemoveFromImportedSegment(*import_docs_mask, query, *import_reader);
+          if (RemoveFromImportedSegment(*import_docs_mask, query,
+                                        *import.reader)) {
+            result.matched_queries.push_back(&query);
+          }
+        }
+      });
+      result.docs_mask_modified = !result.matched_queries.empty();
+    }
+
+    if (meta.docs_count <= import_docs_mask->size()) {
+      result.set_modified = true;
+      return;
+    }
+
+    result.append = true;
+    if (result.docs_mask_modified) {
+      result.docs_mask = std::move(import_docs_mask);
+    }
+  };
+
+  progress("Stage 2: Handling consolidated/imported segments", 0,
+           imports_count);
+  if (!use_executor_imports) {
+    for (size_t i = 0; i != imports_count; ++i) {
+      process_import(i);
+    }
+  } else {
+    for (size_t b = 0; b + 1 < import_batch_bnd.size(); ++b) {
+      if (b == import_inline_idx) {
+        continue;
+      }
+      wg.Add();
+      yaclib::Submit(*_executor, [&, batch_idx = b] {
+        Finally f = [&] noexcept { wg.Done(); };
+        for (size_t i = import_batch_bnd[batch_idx];
+             i < import_batch_bnd[batch_idx + 1]; ++i) {
+          process_import(i);
         }
       });
     }
+    for (size_t i = import_batch_bnd[import_inline_idx];
+         i < import_batch_bnd[import_inline_idx + 1]; ++i) {
+      process_import(i);
+    }
+  }
+  wg.Wait();
 
-    // Skip empty segments
-    if (meta.docs_count <= import_docs_mask->size()) {
-      SDB_ASSERT(meta.docs_count == import_docs_mask->size());
-      modified = true;  // FIXME(gnusi): looks strange
+  for (size_t i = 0; i != imports_count; ++i) {
+    auto& import = ctx->imports[i];
+    auto& result = import_results[i];
+    progress("Stage 2: Stitch consolidated/imported segments", i,
+             imports_count);
+
+    for (auto* query : result.matched_queries) {
+      query->ForceDone();
+    }
+    for (const auto name : result.mask_names) {
+      segment_mask.emplace(name);
+    }
+    import_candidates_count += result.candidates_count;
+    if (result.set_modified) {
+      modified = true;
+    }
+
+    if (!result.append) {
       continue;
     }
 
-    if (docs_mask_modified) {
-      meta.docs_mask = std::move(import_docs_mask);
+    auto& meta = import.segment.meta;
+    if (result.docs_mask_modified) {
+      meta.docs_mask = std::move(result.docs_mask);
     }
 
-    if (docs_mask_modified || pending_consolidation) {
+    if (result.docs_mask_modified || result.pending_consolidation) {
       index_utils::FlushIndexSegment(dir, import.segment,
-                                     !pending_consolidation);
+                                     !result.pending_consolidation);
     }
 
-    if (docs_mask_modified) {
-      import_reader = import_reader->UpdateMeta(dir, meta);
+    if (result.docs_mask_modified) {
+      import.reader = import.reader->UpdateMeta(dir, meta);
     }
 
-    readers.emplace_back(std::move(import_reader));
+    readers.emplace_back(std::move(import.reader));
     pending_meta.segments.emplace_back(std::move(import.segment));
   }
 

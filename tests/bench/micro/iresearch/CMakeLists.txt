@@ -1,0 +1,10 @@
+function(add_iresearch_bench FILE_NAME)
+    set(NAME serenedb-bench-micro-iresearch-${FILE_NAME})
+    add_executable(${NAME} ${FILE_NAME}.cpp)
+    target_link_libraries(${NAME} PRIVATE iresearch-static yaclib benchmark)
+    add_dependencies(serenedb-bench-micro ${NAME})
+endfunction()
+
+add_iresearch_bench(index_writer_stage1)
+add_iresearch_bench(index_writer_stage2)
+add_iresearch_bench(index_writer_full)

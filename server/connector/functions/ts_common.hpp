@@ -97,18 +97,16 @@ auto& AddFilter(Source& parent) {
   if constexpr (std::is_same_v<Filter, irs::All>) {
     static_assert(std::is_base_of_v<irs::BooleanFilter, Source>);
     return parent.add(std::make_unique<irs::All>());
+  } else if constexpr (std::is_same_v<irs::Exclusion, Source>) {
+    return parent.template exclude<Filter>();
   } else {
-    if constexpr (std::is_same_v<irs::Not, Source>) {
-      return parent.template filter<Filter>();
-    } else {
-      return parent.template add<Filter>();
-    }
+    return parent.template add<Filter>();
   }
 }
 
 template<typename Filter, typename Source>
 Filter& Negate(Source& parent) {
-  return AddFilter<Filter>(AddFilter<irs::Not>(
+  return AddFilter<Filter>(AddFilter<irs::Exclusion>(
     parent.type() == irs::Type<irs::Or>::id() ? AddFilter<irs::And>(parent)
                                               : parent));
 }

@@ -26,10 +26,10 @@
 
 namespace irs {
 
-template<typename IncludeAdapter, typename ExcludeAdapters>
-class Exclusion : public DocIterator {
+template<typename IncludeAdapter, typename ExcludeAdapter>
+class ExclusionIterator : public DocIterator {
  public:
-  Exclusion(IncludeAdapter incl, ExcludeAdapters excl) noexcept
+  ExclusionIterator(IncludeAdapter incl, ExcludeAdapter excl) noexcept
     : _incl{std::move(incl)}, _excl{std::move(excl)} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -57,27 +57,14 @@ class Exclusion : public DocIterator {
     if (doc != target) {
       return doc;
     }
-    if constexpr (requires { _excl.begin(); }) {
-      for (auto& it : _excl) {
-        auto excl = it.value();
-        if (excl < doc) {
-          excl = it.LazySeek(doc);
-        }
-        if (excl == doc) {
-          return doc + 1;
-        }
-        SDB_ASSERT(excl > doc);
-      }
-    } else {
-      auto excl = _excl.value();
-      if (excl < doc) {
-        excl = _excl.LazySeek(doc);
-      }
-      if (excl == doc) {
-        return doc + 1;
-      }
-      SDB_ASSERT(excl > doc);
+    auto excl = _excl.value();
+    if (excl < doc) {
+      excl = _excl.LazySeek(doc);
     }
+    if (excl == doc) {
+      return doc + 1;
+    }
+    SDB_ASSERT(excl > doc);
     return _doc = doc;
   }
 
@@ -107,33 +94,20 @@ class Exclusion : public DocIterator {
       return _doc = incl;
     }
 
-    if constexpr (requires { _excl.begin(); }) {
-      for (auto& it : _excl) {
-        auto excl = it.value();
-        if (excl < incl) {
-          excl = it.LazySeek(incl);
-        }
-        if (excl == incl) {
-          return advance();
-        }
-        SDB_ASSERT(excl > incl);
-      }
-    } else {
-      auto excl = _excl.value();
-      if (excl < incl) {
-        excl = _excl.LazySeek(incl);
-      }
-      if (excl == incl) {
-        return advance();
-      }
-      SDB_ASSERT(excl > incl);
+    auto excl = _excl.value();
+    if (excl < incl) {
+      excl = _excl.LazySeek(incl);
     }
+    if (excl == incl) {
+      return advance();
+    }
+    SDB_ASSERT(excl > incl);
 
     return _doc = incl;
   }
 
   IncludeAdapter _incl;
-  ExcludeAdapters _excl;
+  ExcludeAdapter _excl;
 };
 
 }  // namespace irs

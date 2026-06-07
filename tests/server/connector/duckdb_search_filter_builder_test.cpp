@@ -227,8 +227,8 @@ constexpr irs::field_id ExpectedFieldId(uint64_t column_id) {
 
 template<typename Filter, typename Source>
 auto& AddFilter(Source& parent) {
-  if constexpr (std::is_same_v<irs::Not, Source>) {
-    return parent.template filter<Filter>();
+  if constexpr (std::is_same_v<irs::Exclusion, Source>) {
+    return parent.template exclude<Filter>();
   } else {
     return parent.template add<Filter>();
   }
@@ -841,7 +841,7 @@ TEST_F(SearchFilterBuilderTest, test_NotTerm) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddTermFilter<int32_t>(not_filter, 1, 10);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a = '10')", columns,
                true);
@@ -851,7 +851,7 @@ TEST_F(SearchFilterBuilderTest, test_NotOr) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   auto& or_filter = AddFilter<irs::Or>(not_filter);
   AddTermFilter<int32_t>(or_filter, 1, 10);
   AddTermFilter<int32_t>(or_filter, 1, 20);
@@ -864,7 +864,7 @@ TEST_F(SearchFilterBuilderTest, test_NotAnd) {
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   auto& and_filter = AddFilter<irs::And>(not_filter);
   AddTermFilter<int32_t>(and_filter, 1, 10);
   AddTermFilter<int32_t>(and_filter, 2, 20);
@@ -1095,7 +1095,7 @@ TEST_F(SearchFilterBuilderTest, test_AndWithNotOr) {
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "value"}};
   irs::And expected;
   AddTermFilter<bool>(expected, 1, true);
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   auto& or_filter = AddFilter<irs::Or>(not_filter);
   AddTermFilter<int32_t>(or_filter, 2, 10);
   AddTermFilter<int32_t>(or_filter, 2, 20);
@@ -1112,7 +1112,7 @@ TEST_F(SearchFilterBuilderTest, test_OrWithNot) {
   irs::And expected;
   auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<int32_t>(or_filter, 1, 5);
-  auto& not_filter = or_filter.add<irs::And>().add<irs::Not>();
+  auto& not_filter = or_filter.add<irs::And>().add<irs::Exclusion>();
   AddTermFilter<std::string_view>(not_filter, 2, std::string_view{"test"});
   AssertFilter(expected, "SELECT * FROM foo WHERE a = 5 OR NOT (b = 'test')",
                columns, true);
@@ -1141,7 +1141,7 @@ TEST_F(SearchFilterBuilderTest, test_ComplexNested) {
   auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 2048, std::string_view{"premium"});
   AddTermFilter<std::string_view>(or_filter, 2048, std::string_view{"gold"});
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddTermFilter<bool>(not_filter, 4096, false);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE price >= 100 AND (tier = 'premium' OR "
@@ -1322,7 +1322,7 @@ TEST_F(SearchFilterBuilderTest, test_NotIn) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "excluded"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddTermsFilter<int32_t>(not_filter, 1, {100, 200, 300});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE excluded NOT IN (100, 200, 300)",
@@ -1408,7 +1408,7 @@ TEST_F(SearchFilterBuilderTest, test_IsNotNull) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "required_field"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddNullFilter(not_filter, 1);
   AssertFilter(expected, "SELECT * FROM foo WHERE required_field IS NOT NULL",
                columns, true);
@@ -1428,7 +1428,7 @@ TEST_F(SearchFilterBuilderTest, test_NotIsNull) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "required_field"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddNullFilter(not_filter, 1);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT(required_field IS NULL)",
                columns, true);
@@ -1475,7 +1475,7 @@ TEST_F(SearchFilterBuilderTest, test_IsNullOrNotInside) {
   auto& or_filter = expected.add<irs::Or>();
   AddNullFilter(or_filter, 1);
   auto& and_filter = or_filter.add<irs::And>();
-  auto& not_filter = and_filter.add<irs::Not>();
+  auto& not_filter = and_filter.add<irs::Exclusion>();
   AddTermFilter<std::string_view>(not_filter, 2, std::string_view{"invalid"});
   AssertFilter(
     expected,
@@ -1551,7 +1551,7 @@ TEST_F(SearchFilterBuilderTest, test_NotLike) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddLikeFilter(not_filter, 1, "%bar_");
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT(required_field LIKE '%bar_')",
@@ -2057,7 +2057,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_WithNot) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddWildcardNgramFilter(not_filter, 1, "%foo_", true);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT(a LIKE '%foo_')", columns,
                true, WildcardAnalyzerProvider);
@@ -2117,7 +2117,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_WithNot) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddLikeFilter(not_filter, 1, "%foo_");
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT(a @@ (ts_like('%foo_')))",
                columns, true, SegmentationAnalyzerProvider);
@@ -2220,7 +2220,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinNotNegation) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& negated = expected.add<irs::Not>();
+  auto& negated = expected.add<irs::Exclusion>();
   AddEditDistanceFilter(negated, 1, "test", 2);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ !!ts_levenshtein('test', 2)",
@@ -2700,7 +2700,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_NotNegation) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
   irs::And expected;
-  auto& negated = expected.add<irs::Not>();
+  auto& negated = expected.add<irs::Exclusion>();
   AddGeoDistanceFilter(negated, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        500.0, true);
   AssertFilter(expected,
@@ -2763,7 +2763,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_NotEq) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
   irs::And expected;
-  auto& negated = expected.add<irs::Not>();
+  auto& negated = expected.add<irs::Exclusion>();
   AddGeoDistanceFilter(negated, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        100.0, true);
   AssertFilter(expected,
@@ -3224,7 +3224,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundMustNotOnly) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   auto& and_filter = expected.add<irs::And>();
-  auto& not_filter = and_filter.add<irs::Not>();
+  auto& not_filter = and_filter.add<irs::Exclusion>();
   AddTermFilter<std::string_view>(not_filter, 1, std::string_view{"x"});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
@@ -3305,7 +3305,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundFull) {
   auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"y"});
-  auto& not_filter = and_filter.add<irs::Not>();
+  auto& not_filter = and_filter.add<irs::Exclusion>();
   AddTermFilter<std::string_view>(not_filter, 1, std::string_view{"z"});
   auto& or_filter = and_filter.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"a"});
@@ -3379,7 +3379,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundPerClauseTokenize) {
   phrase_must.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
   // must_not clause -- segmentation analyzer.
-  auto& not_filter = and_filter.add<irs::Not>();
+  auto& not_filter = and_filter.add<irs::Exclusion>();
   AddPhraseFilter(not_filter, 1, {"z"});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_compound("
@@ -3401,7 +3401,7 @@ TEST_F(SearchFilterBuilderTest,
   AddPhraseFilter(or_must, 1, {"a"});
   AddTermFilter<std::string_view>(or_must, 1, std::string_view{"b"});
   // must_not: ByRange (string lower=open, upper=z exclusive).
-  auto& not_filter = and_filter.add<irs::Not>();
+  auto& not_filter = and_filter.add<irs::Exclusion>();
   AddRangeFilter<std::string_view>(not_filter, 1, std::nullopt, false,
                                    std::string_view{"z"}, false);
   // should: Or { term('x'), term('y') }.
@@ -3517,8 +3517,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Not) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_group = expected.add<irs::Not>();
-  auto& inner = not_group.filter<irs::ByTerm>();
+  auto& not_group = expected.add<irs::Exclusion>();
+  auto& inner = not_group.exclude<irs::ByTerm>();
   *inner.mutable_field_id() = ExpectedFieldId(1);
   irs::StringTokenizer stream;
   const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
@@ -3771,8 +3771,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnderNot) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
-  auto& re = not_filter.filter<irs::ByRegexp>();
+  auto& not_filter = expected.add<irs::Exclusion>();
+  auto& re = not_filter.exclude<irs::ByRegexp>();
   *re.mutable_field_id() = ExpectedFieldId(1);
   re.mutable_options()->pattern.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"}));
@@ -4780,12 +4780,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListMinMatch) {
 }
 
 // Negation via NOT(b @@ ts_any(ts_tokenize(...))): wraps the resulting
-// ByTerms in irs::Not.
+// ByTerms in irs::Exclusion.
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListWithNot) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddTermsFilter<std::string_view>(
     not_filter, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AssertFilter(expected,
@@ -4938,8 +4938,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchNegation) {
   irs::And expected;
   auto& and_group = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_group, 1, std::string_view{"quick"});
-  auto& not_group = and_group.add<irs::Not>();
-  auto& inner = not_group.filter<irs::ByTerm>();
+  auto& not_group = and_group.add<irs::Exclusion>();
+  auto& inner = not_group.exclude<irs::ByTerm>();
   *inner.mutable_field_id() = ExpectedFieldId(1);
   {
     irs::StringTokenizer stream;
@@ -4964,8 +4964,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchFullExample) {
   auto& or_group = and_group.add<irs::Or>();
   AddPhraseFilter(or_group, 1, {"quick", "fox"});
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"slow"});
-  auto& not_group = and_group.add<irs::Not>();
-  auto& inner = not_group.filter<irs::ByTerm>();
+  auto& not_group = and_group.add<irs::Exclusion>();
+  auto& inner = not_group.exclude<irs::ByTerm>();
   *inner.mutable_field_id() = ExpectedFieldId(1);
   {
     irs::StringTokenizer stream;
@@ -5244,7 +5244,7 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddPhraseFilter(not_filter, 1, {"quick", "brown", "fox"});
   AssertFilter(
     expected,
@@ -5295,7 +5295,7 @@ TEST_F(SearchFilterBuilderTest, test_NgramMatches_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddNgramSimilarityFilter(not_filter, 1, {"he", "el", "ll", "lo"});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT ngram_matches(b, 'hello')", columns,
@@ -5377,7 +5377,7 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddEditDistanceFilter(not_filter, 1, "test", 2);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT levenshtein_matches(b, 'test', 2)",
@@ -5476,7 +5476,7 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   {
     auto& terms = AddFilter<irs::ByTerms>(not_filter);
     *terms.mutable_field_id() = ExpectedFieldId(1);
@@ -5644,7 +5644,7 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddTermsFilter<std::string_view>(
     not_filter, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AssertFilter(expected,
@@ -5752,7 +5752,7 @@ TEST_F(SearchFilterBuilderTest, test_PredicateMix_NotOfAnd) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   auto& inner_and = AddFilter<irs::And>(not_filter);
   AddPhraseFilter(inner_and, 1, {"quick", "brown"});
   AddPhraseFilter(inner_and, 1, {"red", "fox"});
@@ -5849,7 +5849,7 @@ TEST_F(SearchFilterBuilderTest, test_Contains_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddLikeFilter(not_filter, 1, "%foo%");
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT contains(b, 'foo')",
                columns, true);
@@ -5930,7 +5930,7 @@ TEST_F(SearchFilterBuilderTest, test_StartsWith_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddPrefixFilter(not_filter, 1, "foo");
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT starts_with(b, 'foo')",
                columns, true);
@@ -5988,7 +5988,7 @@ TEST_F(SearchFilterBuilderTest, test_EndsWith_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddLikeFilter(not_filter, 1, "%foo");
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT ends_with(b, 'foo')",
                columns, true);
@@ -6045,7 +6045,7 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  auto& not_filter = expected.add<irs::Not>();
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddRegexpFilter(not_filter, 1, "[a-z]+[0-9]+");
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT regexp_matches(b, '[a-z]+[0-9]+')",

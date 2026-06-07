@@ -651,7 +651,7 @@ Filter::Query::ptr PrepareOpenInterval(const PrepareContext& ctx,
           // a ByColumnExistence gate on store_field_id; that's gone, so
           // rows without a stored geo value pass the Not-singleton check.
           And root;
-          auto& excl = root.add<Not>().filter<GeoDistanceFilter>();
+          auto& excl = root.add<Exclusion>().exclude<GeoDistanceFilter>();
           *excl.mutable_field_id() = id;
           auto& opts = *excl.mutable_options();
           opts = options;

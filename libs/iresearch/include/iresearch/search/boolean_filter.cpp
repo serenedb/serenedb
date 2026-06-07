@@ -31,20 +31,7 @@
 #include "prepared_state_visitor.hpp"
 
 namespace irs {
-namespace {
 
-std::pair<const Filter*, bool> OptimizeNot(const Not& node) {
-  bool neg = true;
-  const auto* inner = node.filter();
-  while (inner != nullptr && inner->type() == Type<Not>::id()) {
-    neg = !neg;
-    inner = sdb::basics::downCast<Not>(inner)->filter();
-  }
-
-  return std::pair{inner, neg};
-}
-
-}  // namespace
 bool BooleanFilter::equals(const Filter& rhs) const noexcept {
   if (!Filter::equals(rhs)) {
     return false;
@@ -66,11 +53,7 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
   if (size == 1) {
     auto* filter = _filters.front().get();
     SDB_ASSERT(filter);
-
-    // FIXME(gnusi): let Not handle everything?
-    if (filter->type() != irs::Type<irs::Not>::id()) {
-      return filter->prepare(ctx.Boost(Boost()));
-    }
+    return filter->prepare(ctx.Boost(Boost()));
   }
 
   if (min_match != 0 && absl::c_all_of(*this, [&](const auto& filter) {
@@ -105,141 +88,81 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
     }
   }
 
-  // determine incl/excl parts
-  std::vector<const Filter*> incl;
-  std::vector<const Filter*> excl;
-
-  AllDocsProvider::Ptr all_docs_zero_boost;
-  AllDocsProvider::Ptr all_docs_no_boost;
-
-  GroupFilters(all_docs_zero_boost, incl, excl);
-
-  if (incl.empty() && !excl.empty()) {
-    // single negative query case
-    all_docs_no_boost = MakeAllDocsFilter(kNoBoost);
-    incl.push_back(all_docs_no_boost.get());
-  }
-
-  return PrepareBoolean(incl, excl, ctx);
+  return PrepareBoolean(_filters, ctx);
 }
 
-void BooleanFilter::GroupFilters(AllDocsProvider::Ptr& all_docs_zero_boost,
-                                 std::vector<const Filter*>& incl,
-                                 std::vector<const Filter*>& excl) const {
-  incl.reserve(size() / 2);
-  excl.reserve(incl.capacity());
-
-  const Filter* empty_filter = nullptr;
-  const auto is_or = type() == irs::Type<Or>::id();
-  for (const auto& filter : *this) {
-    if (irs::Type<Empty>::id() == filter->type()) {
-      empty_filter = filter.get();
-      continue;
-    }
-    if (irs::Type<Not>::id() == filter->type()) {
-      const auto res = OptimizeNot(sdb::basics::downCast<Not>(*filter));
-
-      if (!res.first) {
-        continue;
-      }
-
-      if (res.second) {
-        if (!all_docs_zero_boost) {
-          all_docs_zero_boost = MakeAllDocsFilter(0.F);
-        }
-
-        if (*all_docs_zero_boost == *res.first) {
-          // not all -> empty result
-          incl.clear();
-          return;
-        }
-        excl.push_back(res.first);
-        if (is_or) {
-          // FIXME: this should have same boost as Not filter.
-          // But for now we do not boost negation.
-          incl.push_back(all_docs_zero_boost.get());
-        }
-      } else {
-        incl.push_back(res.first);
-      }
-    } else {
-      incl.push_back(filter.get());
-    }
-  }
-  if (empty_filter != nullptr) {
-    incl.push_back(empty_filter);
-  }
-}
-
-Filter::Query::ptr And::PrepareBoolean(std::vector<const Filter*>& incl,
-                                       std::vector<const Filter*>& excl,
+Filter::Query::ptr And::PrepareBoolean(std::span<const Filter::ptr> filters,
                                        const PrepareContext& ctx) const {
-  // optimization step
-  //  if include group empty itself or has 'empty' -> this whole conjunction is
-  //  empty
-  if (incl.empty() || incl.back()->type() == irs::Type<Empty>::id()) {
+  if (filters.empty()) {
     return Query::empty();
+  }
+  for (const auto& filter : filters) {
+    if (filter->type() == irs::Type<Empty>::id()) {
+      return Query::empty();
+    }
   }
 
   PrepareContext sub_ctx = ctx;
 
   // single node case
-  if (1 == incl.size() && excl.empty()) {
+  if (1 == filters.size()) {
     sub_ctx.boost *= Boost();
-    return incl.front()->prepare(sub_ctx);
+    return filters.front()->prepare(sub_ctx);
   }
 
   auto cumulative_all = MakeAllDocsFilter(kNoBoost);
   score_t all_boost{0};
   size_t all_count{0};
-  for (auto filter : incl) {
+  for (const auto& filter : filters) {
     if (*filter == *cumulative_all) {
       all_count++;
       all_boost += sdb::basics::downCast<FilterWithBoost>(*filter).Boost();
     }
   }
-  if (all_count != 0) {
-    const auto non_all_count = incl.size() - all_count;
-    auto it = std::remove_if(incl.begin(), incl.end(),
-                             [&cumulative_all](const irs::Filter* filter) {
-                               return *cumulative_all == *filter;
-                             });
-    incl.erase(it, incl.end());
-    // Here And differs from Or. Last 'All' should be left in include group only
-    // if there is more than one filter of other type. Otherwise this another
-    // filter could be container for boost from 'all' filters
-    if (1 == non_all_count) {
-      // let this last filter hold boost from all removed ones
-      // so we aggregate in external boost values from removed all filters
-      // If we will not optimize resulting boost will be:
-      //   boost * OR_BOOST * ALL_BOOST + boost * OR_BOOST * LEFT_BOOST
-      // We could adjust only 'boost' so we recalculate it as
-      // new_boost =  ( boost * OR_BOOST * ALL_BOOST + boost * OR_BOOST *
-      // LEFT_BOOST) / (OR_BOOST * LEFT_BOOST) so when filter will be executed
-      // resulting boost will be: new_boost * OR_BOOST * LEFT_BOOST. If we
-      // substitute new_boost back we will get ( boost * OR_BOOST * ALL_BOOST +
-      // boost * OR_BOOST * LEFT_BOOST) - original non-optimized boost value
-      auto left_boost = (*incl.begin())->BoostImpl();
-      if (Boost() != 0 && left_boost != 0 && sub_ctx.scorer) {
-        sub_ctx.boost = (sub_ctx.boost * Boost() * all_boost +
-                         sub_ctx.boost * Boost() * left_boost) /
-                        (left_boost * Boost());
-      } else {
-        sub_ctx.boost = 0;
+  const auto non_all_count = filters.size() - all_count;
+
+  if (all_count != 0 && 1 == non_all_count) {
+    const Filter* left = nullptr;
+    for (const auto& filter : filters) {
+      if (*filter != *cumulative_all) {
+        left = filter.get();
+        break;
       }
-    } else {
-      // create new 'all' with boost from all removed
-      cumulative_all->boost(all_boost);
-      incl.push_back(cumulative_all.get());
     }
+    const auto left_boost = left->BoostImpl();
+    if (Boost() != 0 && left_boost != 0 && sub_ctx.scorer) {
+      sub_ctx.boost = (sub_ctx.boost * Boost() * all_boost +
+                       sub_ctx.boost * Boost() * left_boost) /
+                      (left_boost * Boost());
+    } else {
+      sub_ctx.boost = 0;
+    }
+    sub_ctx.boost *= this->Boost();
+    return left->prepare(sub_ctx);
   }
+
   sub_ctx.boost *= this->Boost();
-  if (1 == incl.size() && excl.empty()) {
-    // single node case
-    return incl.front()->prepare(sub_ctx);
+
+  if (all_count != 0 && 0 == non_all_count) {
+    cumulative_all->boost(all_boost);
+    return cumulative_all->prepare(sub_ctx);
+  }
+
+  BooleanQuery::queries_t queries{{sub_ctx.memory}};
+  queries.reserve(non_all_count + (all_count != 0 ? 1 : 0));
+  for (const auto& filter : filters) {
+    if (all_count != 0 && *filter == *cumulative_all) {
+      continue;
+    }
+    queries.emplace_back(filter->prepare(sub_ctx));
+  }
+  if (all_count != 0) {
+    // create new 'all' with boost from all removed
+    cumulative_all->boost(all_boost);
+    queries.emplace_back(cumulative_all->prepare(sub_ctx));
   }
   auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-  q->prepare(sub_ctx, merge_type(), incl, excl);
+  q->prepare(sub_ctx, merge_type(), std::move(queries));
   return q;
 }
 
@@ -256,8 +179,7 @@ Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
   return BooleanFilter::PrepareImpl(ctx, _min_match_count);
 }
 
-Filter::Query::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
-                                      std::vector<const Filter*>& excl,
+Filter::Query::ptr Or::PrepareBoolean(std::span<const Filter::ptr> filters,
                                       const PrepareContext& ctx) const {
   const PrepareContext sub_ctx = ctx.Boost(Boost());
 
@@ -266,55 +188,53 @@ Filter::Query::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
     return MakeAllDocsFilter(kNoBoost)->prepare(sub_ctx);
   }
 
-  if (!incl.empty() && incl.back()->type() == irs::Type<Empty>::id()) {
-    incl.pop_back();
-  }
-
-  if (incl.empty()) {
+  if (filters.empty()) {
     return Query::empty();
   }
 
-  // single node case
-  if (1 == incl.size() && excl.empty()) {
-    return incl.front()->prepare(sub_ctx);
+  if (filters.size() == 1) {
+    return filters.front()->prepare(sub_ctx);
   }
 
   auto cumulative_all = MakeAllDocsFilter(kNoBoost);
-  size_t optimized_match_count = 0;
-  // Optimization steps
 
   score_t all_boost{0};
   size_t all_count{0};
-  const irs::Filter* incl_all{nullptr};
-  for (auto filter : incl) {
+  size_t non_empty_count{0};
+  const irs::Filter* all_filter = nullptr;
+  for (const auto& filter : filters) {
+    if (filter->type() == irs::Type<Empty>::id()) {
+      continue;
+    }
     if (*filter == *cumulative_all) {
       all_count++;
       all_boost += sdb::basics::downCast<FilterWithBoost>(*filter).Boost();
-      incl_all = filter;
+      all_filter = filter.get();
     }
   }
+
+  size_t optimized_match_count = 0;
+  bool collapse_all = false;
+  bool use_cumulative = false;
   if (all_count != 0) {
-    if (!sub_ctx.scorer && incl.size() > 1 && _min_match_count <= all_count) {
+    if (!sub_ctx.scorer && _min_match_count <= all_count) {
       // if we have at least one all in include group - all other filters are
       // not necessary in case there is no scoring and 'all' count satisfies
       // min_match
-      SDB_ASSERT(incl_all != nullptr);
-      incl.resize(1);
-      incl.front() = incl_all;
-      optimized_match_count = all_count - 1;
+      SDB_ASSERT(all_filter != nullptr);
+      collapse_all = true;
     } else {
       // Here Or differs from And. Last All should be left in include group
-      auto it = std::remove_if(incl.begin(), incl.end(),
-                               [&cumulative_all](const irs::Filter* filter) {
-                                 return *cumulative_all == *filter;
-                               });
-      incl.erase(it, incl.end());
-      // create new 'all' with boost from all removed
-      cumulative_all->boost(all_boost);
-      incl.push_back(cumulative_all.get());
-      optimized_match_count = all_count - 1;
+      use_cumulative = true;
     }
+    optimized_match_count = all_count - 1;
   }
+
+  const size_t final_count = collapse_all ? 1
+                             : use_cumulative
+                               ? (non_empty_count - all_count) + 1
+                               : non_empty_count;
+
   // check strictly less to not roll back to 0 min_match (we`ve handled this
   // case above!) single 'all' left -> it could contain boost we want to
   // preserve
@@ -322,62 +242,88 @@ Filter::Query::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
                                     ? _min_match_count - optimized_match_count
                                     : 1;
 
-  if (adjusted_min_match > incl.size()) {
+  if (adjusted_min_match > final_count) {
     // can't satisfy 'min_match_count' conditions
-    // having only 'incl.size()' queries
+    // having only 'final_count' queries
     return Query::empty();
   }
 
-  if (1 == incl.size() && excl.empty()) {
+  if (1 == final_count) {
     // single node case
-    return incl.front()->prepare(sub_ctx);
+    if (collapse_all) {
+      return all_filter->prepare(sub_ctx);
+    }
+    // create new 'all' with boost from all removed
+    cumulative_all->boost(all_boost);
+    return cumulative_all->prepare(sub_ctx);
   }
 
-  SDB_ASSERT(adjusted_min_match > 0 && adjusted_min_match <= incl.size());
+  SDB_ASSERT(adjusted_min_match > 0 && adjusted_min_match <= final_count);
+
+  BooleanQuery::queries_t queries{{sub_ctx.memory}};
+  queries.reserve(final_count);
+  for (const auto& filter : filters) {
+    if (filter->type() == irs::Type<Empty>::id()) {
+      continue;
+    }
+    if (use_cumulative && *filter == *cumulative_all) {
+      continue;
+    }
+    queries.emplace_back(filter->prepare(sub_ctx));
+  }
+  if (use_cumulative) {
+    // create new 'all' with boost from all removed
+    cumulative_all->boost(all_boost);
+    queries.emplace_back(cumulative_all->prepare(sub_ctx));
+  }
 
   memory::managed_ptr<BooleanQuery> q;
-  if (adjusted_min_match == incl.size()) {
+  if (adjusted_min_match == final_count) {
     q = memory::make_tracked<AndQuery>(sub_ctx.memory);
   } else if (1 == adjusted_min_match) {
     q = memory::make_tracked<OrQuery>(sub_ctx.memory);
-  } else {  // min_match_count > 1 && min_match_count < incl.size()
+  } else {  // min_match_count > 1 && min_match_count < final_count
     q = memory::make_tracked<MinMatchQuery>(sub_ctx.memory, adjusted_min_match);
   }
 
-  q->prepare(sub_ctx, merge_type(), incl, excl);
+  q->prepare(sub_ctx, merge_type(), std::move(queries));
   return q;
 }
 
-Filter::Query::ptr Not::prepare(const PrepareContext& ctx) const {
-  const auto res = OptimizeNot(*this);
-
-  if (!res.first) {
-    return Query::empty();
-  }
-
+Filter::Query::ptr Exclusion::prepare(const PrepareContext& ctx) const {
   const PrepareContext sub_ctx = ctx.Boost(Boost());
 
-  if (res.second) {
-    auto all_docs = MakeAllDocsFilter(kNoBoost);
-    const std::array<const irs::Filter*, 1> incl{all_docs.get()};
-    const std::array<const irs::Filter*, 1> excl{res.first};
-
-    auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-    q->prepare(sub_ctx, ScoreMergeType::Sum, incl, excl);
-    return q;
+  if (_include == nullptr && _exclude != nullptr) {
+    const Filter* inner = _exclude.get();
+    bool negated = true;
+    while (inner->type() == Type<Exclusion>::id()) {
+      const auto& ex = sdb::basics::downCast<Exclusion>(*inner);
+      if (ex._include != nullptr || ex._exclude == nullptr) {
+        break;
+      }
+      inner = ex._exclude.get();
+      negated = !negated;
+    }
+    if (!negated) {
+      return inner->prepare(sub_ctx);
+    }
+    return PrepareExclusion(sub_ctx, nullptr, inner);
   }
 
-  // negation has been optimized out
-  return res.first->prepare(sub_ctx);
+  return PrepareExclusion(sub_ctx, _include.get(), _exclude.get());
 }
 
-bool Not::equals(const irs::Filter& rhs) const noexcept {
+bool Exclusion::equals(const irs::Filter& rhs) const noexcept {
   if (!Filter::equals(rhs)) {
     return false;
   }
-  const auto& typed_rhs = sdb::basics::downCast<Not>(rhs);
-  return (!empty() && !typed_rhs.empty() && *_filter == *typed_rhs._filter) ||
-         (empty() && typed_rhs.empty());
+  const auto& typed_rhs = sdb::basics::downCast<Exclusion>(rhs);
+  const auto same = [](const Filter::ptr& lhs, const Filter::ptr& rhs) {
+    return (lhs == nullptr && rhs == nullptr) ||
+           (lhs != nullptr && rhs != nullptr && *lhs == *rhs);
+  };
+  return same(_include, typed_rhs._include) &&
+         same(_exclude, typed_rhs._exclude);
 }
 
 }  // namespace irs

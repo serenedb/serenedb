@@ -39,7 +39,6 @@ catalog::MaterializedData SystemTableSnapshot<PgSubscription>::GetTableData() {
   for (const auto& sub : subs) {
     const auto& cfg = sub->GetConfig();
 
-    // publications: vector<string> → Array<Text>
     Array<Text> pubs;
     // for (const auto& p : cfg.publications) {
     //   pubs.push_back(Text{p});

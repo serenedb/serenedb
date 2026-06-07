@@ -119,6 +119,12 @@ class MaskDocIterator : public DocIterator {
     CollectImpl(*this, scorer, fetcher, collector);
   }
 
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    return _it->PrepareScore(ctx);
+  }
+
+  void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
+
  private:
   const DocumentMask& _mask;
   DocIterator::ptr _it;

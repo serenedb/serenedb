@@ -416,9 +416,9 @@ std::string ToString(const Filter& f) {
 
 std::string ToStringDemangled(
   const Filter& f,
-  const std::function<std::string(sdb::catalog::Column::Id)>& col_name) {
+  const std::function<std::string(field_id)>& field_to_string) {
   return StringifyFilter(f, [&](field_id id) -> std::string {
-    return std::string{col_name(sdb::catalog::Column::Id{id})};
+    return field_to_string(id);
   });
 }
 

@@ -41,7 +41,7 @@ inline constexpr const char kNestingListOffsetPrefix = '[';
 ///        flat iResearch field names
 inline constexpr const char kNestingListOffsetSuffix = ']';
 
-[[maybe_unused]] inline constexpr std::string_view kIresearchInvertedIndexType =
+[[maybe_unused]] inline constexpr std::string_view kIResearchInvertedIndexType =
   "inverted";
 
 /// defines the implementation version of the iresearch view interface

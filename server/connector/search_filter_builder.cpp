@@ -369,12 +369,15 @@ Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {ERROR_BAD_PARAMETER,
             "IS NULL input is not a reference to an indexed column"};
   }
+  if (!irs::field_limits::valid(column_info->null_field_id)) {
+    // INCLUDE-only columns have no null posting list; let DuckDB evaluate
+    // the predicate residually against the columnstore value.
+    return {ERROR_BAD_PARAMETER,
+            "IS NULL on a column without a null_field_id (e.g. INCLUDE-only)"};
+  }
   auto& term_filter =
     ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
   term_filter.boost(ctx.boost);
-  SDB_ENSURE(irs::field_limits::valid(column_info->null_field_id),
-             ERROR_INTERNAL,
-             "FromIsNull: column_info has no null_field_id allocated");
   *term_filter.mutable_field_id() = column_info->null_field_id;
   term_filter.mutable_options()->term.assign(
     irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));

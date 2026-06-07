@@ -140,14 +140,25 @@ EXPLAIN SELECT emb FROM src_hnsw_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOA
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 1          │
+│      Order By: #1 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
-│     src_hnsw_only_idx     │
+│  src_hnsw_only_idx (ANN)  │
 │                           │
 │          TopK: 1          │
 │          Dims: 3          │
-│      Projections: emb     │
+│                           │
+│        Projections:       │
+│            emb            │
+│  sdb_inverted_index_score │
 │                           │
 │          ~2 rows          │
 └───────────────────────────┘
@@ -160,10 +171,18 @@ EXPLAIN SELECT id, emb FROM src_hnsw_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 1          │
+│      Order By: #2 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
-│     src_hnsw_only_idx     │
+│  src_hnsw_only_idx (ANN)  │
 │                           │
 │      Lookup: rocksdb      │
 │          TopK: 1          │
@@ -172,6 +191,7 @@ QUERY PLAN
 │        Projections:       │
 │           id (l)          │
 │          emb (i)          │
+│  sdb_inverted_index_score │
 │                           │
 │          ~2 rows          │
 └───────────────────────────┘
@@ -198,10 +218,18 @@ EXPLAIN SELECT emb, label FROM src_hnsw_mixed_idx ORDER BY emb <-> [1.0, 0.0, 0.
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 1          │
+│      Order By: #2 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
-│     src_hnsw_mixed_idx    │
+│  src_hnsw_mixed_idx (ANN) │
 │                           │
 │      Lookup: rocksdb      │
 │          TopK: 1          │
@@ -210,6 +238,7 @@ QUERY PLAN
 │        Projections:       │
 │          emb (i)          │
 │         label (l)         │
+│  sdb_inverted_index_score │
 │                           │
 │          ~2 rows          │
 └───────────────────────────┘

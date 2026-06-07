@@ -121,6 +121,10 @@ class WildcardIterator : public DocIterator {
     return advance();
   }
 
+  ScoreFunction PrepareScore(const PrepareScoreContext& /*ctx*/) final {
+    return ScoreFunction::Constant(kNoBoost);
+  }
+
  private:
   bool Check(doc_id_t doc) {
     // Per-doc point fetch via cached cursor; cursor reuses its open

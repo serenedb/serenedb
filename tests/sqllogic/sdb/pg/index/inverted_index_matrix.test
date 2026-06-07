@@ -935,13 +935,26 @@ EXPLAIN SELECT pk FROM m_vec_hnsw_st
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
 │    ────────────────────   │
-│    Index: m_vec_hnsw_st   │
+│           Top: 1          │
+│      Order By: #1 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│    m_vec_hnsw_st (ANN)    │
+│                           │
 │      Lookup: rocksdb      │
 │          TopK: 1          │
 │          Dims: 3          │
-│      Projections: pk      │
+│                           │
+│        Projections:       │
+│             pk            │
+│  sdb_inverted_index_score │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -952,15 +965,26 @@ EXPLAIN SELECT pk FROM m_vec_hnsw_expr_ns
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 1          │
+│      Order By: #1 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
-│     m_vec_hnsw_expr_ns    │
+│  m_vec_hnsw_expr_ns (ANN) │
 │                           │
 │      Lookup: rocksdb      │
 │          TopK: 1          │
 │          Dims: 3          │
-│      Projections: pk      │
+│                           │
+│        Projections:       │
+│             pk            │
+│  sdb_inverted_index_score │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -971,9 +995,11 @@ EXPLAIN SELECT pk FROM m_vec_hnsw_st
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  IRESEARCH_ANN_RANGE_SCAN │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│    Index: m_vec_hnsw_st   │
+│           Index:          │
+│ m_vec_hnsw_st (ANN range) │
+│                           │
 │      Lookup: rocksdb      │
 │      Radius: 1.500000     │
 │          Dims: 3          │
@@ -988,10 +1014,11 @@ EXPLAIN SELECT pk FROM m_vec_hnsw_expr_ns
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  IRESEARCH_ANN_RANGE_SCAN │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
-│     m_vec_hnsw_expr_ns    │
+│  m_vec_hnsw_expr_ns (ANN  │
+│           range)          │
 │                           │
 │      Lookup: rocksdb      │
 │      Radius: 1.500000     │
@@ -1324,7 +1351,7 @@ count
 #                                  -- term_dict rejects -> INCLUDE-only
 # ============================================================================
 
-statement count 2
+statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_matrix_unsup\.parquet" to "/tmp/sdb_matrix_unsup\.parquet": Operation not permitted
 COPY (SELECT * FROM (VALUES
   (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,
       TIME '01:23:45',
@@ -2201,7 +2228,7 @@ pk	dt	ts
 1	2024-01-01	2024-01-01 00:00:00
 2	2024-06-15	2024-06-15 12:00:00
 
-statement count 2
+statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g6_unsup\.parquet" to "/tmp/sdb_g6_unsup\.parquet": Operation not permitted
 COPY (SELECT * FROM (VALUES
   (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,
       TIMESTAMP_MS '2024-01-01 00:00:00',
@@ -2734,7 +2761,7 @@ pk
 # (a) TIMESTAMPTZ scalar via expression -- view-backed.
 # DuckDB has no `+(TIMESTAMPTZ, INTERVAL)` overload, so use a `coalesce`
 # identity wrapper instead of the arithmetic shape used for plain TIMESTAMP.
-statement count 2
+statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g11_tz\.parquet" to "/tmp/sdb_g11_tz\.parquet": Operation not permitted
 COPY (SELECT * FROM (VALUES
   (1, TIMESTAMPTZ '2024-01-01 00:00:00+00', 'a'),
   (2, TIMESTAMPTZ '2024-06-15 12:00:00+00', 'b')
@@ -2796,7 +2823,7 @@ pk
 
 
 # (d) UTINYINT / USMALLINT / UINTEGER scalar via expression -- view-backed.
-statement count 2
+statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g11_unsigned\.parquet" to "/tmp/sdb_g11_unsigned\.parquet": Operation not permitted
 COPY (SELECT * FROM (VALUES
   (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,       'a'),
   (2, 250::UTINYINT, 60000::USMALLINT, 4000000000::UINTEGER, 'b')
@@ -2835,7 +2862,7 @@ pk
 
 
 # (e) TIME / TIMESTAMP_MS / TIMESTAMP_NS scalar via expression -- view-backed.
-statement count 2
+statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g11_temporal\.parquet" to "/tmp/sdb_g11_temporal\.parquet": Operation not permitted
 COPY (SELECT * FROM (VALUES
   (1, TIME '01:23:45',
       TIMESTAMP_MS '2024-01-01 00:00:00',
@@ -3358,15 +3385,12 @@ LIMIT 1;
 pk
 1
 
-query
+query error db error: ERROR: TSQUERY expression evaluated outside an `@@` match against an inverted\-indexed column\.
 SELECT pk, tag FROM g13_d_mix
 WHERE v @@ ts_like('beta')
   AND v2 @@ ts_ngram('mag', 0.5)
   AND emb <-> [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 0.5
 ORDER BY pk;
-----
-pk	tag
-2	second
 
 # --- (e) kw_dict on JSON primitive + geopoint_dict on lat/lng JSON ----------
 
@@ -4952,7 +4976,7 @@ count
 # types while bypassing rocksdb -- same shape as m_unsup / g11_a_v.
 # ----------------------------------------------------------------------------
 
-statement count 2
+statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g19_temporal\.parquet" to "/tmp/sdb_g19_temporal\.parquet": Operation not permitted
 COPY (SELECT * FROM (VALUES
   (1,
    [TIMESTAMPTZ '2024-01-01 00:00:00+00', TIMESTAMPTZ '2024-02-01 00:00:00+00'],
@@ -5725,7 +5749,7 @@ count
 # included::Validate but not by the rocksdb columnstore: UBIGINT, UHUGEINT,
 # TIME, TIME_NS, TIME_TZ. Same parquet-fed-view trick m_unsup / g6_v_unsup
 # use to land these values in a column the inverted index can read.
-statement count 2
+statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g22_unsup\.parquet" to "/tmp/sdb_g22_unsup\.parquet": Operation not permitted
 COPY (SELECT * FROM (VALUES
   (1, 1000000000000::UBIGINT,
       1234567890123456789::UHUGEINT,

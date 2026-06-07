@@ -15988,8 +15988,8 @@ TEST_P(BooleanFilterTestCase, exclusion_sequential) {
   {
     irs::And root;
     Append<irs::ByTerm>(root, kFieldSame, "xyz");
-    root.add(irs::Not(std::make_unique<irs::ByTerm>(
-      MakeFilter<irs::ByTerm>(kFieldName, "A"))));
+    root.add(irs::Not(
+      std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldName, "A"))));
     CheckQuery(
       root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
                  18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
@@ -16000,8 +16000,8 @@ TEST_P(BooleanFilterTestCase, exclusion_sequential) {
     irs::Exclusion root;
     root.include<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-    root.exclude(irs::Not(std::make_unique<irs::ByTerm>(
-      MakeFilter<irs::ByTerm>(kFieldName, "A"))));
+    root.exclude(irs::Not(
+      std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldName, "A"))));
     CheckQuery(root, Docs{1}, rdr);
   }
 }

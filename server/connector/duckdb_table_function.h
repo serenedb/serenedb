@@ -375,4 +375,75 @@ duckdb::TableFunction CreateSKRangesScanFunction();
 
 duckdb::TableFunction CreateIResearchScanFunction();
 
+inline auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
+                                  const catalog::InvertedIndex& index) {
+  return [&bind_data, &index](catalog::Column::Id col_id) -> std::string {
+    const auto fid = static_cast<irs::field_id>(col_id);
+    auto base = std::string{bind_data.ColumnNameById(col_id)};
+    const auto column_type = bind_data.ColumnTypeById(col_id);
+    const bool found_type = column_type.id() != duckdb::LogicalTypeId::INVALID;
+    const auto lookup = index.LookupField(fid);
+    auto entry_base = [&](irs::field_id entry_fid,
+                          const catalog::InvertedIndexEntryInfo& entry) {
+      std::string s;
+      if (const auto* expr = entry.GetExpressionData();
+          expr && !expr->pretty_printed.empty()) {
+        s = expr->pretty_printed;
+      } else {
+        s = bind_data.ColumnNameById(catalog::Column::Id{entry_fid});
+      }
+      if (s.empty()) {
+        s = absl::StrCat("col", entry_fid);
+      }
+      return s;
+    };
+    if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
+      const auto name =
+        bind_data.ColumnNameById(catalog::Column::kGeneratedPKId);
+      return std::string{name.empty() ? std::string_view{"sdb_generated_pk"}
+                                      : name} +
+             "(pk)";
+    }
+    if (lookup.entry) {
+      const auto& entry = *lookup.entry;
+      if (fid == lookup.entry_field_id) {
+        const auto* expr = entry.GetExpressionData();
+        if (base.empty() && expr && !expr->pretty_printed.empty()) {
+          base = expr->pretty_printed;
+        }
+        if (base.empty()) {
+          base = absl::StrCat("col", fid);
+        }
+        if (expr) {
+          catalog::InvertedIndex::AppendKindSuffix(base, expr->return_type);
+        } else if (found_type) {
+          catalog::InvertedIndex::AppendKindSuffix(base, column_type);
+        } else if (entry.text_dictionary.isSet()) {
+          base += "(string)";
+        }
+        return base;
+      }
+      if (fid == entry.null_field_id) {
+        return entry_base(lookup.entry_field_id, entry) + "(null)";
+      }
+      if (fid == entry.bool_field_id) {
+        return entry_base(lookup.entry_field_id, entry) + "(bool)";
+      }
+      if (fid == entry.numeric_field_id) {
+        return entry_base(lookup.entry_field_id, entry) + "(numeric)";
+      }
+      if (fid == entry.synthetic_column) {
+        return entry_base(lookup.entry_field_id, entry) + "(synthetic)";
+      }
+    }
+    if (base.empty()) {
+      base = absl::StrCat("col", fid);
+    }
+    if (found_type) {
+      catalog::InvertedIndex::AppendKindSuffix(base, column_type);
+    }
+    return base;
+  };
+}
+
 }  // namespace sdb::connector

@@ -37,12 +37,11 @@ std::string FieldToString(std::string_view field);
 // Prints filter with raw bytes for field names (identity transform).
 std::string ToString(const Filter& f);
 
-// Prints filter resolving each iresearch `field_id` via the caller-supplied
-// callback. The id may be a column's main field_id, a per-kind sub-field id
-// (numeric/bool/null), or a synthetic expression id -- the caller does the
-// catalog lookup and typically returns "name(kind)".
+// Prints filter with column names resolved via col_name(id).
+// Falls back to "col=ID" for unknown ids.
 std::string ToStringDemangled(
-  const Filter& f, const std::function<std::string(field_id)>& field_to_string);
+  const Filter& f,
+  const std::function<std::string(sdb::catalog::Column::Id)>& col_name);
 
 template<typename Sink>
 void AbslStringify(Sink& sink, const Filter& filter) {

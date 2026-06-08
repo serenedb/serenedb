@@ -373,67 +373,6 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
   return absl::StrCat("col", col_id);
 }
 
-static auto MakeFieldNameResolver(const SereneDBScanBindData& bind,
-                                  const catalog::InvertedIndex& index) {
-  return [&bind, &index](irs::field_id fid) -> std::string {
-    const auto col_id = catalog::Column::Id{fid};
-    auto base = std::string{bind.ColumnNameById(col_id)};
-    const auto column_type = bind.ColumnTypeById(col_id);
-    const bool found_type = column_type.id() != duckdb::LogicalTypeId::INVALID;
-    const auto lookup = index.LookupField(fid);
-    auto entry_base = [&](irs::field_id entry_fid,
-                          const catalog::InvertedIndexEntryInfo& entry) {
-      std::string s;
-      if (const auto* expr = entry.GetExpressionData();
-          expr && !expr->pretty_printed.empty()) {
-        s = expr->pretty_printed;
-      } else {
-        s = bind.ColumnNameById(catalog::Column::Id{entry_fid});
-      }
-      if (s.empty()) {
-        s = absl::StrCat("col", entry_fid);
-      }
-      return s;
-    };
-    if (lookup.entry) {
-      const auto& entry = *lookup.entry;
-      if (fid == lookup.entry_field_id) {
-        const auto* expr = entry.GetExpressionData();
-        if (base.empty() && expr && !expr->pretty_printed.empty()) {
-          base = expr->pretty_printed;
-        }
-        if (base.empty()) {
-          base = absl::StrCat("col", fid);
-        }
-        if (expr) {
-          catalog::InvertedIndex::AppendKindSuffix(base, expr->return_type);
-        } else if (found_type) {
-          catalog::InvertedIndex::AppendKindSuffix(base, column_type);
-        } else if (entry.HasTextDictionary()) {
-          base += "(string)";
-        }
-        return base;
-      }
-      if (fid == entry.null_field_id) {
-        return entry_base(lookup.entry_field_id, entry) + "(null)";
-      }
-      if (fid == entry.bool_field_id) {
-        return entry_base(lookup.entry_field_id, entry) + "(bool)";
-      }
-      if (fid == entry.numeric_field_id) {
-        return entry_base(lookup.entry_field_id, entry) + "(numeric)";
-      }
-    }
-    if (base.empty()) {
-      base = absl::StrCat("col", fid);
-    }
-    if (found_type) {
-      catalog::InvertedIndex::AppendKindSuffix(base, column_type);
-    }
-    return base;
-  };
-}
-
 static std::string FormatResolvedPoint(
   const ResolvedPoint& point, const SereneDBScanBindData& bind,
   std::span<const catalog::Column::Id> column_ids) {
@@ -541,10 +480,9 @@ void SearchScan::AppendSummary(
   const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   if (!vector_scorer && stored_filter && bind.inverted_index) {
-    out.insert("Filter",
-               irs::ToStringDemangled(
-                 *stored_filter,
-                 MakeFieldNameResolver(bind, *bind.inverted_index)));
+    out.insert("Filter", irs::ToStringDemangled(
+                           *stored_filter,
+                           MakeFieldNameResolver(bind, *bind.inverted_index)));
   }
   if (count_star) {
     out.insert("Output", "row-count only");
@@ -566,10 +504,10 @@ void SearchScan::AppendSummary(
     }
     out.insert("Dims", std::to_string(vector_scorer->query_vector.size()));
     if (stored_filter && bind.inverted_index) {
-      out.insert("TextFilter",
-                 irs::ToStringDemangled(
-                   *stored_filter,
-                   MakeFieldNameResolver(bind, *bind.inverted_index)));
+      out.insert(
+        "TextFilter",
+        irs::ToStringDemangled(
+          *stored_filter, MakeFieldNameResolver(bind, *bind.inverted_index)));
     }
   }
   if (EmitOffsets()) {

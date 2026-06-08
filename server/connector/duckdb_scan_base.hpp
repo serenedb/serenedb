@@ -185,9 +185,7 @@ struct StreamingHitsView {
   uint64_t operator[](size_t i) const noexcept {
     return doc(i) - irs::doc_limits::min();
   }
-  bool IsSorted() const noexcept {
-    return std::ranges::is_sorted(docs);
-  }
+  bool IsSorted() const noexcept { return std::ranges::is_sorted(docs); }
   StreamingHitsView subview(size_t off, size_t n) const noexcept {
     return {docs.subspan(off, n),
             scores.empty() ? std::span<const float>{} : scores.subspan(off, n),

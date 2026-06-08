@@ -22,16 +22,30 @@ db error: ERROR: Table with name times does not exist!
 Did you mean "<slt:ignore>"?
 
 
+# DOCS_SETUP: local_times_fixture
+
+statement ok
+DROP TABLE IF EXISTS times;
+
+statement ok
+CREATE TABLE times (t TIMESTAMP);
+
+statement ok
+INSERT INTO times VALUES
+    (TIMESTAMP '2025-08-30 00:00:00'),
+    (TIMESTAMP '2025-08-30 12:00:00'),
+    (TIMESTAMP '2025-08-31 00:00:00');
+
 # DOCS_TEST: example_002
 
 statement ok
 SET timezone = 'HST';
 
-query error
+query ?
 FROM times WHERE t <= '2025-08-30';
 ----
-db error: ERROR: Table with name times does not exist!
-Did you mean "<slt:ignore>"?
+t
+2025-08-30 00:00:00
 
 
 # DOCS_TEST: example_003
@@ -39,11 +53,11 @@ Did you mean "<slt:ignore>"?
 statement ok
 SET timezone = 'America/New_York';
 
-query error
+query ?
 FROM times WHERE t <= '2025-08-30';
 ----
-db error: ERROR: Table with name times does not exist!
-Did you mean "<slt:ignore>"?
+t
+2025-08-30 00:00:00
 
 
 # DOCS_TEST: example_004
@@ -77,9 +91,12 @@ db error: ERROR: No function matches the given name and argument types 'generate
 
 # DOCS_TEST: example_005
 
-statement error db error: ERROR: syntax error at or near "x"
+statement error
 x BETWEEN begin AND end
 -- expands to
 begin <= x AND x <= end
 -- not
 begin <= x AND x < end
+----
+db error: ERROR: syntax error at or near "x"
+

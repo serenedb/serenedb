@@ -1,14 +1,79 @@
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_csv('flights*.csv');
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_001_flights_1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_001_flights_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_csv('flights*.csv');
+# DOCS_RAW_END
+
+query
+SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_001_flights_*.csv');
+----
+flightdate	uniquecarrier	origincityname	destcityname
+2024-01-01	AA	New York, NY	Los Angeles, CA
+2024-01-02	UA	San Francisco, CA	Seattle, WA
+2024-02-01	DL	Boston, MA	Chicago, IL
+
+
+# DOCS_SETUP: file_fixtures_example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_002_1_flights_csv_1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_002_1_flights_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_csv('flights*.csv', union_by_name = true);
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_csv('flights*.csv', union_by_name = true);
+query
+SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_002_1_flights_csv_*.csv', union_by_name = true);
+----
+flightdate	uniquecarrier	origincityname	destcityname
+2024-01-01	AA	New York, NY	Los Angeles, CA
+2024-01-02	UA	San Francisco, CA	Seattle, WA
+2024-01-01	AA	New York, NY	Los Angeles, CA
+2024-01-02	UA	San Francisco, CA	Seattle, WA
+
+
+# DOCS_SETUP: file_fixtures_example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_003_1_flights3_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_003_2_flights4_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_csv(['flights3.csv', 'flights4.csv'], union_by_name = true);
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_csv(['flights3.csv', 'flights4.csv'], union_by_name = true);
+query
+SELECT * FROM read_csv(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_003_1_flights3_csv.csv', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_003_2_flights4_csv.csv'], union_by_name = true);
+----
+flightdate	uniquecarrier	origincityname	destcityname	distance
+2024-02-01	DL	Boston, MA	Chicago, IL	867
+2024-02-01	DL	Boston, MA	Chicago, IL	867

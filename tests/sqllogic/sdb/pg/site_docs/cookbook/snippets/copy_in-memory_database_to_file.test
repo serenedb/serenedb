@@ -1,10 +1,17 @@
 # DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| ATTACH 'my_database.db';
+#|
+#| COPY FROM DATABASE memory TO my_database;
+#|
+#| DETACH my_database;
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-ATTACH 'my_database.db';
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_snippets_copy_in_memory_database_to_file_example_001_my_database.db' AS my_database;
 
-statement error (?i)Catalog .* does not exist!
+statement ok
 COPY FROM DATABASE memory TO my_database;
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+statement ok
 DETACH my_database;

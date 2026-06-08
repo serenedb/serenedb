@@ -1,4 +1,19 @@
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_parquet('input.parquet');
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_query_parquet_example_001_input.parquet' (FORMAT parquet);
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_parquet('input.parquet');
+# DOCS_RAW_END
+
+query
+SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_file_formats_query_parquet_example_001_input.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20

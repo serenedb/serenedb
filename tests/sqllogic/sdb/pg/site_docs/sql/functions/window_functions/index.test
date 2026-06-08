@@ -1,84 +1,98 @@
+# DOCS_SETUP: generated_wide_fixtures
+
+statement ok
+CREATE TABLE sales AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
+statement ok
+CREATE TABLE results AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
 # DOCS_TEST: example_001
 
-query error
+query ?
 SELECT row_number() OVER ()
 FROM sales;
 ----
-db error: ERROR: Table with name sales does not exist!
-Did you mean "<slt:ignore>"?
-
+row_number
+1
+2
 
 # DOCS_TEST: example_002
 
-query error
+query ?
 SELECT row_number() OVER (ORDER BY time)
 FROM sales;
 ----
-db error: ERROR: Table with name sales does not exist!
-Did you mean "<slt:ignore>"?
-
+row_number
+1
+2
 
 # DOCS_TEST: example_003
 
-query error
+query ?
 SELECT row_number() OVER (PARTITION BY region ORDER BY time)
 FROM sales;
 ----
-db error: ERROR: Table with name sales does not exist!
-Did you mean "<slt:ignore>"?
-
+row_number
+1
+1
 
 # DOCS_TEST: example_004
 
-query error
+query ?
 SELECT amount - lag(amount) OVER (ORDER BY time)
 FROM sales;
 ----
-db error: ERROR: Table with name sales does not exist!
-Did you mean "<slt:ignore>"?
-
+?column?
+NULL
+100
 
 # DOCS_TEST: example_005
 
-query error
+query ?
 SELECT amount / sum(amount) OVER (PARTITION BY region)
 FROM sales;
 ----
-db error: ERROR: Table with name sales does not exist!
-Did you mean "<slt:ignore>"?
-
+?column?
+1
+1
 
 # DOCS_TEST: example_006
 
-query error
+query ?
 -- Count the number of distinct users at a given point in time
 SELECT count(DISTINCT name) OVER (ORDER BY time) FROM sales;
 ----
-db error: ERROR: Table with name sales does not exist!
-Did you mean "<slt:ignore>"?
+count
+1
+2
 
-
-query error
+query ?
 -- Concatenate those distinct users into a list
 SELECT list(DISTINCT name) OVER (ORDER BY time) FROM sales;
 ----
-db error: ERROR: Table with name sales does not exist!
-Did you mean "<slt:ignore>"?
-
+list
+{alpha}
+{alpha,beta}
 
 # DOCS_TEST: example_007
 
-query error
+query ?
 -- Compute the modal value up to each time, breaking ties in favor of the most recent value.
 SELECT mode(value ORDER BY time DESC) OVER (ORDER BY time) FROM sales;
 ----
-db error: ERROR: Table with name sales does not exist!
-Did you mean "<slt:ignore>"?
-
+mode
+42
+84
 
 # DOCS_TEST: example_008
 
-query error db error: ERROR: syntax error at or near "\("
+query error
 -- Compare each athlete's time in an event with the best time to date
 SELECT event, date, athlete, time
     first_value(time ORDER BY time DESC) OVER w AS record_time,
@@ -86,16 +100,68 @@ SELECT event, date, athlete, time
 FROM meet_results
 WINDOW w AS (PARTITION BY event ORDER BY datetime)
 ORDER BY ALL
+----
+db error: ERROR: syntax error at or near "\("
+
+
+# DOCS_SETUP: file_fixtures_example_009
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_functions_window_functions_index_example_009_1_power_plant_generation_history_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_009
+# DOCS_RAW_BEGIN
+#| CREATE TABLE "Generation History" AS
+#|     FROM 'power-plant-generation-history.csv';
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
+statement ok
 CREATE TABLE "Generation History" AS
-    FROM 'power-plant-generation-history.csv';
+    FROM '/tmp/${__DATABASE__}_sql_functions_window_functions_index_example_009_1_power_plant_generation_history_csv.csv';
+
+# DOCS_SETUP: local_generation_history_fixture
+
+statement ok
+DROP TABLE IF EXISTS "Generation History";
+
+statement ok
+CREATE TABLE "Generation History" (
+    "Plant" VARCHAR,
+    "Date" DATE,
+    "MWh" DOUBLE
+);
+
+statement ok
+INSERT INTO "Generation History" VALUES
+    ('Plant A', DATE '2025-01-01', 10.0),
+    ('Plant A', DATE '2025-01-02', 12.0),
+    ('Plant B', DATE '2025-01-01', 8.0);
+
+statement ok
+DROP TABLE IF EXISTS results;
+
+statement ok
+CREATE TABLE results (
+    points INTEGER,
+    event VARCHAR,
+    date DATE,
+    athlete VARCHAR,
+    time DOUBLE,
+    datetime TIMESTAMP
+);
+
+statement ok
+INSERT INTO results VALUES
+    (10, '100m', DATE '2025-01-01', 'Ada', 12.3, TIMESTAMP '2025-01-01 10:00:00'),
+    (12, '100m', DATE '2025-01-02', 'Bob', 12.1, TIMESTAMP '2025-01-02 10:00:00'),
+    (9, '200m', DATE '2025-01-01', 'Cy', 24.3, TIMESTAMP '2025-01-01 11:00:00');
 
 # DOCS_TEST: example_010
 
-query error
+query ???
 SELECT
     "Plant",
     "Date",
@@ -103,26 +169,28 @@ SELECT
 FROM "Generation History"
 ORDER BY 1, 2;
 ----
-db error: ERROR: Table with name Generation History does not exist!
-Did you mean "<slt:ignore>"?
-
+plant	date	Row
+Plant A	2025-01-01	1
+Plant A	2025-01-02	2
+Plant B	2025-01-01	1
 
 # DOCS_TEST: example_011
 
-query error
+query ??
 SELECT points,
     sum(points) OVER (
         ROWS BETWEEN 1 PRECEDING
                  AND 1 FOLLOWING) AS we
 FROM results;
 ----
-db error: ERROR: Table with name results does not exist!
-Did you mean "<slt:ignore>"?
-
+points	we
+10	22
+12	31
+9	21
 
 # DOCS_TEST: example_012
 
-query error
+query ???
 SELECT "Plant", "Date",
     avg("MWh") OVER (
         PARTITION BY "Plant"
@@ -133,13 +201,14 @@ SELECT "Plant", "Date",
 FROM "Generation History"
 ORDER BY 1, 2;
 ----
-db error: ERROR: Table with name Generation History does not exist!
-Did you mean "<slt:ignore>"?
-
+plant	date	MWh 7-day Moving Average
+Plant A	2025-01-01	11
+Plant A	2025-01-02	11
+Plant B	2025-01-01	8
 
 # DOCS_TEST: example_013
 
-query error
+query ???
 SELECT "Date", "Plant",
     avg("MWh") OVER (
         ORDER BY "Date" ASC
@@ -149,13 +218,14 @@ SELECT "Date", "Plant",
 FROM "Generation History"
 ORDER BY 1, 2;
 ----
-db error: ERROR: Table with name Generation History does not exist!
-Did you mean "<slt:ignore>"?
-
+date	plant	MWh 7-day Moving Average
+2025-01-01	Plant A	10
+2025-01-01	Plant B	10
+2025-01-02	Plant A	10
 
 # DOCS_TEST: example_014
 
-query error
+query ????
 SELECT
     event,
     date,
@@ -170,13 +240,14 @@ WINDOW w AS (
 )
 ORDER BY event, date, athlete;
 ----
-db error: ERROR: Table with name results does not exist!
-Did you mean "<slt:ignore>"?
-
+event	date	athlete	recent
+100m	2025-01-01	Ada	12.1
+100m	2025-01-02	Bob	12.3
+200m	2025-01-01	Cy	NULL
 
 # DOCS_TEST: example_015
 
-query error
+query ?????
 SELECT "Plant", "Date",
     min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
     avg("MWh") OVER seven AS "MWh 7-day Moving Average",
@@ -189,13 +260,14 @@ WINDOW seven AS (
               AND INTERVAL 3 DAYS FOLLOWING)
 ORDER BY 1, 2;
 ----
-db error: ERROR: Table with name Generation History does not exist!
-Did you mean "<slt:ignore>"?
-
+plant	date	MWh 7-day Moving Minimum	MWh 7-day Moving Average	MWh 7-day Moving Maximum
+Plant A	2025-01-01	10	11	12
+Plant A	2025-01-02	10	11	12
+Plant B	2025-01-01	8	8	8
 
 # DOCS_TEST: example_016
 
-query error
+query ????????
 SELECT "Plant", "Date",
     min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
     avg("MWh") OVER seven AS "MWh 7-day Moving Average",
@@ -217,13 +289,14 @@ WINDOW
         AND INTERVAL 1 DAYS FOLLOWING)
 ORDER BY 1, 2;
 ----
-db error: ERROR: Table with name Generation History does not exist!
-Did you mean "<slt:ignore>"?
-
+plant	date	MWh 7-day Moving Minimum	MWh 7-day Moving Average	MWh 7-day Moving Maximum	MWh 3-day Moving Minimum	MWh 3-day Moving Average	MWh 3-day Moving Maximum
+Plant A	2025-01-01	10	11	12	10	11	12
+Plant A	2025-01-02	10	11	12	10	11	12
+Plant B	2025-01-01	8	8	8	8	8	8
 
 # DOCS_TEST: example_017
 
-query error
+query ?????
 SELECT "Plant", "Date",
     min("MWh") OVER seven AS "MWh 7-day Moving Minimum",
     quantile_cont("MWh", [0.25, 0.5, 0.75]) OVER seven
@@ -237,5 +310,7 @@ WINDOW seven AS (
               AND INTERVAL 3 DAYS FOLLOWING)
 ORDER BY 1, 2;
 ----
-db error: ERROR: Table with name Generation History does not exist!
-Did you mean "<slt:ignore>"?
+plant	date	MWh 7-day Moving Minimum	MWh 7-day Moving IQR	MWh 7-day Moving Maximum
+Plant A	2025-01-01	10	{10.5,11,11.5}	12
+Plant A	2025-01-02	10	{10.5,11,11.5}	12
+Plant B	2025-01-01	8	{8,8,8}	8

@@ -38,7 +38,18 @@ CREATE TABLE __docs_noop_c02308a8_001 (i INTEGER);
 statement ok
 CREATE TABLE __docs_noop_c02308a8_002 (i INTEGER);
 
-# DOCS_TEST: example_005
+# DOCS_SETUP: file_fixtures_example_005
 
-query error (?i)Could not resolve hostname error .*
-SELECT * FROM read_parquet('s3://⟨bucket⟩/⟨file⟩');
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_import_example_005_1_file.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_parquet('s3://⟨bucket⟩/⟨file⟩');
+# DOCS_RAW_END
+
+query error db error: ERROR: No magic bytes found at end of file '/tmp/\$\{__DATABASE__\}_cookbook_network_cloud_storage_s3_import_example_005_1_file\.csv'
+SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_import_example_005_1_file.csv');

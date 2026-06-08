@@ -1,6 +1,6 @@
 # DOCS_TEST: example_001
 
-query error db error: ERROR: syntax error at or near "\("
+query error
 UNPIVOT ⟨dataset⟩
 ON ⟨column(s)⟩
 INTO
@@ -8,6 +8,9 @@ INTO
     VALUE ⟨value_column_name(s)⟩
 ORDER BY ⟨column(s)_with_order_direction(s)⟩
 LIMIT ⟨number_of_rows⟩;
+----
+db error: ERROR: syntax error at or near "\("
+
 
 # DOCS_TEST: example_002
 
@@ -185,12 +188,15 @@ col2	woot
 
 # DOCS_TEST: example_010
 
-query error db error: ERROR: syntax error at or near "\["
+query error
 FROM [dataset]
 UNPIVOT [INCLUDE NULLS] (
     [value-column-name(s)]
     FOR [name-column-name] IN [column(s)]
 );
+----
+db error: ERROR: syntax error at or near "\["
+
 
 # DOCS_TEST: example_011
 

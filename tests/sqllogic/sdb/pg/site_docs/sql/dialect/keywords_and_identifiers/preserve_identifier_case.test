@@ -1,0 +1,10 @@
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE tbl AS SELECT cos(pi()) AS CosineOfPi;
+
+query ?
+SELECT cosineofpi FROM tbl;
+----
+cosineofpi
+-1

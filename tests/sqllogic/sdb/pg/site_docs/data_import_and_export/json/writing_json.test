@@ -1,8 +1,14 @@
 # DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| CREATE TABLE cities AS
+#|     FROM (VALUES ('Amsterdam', 1), ('London', 2)) cities(name, id);
+#|
+#| COPY cities TO 'cities.json';
+# DOCS_RAW_END
 
 statement ok
 CREATE TABLE cities AS
     FROM (VALUES ('Amsterdam', 1), ('London', 2)) cities(name, id);
 
-statement error (?i)Cannot open file .*
-COPY cities TO 'cities.json';
+statement ok
+COPY cities TO '/tmp/${__DATABASE__}_data_import_and_export_json_writing_json_example_001_cities.json';

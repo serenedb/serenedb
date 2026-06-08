@@ -1,27 +1,82 @@
+# DOCS_SETUP: comment_timestamp_fixture
+
+statement ok
+DROP TABLE IF EXISTS Comment;
+
+statement ok
+CREATE TABLE Comment (
+    id BIGINT,
+    ParentCommentId BIGINT,
+    creationDate TIMESTAMP
+);
+
+statement ok
+INSERT INTO Comment VALUES
+    (1, NULL, TIMESTAMP '2025-01-15 10:00:00'),
+    (2, 1, TIMESTAMP '2025-03-01 11:00:00'),
+    (3, 1, TIMESTAMP '2025-03-20 12:00:00');
+
 # DOCS_TEST: example_001
 
-query error
+query
 SELECT avg(extract('day' FROM creationDate)) FROM Comment;
 ----
-db error: ERROR: Table with name Comment does not exist!
-Did you mean "<slt:ignore>"?
+avg
+12
 
+
+# DOCS_SETUP: comment_varchar_fixture
+
+statement ok
+DROP TABLE IF EXISTS Comment;
+
+statement ok
+CREATE TABLE Comment (
+    id BIGINT,
+    ParentCommentId BIGINT,
+    creationDate VARCHAR
+);
+
+statement ok
+INSERT INTO Comment VALUES
+    (1, NULL, '2025-01-15 10:00:00'),
+    (2, 1, '2025-03-01 11:00:00'),
+    (3, 1, '2025-03-20 12:00:00');
 
 # DOCS_TEST: example_002
 
-query error
+query
 SELECT avg(CAST(creationDate[9:10] AS INTEGER)) FROM Comment;
 ----
-db error: ERROR: Table with name Comment does not exist!
-Did you mean "<slt:ignore>"?
+avg
+12
 
+
+# DOCS_SETUP: comment_join_fixture
+
+statement ok
+DROP TABLE IF EXISTS Comment;
+
+statement ok
+CREATE TABLE Comment (
+    id BIGINT,
+    ParentCommentId BIGINT,
+    creationDate TIMESTAMP
+);
+
+statement ok
+INSERT INTO Comment VALUES
+    (1, NULL, TIMESTAMP '2025-01-15 10:00:00'),
+    (2, 1, TIMESTAMP '2025-03-01 11:00:00'),
+    (3, 1, TIMESTAMP '2025-03-20 12:00:00'),
+    (4, 2, TIMESTAMP '2025-04-03 09:00:00');
 
 # DOCS_TEST: example_003
 
-query error
+query
 SELECT count(*) AS count
 FROM Comment c1
 JOIN Comment c2 ON c1.ParentCommentId = c2.id;
 ----
-db error: ERROR: Table with name Comment does not exist!
-Did you mean "<slt:ignore>"?
+count
+3

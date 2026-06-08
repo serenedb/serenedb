@@ -1,7 +1,10 @@
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: syntax error at or near "s3express"
+statement error
 s3express-⟨availability_zone⟩.⟨region⟩.amazonaws.com
+----
+db error: ERROR: syntax error at or near "s3express"
+
 
 # DOCS_TEST: example_002
 # DOCS_RAW_BEGIN
@@ -17,8 +20,24 @@ s3express-⟨availability_zone⟩.⟨region⟩.amazonaws.com
 statement ok
 CREATE TABLE __docs_noop_01d3a915_001 (i INTEGER);
 
-# DOCS_TEST: example_003
+# DOCS_SETUP: file_fixtures_example_003
 
-query error (?i).*(Could not resolve hostname|Problem with the SSL CA cert).*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_express_one_example_003_1_my_file_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM 's3://express-bucket-name--use1-az5--x-s3/my-file.parquet';
+# DOCS_RAW_END
+
+query
 SELECT *
-FROM 's3://express-bucket-name--use1-az5--x-s3/my-file.parquet';
+FROM '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_express_one_example_003_1_my_file_parquet.parquet';
+----
+id	name	value
+1	alpha	10
+2	beta	20

@@ -175,3 +175,4 @@ SELECT * FROM read_xlsx('test_excel.xlsx', ignore_errors = true);
 db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+

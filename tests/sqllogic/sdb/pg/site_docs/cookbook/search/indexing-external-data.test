@@ -1,6 +1,14 @@
+# DOCS_SETUP: generated_wide_fixtures
+
+statement ok
+CREATE TABLE logs_search AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: syntax error at or near "USING"
+statement error
 CREATE TABLE logs (
     id INTEGER,
     timestamp TIMESTAMP,
@@ -14,10 +22,13 @@ CREATE TABLE logs (
     S3_SECRET_KEY = 'your-secret-key',
     S3_REGION = 'us-east-1'
 );
+----
+db error: ERROR: syntax error at or near "USING"
+
 
 # DOCS_TEST: example_002
 
-statement error db error: ERROR: syntax error at or near "USING"
+statement error
 CREATE TABLE articles (
     id INTEGER,
     title TEXT,
@@ -27,19 +38,35 @@ CREATE TABLE articles (
     PATH = '/data/articles.parquet',
     FORMAT = 'Parquet'
 );
+----
+db error: ERROR: syntax error at or near "USING"
+
 
 # DOCS_TEST: example_003
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY english_dict (
-    TEMPLATE = 'text',
-    LOCALE = 'en_US.UTF-8',
-    CASE = 'lower',
-    STEMMING = true,
-    ACCENT = false,
-    FREQUENCY = true,
-    POSITION = true
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    accent = false,
+    frequency = true,
+    position = true
 );
+
+# DOCS_SETUP: local_logs_fixture
+
+statement ok
+DROP TABLE IF EXISTS logs;
+
+statement ok
+CREATE TABLE logs (id INTEGER, timestamp TIMESTAMP, level VARCHAR, service VARCHAR, message VARCHAR);
+
+statement ok
+INSERT INTO logs VALUES
+    (1, TIMESTAMP '2025-01-01 10:00:00', 'ERROR', 'postgres', 'connection timeout'),
+    (2, TIMESTAMP '2025-01-01 11:00:00', 'INFO', 'api', 'startup complete');
 
 # DOCS_TEST: example_004
 
@@ -47,11 +74,10 @@ statement error
 CREATE INDEX logs_search ON logs
     USING inverted (id, timestamp, level, service, message english_dict);
 ----
-db error: ERROR: Table with name logs does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Failed to create index: Column timestamp has unsupported kind TIMESTAMP and can not be indexed
 
 
-statement error db error: ERROR: relation 'logs' not found\.
+statement ok
 VACUUM (UPDATE_INDEXES) logs;
 
 # DOCS_TEST: example_005
@@ -64,7 +90,7 @@ WHERE PHRASE(message, 'connection timeout')
 ORDER BY BM25() DESC
 LIMIT 20;
 ----
-db error: ERROR: Table with name logs_search does not exist!
+db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -75,7 +101,7 @@ FROM logs_search
 WHERE PHRASE(message, 'out of memory') AND level = 'ERROR'
 ORDER BY timestamp DESC;
 ----
-db error: ERROR: Table with name logs_search does not exist!
+db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -86,11 +112,11 @@ FROM logs_search
 WHERE LEVENSHTEIN_MATCH(service, 'postgre', 1)
 ORDER BY id;
 ----
-db error: ERROR: Table with name logs_search does not exist!
+db error: ERROR: Scalar Function with name levenshtein_match does not exist!
 Did you mean "<slt:ignore>"?
 
 
 # DOCS_TEST: example_006
 
-statement error db error: ERROR: relation 'logs' not found\.
+statement ok
 VACUUM (UPDATE_INDEXES) logs;

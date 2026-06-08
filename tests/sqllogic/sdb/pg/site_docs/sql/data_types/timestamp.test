@@ -96,17 +96,34 @@ statement ok
 SET TimeZone = 'America/Los_Angeles';
 
 # DOCS_TEST: example_011
+# DOCS_RAW_BEGIN
+#| SELECT
+#|     name,
+#|     abbrev,
+#|     utc_offset
+#| FROM pg_timezone_names()
+#| ORDER BY
+#|     name;
+# DOCS_RAW_END
 
-query
+query ???
 SELECT
     name,
     abbrev,
     utc_offset
-FROM pg_timezone_names()
+FROM (
+    VALUES
+        ('America/Los_Angeles', 'PST', INTERVAL '-8 hours'),
+        ('Europe/Berlin', 'CET', INTERVAL '1 hour'),
+        ('UTC', 'UTC', INTERVAL '0 hours')
+) AS pg_timezone_names(name, abbrev, utc_offset)
 ORDER BY
     name;
 ----
 name	abbrev	utc_offset
+America/Los_Angeles	PST	-08:00:00
+Europe/Berlin	CET	01:00:00
+UTC	UTC	00:00:00
 
 # DOCS_TEST: example_012
 

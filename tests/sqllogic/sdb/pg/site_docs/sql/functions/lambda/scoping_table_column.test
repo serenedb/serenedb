@@ -1,0 +1,17 @@
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE tbl (x INTEGER);
+
+statement ok
+INSERT INTO tbl VALUES (10);
+
+query ?
+SELECT list_apply(
+            [1, 2],
+            lambda x: list_apply([4], lambda x: x + tbl.x)[1] + x
+    )
+FROM tbl;
+----
+list_apply
+{15,16}

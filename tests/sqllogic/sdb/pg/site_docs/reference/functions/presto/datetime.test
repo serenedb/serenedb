@@ -23,8 +23,11 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_002
 
-query error db error: ERROR: Referenced column "current_timezone" was not found because the FROM clause is missing
+query error
 SELECT current_timezone;
+----
+db error: ERROR: Referenced column "current_timezone" was not found because the FROM clause is missing
+
 
 # DOCS_TEST: example_003
 
@@ -101,8 +104,11 @@ timestamp
 
 # DOCS_TEST: example_009
 
-query error db error: ERROR: invalid timestamp field format: "2012\-10\-31 01:00 UTC", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
+query error
 SELECT timestamp '2012-10-31 01:00 UTC';
+----
+db error: ERROR: invalid timestamp field format: "2012\-10\-31 01:00 UTC", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
+
 
 query error
 SELECT timestamp '2012-10-31 01:00 UTC' AT TIME ZONE 'America/Los_Angeles';
@@ -112,3 +118,4 @@ Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_ex
 Extension "icu" is an existing extension.
 
 Install it first using "INSTALL icu".
+

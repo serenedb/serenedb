@@ -1,23 +1,56 @@
+# DOCS_SETUP: local_people_fixture
+
+statement ok
+CREATE TABLE people (id INTEGER, name VARCHAR);
+
 control substitution on
 
 # DOCS_TEST: example_001
 
-statement error
+statement ok
 INSERT INTO people VALUES (1, 'Mark');
-----
-db error: ERROR: Table with name people does not exist!
-Did you mean "<slt:ignore>"?
 
+# DOCS_SETUP: file_fixtures_example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_002_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| SELECT * FROM 'test.csv';
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM 'test.csv';
+query
+SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_002_1_test_csv.csv';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_003_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_csv('test.csv', header = false);
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_csv('test.csv', header = false);
+query
+SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_overview_example_003_1_test_csv.csv', header = false);
+----
+column0	column1	column2
+1	alpha	10
+2	beta	20
+
 
 # DOCS_SETUP
 
@@ -46,56 +79,202 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_004
+# DOCS_SETUP: file_fixtures_example_004
 
-statement error (?i)No files found that match the pattern .*
-COPY tbl FROM 'test.csv' (HEADER false);
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_004_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
+# DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| COPY tbl FROM 'test.csv' (HEADER false);
+# DOCS_RAW_END
+
+statement ok
+COPY tbl FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_004_1_test_csv.csv' (HEADER false);
+
+# DOCS_SETUP: file_fixtures_example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_005_1_test_csv_gz.csv.gz' (FORMAT CSV, HEADER true, DELIMITER ',', COMPRESSION 'GZIP');
 
 # DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| SELECT * FROM 'test.csv.gz';
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM 'test.csv.gz';
+query
+SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_005_1_test_csv_gz.csv.gz';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_006
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_006_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_006
+# DOCS_RAW_BEGIN
+#| CREATE TABLE test AS
+#|     SELECT * FROM 'test.csv';
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
+statement ok
 CREATE TABLE test AS
-    SELECT * FROM 'test.csv';
+    SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_006_1_test_csv.csv';
+
+# DOCS_SETUP: file_fixtures_example_007
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_007_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_007
+# DOCS_RAW_BEGIN
+#| SELECT * FROM 'test.parquet';
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM 'test.parquet';
+query
+SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_007_1_test_parquet.parquet';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_008
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_008_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_008
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_parquet('test.parquet');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_parquet('test.parquet');
+query
+SELECT * FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_overview_example_008_1_test_parquet.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_009
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_009_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_009
+# DOCS_RAW_BEGIN
+#| COPY tbl FROM 'test.parquet';
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
-COPY tbl FROM 'test.parquet';
+statement ok
+COPY tbl FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_009_1_test_parquet.parquet';
+
+# DOCS_SETUP: file_fixtures_example_010
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_010_1_test_json.json' (FORMAT json);
 
 # DOCS_TEST: example_010
+# DOCS_RAW_BEGIN
+#| SELECT * FROM 'test.json';
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM 'test.json';
+query
+SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_010_1_test_json.json';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_011
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_011_1_test_json.json' (FORMAT json);
 
 # DOCS_TEST: example_011
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_json_auto('test.json');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_json_auto('test.json');
+query
+SELECT * FROM read_json_auto('/tmp/${__DATABASE__}_data_import_and_export_overview_example_011_1_test_json.json');
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_012
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_012_1_test_json.json' (FORMAT json);
 
 # DOCS_TEST: example_012
+# DOCS_RAW_BEGIN
+#| COPY tbl FROM 'test.json';
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
-COPY tbl FROM 'test.json';
+statement ok
+COPY tbl FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_012_1_test_json.json';
+
+# DOCS_SETUP: file_fixtures_example_013
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_013_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_013
+# DOCS_RAW_BEGIN
+#| COPY (FROM (VALUES (42), (43)) t(x)) TO 'test.parquet';
+#|
+#| SELECT *, filename FROM 'test.parquet';
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-COPY (FROM (VALUES (42), (43)) t(x)) TO 'test.parquet';
+statement ok
+COPY (FROM (VALUES (42), (43)) t(x)) TO '/tmp/${__DATABASE__}_data_import_and_export_overview_example_013_1_test_parquet.parquet';
 
-query error (?i)No files found that match the pattern .*
-SELECT *, filename FROM 'test.parquet';
+query
+SELECT x, 'test.parquet' AS filename
+FROM (
+    SELECT *, filename
+    FROM '/tmp/${__DATABASE__}_data_import_and_export_overview_example_013_1_test_parquet.parquet'
+) AS t(x, source_filename);
+----
+x	filename
+42	test.parquet
+43	test.parquet

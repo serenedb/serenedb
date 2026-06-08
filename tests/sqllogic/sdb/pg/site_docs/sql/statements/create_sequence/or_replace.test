@@ -1,0 +1,9 @@
+# DOCS_SETUP: local_serial_fixture
+
+statement ok
+DROP SEQUENCE IF EXISTS serial;
+
+# DOCS_TEST: example_007
+
+statement ok
+CREATE OR REPLACE SEQUENCE serial;

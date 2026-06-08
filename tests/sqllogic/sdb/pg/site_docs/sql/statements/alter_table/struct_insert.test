@@ -1,0 +1,10 @@
+# DOCS_TEST: example_024
+
+statement ok
+CREATE TABLE tbl (col STRUCT(i INTEGER));
+
+statement error
+ALTER TABLE tbl
+ALTER col TYPE USING struct_insert(col, a := 42, b := NULL::VARCHAR);
+----
+db error: ERROR: ALTER TABLE through DuckDB

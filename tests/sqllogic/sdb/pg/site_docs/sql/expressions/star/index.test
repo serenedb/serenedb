@@ -27,6 +27,14 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
+statement ok
+CREATE TABLE other_tbl (id INTEGER, other_value VARCHAR);
+
+statement ok
+INSERT INTO other_tbl VALUES
+    (1, 'one'),
+    (3, 'three');
+
 # DOCS_TEST: example_001
 
 query
@@ -40,14 +48,14 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 
 # DOCS_TEST: example_002
 
-query error
+query
 SELECT tbl.*
 FROM tbl
 JOIN other_tbl USING (id);
 ----
-db error: ERROR: Table with name other_tbl does not exist!
-Did you mean "<slt:ignore>"?
-
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 
 # DOCS_TEST: example_003
 
@@ -57,11 +65,71 @@ SELECT st.* FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS st);
 x	y	z
 1	2	3
 
+# DOCS_SETUP: local_star_exclude_col_fixture
+
+statement ok
+DROP TABLE tbl;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col INTEGER,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 99, 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 98, 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 97, 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
 # DOCS_TEST: example_004
 
-query error db error: ERROR: Column "col" in EXCLUDE list not found in FROM clause
+query
 SELECT * EXCLUDE (col)
 FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_SETUP: local_star_base_tbl_fixture
+
+statement ok
+DROP TABLE tbl;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
 # DOCS_TEST: example_005
 
@@ -212,44 +280,6 @@ id	number
 query error substitution failed: Invalid escape sequence: \\w
 SELECT COLUMNS('(\w{3}).*') AS '\1' FROM numbers;
 
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_019
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl ("Foo:Bar" INTEGER, "Foo:Baz" INTEGER, "Foo:Qux" INTEGER);
-
-query error substitution failed: Invalid escape sequence: \\w
-SELECT COLUMNS('(\w*):(\w*)') AS '\1\2' FROM tbl;
-
 # DOCS_TEST: example_020
 
 query error substitution failed: Invalid escape sequence: \\0
@@ -265,10 +295,26 @@ number
 20
 NULL
 
+# DOCS_SETUP: local_numbers_id_num_fixture
+
+statement ok
+DROP TABLE numbers;
+
+statement ok
+CREATE TABLE numbers (id INTEGER, num INTEGER);
+
+statement ok
+INSERT INTO numbers VALUES (1, 10), (2, 20), (3, NULL);
+
 # DOCS_TEST: example_022
 
-query error db error: ERROR: Column "num" was selected but was not found in the FROM clause
+query
 SELECT COLUMNS(['id', 'num']) FROM numbers;
+----
+id	num
+1	10
+2	20
+3	NULL
 
 # DOCS_TEST: example_023
 

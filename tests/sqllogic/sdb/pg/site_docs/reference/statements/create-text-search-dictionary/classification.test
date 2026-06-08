@@ -1,9 +1,12 @@
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: required parameter "template" was not found
+statement error
 CREATE TEXT SEARCH DICTIONARY classifier (
-    TEMPLATE = 'classification',
+    template = 'classification',
     MODELLOCATION = '/models/cooking.bin',
     TOPK = 3,
     THRESHOLD = 0.5
 );
+----
+db error: ERROR: File "/models/cooking\.bin" referenced by option "modellocation" does not exist
+

@@ -18,8 +18,11 @@ SELECT CAST(9223372036854775807 AS JSON);
 json
 9223372036854775807
 
-query error (?i)Malformed JSON.*
+query error
 SELECT CAST('abc' AS JSON);
+----
+(?i)Malformed JSON.*
+
 
 query
 SELECT CAST(true AS JSON);
@@ -113,26 +116,47 @@ SELECT CAST(JSON '1.234' AS DOUBLE);
 float8
 1.234
 
-query error db error: ERROR: syntax error at or near "ARRAY"
+query error
 SELECT CAST(JSON '[1,23,456]' AS ARRAY(INTEGER));
+----
+db error: ERROR: syntax error at or near "ARRAY"
 
-query error db error: ERROR: syntax error at or near "ARRAY"
+
+query error
 SELECT CAST(JSON '[1,null,456]' AS ARRAY(INTEGER));
+----
+db error: ERROR: syntax error at or near "ARRAY"
 
-query error db error: ERROR: syntax error at or near "ARRAY"
+
+query error
 SELECT CAST(JSON '[[1,23],[456]]' AS ARRAY(ARRAY(INTEGER)));
+----
+db error: ERROR: syntax error at or near "ARRAY"
 
-query error (?i)Malformed JSON.*
+
+query error
 SELECT CAST(JSON '\{"k1":1,"k2":23,"k3":456\}' AS MAP(VARCHAR, INTEGER));
+----
+(?i)Malformed JSON.*
 
-query error (?i)Malformed JSON.*
+
+query error
 SELECT CAST(JSON '\{"v1":123,"v2":"abc","v3":true\}' AS ROW(v1 BIGINT, v2 VARCHAR, v3 BOOLEAN));
+----
+(?i)Malformed JSON.*
 
-query error (?i)Malformed JSON.*
+
+query error
 SELECT CAST(JSON '\{"V1":123,"V2":"abc","V3":true\}' AS ROW(v1 BIGINT, v2 VARCHAR, v3 BOOLEAN));
+----
+(?i)Malformed JSON.*
 
-query error db error: ERROR: Expected OBJECT, but got ARRAY: \[123,"abc",true\]
+
+query error
 SELECT CAST(JSON '[123,"abc",true]' AS ROW(v1 BIGINT, v2 VARCHAR, v3 BOOLEAN));
+----
+db error: ERROR: Expected OBJECT, but got ARRAY: \[123,"abc",true\]
+
 
 # DOCS_TEST: example_003
 
@@ -143,12 +167,18 @@ db error: ERROR: Scalar Function with name is_json_scalar does not exist!
 Did you mean "<slt:ignore>"?
 
 
-statement error db error: ERROR: syntax error at or near "\*"
+statement error
 *-- true*
 SELECT is_json_scalar('[1, 2, 3]');
+----
+db error: ERROR: syntax error at or near "\*"
 
-statement error db error: ERROR: syntax error at or near "\*"
+
+statement error
 *-- false*
+----
+db error: ERROR: syntax error at or near "\*"
+
 
 # DOCS_TEST: example_004
 
@@ -226,8 +256,11 @@ json_array_length
 
 # DOCS_TEST: example_010
 
-query error db error: ERROR: Referenced column "json" was not found because the FROM clause is missing
+query error
 SELECT json_extract(json, '$.store.book');
+----
+db error: ERROR: Referenced column "json" was not found because the FROM clause is missing
+
 
 # DOCS_TEST: example_011
 
@@ -298,3 +331,4 @@ SELECT json_size('\{"x": \{"a": 1, "b": 2\}\}', '$.x.a');
 ----
 db error: ERROR: Scalar Function with name json_size does not exist!
 Did you mean "<slt:ignore>"?
+

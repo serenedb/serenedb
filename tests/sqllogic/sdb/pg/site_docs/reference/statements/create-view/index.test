@@ -1,3 +1,11 @@
+# DOCS_SETUP: generated_wide_fixtures
+
+statement ok
+CREATE TABLE articles AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
 # DOCS_TEST: example_001
 
 statement error
@@ -6,17 +14,64 @@ SELECT id, title, views, published_at
 FROM articles
 WHERE published_at > NOW() - INTERVAL '30 days';
 ----
-db error: ERROR: Table with name articles does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: No function matches the given name and argument types '-(TIMESTAMP WITH TIME ZONE, INTERVAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	-(TINYINT) -> TINYINT
+	-(TINYINT, TINYINT) -> TINYINT
+	-(SMALLINT) -> SMALLINT
+	-(SMALLINT, SMALLINT) -> SMALLINT
+	-(INTEGER) -> INTEGER
+	-(INTEGER, INTEGER) -> INTEGER
+	-(BIGINT) -> BIGINT
+	-(BIGINT, BIGINT) -> BIGINT
+	-(HUGEINT) -> HUGEINT
+	-(HUGEINT, HUGEINT) -> HUGEINT
+	-(FLOAT) -> FLOAT
+	-(FLOAT, FLOAT) -> FLOAT
+	-(DOUBLE) -> DOUBLE
+	-(DOUBLE, DOUBLE) -> DOUBLE
+	-(DECIMAL) -> DECIMAL
+	-(DECIMAL, DECIMAL) -> DECIMAL
+	-(UTINYINT) -> UTINYINT
+	-(UTINYINT, UTINYINT) -> UTINYINT
+	-(USMALLINT) -> USMALLINT
+	-(USMALLINT, USMALLINT) -> USMALLINT
+	-(UINTEGER) -> UINTEGER
+	-(UINTEGER, UINTEGER) -> UINTEGER
+	-(UBIGINT) -> UBIGINT
+	-(UBIGINT, UBIGINT) -> UBIGINT
+	-(UHUGEINT) -> UHUGEINT
+	-(UHUGEINT, UHUGEINT) -> UHUGEINT
+	-(BIGNUM) -> BIGNUM
+	-(BIGNUM, BIGNUM) -> BIGNUM
+	-(DATE, DATE) -> BIGINT
+	-(DATE, INTEGER) -> DATE
+	-(TIMESTAMP, TIMESTAMP) -> INTERVAL
+	-(INTERVAL, INTERVAL) -> INTERVAL
+	-(DATE, INTERVAL) -> TIMESTAMP
+	-(TIME, INTERVAL) -> TIME
+	-(TIMESTAMP, INTERVAL) -> TIMESTAMP
+	-(TIME WITH TIME ZONE, INTERVAL) -> TIME WITH TIME ZONE
+	-(INTERVAL) -> INTERVAL
 
+
+# DOCS_SETUP: local_authors_fixture
+
+statement ok
+DROP TABLE IF EXISTS authors;
+
+statement ok
+CREATE TABLE authors (id INTEGER, name VARCHAR);
+
+statement ok
+INSERT INTO authors VALUES
+    (1, 'Ada'),
+    (2, 'Bob');
 
 # DOCS_TEST: example_002
 
-statement error
+statement ok
 CREATE VIEW article_authors AS
 SELECT a.id, a.title, au.name AS author_name
 FROM articles a
 JOIN authors au ON a.author_id = au.id;
-----
-db error: ERROR: Table with name articles does not exist!
-Did you mean "<slt:ignore>"?

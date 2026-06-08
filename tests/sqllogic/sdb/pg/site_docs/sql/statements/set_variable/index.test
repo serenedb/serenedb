@@ -36,29 +36,60 @@ SET VARIABLE my_string = 'Hello world';
 statement ok
 SET VARIABLE my_map = MAP {'k1': 10, 'k2': 20};
 
+# DOCS_SETUP: file_fixtures_example_004
+
+
 # DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| -- write some CSV files
+#| COPY (SELECT 42 AS a) TO 'test1.csv';
+#|
+#| COPY (SELECT 84 AS a) TO 'test2.csv';
+#|
+#| -- add a list of CSV files to a table
+#| CREATE TABLE csv_files (file VARCHAR);
+#|
+#| INSERT INTO csv_files VALUES ('test1.csv'), ('test2.csv');
+#|
+#| -- initialize a variable with the list of csv files
+#| SET VARIABLE list_of_files = (SELECT list(file) FROM csv_files);
+#|
+#| -- read the CSV files
+#| SELECT * FROM read_csv(getvariable('list_of_files'), filename := True);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
+statement ok
 -- write some CSV files
-COPY (SELECT 42 AS a) TO 'test1.csv';
+COPY (SELECT 42 AS a) TO '/tmp/${__DATABASE__}_sql_statements_set_variable_index_example_004_1_test1_csv.csv';
 
-statement error (?i)Cannot open file .*
-COPY (SELECT 84 AS a) TO 'test2.csv';
+statement ok
+COPY (SELECT 84 AS a) TO '/tmp/${__DATABASE__}_sql_statements_set_variable_index_example_004_1_test2_csv.csv';
 
 statement ok
 -- add a list of CSV files to a table
+DROP TABLE IF EXISTS csv_files;
+
+statement ok
 CREATE TABLE csv_files (file VARCHAR);
 
 statement ok
-INSERT INTO csv_files VALUES ('test1.csv'), ('test2.csv');
+INSERT INTO csv_files VALUES (
+    '/tmp/${__DATABASE__}_sql_statements_set_variable_index_example_004_1_test1_csv.csv'
+), (
+    '/tmp/${__DATABASE__}_sql_statements_set_variable_index_example_004_1_test2_csv.csv'
+);
 
 statement ok
 -- initialize a variable with the list of csv files
 SET VARIABLE list_of_files = (SELECT list(file) FROM csv_files);
 
-query error (?i)No files found that match the pattern .*
+query ??
 -- read the CSV files
 SELECT * FROM read_csv(getvariable('list_of_files'), filename := True);
+----
+a	filename
+42	/tmp/tests_sqllogic_sdb_pg_site_docs_sql_statements_set_var_wkyltzav_sql_statements_set_variable_index_example_004_1_test1_csv.csv
+84	/tmp/tests_sqllogic_sdb_pg_site_docs_sql_statements_set_var_wkyltzav_sql_statements_set_variable_index_example_004_1_test2_csv.csv
 
 # DOCS_TEST: example_005
 
@@ -67,49 +98,6 @@ SELECT getvariable('undefined_var') AS result;
 ----
 result
 NULL
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_006
-
-statement ok
-SET VARIABLE column_to_exclude = 'col1';
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl AS SELECT 12 AS col0, 34 AS col1, 56 AS col2;
-
-query
-SELECT COLUMNS(c -> c != getvariable('column_to_exclude')) FROM tbl;
-----
-id	name	col2	Some Column Name	i	a	b	c	number	number1	number2
-1	mark	2	alpha	1	10	20	30	10	100	1000
-3	bookmark	5	beta	2	11	21	31	20	200	2000
-7	other	16	gamma	3	12	22	32	NULL	300	3000
 
 # DOCS_TEST: example_007
 

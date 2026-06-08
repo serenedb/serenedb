@@ -1,19 +1,58 @@
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_csv('my_csv_file.csv', sample_size = -1);
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_001_my_csv_file.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_csv('my_csv_file.csv', sample_size = -1);
+# DOCS_RAW_END
+
+query
+SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_001_my_csv_file.csv', sample_size = -1);
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| FROM sniff_csv('my_file.csv');
+#|
+#| FROM sniff_csv('my_file.csv', sample_size = 1000);
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-FROM sniff_csv('my_file.csv');
+query
+FROM sniff_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv');
+----
+delimiter	quote	escape	newlinedelimiter	comment	skiprows	hasheader	columns	dateformat	timestampformat	userarguments	prompt
+,	(empty)	(empty)	\\n	(empty)	0	t	{"(id,BIGINT)","(name,VARCHAR)","(value,BIGINT)"}	NULL	NULL	NULL	FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'id': 'BIGINT', 'name': 'VARCHAR', 'value': 'BIGINT'});
 
-query error (?i)No files found that match the pattern .*
-FROM sniff_csv('my_file.csv', sample_size = 1000);
+
+query
+FROM sniff_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv', sample_size = 1000);
+----
+delimiter	quote	escape	newlinedelimiter	comment	skiprows	hasheader	columns	dateformat	timestampformat	userarguments	prompt
+,	(empty)	(empty)	\\n	(empty)	0	t	{"(id,BIGINT)","(name,VARCHAR)","(value,BIGINT)"}	NULL	NULL	sample_size=1000	FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_002_1_my_file_csv.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'id': 'BIGINT', 'name': 'VARCHAR', 'value': 'BIGINT'}, sample_size=1000);
+
 
 # DOCS_TEST: example_003
 
-statement error db error: ERROR: syntax error at or near "\."
+statement error
 -- use line mode in CLI to get the full command
 .mode line
 SELECT Prompt FROM sniff_csv('my_file.csv');
+----
+db error: ERROR: syntax error at or near "\."

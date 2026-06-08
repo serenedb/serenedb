@@ -23,32 +23,32 @@ INSERT INTO movies VALUES
 (9, 'Café Society', 'A young man arrives in Hollywood during the 1930s hoping to work in the film industry, falls in love, and finds himself swept up in the café culture and glamour of the era.', 'drama', 96, 2016),
 (10, 'The Grand Budapest Hotel', 'A writer encounters the owner of an aging high-class hotel who tells of his early years serving as a lobby boy in the legendary establishment.', 'comedy', 99, 2014);
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY basic_dict (
-    TEMPLATE = 'text',
-    LOCALE = 'en_US.UTF-8',
-    CASE = 'lower',
-    STEMMING = false,
-    ACCENT = false,
-    FREQUENCY = true,
-    POSITION = true
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
 );
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY exact_dict (
-    TEMPLATE = 'text',
-    LOCALE = 'en_US.UTF-8',
-    CASE = 'none',
-    STEMMING = false,
-    ACCENT = true,
-    FREQUENCY = true,
-    POSITION = true
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = true,
+    frequency = true,
+    position = true
 );
 
-statement error db error: ERROR: Failed to create index: Unknown opclass 'basic_dict' on column 'title': not a built\-in type \(known: included, hnsw\) and no text dictionary by that name in schema 'public'
+statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
 
-statement error db error: ERROR: Failed to create index: Unknown opclass 'exact_dict' on column 'title': not a built\-in type \(known: included, hnsw\) and no text dictionary by that name in schema 'public'
+statement ok
 CREATE INDEX movies_exact_idx ON movies
     USING inverted (id, title exact_dict, description exact_dict);

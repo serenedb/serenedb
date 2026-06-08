@@ -116,10 +116,13 @@ grade	course
 
 # DOCS_TEST: example_013
 
-query error (?i)(Values were not provided .*prepared statement parameters: 1|expected 1 parameters but got 0)
+query error
 SELECT min(grade)
 FROM grades
 WHERE course = ?;
+----
+(?i)(Values were not provided .*prepared statement parameters: 1|expected 1 parameters but got 0)
+
 
 # DOCS_TEST: example_014
 

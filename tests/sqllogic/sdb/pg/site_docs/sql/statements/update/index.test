@@ -13,6 +13,7 @@ CREATE TABLE tbl (
     col2 DOUBLE,
     "Some Column Name" VARCHAR,
     i INTEGER,
+    j INTEGER,
     a INTEGER,
     b INTEGER,
     c INTEGER,
@@ -23,9 +24,9 @@ CREATE TABLE tbl (
 
 statement ok
 INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 20, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 30, 12, 22, 32, NULL, 300, 3000);
 
 # DOCS_TEST: example_001
 
@@ -36,13 +37,9 @@ WHERE i IS NULL;
 
 # DOCS_TEST: example_002
 
-statement error
+statement ok
 UPDATE tbl
 SET i = 1, j = 2;
-----
-db error: ERROR: Referenced update column j not found in table!
-
-Did you mean: "a", "b", "c", "col1", "col2"
 
 
 # DOCS_TEST: example_003

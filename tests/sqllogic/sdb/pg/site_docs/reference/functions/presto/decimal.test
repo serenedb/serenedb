@@ -99,3 +99,4 @@ SELECT truncate(999.45, -10);
 ----
 db error: ERROR: Scalar Function with name truncate does not exist!
 Did you mean "<slt:ignore>"?
+

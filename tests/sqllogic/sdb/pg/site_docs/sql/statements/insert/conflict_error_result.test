@@ -1,0 +1,15 @@
+# DOCS_SETUP: local_tbl_ij_fixture
+
+statement ok
+CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER);
+
+statement ok
+INSERT INTO tbl VALUES (1, 42);
+
+# DOCS_TEST: example_013
+
+query
+SELECT * FROM tbl;
+----
+i	j
+1	42

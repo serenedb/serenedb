@@ -58,3 +58,4 @@ GROUP BY s COLLATE "en_US_ci";
 ----
 db error: ERROR: Collation with name en_us_ci does not exist!
 Did you mean "<slt:ignore>"?
+

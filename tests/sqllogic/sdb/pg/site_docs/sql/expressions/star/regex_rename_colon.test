@@ -1,0 +1,9 @@
+# DOCS_TEST: example_019
+
+statement ok
+CREATE TABLE tbl ("Foo:Bar" INTEGER, "Foo:Baz" INTEGER, "Foo:Qux" INTEGER);
+
+query ???
+SELECT COLUMNS('(\w*):(\w*)') AS '\1\2' FROM tbl;
+----
+FooBar	FooBaz	FooQux

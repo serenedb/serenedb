@@ -1,8 +1,34 @@
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://blobs\.duckdb\.org/data/shakespeare\.parquet'
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'Hamlet', 'HAMLET', 'butter would not melt'),
+    (2, 'Macbeth', 'MACBETH', 'another line')
+) AS t("line_id", "play_name", "speaker", "text_entry")) TO '/tmp/${__DATABASE__}_cookbook_sql_features_full_text_search_example_001_shakespeare.parquet' (FORMAT parquet);
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| CREATE TABLE corpus AS
+#|     SELECT * FROM 'https://blobs.duckdb.org/data/shakespeare.parquet';
+# DOCS_RAW_END
+
+statement ok
 CREATE TABLE corpus AS
-    SELECT * FROM 'https://blobs.duckdb.org/data/shakespeare.parquet';
+    SELECT * FROM '/tmp/${__DATABASE__}_cookbook_sql_features_full_text_search_example_001_shakespeare.parquet';
+
+
+# DOCS_SETUP: local_corpus_fixture
+
+statement ok
+DROP TABLE IF EXISTS corpus;
+
+statement ok
+CREATE TABLE corpus (line_id INTEGER, play_name VARCHAR, speaker VARCHAR, text_entry VARCHAR);
+
+statement ok
+INSERT INTO corpus VALUES
+    (1, 'Hamlet', 'HAMLET', 'butter would not melt'),
+    (2, 'Macbeth', 'MACBETH', 'another line');
 
 # DOCS_TEST: example_002
 
@@ -34,5 +60,5 @@ FROM corpus
 WHERE score IS NOT NULL
 ORDER BY score DESC;
 ----
-db error: ERROR: Table with name corpus does not exist!
+db error: ERROR: Scalar Function with name match_bm25 does not exist!
 Did you mean "<slt:ignore>"?

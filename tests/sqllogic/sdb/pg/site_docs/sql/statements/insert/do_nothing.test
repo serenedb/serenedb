@@ -1,0 +1,13 @@
+# DOCS_TEST: example_014
+
+statement ok
+CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER);
+
+statement ok
+INSERT INTO tbl
+    VALUES (1, 42);
+
+statement ok
+INSERT INTO tbl
+    VALUES (1, 84)
+    ON CONFLICT DO NOTHING;

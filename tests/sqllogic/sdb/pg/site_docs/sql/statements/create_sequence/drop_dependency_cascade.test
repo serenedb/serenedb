@@ -1,0 +1,28 @@
+# DOCS_SETUP: local_sequence_dependency_fixture
+
+statement ok
+CREATE SEQUENCE id_sequence START 1;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER DEFAULT nextval('id_sequence'),
+    s VARCHAR
+);
+
+# DOCS_TEST: example_018
+# DOCS_RAW_BEGIN
+#| DROP SEQUENCE id_sequence CASCADE;
+#|
+#| SELECT * FROM tbl;
+# DOCS_RAW_END
+
+statement ok
+DROP SEQUENCE id_sequence CASCADE;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+query error
+SELECT * FROM tbl;
+----
+db error: ERROR: Table with name tbl does not exist!

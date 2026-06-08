@@ -1,8 +1,32 @@
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://blobs\.duckdb\.org/nl\-railway/services\-2025\-03\.csv\.gz'
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1001, 'Intercity', 'Amsterdam Centraal', 'Utrecht Centraal'),
+    (1002, 'Sprinter', 'Rotterdam Centraal', 'Delft')
+) AS t("service_id", "service_name", "origin", "destination")) TO '/tmp/${__DATABASE__}_cookbook_snippets_dutch_railway_datasets_example_001_services.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| CREATE TABLE services AS
+#|     FROM 'https://blobs.duckdb.org/nl-railway/services-2025-03.csv.gz';
+# DOCS_RAW_END
+
+statement ok
 CREATE TABLE services AS
-    FROM 'https://blobs.duckdb.org/nl-railway/services-2025-03.csv.gz';
+    FROM '/tmp/${__DATABASE__}_cookbook_snippets_dutch_railway_datasets_example_001_services.csv';
+
+
+# DOCS_SETUP: local_services_fixture
+
+statement ok
+DROP TABLE IF EXISTS services;
+
+statement ok
+CREATE TABLE services AS SELECT * FROM (VALUES
+    (1001, 'Intercity', 'Amsterdam Centraal', 'Utrecht Centraal'),
+    (1002, 'Sprinter', 'Rotterdam Centraal', 'Delft')
+) AS t(service_id, service_name, origin, destination);
 
 # DOCS_TEST: example_002
 

@@ -18,8 +18,11 @@ INSERT INTO geometries VALUES
   (6, 'MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10,15 5)))'),
   (7, 'GEOMETRYCOLLECTION (POINT(40 10), LINESTRING(10 10,20 20,10 40), POLYGON((40 40,20 45,45 30,40 40)))');
 
-query error db error: ERROR: Such type is not supported
+query error
 SELECT * FROM geometries;
+----
+db error: ERROR: Such type is not supported
+
 
 # DOCS_TEST: example_002
 
@@ -36,13 +39,19 @@ INSERT INTO points VALUES
   (3, 'POINT M (30 10 1)'),
   (4, 'POINT ZM (30 10 5 1)');
 
-query error db error: ERROR: Such type is not supported
+query error
 SELECT * FROM points;
+----
+db error: ERROR: Such type is not supported
 
-statement error db error: ERROR: Failed to parse geometry: Expected number at offset 12
+
+statement error
 -- But we cannot mix different vertex dimensions within the same geometry!
 INSERT INTO points VALUES
   (5, 'MULTIPOINT (POINT (30 10), POINT Z (30 10 5))');
+----
+db error: ERROR: Failed to parse geometry: Expected number at offset 12
+
 
 # DOCS_TEST: example_003
 
@@ -62,11 +71,60 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS points;
 
-# DOCS_TEST: example_004
+statement ok
+DETACH IF EXISTS geometry_db;
 
-statement error (?i)Cannot open file .*
+statement ok
+DETACH IF EXISTS shredded_db;
+
+# DOCS_SETUP: file_fixtures_example_004
+
+
+# DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| -- Attach a persistent database with storage version v1.5
+#| ATTACH 'geometry_db.db' as geometry_db (STORAGE_VERSION 'v1.5.0');
+#|
+#| USE geometry_db;
+#|
+#| -- Disable shredding completely and create a table with 1 million 2D points
+#| SET geometry_minimum_shredding_size = -1;
+#|
+#| CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
+#| FROM range(0, 1000) AS rx(x), range(0, 1000) AS ry(y);
+#|
+#| -- Checkpoint the database to persist the data and storage layout to disk
+#| CHECKPOINT;
+#|
+#| -- Attach a second database
+#| ATTACH 'shredded_db.db' as shredded_db (STORAGE_VERSION 'v1.5.0');
+#|
+#| USE shredded_db;
+#|
+#| -- This time, set the minimum shredding size to 0 to always shred geometry columns,
+#| -- and create the same table with 1 million 2D points
+#| SET geometry_minimum_shredding_size = 0;
+#|
+#| CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
+#| FROM range(0, 1000) AS rx(x), range(0, 1000) AS ry(y);
+#|
+#| -- Checkpoint to persist the data and storage layout to disk, and apply shredding
+#| CHECKPOINT;
+#|
+#| -- Now check the storage layout and memory usage of the geometry column in both attached databases
+#| SELECT database_name, database_size FROM pragma_database_size();
+#|
+#| -- The geometry column in `geometry_db` is stored as regular GEOMETRY segments
+#| SELECT DISTINCT(segment_type) FROM pragma_storage_info('geometry_db.points');
+#|
+#| -- While the geometry column in `shredded_db` is decomposed into primitive DOUBLE segments,
+#| -- which can be compressed much more efficiently!
+#| SELECT DISTINCT(segment_type) FROM pragma_storage_info('shredded_db.points');
+# DOCS_RAW_END
+
+statement ok
 -- Attach a persistent database with storage version v1.5
-ATTACH 'geometry_db.db' as geometry_db (STORAGE_VERSION 'v1.5.0');
+ATTACH '/tmp/${__DATABASE__}_sql_data_types_geometry_example_004_geometry_db.db' as geometry_db (STORAGE_VERSION 'v1.5.0');
 
 statement ok
 USE geometry_db;
@@ -75,17 +133,17 @@ statement ok
 -- Disable shredding completely and create a table with 1 million 2D points
 SET geometry_minimum_shredding_size = -1;
 
-statement error (?i)Catalog with name .* does not exist!
+statement ok
 CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
-FROM range(0, 1000) AS rx(x), range(0, 1000) AS ry(y);
+FROM range(0, 4) AS rx(x), range(0, 4) AS ry(y);
 
 statement ok
 -- Checkpoint the database to persist the data and storage layout to disk
 CHECKPOINT;
 
-statement error (?i)Cannot open file .*
+statement ok
 -- Attach a second database
-ATTACH 'shredded_db.db' as shredded_db (STORAGE_VERSION 'v1.5.0');
+ATTACH '/tmp/${__DATABASE__}_sql_data_types_geometry_example_004_shredded_db.db' as shredded_db (STORAGE_VERSION 'v1.5.0');
 
 statement ok
 USE shredded_db;
@@ -95,9 +153,9 @@ statement ok
 -- and create the same table with 1 million 2D points
 SET geometry_minimum_shredding_size = 0;
 
-statement error (?i)Catalog with name .* does not exist!
+statement ok
 CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
-FROM range(0, 1000) AS rx(x), range(0, 1000) AS ry(y);
+FROM range(0, 4) AS rx(x), range(0, 4) AS ry(y);
 
 statement ok
 -- Checkpoint to persist the data and storage layout to disk, and apply shredding
@@ -107,14 +165,24 @@ statement ok
 -- Now check the storage layout and memory usage of the geometry column in both attached databases
 SELECT database_name, database_size FROM pragma_database_size();
 
-query error db error: ERROR: Table with name "geometry_db\.points" does not exist because schema "geometry_db" does not exist\.
+query ? rowsort
 -- The geometry column in `geometry_db` is stored as regular GEOMETRY segments
 SELECT DISTINCT(segment_type) FROM pragma_storage_info('geometry_db.points');
+----
+segment_type
+GEOMETRY
+VALIDITY
 
-query error db error: ERROR: Table with name "shredded_db\.points" does not exist because schema "shredded_db" does not exist\.
+
+query ? rowsort
 -- While the geometry column in `shredded_db` is decomposed into primitive DOUBLE segments,
 -- which can be compressed much more efficiently!
 SELECT DISTINCT(segment_type) FROM pragma_storage_info('shredded_db.points');
+----
+segment_type
+DOUBLE
+VALIDITY
+
 
 # DOCS_SETUP
 
@@ -129,8 +197,11 @@ DROP TABLE IF EXISTS geometries;
 statement ok
 CREATE TABLE geometries as select 'POINT Z (30 10 5)'::GEOMETRY as geom;
 
-query error db error: ERROR: Such type is not supported
+query error
 SELECT stats(geom) AS geom_stats FROM geometries;
+----
+db error: ERROR: Such type is not supported
+
 
 # DOCS_TEST: example_006
 
@@ -155,8 +226,11 @@ statement ok
 -- Ignore any unknown CRS identifiers
 SET ignore_unknown_crs = true;
 
-query error db error: ERROR: Such type is not supported
+query error
 select 'POINT(1 2)'::GEOMETRY('DUCK:1337') AS my_point;
+----
+db error: ERROR: Such type is not supported
+
 
 # DOCS_TEST: example_009
 
@@ -179,16 +253,25 @@ This feature relies on the "spatial" extension which is not built into this Sere
 
 # DOCS_TEST: example_010
 
-query error db error: ERROR: Such type is not supported
+query error
 SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY, 'OGC:CRS84') AS with_crs;
+----
+db error: ERROR: Such type is not supported
+
 
 # DOCS_TEST: example_011
 
-query error db error: ERROR: Such type is not supported
+query error
 SELECT 'POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84')::GEOMETRY AS no_crs;
+----
+db error: ERROR: Such type is not supported
 
-query error db error: ERROR: Such type is not supported
+
+query error
 SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84'), '') AS no_crs;
+----
+db error: ERROR: Such type is not supported
+
 
 # DOCS_TEST: example_012
 

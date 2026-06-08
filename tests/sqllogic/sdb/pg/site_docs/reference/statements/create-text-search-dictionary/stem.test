@@ -1,7 +1,7 @@
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY stem_dict (
-    TEMPLATE = 'stem',
-    LOCALE = 'en'
+    template = 'stem',
+    locale = 'en'
 );

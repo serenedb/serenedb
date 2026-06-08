@@ -1,7 +1,10 @@
 # DOCS_TEST: example_001
 
-query error db error: ERROR: Could not convert string 'abc' to INT32
+query error
 SELECT 'abc'::INTEGER;
+----
+db error: ERROR: Could not convert string 'abc' to INT32
+
 
 # DOCS_TEST: example_002
 
@@ -29,9 +32,12 @@ SELECT TRY(ln(0));
 
 # DOCS_TEST: example_005
 
-query error db error: ERROR: Could not convert string 'test' to INT32 when casting from source column a
+query error
 WITH cte AS (FROM (VALUES ('123'), ('test'), ('235')) t(a))
 SELECT a::INTEGER AS x FROM cte;
+----
+db error: ERROR: Could not convert string 'test' to INT32 when casting from source column a
+
 
 # DOCS_TEST: example_006
 
@@ -46,5 +52,8 @@ NULL
 
 # DOCS_TEST: example_007
 
-query error db error: ERROR: TRY can not be used in combination with a volatile function
+query error
 SELECT TRY(random())
+----
+db error: ERROR: TRY can not be used in combination with a volatile function
+

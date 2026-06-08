@@ -71,12 +71,25 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_006
+# DOCS_SETUP: file_fixtures_example_006
 
-statement error (?i)No files found that match the pattern .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_006_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_006
+# DOCS_RAW_BEGIN
+#| CREATE TABLE t1 AS
+#|     SELECT *
+#|     FROM read_csv('path/file.csv');
+# DOCS_RAW_END
+
+statement ok
 CREATE TABLE t1 AS
     SELECT *
-    FROM read_csv('path/file.csv');
+    FROM read_csv('/tmp/${__DATABASE__}_sql_statements_create_table_index_example_006_1_file_csv.csv');
 
 # DOCS_SETUP
 
@@ -85,12 +98,24 @@ USE $__DATABASE__;
 
 statement ok
 DROP TABLE IF EXISTS t1;
+
+# DOCS_SETUP: file_fixtures_example_007
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_007_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_007
+# DOCS_RAW_BEGIN
+#| CREATE TABLE t1 AS
+#|     FROM read_csv('path/file.csv');
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
+statement ok
 CREATE TABLE t1 AS
-    FROM read_csv('path/file.csv');
+    FROM read_csv('/tmp/${__DATABASE__}_sql_statements_create_table_index_example_007_1_file_csv.csv');
 
 # DOCS_SETUP
 
@@ -99,16 +124,26 @@ USE $__DATABASE__;
 
 statement ok
 DROP TABLE IF EXISTS t1;
+
+# DOCS_SETUP: local_t2_fixture
+
+statement ok
+DROP TABLE IF EXISTS t2;
+
+statement ok
+CREATE TABLE t2 (i INTEGER, j INTEGER);
+
+statement ok
+INSERT INTO t2 VALUES
+    (1, 10),
+    (2, 20);
 
 # DOCS_TEST: example_008
 
-statement error
+statement ok
 CREATE TABLE t1 AS
     FROM t2
     LIMIT 0;
-----
-db error: ERROR: Table with name t2 does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # DOCS_SETUP
@@ -119,12 +154,25 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_009
+# DOCS_SETUP: file_fixtures_example_009
 
-statement error (?i)No files found that match the pattern .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_009_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_009
+# DOCS_RAW_BEGIN
+#| CREATE TEMP TABLE t1 AS
+#|     SELECT *
+#|     FROM read_csv('path/file.csv');
+# DOCS_RAW_END
+
+statement ok
 CREATE TEMP TABLE t1 AS
     SELECT *
-    FROM read_csv('path/file.csv');
+    FROM read_csv('/tmp/${__DATABASE__}_sql_statements_create_table_index_example_009_1_file_csv.csv');
 
 # DOCS_TEST: example_010
 
@@ -164,11 +212,23 @@ CREATE TABLE nums AS
     SELECT i
     FROM range(0, 3) t(i);
 
-# DOCS_TEST: example_014
+# DOCS_SETUP: file_fixtures_example_014
 
-statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://duckdb\.org/data/flights\.csv'
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_014_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_014
+# DOCS_RAW_BEGIN
+#| CREATE TABLE flights AS
+#|     FROM 'https://duckdb.org/data/flights.csv';
+# DOCS_RAW_END
+
+statement ok
 CREATE TABLE flights AS
-    FROM 'https://duckdb.org/data/flights.csv';
+    FROM '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_014_1_flights_csv.csv';
 
 # DOCS_SETUP
 
@@ -178,11 +238,23 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS flights;
 
-# DOCS_TEST: example_015
+# DOCS_SETUP: file_fixtures_example_015
 
-statement error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://duckdb\.org/data/flights\.csv'
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_015_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_015
+# DOCS_RAW_BEGIN
+#| CREATE OR REPLACE TABLE flights AS
+#|     FROM 'https://duckdb.org/data/flights.csv';
+# DOCS_RAW_END
+
+statement ok
 CREATE OR REPLACE TABLE flights AS
-    FROM 'https://duckdb.org/data/flights.csv';
+    FROM '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_015_1_flights_csv.csv';
 
 # DOCS_SETUP
 
@@ -194,13 +266,10 @@ DROP TABLE IF EXISTS t1;
 
 # DOCS_TEST: example_016
 
-statement error
+statement ok
 CREATE TABLE t1 AS
     FROM t2
     WITH NO DATA;
-----
-db error: ERROR: Table with name t2 does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # DOCS_SETUP
@@ -213,13 +282,10 @@ DROP TABLE IF EXISTS t1;
 
 # DOCS_TEST: example_017
 
-statement error
+statement ok
 CREATE TABLE t1 AS
     FROM t2
     LIMIT 0;
-----
-db error: ERROR: Table with name t2 does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # DOCS_SETUP
@@ -256,6 +322,11 @@ INSERT INTO t1 VALUES (3, 101);
 db error: ERROR: new row for relation "t1" violates check constraint "t1_percentage_check"
 DETAIL: Failing row contains (3, 101).
 
+
+# DOCS_SETUP: drop_t2_before_constraint_example
+
+statement ok
+DROP TABLE IF EXISTS t2;
 
 # DOCS_TEST: example_020
 
@@ -361,12 +432,15 @@ INSERT INTO t4 VALUES (2, 1, 'b');
 statement ok
 CREATE TABLE t5 (id INTEGER UNIQUE, j VARCHAR);
 
-statement error db error: ERROR: Failed to create foreign key: there is no primary key or unique constraint for referenced table "t5"
+statement error
 CREATE TABLE t6 (
     id INTEGER PRIMARY KEY,
     t5_id INTEGER,
     FOREIGN KEY (t5_id) REFERENCES t5(id)
 );
+----
+db error: ERROR: Failed to create foreign key: there is no primary key or unique constraint for referenced table "t5"
+
 
 # DOCS_SETUP
 

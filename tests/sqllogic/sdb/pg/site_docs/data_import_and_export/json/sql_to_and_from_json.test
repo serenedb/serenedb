@@ -56,5 +56,8 @@ SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT 1 + 2'));
 
 # DOCS_TEST: example_008
 
-query error db error: ERROR: Error parsing json: parser: syntax error at or near "TOTALLY"
+query error
 SELECT * FROM json_execute_serialized_sql(json_serialize_sql('TOTALLY NOT VALID SQL'));
+----
+db error: ERROR: Error parsing json: parser: syntax error at or near "TOTALLY"
+

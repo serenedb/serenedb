@@ -1,3 +1,8 @@
+# DOCS_SETUP: local_table_name_fixture
+
+statement ok
+CREATE TABLE table_name (id INTEGER, name VARCHAR);
+
 # DOCS_TEST: example_001
 
 statement ok
@@ -25,29 +30,35 @@ SET catalog_error_max_schemas = 10;
 
 # DOCS_TEST: example_006
 
-query error
+query
 PRAGMA table_info('table_name');
 ----
-db error: ERROR: Table with name table_name does not exist!
-Did you mean "<slt:ignore>"?
+cid	name	type	notnull	dflt_value	pk
+0	id	INTEGER	f	NULL	f
+1	name	VARCHAR	f	NULL	f
 
 
-query error
+query
 CALL pragma_table_info('table_name');
 ----
-db error: ERROR: Table with name table_name does not exist!
-Did you mean "<slt:ignore>"?
+cid	name	type	notnull	dflt_value	pk
+0	id	INTEGER	f	NULL	f
+1	name	VARCHAR	f	NULL	f
 
 
 # DOCS_TEST: example_007
+# DOCS_RAW_BEGIN
+#| cid INTEGER,        -- cid of the column
+#| name VARCHAR,       -- name of the column
+#| type VARCHAR,       -- type of the column
+#| notnull BOOLEAN,    -- if the column is marked as NOT NULL
+#| dflt_value VARCHAR, -- default value of the column, or NULL if not specified
+#| pk BOOLEAN          -- part of the primary key or not
+# DOCS_RAW_END
 
-statement error db error: ERROR: syntax error at or near "cid"
-cid INTEGER,        -- cid of the column
-name VARCHAR,       -- name of the column
-type VARCHAR,       -- type of the column
-notnull BOOLEAN,    -- if the column is marked as NOT NULL
-dflt_value VARCHAR, -- default value of the column, or NULL if not specified
-pk BOOLEAN          -- part of the primary key or not
+statement ok
+CREATE TABLE __docs_noop_pragmas_table_info_schema (i INTEGER);
+
 
 # DOCS_TEST: example_008
 
@@ -59,7 +70,7 @@ CALL pragma_database_size();
 
 # DOCS_TEST: example_009
 
-statement error db error: ERROR: syntax error at or near "database_name"
+statement error
 database_name VARCHAR, -- database name
 database_size VARCHAR, -- total block count times the block size
 block_size BIGINT,     -- database block size
@@ -69,21 +80,22 @@ free_blocks BIGINT,    -- free blocks in the database
 wal_size VARCHAR,      -- write ahead log size
 memory_usage VARCHAR,  -- memory used by the database buffer manager
 memory_limit VARCHAR   -- maximum memory allowed for the database
+----
+db error: ERROR: syntax error at or near "database_name"
+
 
 # DOCS_TEST: example_010
 
 query error
 PRAGMA storage_info('table_name');
 ----
-db error: ERROR: Table with name table_name does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Such type is not supported
 
 
 query error
 CALL pragma_storage_info('table_name');
 ----
-db error: ERROR: Table with name table_name does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Such type is not supported
 
 
 # DOCS_TEST: example_011
@@ -190,12 +202,44 @@ PRAGMA user_agent;
 user_agent
 duckdb/v0.0.1(linux_arm64) cpp
 
+# DOCS_SETUP: local_metadata_info_fixture
+
+statement ok
+DETACH IF EXISTS metadata_info_fixture;
+
+statement ok
+ATTACH OR REPLACE '/tmp/${__DATABASE__}_configuration_pragmas_example_023_metadata_info.db' AS metadata_info_fixture;
+
+statement ok
+USE metadata_info_fixture;
+
+statement ok
+CREATE OR REPLACE TABLE metadata_info_table AS
+SELECT i, repeat('x', 1000) AS payload
+FROM range(0, 10000) AS t(i);
+
+statement ok
+CHECKPOINT;
+
 # DOCS_TEST: example_023
+# DOCS_RAW_BEGIN
+#| PRAGMA metadata_info;
+# DOCS_RAW_END
 
 query
-PRAGMA metadata_info;
+SELECT block_id, total_blocks, free_blocks, length(free_list) AS free_list
+FROM pragma_metadata_info();
 ----
 block_id	total_blocks	free_blocks	free_list
+0	64	33	33
+
+# DOCS_SETUP: restore_memory_after_metadata_info
+
+statement ok
+USE memory;
+
+statement ok
+DETACH metadata_info_fixture;
 
 # DOCS_TEST: example_024
 
@@ -347,9 +391,13 @@ statement ok
 SET disabled_optimizers = '';
 
 # DOCS_TEST: example_048
+# DOCS_RAW_BEGIN
+#| SET log_query_path = '/tmp/duckdb_log/';
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-SET log_query_path = '/tmp/duckdb_log/';
+statement ok
+SET log_query_path = '/tmp/${__DATABASE__}_configuration_pragmas_example_048_duckdb_log.json';
+
 
 # DOCS_TEST: example_049
 

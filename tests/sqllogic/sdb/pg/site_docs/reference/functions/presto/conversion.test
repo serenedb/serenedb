@@ -14,11 +14,17 @@ tinyint
 
 # DOCS_TEST: example_002
 
-query error db error: ERROR: Type INT32 with value 1234 can't be cast because the value is out of range for the destination type INT8
+query error
 SELECT cast(1234 as tinyint);
+----
+db error: ERROR: Type INT32 with value 1234 can't be cast because the value is out of range for the destination type INT8
 
-query error db error: ERROR: Type INT32 with value 1234567 can't be cast because the value is out of range for the destination type INT16
+
+query error
 SELECT cast(1234567 as smallint);
+----
+db error: ERROR: Type INT32 with value 1234567 can't be cast because the value is out of range for the destination type INT16
+
 
 # DOCS_TEST: example_003
 
@@ -63,11 +69,17 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_004
 
-query error db error: ERROR: Failed to cast decimal value 128 to type INT8
+query error
 SELECT cast(127.8 as tinyint);
+----
+db error: ERROR: Failed to cast decimal value 128 to type INT8
 
-query error db error: ERROR: Failed to cast decimal value 1234568 to type INT16
+
+query error
 SELECT cast(1234567.89 as smallint);
+----
+db error: ERROR: Failed to cast decimal value 1234568 to type INT16
+
 
 query error
 SELECT cast(infinity() as bigint);
@@ -107,8 +119,11 @@ tinyint
 
 # DOCS_TEST: example_007
 
-query error db error: ERROR: Could not convert string '12345\.67' to INT8
+query error
 SELECT cast('12345.67' as tinyint);
+----
+db error: ERROR: Could not convert string '12345\.67' to INT8
+
 
 query
 SELECT cast('12345.67' as bigint);
@@ -146,24 +161,39 @@ SELECT cast('0.' as tinyint);
 tinyint
 0
 
-query error db error: ERROR: Could not convert string '\.' to INT8
+query error
 SELECT cast('.' as tinyint);
+----
+db error: ERROR: Could not convert string '\.' to INT8
 
-query error db error: ERROR: Could not convert string '\-\.' to INT8
+
+query error
 SELECT cast('-.' as tinyint);
+----
+db error: ERROR: Could not convert string '\-\.' to INT8
+
 
 # DOCS_TEST: example_008
 
-query error db error: ERROR: syntax error at or near "decimal"
+query error
 SELECT cast(2.56 decimal(6, 2) as integer);
+----
+db error: ERROR: syntax error at or near "decimal"
 
-query error db error: ERROR: syntax error at or near "decimal"
+
+query error
 SELECT cast(3.46 decimal(6, 2) as integer);
+----
+db error: ERROR: syntax error at or near "decimal"
+
 
 # DOCS_TEST: example_009
 
-query error db error: ERROR: syntax error at or near "decimal"
+query error
 SELECT cast(214748364890 decimal(12, 2) as integer);
+----
+db error: ERROR: syntax error at or near "decimal"
+
 
 # DOCS_TEST: example_010
 
@@ -293,26 +323,47 @@ t
 
 # DOCS_TEST: example_012
 
-query error db error: ERROR: Could not convert string '1\.7E308' to BOOL
+query error
 SELECT cast('1.7E308' as boolean);
+----
+db error: ERROR: Could not convert string '1\.7E308' to BOOL
 
-query error db error: ERROR: Could not convert string 'nan' to BOOL
+
+query error
 SELECT cast('nan' as boolean);
+----
+db error: ERROR: Could not convert string 'nan' to BOOL
 
-query error db error: ERROR: Could not convert string 'infinity' to BOOL
+
+query error
 SELECT cast('infinity' as boolean);
+----
+db error: ERROR: Could not convert string 'infinity' to BOOL
 
-query error db error: ERROR: Could not convert string '12' to BOOL
+
+query error
 SELECT cast('12' as boolean);
+----
+db error: ERROR: Could not convert string '12' to BOOL
 
-query error db error: ERROR: Could not convert string '\-1' to BOOL
+
+query error
 SELECT cast('-1' as boolean);
+----
+db error: ERROR: Could not convert string '\-1' to BOOL
 
-query error db error: ERROR: Could not convert string 'tr' to BOOL
+
+query error
 SELECT cast('tr' as boolean);
+----
+db error: ERROR: Could not convert string 'tr' to BOOL
 
-query error db error: ERROR: Could not convert string 'tru' to BOOL
+
+query error
 SELECT cast('tru' as boolean);
+----
+db error: ERROR: Could not convert string 'tru' to BOOL
+
 
 query
 SELECT cast('No' as boolean);
@@ -336,11 +387,17 @@ float4
 
 # DOCS_TEST: example_014
 
-query error db error: ERROR: Type DOUBLE with value 1\.7e\+308 can't be cast because the value is out of range for the destination type FLOAT
+query error
 SELECT cast(1.7E308 as real);
+----
+db error: ERROR: Type DOUBLE with value 1\.7e\+308 can't be cast because the value is out of range for the destination type FLOAT
 
-query error db error: ERROR: Type DOUBLE with value \-1\.7e\+308 can't be cast because the value is out of range for the destination type FLOAT
+
+query error
 SELECT cast(-1.7E308 as real);
+----
+db error: ERROR: Type DOUBLE with value \-1\.7e\+308 can't be cast because the value is out of range for the destination type FLOAT
+
 
 # DOCS_TEST: example_015
 
@@ -356,8 +413,11 @@ SELECT cast('1' as real);
 float4
 1
 
-query error db error: ERROR: Could not convert string '1\.7E308' to FLOAT
+query error
 SELECT cast('1.7E308' as real);
+----
+db error: ERROR: Could not convert string '1\.7E308' to FLOAT
+
 
 query
 SELECT cast('Infinity' as real);
@@ -379,11 +439,17 @@ NaN
 
 # DOCS_TEST: example_016
 
-query error db error: ERROR: Could not convert string '1\.2a' to FLOAT
+query error
 SELECT cast('1.2a' as real);
+----
+db error: ERROR: Could not convert string '1\.2a' to FLOAT
 
-query error db error: ERROR: Could not convert string '1\.2\.3' to FLOAT
+
+query error
 SELECT cast('1.2.3' as real);
+----
+db error: ERROR: Could not convert string '1\.2\.3' to FLOAT
+
 
 query
 SELECT cast('infinity' as real);
@@ -429,17 +495,29 @@ NaN
 
 # DOCS_TEST: example_017
 
-query error db error: ERROR: Could not convert string '1\.2f' to FLOAT
+query error
 SELECT cast('1.2f' as real);
+----
+db error: ERROR: Could not convert string '1\.2f' to FLOAT
 
-query error db error: ERROR: Could not convert string '1\.2f' to DOUBLE
+
+query error
 SELECT cast('1.2f' as double);
+----
+db error: ERROR: Could not convert string '1\.2f' to DOUBLE
 
-query error db error: ERROR: Could not convert string '1\.2d' to FLOAT
+
+query error
 SELECT cast('1.2d' as real);
+----
+db error: ERROR: Could not convert string '1\.2d' to FLOAT
 
-query error db error: ERROR: Could not convert string '1\.2d' to DOUBLE
+
+query error
 SELECT cast('1.2d' as double);
+----
+db error: ERROR: Could not convert string '1\.2d' to DOUBLE
+
 
 # DOCS_TEST: example_018
 
@@ -451,8 +529,11 @@ float8
 
 # DOCS_TEST: example_019
 
-query error db error: ERROR: Failed to cast decimal value 300 to type INT8
+query error
 SELECT cast(decimal '300.001' as tinyint);
+----
+db error: ERROR: Failed to cast decimal value 300 to type INT8
+
 
 # DOCS_TEST: example_020
 
@@ -1010,13 +1091,19 @@ timestamp
 
 # DOCS_TEST: example_039
 
-query error db error: ERROR: invalid timestamp field format: "2012\-Oct\-23", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
+query error
 SELECT cast('2012-Oct-23' as timestamp);
+----
+db error: ERROR: invalid timestamp field format: "2012\-Oct\-23", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
+
 
 # DOCS_TEST: example_040
 
-query error db error: ERROR: invalid timestamp field format: "1970\-01\-01 00:00:00 \+09:00", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
+query error
 SELECT cast('1970-01-01 00:00:00 +09:00' as timestamp);
+----
+db error: ERROR: invalid timestamp field format: "1970\-01\-01 00:00:00 \+09:00", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
+
 
 query
 SELECT cast('1970-01-01 00:00:00 UTC' as timestamp);
@@ -1033,11 +1120,17 @@ Use the TIMESTAMPTZ type with the ICU extension loaded to handle non-UTC timesta
 
 # DOCS_TEST: example_041
 
-query error db error: ERROR: invalid timestamp field format: "1970\-01\-01 00:00 Z", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
+query error
 SELECT cast('1970-01-01 00:00 Z' as timestamp);
+----
+db error: ERROR: invalid timestamp field format: "1970\-01\-01 00:00 Z", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
 
-query error db error: ERROR: invalid timestamp field format: "1970\-01\-01 00:00Z", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
+
+query error
 SELECT cast('1970-01-01 00:00Z' as timestamp);
+----
+db error: ERROR: invalid timestamp field format: "1970\-01\-01 00:00Z", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
+
 
 # DOCS_TEST: example_042
 
@@ -1181,11 +1274,17 @@ date
 
 # DOCS_TEST: example_047
 
-query error db error: ERROR: invalid date field format: "2012", expected format is \(YYYY\-MM\-DD\)
+query error
 SELECT cast('2012' as date);
+----
+db error: ERROR: invalid date field format: "2012", expected format is \(YYYY\-MM\-DD\)
 
-query error db error: ERROR: invalid date field format: "2012\-10", expected format is \(YYYY\-MM\-DD\)
+
+query error
 SELECT cast('2012-10' as date);
+----
+db error: ERROR: invalid date field format: "2012\-10", expected format is \(YYYY\-MM\-DD\)
+
 
 query
 SELECT cast('2012-10-23T123' as date);
@@ -1199,8 +1298,11 @@ SELECT cast('2012-10-23 (BC)' as date);
 date
 -2011-10-23
 
-query error db error: ERROR: invalid date field format: "2012\-Oct\-23", expected format is \(YYYY\-MM\-DD\)
+query error
 SELECT cast('2012-Oct-23' as date);
+----
+db error: ERROR: invalid date field format: "2012\-Oct\-23", expected format is \(YYYY\-MM\-DD\)
+
 
 query
 SELECT cast('2012/10/23' as date);
@@ -1208,8 +1310,11 @@ SELECT cast('2012/10/23' as date);
 date
 2012-10-23
 
-query error db error: ERROR: invalid date field format: "2012\.10\.23", expected format is \(YYYY\-MM\-DD\)
+query error
 SELECT cast('2012.10.23' as date);
+----
+db error: ERROR: invalid date field format: "2012\.10\.23", expected format is \(YYYY\-MM\-DD\)
+
 
 query
 SELECT cast('2012-10-23 ' as date);
@@ -1276,11 +1381,17 @@ numeric
 
 # DOCS_TEST: example_052
 
-query error db error: ERROR: Could not cast value 123 to DECIMAL\(6,4\)
+query error
 SELECT cast(123 as decimal(6, 4));
+----
+db error: ERROR: Could not cast value 123 to DECIMAL\(6,4\)
 
-query error db error: ERROR: Could not cast value 123 to DECIMAL\(4,2\)
+
+query error
 SELECT cast(123 as decimal(4, 2));
+----
+db error: ERROR: Could not cast value 123 to DECIMAL\(4,2\)
+
 
 # DOCS_TEST: example_053
 
@@ -1316,11 +1427,17 @@ numeric
 
 # DOCS_TEST: example_054
 
-query error db error: ERROR: Casting value "123\.12" to type DECIMAL\(6,4\) failed: value is out of range!
+query error
 SELECT cast(123.12 as decimal(6, 4));
+----
+db error: ERROR: Casting value "123\.12" to type DECIMAL\(6,4\) failed: value is out of range!
 
-query error db error: ERROR: Casting value "99999\.99" to type DECIMAL\(6,2\) failed: value is out of range!
+
+query error
 SELECT cast(99999.99 as decimal(6, 2));
+----
+db error: ERROR: Casting value "99999\.99" to type DECIMAL\(6,2\) failed: value is out of range!
+
 
 # DOCS_TEST: example_055
 
@@ -1338,11 +1455,17 @@ numeric
 
 # DOCS_TEST: example_056
 
-query error db error: ERROR: Casting value "\-1000\.000" to type DECIMAL\(6,4\) failed: value is out of range!
+query error
 SELECT cast(decimal '-1000.000' as decimal(6, 4));
+----
+db error: ERROR: Casting value "\-1000\.000" to type DECIMAL\(6,4\) failed: value is out of range!
 
-query error db error: ERROR: Casting value "123456789\.000" to type DECIMAL\(9,1\) failed: value is out of range!
+
+query error
 SELECT cast(decimal '123456789' as decimal(9, 1));
+----
+db error: ERROR: Casting value "123456789\.000" to type DECIMAL\(9,1\) failed: value is out of range!
+
 
 # DOCS_TEST: example_057
 
@@ -1438,17 +1561,29 @@ numeric
 
 # DOCS_TEST: example_058
 
-query error db error: ERROR: Could not convert string "1\.23e67" to DECIMAL\(38,0\)
+query error
 SELECT cast('1.23e67' as decimal(38, 0));
+----
+db error: ERROR: Could not convert string "1\.23e67" to DECIMAL\(38,0\)
 
-query error db error: ERROR: Could not convert string "0\.0446a" to DECIMAL\(9,1\)
+
+query error
 SELECT cast('0.0446a' as decimal(9, 1));
+----
+db error: ERROR: Could not convert string "0\.0446a" to DECIMAL\(9,1\)
 
-query error db error: ERROR: Could not convert string "" to DECIMAL\(9,1\)
+
+query error
 SELECT cast('' as decimal(9, 1));
+----
+db error: ERROR: Could not convert string "" to DECIMAL\(9,1\)
 
-query error db error: ERROR: Could not convert string "23e\-5d" to DECIMAL\(9,1\)
+
+query error
 SELECT cast('23e-5d' as decimal(9, 1));
+----
+db error: ERROR: Could not convert string "23e\-5d" to DECIMAL\(9,1\)
+
 
 query
 SELECT cast('1.23 ' as decimal(38, 0));
@@ -1462,11 +1597,17 @@ SELECT cast(' -3E+2' as decimal(12, 2));
 numeric
 -300.00
 
-query error db error: ERROR: Could not convert string "\-3E\+2\.1" to DECIMAL\(12,2\)
+query error
 SELECT cast('-3E+2.1' as decimal(12, 2));
+----
+db error: ERROR: Could not convert string "\-3E\+2\.1" to DECIMAL\(12,2\)
 
-query error db error: ERROR: Could not convert string "3E\+" to DECIMAL\(12,2\)
+
+query error
 SELECT cast('3E+' as decimal(12, 2));
+----
+db error: ERROR: Could not convert string "3E\+" to DECIMAL\(12,2\)
+
 
 # DOCS_TEST: example_059
 
@@ -1541,25 +1682,40 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_063
 
-query error db error: ERROR: syntax error at or near "SELECT"
+query error
 SELECT cast(ipprefix '1.2.3.4/24' as ipaddress) -- ipaddress '1.2.3.0'
 SELECT cast(ipprefix '2001:db8::ff00:42:8329/64' as ipaddress) -- ipaddress '2001:db8::'
+----
+db error: ERROR: syntax error at or near "SELECT"
+
 
 # DOCS_TEST: example_064
 
-query error db error: ERROR: Expected a constant as type modifier
+query error
 SELECT cast(stored_tdigest_binary as tdigest(double));
+----
+db error: ERROR: Expected a constant as type modifier
+
 
 # DOCS_TEST: example_065
 
-query error db error: ERROR: Expected a constant as type modifier
+query error
 SELECT cast(stored_qdigest_binary as qdigest(bigint));
+----
+db error: ERROR: Expected a constant as type modifier
 
-query error db error: ERROR: Expected a constant as type modifier
+
+query error
 SELECT cast(stored_qdigest_binary as qdigest(real));
+----
+db error: ERROR: Expected a constant as type modifier
 
-query error db error: ERROR: Expected a constant as type modifier
+
+query error
 SELECT cast(stored_qdigest_binary as qdigest(double));
+----
+db error: ERROR: Expected a constant as type modifier
+
 
 # DOCS_TEST: example_066
 
@@ -1623,9 +1779,12 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_068
 
-query error db error: ERROR: syntax error at or near "SELECT"
+query error
 SELECT cast(ipaddress '1.2.3.4' as ipprefix) -- ipprefix '1.2.3.4/32'
 SELECT cast(ipaddress '2001:db8::ff00:42:8329' as ipprefix) -- ipprefix '2001:db8::ff00:42:8329/128'
+----
+db error: ERROR: syntax error at or near "SELECT"
+
 
 # DOCS_TEST: example_069
 

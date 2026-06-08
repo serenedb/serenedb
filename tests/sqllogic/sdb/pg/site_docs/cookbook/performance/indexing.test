@@ -1,20 +1,37 @@
+# DOCS_SETUP: local_single_column_index_fixture
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (col1 INTEGER, col2 INTEGER);
+
+statement ok
+INSERT INTO tbl VALUES (1, 10), (2, 20), (3, 30);
+
 # DOCS_TEST: example_001
 
-statement error
+statement ok
 CREATE INDEX idx ON tbl (col1);
-----
-db error: ERROR: Table with name tbl does not exist!
-Did you mean "<slt:ignore>"?
 
+# DOCS_SETUP: local_multi_column_index_fixture
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (col1 INTEGER, col2 INTEGER);
+
+statement ok
+INSERT INTO tbl VALUES (1, 10), (2, 20), (3, 30);
 
 # DOCS_TEST: example_002
 
-statement error
+statement ok
 CREATE INDEX idx_multi_column ON tbl (col1, col2);
-----
-db error: ERROR: Table with name tbl does not exist!
-Did you mean "<slt:ignore>"?
 
 
-statement error db error: ERROR: syntax error at or near "\+"
+statement error
 CREATE INDEX idx_expr ON tbl (col1 + 1);
+----
+db error: ERROR: syntax error at or near "\+"

@@ -31,42 +31,54 @@ j
 
 # DOCS_TEST: example_004
 
-query error db error: ERROR: syntax error at or near "⟨complex_query⟩"
+query error
 WITH t(x) AS (⟨complex_query⟩)
 SELECT *
 FROM
     t AS t1,
     t AS t2,
     t AS t3;
+----
+db error: ERROR: syntax error at or near "⟨complex_query⟩"
+
 
 # DOCS_TEST: example_005
 
-query error db error: ERROR: syntax error at or near "\)"
+query error
 SELECT *
 FROM
     (⟨complex_query⟩) AS t1(x),
     (⟨complex_query⟩) AS t2(x),
     (⟨complex_query⟩) AS t3(x);
+----
+db error: ERROR: syntax error at or near "\)"
+
 
 # DOCS_TEST: example_006
 
-query error db error: ERROR: syntax error at or near "⟨complex_query⟩"
+query error
 WITH t(x) AS MATERIALIZED (⟨complex_query⟩)
 SELECT *
 FROM
     t AS t1,
     t AS t2,
     t AS t3;
+----
+db error: ERROR: syntax error at or near "⟨complex_query⟩"
+
 
 # DOCS_TEST: example_007
 
-query error db error: ERROR: syntax error at or near "⟨complex_query⟩"
+query error
 WITH t(x) AS NOT MATERIALIZED (⟨complex_query⟩)
 SELECT *
 FROM
     t AS t1,
     t AS t2,
     t AS t3;
+----
+db error: ERROR: syntax error at or near "⟨complex_query⟩"
+
 
 # DOCS_TEST: example_008
 

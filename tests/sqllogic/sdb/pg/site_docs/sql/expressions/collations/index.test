@@ -85,10 +85,13 @@ hännes
 
 # DOCS_TEST: example_011
 
-query error db error: ERROR: Cannot combine types with different collation!
+query error
 SELECT name
 FROM names
 WHERE name = 'hannes' COLLATE NOCASE;
+----
+db error: ERROR: Cannot combine types with different collation!
+
 
 # DOCS_TEST: example_012
 
@@ -100,10 +103,13 @@ INSERT INTO other_names VALUES ('HÄNNES');
 
 # DOCS_TEST: example_013
 
-query error db error: ERROR: Cannot combine types with different collation!
+query error
 SELECT names.name AS name, other_names.name AS other_name
 FROM names, other_names
 WHERE names.name = other_names.name;
+----
+db error: ERROR: Cannot combine types with different collation!
+
 
 # DOCS_TEST: example_014
 
@@ -156,3 +162,4 @@ SELECT * FROM strings ORDER BY s;
 ----
 db error: ERROR: Table with name strings does not exist!
 Did you mean "<slt:ignore>"?
+

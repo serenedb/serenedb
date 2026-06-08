@@ -71,3 +71,4 @@ GROUP BY category;
 ----
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
+

@@ -7,7 +7,7 @@ CREATE TABLE settings (
     is_active BOOLEAN
 );
 
-statement error db error: ERROR: Could not convert string 'on' to BOOL
+statement error
 -- Insert boolean values using different literal forms
 INSERT INTO settings VALUES
     (1, TRUE),
@@ -20,6 +20,9 @@ INSERT INTO settings VALUES
     (8, 'no'),
     (9, 'off'),
     (10, '0');
+----
+db error: ERROR: Could not convert string 'on' to BOOL
+
 
 query
 -- Retrieve all rows

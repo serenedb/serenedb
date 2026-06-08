@@ -20,13 +20,24 @@ query
 SELECT 'clubs'::ENUM ('spades', 'hearts', 'diamonds', 'clubs');
 ----
 
+# DOCS_SETUP: local_sales_data_varchar_fixture
+
+statement ok
+CREATE TABLE sales_data (
+    amount INTEGER,
+    region VARCHAR
+);
+
+statement ok
+INSERT INTO sales_data VALUES
+    (10, 'north'),
+    (20, 'south'),
+    (30, 'north');
+
 # DOCS_TEST: example_004
 
-statement error
+statement ok
 CREATE TYPE region AS ENUM (SELECT region FROM sales_data);
-----
-db error: ERROR: Table with name sales_data does not exist!
-Did you mean "<slt:ignore>"?
 
 
 # DOCS_SETUP
@@ -35,26 +46,44 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
+DROP TABLE IF EXISTS sales_data;
+
+statement ok
 DROP TYPE IF EXISTS region CASCADE;
 
+# DOCS_SETUP: file_fixtures_example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (10, 'north'),
+    (20, 'south'),
+    (30, 'north')
+) AS t("amount", "region")) TO '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_regions.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (10, 'north'),
+    (20, 'south'),
+    (30, 'north')
+) AS t("amount", "region")) TO '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_rows.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
 # DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| CREATE TYPE region AS ENUM (SELECT region FROM 'sales_data.csv');
+#|
+#| CREATE TABLE sales_data (amount INTEGER, region region);
+#|
+#| COPY sales_data FROM 'sales_data.csv';
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
-CREATE TYPE region AS ENUM (SELECT region FROM 'sales_data.csv');
+statement ok
+CREATE TYPE region AS ENUM (SELECT region FROM '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_regions.csv');
 
-statement error
+statement ok
 CREATE TABLE sales_data (amount INTEGER, region region);
-----
-db error: ERROR: Type with name region does not exist!
-Did you mean "<slt:ignore>"?
 
-
-statement error
-COPY sales_data FROM 'sales_data.csv';
-----
-db error: ERROR: Table with name sales_data does not exist!
-Did you mean "<slt:ignore>"?
-
+statement ok
+COPY sales_data FROM '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_rows.csv';
 
 # DOCS_TEST: example_006
 
@@ -131,6 +160,30 @@ WHERE current_mood = 'sad';
 ----
 name	current_mood
 Pagliacci	sad
+
+# DOCS_SETUP: local_person_mood_bogus_fixture
+
+statement ok
+DROP TABLE IF EXISTS person;
+
+statement ok
+DROP TYPE IF EXISTS mood CASCADE;
+
+statement ok
+CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+
+statement ok
+CREATE TABLE person (
+    name TEXT,
+    current_mood mood
+);
+
+statement ok
+INSERT INTO person VALUES
+    ('Pedro', 'happy'),
+    ('Mark', NULL),
+    ('Pagliacci', 'sad'),
+    ('Mr. Mackey', 'ok');
 
 # DOCS_TEST: example_013
 

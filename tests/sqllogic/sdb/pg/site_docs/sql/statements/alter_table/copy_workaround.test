@@ -1,0 +1,14 @@
+# DOCS_SETUP: local_tbl_copy_fixture
+
+statement ok
+CREATE TABLE tbl (col VARCHAR);
+
+statement ok
+INSERT INTO tbl VALUES
+    ('asdf'),
+    ('42');
+
+# DOCS_TEST: example_033
+
+statement ok
+CREATE TABLE tbl_copy AS FROM tbl;

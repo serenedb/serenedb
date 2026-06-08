@@ -8,10 +8,16 @@ struct_pack
 
 # DOCS_TEST: example_002
 
-query error connection closed
+query error
 SELECT {'test': [MAP([1, 5], [42.1, 45]), MAP([1, 5], [42.1, 45])]};
+----
+connection closed
+
 
 # DOCS_TEST: example_003
 
-query error connection closed
+query error
 SELECT [union_value(num := 2), union_value(str := 'ABC')::UNION(str VARCHAR, num INTEGER)];
+----
+connection closed
+

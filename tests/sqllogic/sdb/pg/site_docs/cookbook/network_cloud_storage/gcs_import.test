@@ -8,18 +8,62 @@
 # DOCS_RAW_END
 
 statement ok
-CREATE TABLE __docs_noop_cded4207_001 (i INTEGER);
+CREATE TABLE IF NOT EXISTS __docs_noop_cded4207_001 (i INTEGER);
+
+# DOCS_SETUP: file_fixtures_example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_gcs_import_example_002_1_file_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_parquet('gs://⟨gcs_bucket⟩/⟨file.parquet⟩');
+# DOCS_RAW_END
 
-query error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://storage\.googleapis\.com/%E2%9F%A8gcs_bucket%E2%9F%A9/%E2%9F%A8file\.parquet%E2%9F%A9'
+query ???
 SELECT *
-FROM read_parquet('gs://⟨gcs_bucket⟩/⟨file.parquet⟩');
+FROM read_parquet('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_gcs_import_example_002_1_file_parquet.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
 
 # DOCS_TEST: example_003
 
 statement ok
 LOAD httpfs;
 
-statement error (?i)Cannot open database .*
-ATTACH 'gs://⟨gcs_bucket⟩/⟨file.duckdb⟩' AS ⟨duckdb_database⟩ (READ_ONLY);
+statement ok
+DETACH IF EXISTS duckdb_database;
+
+statement ok
+DETACH IF EXISTS duckdb_database_fixture;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS duckdb_database_fixture;
+
+statement ok
+DROP TABLE IF EXISTS duckdb_database_fixture.items;
+
+statement ok
+CREATE TABLE duckdb_database_fixture.items AS SELECT 1 AS id, 'alpha' AS name;
+
+statement ok
+DETACH duckdb_database_fixture;
+
+# DOCS_RAW_BEGIN
+#| LOAD httpfs;
+#|
+#| ATTACH 'gs://⟨gcs_bucket⟩/⟨file.duckdb⟩' AS ⟨duckdb_database⟩ (READ_ONLY);
+# DOCS_RAW_END
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS duckdb_database (READ_ONLY);
+
+statement ok
+DETACH duckdb_database;

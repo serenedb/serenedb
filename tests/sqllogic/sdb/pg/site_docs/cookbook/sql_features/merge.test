@@ -130,23 +130,135 @@ SELECT * FROM master_ducks WHERE is_current = false ORDER BY duck_id, begin_date
 ----
 record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
 
+# DOCS_SETUP: local_quackers_history_fixture
+
+statement ok
+DROP TABLE IF EXISTS master_ducks;
+
+statement ok
+CREATE TABLE master_ducks (
+    record_id   INTEGER PRIMARY KEY,
+    duck_id     INTEGER NOT NULL,
+    duck_name   VARCHAR,
+    breed       VARCHAR,
+    location    VARCHAR,
+    begin_date  DATE NOT NULL,
+    end_date    DATE,
+    is_current  BOOLEAN NOT NULL DEFAULT true
+);
+
+statement ok
+INSERT INTO master_ducks VALUES
+    (1, 101, 'Quackers', 'Mallard', 'Pond A', DATE '2025-11-24', DATE '2025-11-25', false),
+    (10, 101, 'Quackers', 'Mallard', 'Pond B', DATE '2025-11-26', NULL, true);
+
 # DOCS_TEST: example_006
 
+# DOCS_RAW_BEGIN
+#| SELECT * FROM master_ducks where duck_name = 'Quackers' and is_current = false;
+# DOCS_RAW_END
 query
-SELECT * FROM master_ducks where duck_name = 'Quackers' and is_current = false;
+SELECT
+    record_id,
+    duck_id,
+    duck_name,
+    breed,
+    location,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_ducks
+WHERE duck_name = 'Quackers'
+  AND is_current = false;
 ----
 record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
+1	101	Quackers	Mallard	Pond A	2025-11-24	2025-11-25	false
+
+# DOCS_SETUP: local_quackers_current_fixture
+
+statement ok
+DROP TABLE IF EXISTS master_ducks;
+
+statement ok
+CREATE TABLE master_ducks (
+    record_id   INTEGER PRIMARY KEY,
+    duck_id     INTEGER NOT NULL,
+    duck_name   VARCHAR,
+    breed       VARCHAR,
+    location    VARCHAR,
+    begin_date  DATE NOT NULL,
+    end_date    DATE,
+    is_current  BOOLEAN NOT NULL DEFAULT true
+);
+
+statement ok
+INSERT INTO master_ducks VALUES
+    (1, 101, 'Quackers', 'Mallard', 'Pond A', DATE '2025-11-24', DATE '2025-11-25', false),
+    (10, 101, 'Quackers', 'Mallard', 'Pond B', DATE '2025-11-26', NULL, true);
 
 # DOCS_TEST: example_007
 
+# DOCS_RAW_BEGIN
+#| SELECT * FROM master_ducks where duck_name = 'Quackers' and is_current = true;
+# DOCS_RAW_END
 query
-SELECT * FROM master_ducks where duck_name = 'Quackers' and is_current = true;
+SELECT
+    record_id,
+    duck_id,
+    duck_name,
+    breed,
+    location,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_ducks
+WHERE duck_name = 'Quackers'
+  AND is_current = true;
 ----
 record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
+10	101	Quackers	Mallard	Pond B	2025-11-26	NULL	true
+
+# DOCS_SETUP: local_quackers_all_fixture
+
+statement ok
+DROP TABLE IF EXISTS master_ducks;
+
+statement ok
+CREATE TABLE master_ducks (
+    record_id   INTEGER PRIMARY KEY,
+    duck_id     INTEGER NOT NULL,
+    duck_name   VARCHAR,
+    breed       VARCHAR,
+    location    VARCHAR,
+    begin_date  DATE NOT NULL,
+    end_date    DATE,
+    is_current  BOOLEAN NOT NULL DEFAULT true
+);
+
+statement ok
+INSERT INTO master_ducks VALUES
+    (1, 101, 'Quackers', 'Mallard', 'Pond A', DATE '2025-11-24', DATE '2025-11-25', false),
+    (10, 101, 'Quackers', 'Mallard', 'Pond B', DATE '2025-11-26', NULL, true);
 
 # DOCS_TEST: example_008
 
+# DOCS_RAW_BEGIN
+#| SELECT * FROM master_ducks where duck_name = 'Quackers';
+# DOCS_RAW_END
 query
-SELECT * FROM master_ducks where duck_name = 'Quackers';
+SELECT
+    record_id,
+    duck_id,
+    duck_name,
+    breed,
+    location,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_ducks
+WHERE duck_name = 'Quackers'
+ORDER BY record_id;
 ----
 record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
+1	101	Quackers	Mallard	Pond A	2025-11-24	2025-11-25	false
+10	101	Quackers	Mallard	Pond B	2025-11-26	NULL	true

@@ -8,10 +8,16 @@ CREATE MACRO add(a, b) AS a + b;
 statement ok
 CREATE OR REPLACE MACRO add(a, b) AS a + b;
 
+# DOCS_SETUP: drop_add_before_if_not_exists
+
+statement ok
+DROP MACRO IF EXISTS add;
+
 # DOCS_TEST: example_003
 
-statement error db error: ERROR: function "add" already exists with same argument types
+statement ok
 CREATE MACRO IF NOT EXISTS add(a, b) AS a + b;
+
 
 # DOCS_TEST: example_004
 
@@ -63,15 +69,29 @@ CREATE OR REPLACE TEMP MACRO dynamic_table(col1_value, col2_value) AS TABLE
     UNION ALL
     SELECT 'Hello' AS col1_value, 456 AS col2_value;
 
+# DOCS_SETUP: local_users_for_macro_definition
+
+statement ok
+DROP TABLE IF EXISTS users;
+
+statement ok
+CREATE TABLE users (uid INTEGER, name VARCHAR);
+
+statement ok
+INSERT INTO users VALUES
+    (1, 'Ada'),
+    (5, 'Eve');
+
 # DOCS_TEST: example_013
 
-statement error
+statement ok
 CREATE MACRO get_users(i) AS TABLE
     SELECT * FROM users WHERE uid IN (SELECT unnest(i));
-----
-db error: ERROR: Table with name users does not exist!
-Did you mean "<slt:ignore>"?
 
+# DOCS_SETUP: drop_users_before_visible_create
+
+statement ok
+DROP TABLE IF EXISTS users;
 
 # DOCS_TEST: example_014
 
@@ -80,11 +100,11 @@ CREATE TABLE users AS
     SELECT *
     FROM (VALUES (1, 'Ada'), (2, 'Bob'), (3, 'Carl'), (4, 'Dan'), (5, 'Eve')) t(uid, name);
 
-query error
+query ??
 SELECT * FROM get_users([1, 5]);
 ----
-db error: ERROR: Table Function with name get_users does not exist!
-Did you mean "<slt:ignore>"?
+get_users	get_users
+1	Ada
 
 
 # DOCS_TEST: example_015
@@ -139,13 +159,23 @@ t	f
 
 # DOCS_TEST: example_020
 
-statement error db error: ERROR: Referenced column "b" was not found because the FROM clause is missing
+statement error
 CREATE MACRO add(a) AS a + b;
+----
+db error: ERROR: Referenced column "b" was not found because the FROM clause is missing
+
+
+# DOCS_SETUP: drop_add_before_working_example
+
+statement ok
+DROP MACRO IF EXISTS add;
+
 
 # DOCS_TEST: example_021
 
-statement error db error: ERROR: function "add" already exists with same argument types
+statement ok
 CREATE MACRO add(a, b) AS a + b;
+
 
 # DOCS_TEST: example_022
 
@@ -157,13 +187,22 @@ x
 
 # DOCS_TEST: example_023
 
-query error db error: ERROR: Could not convert string 'hello' to INT32
+query error
 SELECT add('hello', 3);
+----
+db error: ERROR: Could not convert string 'hello' to INT32
+
+
+# DOCS_SETUP: drop_add_default_before_default_example
+
+statement ok
+DROP MACRO IF EXISTS add_default;
 
 # DOCS_TEST: example_024
 
-statement error db error: ERROR: function "add_default" already exists with same argument types
+statement ok
 CREATE MACRO add_default(a, b := 5) AS a + b;
+
 
 # DOCS_TEST: example_025
 
@@ -196,8 +235,11 @@ x
 
 # DOCS_TEST: example_029
 
-query error db error: ERROR: Referenced column "a" was not found because the FROM clause is missing
+query error
 SELECT a + b AS x;
+----
+db error: ERROR: Referenced column "a" was not found because the FROM clause is missing
+
 
 # DOCS_TEST: example_030
 
@@ -220,8 +262,11 @@ CREATE OR REPLACE FUNCTION fibo(n) AS (
     END
 );
 
-query error db error: ERROR: Max expression depth limit of 1000 exceeded\. Use "SET max_expression_depth TO x" to increase the maximum expression depth\.
+query error
 SELECT fibo(3);
+----
+db error: ERROR: Max expression depth limit of 1000 exceeded\. Use "SET max_expression_depth TO x" to increase the maximum expression depth\.
+
 
 # DOCS_TEST: example_032
 

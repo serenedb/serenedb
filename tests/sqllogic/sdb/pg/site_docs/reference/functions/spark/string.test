@@ -16,11 +16,14 @@ bit_length
 
 # DOCS_TEST: example_003
 
-statement error db error: ERROR: syntax error at or near "char_type_write_side_check"
+statement error
 -- Function call examples (this function is not directly callable in Spark SQL).
 char_type_write_side_check("abcd", 3) -- VeloxUserError: "Exceeds allowed length limitation: '3'"
 char_type_write_side_check("世界人", 2) -- VeloxUserError: "Exceeds allowed length limitation: '2'"
 char_type_write_side_check("abc", 0) -- VeloxUserError: "The length limit must be greater than 0."
+----
+db error: ERROR: syntax error at or near "char_type_write_side_check"
+
 
 # DOCS_TEST: example_004
 
@@ -591,26 +594,44 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_019
 
-query error db error: ERROR: syntax error at or near ","
+query error
 SELECT overlay('Spark SQL', '_', 6, -1);
+----
+db error: ERROR: syntax error at or near ","
 
-query error db error: ERROR: syntax error at or near ","
+
+query error
 SELECT overlay('Spark SQL', 'CORE', 7, -1);
+----
+db error: ERROR: syntax error at or near ","
 
-query error db error: ERROR: syntax error at or near ","
+
+query error
 SELECT overlay('Spark SQL', 'ANSI ', 7, 0);
+----
+db error: ERROR: syntax error at or near ","
 
-query error db error: ERROR: syntax error at or near ","
+
+query error
 SELECT overlay('Spark SQL', 'tructured', 2, 4);
+----
+db error: ERROR: syntax error at or near ","
 
-query error db error: ERROR: syntax error at or near ","
+
+query error
 SELECT overlay('Spark SQL', '_', -6, 3);
+----
+db error: ERROR: syntax error at or near ","
+
 
 # DOCS_TEST: example_020
 
-statement error db error: ERROR: syntax error at or near "read_side_padding"
+statement error
 -- Function call examples (this function is not directly callable in Spark SQL).
 read_side_padding("a", 0) -- VeloxUserError: "The length limit must be greater than 0."
+----
+db error: ERROR: syntax error at or near "read_side_padding"
+
 
 # DOCS_TEST: example_021
 
@@ -1008,8 +1029,11 @@ SPARKSQL
 
 # DOCS_TEST: example_038
 
-statement error db error: ERROR: syntax error at or near "varchar_type_write_side_check"
+statement error
 -- Function call examples (this function is not directly callable in Spark SQL).
 varchar_type_write_side_check("abcd", 3) -- VeloxUserError: "Exceeds allowed length limitation: '3'"
 varchar_type_write_side_check("中文中国", 3) -- VeloxUserError: "Exceeds allowed length limitation: '3'"
 varchar_type_write_side_check("   ", 0) -- VeloxUserError: "The length limit must be greater than 0."
+----
+db error: ERROR: syntax error at or near "varchar_type_write_side_check"
+

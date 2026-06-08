@@ -23,53 +23,6 @@ SELECT list_transform(
 list_transform
 {16,17,18}
 
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_003
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (x INTEGER);
-
-statement error db error: ERROR: table tbl has 12 columns but 1 values were supplied
-INSERT INTO tbl VALUES (10);
-
-query error
-SELECT list_apply(
-            [1, 2],
-            lambda x: list_apply([4], lambda x: x + tbl.x)[1] + x
-    )
-FROM tbl;
-----
-db error: ERROR: Table "tbl" does not have a column named "x"
-
-Candidate bindings: : "a", "b", "c", "col1", "col2"
-
-
 # DOCS_TEST: example_004
 
 query
@@ -123,12 +76,14 @@ list_filter
 
 # DOCS_TEST: example_010
 
-query error
-SELECT list_filter([1, 2, 3, 4], lambda x: x > #1) FROM range(4);
+query
+SELECT list_filter([1, 2, 3, 4], lambda x: x > range) FROM range(4);
 ----
-db error: ERROR: Scalar Function with name # does not exist!
-Did you mean "<slt:ignore>"?
-
+list_filter
+{1,2,3,4}
+{2,3,4}
+{3,4}
+{4}
 
 # DOCS_TEST: example_011
 

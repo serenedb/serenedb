@@ -1,17 +1,47 @@
 control substitution on
 
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-query error (?i)No files found that match the pattern .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_import_example_001_1_input_json.json' (FORMAT json);
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_json_auto('input.json');
+# DOCS_RAW_END
+
+query
 SELECT *
-FROM read_json_auto('input.json');
+FROM read_json_auto('/tmp/${__DATABASE__}_cookbook_file_formats_json_import_example_001_1_input_json.json');
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_import_example_002_1_input_json.json' (FORMAT json);
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| CREATE TABLE new_tbl AS
+#|     SELECT *
+#|     FROM read_json_auto('input.json');
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
+statement ok
 CREATE TABLE new_tbl AS
     SELECT *
-    FROM read_json_auto('input.json');
+    FROM read_json_auto('/tmp/${__DATABASE__}_cookbook_file_formats_json_import_example_002_1_input_json.json');
 
 # DOCS_SETUP
 
@@ -40,14 +70,38 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_003
+# DOCS_SETUP: file_fixtures_example_003
 
-statement error (?i)No files found that match the pattern .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_import_example_003_1_input_json.json' (FORMAT json);
+
+# DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| INSERT INTO tbl
+#|     SELECT *
+#|     FROM read_json_auto('input.json');
+# DOCS_RAW_END
+
+statement ok
 INSERT INTO tbl
     SELECT *
-    FROM read_json_auto('input.json');
+    FROM read_json_auto('/tmp/${__DATABASE__}_cookbook_file_formats_json_import_example_003_1_input_json.json');
+
+# DOCS_SETUP: file_fixtures_example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_import_example_004_1_input_json.json' (FORMAT json);
 
 # DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| COPY tbl FROM 'input.json';
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
-COPY tbl FROM 'input.json';
+statement ok
+COPY tbl FROM '/tmp/${__DATABASE__}_cookbook_file_formats_json_import_example_004_1_input_json.json';

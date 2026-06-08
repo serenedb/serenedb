@@ -1,7 +1,7 @@
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY collation_dict (
-    TEMPLATE = 'collation',
-    LOCALE = 'en_US.UTF-8'
+    template = 'collation',
+    locale = 'en_US.UTF-8'
 );

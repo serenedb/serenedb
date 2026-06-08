@@ -1,3 +1,17 @@
+# DOCS_SETUP: top_n_in_group_fixture
+
+statement ok
+CREATE TABLE t1 (grp VARCHAR, val INTEGER);
+
+statement ok
+INSERT INTO t1 VALUES
+    ('a', 2),
+    ('a', 1),
+    ('b', 5),
+    ('b', 4),
+    ('a', 3),
+    ('b', 6);
+
 # DOCS_TEST: example_001
 
 query
@@ -12,16 +26,20 @@ x	y	z
 
 # DOCS_TEST: example_002
 
-query error
+query ??
 SELECT * FROM t1;
 ----
-db error: ERROR: Table with name t1 does not exist!
-Did you mean "<slt:ignore>"?
-
+grp	val
+a	2
+a	1
+b	5
+b	4
+a	3
+b	6
 
 # DOCS_TEST: example_003
 
-query error
+query ?? rowsort
 SELECT array_agg(rs.val), rs.grp
 FROM
     (SELECT val, grp, row_number() OVER (PARTITION BY grp ORDER BY val DESC) AS rid
@@ -29,14 +47,16 @@ FROM
 WHERE rid < 4
 GROUP BY rs.grp;
 ----
-db error: ERROR: Table with name t1 does not exist!
-Did you mean "<slt:ignore>"?
+array_agg	grp
+{3,2,1}	a
+{6,5,4}	b
 
 
 # DOCS_TEST: example_004
 
-query error
+query ? rowsort
 SELECT max(val, 3) FROM t1 GROUP BY grp;
 ----
-db error: ERROR: Table with name t1 does not exist!
-Did you mean "<slt:ignore>"?
+max
+{3,2,1}
+{6,5,4}

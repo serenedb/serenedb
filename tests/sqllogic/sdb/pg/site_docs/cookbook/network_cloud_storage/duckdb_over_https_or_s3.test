@@ -1,21 +1,98 @@
-# DOCS_TEST: example_001
+# DOCS_SETUP: local_stations_db_example_001
 
-statement error (?i)Cannot open database .*
-ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+statement ok
+DETACH IF EXISTS stations_fixture;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_fixture;
+
+statement ok
+DROP TABLE IF EXISTS stations_fixture.stations;
+
+statement ok
+CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
+    (1, 'Amsterdam Centraal'),
+    (2, 'Rotterdam Centraal')
+) AS t(station_id, station_name);
+
+statement ok
+DETACH stations_fixture;
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+# DOCS_RAW_END
+
+statement ok
+DETACH IF EXISTS stations_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_db;
+
+
+# DOCS_SETUP: local_stations_db_example_002
+
+statement ok
+DETACH IF EXISTS stations_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_db;
 
 # DOCS_TEST: example_002
 
-query error db error: ERROR: Table with name "stations_db\.stations" does not exist because schema "stations_db" does not exist\.
+query
 SELECT count(*) AS num_stations
 FROM stations_db.stations;
+----
+num_stations
+2
+
+
+# DOCS_SETUP: local_stations_db_example_003
+
+statement ok
+DETACH IF EXISTS stations_db;
+
+statement ok
+DETACH IF EXISTS stations_fixture;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_fixture;
+
+statement ok
+DROP TABLE IF EXISTS stations_fixture.stations;
+
+statement ok
+CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
+    (1, 'Amsterdam Centraal'),
+    (2, 'Rotterdam Centraal')
+) AS t(station_id, station_name);
+
+statement ok
+DETACH stations_fixture;
 
 # DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+# DOCS_RAW_END
 
-statement error (?i)Cannot open database .*
-ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_db;
+
+
+# DOCS_SETUP: local_stations_db_example_004
+
+statement ok
+DETACH IF EXISTS stations_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_db;
 
 # DOCS_TEST: example_004
 
-query error db error: ERROR: Table with name "stations_db\.stations" does not exist because schema "stations_db" does not exist\.
+query
 SELECT count(*) AS num_stations
 FROM stations_db.stations;
+----
+num_stations
+2

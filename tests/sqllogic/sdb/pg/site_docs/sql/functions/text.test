@@ -60,8 +60,11 @@ format
 
 # DOCS_TEST: example_007
 
-query error db error: ERROR: invalid hexadecimal digit: "h"
+query error
 SELECT format('{}', BLOB '\x00hello');
+----
+db error: ERROR: invalid hexadecimal digit: "h"
+
 
 # DOCS_TEST: example_008
 
@@ -187,8 +190,11 @@ printf
 
 # DOCS_TEST: example_018
 
-query error db error: ERROR: invalid format specifier
+query error
 SELECT printf('%s != %s', true, false);
+----
+db error: ERROR: invalid format specifier
+
 
 # DOCS_TEST: example_019
 
@@ -212,8 +218,11 @@ printf
 
 # DOCS_TEST: example_020
 
-query error db error: ERROR: invalid hexadecimal digit: "h"
+query error
 SELECT printf('%s', BLOB '\x00hello');
+----
+db error: ERROR: invalid hexadecimal digit: "h"
+
 
 # DOCS_TEST: example_021
 
@@ -241,13 +250,19 @@ printf
 
 # DOCS_TEST: example_024
 
-query error db error: ERROR: invalid format specifier
+query error
 SELECT printf('%b', 123_456_789);
+----
+db error: ERROR: invalid format specifier
+
 
 # DOCS_TEST: example_025
 
-query error db error: ERROR: invalid format specifier
+query error
 SELECT printf('%,d',  123_456_789);
+----
+db error: ERROR: invalid format specifier
+
 
 query
 SELECT printf('%.d',  123_456_789);
@@ -255,16 +270,28 @@ SELECT printf('%.d',  123_456_789);
 printf
 123456789
 
-query error db error: ERROR: invalid format specifier
+query error
 SELECT printf('%''d', 123_456_789);
+----
+db error: ERROR: invalid format specifier
 
-query error db error: ERROR: invalid format specifier
+
+query error
 SELECT printf('%_d',  123_456_789);
+----
+db error: ERROR: invalid format specifier
+
 
 # DOCS_TEST: example_026
 
-query error db error: ERROR: invalid format specifier
+query error
 SELECT printf('%,f',   123456.789);
+----
+db error: ERROR: invalid format specifier
 
-query error db error: ERROR: invalid format specifier
+
+query error
 SELECT printf('%,.2f', 123456.789);
+----
+db error: ERROR: invalid format specifier
+

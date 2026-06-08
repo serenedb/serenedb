@@ -8,10 +8,16 @@ CREATE SCHEMA s1;
 statement ok
 CREATE SCHEMA IF NOT EXISTS s2;
 
+# DOCS_SETUP: drop_s2_before_or_replace_example
+
+statement ok
+DROP SCHEMA IF EXISTS s2 CASCADE;
+
 # DOCS_TEST: example_003
 
-statement error db error: ERROR: schema "s2" already exists
+statement ok
 CREATE OR REPLACE SCHEMA s2;
+
 
 # DOCS_TEST: example_004
 
@@ -21,11 +27,33 @@ CREATE TABLE s1.t (id INTEGER PRIMARY KEY, other_id INTEGER);
 statement ok
 CREATE TABLE s2.t (id INTEGER PRIMARY KEY, j VARCHAR);
 
+# DOCS_SETUP: local_schema_join_fixture
+
+statement ok
+DELETE FROM s1.t;
+
+statement ok
+DELETE FROM s2.t;
+
+statement ok
+INSERT INTO s1.t VALUES
+    (1, 1),
+    (2, 1),
+    (3, 2);
+
+statement ok
+INSERT INTO s2.t VALUES
+    (1, 'a'),
+    (2, 'b');
+
 # DOCS_TEST: example_005
 
-query
+query ???? rowsort
 SELECT *
 FROM s1.t s1t, s2.t s2t
 WHERE s1t.other_id = s2t.id;
 ----
 id	other_id	id	j
+1	1	1	a
+2	1	1	a
+3	2	2	b

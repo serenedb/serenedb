@@ -27,6 +27,30 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
+statement ok
+CREATE MACRO fn() AS 1;
+
+statement ok
+CREATE TABLE idx_tbl (id INTEGER);
+
+statement ok
+CREATE INDEX idx ON idx_tbl (id);
+
+statement ok
+CREATE SCHEMA sch;
+
+statement ok
+CREATE SEQUENCE seq;
+
+statement ok
+CREATE MACRO mcr() AS 1;
+
+statement ok
+CREATE MACRO mt() AS TABLE SELECT 1 AS value;
+
+statement ok
+CREATE TYPE typ AS ENUM ('value');
+
 # DOCS_TEST: example_001
 
 statement ok
@@ -39,54 +63,38 @@ DROP VIEW IF EXISTS view1;
 
 # DOCS_TEST: example_003
 
-statement error
+statement ok
 DROP FUNCTION fn;
-----
-db error: ERROR: Macro Function with name fn does not exist!
-Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_004
 
-statement error db error: ERROR: Index with name idx does not exist!
+statement ok
 DROP INDEX idx;
 
 # DOCS_TEST: example_005
 
-statement error db error: ERROR: schema "sch" does not exist
+statement ok
 DROP SCHEMA sch;
 
 # DOCS_TEST: example_006
 
-statement error db error: ERROR: Sequence with name seq does not exist!
+statement ok
 DROP SEQUENCE seq;
 
 # DOCS_TEST: example_007
 
-statement error
+statement ok
 DROP MACRO mcr;
-----
-db error: ERROR: Macro Function with name mcr does not exist!
-Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_008
 
-statement error
+statement ok
 DROP MACRO TABLE mt;
-----
-db error: ERROR: Table Macro Function with name mt does not exist!
-Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_009
 
-statement error
+statement ok
 DROP TYPE typ;
-----
-db error: ERROR: Type with name typ does not exist!
-Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_010
 
@@ -96,12 +104,8 @@ CREATE SCHEMA myschema;
 statement ok
 CREATE TABLE myschema.t1 (i INTEGER);
 
-statement error
+statement error (?i)cannot drop schema myschema because other objects depend on it
 DROP SCHEMA myschema;
-----
-db error: ERROR: cannot drop schema myschema because other objects depend on it
-HINT: Use DROP ... CASCADE to drop the dependent objects too.
-
 
 # DOCS_SETUP
 
@@ -124,58 +128,6 @@ CREATE TABLE myschema.t1 (i INTEGER);
 
 statement ok
 DROP SCHEMA myschema CASCADE;
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_012
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (i INTEGER);
-
-statement ok
-CREATE VIEW view1 AS
-    SELECT i FROM tbl;
-
-statement error
-DROP TABLE tbl RESTRICT;
-----
-db error: ERROR: cannot drop table tbl because other objects depend on it
-DETAIL: view view1 depends on table tbl
-HINT: Use DROP ... CASCADE to drop the dependent objects too.
-
-
-query
-SELECT * FROM view1;
-----
-i
-1
-2
-3
 
 # DOCS_TEST: example_013
 

@@ -5,8 +5,11 @@ CHECKPOINT;
 
 # DOCS_TEST: example_002
 
-statement error db error: ERROR: Database "file_db" not found
+statement error
 CHECKPOINT file_db;
+----
+db error: ERROR: Database "file_db" not found
+
 
 # DOCS_TEST: example_003
 

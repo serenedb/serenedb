@@ -18,14 +18,15 @@ CREATE TABLE cities (
     lon  DECIMAL
 );
 
+# DOCS_SETUP: local_tablename_fixture
+
+statement ok
+CREATE TABLE tablename (id INTEGER);
+
 # DOCS_TEST: example_003
 
-statement error
-DROP TABLE ⟨tablename⟩;
-----
-db error: ERROR: Table with name ⟨tablename⟩ does not exist!
-Did you mean "<slt:ignore>"?
-
+statement ok
+DROP TABLE tablename;
 
 # DOCS_TEST: example_004
 
@@ -35,9 +36,12 @@ VALUES ('San Francisco', 46, 50, 0.25, '1994-11-27');
 
 # DOCS_TEST: example_005
 
-statement error db error: ERROR: Unsupported column type for RocksDB serialization: DECIMAL
+statement error
 INSERT INTO cities
 VALUES ('San Francisco', -194.0, 53.0);
+----
+db error: ERROR: Unsupported column type for RocksDB serialization: DECIMAL
+
 
 # DOCS_TEST: example_006
 
@@ -51,11 +55,22 @@ statement ok
 INSERT INTO weather (date, city, temp_hi, temp_lo)
 VALUES ('1994-11-29', 'Hayward', 54, 37);
 
-# DOCS_TEST: example_008
+# DOCS_SETUP: file_fixtures_example_008
 
-statement error (?i)No files found that match the pattern .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('Oakland', 45, 58, 0.1, DATE '1994-11-30')
+) AS t("city", "temp_lo", "temp_hi", "prcp", "date")) TO '/tmp/${__DATABASE__}_sql_introduction_example_008_1_weather_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
+# DOCS_TEST: example_008
+# DOCS_RAW_BEGIN
+#| COPY weather
+#| FROM 'weather.csv';
+# DOCS_RAW_END
+
+statement ok
 COPY weather
-FROM 'weather.csv';
+FROM '/tmp/${__DATABASE__}_sql_introduction_example_008_1_weather_csv.csv';
 
 # DOCS_TEST: example_009
 
@@ -67,6 +82,7 @@ city	temp_lo	temp_hi	prcp	date
 San Francisco	46	50	0.25	1994-11-27
 San Francisco	43	57	0	1994-11-29
 Hayward	37	54	NULL	1994-11-29
+Oakland	45	58	0.1	1994-11-30
 
 # DOCS_TEST: example_010
 
@@ -78,6 +94,7 @@ city	temp_lo	temp_hi	prcp	date
 San Francisco	46	50	0.25	1994-11-27
 San Francisco	43	57	0	1994-11-29
 Hayward	37	54	NULL	1994-11-29
+Oakland	45	58	0.1	1994-11-30
 
 # DOCS_TEST: example_011
 
@@ -89,6 +106,7 @@ city	temp_avg	date
 San Francisco	48	1994-11-27
 San Francisco	50	1994-11-29
 Hayward	45	1994-11-29
+Oakland	51	1994-11-30
 
 # DOCS_TEST: example_012
 
@@ -110,6 +128,7 @@ ORDER BY city;
 ----
 city	temp_lo	temp_hi	prcp	date
 Hayward	37	54	NULL	1994-11-29
+Oakland	45	58	0.1	1994-11-30
 San Francisco	46	50	0.25	1994-11-27
 San Francisco	43	57	0	1994-11-29
 
@@ -122,6 +141,7 @@ ORDER BY city, temp_lo;
 ----
 city	temp_lo	temp_hi	prcp	date
 Hayward	37	54	NULL	1994-11-29
+Oakland	45	58	0.1	1994-11-30
 San Francisco	43	57	0	1994-11-29
 San Francisco	46	50	0.25	1994-11-27
 
@@ -133,6 +153,7 @@ FROM weather;
 ----
 city
 Hayward
+Oakland
 San Francisco
 
 # DOCS_TEST: example_016
@@ -144,7 +165,17 @@ ORDER BY city;
 ----
 city
 Hayward
+Oakland
 San Francisco
+
+# DOCS_SETUP: local_cities_insert_failure_for_join_017
+
+statement error
+INSERT INTO cities
+VALUES ('San Francisco', -194.0, 53.0);
+----
+db error: ERROR: Unsupported column type for RocksDB serialization: DECIMAL
+
 
 # DOCS_TEST: example_017
 
@@ -155,6 +186,15 @@ WHERE city = name;
 ----
 city	temp_lo	temp_hi	prcp	date	name	lat	lon
 
+# DOCS_SETUP: local_cities_insert_failure_for_join_018
+
+statement error
+INSERT INTO cities
+VALUES ('San Francisco', -194.0, 53.0);
+----
+db error: ERROR: Unsupported column type for RocksDB serialization: DECIMAL
+
+
 # DOCS_TEST: example_018
 
 query
@@ -163,6 +203,15 @@ FROM weather, cities
 WHERE city = name;
 ----
 city	temp_lo	temp_hi	prcp	date	lon	lat
+
+# DOCS_SETUP: local_cities_insert_failure_for_join_019
+
+statement error
+INSERT INTO cities
+VALUES ('San Francisco', -194.0, 53.0);
+----
+db error: ERROR: Unsupported column type for RocksDB serialization: DECIMAL
+
 
 # DOCS_TEST: example_019
 
@@ -173,6 +222,15 @@ FROM weather, cities
 WHERE cities.name = weather.city;
 ----
 city	temp_lo	temp_hi	prcp	date	lon	lat
+
+# DOCS_SETUP: local_cities_insert_failure_for_join_020
+
+statement error
+INSERT INTO cities
+VALUES ('San Francisco', -194.0, 53.0);
+----
+db error: ERROR: Unsupported column type for RocksDB serialization: DECIMAL
+
 
 # DOCS_TEST: example_020
 
@@ -194,6 +252,7 @@ city	temp_lo	temp_hi	prcp	date	name	lat	lon
 San Francisco	46	50	0.25	1994-11-27	NULL	NULL	NULL
 San Francisco	43	57	0	1994-11-29	NULL	NULL	NULL
 Hayward	37	54	NULL	1994-11-29	NULL	NULL	NULL
+Oakland	45	58	0.1	1994-11-30	NULL	NULL	NULL
 
 # DOCS_TEST: example_022
 
@@ -206,10 +265,13 @@ max
 
 # DOCS_TEST: example_023
 
-query error db error: ERROR: WHERE clause cannot contain aggregates!
+query error
 SELECT city
 FROM weather
 WHERE temp_lo = max(temp_lo);
+----
+db error: ERROR: WHERE clause cannot contain aggregates!
+
 
 # DOCS_TEST: example_024
 
@@ -230,6 +292,7 @@ GROUP BY city;
 ----
 city	max
 Hayward	37
+Oakland	45
 San Francisco	46
 
 # DOCS_TEST: example_026
@@ -271,6 +334,7 @@ city	temp_lo	temp_hi	prcp	date
 San Francisco	46	50	0.25	1994-11-27
 San Francisco	41	55	0	1994-11-29
 Hayward	35	52	NULL	1994-11-29
+Oakland	43	56	0.1	1994-11-30
 
 # DOCS_TEST: example_030
 
@@ -287,11 +351,14 @@ FROM weather;
 city	temp_lo	temp_hi	prcp	date
 San Francisco	46	50	0.25	1994-11-27
 San Francisco	41	55	0	1994-11-29
+Oakland	43	56	0.1	1994-11-30
+
+# DOCS_SETUP: local_table_name_fixture_for_delete
+
+statement ok
+CREATE TABLE table_name (id INTEGER);
 
 # DOCS_TEST: example_032
 
-statement error
-DELETE FROM ⟨table_name⟩;
-----
-db error: ERROR: Table with name ⟨table_name⟩ does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+DELETE FROM table_name;

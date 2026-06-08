@@ -1,0 +1,12 @@
+# DOCS_SETUP: local_serial_distributors_fixture
+
+statement ok
+CREATE SEQUENCE serial START 1;
+
+statement ok
+CREATE TABLE distributors (id INTEGER, s VARCHAR);
+
+# DOCS_TEST: example_014
+
+statement ok
+INSERT INTO distributors VALUES (nextval('serial'), 'nothing');

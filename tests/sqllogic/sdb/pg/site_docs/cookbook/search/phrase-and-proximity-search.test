@@ -1,3 +1,58 @@
+# DOCS_SETUP: shared_search_dataset
+
+statement ok
+CREATE TABLE movies (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    description VARCHAR,
+    genre VARCHAR,
+    runtime INTEGER,
+    year INTEGER
+);
+
+statement ok
+INSERT INTO movies VALUES
+(1, 'The Matrix', 'A computer hacker learns about the true nature of reality and his role in the war against its controllers.', 'sci-fi', 136, 1999),
+(2, 'The Matrix Reloaded', 'Neo and the rebel leaders estimate they have 72 hours until Zion falls to the machine army.', 'sci-fi', 138, 2003),
+(3, 'The Matrix Revolutions', 'The human city of Zion defends itself against the massive machine invasion.', 'sci-fi', 129, 2003),
+(4, 'Jurassic Park', 'A pragmatic paleontologist touring an almost complete theme park on an island is tasked with protecting a group of children after the biggest blockbuster creatures break free.', 'adventure', 127, 1993),
+(5, 'Harry Potter and the Order of the Phoenix', 'With their warning about Lord Voldemorts return scoffed at, Harry and Dumbledore are targeted by the Wizard Authoritys new combative leader.', 'fantasy', 138, 2007),
+(6, 'Scary Movie', 'A year after disposing of the body of a man they accidentally killed, a group of dumb teenagers are stalked by a bumbling serial killer in the biggest blockbuster parody.', 'comedy', 88, 2000),
+(7, 'Star Trek: The Motion Picture', 'When an alien spacecraft of enormous power is spotted approaching Earth, Admiral James T. Kirk resumes command of the overhauled USS Enterprise to intercept the galaxy threat.', 'sci-fi', 132, 1979),
+(8, 'Alien', 'After investigating a mysterious transmission of unknown origin, the crew of a commercial spacecraft encounters a deadly lifeform in the dark galaxy of space.', 'sci-fi', 117, 1979),
+(9, 'Café Society', 'A young man arrives in Hollywood during the 1930s hoping to work in the film industry, falls in love, and finds himself swept up in the café culture and glamour of the era.', 'drama', 96, 2016),
+(10, 'The Grand Budapest Hotel', 'A writer encounters the owner of an aging high-class hotel who tells of his early years serving as a lobby boy in the legendary establishment.', 'comedy', 99, 2014);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY basic_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY exact_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = true,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX movies_idx ON movies
+    USING inverted (id, title basic_dict, description basic_dict, genre);
+
+statement ok
+CREATE INDEX movies_exact_idx ON movies
+    USING inverted (id, title exact_dict, description exact_dict);
+
 # DOCS_TEST: example_001
 
 query error
@@ -6,7 +61,7 @@ FROM movies_idx
 WHERE PHRASE(description, 'biggest blockbuster')
 ORDER BY id;
 ----
-db error: ERROR: Table with name movies_idx does not exist!
+db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -17,7 +72,7 @@ SELECT id, title
 FROM movies_idx
 WHERE PHRASE(description, 'the war against its controllers');
 ----
-db error: ERROR: Table with name movies_idx does not exist!
+db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -29,7 +84,7 @@ FROM movies_idx
 WHERE PHRASE(description, 'alien') AND PHRASE(description, 'galaxy')
 ORDER BY id;
 ----
-db error: ERROR: Table with name movies_idx does not exist!
+db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -41,7 +96,7 @@ FROM movies_idx
 WHERE PHRASE(description, 'computer hacker') OR PHRASE(description, 'serial killer')
 ORDER BY id;
 ----
-db error: ERROR: Table with name movies_idx does not exist!
+db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -53,7 +108,7 @@ FROM movies_idx
 WHERE PHRASE(title, 'the matrix') AND PHRASE(description, 'machine')
 ORDER BY id;
 ----
-db error: ERROR: Table with name movies_idx does not exist!
+db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -65,7 +120,7 @@ FROM movies_idx
 WHERE TERM_EQ(genre, 'sci-fi') AND PHRASE(description, 'galaxy')
 ORDER BY id;
 ----
-db error: ERROR: Table with name movies_idx does not exist!
+db error: ERROR: Scalar Function with name term_eq does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -78,7 +133,7 @@ WHERE PHRASE(description, 'film')
 GROUP BY genre
 ORDER BY matches DESC;
 ----
-db error: ERROR: Table with name movies_idx does not exist!
+db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -93,12 +148,15 @@ FROM movies_idx
 WHERE PHRASE(description, 'biggest blockbuster')
 GROUP BY genre;
 ----
-db error: ERROR: Table with name movies_idx does not exist!
+db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
 
 # DOCS_TEST: example_009
 
-query error db error: ERROR: text search dictionary "basic_dict" does not exist
+query ?
 -- The query "Biggest Blockbuster" becomes tokens: {biggest, blockbuster}
 SELECT ts_lexize('basic_dict', 'Biggest Blockbuster');
+----
+ts_lexize
+{biggest,blockbuster}

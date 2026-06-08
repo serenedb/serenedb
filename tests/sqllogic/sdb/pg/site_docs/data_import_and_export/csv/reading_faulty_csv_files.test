@@ -1,50 +1,206 @@
+# DOCS_SETUP: generated_wide_fixtures
+
+statement ok
+CREATE TABLE reject_scans AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
+statement ok
+CREATE TABLE reject_errors AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
 # DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE people (name VARCHAR, birth_date DATE);
 
-# DOCS_TEST: example_002
+# DOCS_SETUP: file_fixtures_example_002
 
-query error (?i)No files found that match the pattern .*
-FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_002_1_faulty_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
+# DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+# DOCS_RAW_END
+
+query error
+FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_002_1_faulty_csv.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+----
+db error: ERROR: Error when sniffing file "/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_002_1_faulty_csv.csv".
+It was not possible to automatically detect the CSV parsing dialect
+The search space used was:
+Delimiter Candidates: ',', '|', ';', '	'
+Quote/Escape Candidates: ['(no quote)','(no escape)'],['"','(no escape)'],['"','"'],['"','''],['"','\'],[''','(no escape)'],[''','''],[''','"'],[''','\']
+Comment Candidates: '\0', '#'
+Encoding: utf-8
+Possible fixes:
+* Disable the parser's strict mode (strict_mode=false) to allow reading rows that do not comply with the CSV standard.
+* Columns are set as: "columns = { 'name' : 'VARCHAR', 'age' : 'INTEGER'}", and they contain: 2 columns. It does not match the number of columns found by the sniffer: 3. Verify the columns parameter is correctly set.
+* Make sure you are using the correct file encoding. If not, set it (e.g., encoding = 'utf-16').
+* Set delimiter (e.g., delim=',')
+* Set quote (e.g., quote='"')
+* Set escape (e.g., escape='"')
+* Set comment (e.g., comment='#')
+* Set skip (skip=${n}) to skip ${n} lines at the top of the file
+* Enable ignore errors (ignore_errors=true) to ignore potential errors
+* Enable null padding (null_padding=true) to pad missing columns with NULL values
+* Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
+* Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
+
+
+# DOCS_SETUP: file_fixtures_example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_003_1_faulty_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| FROM read_csv(
+#|     'faulty.csv',
+#|     columns = {'name': 'VARCHAR', 'age': 'INTEGER'},
+#|     ignore_errors = true
+#| );
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query error
 FROM read_csv(
-    'faulty.csv',
+    '/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_003_1_faulty_csv.csv',
     columns = {'name': 'VARCHAR', 'age': 'INTEGER'},
     ignore_errors = true
 );
+----
+db error: ERROR: Error when sniffing file "/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_003_1_faulty_csv.csv".
+It was not possible to automatically detect the CSV parsing dialect
+The search space used was:
+Delimiter Candidates: ',', '|', ';', '	'
+Quote/Escape Candidates: ['(no quote)','(no escape)'],['"','(no escape)'],['"','"'],['"','''],['"','\'],[''','(no escape)'],[''','''],[''','"'],[''','\']
+Comment Candidates: '\0', '#'
+Encoding: utf-8
+Possible fixes:
+* Disable the parser's strict mode (strict_mode=false) to allow reading rows that do not comply with the CSV standard.
+* Columns are set as: "columns = { 'name' : 'VARCHAR', 'age' : 'INTEGER'}", and they contain: 2 columns. It does not match the number of columns found by the sniffer: 3. Verify the columns parameter is correctly set.
+* Make sure you are using the correct file encoding. If not, set it (e.g., encoding = 'utf-16').
+* Set delimiter (e.g., delim=',')
+* Set quote (e.g., quote='"')
+* Set escape (e.g., escape='"')
+* Set comment (e.g., comment='#')
+* Set skip (skip=${n}) to skip ${n} lines at the top of the file
+* Enable null padding (null_padding=true) to pad missing columns with NULL values
+* Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
+* Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
+
+
+
+# DOCS_SETUP: file_fixtures_example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_004_1_faulty_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| SELECT name
+#| FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query error
 SELECT name
-FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_004_1_faulty_csv.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
+----
+db error: ERROR: Error when sniffing file "/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_004_1_faulty_csv.csv".
+It was not possible to automatically detect the CSV parsing dialect
+The search space used was:
+Delimiter Candidates: ',', '|', ';', '	'
+Quote/Escape Candidates: ['(no quote)','(no escape)'],['"','(no escape)'],['"','"'],['"','''],['"','\'],[''','(no escape)'],[''','''],[''','"'],[''','\']
+Comment Candidates: '\0', '#'
+Encoding: utf-8
+Possible fixes:
+* Disable the parser's strict mode (strict_mode=false) to allow reading rows that do not comply with the CSV standard.
+* Columns are set as: "columns = { 'name' : 'VARCHAR', 'age' : 'INTEGER'}", and they contain: 2 columns. It does not match the number of columns found by the sniffer: 3. Verify the columns parameter is correctly set.
+* Make sure you are using the correct file encoding. If not, set it (e.g., encoding = 'utf-16').
+* Set delimiter (e.g., delim=',')
+* Set quote (e.g., quote='"')
+* Set escape (e.g., escape='"')
+* Set comment (e.g., comment='#')
+* Set skip (skip=${n}) to skip ${n} lines at the top of the file
+* Enable ignore errors (ignore_errors=true) to ignore potential errors
+* Enable null padding (null_padding=true) to pad missing columns with NULL values
+* Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
+* Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
+
+
+# DOCS_SETUP: file_fixtures_example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_005_1_faulty_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| FROM read_csv(
+#|     'faulty.csv',
+#|     columns = {'name': 'VARCHAR', 'age': 'INTEGER'},
+#|     store_rejects = true
+#| );
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query error
 FROM read_csv(
-    'faulty.csv',
+    '/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_005_1_faulty_csv.csv',
     columns = {'name': 'VARCHAR', 'age': 'INTEGER'},
     store_rejects = true
 );
+----
+db error: ERROR: Error when sniffing file "/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_005_1_faulty_csv.csv".
+It was not possible to automatically detect the CSV parsing dialect
+The search space used was:
+Delimiter Candidates: ',', '|', ';', '	'
+Quote/Escape Candidates: ['(no quote)','(no escape)'],['"','(no escape)'],['"','"'],['"','''],['"','\'],[''','(no escape)'],[''','''],[''','"'],[''','\']
+Comment Candidates: '\0', '#'
+Encoding: utf-8
+Possible fixes:
+* Disable the parser's strict mode (strict_mode=false) to allow reading rows that do not comply with the CSV standard.
+* Columns are set as: "columns = { 'name' : 'VARCHAR', 'age' : 'INTEGER'}", and they contain: 2 columns. It does not match the number of columns found by the sniffer: 3. Verify the columns parameter is correctly set.
+* Make sure you are using the correct file encoding. If not, set it (e.g., encoding = 'utf-16').
+* Set delimiter (e.g., delim=',')
+* Set quote (e.g., quote='"')
+* Set escape (e.g., escape='"')
+* Set comment (e.g., comment='#')
+* Set skip (skip=${n}) to skip ${n} lines at the top of the file
+* Enable null padding (null_padding=true) to pad missing columns with NULL values
+* Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
+* Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
+
+
 
 # DOCS_TEST: example_006
 
-query error
+query ???????????????????????????????????????????????????????????????????
 FROM reject_scans;
 ----
-db error: ERROR: Table with name reject_scans does not exist!
-Did you mean "<slt:ignore>"?
-
+id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	product_id	employee_id	title	body	content	description	name	tag	category	genre	region	country	city	product	customer	status	symbol	amount	quantity	price	views	runtime	year	revenue	salary	grade	balance	count	value	published_at	created_at	updated_at	date	sale_date	ts	time	l_orderkey	l_partkey	l_suppkey	l_linenumber	l_quantity	l_extendedprice	l_discount	l_tax	l_returnflag	l_linestatus	l_shipdate	l_commitdate	l_receiptdate	l_shipinstruct	l_shipmode	l_comment
+1	1	10	100	1	2	3	1	2	3	1	1	1	1	1	1	1	Intro to Search	search analytics body	search content	alien galaxy film	alpha	search	engineering	sci-fi	north	US	Berlin	widget	Alice	open	AAPL	100	10	9.5	4200	120	2024	1000	70000	1	500	1	42	2025-01-15	2025-01-15 10:00:00	2025-01-16 10:00:00	2025-01-15	2025-01-15	2025-01-15 10:00:00	2025-01-15 10:00:00	1	1	1	1	10	100	0.05	0.01	N	O	1998-09-01	1998-08-15	1998-09-05	DELIVER IN PERSON	AIR	first lineitem
+2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem
 
 # DOCS_TEST: example_007
 
-query error
+query ???????????????????????????????????????????????????????????????????
 FROM reject_errors;
 ----
-db error: ERROR: Table with name reject_errors does not exist!
-Did you mean "<slt:ignore>"?
+id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	product_id	employee_id	title	body	content	description	name	tag	category	genre	region	country	city	product	customer	status	symbol	amount	quantity	price	views	runtime	year	revenue	salary	grade	balance	count	value	published_at	created_at	updated_at	date	sale_date	ts	time	l_orderkey	l_partkey	l_suppkey	l_linenumber	l_quantity	l_extendedprice	l_discount	l_tax	l_returnflag	l_linestatus	l_shipdate	l_commitdate	l_receiptdate	l_shipinstruct	l_shipmode	l_comment
+1	1	10	100	1	2	3	1	2	3	1	1	1	1	1	1	1	Intro to Search	search analytics body	search content	alien galaxy film	alpha	search	engineering	sci-fi	north	US	Berlin	widget	Alice	open	AAPL	100	10	9.5	4200	120	2024	1000	70000	1	500	1	42	2025-01-15	2025-01-15 10:00:00	2025-01-16 10:00:00	2025-01-15	2025-01-15	2025-01-15 10:00:00	2025-01-15 10:00:00	1	1	1	1	10	100	0.05	0.01	N	O	1998-09-01	1998-08-15	1998-09-05	DELIVER IN PERSON	AIR	first lineitem
+2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem

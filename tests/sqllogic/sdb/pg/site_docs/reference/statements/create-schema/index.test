@@ -3,6 +3,11 @@
 statement ok
 CREATE SCHEMA IF NOT EXISTS analytics;
 
+# DOCS_SETUP: local_analytics_schema_fixture
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS analytics;
+
 # DOCS_TEST: example_002
 
 statement ok

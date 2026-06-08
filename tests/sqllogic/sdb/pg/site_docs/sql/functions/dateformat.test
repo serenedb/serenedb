@@ -1,3 +1,11 @@
+# DOCS_SETUP: generated_wide_fixtures
+
+statement ok
+CREATE TABLE dates AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
 # DOCS_TEST: example_001
 
 query
@@ -41,17 +49,59 @@ db error: ERROR: Could not parse string "02/50/1992" according to format specifi
 Error: Month out of range, expected a value between 1 and 12
 
 
+# DOCS_SETUP: file_fixtures_example_006
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('02/03/1992', 'Monday, 2 March 1992 - 08:32:45 PM')
+) AS t("d", "ts")) TO '/tmp/${__DATABASE__}_sql_functions_dateformat_example_006_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
 # DOCS_TEST: example_006
+# DOCS_RAW_BEGIN
+#| COPY dates FROM 'test.csv' (DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%A, %-d %B %Y - %I:%M:%S %p');
+# DOCS_RAW_END
 
 statement error
-COPY dates FROM 'test.csv' (DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%A, %-d %B %Y - %I:%M:%S %p');
+COPY dates FROM '/tmp/${__DATABASE__}_sql_functions_dateformat_example_006_1_test_csv.csv' (DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%A, %-d %B %Y - %I:%M:%S %p');
 ----
-db error: ERROR: Table with name dates does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Error when sniffing file "/tmp/${__DATABASE__}_sql_functions_dateformat_example_006_1_test_csv.csv".
+It was not possible to automatically detect the CSV parsing dialect
+The search space used was:
+Delimiter Candidates: ',', '|', ';', '	'
+Quote/Escape Candidates: ['(no quote)','(no escape)'],['"','(no escape)'],['"','"'],['"','''],['"','\'],[''','(no escape)'],[''','''],[''','"'],[''','\']
+Comment Candidates: '\0', '#'
+Encoding: utf-8
+Possible fixes:
+* Disable the parser's strict mode (strict_mode=false) to allow reading rows that do not comply with the CSV standard.
+* Columns are set as: "columns = { 'id' : 'INTEGER', 'i' : 'INTEGER', 'j' : 'INTEGER', 'k' : 'INTEGER', 'x' : 'INTEGER', 'y' : 'INTEGER', 'z' : 'INTEGER', 'a' : 'INTEGER', 'b' : 'INTEGER', 'c' : 'INTEGER', 'article_id' : 'INTEGER', 'comment_id' : 'INTEGER', 'author_id' : 'INTEGER', 'customer_id' : 'INTEGER', 'order_id' : 'INTEGER', 'product_id' : 'INTEGER', 'employee_id' : 'INTEGER', 'title' : 'VARCHAR', 'body' : 'VARCHAR', 'content' : 'VARCHAR', 'description' : 'VARCHAR', 'name' : 'VARCHAR', 'tag' : 'VARCHAR', 'category' : 'VARCHAR', 'genre' : 'VARCHAR', 'region' : 'VARCHAR', 'country' : 'VARCHAR', 'city' : 'VARCHAR', 'product' : 'VARCHAR', 'customer' : 'VARCHAR', 'status' : 'VARCHAR', 'symbol' : 'VARCHAR', 'amount' : 'INTEGER', 'quantity' : 'INTEGER', 'price' : 'DOUBLE', 'views' : 'INTEGER', 'runtime' : 'INTEGER', 'year' : 'INTEGER', 'revenue' : 'INTEGER', 'salary' : 'INTEGER', 'grade' : 'INTEGER', 'balance' : 'INTEGER', 'count' : 'INTEGER', 'value' : 'INTEGER', 'published_at' : 'DATE', 'created_at' : 'TIMESTAMP', 'updated_at' : 'TIMESTAMP', 'date' : 'DATE', 'sale_date' : 'DATE', 'ts' : 'TIMESTAMP', 'time' : 'TIMESTAMP', 'l_orderkey' : 'INTEGER', 'l_partkey' : 'INTEGER', 'l_suppkey' : 'INTEGER', 'l_linenumber' : 'INTEGER', 'l_quantity' : 'INTEGER', 'l_extendedprice' : 'DOUBLE', 'l_discount' : 'DOUBLE', 'l_tax' : 'DOUBLE', 'l_returnflag' : 'VARCHAR', 'l_linestatus' : 'VARCHAR', 'l_shipdate' : 'DATE', 'l_commitdate' : 'DATE', 'l_receiptdate' : 'DATE', 'l_shipinstruct' : 'VARCHAR', 'l_shipmode' : 'VARCHAR', 'l_comment' : 'VARCHAR'}", and they contain: 67 columns. It does not match the number of columns found by the sniffer: 3. Verify the columns parameter is correctly set.
+* Make sure you are using the correct file encoding. If not, set it (e.g., encoding = 'utf-16').
+* Set delimiter (e.g., delim=',')
+* Set quote (e.g., quote='"')
+* Set escape (e.g., escape='"')
+* Set comment (e.g., comment='#')
+* Set skip (skip=${n}) to skip ${n} lines at the top of the file
+* Enable ignore errors (ignore_errors=true) to ignore potential errors
+* Enable null padding (null_padding=true) to pad missing columns with NULL values
+* Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
+* Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
 
+
+# DOCS_SETUP: file_fixtures_example_007
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('02/03/1992', 'Monday, 2 March 1992 - 08:32:45 PM')
+) AS t("d", "ts")) TO '/tmp/${__DATABASE__}_sql_functions_dateformat_example_007_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_007
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_csv('test.csv', dateformat = '%m/%d/%Y', timestampformat = '%A, %-d %B %Y - %I:%M:%S %p');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM read_csv('test.csv', dateformat = '%m/%d/%Y', timestampformat = '%A, %-d %B %Y - %I:%M:%S %p');
+FROM read_csv('/tmp/${__DATABASE__}_sql_functions_dateformat_example_007_1_test_csv.csv', dateformat = '%m/%d/%Y', timestampformat = '%A, %-d %B %Y - %I:%M:%S %p');
+----
+d	ts
+1992-02-03	1992-03-02 20:32:45

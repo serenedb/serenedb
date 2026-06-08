@@ -34,3 +34,4 @@ db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_ar
 Extension "spatial" is an existing extension.
 
 Install it first using "INSTALL spatial".
+

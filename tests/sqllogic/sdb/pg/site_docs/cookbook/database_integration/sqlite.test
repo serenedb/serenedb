@@ -43,9 +43,12 @@ Extension "sqlite" is an existing extension.
 Install it first using "INSTALL sqlite".
 
 
-query error db error: ERROR: Table with name "test\.tbl_name" does not exist because schema "test" does not exist\.
+query error
 -- The table "tbl_name" can now be queried as if it is a regular table
 SELECT * FROM test.tbl_name;
+----
+db error: ERROR: Table with name "test\.tbl_name" does not exist because schema "test" does not exist\.
+
 
 statement ok
 -- Switch the active database to "test"

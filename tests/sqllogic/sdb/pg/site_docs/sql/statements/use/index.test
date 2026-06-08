@@ -5,9 +5,12 @@ statement ok
 --- if it does not exist.
 USE memory;
 
-statement error db error: ERROR: SET schema: No catalog \+ schema named "duck\.main" found\.
+statement error
 --- Sets the 'duck.main' database and schema as the default
 USE duck.main;
+----
+db error: ERROR: SET schema: No catalog \+ schema named "duck\.main" found\.
+
 
 statement ok
 -- Sets the `main` schema of the currently selected database as the default, in this case 'duck.main'

@@ -7,6 +7,7 @@ target_sources(
         http/router.cpp
         http/h1_codec.cpp
         http/tier0_handlers.cpp
+        http/test_api_handlers.cpp
         pg/pg_frame_codec.cpp
         pg/wire_frames.cpp
         pg/auth.cpp

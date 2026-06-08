@@ -20,20 +20,13 @@
 
 #pragma once
 
-#include <chrono>
-#include <cstddef>
+#include "network/http/router.h"
 
 namespace sdb::network {
 
-inline constexpr size_t kReadBlock = 16 * 1024;
-inline constexpr size_t kBufferMaxGrowth = 1u << 20;
-
-// Per-read HTTP inactivity timeouts: bound how long one async socket read may
-// stall so a slow/idle client cannot pin an io thread (slow-loris). Re-armed
-// around each read; the keep-alive value applies while waiting for the first
-// byte of the next request.
-inline constexpr auto kHttpHeaderReadTimeout = std::chrono::seconds{10};
-inline constexpr auto kHttpKeepAliveIdleTimeout = std::chrono::seconds{75};
-inline constexpr auto kHttpBodyReadTimeout = std::chrono::seconds{30};
+// Registers test-only HTTP endpoints under /_test/ (echo, ping, bytes, fuzz,
+// status) used by functional + performance tests. Gated behind a flag; never
+// enabled in production.
+void RegisterTestApi(HttpRouter& router);
 
 }  // namespace sdb::network

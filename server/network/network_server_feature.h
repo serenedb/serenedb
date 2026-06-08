@@ -56,6 +56,7 @@ class NetworkServerFeature final {
   std::string _auth_user;
   bool _auth_cleartext;
   bool _allow_cleartext_without_tls;
+  bool _http_test_api;
   std::uint32_t _io_threads;
   network::HttpRouter _router;
   network::HttpServerContext _http_context{_router};

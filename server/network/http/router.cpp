@@ -48,6 +48,19 @@ yaclib::Future<HttpResponse> HttpRouter::Route(HttpRequest& request) {
   const size_t cut = target.find_first_of("?#");
   const std::string_view path =
     cut == std::string_view::npos ? target : target.substr(0, cut);
+  // Parse the query string (request-scoped) into request.query, percent-decoded
+  // by ada; path matching below still uses `path` only, so it is unaffected.
+  request.query.clear();
+  if (cut != std::string_view::npos && target[cut] == '?') {
+    const size_t frag = target.find('#', cut);
+    const std::string_view raw_query = target.substr(
+      cut + 1,
+      frag == std::string_view::npos ? std::string_view::npos : frag - cut - 1);
+    ada::url_search_params parsed{raw_query};
+    for (const auto& [key, value] : parsed) {
+      request.query.emplace_back(key, value);
+    }
+  }
   if (path.empty() || path.front() != '/') {
     return yaclib::MakeFuture(HttpResponse::NotFound());
   }

@@ -29,6 +29,7 @@
 
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
+#include "network/http/test_api_handlers.h"
 #include "network/http/tier0_handlers.h"
 #include "network/pg/auth.h"
 #include "network/tls_context.h"
@@ -68,6 +69,10 @@ ABSL_FLAG(bool, network_auth_cleartext, false,
 
 ABSL_FLAG(bool, network_allow_cleartext_without_tls, false,
           "Permit cleartext password auth on plaintext (non-TLS) connections.");
+
+ABSL_FLAG(bool, network_http_test_api, false,
+          "Register test-only HTTP endpoints under /_test/ (echo, ping, bytes, "
+          "fuzz, status). For tests/benchmarks only -- never in production.");
 
 namespace sdb {
 namespace {
@@ -131,6 +136,7 @@ NetworkServerFeature::NetworkServerFeature()
     _auth_cleartext{absl::GetFlag(FLAGS_network_auth_cleartext)},
     _allow_cleartext_without_tls{
       absl::GetFlag(FLAGS_network_allow_cleartext_without_tls)},
+    _http_test_api{absl::GetFlag(FLAGS_network_http_test_api)},
     _io_threads{
       static_cast<std::uint32_t>(absl::GetFlag(FLAGS_server_io_threads))} {
   if (_io_threads == 0) {
@@ -178,6 +184,10 @@ void NetworkServerFeature::start() {
   if (!_endpoint.empty()) {
     const auto bind = ParseEndpoint(_endpoint);
     RegisterTier0(_router);
+    if (_http_test_api) {
+      network::RegisterTestApi(_router);
+      SDB_INFO(GENERAL, "network HTTP test API enabled under /_test/");
+    }
     std::shared_ptr<network::AcceptorBase> acceptor;
     if (tls) {
       acceptor = std::make_shared<

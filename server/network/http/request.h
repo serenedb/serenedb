@@ -54,6 +54,7 @@ struct HttpRequest {
   std::string target;
   std::vector<Field> headers;
   std::vector<std::pair<std::string, std::string>> params;
+  std::vector<std::pair<std::string, std::string>> query;
   message::SequenceView body;
   bool keep_alive = true;
 
@@ -82,6 +83,17 @@ struct HttpRequest {
 
   std::string_view Param(std::string_view name) const {
     for (const auto& [key, value] : params) {
+      if (key == name) {
+        return value;
+      }
+    }
+    return {};
+  }
+
+  // Query-string parameters (percent-decoded). Returns the first match, like
+  // Param; repeated keys keep wire order.
+  std::string_view Query(std::string_view name) const {
+    for (const auto& [key, value] : query) {
       if (key == name) {
         return value;
       }

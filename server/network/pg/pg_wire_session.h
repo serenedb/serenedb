@@ -79,7 +79,6 @@
 #include "pg/command_tag.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
-#include "pg/copy_messages_queue.h"
 #include "pg/duckdb_sql_statement.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"

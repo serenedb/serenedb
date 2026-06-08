@@ -138,6 +138,12 @@ int H1Codec::OnHeadersComplete(llhttp_t* parser) {
 
 int H1Codec::OnBody(llhttp_t* parser, const char* at, size_t length) {
   auto* self = static_cast<H1Codec*>(parser->data);
+  // Enforce the body cap per byte: a chunked body has content_length 0 at
+  // headers-complete, so the OnHeadersComplete check can't bound it.
+  self->_body_bytes += length;
+  if (self->_body_bytes > self->_limits.max_body_bytes) {
+    return self->Fail(413);
+  }
   if (self->_body_out == nullptr) {
     return HPE_OK;
   }
@@ -217,11 +223,16 @@ HttpRequest H1Codec::TakeHead() noexcept {
 
 void H1Codec::EncodeHead(const HttpResponse& response, bool keep_alive,
                          message::Buffer& out) const {
-  std::string head = absl::StrCat(
-    "HTTP/1.1 ", response.status, " ", response.reason,
-    "\r\nContent-Type: ", response.content_type,
-    "\r\nContent-Length: ", response.body.size(),
-    "\r\nConnection: ", keep_alive ? "keep-alive" : "close", "\r\n");
+  std::string head =
+    absl::StrCat("HTTP/1.1 ", response.status, " ", response.reason,
+                 "\r\nContent-Type: ", response.content_type);
+  if (response.IsStreaming()) {
+    absl::StrAppend(&head, "\r\nTransfer-Encoding: chunked");
+  } else {
+    absl::StrAppend(&head, "\r\nContent-Length: ", response.body.size());
+  }
+  absl::StrAppend(&head, "\r\nConnection: ", keep_alive ? "keep-alive" : "close",
+                  "\r\n");
   for (const auto& [name, value] : response.headers) {
     absl::StrAppend(&head, name, ": ", value, "\r\n");
   }
@@ -229,11 +240,24 @@ void H1Codec::EncodeHead(const HttpResponse& response, bool keep_alive,
   out.WriteUncommitted(head);
 }
 
+void WriteChunk(message::Buffer& dst, std::string_view data) {
+  if (data.empty()) {
+    return;
+  }
+  dst.WriteUncommitted(absl::StrCat(absl::Hex(data.size())));
+  dst.WriteUncommitted("\r\n");
+  dst.WriteUncommitted(data);
+  dst.WriteUncommitted("\r\n");
+}
+
+void WriteLastChunk(message::Buffer& dst) { dst.WriteUncommitted("0\r\n\r\n"); }
+
 void H1Codec::Reset() noexcept {
   llhttp_reset(&_parser);
   _target.clear();
   _fields.clear();
   _content_length = 0;
+  _body_bytes = 0;
   _head_bytes = 0;
   _body_out = nullptr;
   _chunked = false;

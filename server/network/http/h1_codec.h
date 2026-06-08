@@ -94,6 +94,7 @@ class H1Codec final {
   std::string _target;
   std::vector<HttpRequest::Field> _fields;
   uint64_t _content_length{0};
+  uint64_t _body_bytes{0};
   size_t _head_bytes{0};
   message::Buffer* _body_out{nullptr};
   bool _chunked{false};
@@ -104,5 +105,9 @@ class H1Codec final {
   int _error_status{0};
   H1Event _event{H1Event::NeedMore};
 };
+
+// HTTP/1.1 chunked transfer-encoding framers for streaming responses (sans-io).
+void WriteChunk(message::Buffer& dst, std::string_view data);
+void WriteLastChunk(message::Buffer& dst);
 
 }  // namespace sdb::network

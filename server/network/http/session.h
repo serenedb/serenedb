@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -50,11 +51,11 @@ class HttpSession final
 
   HttpSession(HttpServerContext& ctx, asio_ns::io_context& io)
     requires(Kind != SocketKind::Ssl)
-    : _socket{io}, _router{ctx.router} {}
+    : _socket{io}, _deadline{io}, _router{ctx.router} {}
 
   HttpSession(HttpServerContext& ctx, asio_ns::io_context& io)
     requires(Kind == SocketKind::Ssl)
-    : _socket{io, *ctx.ssl}, _router{ctx.router} {}
+    : _socket{io, *ctx.ssl}, _deadline{io}, _router{ctx.router} {}
 
   void Start() { Run().Detach(); }
 
@@ -67,12 +68,32 @@ class HttpSession final
   yaclib::Future<> Flush();
   yaclib::Future<> SendError(int status);
 
+  // Bound the in-flight socket read with a per-connection deadline. The timer
+  // and socket share this connection's single-threaded io_context, so the
+  // expiry handler, socket cancel, and read completion are serialized on one
+  // thread (no strand). On expiry, closing aborts the read -> the awaiting
+  // coroutine resumes with an error -> the session tears down. The handler
+  // touches only the socket; it never resumes the coroutine.
+  void Arm(std::chrono::steady_clock::duration timeout) {
+    _deadline.expires_after(timeout);
+    _deadline.async_wait(
+      [self = this->shared_from_this()](const asio_ns::error_code& ec) {
+        if (ec) {
+          return;  // cancelled or superseded by the next Arm/Disarm
+        }
+        self->_socket.Close();
+      });
+  }
+  void Disarm() noexcept { _deadline.cancel(); }
+
   Socket<Kind> _socket;
+  asio_ns::steady_timer _deadline;
   HttpRouter& _router;
   H1Codec _codec;
   message::Buffer _recv{kReadBlock, kBufferMaxGrowth};
   message::Buffer _send{kReadBlock, kBufferMaxGrowth};
   message::Buffer _dechunk{kReadBlock, kBufferMaxGrowth};
+  ChunkSink _sink;
 };
 
 template<SocketKind Kind>
@@ -98,7 +119,9 @@ yaclib::Future<> HttpSession<Kind>::Run() {
   auto self = this->shared_from_this();
   if constexpr (Kind == SocketKind::Ssl) {
     try {
+      Arm(kHttpHeaderReadTimeout);
       co_await _socket.Handshake();
+      Disarm();
     } catch (const std::exception&) {
       _socket.Close();
       co_return {};
@@ -124,7 +147,10 @@ yaclib::Future<> HttpSession<Kind>::Run() {
             continue;
           }
         }
+        Arm(_recv.ReadableSize() == 0 ? kHttpKeepAliveIdleTimeout
+                                      : kHttpHeaderReadTimeout);
         const size_t n = co_await _socket.ReadSome(_recv.Reserve(kReadBlock));
+        Disarm();
         if (n == 0) {
           _socket.Close();
           co_return {};
@@ -159,7 +185,9 @@ yaclib::Future<> HttpSession<Kind>::Run() {
               continue;
             }
           }
+          Arm(kHttpBodyReadTimeout);
           const size_t n = co_await _socket.ReadSome(_recv.Reserve(kReadBlock));
+          Disarm();
           if (n == 0) {
             _socket.Close();
             co_return {};
@@ -170,7 +198,9 @@ yaclib::Future<> HttpSession<Kind>::Run() {
       } else {
         const auto length = static_cast<size_t>(_codec.ContentLength());
         while (_recv.ReadableSize() < length) {
+          Arm(kHttpBodyReadTimeout);
           const size_t n = co_await _socket.ReadSome(_recv.Reserve(kReadBlock));
+          Disarm();
           if (n == 0) {
             _socket.Close();
             co_return {};
@@ -190,10 +220,36 @@ yaclib::Future<> HttpSession<Kind>::Run() {
         response = HttpResponse::Error(500);
       }
       _codec.EncodeHead(response, keep_alive, _send);
-      if (!is_head) {
-        _send.WriteUncommitted(response.body);
+      if (response.IsStreaming()) {
+        co_await Flush();  // send the head before any chunks
+        if (!is_head) {
+          auto& producer = *response.producer;
+          for (;;) {
+            _sink.Clear();
+            bool more;
+            try {
+              more = co_await producer(_sink);
+            } catch (const std::exception&) {
+              // Head is already on the wire, so a clean HTTP error is no longer
+              // possible: abandon the unterminated body and drop the connection.
+              _socket.Close();
+              co_return {};
+            }
+            WriteChunk(_send, _sink.View());
+            co_await Flush();
+            if (!more) {
+              WriteLastChunk(_send);
+              co_await Flush();
+              break;
+            }
+          }
+        }
+      } else {
+        if (!is_head) {
+          _send.WriteUncommitted(response.body);
+        }
+        co_await Flush();
       }
-      co_await Flush();
 
       if (pinned_body != 0) {
         _recv.Consume(pinned_body);

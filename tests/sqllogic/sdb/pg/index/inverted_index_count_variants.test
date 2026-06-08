@@ -29,6 +29,10 @@ INSERT INTO ct VALUES
   (5, NULL, 4,    'red')
 
 
+statement ok
+VACUUM (REFRESH_TABLE) ct;
+
+
 # COUNT variants — match the values PostgreSQL produces (DB Fiddle output).
 # Constant / star args count every row; column args count non-null values
 # of that column; literal NULL never counts.
@@ -39,7 +43,7 @@ SELECT count(*), count(88), count(1), count(2),
 FROM ct_idx;
 ----
 count	count	count	count	count	count	count	count
-0	0	0	0	0	0	0	0
+5	5	5	5	3	3	0	5
 
 
 # Same shape applied to the base table (rocksdb path) -- sanity check that

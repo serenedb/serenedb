@@ -131,21 +131,21 @@ count
 
 connection ds_after
 query
-SELECT id FROM ds_keep.t WHERE body @@ ts_phrase('CHANGED');
+SELECT id FROM ds_keep_idx WHERE body @@ ts_phrase('CHANGED');
 ----
 id
 2
 
 connection ds_after
 query
-SELECT id FROM ds_keep.t WHERE body @@ ts_phrase('after fault charlie');
+SELECT id FROM ds_keep_idx WHERE body @@ ts_phrase('after fault charlie');
 ----
 id
 3
 
 connection ds_after
 query
-SELECT id FROM ds_keep.t WHERE body @@ ts_phrase('post drop echo');
+SELECT id FROM ds_keep_idx WHERE body @@ ts_phrase('post drop echo');
 ----
 id
 4
@@ -153,7 +153,7 @@ id
 # Old pk=2 body and pk=1 are both gone.
 connection ds_after
 query
-SELECT COUNT(*) FROM ds_keep.t WHERE body @@ ts_phrase('keep seed bravo');
+SELECT COUNT(*) FROM ds_keep_idx WHERE body @@ ts_phrase('keep seed bravo');
 ----
 count
 0

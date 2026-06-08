@@ -66,21 +66,21 @@ count
 # Spot checks
 connection ef_after
 query
-SELECT id FROM ef_t WHERE body @@ ts_phrase('doc_0');
+SELECT id FROM ef_idx WHERE body @@ ts_phrase('doc_0');
 ----
 id
 0
 
 connection ef_after
 query
-SELECT id FROM ef_t WHERE body @@ ts_phrase('doc_2500');
+SELECT id FROM ef_idx WHERE body @@ ts_phrase('doc_2500');
 ----
 id
 2500
 
 connection ef_after
 query
-SELECT id FROM ef_t WHERE body @@ ts_phrase('doc_4999');
+SELECT id FROM ef_idx WHERE body @@ ts_phrase('doc_4999');
 ----
 id
 4999

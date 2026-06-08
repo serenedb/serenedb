@@ -1026,35 +1026,35 @@ count
 # Round 1
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('ins_R1_100150');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('ins_R1_100150');
 ----
 id
 100150
 
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('upd1_R1_100055');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('upd1_R1_100055');
 ----
 id
 100055
 
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('upd_sgl_R1');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('upd_sgl_R1');
 ----
 id
 100400
 
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('sgl3_R1');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('sgl3_R1');
 ----
 id
 109999
 
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('late_R1_changed');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('late_R1_changed');
 ----
 id
 100700
@@ -1062,28 +1062,28 @@ id
 # Deleted rows: should not be found
 connection final
 query
-SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('ins_R1_100010');
+SELECT COUNT(*) FROM stress_idx WHERE body @@ ts_phrase('ins_R1_100010');
 ----
 count
 0
 
 connection final
 query
-SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('sgl2_R1');
+SELECT COUNT(*) FROM stress_idx WHERE body @@ ts_phrase('sgl2_R1');
 ----
 count
 0
 
 connection final
 query
-SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('eph_R1');
+SELECT COUNT(*) FROM stress_idx WHERE body @@ ts_phrase('eph_R1');
 ----
 count
 0
 
 connection final
 query
-SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('block_C_R1_100545');
+SELECT COUNT(*) FROM stress_idx WHERE body @@ ts_phrase('block_C_R1_100545');
 ----
 count
 0
@@ -1091,7 +1091,7 @@ count
 # Original token replaced by update — must be gone
 connection final
 query
-SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('ins_R1_100055');
+SELECT COUNT(*) FROM stress_idx WHERE body @@ ts_phrase('ins_R1_100055');
 ----
 count
 0
@@ -1099,28 +1099,28 @@ count
 # Round 5 (mid-chain spot check)
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('ins_R5_500150');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('ins_R5_500150');
 ----
 id
 500150
 
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('upd_block6_R5_500505');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('upd_block6_R5_500505');
 ----
 id
 500505
 
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('sgl3_R5');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('sgl3_R5');
 ----
 id
 509999
 
 connection final
 query
-SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('sgl2_R5');
+SELECT COUNT(*) FROM stress_idx WHERE body @@ ts_phrase('sgl2_R5');
 ----
 count
 0
@@ -1128,28 +1128,28 @@ count
 # Round 10 (last round)
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('ins_R10_1000150');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('ins_R10_1000150');
 ----
 id
 1000150
 
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('late_R10_changed');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('late_R10_changed');
 ----
 id
 1000700
 
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('sgl3_R10');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('sgl3_R10');
 ----
 id
 1009999
 
 connection final
 query
-SELECT id FROM stress_t WHERE body @@ ts_phrase('block_D_R10_1000805');
+SELECT id FROM stress_idx WHERE body @@ ts_phrase('block_D_R10_1000805');
 ----
 id
 1000805
@@ -1157,14 +1157,14 @@ id
 # Eph rows from all 10 rounds — none must exist
 connection final
 query
-SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('eph_R5');
+SELECT COUNT(*) FROM stress_idx WHERE body @@ ts_phrase('eph_R5');
 ----
 count
 0
 
 connection final
 query
-SELECT COUNT(*) FROM stress_t WHERE body @@ ts_phrase('eph_R10');
+SELECT COUNT(*) FROM stress_idx WHERE body @@ ts_phrase('eph_R10');
 ----
 count
 0

@@ -106,7 +106,7 @@ class ColumnstoreMaterializer {
       }
       irs::MaterializeNode(*b.reader, *b.state,
                            irs::IotaRange{start_doc, count}, out_vec,
-                           output_start, output_start == 0);
+                           output_start, false);
     }
   }
 

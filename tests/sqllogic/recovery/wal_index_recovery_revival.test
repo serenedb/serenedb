@@ -78,7 +78,7 @@ VACUUM (REFRESH_TABLE) rv_t;
 # pk=1 untouched
 connection rv_after
 query
-SELECT id FROM rv_t WHERE body @@ ts_phrase('persistent');
+SELECT id FROM rv_idx WHERE body @@ ts_phrase('persistent');
 ----
 id
 1
@@ -86,14 +86,14 @@ id
 # pk=2: original gone, second life present
 connection rv_after
 query
-SELECT COUNT(*) FROM rv_t WHERE body @@ ts_phrase('first life of two');
+SELECT COUNT(*) FROM rv_idx WHERE body @@ ts_phrase('first life of two');
 ----
 count
 0
 
 connection rv_after
 query
-SELECT id FROM rv_t WHERE body @@ ts_phrase('second life');
+SELECT id FROM rv_idx WHERE body @@ ts_phrase('second life');
 ----
 id
 2
@@ -101,21 +101,21 @@ id
 # pk=3: original gone, intermediate gone, final present
 connection rv_after
 query
-SELECT COUNT(*) FROM rv_t WHERE body @@ ts_phrase('first life of three');
+SELECT COUNT(*) FROM rv_idx WHERE body @@ ts_phrase('first life of three');
 ----
 count
 0
 
 connection rv_after
 query
-SELECT COUNT(*) FROM rv_t WHERE body @@ ts_phrase('temp life');
+SELECT COUNT(*) FROM rv_idx WHERE body @@ ts_phrase('temp life');
 ----
 count
 0
 
 connection rv_after
 query
-SELECT id FROM rv_t WHERE body @@ ts_phrase('final life of three');
+SELECT id FROM rv_idx WHERE body @@ ts_phrase('final life of three');
 ----
 id
 3
@@ -130,7 +130,7 @@ count
 
 connection rv_after
 query
-SELECT COUNT(*) FROM rv_t WHERE body @@ ts_phrase('first life of four');
+SELECT COUNT(*) FROM rv_idx WHERE body @@ ts_phrase('first life of four');
 ----
 count
 0
@@ -138,7 +138,7 @@ count
 # pk=5: brand new
 connection rv_after
 query
-SELECT id FROM rv_t WHERE body @@ ts_phrase('born after fault');
+SELECT id FROM rv_idx WHERE body @@ ts_phrase('born after fault');
 ----
 id
 5

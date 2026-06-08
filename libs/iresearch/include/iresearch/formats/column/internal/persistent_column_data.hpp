@@ -59,11 +59,16 @@ namespace irs {
 //   STRUCT: pointers empty, child_columns one per field.
 struct PersistentColumnData;
 
+enum class VariantShredState : uint8_t {
+  Unshredded = 0,
+  Partial = 1,
+  Full = 2,
+};
+
 struct VariantRowGroupLayout {
   uint64_t row_start = 0;
   uint64_t row_count = 0;
-  bool shredded = false;
-  bool fully_shredded = false;
+  VariantShredState shred_state = VariantShredState::Unshredded;
   std::unique_ptr<PersistentColumnData> unshredded;
   std::unique_ptr<PersistentColumnData> shredded_node;
 };
@@ -118,8 +123,7 @@ inline PersistentColumnData Clone(const PersistentColumnData& src) {
     VariantRowGroupLayout cl;
     cl.row_start = l.row_start;
     cl.row_count = l.row_count;
-    cl.shredded = l.shredded;
-    cl.fully_shredded = l.fully_shredded;
+    cl.shred_state = l.shred_state;
     if (l.unshredded) {
       cl.unshredded =
         std::make_unique<PersistentColumnData>(Clone(*l.unshredded));

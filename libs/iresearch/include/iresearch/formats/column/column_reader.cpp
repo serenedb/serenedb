@@ -161,7 +161,8 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
   for (const auto& rg : _variant_rgs) {
     SDB_ASSERT(rg.unshredded);
     SDB_ASSERT(rg.unshredded->RowCount() == rg.row_count);
-    SDB_ASSERT(!rg.shredded || rg.shredded_node->RowCount() == rg.row_count);
+    SDB_ASSERT(rg.shred_state == VariantShredState::Unshredded ||
+               rg.shredded_node->RowCount() == rg.row_count);
     _variant_rg_starts.push_back(total);
     total += rg.row_count;
   }

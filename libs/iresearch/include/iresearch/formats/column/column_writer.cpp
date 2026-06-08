@@ -496,7 +496,6 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
       auto& layout = node.variant_layouts.back();
       layout.row_start = row_start;
       layout.row_count = row_count;
-      layout.shredded = should_shred;
       layout.unshredded = std::make_unique<PersistentColumnData>();
 
       if (!should_shred) {
@@ -515,8 +514,9 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
       {
         duckdb::UnifiedVectorFormat unshredded_fmt;
         shred_entries[0].ToUnifiedFormat(row_count, unshredded_fmt);
-        layout.fully_shredded =
-          unshredded_fmt.validity.CountValid(row_count) == 0;
+        layout.shred_state = unshredded_fmt.validity.CountValid(row_count) == 0
+                               ? VariantShredState::Full
+                               : VariantShredState::Partial;
       }
 
       layout.shredded_node = std::make_unique<PersistentColumnData>();

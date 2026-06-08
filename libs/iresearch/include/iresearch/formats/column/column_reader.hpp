@@ -32,6 +32,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/internal/persistent_column_data.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
@@ -74,8 +75,7 @@ class ColumnReader final {
  public:
   struct VariantRgReader {
     uint64_t row_count = 0;
-    bool shredded = false;
-    bool fully_shredded = false;
+    VariantShredState shred_state = VariantShredState::Unshredded;
     std::unique_ptr<ColumnReader> unshredded;
     std::unique_ptr<ColumnReader> shredded_node;
   };

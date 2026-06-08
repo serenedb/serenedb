@@ -114,7 +114,7 @@ inline MaterializeState::VariantRgState& EnsureVariantRgState(
   if (!slot.unshredded) {
     const auto& rgr = reader.VariantRg(rg);
     slot.unshredded = MakeMaterializeState(*rgr.unshredded, *state.ctx);
-    if (rgr.shredded) {
+    if (rgr.shred_state != VariantShredState::Unshredded) {
       slot.shredded = MakeMaterializeState(*rgr.shredded_node, *state.ctx);
     }
   }
@@ -143,7 +143,7 @@ inline void ReconstructVariantRun(MaterializeState::VariantRgState& rgstate,
       }
     }
   };
-  if (!rgr.shredded) {
+  if (rgr.shred_state == VariantShredState::Unshredded) {
     MaterializeNode(*rgr.unshredded, *rgstate.unshredded,
                     IotaRange{local_start, run}, out_variant, 0);
     apply_nulls(out_variant);
@@ -366,7 +366,7 @@ void MaterializeExtractNode(const ColumnReader& reader, MaterializeState& state,
     const uint64_t local_start = doc0 - w.begin;
 
     const ColumnReader* leaf = nullptr;
-    if (rgr.shredded && rgr.fully_shredded) {
+    if (rgr.shred_state == VariantShredState::Full) {
       leaf = ResolveShreddedLeaf(*rgr.shredded_node, path);
     }
     if (leaf != nullptr) {

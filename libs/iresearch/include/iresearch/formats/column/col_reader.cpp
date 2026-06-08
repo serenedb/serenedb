@@ -78,11 +78,10 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
       for (auto& l : node.variant_layouts) {
         ColumnReader::VariantRgReader rg;
         rg.row_count = l.row_count;
-        rg.shredded = l.shredded;
-        rg.fully_shredded = l.fully_shredded;
+        rg.shred_state = l.shred_state;
         rg.unshredded =
           MakeColumnReader(field_limits::invalid(), std::move(*l.unshredded));
-        if (l.shredded) {
+        if (l.shred_state != VariantShredState::Unshredded) {
           rg.shredded_node = MakeColumnReader(field_limits::invalid(),
                                               std::move(*l.shredded_node));
         }
@@ -154,18 +153,17 @@ PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
         VariantRowGroupLayout l;
         l.row_start = vo.ReadProperty<uint64_t>(0, "row_start");
         l.row_count = vo.ReadProperty<uint64_t>(1, "row_count");
-        l.shredded = vo.ReadProperty<bool>(2, "shredded");
+        l.shred_state = static_cast<VariantShredState>(
+          vo.ReadProperty<uint8_t>(2, "shred_state"));
         vo.ReadObject(3, "unshredded", [&](duckdb::Deserializer& u) {
           l.unshredded =
             std::make_unique<PersistentColumnData>(DeserializeColumnData(u));
         });
-        if (l.shredded) {
+        if (l.shred_state != VariantShredState::Unshredded) {
           vo.ReadObject(4, "shredded_node", [&](duckdb::Deserializer& s) {
             l.shredded_node =
               std::make_unique<PersistentColumnData>(DeserializeColumnData(s));
           });
-          l.fully_shredded =
-            vo.ReadPropertyWithDefault<bool>(5, "fully_shredded");
         }
         node.variant_layouts.push_back(std::move(l));
       });

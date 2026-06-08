@@ -44,6 +44,7 @@ namespace {
 
 using irs::ColumnReader;
 using irs::ReadContext;
+using irs::VariantShredState;
 using Reader = irs::ColReader;
 using Writer = irs::ColWriter;
 
@@ -126,7 +127,7 @@ void ExpectValuesEqual(const std::vector<duckdb::Value>& expected,
 size_t ShreddedRgCount(const ColumnReader& col) {
   size_t n = 0;
   for (size_t rg = 0; rg < col.VariantRgCount(); ++rg) {
-    n += col.VariantRg(rg).shredded ? 1 : 0;
+    n += col.VariantRg(rg).shred_state != VariantShredState::Unshredded ? 1 : 0;
   }
   return n;
 }
@@ -208,7 +209,7 @@ TEST_F(IRSVariantShreddingTest, RoundTripForcedShreddingLargeRowGroup) {
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), 5000u);
   ASSERT_EQ(col->VariantRgCount(), 1u);
-  EXPECT_TRUE(col->VariantRg(0).shredded);
+  EXPECT_NE(col->VariantRg(0).shred_state, VariantShredState::Unshredded);
 
   ExpectValuesEqual(expected, ReadVariantColumn(r, *col));
 }
@@ -230,7 +231,7 @@ TEST_F(IRSVariantShreddingTest, MixedShreddedRowGroups) {
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->VariantRgCount(), 4u);
   EXPECT_EQ(ShreddedRgCount(*col), 3u);
-  EXPECT_FALSE(col->VariantRg(3).shredded);
+  EXPECT_EQ(col->VariantRg(3).shred_state, VariantShredState::Unshredded);
 
   ExpectValuesEqual(expected, ReadVariantColumn(r, *col));
 }
@@ -364,8 +365,8 @@ TEST_F(IRSVariantShreddingTest, ExtractFastPath) {
   ASSERT_NE(col, nullptr);
   ASSERT_GT(col->VariantRgCount(), 1u);
   for (size_t rg = 0; rg < col->VariantRgCount(); ++rg) {
-    EXPECT_TRUE(col->VariantRg(rg).shredded) << "rg=" << rg;
-    EXPECT_TRUE(col->VariantRg(rg).fully_shredded) << "rg=" << rg;
+    EXPECT_EQ(col->VariantRg(rg).shred_state, VariantShredState::Full)
+      << "rg=" << rg;
   }
 
   duckdb::Connection con{Db()};
@@ -461,12 +462,11 @@ TEST_F(IRSVariantShreddingTest, ExtractFallbackNotFullyShredded) {
   Reader r{dir, std::string{kSegment}, Db()};
   const auto* col = r.Column(14);
   ASSERT_NE(col, nullptr);
-  bool any_not_fully = false;
+  bool any_partial = false;
   for (size_t rg = 0; rg < col->VariantRgCount(); ++rg) {
-    any_not_fully |=
-      col->VariantRg(rg).shredded && !col->VariantRg(rg).fully_shredded;
+    any_partial |= col->VariantRg(rg).shred_state == VariantShredState::Partial;
   }
-  EXPECT_TRUE(any_not_fully);
+  EXPECT_TRUE(any_partial);
 
   duckdb::Connection con{Db()};
   const auto expected = QueryScalarColumn(

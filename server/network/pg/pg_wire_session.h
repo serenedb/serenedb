@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <array>
@@ -69,6 +70,7 @@
 #include "network/connection.h"
 #include "network/io_executor.h"
 #include "network/pg/auth.h"
+#include "network/pg/cancel_registry.h"
 #include "network/pg/duck_executor.h"
 #include "network/pg/pg_frame_codec.h"
 #include "network/pg/query_pump.h"
@@ -96,6 +98,7 @@ struct PgServerContext {
   asio_ns::ssl::context* ssl = nullptr;
   const CredentialProvider* credentials = nullptr;
   bool allow_cleartext_without_tls = false;
+  CancelRegistry* cancel = nullptr;
 };
 
 // A bound portal: a prepared statement plus its pending/streaming execution and
@@ -241,14 +244,16 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
     : _socket{io},
       _io{io},
       _credentials{ctx.credentials},
-      _allow_cleartext{ctx.allow_cleartext_without_tls} {}
+      _allow_cleartext{ctx.allow_cleartext_without_tls},
+      _cancel{ctx.cancel} {}
 
   PgWireSession(PgServerContext& ctx, asio_ns::io_context& io)
     requires(Kind == SocketKind::MaybeTls)
     : _socket{io, *ctx.ssl},
       _io{io},
       _credentials{ctx.credentials},
-      _allow_cleartext{ctx.allow_cleartext_without_tls} {}
+      _allow_cleartext{ctx.allow_cleartext_without_tls},
+      _cancel{ctx.cancel} {}
 
   void Start() { Run().Detach(); }
 
@@ -320,6 +325,9 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   asio_ns::io_context& _io;
   const CredentialProvider* _credentials = nullptr;
   bool _allow_cleartext = false;
+  CancelRegistry* _cancel = nullptr;
+  std::shared_ptr<CancelToken> _cancel_token;
+  uint64_t _cancel_key = 0;
   message::Buffer _recv{kReadBlock, kBufferMaxGrowth};
   message::Buffer _send{kReadBlock, kBufferMaxGrowth};
   std::string _scratch;
@@ -516,9 +524,17 @@ void PgWireSession<Kind>::SendStartupBurst() {
     }
   }
 
-  static constexpr std::array<char, 13> kBackendKeyData{
-    PQ_MSG_BACKEND_KEY_DATA, 0, 0, 0, 12, 0, 0, 0, 1, 0, 0, 0, 1};
-  _send.WriteUncommitted({kBackendKeyData.data(), kBackendKeyData.size()});
+  // BackendKeyData carries this session's cancel key (pid = high 32 bits,
+  // secret = low 32; both 4 bytes for the 3.0 protocol). A CancelRequest echoes
+  // them back so CancelRegistry can find and interrupt this connection.
+  auto* backend_key = _send.GetContiguousData(13);
+  backend_key[0] = PQ_MSG_BACKEND_KEY_DATA;
+  absl::big_endian::Store32(backend_key + 1, 12);
+  absl::big_endian::Store32(backend_key + 5,
+                            static_cast<uint32_t>(_cancel_key >> 32));
+  absl::big_endian::Store32(backend_key + 9,
+                            static_cast<uint32_t>(_cancel_key & 0xffffffffu));
+  _send.Commit(false);
   DrainNotices();
   WriteReadyForQuery(_send, 'I');
 }
@@ -1564,9 +1580,16 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
         continue;
       }
       if (code == static_cast<uint32_t>(CANCEL_REQUEST_CODE)) {
-        // Query cancellation arrives on a throwaway connection and expects no
-        // reply. Honoring it (signaling the target backend) needs the
-        // cancel-key registry, a later step; for now accept and drop it.
+        // CancelRequest payload: code(4) + backend pid(4) + secret(4). Look the
+        // (pid,secret) up in the shared registry and interrupt the target's
+        // running query cross-thread. No reply -- just close (per protocol).
+        if (_cancel && frame.payload.size() >= 12) {
+          const uint32_t pid =
+            absl::big_endian::Load32(frame.payload.data() + 4);
+          const uint32_t secret =
+            absl::big_endian::Load32(frame.payload.data() + 8);
+          _cancel->Cancel((uint64_t{pid} << 32) | secret);
+        }
         _socket.Close();
         co_return {};
       }
@@ -1642,6 +1665,24 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
       _socket.Close();
       co_return {};
     }
+
+    // Register for query cancellation. The token holds this connection's
+    // ClientContext; a CancelRequest from another connection interrupts it
+    // cross-thread. Detach-then-Unregister on every exit path (the guard fires
+    // as the coroutine frame unwinds, while _conn is still alive) so a racing
+    // Cancel can never touch a torn-down context.
+    _cancel_token = std::make_shared<CancelToken>();
+    _cancel_token->ctx = _conn->context.get();
+    if (_cancel) {
+      _cancel_key = _cancel->Register(_cancel_token);
+    }
+    absl::Cleanup cancel_guard{[this] {
+      _cancel_token->Detach();
+      if (_cancel && _cancel_key) {
+        _cancel->Unregister(_cancel_key);
+      }
+    }};
+
     _duck = yaclib::MakeShared<DuckExecutor>(
       1, duckdb::TaskScheduler::GetScheduler(*_conn->context));
     _ioexec = yaclib::MakeShared<IoExecutor>(1, _io);

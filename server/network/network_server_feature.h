@@ -60,6 +60,9 @@ class NetworkServerFeature final {
   network::HttpRouter _router;
   network::HttpServerContext _http_context{_router};
   network::pg::PgServerContext _pg_context;
+  // Declared before _pool/_acceptors so it outlives the sessions that hold a
+  // pointer to it via _pg_context.cancel.
+  network::pg::CancelRegistry _cancel;
   std::optional<asio_ns::ssl::context> _ssl;
   // Temporary config-based auth source (RBAC will replace it via the seam).
   std::unique_ptr<network::pg::CredentialProvider> _credentials;

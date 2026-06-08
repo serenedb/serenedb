@@ -78,6 +78,8 @@ int DuckExceptionToErrcode(duckdb::ExceptionType type) {
     case duckdb::ExceptionType::NETWORK:
     case duckdb::ExceptionType::HTTP:
       return ERRCODE_CONNECTION_EXCEPTION;
+    case duckdb::ExceptionType::INTERRUPT:
+      return ERRCODE_QUERY_CANCELED;
     default:
       return ERRCODE_INTERNAL_ERROR;
   }
@@ -241,9 +243,12 @@ void WriteNoticeResponse(message::Buffer& out,
 }
 
 sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
+  // An interrupted query is DuckDB "Interrupted!"; report postgres's wording.
+  const bool interrupted = error.Type() == duckdb::ExceptionType::INTERRUPT;
   return sdb::pg::SqlErrorData{
     .errcode = DuckExceptionToErrcode(error.Type()),
-    .errmsg = error.RawMessage(),
+    .errmsg = interrupted ? "canceling statement due to user request"
+                          : error.RawMessage(),
   };
 }
 

@@ -170,6 +170,8 @@ void NetworkServerFeature::start() {
              "' (", _auth_cleartext ? "cleartext" : "scram-sha-256", ")");
   }
 
+  _pg_context.cancel = &_cancel;
+
   _pool = std::make_unique<network::IoThreadPool>(_io_threads);
   _pool->Start();
 

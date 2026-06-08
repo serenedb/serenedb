@@ -16480,14 +16480,16 @@ TEST(And_test, not_boosted) {
   irs::And root;
   {
     auto& neg = root.add<irs::Exclusion>();
-    auto& node = neg.exclude<detail::Boosted>();
-    node.docs = {5, 6};
-    node.boost(4);
-  }
-  {
-    auto& node = root.add<detail::Boosted>();
-    node.docs = {1};
-    node.boost(5);
+    {
+      auto& node = neg.include<detail::Boosted>();
+      node.docs = {1};
+      node.boost(5);
+    }
+    {
+      auto& node = neg.exclude<detail::Boosted>();
+      node.docs = {5, 6};
+      node.boost(4);
+    }
   }
   auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
   auto docs =

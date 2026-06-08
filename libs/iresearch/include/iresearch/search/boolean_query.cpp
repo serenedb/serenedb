@@ -196,17 +196,13 @@ void BooleanQuery::prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
 Filter::Query::ptr PrepareExclusion(const PrepareContext& ctx,
                                     const Filter* include,
                                     const Filter* exclude) {
-  AllDocsProvider::Ptr all;
+  SDB_ASSERT(exclude);
   Filter::Query::ptr incl;
   if (include == nullptr) {
-    all = AllDocsProvider::Default(kNoBoost);
+    auto all = AllDocsProvider::Default(kNoBoost);
     incl = all->prepare(ctx);
   } else {
     incl = include->prepare(ctx);
-  }
-
-  if (exclude == nullptr) {
-    return incl;
   }
 
   // exclusion part does not affect scoring at all

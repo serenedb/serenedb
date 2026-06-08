@@ -206,6 +206,7 @@ Filter::Query::ptr Or::PrepareBoolean(std::span<const Filter::ptr> filters,
     if (filter->type() == irs::Type<Empty>::id()) {
       continue;
     }
+    ++non_empty_count;
     if (*filter == *cumulative_all) {
       all_count++;
       all_boost += sdb::basics::downCast<FilterWithBoost>(*filter).Boost();
@@ -253,9 +254,16 @@ Filter::Query::ptr Or::PrepareBoolean(std::span<const Filter::ptr> filters,
     if (collapse_all) {
       return all_filter->prepare(sub_ctx);
     }
-    // create new 'all' with boost from all removed
-    cumulative_all->boost(all_boost);
-    return cumulative_all->prepare(sub_ctx);
+    if (use_cumulative) {
+      // create new 'all' with boost from all removed
+      cumulative_all->boost(all_boost);
+      return cumulative_all->prepare(sub_ctx);
+    }
+    for (const auto& filter : filters) {
+      if (filter->type() != irs::Type<Empty>::id()) {
+        return filter->prepare(sub_ctx);
+      }
+    }
   }
 
   SDB_ASSERT(adjusted_min_match > 0 && adjusted_min_match <= final_count);

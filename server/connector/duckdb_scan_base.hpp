@@ -288,19 +288,20 @@ void WriteChunkOffsets(Lstate& lstate, const irs::Filter::Query& query,
     auto& child = duckdb::ListVector::GetChildMutable(list_vec);
     child.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   }
+  const irs::SubReader* cached_seg = nullptr;
   for (size_t i = 0; i < view.size(); ++i) {
     const uint32_t seg_idx = view.seg(i);
     if (seg_idx != lstate.offsets_prepped_seg) {
       for (auto& entry : lstate.offsets_entries) {
         entry.state.Clear();
       }
+      cached_seg = &reader[seg_idx];
       OffsetsCollector visitor{lstate.offsets_entries};
-      query.visit(reader[seg_idx], visitor, irs::kNoBoost);
+      query.visit(*cached_seg, visitor, irs::kNoBoost);
       lstate.offsets_prepped_seg = seg_idx;
     }
-    const auto& seg = reader[seg_idx];
     for (auto& entry : lstate.offsets_entries) {
-      FillRowOffsets(entry.state, seg, view.doc(i), entry.limit,
+      FillRowOffsets(entry.state, *cached_seg, view.doc(i), entry.limit,
                      lstate.offsets_doc_scratch);
       WriteRowOffsets(output.data[entry.output_idx],
                       static_cast<duckdb::idx_t>(i),

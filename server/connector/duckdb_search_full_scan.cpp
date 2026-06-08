@@ -348,6 +348,7 @@ void SearchFullScanStreamingLocalState::AdvanceChunk(
   if (!streaming_doc) {
     return;
   }
+  chunk_hits.reserve(STANDARD_VECTOR_SIZE);
 
   if (!g.scan_score) {
     while (chunk_hits.size() < STANDARD_VECTOR_SIZE) {

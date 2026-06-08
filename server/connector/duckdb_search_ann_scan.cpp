@@ -98,8 +98,10 @@ bool EmitHitsChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& lstate,
     }
   }
   const ScoreDocsView view{{lstate.hits.data() + lstate.current_idx, take}};
-  const auto emitted = MaterializeChunk(ctx, g, lstate, view, output);
+  const auto emitted = MaterializeChunk(ctx, g, lstate, view, output, 0);
+  FinalizeBatch(ctx, g, lstate, output, emitted);
   lstate.current_idx += take;
+  output.SetChildCardinality(emitted);
   return emitted > 0;
 }
 
@@ -151,10 +153,10 @@ bool SearchAnnTopKLocalState::OnSegmentsExhausted(duckdb::ClientContext& ctx,
   return EmitHitsChunk(ctx, g, *this, output);
 }
 
-void SearchAnnRangeLocalState::OnSegment(duckdb::ClientContext& ctx,
-                                         const irs::SubReader& seg,
-                                         uint32_t seg_idx,
-                                         SearchAnnScanGlobalState& g) {
+void SearchAnnRangeLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
+                                            const irs::SubReader& seg,
+                                            uint32_t seg_idx,
+                                            SearchAnnScanGlobalState& g) {
   const auto* cs = seg.CsReader();
   SDB_ASSERT(cs);
   hits.clear();
@@ -181,10 +183,26 @@ void SearchAnnRangeLocalState::OnSegment(duckdb::ClientContext& ctx,
   BuildSortedHits(range_buffer, range_buffer.ids.size(), vs, hits);
 }
 
-bool SearchAnnRangeLocalState::EmitNextChunk(duckdb::ClientContext& ctx,
-                                             SearchAnnScanGlobalState& g,
-                                             duckdb::DataChunk& output) {
-  return EmitHitsChunk(ctx, g, *this, output);
+duckdb::idx_t SearchAnnRangeLocalState::EmitChunk(duckdb::ClientContext& ctx,
+                                                  SearchAnnScanGlobalState& g,
+                                                  duckdb::DataChunk& output,
+                                                  duckdb::idx_t output_start) {
+  const size_t remaining = hits.size() - current_idx;
+  if (remaining == 0) {
+    return 0;
+  }
+  const auto budget = STANDARD_VECTOR_SIZE - output_start;
+  const auto take = std::min<duckdb::idx_t>(remaining, budget);
+  SDB_IF_FAILURE("SearchRocksDBLookupFault") {
+    if (g.has_external_projections) {
+      SDB_THROW(ERROR_DEBUG);
+    }
+  }
+  const ScoreDocsView view{{hits.data() + current_idx, take}};
+  const auto emitted =
+    MaterializeChunk(ctx, g, *this, view, output, output_start);
+  current_idx += take;
+  return emitted;
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(

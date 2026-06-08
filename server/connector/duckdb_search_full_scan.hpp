@@ -86,8 +86,6 @@ struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
 
 struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
   uint32_t current_seg_idx = 0;
-  bool current_segment_bulk = false;
-
   uint64_t bulk_doc_in_seg = 0;
   uint64_t bulk_seg_doc_count = 0;
 
@@ -101,13 +99,15 @@ struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
   std::vector<highlight::HitRange> offsets_doc_scratch;
   uint32_t offsets_prepped_seg = std::numeric_limits<uint32_t>::max();
 
-  void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
-                 uint32_t seg_idx, SearchFullScanGlobalState& g);
-  bool EmitNextChunk(duckdb::ClientContext& ctx, SearchFullScanGlobalState& g,
-                     duckdb::DataChunk& output);
+  void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
+                    uint32_t seg_idx, SearchFullScanGlobalState& g);
+  duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
+                          SearchFullScanGlobalState& g,
+                          duckdb::DataChunk& output,
+                          duckdb::idx_t output_start);
 
  private:
-  void AdvanceChunk(SearchFullScanGlobalState& g);
+  void AdvanceChunk(SearchFullScanGlobalState& g, duckdb::idx_t budget);
 };
 
 struct SearchFullScanCountLocalState : public CommonScanLocalState {

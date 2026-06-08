@@ -81,10 +81,12 @@ struct SearchAnnRangeLocalState : public SegDocBufferedScanLocalState {
   irs::Filter::Query::ptr text_filter_query;
   std::optional<TextScanFilter> text_filter;
 
-  void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
-                 uint32_t seg_idx, SearchAnnScanGlobalState& g);
-  bool EmitNextChunk(duckdb::ClientContext& ctx, SearchAnnScanGlobalState& g,
-                     duckdb::DataChunk& output);
+  void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
+                    uint32_t seg_idx, SearchAnnScanGlobalState& g);
+  duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
+                          SearchAnnScanGlobalState& g,
+                          duckdb::DataChunk& output,
+                          duckdb::idx_t output_start);
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(

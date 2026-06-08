@@ -36,7 +36,6 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <ranges>
 
 #include "basics/down_cast.h"
 #include "catalog/inverted_index.h"
@@ -1008,23 +1007,22 @@ bool TryClaimSearchFilter(
   };
 
   auto root = std::make_shared<irs::And>();
-  std::vector<size_t> claimed_indices;
-  for (size_t i = 0; i < filters.size(); ++i) {
+  bool any_claimed = false;
+  for (size_t i = 0; i < filters.size();) {
     if (TryClaimIResearchConjunct(*root, filters[i], getter, expr_getter,
                                   options)) {
-      claimed_indices.push_back(i);
+      any_claimed = true;
+      std::swap(filters[i], filters.back());
+      filters.pop_back();
+    } else {
+      ++i;
     }
   }
-  if (claimed_indices.empty()) {
+  if (!any_claimed) {
     return false;
   }
 
-  auto& search = bind_data.scan_source->Cast<connector::SearchScan>();
-  search.stored_filter = root;
-
-  for (auto idx : claimed_indices | std::views::reverse) {
-    filters.erase(filters.begin() + idx);
-  }
+  bind_data.scan_source->Cast<connector::SearchScan>().stored_filter = root;
   return true;
 }
 

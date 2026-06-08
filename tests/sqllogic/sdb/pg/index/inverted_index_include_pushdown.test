@@ -72,11 +72,11 @@ QUERY PLAN
 │                           │
 │          Filter:          │
 │   AND[Term(body(string)   │
-│    =connection) && Term   │
-│ (service(string)=frontend)│
-│    && GranularRange(sev   │
-│  (numeric) >=( \\x0\\x80\\x0 │
-│   \\x0\\xd \\x10\\x80\\x0 ))]  │
+│      =connection) &&      │
+│  GranularRange(sev(numeric│
+│  ) >=( \\x0\\x80\\x0\\x0\\xd   │
+│   \\x10\\x80\\x0 )) && Term  │
+│(service(string)=frontend)]│
 │                           │
 │    Projections: id (l)    │
 │                           │

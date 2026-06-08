@@ -24,6 +24,7 @@
 
 #include "filter.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
@@ -52,7 +53,7 @@ class ByColumnExistence final
   }
 
  private:
-  field_id _id{0};
+  field_id _id{irs::field_limits::invalid()};
 };
 
 }  // namespace irs

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <__memory/shared_ptr.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -30,6 +31,7 @@
 #include <iresearch/search/scorer.hpp>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "basics/assert.h"
@@ -193,7 +195,7 @@ struct VectorSearchScan : ScanSource {
   VectorSearchScan(ScanSourceKind kind) : ScanSource{kind} {}
 
   search::InvertedIndexSnapshotPtr snapshot;
-  irs::field_id field_id{};
+  irs::field_id field_id{irs::field_limits::invalid()};
   std::vector<float> query_vector;
   duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;
@@ -344,6 +346,9 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   // Returns an empty view when the id is not on the relation.
   virtual std::string_view ColumnNameById(catalog::Column::Id col_id) const = 0;
 
+  virtual duckdb::LogicalType ColumnTypeById(
+    catalog::Column::Id col_id) const = 0;
+
   using ColumnVisitor =
     std::function<void(catalog::Column::Id, const duckdb::LogicalType&)>;
   virtual void IterateColumns(const ColumnVisitor& cb) const = 0;
@@ -369,6 +374,7 @@ struct TableScanBindData final : public SereneDBScanBindData {
   std::string_view RelationName() const final;
   catalog::Column::Id ColumnIdByName(std::string_view name) const final;
   std::string_view ColumnNameById(catalog::Column::Id col_id) const final;
+  duckdb::LogicalType ColumnTypeById(catalog::Column::Id col_id) const final;
   void IterateColumns(const ColumnVisitor& cb) const final;
 };
 
@@ -386,6 +392,7 @@ struct ViewScanBindData final : public SereneDBScanBindData {
   std::string_view RelationName() const final;
   catalog::Column::Id ColumnIdByName(std::string_view name) const final;
   std::string_view ColumnNameById(catalog::Column::Id col_id) const final;
+  duckdb::LogicalType ColumnTypeById(catalog::Column::Id col_id) const final;
   void IterateColumns(const ColumnVisitor& cb) const final;
 };
 
@@ -419,5 +426,76 @@ duckdb::TableFunction CreateIResearchCountFunction();
 duckdb::TableFunction CreateIResearchANNScanFunction();
 
 duckdb::TableFunction CreateIResearchANNRangeScanFunction();
+
+inline auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
+                                  const catalog::InvertedIndex& index) {
+  return [&bind_data, &index](catalog::Column::Id col_id) -> std::string {
+    const auto fid = static_cast<irs::field_id>(col_id);
+    auto base = std::string{bind_data.ColumnNameById(col_id)};
+    const auto column_type = bind_data.ColumnTypeById(col_id);
+    const bool found_type = column_type.id() != duckdb::LogicalTypeId::INVALID;
+    const auto lookup = index.LookupField(fid);
+    auto entry_base = [&](irs::field_id entry_fid,
+                          const catalog::InvertedIndexEntryInfo& entry) {
+      std::string s;
+      if (const auto* expr = entry.GetExpressionData();
+          expr && !expr->pretty_printed.empty()) {
+        s = expr->pretty_printed;
+      } else {
+        s = bind_data.ColumnNameById(catalog::Column::Id{entry_fid});
+      }
+      if (s.empty()) {
+        s = absl::StrCat("col", entry_fid);
+      }
+      return s;
+    };
+    if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
+      const auto name =
+        bind_data.ColumnNameById(catalog::Column::kGeneratedPKId);
+      return std::string{name.empty() ? std::string_view{"sdb_generated_pk"}
+                                      : name} +
+             "(pk)";
+    }
+    if (lookup.entry) {
+      const auto& entry = *lookup.entry;
+      if (fid == lookup.entry_field_id) {
+        const auto* expr = entry.GetExpressionData();
+        if (base.empty() && expr && !expr->pretty_printed.empty()) {
+          base = expr->pretty_printed;
+        }
+        if (base.empty()) {
+          base = absl::StrCat("col", fid);
+        }
+        if (expr) {
+          catalog::InvertedIndex::AppendKindSuffix(base, expr->return_type);
+        } else if (found_type) {
+          catalog::InvertedIndex::AppendKindSuffix(base, column_type);
+        } else if (entry.text_dictionary.isSet()) {
+          base += "(string)";
+        }
+        return base;
+      }
+      if (fid == entry.null_field_id) {
+        return entry_base(lookup.entry_field_id, entry) + "(null)";
+      }
+      if (fid == entry.bool_field_id) {
+        return entry_base(lookup.entry_field_id, entry) + "(bool)";
+      }
+      if (fid == entry.numeric_field_id) {
+        return entry_base(lookup.entry_field_id, entry) + "(numeric)";
+      }
+      if (fid == entry.synthetic_column) {
+        return entry_base(lookup.entry_field_id, entry) + "(synthetic)";
+      }
+    }
+    if (base.empty()) {
+      base = absl::StrCat("col", fid);
+    }
+    if (found_type) {
+      catalog::InvertedIndex::AppendKindSuffix(base, column_type);
+    }
+    return base;
+  };
+}
 
 }  // namespace sdb::connector

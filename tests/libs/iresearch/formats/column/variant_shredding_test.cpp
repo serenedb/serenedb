@@ -31,20 +31,21 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/column_writer.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/merge.hpp"
-#include "iresearch/columnstore/read_context.hpp"
-#include "iresearch/columnstore/scan.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/column_writer.hpp"
+#include "iresearch/formats/column/merge.hpp"
+#include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/column/scan.hpp"
 #include "iresearch/store/memory_directory.hpp"
 
 namespace {
 
-using irs::columnstore::ColumnReader;
-using irs::columnstore::ReadContext;
-using irs::columnstore::Reader;
-using irs::columnstore::Writer;
+using irs::ColumnReader;
+using irs::ReadContext;
+using Reader = irs::ColReader;
+using Writer = irs::ColWriter;
 
 class IRSVariantShreddingTest : public ::testing::Test {
  protected:
@@ -63,8 +64,6 @@ class IRSVariantShreddingTest : public ::testing::Test {
   duckdb::DuckDB _db;
 };
 
-// Write `sql` (a single VARIANT column) into a cs column, capturing each row's
-// expected Value. The shredding gate must already be configured.
 void WriteVariantColumn(duckdb::DatabaseInstance& db, irs::Directory& dir,
                         std::string_view segment, irs::field_id id,
                         const std::string& sql, uint32_t row_group_size,
@@ -92,11 +91,10 @@ void WriteVariantColumn(duckdb::DatabaseInstance& db, irs::Directory& dir,
   ASSERT_FALSE(filename.empty());
 }
 
-// Materialize the whole VARIANT column back into Values via the scan path.
 std::vector<duckdb::Value> ReadVariantColumn(Reader& r,
                                              const ColumnReader& col) {
   ReadContext ctx{r};
-  auto state = irs::columnstore::MakeMaterializeState(col, ctx);
+  auto state = irs::MakeMaterializeState(col, ctx);
   std::vector<duckdb::Value> out;
   const auto total = col.RowCount();
   out.reserve(total);
@@ -104,11 +102,8 @@ std::vector<duckdb::Value> ReadVariantColumn(Reader& r,
   while (pos < total) {
     const auto take =
       std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
-    // Fresh batch each iteration: VARIANT reconstruction copies into the
-    // output's internal lists, which would otherwise accumulate across calls.
     duckdb::Vector batch{duckdb::LogicalType::VARIANT(), STANDARD_VECTOR_SIZE};
-    irs::columnstore::MaterializeNode(
-      col, *state, irs::columnstore::IotaRange{pos, take}, batch, 0);
+    irs::MaterializeNode(col, *state, irs::IotaRange{pos, take}, batch, 0);
     for (duckdb::idx_t k = 0; k < take; ++k) {
       out.push_back(batch.GetValue(k));
     }
@@ -136,7 +131,6 @@ size_t ShreddedRgCount(const ColumnReader& col) {
   return n;
 }
 
-// Run a single-column query and collect its Values (one per row).
 std::vector<duckdb::Value> QueryScalarColumn(duckdb::DatabaseInstance& db,
                                              const std::string& sql) {
   duckdb::Connection con{db};
@@ -151,13 +145,11 @@ std::vector<duckdb::Value> QueryScalarColumn(duckdb::DatabaseInstance& db,
   return out;
 }
 
-// Read object path `path` of a VARIANT column directly via the field-extract
-// pushdown path (MaterializeExtractNode), one batch at a time, into Values.
 std::vector<duckdb::Value> ReadVariantExtract(
   Reader& r, const ColumnReader& col, duckdb::ClientContext& context,
   std::span<const std::string> path, const duckdb::LogicalType& scan_type) {
   ReadContext ctx{r};
-  auto state = irs::columnstore::MakeMaterializeState(col, ctx);
+  auto state = irs::MakeMaterializeState(col, ctx);
   std::vector<duckdb::Value> out;
   const auto total = col.RowCount();
   out.reserve(total);
@@ -166,9 +158,8 @@ std::vector<duckdb::Value> ReadVariantExtract(
     const auto take =
       std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
     duckdb::Vector batch{scan_type, STANDARD_VECTOR_SIZE};
-    irs::columnstore::MaterializeExtractNode(
-      col, *state, irs::columnstore::IotaRange{pos, take}, path, scan_type,
-      batch, 0, context);
+    irs::MaterializeExtractNode(col, *state, irs::IotaRange{pos, take}, path,
+                                scan_type, batch, 0, context);
     for (duckdb::idx_t k = 0; k < take; ++k) {
       out.push_back(batch.GetValue(k));
     }
@@ -177,7 +168,6 @@ std::vector<duckdb::Value> ReadVariantExtract(
   return out;
 }
 
-// Shredding disabled (-1): every row group stays unshredded, values round-trip.
 TEST_F(IRSVariantShreddingTest, RoundTripNoShredding) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "no_shred";
@@ -201,9 +191,6 @@ TEST_F(IRSVariantShreddingTest, RoundTripNoShredding) {
   ExpectValuesEqual(expected, ReadVariantColumn(r, *col));
 }
 
-// Shredding forced on (0) with a single row group larger than a DuckDB vector
-// (5000 > STANDARD_VECTOR_SIZE): exercises a single-call ShredVariantData over
-// a full row group and the unshred-on-read reconstruction.
 TEST_F(IRSVariantShreddingTest, RoundTripForcedShreddingLargeRowGroup) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "forced_shred";
@@ -226,13 +213,10 @@ TEST_F(IRSVariantShreddingTest, RoundTripForcedShreddingLargeRowGroup) {
   ExpectValuesEqual(expected, ReadVariantColumn(r, *col));
 }
 
-// A threshold between the full row-group size and the short trailing row group
-// yields a mix of shredded and unshredded row groups in one column.
 TEST_F(IRSVariantShreddingTest, MixedShreddedRowGroups) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "mixed_shred";
   constexpr uint32_t kRowGroupSize = 64;
-  // Full RGs (64 rows) shred; the trailing partial RG (< 64) does not.
   SetShreddingSize(64);
 
   std::vector<duckdb::Value> expected;
@@ -244,7 +228,6 @@ TEST_F(IRSVariantShreddingTest, MixedShreddedRowGroups) {
   Reader r{dir, std::string{kSegment}, Db()};
   const auto* col = r.Column(3);
   ASSERT_NE(col, nullptr);
-  // 200 / 64 -> 4 row groups: 3 full (shredded) + 1 partial (unshredded).
   ASSERT_EQ(col->VariantRgCount(), 4u);
   EXPECT_EQ(ShreddedRgCount(*col), 3u);
   EXPECT_FALSE(col->VariantRg(3).shredded);
@@ -252,8 +235,6 @@ TEST_F(IRSVariantShreddingTest, MixedShreddedRowGroups) {
   ExpectValuesEqual(expected, ReadVariantColumn(r, *col));
 }
 
-// NULL variant rows interleaved with shredding on: variant-level validity must
-// survive reconstruction.
 TEST_F(IRSVariantShreddingTest, NullHandlingWithShredding) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "null_shred";
@@ -266,7 +247,6 @@ TEST_F(IRSVariantShreddingTest, NullHandlingWithShredding) {
                      "FROM range(200) t(i)",
                      kRowGroupSize, expected);
   ASSERT_EQ(expected.size(), 200u);
-  // Sanity: the source really has NULLs.
   ASSERT_TRUE(expected[0].IsNull());
   ASSERT_FALSE(expected[1].IsNull());
 
@@ -278,8 +258,6 @@ TEST_F(IRSVariantShreddingTest, NullHandlingWithShredding) {
   ExpectValuesEqual(expected, ReadVariantColumn(r, *col));
 }
 
-// Mixed underlying types: the dominant type shreds, the rest land in the
-// unshredded leftover column. Round-trips both.
 TEST_F(IRSVariantShreddingTest, MixedTypesLeftover) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "leftover_shred";
@@ -301,7 +279,6 @@ TEST_F(IRSVariantShreddingTest, MixedTypesLeftover) {
   ExpectValuesEqual(expected, ReadVariantColumn(r, *col));
 }
 
-// Nested objects: shredding recurses into object fields. Round-trips.
 TEST_F(IRSVariantShreddingTest, NestedObjectShredding) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "object_shred";
@@ -323,9 +300,6 @@ TEST_F(IRSVariantShreddingTest, NestedObjectShredding) {
   ExpectValuesEqual(expected, ReadVariantColumn(r, *col));
 }
 
-// Merge two segments (one shredded, one unshredded) into one and round-trip.
-// The merge reads each source via MaterializeNode and re-appends, so the
-// output re-decides shredding per row group.
 TEST_F(IRSVariantShreddingTest, MergeReshreds) {
   irs::MemoryDirectory dir{};
   constexpr uint32_t kRowGroupSize = 128;
@@ -333,22 +307,21 @@ TEST_F(IRSVariantShreddingTest, MergeReshreds) {
   std::vector<duckdb::Value> expected_a;
   std::vector<duckdb::Value> expected_b;
 
-  SetShreddingSize(0);  // segment A shreds
+  SetShreddingSize(0);
   WriteVariantColumn(Db(), dir, "seg_a", /*id=*/7,
                      "SELECT i::VARIANT FROM range(300) t(i)", kRowGroupSize,
                      expected_a);
-  SetShreddingSize(-1);  // segment B does not shred
+  SetShreddingSize(-1);
   WriteVariantColumn(Db(), dir, "seg_b", /*id=*/7,
                      "SELECT (i + 1000)::VARIANT FROM range(300) t(i)",
                      kRowGroupSize, expected_b);
 
-  // Merge into a single segment with shredding on.
   SetShreddingSize(0);
   Reader ra{dir, "seg_a", Db()};
   Reader rb{dir, "seg_b", Db()};
   {
     Writer w{dir, "merged", Db()};
-    irs::columnstore::MergeSource sources[2] = {
+    irs::MergeSource sources[2] = {
       {.reader = nullptr,
        .cs_reader = &ra,
        .mask = nullptr,
@@ -358,7 +331,7 @@ TEST_F(IRSVariantShreddingTest, MergeReshreds) {
        .mask = nullptr,
        .alive_count = 300},
     };
-    irs::columnstore::MergeInto(sources, w, /*column_options=*/nullptr);
+    irs::MergeInto(sources, w, /*column_options=*/nullptr);
     const auto filename = w.Commit(600);
     ASSERT_FALSE(filename.empty());
   }
@@ -374,8 +347,6 @@ TEST_F(IRSVariantShreddingTest, MergeReshreds) {
   ExpectValuesEqual(expected, ReadVariantColumn(r, *col));
 }
 
-// Field-extract fast path: a fully-shredded object column, read field `a`
-// directly as DOUBLE. Matches a CAST(variant.a AS DOUBLE) over the source.
 TEST_F(IRSVariantShreddingTest, ExtractFastPath) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "ex_fast";
@@ -405,7 +376,6 @@ TEST_F(IRSVariantShreddingTest, ExtractFastPath) {
                                                  duckdb::LogicalType::DOUBLE));
 }
 
-// Field-extract with a cast: shredded leaf is INTEGER, requested as BIGINT.
 TEST_F(IRSVariantShreddingTest, ExtractWithCast) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "ex_cast";
@@ -429,7 +399,6 @@ TEST_F(IRSVariantShreddingTest, ExtractWithCast) {
                                                  duckdb::LogicalType::BIGINT));
 }
 
-// Nested object path a.b.
 TEST_F(IRSVariantShreddingTest, ExtractNestedPath) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "ex_nested";
@@ -452,7 +421,6 @@ TEST_F(IRSVariantShreddingTest, ExtractNestedPath) {
                                                  duckdb::LogicalType::DOUBLE));
 }
 
-// NULL variant rows: the extracted field must be NULL there.
 TEST_F(IRSVariantShreddingTest, ExtractNullRows) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "ex_null";
@@ -478,19 +446,11 @@ TEST_F(IRSVariantShreddingTest, ExtractNullRows) {
   ExpectValuesEqual(expected, actual);
 }
 
-// Fallback path: rows carry a field absent from the shredded type, so the row
-// group is not fully shredded and the read must reconstruct + extract. The
-// extracted field still matches.
 TEST_F(IRSVariantShreddingTest, ExtractFallbackNotFullyShredded) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegment = "ex_fallback";
   SetShreddingSize(0);
 
-  // Field 'a' is DOUBLE for most rows but BIGINT every 5th row. Shredding
-  // picks the dominant DOUBLE typed leaf; the BIGINT rows land in the
-  // unshredded leftover, so the row group is not fully shredded and the read
-  // must reconstruct + extract for it. The extracted value still matches
-  // (BIGINT a=i extracts and casts to i.0).
   const std::string obj =
     "CASE WHEN i % 5 = 0 THEN {'a': i}::VARIANT "
     "ELSE {'a': (i * 0.5)::DOUBLE}::VARIANT END";
@@ -501,7 +461,6 @@ TEST_F(IRSVariantShreddingTest, ExtractFallbackNotFullyShredded) {
   Reader r{dir, std::string{kSegment}, Db()};
   const auto* col = r.Column(14);
   ASSERT_NE(col, nullptr);
-  // At least one row group should have leftovers (not fully shredded).
   bool any_not_fully = false;
   for (size_t rg = 0; rg < col->VariantRgCount(); ++rg) {
     any_not_fully |=

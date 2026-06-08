@@ -1,0 +1,94 @@
+hash-threshold 100
+
+# SwitchColumnImpl LIST/ARRAY branch omits `_vec_fmt.children.clear()` before
+# `RecursiveToUnifiedFormat`. When the SAME writer instance switches across
+# two consecutive LIST<VARCHAR> columns within a single batch, the first
+# column populates `_vec_fmt.children[0]`. The second column then appends
+# its child format at children[1], but `WriteListBatch` always reads
+# children[0] -- i.e. the FIRST column's stale child format. The second
+# column's tokens are written with the wrong selection / data pointers, so
+# they are either missed, mis-attributed, or the writer segfaults on a sel
+# index past the current allocation.
+#
+# Repro: one inverted index over TWO direct LIST<VARCHAR> columns. The
+# expression-side path (SwitchExpressionImpl) clears first and is unaffected,
+# but the column-side path does not -- so the second column's tokens are
+# silently lost. Triggers in both backfill and live-INSERT paths.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict( template = 'keyword' );
+
+statement ok
+CREATE TABLE words (
+  pk INTEGER PRIMARY KEY,
+  tags VARCHAR[],
+  more_tags VARCHAR[]
+);
+
+# Backfill rows: both LIST columns get tokens during CREATE INDEX.
+statement ok
+INSERT INTO words VALUES (1, ['alpha', 'beta'], ['lorem']);
+
+statement ok
+INSERT INTO words VALUES (2, ['gamma', 'delta'], ['ipsum', 'dolor']);
+
+statement ok
+CREATE INDEX words_idx ON words
+  USING inverted(pk, tags verbatim_dict, more_tags verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) words;
+
+# Live INSERT path: same writer processes both LIST columns in one batch.
+statement ok
+INSERT INTO words VALUES (3, ['epsilon', 'zeta'], ['sit']);
+
+statement ok
+INSERT INTO words VALUES (4, ['eta', 'theta'], ['amet', 'consectetur']);
+
+statement ok
+VACUUM (REFRESH_TABLE) words;
+
+# First LIST column (`tags`) indexes correctly -- it's the column that runs
+# first in the per-batch switch sequence and populates children[0].
+query
+SELECT pk FROM words_idx WHERE tags @@ ts_like('theta') ORDER BY pk;
+----
+pk
+4
+
+query
+SELECT pk FROM words_idx WHERE tags @@ ts_like('epsilon') ORDER BY pk;
+----
+pk
+3
+
+# Second LIST column (`more_tags`) should also index correctly. Under the
+# bug, `RecursiveToUnifiedFormat` appends to _vec_fmt.children[1] but the
+# writer keeps reading the stale children[0] from the `tags` batch -- so
+# these queries return empty / wrong rows.
+query
+SELECT pk FROM words_idx WHERE more_tags @@ ts_like('amet') ORDER BY pk;
+----
+pk
+4
+
+query
+SELECT pk FROM words_idx WHERE more_tags @@ ts_like('sit') ORDER BY pk;
+----
+pk
+3
+
+# Backfill-time corruption: rows 1 and 2 were indexed during CREATE INDEX,
+# which also runs `tags` before `more_tags` through the same writer.
+query
+SELECT pk FROM words_idx WHERE more_tags @@ ts_like('lorem') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM words_idx WHERE more_tags @@ ts_like('ipsum') ORDER BY pk;
+----
+pk
+2

@@ -470,17 +470,6 @@ struct ResettableDocIterator : DocIterator {
 
 struct TermReader;
 
-// An iterator providing sequential and random access to indexed fields
-struct FieldIterator : Iterator<const TermReader&> {
-  using ptr = memory::managed_ptr<FieldIterator>;
-
-  [[nodiscard]] static FieldIterator::ptr empty() noexcept;
-
-  // Position iterator at a specified target.
-  // Return if the target is found, false otherwise.
-  virtual bool seek(std::string_view target) = 0;
-};
-
 // An iterator providing sequential access to term dictionary
 struct TermIterator : Iterator<bytes_view, AttributeProvider> {
   using ptr = memory::managed_ptr<TermIterator>;

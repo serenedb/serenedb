@@ -23,7 +23,7 @@
 namespace sdb::connector {
 
 ColumnstoreMaterializer::ColumnstoreMaterializer(
-  const irs::columnstore::Reader& reader,
+  const irs::ColReader& reader,
   std::span<const ColumnstoreProjection> projections,
   duckdb::ClientContext* context)
   : _ctx{reader}, _context{context} {
@@ -36,7 +36,7 @@ ColumnstoreMaterializer::ColumnstoreMaterializer(
     _bound.push_back(Binding{
       .reader = r,
       .output_slot = cp.output_slot,
-      .state = irs::columnstore::MakeMaterializeState(*r, _ctx),
+      .state = irs::MakeMaterializeState(*r, _ctx),
       .extract_path = cp.extract_path,
       .extract_scan_type = cp.extract_scan_type,
     });

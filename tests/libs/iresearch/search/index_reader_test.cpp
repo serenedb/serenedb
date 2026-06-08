@@ -36,12 +36,24 @@ using namespace std::chrono_literals;
 
 namespace {
 
-inline constexpr irs::field_id kName = 1;
+// Stable per-name field ids, sourced from `tests::FieldIdFor` so the
+// canonical JSON factories and these tests agree on the id-per-name.
+[[maybe_unused]] inline constexpr irs::field_id kName =
+  tests::FieldIdFor("name");
+[[maybe_unused]] inline constexpr irs::field_id kSeq = tests::FieldIdFor("seq");
+[[maybe_unused]] inline constexpr irs::field_id kSame =
+  tests::FieldIdFor("same");
+[[maybe_unused]] inline constexpr irs::field_id kDuplicated =
+  tests::FieldIdFor("duplicated");
+[[maybe_unused]] inline constexpr irs::field_id kPrefix =
+  tests::FieldIdFor("prefix");
+[[maybe_unused]] inline constexpr irs::field_id kValue =
+  tests::FieldIdFor("value");
 
 auto StoreName() {
   return [](irs::IndexWriter::Document& doc, const tests::Document& src) {
     const auto* name =
-      dynamic_cast<const tests::StringField*>(src.stored.get("name"));
+      dynamic_cast<const tests::StringField*>(src.stored.get_by_id(kName));
     if (name) {
       irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(), *name);
     }
@@ -79,11 +91,13 @@ TEST(directory_reader_test, open_empty_index) {
 
   // Create empty index
   {
-    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(writer->RefreshCommit());
   }
 
-  auto rdr = irs::DirectoryReader(dir, codec);
+  auto rdr =
+    irs::DirectoryReader(dir, codec, irs::tests::DefaultReaderOptions());
   ASSERT_FALSE(!rdr);
   ASSERT_EQ(0, rdr.docs_count());
   ASSERT_EQ(0, rdr.live_docs_count());
@@ -119,13 +133,6 @@ TEST(directory_reader_test, open_newest_index) {
       return nullptr;
     }
     irs::SegmentMetaReader::ptr get_segment_meta_reader() const final {
-      return nullptr;
-    }
-    irs::FieldWriter::ptr get_field_writer(bool,
-                                           irs::IResourceManager&) const final {
-      return nullptr;
-    }
-    irs::FieldReader::ptr get_field_reader(irs::IResourceManager&) const final {
       return nullptr;
     }
     irs::PostingsWriter::ptr get_postings_writer(
@@ -198,7 +205,9 @@ TEST(directory_reader_test, open) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (tests::JsonDocGenerator::ValueType::STRING == data.vt) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        auto field = std::make_shared<tests::StringField>(name, data.str);
+        field->id = tests::FieldIdForRuntime(name);
+        doc.insert(std::move(field));
       }
     });
 
@@ -575,22 +584,12 @@ TEST(segment_reader_test, open) {
       ASSERT_EQ(rdr->end(), it);
     }
 
-    // check field names
+    // check field ids
     {
-      auto it = rdr->fields();
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ("duplicated", it->value().meta().name);
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ("name", it->value().meta().name);
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ("prefix", it->value().meta().name);
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ("same", it->value().meta().name);
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ("seq", it->value().meta().name);
-      ASSERT_TRUE(it->next());
-      ASSERT_EQ("value", it->value().meta().name);
-      ASSERT_FALSE(it->next());
+      auto ids = rdr->field_ids();
+      ASSERT_EQ(6, ids.size());
+      // Ids are sorted ascending; doc-generator assigns ids via the fixture,
+      // not by name. Without a real catalog we only check the count here.
     }
 
     // check live docs
@@ -613,22 +612,17 @@ TEST(segment_reader_test, open) {
     // check field metadata
     {
       {
-        auto it = rdr->fields();
-        size_t size = 0;
-        while (it->next()) {
-          ++size;
-        }
-        ASSERT_EQ(6, size);
+        ASSERT_EQ(6, rdr->field_ids().size());
       }
 
       // check field
       {
-        const std::string_view name = "name";
-        auto field = rdr->field(name);
-        ASSERT_EQ(name, field->meta().name);
+        constexpr irs::field_id id = kName;
+        auto field = rdr->field(id);
+        ASSERT_EQ(id, field->meta().id);
 
         // check terms
-        auto terms = rdr->field(name);
+        auto terms = rdr->field(id);
         ASSERT_NE(nullptr, terms);
 
         ASSERT_EQ(5, terms->size());
@@ -724,23 +718,23 @@ TEST(segment_reader_test, open) {
 
       // check field
       {
-        const std::string_view name = "seq";
-        auto field = rdr->field(name);
-        ASSERT_EQ(name, field->meta().name);
+        constexpr irs::field_id id = kSeq;  // "seq"
+        auto field = rdr->field(id);
+        ASSERT_EQ(id, field->meta().id);
 
         // check terms
-        auto terms = rdr->field(name);
+        auto terms = rdr->field(id);
         ASSERT_NE(nullptr, terms);
       }
 
       // check field
       {
-        const std::string_view name = "same";
-        auto field = rdr->field(name);
-        ASSERT_EQ(name, field->meta().name);
+        constexpr irs::field_id id = kSame;  // "same"
+        auto field = rdr->field(id);
+        ASSERT_EQ(id, field->meta().id);
 
         // check terms
-        auto terms = rdr->field(name);
+        auto terms = rdr->field(id);
         ASSERT_NE(nullptr, terms);
         ASSERT_EQ(1, terms->size());
         ASSERT_EQ(5, terms->docs_count());
@@ -780,12 +774,12 @@ TEST(segment_reader_test, open) {
 
       // check field
       {
-        const std::string_view name = "duplicated";
-        auto field = rdr->field(name);
-        ASSERT_EQ(name, field->meta().name);
+        constexpr irs::field_id id = kDuplicated;  // "duplicated"
+        auto field = rdr->field(id);
+        ASSERT_EQ(id, field->meta().id);
 
         // check terms
-        auto terms = rdr->field(name);
+        auto terms = rdr->field(id);
         ASSERT_NE(nullptr, terms);
         ASSERT_EQ(2, terms->size());
         ASSERT_EQ(4, terms->docs_count());
@@ -837,12 +831,12 @@ TEST(segment_reader_test, open) {
 
       // check field
       {
-        const std::string_view name = "prefix";
-        auto field = rdr->field(name);
-        ASSERT_EQ(name, field->meta().name);
+        constexpr irs::field_id id = kPrefix;  // "prefix"
+        auto field = rdr->field(id);
+        ASSERT_EQ(id, field->meta().id);
 
         // check terms
-        auto terms = rdr->field(name);
+        auto terms = rdr->field(id);
         ASSERT_NE(nullptr, terms);
         ASSERT_EQ(2, terms->size());
         ASSERT_EQ(2, terms->docs_count());
@@ -890,8 +884,7 @@ TEST(segment_reader_test, open) {
 
       // invalid field
       {
-        const std::string_view name = "invalid_field";
-        ASSERT_EQ(nullptr, rdr->field(name));
+        ASSERT_EQ(nullptr, rdr->field(static_cast<irs::field_id>(999)));
       }
     }
   }

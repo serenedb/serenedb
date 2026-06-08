@@ -50,7 +50,7 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
   };
   writer_opts.norm_column_options =
     [norm_row_group_size, next = std::make_shared<std::atomic<irs::field_id>>(
-                            0)](std::string_view) -> irs::NormColumnOptions {
+                            0)](irs::field_id) -> irs::NormColumnOptions {
     return {
       .id = next->fetch_add(1, std::memory_order_relaxed),
       .row_group_size = norm_row_group_size,

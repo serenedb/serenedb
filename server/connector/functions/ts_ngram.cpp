@@ -24,7 +24,6 @@
 #include <iresearch/search/ngram_similarity_query.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -79,14 +78,11 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
                "`Frequency` features attached to the column."));
   }
 
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& ngram = ctx.negated ? Negate<irs::ByNGramSimilarity>(filter)
                             : AddFilter<irs::ByNGramSimilarity>(filter);
   ngram.boost(ctx.boost);
-  *ngram.mutable_field() = field_name;
+  *ngram.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   ngram.mutable_options()->threshold = threshold;
   auto& analyzer = ctx.tokenizer;
   analyzer.reset(std::string_view{target});

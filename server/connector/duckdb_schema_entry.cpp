@@ -348,13 +348,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
             append_pk(it->GetId());
           }
         }
-        break;
-      }
+      } break;
       case duckdb::ConstraintType::NOT_NULL: {
         auto& nn = constraint->Cast<duckdb::NotNullConstraint>();
         append_not_null(nn.index.index);
-        break;
-      }
+      } break;
       case duckdb::ConstraintType::CHECK: {
         auto& check = constraint->Cast<duckdb::CheckConstraint>();
         std::string name;
@@ -488,8 +486,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
     create_result = catalog_impl.CreateInvertedIndex(
-      database_id, name, sdb_table->GetName(), info.index_name,
-      std::move(idx_columns), std::move(options), /*operation_options=*/{});
+      context, database_id, name, sdb_table->GetName(), info.index_name,
+      std::move(idx_columns), std::move(options),
+      /*operation_options=*/{});
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
@@ -689,26 +688,29 @@ duckdb::optional_ptr<duckdb::CatalogEntry>
 SereneDBSchemaEntry::CreateTableFunction(
   duckdb::CatalogTransaction transaction,
   duckdb::CreateTableFunctionInfo& info) {
-  throw duckdb::NotImplementedException("CREATE TABLE FUNCTION through DuckDB");
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("CREATE TABLE FUNCTION is not supported"));
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry>
 SereneDBSchemaEntry::CreateCopyFunction(duckdb::CatalogTransaction transaction,
                                         duckdb::CreateCopyFunctionInfo& info) {
-  throw duckdb::NotImplementedException("CREATE COPY FUNCTION through DuckDB");
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("CREATE COPY FUNCTION is not supported"));
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry>
 SereneDBSchemaEntry::CreatePragmaFunction(
   duckdb::CatalogTransaction transaction,
   duckdb::CreatePragmaFunctionInfo& info) {
-  throw duckdb::NotImplementedException(
-    "CREATE PRAGMA FUNCTION through DuckDB");
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("CREATE PRAGMA FUNCTION is not supported"));
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateCollation(
   duckdb::CatalogTransaction transaction, duckdb::CreateCollationInfo& info) {
-  throw duckdb::NotImplementedException("CREATE COLLATION through DuckDB");
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("CREATE COLLATION is not supported"));
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
@@ -785,7 +787,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
     auto& fn_info = info.Cast<duckdb::AlterScalarFunctionInfo>();
     if (fn_info.alter_scalar_function_type !=
         duckdb::AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
-      throw duckdb::NotImplementedException("ALTER FUNCTION through DuckDB");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("only RENAME is supported for ALTER FUNCTION"));
     }
     auto& rename_info = fn_info.Cast<duckdb::RenameScalarFunctionInfo>();
 
@@ -817,7 +820,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
   if (info.type == duckdb::AlterType::ALTER_VIEW) {
     auto& view_info = info.Cast<duckdb::AlterViewInfo>();
     if (view_info.alter_view_type != duckdb::AlterViewType::RENAME_VIEW) {
-      throw duckdb::NotImplementedException("ALTER VIEW through DuckDB");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("only RENAME is supported for ALTER VIEW"));
     }
     auto& rename_info = view_info.Cast<duckdb::RenameViewInfo>();
     Result r =
@@ -828,7 +832,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
   }
 
   if (info.type != duckdb::AlterType::ALTER_TABLE) {
-    throw duckdb::NotImplementedException("ALTER through DuckDB");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("this ALTER operation is not supported"));
   }
 
   auto& table_info = info.Cast<duckdb::AlterTableInfo>();
@@ -972,7 +977,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
     }
 
     default:
-      throw duckdb::NotImplementedException("ALTER TABLE through DuckDB");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("this ALTER TABLE operation is not supported"));
   }
 }
 

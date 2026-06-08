@@ -23,7 +23,6 @@
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search.h"
@@ -184,16 +183,13 @@ void FromTokenizeListInAnyAllOf(
     return;
   }
 
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   // Single-token short-circuit -> ByTerm.
   if (tokens.size() == 1) {
     auto& term = ctx.negated ? Negate<irs::ByTerm>(parent)
                              : AddFilter<irs::ByTerm>(parent);
     term.boost(ctx.boost);
-    *term.mutable_field() = field_name;
+    *term.mutable_field_id() =
+      PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
     term.mutable_options()->term.assign(tokens[0]);
     return;
   }
@@ -211,7 +207,8 @@ void FromTokenizeListInAnyAllOf(
   auto& terms = ctx.negated ? Negate<irs::ByTerms>(parent)
                             : AddFilter<irs::ByTerms>(parent);
   terms.boost(ctx.boost);
-  *terms.mutable_field() = std::move(field_name);
+  *terms.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& opts = *terms.mutable_options();
   opts.min_match = min_match_value;
   for (auto& t : tokens) {

@@ -271,7 +271,7 @@ INSERT INTO clickclack_or VALUES (1, 5);
 
 
 statement ok
-CREATE INDEX clickclack_or_idx ON clickclack_or USING inverted(id, (babsky_or(n)) mop_dict);
+CREATE INDEX clickclack_or_idx ON clickclack_or USING inverted(id, (babsky_or(n)));
 
 
 # Trying to replace the function: rejected because the index depends on it.

@@ -21,7 +21,9 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "basics/duckdb_engine.h"
 #include "filter_test_case_base.hpp"
+#include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/bm25.hpp"
@@ -31,11 +33,28 @@
 
 namespace {
 
-irs::ByPrefix MakeFilter(const std::string_view& field,
-                         const std::string_view term,
+// Stable field ids for the simple_sequential / AdventureWorks test data,
+// sourced from `tests::FieldIdFor` so the shared JSON factories and these
+// tests agree on the id-per-name.
+[[maybe_unused]] inline constexpr irs::field_id kPrefixId =
+  tests::FieldIdFor("prefix");
+[[maybe_unused]] inline constexpr irs::field_id kSameId =
+  tests::FieldIdFor("same");
+[[maybe_unused]] inline constexpr irs::field_id kDuplicatedId =
+  tests::FieldIdFor("duplicated");
+[[maybe_unused]] inline constexpr irs::field_id kNameId =
+  tests::FieldIdFor("name");
+[[maybe_unused]] inline constexpr irs::field_id kNameSchemaId =
+  tests::FieldIdFor("Name");
+[[maybe_unused]] inline constexpr irs::field_id kInvalidId =
+  tests::FieldIdFor("same1");
+[[maybe_unused]] inline constexpr irs::field_id kEmptyFieldId =
+  irs::field_limits::invalid();
+
+irs::ByPrefix MakeFilter(irs::field_id field, const std::string_view term,
                          size_t scored_terms_limit = 1024) {
   irs::ByPrefix q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = field;
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   q.mutable_options()->scored_terms_limit = scored_terms_limit;
   return q;
@@ -78,7 +97,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
         finish_docs_with_field += field->docs_with_field;
         finish_docs_with_term += term->docs_with_term;
       };
-      CheckQuery(MakeFilter("prefix", ""), order, docs, rdr);
+      CheckQuery(MakeFilter(kPrefixId, ""), order, docs, rdr);
       ASSERT_EQ(9, finish_count);
       ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
       ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -91,7 +110,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::Scorer::ptr scorer{std::make_unique<tests::sort::FrequencySort>()};
 
-      CheckQuery(MakeFilter("prefix", ""), std::span{&scorer, 1}, docs, rdr);
+      CheckQuery(MakeFilter(kPrefixId, ""), std::span{&scorer, 1}, docs, rdr);
     }
 
     // empty prefix + scored_terms_limit
@@ -102,7 +121,8 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::Scorer::ptr scorer{std::make_unique<tests::sort::FrequencySort>()};
 
-      CheckQuery(MakeFilter("prefix", "", 1), std::span{&scorer, 1}, docs, rdr);
+      CheckQuery(MakeFilter(kPrefixId, "", 1), std::span{&scorer, 1}, docs,
+                 rdr);
     }
 
     // prefix
@@ -113,7 +133,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
       std::array<irs::Scorer::ptr, 1> order{
         std::make_unique<tests::sort::FrequencySort>()};
 
-      CheckQuery(MakeFilter("prefix", "a"), order, docs, rdr);
+      CheckQuery(MakeFilter(kPrefixId, "a"), order, docs, rdr);
     }
 
     // prefix
@@ -125,7 +145,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
         std::make_unique<tests::sort::FrequencySort>(),
         std::make_unique<tests::sort::FrequencySort>()};
 
-      CheckQuery(MakeFilter("prefix", "a"), order, docs, rdr);
+      CheckQuery(MakeFilter(kPrefixId, "a"), order, docs, rdr);
     }
   }
 
@@ -133,6 +153,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     irs::BM25 bm25;
     irs::Scorer* score = &bm25;
     irs::IndexWriterOptions opts;
+    opts.reader_options.db = &::sdb::DuckDBEngine::Instance().instance();
     if (codec()->type()().name().starts_with("1_5simd") && wand) {
       opts.reader_options.scorer = score;
     }
@@ -149,13 +170,13 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     CheckQuery(irs::ByPrefix(), Docs{}, Costs{0}, rdr);
 
     // empty field
-    CheckQuery(MakeFilter("", "xyz"), Docs{}, Costs{0}, rdr);
+    CheckQuery(MakeFilter(kEmptyFieldId, "xyz"), Docs{}, Costs{0}, rdr);
 
     // invalid field
-    CheckQuery(MakeFilter("same1", "xyz"), Docs{}, Costs{0}, rdr);
+    CheckQuery(MakeFilter(kInvalidId, "xyz"), Docs{}, Costs{0}, rdr);
 
     // invalid prefix
-    CheckQuery(MakeFilter("same", "xyz_invalid"), Docs{}, Costs{0}, rdr);
+    CheckQuery(MakeFilter(kSameId, "xyz_invalid"), Docs{}, Costs{0}, rdr);
 
     // valid prefix
     {
@@ -166,7 +187,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
 
       Costs costs{result.size()};
 
-      CheckQuery(MakeFilter("same", "xyz"), result, costs, rdr);
+      CheckQuery(MakeFilter(kSameId, "xyz"), result, costs, rdr);
     }
 
     // empty prefix : get all fields
@@ -174,7 +195,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
       Docs docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31};
       Costs costs{docs.size()};
 
-      CheckQuery(MakeFilter("duplicated", ""), docs, costs, rdr);
+      CheckQuery(MakeFilter(kDuplicatedId, ""), docs, costs, rdr);
     }
 
     // single digit prefix
@@ -182,35 +203,35 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
       Docs docs{1, 5, 11, 21, 27, 31};
       Costs costs{docs.size()};
 
-      CheckQuery(MakeFilter("duplicated", "a"), docs, costs, rdr);
+      CheckQuery(MakeFilter(kDuplicatedId, "a"), docs, costs, rdr);
     }
 
-    CheckQuery(MakeFilter("name", "!"), Docs{28}, Costs{1}, rdr);
-    CheckQuery(MakeFilter("prefix", "b"), Docs{9, 24}, Costs{2}, rdr);
+    CheckQuery(MakeFilter(kNameId, "!"), Docs{28}, Costs{1}, rdr);
+    CheckQuery(MakeFilter(kPrefixId, "b"), Docs{9, 24}, Costs{2}, rdr);
 
     // multiple digit prefix
     {
       Docs docs{2, 3, 8, 14, 17, 19, 24};
       Costs costs{docs.size()};
 
-      CheckQuery(MakeFilter("duplicated", "vcz"), docs, costs, rdr);
+      CheckQuery(MakeFilter(kDuplicatedId, "vcz"), docs, costs, rdr);
     }
 
     {
       Docs docs{1, 4, 21, 26, 31, 32};
       Costs costs{docs.size()};
-      CheckQuery(MakeFilter("prefix", "abc"), docs, costs, rdr);
+      CheckQuery(MakeFilter(kPrefixId, "abc"), docs, costs, rdr);
     }
 
     {
       Docs docs{1, 4, 21, 26, 31, 32};
       Costs costs{docs.size()};
 
-      CheckQuery(MakeFilter("prefix", "abc"), docs, costs, rdr);
+      CheckQuery(MakeFilter(kPrefixId, "abc"), docs, costs, rdr);
     }
 
     // whole word
-    CheckQuery(MakeFilter("prefix", "bateradsfsfasdf"), Docs{24}, Costs{1},
+    CheckQuery(MakeFilter(kPrefixId, "bateradsfsfasdf"), Docs{24}, Costs{1},
                rdr);
   }
 
@@ -234,7 +255,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
 
     auto rdr = open_reader();
 
-    CheckQuery(MakeFilter("Name", "Addr"), Docs{1, 2, 77, 78}, rdr);
+    CheckQuery(MakeFilter(kNameSchemaId, "Addr"), Docs{1, 2, 77, 78}, rdr);
   }
 };
 
@@ -248,34 +269,37 @@ TEST(by_prefix_test, ctor) {
   irs::ByPrefix q;
   ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), q.type());
   ASSERT_EQ(irs::ByPrefixOptions{}, q.options());
-  ASSERT_EQ("", q.field());
+  ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 }
 
 TEST(by_prefix_test, equal) {
+  constexpr irs::field_id kField = 1;
+  constexpr irs::field_id kField1 = 2;
   {
-    irs::ByPrefix q = MakeFilter("field", "term");
+    irs::ByPrefix q = MakeFilter(kField, "term");
 
-    ASSERT_EQ(q, MakeFilter("field", "term"));
-    ASSERT_NE(q, MakeFilter("field1", "term"));
-    ASSERT_NE(q, MakeFilter("field", "term", 100));
+    ASSERT_EQ(q, MakeFilter(kField, "term"));
+    ASSERT_NE(q, MakeFilter(kField1, "term"));
+    ASSERT_NE(q, MakeFilter(kField, "term", 100));
   }
 
   {
-    irs::ByPrefix q = MakeFilter("field", "term", 100);
+    irs::ByPrefix q = MakeFilter(kField, "term", 100);
 
-    ASSERT_EQ(q, MakeFilter("field", "term", 100));
-    ASSERT_NE(q, MakeFilter("field1", "term", 100));
-    ASSERT_NE(q, MakeFilter("field", "term"));
+    ASSERT_EQ(q, MakeFilter(kField, "term", 100));
+    ASSERT_NE(q, MakeFilter(kField1, "term", 100));
+    ASSERT_NE(q, MakeFilter(kField, "term"));
   }
 }
 
 TEST(by_prefix_test, boost) {
+  constexpr irs::field_id kField = 1;
   MaxMemoryCounter counter;
 
   // no boost
   {
-    irs::ByPrefix q = MakeFilter("field", "term");
+    irs::ByPrefix q = MakeFilter(kField, "term");
 
     auto prepared = q.prepare({
       .index = irs::SubReader::empty(),
@@ -290,7 +314,7 @@ TEST(by_prefix_test, boost) {
   // with boost
   {
     irs::score_t boost = 1.5f;
-    irs::ByPrefix q = MakeFilter("field", "term");
+    irs::ByPrefix q = MakeFilter(kField, "term");
     q.boost(boost);
 
     auto prepared = q.prepare({
@@ -319,7 +343,7 @@ TEST_P(PrefixFilterTestCase, visit) {
     add_segment(gen);
   }
 
-  const std::string_view field = "prefix";
+  const irs::field_id field = kPrefixId;
   const irs::bytes_view term =
     irs::ViewCast<irs::byte_type>(std::string_view("ab"));
 
@@ -360,7 +384,9 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (name == "name" && data.is_string()) {
-          doc.insert(std::make_shared<tests::StringField>(name, data.str));
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdForRuntime(name);
+          doc.insert(std::move(f));
         }
       });
     add_segment(gen, irs::kOmAppend);
@@ -373,7 +399,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
   uint64_t expected_docs_with_field = 0;
   size_t segments_with_field = 0;
   for (const auto& segment : rdr) {
-    if (const auto* field = segment.field("prefix")) {
+    if (const auto* field = segment.field(kPrefixId)) {
       expected_docs_with_field += field->docs_count();
       ++segments_with_field;
     }
@@ -401,7 +427,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
     ASSERT_EQ(expected_docs_with_field, field->docs_with_field);
   };
 
-  auto q = MakeFilter("prefix", "").prepare({.index = rdr, .scorer = &scorer});
+  auto q = MakeFilter(kPrefixId, "").prepare({.index = rdr, .scorer = &scorer});
   ASSERT_NE(nullptr, q);
 
   ASSERT_GT(finish_count, 1u);       // multiple scored terms
@@ -417,6 +443,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
       for (const auto* value : {"aa", "aa", "ab", "ac", "ac", "ac"}) {
         auto doc = ctx.Insert();
         tests::StringField field{"name", value};
+        field.id = kNameId;
         doc.Insert(field);
       }
     }
@@ -437,7 +464,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
   };
 
   irs::Scorer::ptr scorer{std::make_unique<tests::sort::FrequencySort>()};
-  CheckQuery(MakeFilter("name", "a"), std::span{&scorer, 1}, expected, rdr);
+  CheckQuery(MakeFilter(kNameId, "a"), std::span{&scorer, 1}, expected, rdr);
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

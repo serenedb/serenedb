@@ -33,10 +33,10 @@
 #include "basics/debugging.h"
 #include "basics/exceptions.h"
 #include "catalog/table_options.h"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/read_context.hpp"
-#include "iresearch/columnstore/scan.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/column/scan.hpp"
 #include "iresearch/types.hpp"
 
 namespace duckdb {
@@ -57,7 +57,7 @@ struct ColumnstoreProjection {
 
 class ColumnstoreMaterializer {
  public:
-  ColumnstoreMaterializer(const irs::columnstore::Reader& reader,
+  ColumnstoreMaterializer(const irs::ColReader& reader,
                           std::span<const ColumnstoreProjection> projections,
                           duckdb::ClientContext* context);
 
@@ -71,7 +71,7 @@ class ColumnstoreMaterializer {
     SDB_ASSERT(i < _bound.size());
     return _bound[i].output_slot;
   }
-  const irs::columnstore::ColumnReader& BindingReader(size_t i) const noexcept {
+  const irs::ColumnReader& BindingReader(size_t i) const noexcept {
     SDB_ASSERT(i < _bound.size());
     return *_bound[i].reader;
   }
@@ -88,13 +88,12 @@ class ColumnstoreMaterializer {
     const auto& b = _bound[i];
     if (b.IsExtract()) {
       SDB_ASSERT(_context);
-      irs::columnstore::MaterializeExtractNode(
+      irs::MaterializeExtractNode(
         *b.reader, *b.state, doc_ids, b.extract_path, b.extract_scan_type,
         out_vec, output_start, *_context);
       return;
     }
-    irs::columnstore::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec,
-                                      output_start);
+    irs::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec, output_start);
   }
 
   void SelectByDocIds(std::span<const irs::doc_id_t> doc_ids,
@@ -108,7 +107,7 @@ class ColumnstoreMaterializer {
       auto& out_vec = output.data[b.output_slot];
       if (b.IsExtract()) {
         SDB_ASSERT(_context);
-        irs::columnstore::MaterializeExtractNode(
+        irs::MaterializeExtractNode(
           *b.reader, *b.state, doc_ids, b.extract_path, b.extract_scan_type,
           out_vec, output_start, *_context);
         continue;
@@ -118,8 +117,7 @@ class ColumnstoreMaterializer {
                                 type_id == duckdb::LogicalTypeId::MAP)) {
         duckdb::ListVector::SetListSize(out_vec, 0);
       }
-      irs::columnstore::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec,
-                                        output_start);
+      irs::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec, output_start);
     }
   }
 
@@ -133,8 +131,8 @@ class ColumnstoreMaterializer {
       auto& out_vec = output.data[b.output_slot];
       if (b.IsExtract()) {
         SDB_ASSERT(_context);
-        irs::columnstore::MaterializeExtractNode(
-          *b.reader, *b.state, irs::columnstore::IotaRange{start_doc, count},
+        irs::MaterializeExtractNode(
+          *b.reader, *b.state, irs::IotaRange{start_doc, count},
           b.extract_path, b.extract_scan_type, out_vec, 0, *_context);
         continue;
       }
@@ -143,24 +141,24 @@ class ColumnstoreMaterializer {
           type_id == duckdb::LogicalTypeId::MAP) {
         duckdb::ListVector::SetListSize(out_vec, 0);
       }
-      irs::columnstore::MaterializeNode(
-        *b.reader, *b.state, irs::columnstore::IotaRange{start_doc, count},
-        out_vec, 0, /*may_use_entire=*/true);
+      irs::MaterializeNode(*b.reader, *b.state,
+                           irs::IotaRange{start_doc, count}, out_vec, 0,
+                           /*may_use_entire=*/true);
     }
   }
 
  private:
   struct Binding {
-    const irs::columnstore::ColumnReader* reader;
+    const irs::ColumnReader* reader;
     duckdb::idx_t output_slot;
-    std::unique_ptr<irs::columnstore::MaterializeState> state;
+    std::unique_ptr<irs::MaterializeState> state;
     std::vector<std::string> extract_path;
     duckdb::LogicalType extract_scan_type = duckdb::LogicalType::INVALID;
 
     bool IsExtract() const noexcept { return !extract_path.empty(); }
   };
 
-  irs::columnstore::ReadContext _ctx;
+  irs::ReadContext _ctx;
   std::vector<Binding> _bound;
   duckdb::ClientContext* _context = nullptr;
 };

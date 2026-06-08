@@ -9,7 +9,7 @@ on:
         description: 'Runner label (linux = any of our machines; all = amd64 + arm64 explicitly)'
         type: choice
         required: true
-        default: 'linux'
+        default: 'linux-amd64'
         options:
           - linux
           - linux-amd64
@@ -152,7 +152,7 @@ jobs:
     if: ${{ !cancelled() && (inputs.EVERYTHING || needs.classify.outputs.pg == 'true') }}
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
-      LOCATION: linux
+      LOCATION: linux-amd64
       PR_SHA: ${{ inputs.PR_SHA }}
       # empty = run all pg tests downstream
       PG_TESTS: ${{ inputs.EVERYTHING && '' || needs.classify.outputs.pg_tests }}

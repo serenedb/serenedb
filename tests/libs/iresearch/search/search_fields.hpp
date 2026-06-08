@@ -24,11 +24,14 @@
 #include "iresearch/analysis/geo_analyzer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/types.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs::tests {
 
 struct StringField final {
   std::string_view Name() const { return field_name; }
+  irs::field_id Id() const noexcept { return id; }
 
   irs::Tokenizer& GetTokens() const {
     stream.reset(value);
@@ -47,10 +50,12 @@ struct StringField final {
   mutable irs::StringTokenizer stream;
   std::string_view value;
   std::string_view field_name;
+  irs::field_id id{irs::field_limits::invalid()};
 };
 
 struct GeoField final {
   std::string_view Name() const { return field_name; }
+  irs::field_id Id() const noexcept { return id; }
 
   irs::Tokenizer& GetTokens() const {
     if (!value.empty()) {
@@ -78,6 +83,7 @@ struct GeoField final {
       irs::analysis::GeoJsonAnalyzer::Options{})};
   std::string_view value;
   std::string_view field_name;
+  irs::field_id id{irs::field_limits::invalid()};
 };
 
 }  // namespace irs::tests

@@ -197,20 +197,16 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     };
   };
   writer_options.norm_column_options =
-    [&](std::string_view name) -> irs::NormColumnOptions {
-    static constexpr size_t kIdSize = sizeof(uint64_t);
-    SDB_ASSERT(name.size() == kIdSize + 1);
-    const auto raw =
-      static_cast<uint64_t>(absl::big_endian::Load64(name.data()));
-    const auto* entry = index.FindEntry(static_cast<irs::field_id>(raw));
+    [&](irs::field_id id) -> irs::NormColumnOptions {
+    const auto* entry = index.FindEntry(id);
     SDB_ASSERT(entry != nullptr, ERROR_INTERNAL,
-               "norm callback for unknown id: ", raw);
-    SDB_ASSERT(entry->synthetic_column,
-               "norm callback fired without a catalog reservation; id: ", raw);
+               "norm callback for unknown id: ", id);
+    SDB_ASSERT(irs::field_limits::valid(entry->synthetic_column),
+               "norm callback fired without a catalog reservation; id: ", id);
     SDB_ASSERT(entry->features.HasFeatures(irs::IndexFeatures::Norm),
-               "norm callback fired but catalog features lack Norm; id: ", raw);
+               "norm callback fired but catalog features lack Norm; id: ", id);
     return {
-      .id = *entry->synthetic_column,
+      .id = entry->synthetic_column,
       .row_group_size = entry->norm_row_group_size,
     };
   };

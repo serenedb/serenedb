@@ -29,7 +29,6 @@
 #include <iresearch/utils/string.hpp>
 
 #include "basics/assert.h"
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search.h"
@@ -119,14 +118,11 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
                "`Frequency` features attached to the column."));
   }
 
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(filter)
                              : AddFilter<irs::ByPhrase>(filter);
   phrase.boost(ctx.boost);
-  *phrase.mutable_field() = field_name;
+  *phrase.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto* opts = phrase.mutable_options();
   auto& analyzer = ctx.tokenizer;
   const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
@@ -238,10 +234,8 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)
                              : AddFilter<irs::ByPhrase>(parent);
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
-  *phrase.mutable_field() = field_name;
+  *phrase.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   phrase.boost(ctx.boost);
   EmitPhraseTokens(*phrase.mutable_options(), ctx, column_info, text,
                    PhraseGap{});
@@ -431,13 +425,10 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                "`Frequency` features attached to the column."));
   }
 
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)
                              : AddFilter<irs::ByPhrase>(parent);
-  *phrase.mutable_field() = field_name;
+  *phrase.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   phrase.boost(ctx.boost);
 
   auto* options = phrase.mutable_options();
@@ -507,29 +498,38 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         auto text = get_text_arg();
         options->push_back<irs::ByTermOptions>(gap.min, gap.max)
           .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
-        break;
-      }
+      } break;
       case TSQueryOp::Prefix: {
         auto text = get_text_arg();
         options->push_back<irs::ByPrefixOptions>(gap.min, gap.max)
           .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
-        break;
-      }
+      } break;
       case TSQueryOp::Like: {
         auto text = get_text_arg();
         auto pattern = LikeEscapePattern(text, '\\');
-        options->push_back<irs::ByWildcardOptions>(gap.min, gap.max)
-          .term.assign(
-            irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
-        break;
-      }
+        irs::bstring buf;
+        // TODO(codeworse): Will be dropped with filter optimizer
+        irs::ExecuteWildcard(
+          buf, irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
+          [&](irs::bytes_view term) {
+            options->push_back<irs::ByTermOptions>(gap.min, gap.max).term =
+              term;
+          },
+          [&](irs::bytes_view term) {
+            options->push_back<irs::ByPrefixOptions>(gap.min, gap.max).term =
+              term;
+          },
+          [&](irs::bytes_view term) {
+            options->push_back<irs::ByWildcardOptions>(gap.min, gap.max) =
+              irs::ByWildcardOptions{term};
+          });
+      } break;
       case TSQueryOp::Fuzzy: {
         auto args = ParseLevenshteinArgs(*f);
         FillByEditDistanceOptions(
           args,
           options->push_back<irs::ByEditDistanceOptions>(gap.min, gap.max));
-        break;
-      }
+      } break;
       case TSQueryOp::Phrase: {
         // Nested ts_phrase('x y z') -> tokenise via column analyzer and
         // emit one term part per token. The FIRST token uses the
@@ -551,8 +551,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                           ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
         }
         EmitPhraseTokens(*options, ctx, column_info, phrase_text, gap);
-        break;
-      }
+      } break;
       case TSQueryOp::Any: {
         // ts_any as a phrase part -> ByTermsOptions slot with the
         // listed terms as alternatives at this phrase position. Only
@@ -588,8 +587,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
           terms_opts.terms.emplace(
             irs::ViewCast<irs::byte_type>(std::string_view{term_text}));
         }
-        break;
-      }
+      } break;
       case TSQueryOp::All:
         // ts_all rejected for the same reason min_match > 1 is rejected
         // for ts_any: a phrase position can match only one token.

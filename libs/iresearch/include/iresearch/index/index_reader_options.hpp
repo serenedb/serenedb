@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "iresearch/columnstore/format.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace duckdb {
@@ -46,13 +46,9 @@ struct WandContext {
 
 struct IndexReaderOptions {
   ScorerPtr scorer = nullptr;  // A list of topk scorers
-  // When non-null, the per-segment columnstore::Reader is opened so
-  // norm-bearing fields and typed/HNSW columns are accessible via
-  // SubReader::norms / Column / HNSW. Must outlive every reader produced
-  // by Open / Reopen.
   duckdb::DatabaseInstance* db = nullptr;
   bool index = true;  // Open inverted index
-  columnstore::PreloadedHnswGraphs cs_hnsw_graphs;
+  PreloadedHnswGraphs hnsw_graphs;
 };
 
 }  // namespace irs

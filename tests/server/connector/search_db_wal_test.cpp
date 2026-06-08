@@ -499,12 +499,13 @@ TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
   {
     SearchDbWal wal(Fs(), _dir);
     auto cdc = MakeIntCdc(Alloc(), {7, 8, 9});
-    std::vector<uint64_t> pk_bases{1000};  // one chunk -> one base
-    SearchDbWal::ShardSection sec{
-      /*schema=*/1,
-      /*table=*/5,          SearchDbWal::ColumnIds{cols},
-      /*inline=*/cdc.get(),
-      /*seg_ids=*/{},       std::span<const uint64_t>{pk_bases}};
+    std::vector<SearchDbWal::InlinePk> segs{{1000, 3}};  // base 1000, 3 rows
+    SearchDbWal::ShardSection sec{/*schema=*/1,
+                                  /*table=*/5,
+                                  SearchDbWal::ColumnIds{cols},
+                                  /*inline=*/cdc.get(),
+                                  /*seg_ids=*/{},
+                                  std::span<const SearchDbWal::InlinePk>{segs}};
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), 1u);
   }
   {
@@ -540,6 +541,102 @@ TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
     EXPECT_EQ(std::get<3>(got.chunks[0]), (std::vector<int32_t>{3, 4}));
     EXPECT_EQ(std::get<4>(got.chunks[0]), 2000u);
   }
+}
+
+// Two PARTIAL inline appends, each with its own (disjoint, non-contiguous)
+// generated-PK base. ColumnDataCollection packs rows toward
+// STANDARD_VECTOR_SIZE, so the two appends COALESCE into a single Chunks()
+// entry. But pk_base is recorded per append-chunk (§5.6), so recovery must
+// reproduce each append's rows with ITS base -- replaying by Chunks()-index
+// tags the 2nd append's rows with the 1st base, minting wrong generated PKs (M6
+// delete/dedup then breaks). The fix records per-append (base, count) segments
+// and re-slices the CDC's rows by count on replay (§5.6); this pins that
+// invariant.
+TEST_F(SearchDbWalTest, InlinePkBaseAlignedToAppendsNotChunks) {
+  std::vector<uint64_t> cols{1};
+  auto cdc = std::make_unique<duckdb::ColumnDataCollection>(Alloc(), IntType());
+  {
+    duckdb::DataChunk c0;
+    FillIntChunk(c0, Alloc(), {10, 11});
+    cdc->Append(c0);
+    duckdb::DataChunk c1;
+    FillIntChunk(c1, Alloc(), {20, 21});
+    cdc->Append(c1);
+  }
+  // Precondition: the partial appends coalesced (else the bug's premise is
+  // gone).
+  ASSERT_EQ(cdc->ChunkCount(), 1u);
+  // One (base, count) segment per append; disjoint, non-contiguous bases.
+  std::vector<SearchDbWal::InlinePk> segs{{1000, 2}, {2000, 2}};
+
+  {
+    SearchDbWal wal(Fs(), _dir);
+    SearchDbWal::ShardSection sec{/*schema=*/1,
+                                  /*table=*/5,
+                                  SearchDbWal::ColumnIds{cols},
+                                  /*inline=*/cdc.get(),
+                                  /*seg_ids=*/{},
+                                  std::span<const SearchDbWal::InlinePk>{segs}};
+    EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), 1u);
+  }
+
+  Collected got;
+  {
+    SearchDbWal wal2(Fs(), _dir);
+    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got));
+  }
+  // Each append's rows must come back tagged with its own base (pk = base +
+  // row).
+  ASSERT_EQ(got.chunks.size(), 2u);
+  EXPECT_EQ(std::get<3>(got.chunks[0]), (std::vector<int32_t>{10, 11}));
+  EXPECT_EQ(std::get<4>(got.chunks[0]), 1000u);
+  EXPECT_EQ(std::get<3>(got.chunks[1]), (std::vector<int32_t>{20, 21}));
+  EXPECT_EQ(std::get<4>(got.chunks[1]), 2000u);
+}
+
+// The commit-time inline flush (the general/mix path) re-slices a coalesced
+// collection by (base, count) and writes one chunk frame per segment via
+// ChunkWriter -- i.e. the slices go through DataChunk::Serialize. This mirrors
+// that path (VisitInlineSegments -> ChunkWriter -> Recover) to prove the
+// dictionary slices serialize + recover correctly with NO Flatten (Serialize
+// resolves the selection via ToUnifiedFormat / Values<T>()).
+TEST_F(SearchDbWalTest, ReferenceFlushReslicesCoalescedInline) {
+  std::vector<uint64_t> cols{1};
+  auto cdc = std::make_unique<duckdb::ColumnDataCollection>(Alloc(), IntType());
+  {
+    duckdb::DataChunk c0;
+    FillIntChunk(c0, Alloc(), {10, 11});
+    cdc->Append(c0);
+    duckdb::DataChunk c1;
+    FillIntChunk(c1, Alloc(), {20, 21});
+    cdc->Append(c1);
+  }
+  ASSERT_EQ(cdc->ChunkCount(), 1u);  // partial appends coalesced
+  std::vector<SearchDbWal::InlinePk> segs{{1000, 2}, {2000, 2}};
+
+  {
+    SearchDbWal wal(Fs(), _dir);
+    auto cw = wal.NewChunkWriter(/*schema=*/1, /*table=*/5);
+    VisitInlineSegments(
+      *cdc, segs,
+      [&](duckdb::DataChunk& chunk, uint64_t base) { cw.Append(chunk, base); });
+    cw.Finish();
+    std::vector<uint64_t> segids{cw.SegId()};
+    auto sec = ReferenceSection(1, 5, cols, segids);
+    EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), 1u);
+  }
+
+  Collected got;
+  {
+    SearchDbWal wal2(Fs(), _dir);
+    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got));
+  }
+  // One frame per segment, each with its own base + rows.
+  ASSERT_EQ(got.chunks.size(), 2u);
+  EXPECT_EQ(std::get<3>(got.chunks[0]), (std::vector<int32_t>{10, 11}));
+  EXPECT_EQ(std::get<4>(got.chunks[0]), 1000u);
+  EXPECT_EQ(std::get<3>(got.chunks[1]), (std::vector<int32_t>{20, 21}));
+  EXPECT_EQ(std::get<4>(got.chunks[1]), 2000u);
 }
 
 }  // namespace

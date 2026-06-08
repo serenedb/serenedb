@@ -20,10 +20,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-
-#include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -86,8 +85,8 @@ class SearchTableTransaction {
   }
 
   // Register (or extend) a plain search-table WAL commit (WAL_DESIGN.md §7).
-  // Called once per plain INSERT/COPY statement at Finalize: the first call sets
-  // the descriptor; a later statement on the same shard appends its bulk
+  // Called once per plain INSERT/COPY statement at Finalize: the first call
+  // sets the descriptor; a later statement on the same shard appends its bulk
   // chunk-file `seg_ids` (inline buffers accumulate in `changes`). Single-shard
   // contract -- `table_id` must match across calls.
   void RegisterSearchTableCommit(std::shared_ptr<TableShard> shard,
@@ -104,8 +103,8 @@ class SearchTableTransaction {
 
   // Pins a SearchTableShard's DirectoryReader for the lifetime of this sdb txn
   // so every scan in the same transaction sees the same view. `make_reader` is
-  // invoked only on first call for a given shard_id; subsequent calls return the
-  // same reader.
+  // invoked only on first call for a given shard_id; subsequent calls return
+  // the same reader.
   template<typename Factory>
   std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
     ObjectId shard_id, Factory&& make_reader) {
@@ -119,9 +118,9 @@ class SearchTableTransaction {
     return it->second;
   }
 
-  // Per-search-table in-flight INSERT buffer (see search/local_table_changes.h).
-  // Lazily populated by SereneDBSearchInsert; read back at commit for the INLINE
-  // WAL record (and future RYOW overlay).
+  // Per-search-table in-flight INSERT buffer (see
+  // search/local_table_changes.h). Lazily populated by SereneDBSearchInsert;
+  // read back at commit for the INLINE WAL record (and future RYOW overlay).
   LocalTableChanges& Changes() noexcept { return _changes; }
 
   // --- Lifecycle (query::Transaction delegates) ---

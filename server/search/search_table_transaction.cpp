@@ -96,20 +96,18 @@ uint64_t SearchTableTransaction::AppendCommit() {
     }
 
     // Gather this shard's inline (small-INSERT) buffers, one per inline sink
-    // thread / statement, with their parallel per-chunk generated-PK base lists
+    // thread / statement, with their per-Sink-chunk (base, count) segment lists
     // (§5.6). Bulk inserts produced no buffers (they streamed to chunk files
     // during Sink) -- their data + pk_bases are in w.seg_ids / the chunk
     // frames.
     std::vector<duckdb::ColumnDataCollection*> buffers;
-    std::vector<std::vector<uint64_t>*> pk_lists;
+    std::vector<std::vector<SearchDbWal::InlinePk>*> pk_lists;
     auto it = _changes.find(table_id);
     if (it != _changes.end()) {
-      auto& e = it->second;
-      for (size_t i = 0; i < e.insert_collections.size(); ++i) {
-        auto& c = e.insert_collections[i];
-        if (c && c->Count() > 0) {
-          buffers.push_back(c.get());
-          pk_lists.push_back(e.insert_pk_bases[i].get());
+      for (auto& buf : it->second.inserts) {
+        if (buf.collection && buf.collection->Count() > 0) {
+          buffers.push_back(buf.collection.get());
+          pk_lists.push_back(buf.pk_segments.get());
         }
       }
     }
@@ -122,21 +120,28 @@ uint64_t SearchTableTransaction::AppendCommit() {
     section.column_ids = SearchDbWal::ColumnIds{w.column_ids};
     if (w.seg_ids.empty() && buffers.size() == 1) {
       // OLTP fast path: one inline buffer, no chunk files -> INLINE section
-      // (rows serialised straight into the central record, pk_bases alongside).
+      // (rows serialised straight into the central record, segments alongside).
       section.inline_data = buffers.front();
-      section.inline_pk_bases = std::span<const uint64_t>{*pk_lists.front()};
+      section.inline_pks =
+        std::span<const SearchDbWal::InlinePk>{*pk_lists.front()};
     } else {
-      // General path (bulk, multi-statement inline, or a mix): flush any inline
-      // buffers to this shard's chunk files so the section is a single
-      // REFERENCE over all of them (single-threaded here; only the multi/mixed
-      // case). Each chunk carries its pk_base in the chunk frame.
-      for (size_t k = 0; k < buffers.size(); ++k) {
+      // General path (bulk, multi-statement inline, or a mix): the section is a
+      // single REFERENCE over all chunk files. Bulk inserts already streamed
+      // their per-thread chunk files concurrently at Sink (w.seg_ids). Any
+      // inline buffers are flushed here -- single-threaded commit point, so no
+      // Sink-time concurrency to exploit: pack ALL of them into ONE chunk file.
+      // Re-slice each buffer by its recorded (base, count) segments so a
+      // coalesced collection chunk doesn't smear one base across two Sink
+      // chunks' rows (§5.6); each emitted frame carries its own base. The
+      // dictionary slices serialize fine -- DataChunk::Serialize resolves the
+      // selection (ToUnifiedFormat / Values<T>()), so no Flatten needed.
+      if (!buffers.empty()) {
         auto writer = shard.NewChunkWriter();
-        auto* pks = pk_lists[k];
-        size_t ci = 0;
-        for (auto& chunk : buffers[k]->Chunks()) {
-          writer.Append(chunk, ci < pks->size() ? (*pks)[ci] : 0);
-          ++ci;
+        for (size_t k = 0; k < buffers.size(); ++k) {
+          VisitInlineSegments(*buffers[k], *pk_lists[k],
+                              [&](duckdb::DataChunk& chunk, uint64_t base) {
+                                writer.Append(chunk, base);
+                              });
         }
         writer.Finish();
         w.seg_ids.push_back(writer.SegId());

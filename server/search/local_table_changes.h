@@ -27,6 +27,7 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
+#include "search/search_db_wal.h"
 
 namespace sdb::search {
 
@@ -54,27 +55,34 @@ namespace sdb::search {
 // memory pressure transparently, so a wide INSERT doesn't blow heap. We
 // follow DuckLake's `LocalTableChanges` pattern; see design doc D15.
 struct LocalTableChangesEntry {
-  // One collection per parallel sink thread, registered in
-  // SereneDBSearchInsert::GetLocalSinkState. unique_ptr so a thread's
-  // collection pointer (held in its LocalSinkState) stays stable across
-  // vector growth. Empty until the first INSERT thread registers one. The
-  // generated PK is assigned inline in Sink (each thread reserves its own
-  // contiguous range from the sequence), so no per-row PK bookkeeping is
-  // carried here.
-  std::vector<std::unique_ptr<duckdb::ColumnDataCollection>> insert_collections;
+  // One buffered INSERT per parallel sink thread, registered in
+  // SereneDBSearchInsert::GetLocalSinkState. Both members are unique_ptr so the
+  // raw pointers a thread caches in its LocalSinkState (collection /
+  // pk_segments) stay valid while other threads push more buffers and grow this
+  // vector -- the heap pointees don't move, only the 16-byte element does
+  // (nobody caches a pointer to that). Empty until the first INSERT thread
+  // registers one.
+  struct InsertBuffer {
+    // This thread's rows. The generated PK is assigned inline in Sink (each
+    // thread reserves its own contiguous range from the sequence), so no
+    // per-row PK bookkeeping is carried here.
+    std::unique_ptr<duckdb::ColumnDataCollection> collection;
 
-  // Parallel to insert_collections (same index): the per-chunk generated-PK
-  // `pk_base` values for the inline path, in chunk-append order. Recorded so
-  // recovery can reproduce the synthetic PKs (WAL_DESIGN.md §5.6). unique_ptr
-  // so a thread's list pointer (held in its LocalSinkState) stays stable across
-  // vector growth, mirroring insert_collections. For an explicit-PK table the
-  // entries are 0 (replay re-derives the key from the columns and ignores
-  // them).
-  std::vector<std::unique_ptr<std::vector<uint64_t>>> insert_pk_bases;
+    // One InlinePk{base, count} per Sink chunk appended to `collection`, in
+    // append order -- the generated-PK base and that chunk's row count.
+    // Recorded per Sink chunk (NOT per collection Chunk: ColumnDataCollection
+    // coalesces partial appends) so replay re-slices by count and reproduces
+    // each chunk's synthetic PKs (WAL_DESIGN.md §5.6). base is 0 for
+    // explicit-PK.
+    std::unique_ptr<std::vector<SearchDbWal::InlinePk>> pk_segments;
+  };
+
+  std::vector<InsertBuffer> inserts;
 };
 
 // Map keyed by SearchTableShard's table_id (one search table -> one
-// entry). Cleared when the SearchTableTransaction is reset (Transaction::Destroy).
+// entry). Cleared when the SearchTableTransaction is reset
+// (Transaction::Destroy).
 using LocalTableChanges =
   containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
 

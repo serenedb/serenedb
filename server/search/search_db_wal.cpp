@@ -431,13 +431,16 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
       payload.Write<uint64_t>(cid);
     }
     if (s.inline_data) {
-      // [u32 pk_count][u64 pk_base x pk_count][u64 inline_len][serialized CDC].
-      // pk_bases are the per-chunk generated-PK bases (aligned to the CDC's
-      // chunks; §5.6); the inline_len prefix lets recovery/GC step to the next
-      // section without deserialising.
-      payload.Write<uint32_t>(static_cast<uint32_t>(s.inline_pk_bases.size()));
-      for (uint64_t pb : s.inline_pk_bases) {
-        payload.Write<uint64_t>(pb);
+      // [u32 seg_count][(u64 base, u64 count) x seg_count][u64
+      // inline_len][CDC]. One (base, count) per inserted Sink chunk (§5.6);
+      // replay re-slices the CDC's rows by `count` so each chunk's rows get
+      // their own base regardless of how ColumnDataCollection coalesced them.
+      // The inline_len prefix lets recovery/GC step to the next section without
+      // deserialising.
+      payload.Write<uint32_t>(static_cast<uint32_t>(s.inline_pks.size()));
+      for (const auto& pk : s.inline_pks) {
+        payload.Write<uint64_t>(pk.base);
+        payload.Write<uint64_t>(pk.count);
       }
       duckdb::MemoryStream tmp;
       duckdb::BinarySerializer serializer{tmp};
@@ -621,28 +624,33 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
         const bool live =
           exists_of(h.schema_id, h.table_id) && tick > committed_of(h.table_id);
         if (h.kind == kKindInline) {
-          auto pk_count = c.Read<uint32_t>();
-          const uint8_t* pk_blob = c.ReadBlob(pk_count * sizeof(uint64_t));
+          auto seg_count = c.Read<uint32_t>();
+          const uint8_t* pk_blob = c.ReadBlob(seg_count * 2 * sizeof(uint64_t));
           auto inline_len = c.Read<uint64_t>();
           const uint8_t* blob = c.ReadBlob(inline_len);
           if (!live) {
             continue;
+          }
+          std::vector<InlinePk> segments(seg_count);
+          for (uint32_t i = 0; i < seg_count; ++i) {
+            std::memcpy(&segments[i].base, pk_blob + (2 * i) * sizeof(uint64_t),
+                        sizeof(uint64_t));
+            std::memcpy(&segments[i].count,
+                        pk_blob + (2 * i + 1) * sizeof(uint64_t),
+                        sizeof(uint64_t));
           }
           duckdb::MemoryStream ms(const_cast<uint8_t*>(blob), inline_len);
           duckdb::BinaryDeserializer deser{ms};
           deser.Begin();
           auto cdc = duckdb::ColumnDataCollection::Deserialize(deser);
           deser.End();
-          uint32_t i = 0;
-          for (auto& chunk : cdc->Chunks()) {
-            uint64_t pk_base = 0;
-            if (i < pk_count) {
-              std::memcpy(&pk_base, pk_blob + i * sizeof(uint64_t),
-                          sizeof(uint64_t));
-            }
-            cb(tick, h.schema_id, h.table_id, pk_base, column_ids, chunk);
-            ++i;
-          }
+          // Re-slice by the recorded per-Sink-chunk segments (§5.6) -- the
+          // CDC's own Chunks() coalesce partial appends, so we can't index by
+          // chunk.
+          VisitInlineSegments(
+            *cdc, segments, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
+              cb(tick, h.schema_id, h.table_id, pk_base, column_ids, chunk);
+            });
         } else {
           auto seg_count = c.Read<uint32_t>();
           for (uint32_t k = 0; k < seg_count; ++k) {
@@ -694,6 +702,55 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
     _tick.store(max_tick, std::memory_order_relaxed);
   }
   return max_tick;
+}
+
+void VisitInlineSegments(
+  const duckdb::ColumnDataCollection& cdc,
+  std::span<const SearchDbWal::InlinePk> segments,
+  const std::function<void(duckdb::DataChunk&, uint64_t base)>& emit) {
+  if (segments.empty()) {
+    // No recorded segments (a section with no generated-PK info): replay each
+    // chunk as-is with base 0 -- explicit-PK keys are re-derived from the
+    // columns on replay (matches the pre-§5.6 behaviour).
+    for (auto& chunk : cdc.Chunks()) {
+      emit(chunk, 0);
+    }
+    return;
+  }
+  size_t seg = 0;
+  uint64_t seg_off = 0;  // rows of the current segment already emitted
+  for (auto& chunk : cdc.Chunks()) {
+    const uint64_t n = chunk.size();
+    uint64_t off = 0;  // rows of this (coalesced) chunk already consumed
+    while (off < n && seg < segments.size()) {
+      const auto take = static_cast<duckdb::idx_t>(
+        std::min<uint64_t>(segments[seg].count - seg_off, n - off));
+      if (off == 0 && seg_off == 0 && take == n) {
+        // Whole chunk is exactly one segment -- the common case (full Sink
+        // chunks don't coalesce); emit directly, no slice.
+        emit(chunk, segments[seg].base);
+      } else {
+        // Dictionary view over chunk[off, off+take): Slice References chunk and
+        // applies a selection vector (no row-data copy). Safe -- the consumer
+        // copies the rows out synchronously while `chunk` is still the live
+        // scan scratch.
+        duckdb::SelectionVector sel(take);
+        for (duckdb::idx_t r = 0; r < take; ++r) {
+          sel.set_index(r, off + r);
+        }
+        duckdb::DataChunk slice;
+        slice.InitializeEmpty(cdc.Types());
+        slice.Slice(chunk, sel, take);
+        emit(slice, segments[seg].base + seg_off);
+      }
+      off += take;
+      seg_off += take;
+      if (seg_off == segments[seg].count) {
+        ++seg;
+        seg_off = 0;
+      }
+    }
+  }
 }
 
 }  // namespace sdb::search

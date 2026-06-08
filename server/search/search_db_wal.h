@@ -116,6 +116,16 @@ class SearchDbWal {
   // Opaque column-id list carried in a section (catalog::Column::Id::id()).
   using ColumnIds = std::span<const uint64_t>;
 
+  // One inserted Sink chunk's generated-PK run: `count` rows keyed
+  // [base, base+count). Recorded per Sink chunk -- NOT per inline_data Chunk:
+  // ColumnDataCollection coalesces partial appends, so its Chunks() boundaries
+  // don't line up with the Sink chunks the bases are keyed to. Replay re-slices
+  // inline_data's rows by these counts (§5.6). base is 0 for explicit-PK.
+  struct InlinePk {
+    uint64_t base;
+    uint64_t count;
+  };
+
   // One transaction's contribution for a single search shard. Exactly one of
   // `inline_data` (small INSERT, rows serialised into the section) or `seg_ids`
   // (bulk INSERT, references already-fsynced chunk files) is populated.
@@ -126,9 +136,10 @@ class SearchDbWal {
     ColumnIds column_ids;
     const duckdb::ColumnDataCollection* inline_data = nullptr;  // INLINE
     std::span<const uint64_t> seg_ids;                          // REFERENCE
-    // INLINE only: per-chunk generated-PK base, aligned to inline_data's chunks
-    // (0 for explicit-PK). Recorded for replay PK reconstruction (§5.6).
-    std::span<const uint64_t> inline_pk_bases;
+    // INLINE only: one entry per inserted Sink chunk (the unit a generated-PK
+    // base is keyed to), in append order. Recorded for replay PK
+    // reconstruction (§5.6).
+    std::span<const InlinePk> inline_pks;
   };
 
   // Per replayed chunk during Recover(): the record's tick, the section's
@@ -248,5 +259,17 @@ class SearchDbWal {
   uint64_t MinCommittedTick();  // min over _committed (0 if empty)
   void RunGc();                 // delete sealed segments whose range <= min
 };
+
+// Re-slice an inline collection by its recorded per-Sink-chunk `segments`,
+// invoking `emit(slice, base)` once per segment with that chunk's rows + base.
+// `cdc` preserves append ORDER, so walking its (possibly coalesced) Chunks()
+// and splitting at the segment row boundaries reproduces each original Sink
+// chunk with its own base -- the alignment ColumnDataCollection's own chunking
+// loses (§5.6). Shared by INLINE replay (Recover) and the commit-time inline
+// flush.
+void VisitInlineSegments(
+  const duckdb::ColumnDataCollection& cdc,
+  std::span<const SearchDbWal::InlinePk> segments,
+  const std::function<void(duckdb::DataChunk&, uint64_t base)>& emit);
 
 }  // namespace sdb::search

@@ -93,6 +93,7 @@ set(IResearch_core_sources
     ./formats/column/hnsw_index.cpp
     ./index/directory_reader.cpp
     ./index/directory_reader_impl.cpp
+    ./index/document_mask.cpp
     ./index/field_data.cpp
     ./index/field_meta.cpp
     ./index/file_names.cpp

@@ -71,7 +71,8 @@ irs::doc_id_t SearchRemoveFilter::advance() {
 
     auto doc = irs::doc_limits::eof();
     auto acceptor = [&](irs::doc_id_t found_doc) {
-      if (_segment_mask.IsDeleted(found_doc) || _pending_mask.IsDeleted(found_doc)) {
+      if (_segment_mask.IsDeleted(found_doc) ||
+          (_pending_mask && _pending_mask->IsDeleted(found_doc))) {
         return true;  // skip deleted
       }
       // found alive document with this PK

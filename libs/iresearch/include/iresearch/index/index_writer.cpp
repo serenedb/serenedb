@@ -198,10 +198,8 @@ void RemoveFromExistingSegment(DocumentBitMask& deleted_docs,
     return;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->execute(
-    {.segment = reader,
-     .pending_docs_mask = DocumentMaskView(&deleted_docs, DocumentMaskKind::DenseBitset)});
-  static_assert(std::is_same_v<std::remove_cvref_t<decltype(deleted_docs)>, DocumentBitMask>);
+  auto itr =
+    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
 
   if (!itr) [[unlikely]] {
     return;  // skip invalid iterators
@@ -233,10 +231,8 @@ bool RemoveFromImportedSegment(DocumentBitMask& deleted_docs,
     return false;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->execute(
-    {.segment = reader,
-     .pending_docs_mask = DocumentMaskView(&deleted_docs, DocumentMaskKind::DenseBitset)});
-  static_assert(std::is_same_v<std::remove_cvref_t<decltype(deleted_docs)>, DocumentBitMask>);
+  auto itr =
+    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
 
   if (!itr) [[unlikely]] {
     return false;  // skip invalid iterators
@@ -277,9 +273,7 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
   }
 
   auto itr = prepared->execute(
-    {.segment = *reader,
-     .pending_docs_mask = DocumentMaskView(&document_mask, DocumentMaskKind::DenseBitset)});
-  static_assert(std::is_same_v<std::remove_cvref_t<decltype(document_mask)>, DocumentBitMask>);
+    {.segment = *reader, .pending_docs_mask = &document_mask});
 
   if (!itr) [[unlikely]] {
     return;  // Skip invalid iterators

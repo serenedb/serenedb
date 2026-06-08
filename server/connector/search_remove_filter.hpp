@@ -71,7 +71,7 @@ class SearchRemoveFilterBase : public irs::Filter,
   }
 
   mutable const irs::SubReader* _segment{};
-  mutable irs::DocumentMaskView _pending_mask{};
+  mutable const irs::DocumentBitMask* _pending_mask{};
   mutable irs::DocumentMaskView _segment_mask{};
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};

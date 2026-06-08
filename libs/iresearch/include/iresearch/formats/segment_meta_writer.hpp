@@ -61,40 +61,18 @@ inline std::string FileName<SegmentMetaWriter, SegmentMeta>(
                        SegmentMetaWriterImpl::kFormatExt);
 }
 
-// The old format, not used anymore. ReadDocumentMask should support old
-// versions, so keeping serialization algorithm for visibility and benchmarking
-// purposes.
-[[deprecated]]
-inline uint64_t WriteDocumentMaskV0(IndexOutput& out,
-                                    const DocumentMask* docs_mask) {
-  // TODO(gnusi): better format
-  uint32_t mask_size =
-    docs_mask ? static_cast<uint32_t>(docs_mask->DeletedDocCount()) : 0;
-  SDB_ASSERT(mask_size < doc_limits::eof());
-
-  if (!mask_size) {
-    out.WriteV32(0);
-    return 0;
-  }
-
-  out.WriteV32(mask_size);
-  const auto pos = out.Position();
-  docs_mask->ForEachDeleted([&out](doc_id_t doc_id) { out.WriteV32(doc_id); });
-  return out.Position() - pos;
-}
-
 inline uint64_t WriteDocumentMaskDeletedVarintList(
   Directory&, IndexOutput& out, const DocumentMask& docs_mask) {
   out.WriteV32(DocumentMaskOnDiskFormat::DeletedVarintList);
   const auto pos = out.Position();
-  docs_mask.ForEachDeleted([&out](doc_id_t doc_id) { out.WriteV32(doc_id); });
+  ForEachDeleted(docs_mask, [&out](doc_id_t doc_id) { out.WriteV32(doc_id); });
   return out.Position() - pos;
 }
 inline uint64_t WriteDocumentMaskAliveVarintList(
   Directory&, IndexOutput& out, const DocumentMask& docs_mask) {
   out.WriteV32(DocumentMaskOnDiskFormat::AliveVarintList);
   const auto pos = out.Position();
-  docs_mask.ForEachAlive([&out](doc_id_t doc_id) { out.WriteV32(doc_id); });
+  ForEachAlive(docs_mask, [&out](doc_id_t doc_id) { out.WriteV32(doc_id); });
   return out.Position() - pos;
 }
 
@@ -105,7 +83,7 @@ inline uint64_t WriteDocumentMaskDenseBitset(Directory& dir, IndexOutput& out,
   // TODO: decide on proper resource manager for the buffering bitset
   ManagedBitset deleted_docs(docs_mask.DocCount(),
                              *dir.ResourceManager().readers);
-  docs_mask.ForEachDeleted([&deleted_docs](doc_id_t doc_id) {
+  ForEachDeleted(docs_mask, [&deleted_docs](doc_id_t doc_id) {
     deleted_docs.set(doc_id - doc_limits::min());
   });
   const auto pos = out.Position();

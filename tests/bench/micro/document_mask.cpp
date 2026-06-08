@@ -33,39 +33,28 @@ namespace {
 static constexpr size_t kPostingListSize = 1000;
 static constexpr size_t kPostingListCount = 20;
 
-// Build uniformly random set of deleted_count ids to be put as deleted in mask
-DocumentDeletedHashMask BuildHashMask(size_t doc_count, size_t deleted_count,
-                                      int seed) {
-  DocumentDeletedHashMask mask{irs::IResourceManager::gNoop, doc_count,
-                               deleted_count};
+// Build uniformly random DocumentBitMask with deleted_count deleted ids.
+DocumentBitMask BuildBitMask(size_t doc_count, size_t deleted_count, int seed) {
+  DocumentBitMask mask{irs::IResourceManager::gNoop, doc_count};
   vector<doc_id_t> all_ids(doc_count);
-  std::iota(all_ids.begin(), all_ids.end(), 1);
+  std::iota(all_ids.begin(), all_ids.end(), irs::doc_limits::min());
   std::shuffle(all_ids.begin(), all_ids.end(), std::mt19937(seed));
   for (size_t i = 0; i < deleted_count; ++i) {
-    mask.Store(all_ids[i]);
+    mask.MarkDeleted(all_ids[i]);
   }
   return mask;
 }
 
 template<typename MaskType>
 MaskType BuildMask(size_t doc_count, size_t deleted_count, int seed) {
-  auto source =
-    BuildMask<DocumentDeletedHashMask>(doc_count, deleted_count, seed);
+  auto source = BuildBitMask(doc_count, deleted_count, seed);
   return MaskType(irs::IResourceManager::gNoop, source);
-}
-
-template<>
-DocumentDeletedHashMask BuildMask<DocumentDeletedHashMask>(size_t doc_count,
-                                                           size_t deleted_count,
-                                                           int seed) {
-  return BuildHashMask(doc_count, deleted_count, seed);
 }
 
 template<>
 DocumentBitMask BuildMask<DocumentBitMask>(size_t doc_count,
                                            size_t deleted_count, int seed) {
-  auto source = BuildHashMask(doc_count, deleted_count, seed);
-  return DocumentBitMask(irs::IResourceManager::gNoop, std::move(source));
+  return BuildBitMask(doc_count, deleted_count, seed);
 }
 
 // Builds a vector of size kPostingListSize of document ids to lookup in
@@ -160,8 +149,8 @@ void BmIterateDeleted(benchmark::State& state) {
     BuildMask<MaskType>(doc_count, doc_count * delete_permille / 1000, kSeed);
 
   for (auto _ : state) {
-    mask.ForEachDeleted(
-      [](doc_id_t doc_id) { benchmark::DoNotOptimize(doc_id); });
+    ForEachDeleted(mask,
+                   [](doc_id_t doc_id) { benchmark::DoNotOptimize(doc_id); });
   }
 }
 
@@ -177,8 +166,8 @@ void BmIterateAlive(benchmark::State& state) {
     BuildMask<MaskType>(doc_count, doc_count * delete_permille / 1000, kSeed);
 
   for (auto _ : state) {
-    mask.ForEachAlive(
-      [](doc_id_t doc_id) { benchmark::DoNotOptimize(doc_id); });
+    ForEachAlive(mask,
+                 [](doc_id_t doc_id) { benchmark::DoNotOptimize(doc_id); });
   }
 }
 
@@ -312,7 +301,7 @@ void BmMaskMemory(benchmark::State& state) {
 
 void MaskArgs(benchmark::internal::Benchmark* b) {
   for (auto doc_cnt : {4000000}) {
-    for (auto pmle : {1, 10, 100, 300, 500, 700, 900, 990, 999}) {
+    for (auto pmle : {1, 10, 30, 50, 100, 300, 500, 700, 900, 950, 970, 990, 999}) {
       b->Args({doc_cnt, pmle});
     }
   }
@@ -348,8 +337,7 @@ struct JustTokensIndex {
   irs::DirectoryReader reader;
 };
 
-JustTokensIndex
-PrepareIndex(size_t doc_count, size_t deleted_doc_count) {
+JustTokensIndex PrepareIndex(size_t doc_count, size_t deleted_doc_count) {
   constexpr size_t kSeed = 43;
 
   vector<size_t> doc_ids(doc_count);
@@ -404,7 +392,8 @@ PrepareIndex(size_t doc_count, size_t deleted_doc_count) {
   // Stage 2: do remove
   irs::ByTerm del_filter;
   *del_filter.mutable_field() = "status";
-  del_filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(std::string_view{"dead"});
+  del_filter.mutable_options()->term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"dead"});
   {
     auto tx = writer->GetBatch();
     tx.Remove(del_filter);

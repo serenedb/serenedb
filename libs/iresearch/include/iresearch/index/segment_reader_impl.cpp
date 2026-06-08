@@ -76,9 +76,10 @@ class AllIterator : public DocIterator {
   const doc_id_t _max_doc;
 };
 
+template<typename DocumentMaskImpl>
 class MaskDocIterator : public DocIterator {
  public:
-  MaskDocIterator(DocIterator::ptr&& it, DocumentMaskView mask) noexcept
+  MaskDocIterator(DocIterator::ptr&& it, const DocumentMaskImpl& mask) noexcept
     : _mask{mask}, _it{std::move(it)} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -115,14 +116,15 @@ class MaskDocIterator : public DocIterator {
   }
 
  private:
-  DocumentMaskView _mask;
+  const DocumentMaskImpl& _mask;
   DocIterator::ptr _it;
 };
 
+template<typename DocumentMaskImpl>
 class MaskedDocIterator : public DocIterator {
  public:
   MaskedDocIterator(doc_id_t begin, doc_id_t end,
-                    DocumentMaskView docs_mask) noexcept
+                    const DocumentMaskImpl& docs_mask) noexcept
     : _docs_mask{docs_mask}, _end{end}, _next{begin} {
     SDB_ASSERT(begin <= end);
     SDB_ASSERT(doc_limits::valid(begin));
@@ -161,7 +163,7 @@ class MaskedDocIterator : public DocIterator {
   }
 
  private:
-  DocumentMaskView _docs_mask;
+  const DocumentMaskImpl& _docs_mask;
   const doc_id_t _end;
   doc_id_t _next;
 };
@@ -258,8 +260,16 @@ DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
   }
   SDB_ASSERT(_docs_mask->DeletedDocCount() > 0);
 
-  return memory::make_managed<MaskedDocIterator>(
-    doc_limits::min(), doc_limits::min() + _info.docs_count, DocumentMaskView(_docs_mask.get()));
+  switch (_docs_mask->Kind()) {
+    case DocumentMaskKind::None:
+      return memory::make_managed<AllIterator>(_info.docs_count);
+    case DocumentMaskKind::DeletedHashSet:
+      return memory::make_managed<MaskedDocIterator<DocumentDeletedHashMask>>(doc_limits::min(), doc_limits::min() + _info.docs_count, static_cast<const DocumentDeletedHashMask&>(*_docs_mask));
+    case DocumentMaskKind::DenseBitset:
+      return memory::make_managed<MaskedDocIterator<DocumentBitMask>>(doc_limits::min(), doc_limits::min() + _info.docs_count, static_cast<const DocumentBitMask&>(*_docs_mask));
+    case DocumentMaskKind::AliveHashSet:
+      return memory::make_managed<MaskedDocIterator<DocumentAliveHashMask>>(doc_limits::min(), doc_limits::min() + _info.docs_count, static_cast<const DocumentAliveHashMask&>(*_docs_mask));
+  }
 }
 
 DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
@@ -269,7 +279,16 @@ DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
   }
   SDB_ASSERT(_docs_mask->DeletedDocCount() > 0);
 
-  return memory::make_managed<MaskDocIterator>(std::move(it), DocumentMaskView(_docs_mask.get()));
+  switch (_docs_mask->Kind()) {
+    case DocumentMaskKind::None:
+      return std::move(it);
+    case DocumentMaskKind::DeletedHashSet:
+      return memory::make_managed<MaskDocIterator<DocumentDeletedHashMask>>(std::move(it), static_cast<const DocumentDeletedHashMask&>(*_docs_mask));
+    case DocumentMaskKind::DenseBitset:
+      return memory::make_managed<MaskDocIterator<DocumentBitMask>>(std::move(it), static_cast<const DocumentBitMask&>(*_docs_mask));
+    case DocumentMaskKind::AliveHashSet:
+      return memory::make_managed<MaskDocIterator<DocumentAliveHashMask>>(std::move(it), static_cast<const DocumentAliveHashMask&>(*_docs_mask));
+  }
 }
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,

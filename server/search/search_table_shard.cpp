@@ -72,6 +72,36 @@ std::filesystem::path SearchTableShard::GetChunkDir(ObjectId db_id,
   return path;
 }
 
+Result SearchTableShard::DropArtifacts(ObjectId db_id, ObjectId schema_id,
+                                       ObjectId table_id) {
+  // remove_all returns 0 and leaves ec clear when the path doesn't exist --
+  // treat that as success (idempotent drop, also covers the create-then-
+  // rollback path where the dir may never have been made).
+  auto path = GetPath(db_id, schema_id, table_id);
+  std::error_code ec;
+  std::filesystem::remove_all(path, ec);
+  if (ec) {
+    return Result{ERROR_INTERNAL,
+                  "Failed to remove search table shard directory '" +
+                    path.string() + "': " + ec.message()};
+  }
+  // Wipe THIS shard's bulk chunk subtree (WAL_DESIGN.md §4.0). The central
+  // commit log is per-DATABASE (shared), so it is NOT removed here -- the
+  // dropped shard's central sections become orphans (skipped on recovery via
+  // the catalog, GC'd with their segment).
+  auto chunk_dir = GetChunkDir(db_id, schema_id, table_id);
+  std::filesystem::remove_all(chunk_dir, ec);
+  if (ec) {
+    return Result{ERROR_INTERNAL,
+                  "Failed to remove search table chunk directory '" +
+                    chunk_dir.string() + "': " + ec.message()};
+  }
+  // Deregister from the db WAL's flush-subscription so the dropped shard's
+  // frozen committed tick can't pin GC (WAL_DESIGN.md §10.3).
+  GetSearchEngine().GetDbWal(db_id).DeregisterShard(table_id.id());
+  return {};
+}
+
 SearchTableShard::SearchTableShard(ObjectId db_id, ObjectId schema_id,
                                    ObjectId table_id,
                                    const catalog::TableStats& stats)

@@ -77,6 +77,15 @@ class SearchTableShard final : public TableShard {
   static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId schema_id,
                                            ObjectId table_id);
 
+  // Removes a dropped kSearch shard's on-disk artifacts (iresearch directory +
+  // bulk chunk subtree) and deregisters it from the db WAL flush-subscription
+  // (WAL_DESIGN.md §4.0/§10.3). Static because it runs after the shard instance
+  // is gone (drop path). Idempotent: a missing directory is success. The shared
+  // per-database central commit log is NOT removed here. Dispatched to from
+  // TableShard::DropArtifacts for the kSearch case.
+  static Result DropArtifacts(ObjectId db_id, ObjectId schema_id,
+                              ObjectId table_id);
+
   // Returns a fresh iresearch IndexWriter::Transaction tied to this shard's
   // writer. Used by SereneDBSearchInsert (M3) to stash one trx per shard
   // in query::Transaction::_search_transactions; the per-sdb-txn lifetime

@@ -26,8 +26,6 @@
 #include <atomic>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
-#include <filesystem>
-#include <system_error>
 #include <tuple>
 #include <yaclib/async/make.hpp>
 
@@ -41,7 +39,6 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/search_table_shard.h"
 #include "storage_engine/engine_feature.h"
-#include "storage_engine/search_engine.h"
 
 namespace sdb {
 
@@ -101,38 +98,12 @@ Result TableShard::DropArtifacts(catalog::StorageKind kind, ObjectId db_id,
                                           rocksdb::Slice{end}, cf, true,
                                           (size >= 1000));
     }
-    case catalog::StorageKind::kSearch: {
-      // remove_all returns 0 and leaves ec clear when the path doesn't
-      // exist -- treat that as success (idempotent drop, also covers the
-      // create-then-rollback path where the dir may never have been made).
-      // shard_id is unused: single-shard-per-table arch, path is keyed on
-      // (db_id, schema_id, table_id) only -- see SearchTableShard::GetPath.
+    case catalog::StorageKind::kSearch:
+      // shard_id is unused for search (single-shard-per-table, path keyed on
+      // db/schema/table); the cleanup lives on the search shard.
       (void)shard_id;
-      auto path = search::SearchTableShard::GetPath(db_id, schema_id, table_id);
-      std::error_code ec;
-      std::filesystem::remove_all(path, ec);
-      if (ec) {
-        return Result{ERROR_INTERNAL,
-                      "Failed to remove search table shard directory '" +
-                        path.string() + "': " + ec.message()};
-      }
-      // Wipe THIS shard's bulk chunk subtree (WAL_DESIGN.md §4.0). The central
-      // commit log is per-DATABASE (shared), so it is NOT removed here -- the
-      // dropped shard's central sections become orphans (skipped on recovery
-      // via the catalog, GC'd with their segment).
-      auto chunk_dir =
-        search::SearchTableShard::GetChunkDir(db_id, schema_id, table_id);
-      std::filesystem::remove_all(chunk_dir, ec);
-      if (ec) {
-        return Result{ERROR_INTERNAL,
-                      "Failed to remove search table chunk directory '" +
-                        chunk_dir.string() + "': " + ec.message()};
-      }
-      // Deregister from the db WAL's flush-subscription so the dropped shard's
-      // frozen committed tick can't pin GC (WAL_DESIGN.md §10.3).
-      search::GetSearchEngine().GetDbWal(db_id).DeregisterShard(table_id.id());
-      return {};
-    }
+      return search::SearchTableShard::DropArtifacts(db_id, schema_id,
+                                                     table_id);
   }
   SDB_UNREACHABLE();
 }

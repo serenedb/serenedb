@@ -22,7 +22,6 @@
 
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
-
 #include <string_view>
 
 #include "catalog/table_options.h"

@@ -29,14 +29,13 @@
 #include <yaclib/async/future.hpp>
 
 #include "basics/containers/flat_hash_map.h"
-#include "basics/containers/node_hash_map.h"
 #include "basics/down_cast.h"
 #include "basics/result.h"
 #include "catalog/catalog.h"
 #include "query/config.h"
-#include "query/local_table_changes.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
+#include "search/search_table_transaction.h"
 
 namespace sdb {
 
@@ -44,28 +43,6 @@ class TableShard;
 
 }  // namespace sdb
 namespace sdb::query {
-
-// Per-(sdb txn, search shard) writes (WAL_DESIGN.md §3.2/§9). One entry per
-// search table the transaction wrote; Commit() turns each into a per-shard
-// section of ONE central WAL record (multi-shard atomicity, §9). Keyed by
-// table_id in Transaction::_search_table_writes.
-struct SearchShardWrites {
-  // Keeps the shard alive past the catalog snapshot; downcast to
-  // search::SearchTableShard at commit to reach the database's shared WAL.
-  std::shared_ptr<TableShard> shard;
-  // For the WAL section's chunk path + recovery dispatch (= shard's schema id).
-  uint64_t schema_id = 0;
-  // Catalog column ids (catalog::Column::Id::id()) in input-chunk order.
-  std::vector<uint64_t> column_ids;
-  // Bulk chunk-file ids (one per sink thread that wrote rows), collected at
-  // Combine/Finalize. Empty => this shard's data is in its inline buffers
-  // (_local_table_changes[table_id]).
-  std::vector<uint64_t> seg_ids;
-  // Per-thread iresearch transactions for this shard (one per parallel sink
-  // thread; one for the single-threaded inline case). Handed off at Combine,
-  // committed on the shared WAL tick at Transaction::Commit.
-  std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
-};
 
 class Transaction : public Config {
  public:
@@ -87,7 +64,7 @@ class Transaction : public Config {
     // reasons) So if we get here explicit Commit/Rollback should be already
     // called. Otherwise we might have some unexpected data
     SDB_ASSERT(_search_transactions.empty());
-    SDB_ASSERT(_search_table_writes.empty());
+    SDB_ASSERT(!_search_txn || _search_txn->Empty());
     // RocksDB transactions aborts itself in destructor but just for consistency
     // we should do Commit/Rollback explicitly
     SDB_ASSERT(!_rocksdb_transaction);
@@ -160,70 +137,15 @@ class Transaction : public Config {
     return *it->second;
   }
 
-  // Parallel search-table INSERT (SereneDBSearchInsert): each sink thread
-  // creates its own iresearch IndexWriter::Transaction (one segment) and
-  // hands it off here at Combine. Unlike _search_transactions (one trx per
-  // shard, used by the inverted-index path), a single search-table INSERT
-  // contributes N transactions on the same shard. They are committed
-  // together with the shared post_commit_seq tick in Commit() -- valid
-  // because these writes are insert-only (no removes), so all N segments
-  // share first_tick and one RefreshCommit publishes them.
-  //
-  // The operator serialises calls with its own sink-state mutex; this is the
-  // only concurrent mutator of the container during the parallel Sink phase.
-  // `table_id` routes the trx to its shard's entry (one record covers all
-  // shards).
-  void AddParallelSearchTransaction(
-    ObjectId table_id, std::unique_ptr<irs::IndexWriter::Transaction> trx) {
-    _search_table_writes[table_id].transactions.push_back(std::move(trx));
-  }
-
-  // Register (or extend) this txn's plain search-table WAL commit
-  // (WAL_DESIGN.md §7). Called once per plain INSERT/COPY statement at
-  // Finalize: the first call sets the descriptor; a later statement on the
-  // same shard appends its bulk chunk-file `seg_ids` (inline buffers
-  // accumulate in _local_table_changes). Single-shard contract -- `table_id`
-  // must match across calls.
-  void RegisterSearchTableCommit(std::shared_ptr<TableShard> shard,
-                                 ObjectId table_id, uint64_t schema_id,
-                                 std::vector<uint64_t> column_ids,
-                                 std::vector<uint64_t> seg_ids) {
-    auto& w = _search_table_writes[table_id];
-    w.shard = std::move(shard);
-    w.schema_id = schema_id;
-    w.column_ids = std::move(column_ids);
-    auto& acc = w.seg_ids;
-    acc.insert(acc.end(), seg_ids.begin(), seg_ids.end());
-  }
-
-  // Pins a SearchTableShard's DirectoryReader for the lifetime of this
-  // sdb txn so every scan in the same transaction sees the same view
-  // (committed state at the moment of the first scan). Mirrors
-  // EnsureSearchSnapshot for inverted-index reads but on a separate map
-  // -- the reader type is different (no rocksdb snapshot pair, no
-  // segment-mask coordination) and recycling the existing map would
-  // bloat its value type. `make_reader` is invoked only on first call
-  // for a given shard_id; subsequent calls return the same reader.
-  template<typename Factory>
-  std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
-    ObjectId shard_id, Factory&& make_reader) {
-    auto it = _search_table_readers.find(shard_id);
-    if (it == _search_table_readers.end()) {
-      it = _search_table_readers
-             .emplace(shard_id,
-                      std::make_shared<irs::DirectoryReader>(make_reader()))
-             .first;
+  // Lazily-created search-table (StorageKind::kSearch) transaction state +
+  // commit logic. Engaged on the first search-table write/scan; query::
+  // Transaction just delegates RegisterFlush/Commit/Abort to it (see Commit /
+  // Rollback). The operator and scan reach the per-shard mutators through here.
+  search::SearchTableTransaction& SearchTxn() {
+    if (!_search_txn) {
+      _search_txn.emplace();
     }
-    return it->second;
-  }
-
-  // Per-search-table in-flight INSERT/UPDATE buffer (see
-  // local_table_changes.h). Lazily populated by SereneDBSearchInsert; read
-  // back by the scan overlay and the commit-time sink/marker drain.
-  // PR 3.1: struct + accessor only -- nothing populates it yet.
-  template<typename Self>
-  auto& GetLocalTableChanges(this Self&& self) noexcept {
-    return self._local_table_changes;
+    return *_search_txn;
   }
 
   void Destroy() noexcept;
@@ -278,33 +200,19 @@ class Transaction : public Config {
  private:
   void ApplyTableStatsDiffs() noexcept;
 
-  // Append the txn's ONE central search-table WAL record (INLINE for a single
-  // small buffer, otherwise REFERENCE over chunk files) and return its tick.
-  // Reads _search_table_commit + the inline buffers in _local_table_changes.
-  uint64_t CommitSearchTableWal();
-
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
   containers::FlatHashMap<ObjectId,
                           std::unique_ptr<irs::IndexWriter::Transaction>>
     _search_transactions;
-  // Per-(search shard) writes for this txn (see SearchShardWrites). Filled by
-  // the search-table INSERT operator -- iresearch trxs at Combine
-  // (AddParallelSearchTransaction), shard/schema/column_ids/seg_ids at Finalize
-  // (RegisterSearchTableCommit); consumed by Commit() into ONE central WAL
-  // record across all shards (WAL_DESIGN.md §9). Keyed by table_id; cleared in
-  // Destroy.
-  containers::NodeHashMap<ObjectId, SearchShardWrites> _search_table_writes;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
-  // Per-(sdb txn, SearchTableShard) DirectoryReader cache. shared_ptr so
-  // multiple scans inside one txn alias the same reader without a fresh
-  // _writer->GetSnapshot() per scan.
-  containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>
-    _search_table_readers;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
-  LocalTableChanges _local_table_changes;
+  // All search-table (kSearch) state + WAL commit logic. Engaged lazily via
+  // SearchTxn(); reset in Destroy. The inverted-index trxs above stay here --
+  // they commit on the rocksdb seq, not the engine WAL tick.
+  std::optional<search::SearchTableTransaction> _search_txn;
   uint64_t _num_log_data_markers = 0;
 };
 

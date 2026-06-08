@@ -370,7 +370,7 @@ SereneDBSearchInsert::GetLocalSinkState(
       duckdb::BufferManager::GetBufferManager(context.client),
       gstate->chunk_types);
     std::lock_guard<std::mutex> lock(gstate->combine_mu);
-    auto& entry = gstate->sdb_txn->GetLocalTableChanges()[gstate->table_id];
+    auto& entry = gstate->sdb_txn->SearchTxn().Changes()[gstate->table_id];
     entry.insert_collections.push_back(std::move(collection));
     lstate->collection = entry.insert_collections.back().get();
     // Parallel per-chunk generated-PK base list for this collection (§5.6).
@@ -476,8 +476,8 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   if (lstate->bulk) {
     gstate.seg_ids.push_back(seg_id);
   }
-  gstate.sdb_txn->AddParallelSearchTransaction(gstate.table_id,
-                                               std::move(lstate->search_trx));
+  gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
+    gstate.table_id, std::move(lstate->search_trx));
   return duckdb::SinkCombineResultType::FINISHED;
 }
 
@@ -510,7 +510,7 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   for (auto id : gstate.column_ids) {
     column_ids.push_back(id.id());
   }
-  gstate.sdb_txn->RegisterSearchTableCommit(
+  gstate.sdb_txn->SearchTxn().RegisterSearchTableCommit(
     gstate.table_shard, gstate.table_id,
     gstate.search_shard->GetSchemaId().id(), std::move(column_ids),
     std::move(gstate.seg_ids));

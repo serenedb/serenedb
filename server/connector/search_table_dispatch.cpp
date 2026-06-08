@@ -23,7 +23,6 @@
 #include <duckdb.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
-
 #include <optional>
 #include <string>
 

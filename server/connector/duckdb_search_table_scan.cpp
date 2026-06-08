@@ -58,7 +58,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
              "SearchTableScan dispatched against a non-search shard");
   auto& search_shard = basics::downCast<search::SearchTableShard>(*shard);
 
-  state->reader = conn_ctx.EnsureSearchTableReader(
+  state->reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
     shard->GetId(), [&] { return search_shard.GetDirectoryReader(); });
 
   // Resolve projection. input.column_ids holds DuckDB-side indices; for

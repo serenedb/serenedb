@@ -1351,7 +1351,7 @@ count
 #                                  -- term_dict rejects -> INCLUDE-only
 # ============================================================================
 
-statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_matrix_unsup\.parquet" to "/tmp/sdb_matrix_unsup\.parquet": Operation not permitted
+statement ok
 COPY (SELECT * FROM (VALUES
   (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,
       TIME '01:23:45',
@@ -2228,7 +2228,7 @@ pk	dt	ts
 1	2024-01-01	2024-01-01 00:00:00
 2	2024-06-15	2024-06-15 12:00:00
 
-statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g6_unsup\.parquet" to "/tmp/sdb_g6_unsup\.parquet": Operation not permitted
+statement ok
 COPY (SELECT * FROM (VALUES
   (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,
       TIMESTAMP_MS '2024-01-01 00:00:00',
@@ -2761,7 +2761,7 @@ pk
 # (a) TIMESTAMPTZ scalar via expression -- view-backed.
 # DuckDB has no `+(TIMESTAMPTZ, INTERVAL)` overload, so use a `coalesce`
 # identity wrapper instead of the arithmetic shape used for plain TIMESTAMP.
-statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g11_tz\.parquet" to "/tmp/sdb_g11_tz\.parquet": Operation not permitted
+statement ok
 COPY (SELECT * FROM (VALUES
   (1, TIMESTAMPTZ '2024-01-01 00:00:00+00', 'a'),
   (2, TIMESTAMPTZ '2024-06-15 12:00:00+00', 'b')
@@ -2823,7 +2823,7 @@ pk
 
 
 # (d) UTINYINT / USMALLINT / UINTEGER scalar via expression -- view-backed.
-statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g11_unsigned\.parquet" to "/tmp/sdb_g11_unsigned\.parquet": Operation not permitted
+statement ok
 COPY (SELECT * FROM (VALUES
   (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,       'a'),
   (2, 250::UTINYINT, 60000::USMALLINT, 4000000000::UINTEGER, 'b')
@@ -2862,7 +2862,7 @@ pk
 
 
 # (e) TIME / TIMESTAMP_MS / TIMESTAMP_NS scalar via expression -- view-backed.
-statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g11_temporal\.parquet" to "/tmp/sdb_g11_temporal\.parquet": Operation not permitted
+statement ok
 COPY (SELECT * FROM (VALUES
   (1, TIME '01:23:45',
       TIMESTAMP_MS '2024-01-01 00:00:00',
@@ -4976,7 +4976,7 @@ count
 # types while bypassing rocksdb -- same shape as m_unsup / g11_a_v.
 # ----------------------------------------------------------------------------
 
-statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g19_temporal\.parquet" to "/tmp/sdb_g19_temporal\.parquet": Operation not permitted
+statement ok
 COPY (SELECT * FROM (VALUES
   (1,
    [TIMESTAMPTZ '2024-01-01 00:00:00+00', TIMESTAMPTZ '2024-02-01 00:00:00+00'],
@@ -5749,7 +5749,7 @@ count
 # included::Validate but not by the rocksdb columnstore: UBIGINT, UHUGEINT,
 # TIME, TIME_NS, TIME_TZ. Same parquet-fed-view trick m_unsup / g6_v_unsup
 # use to land these values in a column the inverted index can read.
-statement error db error: ERROR: Could not rename file "/tmp/tmp_sdb_g22_unsup\.parquet" to "/tmp/sdb_g22_unsup\.parquet": Operation not permitted
+statement ok
 COPY (SELECT * FROM (VALUES
   (1, 1000000000000::UBIGINT,
       1234567890123456789::UHUGEINT,

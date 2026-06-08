@@ -839,9 +839,9 @@ QUERY PLAN
 │          body (l)         │
 │           id (l)          │
 │ sdb_inverted_index_offsets│
-│          $2002384         │
+<slt:ignore>
 │ sdb_inverted_index_offsets│
-│          $2002385         │
+<slt:ignore>
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

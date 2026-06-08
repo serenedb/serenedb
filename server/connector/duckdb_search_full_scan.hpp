@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
+#include "connector/duckdb_table_function.h"
 #include "connector/index_source.h"
 #include "connector/offsets_collector.hpp"
 #include "connector/search_pk_lookup.h"
@@ -45,8 +46,8 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
     std::numeric_limits<irs::score_t>::lowest()};
   bool parallel_topk = false;
 
-  duckdb::idx_t MaxThreads() const override {
-    if (count_star && !query) {
+  duckdb::idx_t MaxThreads() const final {
+    if (count_only && !query) {
       return 1;
     }
     return std::max<duckdb::idx_t>(1, total_segments);
@@ -54,9 +55,9 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
 
   irs::Filter::Query::ptr query;
   std::unique_ptr<irs::Scorer> scorer_obj;
+  const SearchScan* scan = nullptr;
 
-  bool bulk_scan_active = false;
-  bool count_star = false;
+  bool count_only = false;
 };
 
 struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
@@ -83,13 +84,19 @@ struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
   void PrepEmitBuffer(duckdb::ClientContext& ctx, SearchFullScanGlobalState& g);
 };
 
-struct SearchFullScanStreamingLocalState : public SegDocBufferedScanLocalState {
+struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
+  uint32_t current_seg_idx = 0;
+  bool current_segment_bulk = false;
+
+  uint64_t bulk_doc_in_seg = 0;
+  uint64_t bulk_seg_doc_count = 0;
+
   irs::DocIterator::ptr streaming_doc;
-  uint32_t streaming_seg_idx = 0;
   irs::ScoreFunction streaming_score_function;
   irs::ColumnArgsFetcher score_fetcher;
   std::vector<irs::doc_id_t> chunk_hits;
   std::vector<float> chunk_scores;
+
   std::vector<FieldEntry> offsets_entries;
   std::vector<highlight::HitRange> offsets_doc_scratch;
   uint32_t offsets_prepped_seg = std::numeric_limits<uint32_t>::max();
@@ -112,17 +119,6 @@ struct SearchFullScanCountLocalState : public CommonScanLocalState {
   bool OnSegmentsExhausted(duckdb::ClientContext& ctx,
                            SearchFullScanGlobalState& g,
                            duckdb::DataChunk& output);
-};
-
-struct SearchFullScanBulkLocalState : public CommonScanLocalState {
-  uint32_t bulk_seg_idx = 0;
-  uint64_t bulk_doc_in_seg = 0;
-  uint64_t bulk_seg_doc_count = 0;
-
-  void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
-                 uint32_t seg_idx, SearchFullScanGlobalState& g);
-  bool EmitNextChunk(duckdb::ClientContext& ctx, SearchFullScanGlobalState& g,
-                     duckdb::DataChunk& output);
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(

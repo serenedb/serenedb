@@ -96,7 +96,7 @@ QUERY PLAN
 │       Offsets: body       │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │ sdb_inverted_index_offsets│
 <slt:ignore>
 │                           │
@@ -373,7 +373,7 @@ QUERY PLAN
 │       Offsets: body       ││       Offsets: body       │
 │                           ││                           │
 │        Projections:       ││        Projections:       │
-│           id (l)          ││           id (l)          │
+│             id            ││             id            │
 │ sdb_inverted_index_offsets││ sdb_inverted_index_offsets│
 <slt:ignore>
 │                           ││                           │
@@ -668,7 +668,7 @@ QUERY PLAN
 │       Offsets: body       │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │ sdb_inverted_index_offsets│
 <slt:ignore>
 │  sdb_inverted_index_score │
@@ -724,7 +724,7 @@ QUERY PLAN
 │       Offsets: body       │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │ sdb_inverted_index_offsets│
 <slt:ignore>
 │  sdb_inverted_index_score │

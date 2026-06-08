@@ -47,7 +47,7 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   // Top-K mode only: cross-thread threshold for ANN pruning.
   std::atomic<float> global_kth_dis{std::numeric_limits<float>::max()};
 
-  duckdb::idx_t MaxThreads() const override {
+  duckdb::idx_t MaxThreads() const final {
     return std::max<duckdb::idx_t>(1, total_segments);
   }
 };

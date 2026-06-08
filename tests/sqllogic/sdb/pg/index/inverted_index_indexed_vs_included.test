@@ -95,8 +95,8 @@ QUERY PLAN
 │   <Term:alpha(0, 0); >]]  │
 │                           │
 │        Projections:       │
-│          body (l)         │
-│           pk (l)          │
+│            body           │
+│             pk            │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -133,8 +133,8 @@ QUERY PLAN
 │       \\x80\\x0\\x0d)]       │
 │                           │
 │        Projections:       │
-│          tag (l)          │
-│           pk (l)          │
+│            tag            │
+│             pk            │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -162,8 +162,8 @@ QUERY PLAN
 │   <Term:alpha(0, 0); >]]  │
 │                           │
 │        Projections:       │
-│          note (i)         │
-│         extra (i)         │
+│            note           │
+│           extra           │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

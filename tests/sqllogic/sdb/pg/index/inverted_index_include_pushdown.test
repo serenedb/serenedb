@@ -78,7 +78,7 @@ QUERY PLAN
 │   \\x10\\x80\\x0 )) && Term  │
 │(service(string)=frontend)]│
 │                           │
-│    Projections: id (l)    │
+│      Projections: id      │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

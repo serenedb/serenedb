@@ -75,10 +75,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   InitCommonState(*state, context, bind_data, input);
 
   const auto& ss = bind_data.scan_source->Cast<SearchScan>();
+  state->scan = &ss;
   state->reader = &ss.snapshot->reader;
   state->total_segments = ss.snapshot->reader.size();
 
-  if ((state->count_star = ss.count_star)) {
+  if ((state->count_only = ss.count_only)) {
     if (ss.stored_filter) {
       state->query = ss.stored_filter->prepare({.index = ss.snapshot->reader});
     }
@@ -87,8 +88,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
       std::move(state));
   }
 
-  if (ss.scorer) {
-    state->scorer_obj = catalog::MakeScorer(*ss.scorer);
+  if (ss.text_scorer) {
+    state->scorer_obj = catalog::MakeScorer(*ss.text_scorer);
   }
   const auto& filter = ss.stored_filter ? *ss.stored_filter : MatchAllFilter();
   state->query = filter.prepare({
@@ -96,23 +97,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
     .scorer = state->scorer_obj.get(),
   });
 
-  if (ss.score_top_k && ss.scorer) {
+  if (ss.score_top_k && ss.text_scorer) {
     state->parallel_topk = true;
   }
 
   ClassifyColumnstoreProjections(*state, bind_data);
-
-  if (!state->parallel_topk) {
-    const bool has_real = absl::c_any_of(state->projected_columns, [](auto p) {
-      return p != duckdb::DConstants::INVALID_INDEX;
-    });
-    if (has_real && !state->scan_score && !ss.score_top_k &&
-        !ss.EmitOffsets() && !state->has_external_projections &&
-        ss.IsMatchAll() &&
-        state->reader->live_docs_count() == state->reader->docs_count()) {
-      state->bulk_scan_active = true;
-    }
-  }
 
   return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
                                  duckdb::GlobalTableFunctionState>(
@@ -121,7 +110,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 
 namespace {
 
-template<class Lstate>
+template<typename Lstate>
 void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
                          const SereneDBScanBindData& bd) {
   const auto& ss = bd.scan_source->Cast<SearchScan>();
@@ -166,7 +155,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
   duckdb::GlobalTableFunctionState* state) {
   auto& gstate = state->Cast<SearchFullScanGlobalState>();
   const auto& bd = input.bind_data->Cast<SereneDBScanBindData>();
-  if (gstate.count_star) {
+  if (gstate.count_only) {
     auto lstate = duckdb::make_uniq<SearchFullScanCountLocalState>();
     if (!gstate.query) {
       lstate->local_count = gstate.reader->live_docs_count();
@@ -183,11 +172,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchFullScanInitLocal(
     BuildOffsetsEntries(*lstate, input, bd);
     return lstate;
   }
-  if (gstate.bulk_scan_active) {
-    auto lstate = duckdb::make_uniq<SearchFullScanBulkLocalState>();
-    return lstate;
-  }
-  auto lstate = duckdb::make_uniq<SearchFullScanStreamingLocalState>();
+  auto lstate = duckdb::make_uniq<SearchFullScanScanLocalState>();
   lstate->bind_data = &bd;
   BuildOffsetsEntries(*lstate, input, bd);
   return lstate;
@@ -197,17 +182,14 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
                             duckdb::TableFunctionInput& data,
                             duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SearchFullScanGlobalState>();
-  if (gstate.count_star) {
+  if (gstate.count_only) {
     auto& l = data.local_state->Cast<SearchFullScanCountLocalState>();
     RunCollectThenEmitScan(context, gstate, l, output);
   } else if (gstate.parallel_topk) {
     auto& l = data.local_state->Cast<SearchFullScanTopKLocalState>();
     RunCollectThenEmitScan(context, gstate, l, output);
-  } else if (gstate.bulk_scan_active) {
-    auto& l = data.local_state->Cast<SearchFullScanBulkLocalState>();
-    RunStreamingScan(context, gstate, l, output);
   } else {
-    auto& l = data.local_state->Cast<SearchFullScanStreamingLocalState>();
+    auto& l = data.local_state->Cast<SearchFullScanScanLocalState>();
     RunStreamingScan(context, gstate, l, output);
   }
 }
@@ -223,7 +205,7 @@ void IResearchSetScanOrder(
   if (search_scan.score_top_k) {
     return;
   }
-  if (search_scan.scorer) {
+  if (search_scan.text_scorer) {
     if (options->order_type != duckdb::OrderType::DESCENDING) {
       return;
     }
@@ -257,7 +239,7 @@ void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
   }
 
   const bool wand_enabled =
-    WandEnabled(bind_data->inverted_index.get(), search.scorer);
+    WandEnabled(bind_data->inverted_index.get(), search.text_scorer);
   auto it = seg.mask(g.query->execute({
     .segment = seg,
     .scorer = g.scorer_obj.get(),
@@ -315,10 +297,26 @@ void SearchFullScanTopKLocalState::PrepEmitBuffer(
   top_hits = hit_slice.subspan(0, accepted);
 }
 
-void SearchFullScanStreamingLocalState::OnSegment(
-  duckdb::ClientContext& /*ctx*/, const irs::SubReader& seg, uint32_t seg_idx,
-  SearchFullScanGlobalState& g) {
-  streaming_seg_idx = seg_idx;
+void SearchFullScanScanLocalState::OnSegment(duckdb::ClientContext& /*ctx*/,
+                                             const irs::SubReader& seg,
+                                             uint32_t seg_idx,
+                                             SearchFullScanGlobalState& g) {
+  current_seg_idx = seg_idx;
+  const bool has_real = absl::c_any_of(g.projected_columns, [](auto p) {
+    return p != duckdb::DConstants::INVALID_INDEX;
+  });
+  current_segment_bulk = has_real && !g.scan_score &&
+                         !g.has_external_projections && g.scan->IsMatchAll() &&
+                         !g.scan->EmitOffsets() &&
+                         seg.live_docs_count() == seg.docs_count();
+
+  if (current_segment_bulk) {
+    bulk_doc_in_seg = 0;
+    bulk_seg_doc_count = seg.docs_count();
+    streaming_doc.reset();
+    return;
+  }
+
   streaming_doc.reset();
   streaming_doc = seg.mask(g.query->execute({
     .segment = seg,
@@ -341,8 +339,7 @@ void SearchFullScanStreamingLocalState::OnSegment(
   }
 }
 
-void SearchFullScanStreamingLocalState::AdvanceChunk(
-  SearchFullScanGlobalState& g) {
+void SearchFullScanScanLocalState::AdvanceChunk(SearchFullScanGlobalState& g) {
   chunk_hits.clear();
   chunk_scores.clear();
   if (!streaming_doc) {
@@ -404,9 +401,28 @@ void SearchFullScanStreamingLocalState::AdvanceChunk(
   SDB_ASSERT(chunk_scores.size() == chunk_hits.size());
 }
 
-bool SearchFullScanStreamingLocalState::EmitNextChunk(
-  duckdb::ClientContext& ctx, SearchFullScanGlobalState& g,
-  duckdb::DataChunk& output) {
+bool SearchFullScanScanLocalState::EmitNextChunk(duckdb::ClientContext& ctx,
+                                                 SearchFullScanGlobalState& g,
+                                                 duckdb::DataChunk& output) {
+  if (current_segment_bulk) {
+    if (bulk_doc_in_seg >= bulk_seg_doc_count) {
+      return false;
+    }
+    auto* mat =
+      GetOrOpenSegmentMaterializer(*this, g, *g.reader, current_seg_idx);
+    SDB_ENSURE(mat, sdb::ERROR_INTERNAL,
+               "bulk cs scan: segment has no columnstore reader");
+    const auto take = std::min<duckdb::idx_t>(
+      STANDARD_VECTOR_SIZE, bulk_seg_doc_count - bulk_doc_in_seg);
+    mat->Scan(bulk_doc_in_seg, take, output);
+    const auto row_base =
+      g.produced_rows.fetch_add(take, std::memory_order_relaxed);
+    WriteVirtualColumns(g, row_base, take, ScoreDocsView{}, output);
+    output.SetChildCardinality(take);
+    bulk_doc_in_seg += take;
+    return true;
+  }
+
   AdvanceChunk(g);
   if (chunk_hits.empty()) {
     return false;
@@ -423,7 +439,7 @@ bool SearchFullScanStreamingLocalState::EmitNextChunk(
     .scores = g.scan_score ? std::span<const float>{chunk_scores.data(),
                                                     chunk_scores.size()}
                            : std::span<const float>{},
-    .fixed_seg = streaming_seg_idx,
+    .fixed_seg = current_seg_idx,
   };
   const auto emitted = MaterializeChunk(ctx, g, *this, view, output);
   return emitted > 0;
@@ -448,35 +464,6 @@ bool SearchFullScanCountLocalState::OnSegmentsExhausted(
   output.SetChildCardinality(batch);
   g.produced_rows.fetch_add(batch, std::memory_order_relaxed);
   local_emitted += batch;
-  return true;
-}
-
-void SearchFullScanBulkLocalState::OnSegment(duckdb::ClientContext& ctx,
-                                             const irs::SubReader& seg,
-                                             uint32_t seg_idx,
-                                             SearchFullScanGlobalState& g) {
-  bulk_seg_idx = seg_idx;
-  bulk_doc_in_seg = 0;
-  bulk_seg_doc_count = seg.docs_count();
-}
-
-bool SearchFullScanBulkLocalState::EmitNextChunk(duckdb::ClientContext& ctx,
-                                                 SearchFullScanGlobalState& g,
-                                                 duckdb::DataChunk& output) {
-  if (bulk_doc_in_seg >= bulk_seg_doc_count) {
-    return false;  // segment drained; skeleton claims next.
-  }
-  auto* mat = GetOrOpenSegmentMaterializer(*this, g, *g.reader, bulk_seg_idx);
-  SDB_ENSURE(mat, sdb::ERROR_INTERNAL,
-             "bulk cs scan: segment has no columnstore reader");
-  const auto take = std::min<duckdb::idx_t>(
-    STANDARD_VECTOR_SIZE, bulk_seg_doc_count - bulk_doc_in_seg);
-  mat->Scan(bulk_doc_in_seg, take, output);
-  const auto row_base =
-    g.produced_rows.fetch_add(take, std::memory_order_relaxed);
-  WriteVirtualColumns(g, row_base, take, ScoreDocsView{}, output);
-  output.SetChildCardinality(take);
-  bulk_doc_in_seg += take;
   return true;
 }
 

@@ -1132,7 +1132,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
@@ -1179,7 +1179,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │

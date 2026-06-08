@@ -34,9 +34,11 @@
 #include <duckdb/planner/operator/logical_limit.hpp>
 #include <duckdb/planner/operator/logical_order.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
+#include <duckdb/planner/operator/logical_top_n.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 
+#include "basics/containers/trivial_map.h"
 #include "basics/down_cast.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
@@ -200,7 +202,7 @@ struct FoundScan {
   connector::SereneDBScanBindData* bind_data;
 };
 
-template<class AcceptFn>
+template<typename AcceptFn>
 std::optional<FoundScan> FindIResearchScan(duckdb::LogicalOperator& op,
                                            duckdb::TableIndex target,
                                            AcceptFn&& accept) {
@@ -327,15 +329,19 @@ duckdb::idx_t AppendScoreColumn(connector::SereneDBScanBindData& bind_data,
 
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
-  return name == S::Bm25::Owner::type_name() ||
-         name == S::Tfidf::Owner::type_name() ||
-         name == S::LmJm::Owner::type_name() ||
-         name == S::LmDirichlet::Owner::type_name() ||
-         name == S::IndriDirichlet::Owner::type_name() ||
-         name == S::Dfi::Owner::type_name() ||
-         name == S::RawBoost::Owner::type_name() ||
-         name == S::RawTf::Owner::type_name() ||
-         name == S::RawDL::Owner::type_name();
+  static constexpr containers::TrivialSet kScorerNames = [](auto selector) {
+    return selector()
+      .Case(S::Bm25::Owner::type_name())
+      .Case(S::Tfidf::Owner::type_name())
+      .Case(S::LmJm::Owner::type_name())
+      .Case(S::LmDirichlet::Owner::type_name())
+      .Case(S::IndriDirichlet::Owner::type_name())
+      .Case(S::Dfi::Owner::type_name())
+      .Case(S::RawBoost::Owner::type_name())
+      .Case(S::RawTf::Owner::type_name())
+      .Case(S::RawDL::Owner::type_name());
+  };
+  return kScorerNames.Contains(name);
 }
 
 bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
@@ -377,7 +383,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   if (ss.vector_scorer) {
     return nullptr;
   }
-  if (!TrySetScorer(ss.scorer, func, func.function.GetName())) {
+  if (!TrySetScorer(ss.text_scorer, func, func.function.GetName())) {
     return nullptr;
   }
   const auto idx = AppendScoreColumn(*found->bind_data, *found->get);
@@ -443,7 +449,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   {
     const auto& ss =
       found->bind_data->scan_source->Cast<connector::SearchScan>();
-    if (ss.scorer || ss.EmitOffsets()) {
+    if (ss.text_scorer || ss.EmitOffsets()) {
       return nullptr;
     }
   }
@@ -451,7 +457,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   auto index = found->bind_data->inverted_index;
   const auto call_field_id = ResolveAnnTargetFieldId(
     *col_arg, *found->get, *found->bind_data, *index, context);
-  if (call_field_id == 0) {
+  if (!irs::field_limits::valid(call_field_id)) {
     return nullptr;
   }
   auto ann_info = index->GetHNSWInfo(call_field_id);
@@ -571,7 +577,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
         return false;
       }
       const auto& ss = s.Cast<connector::SearchScan>();
-      return ss.stored_filter || ss.scorer;
+      return ss.stored_filter || ss.text_scorer;
     });
   if (!found) {
     THROW_SQL_ERROR(
@@ -740,6 +746,11 @@ bool RewriteIResearchExpressions(
         rewrite_call(o.expression);
       }
       break;
+    case duckdb::LogicalOperatorType::LOGICAL_TOP_N:
+      for (auto& o : plan->Cast<duckdb::LogicalTopN>().orders) {
+        rewrite_call(o.expression);
+      }
+      break;
     case duckdb::LogicalOperatorType::LOGICAL_WINDOW:
       for (auto& e : plan->expressions) {
         rewrite_call(e);
@@ -849,7 +860,7 @@ bool TryClaimAnnRange(
     }
     const auto candidate_field_id = ResolveAnnTargetFieldId(
       *col_expr, get, bind_data, index, options.client_context);
-    if (candidate_field_id == 0) {
+    if (!irs::field_limits::valid(candidate_field_id)) {
       continue;
     }
     auto ann_info = index.GetHNSWInfo(candidate_field_id);
@@ -1050,7 +1061,7 @@ void IResearchPushdownComplexFilter(
     return;
   }
   const auto& ss = bind_data.scan_source->Cast<connector::SearchScan>();
-  if (ss.stored_filter || ss.scorer || ss.vector_scorer) {
+  if (ss.stored_filter || ss.text_scorer || ss.vector_scorer) {
     return;
   }
   auto index = bind_data.inverted_index;

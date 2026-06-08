@@ -901,7 +901,7 @@ QUERY PLAN
 │ :lazy(1, 1); Term:dog(1, 1│
 │           ); >]]          │
 │                           │
-│     Projections: a (l)    │
+│       Projections: a      │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

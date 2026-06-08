@@ -59,8 +59,8 @@ QUERY PLAN
 │          Dims: 3          │
 │                           │
 │        Projections:       │
-│         label (i)         │
-│          tag (i)          │
+│           label           │
+│            tag            │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘

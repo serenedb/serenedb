@@ -953,7 +953,7 @@ QUERY PLAN
 │          Dims: 3          │
 │                           │
 │        Projections:       │
-│           pk (l)          │
+│             pk            │
 │  sdb_inverted_index_score │
 │                           │
 │          ~3 rows          │
@@ -983,7 +983,7 @@ QUERY PLAN
 │          Dims: 3          │
 │                           │
 │        Projections:       │
-│           pk (l)          │
+│             pk            │
 │  sdb_inverted_index_score │
 │                           │
 │          ~3 rows          │
@@ -1003,7 +1003,7 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │      Radius: 1.500000     │
 │          Dims: 3          │
-│    Projections: pk (l)    │
+│      Projections: pk      │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -1023,7 +1023,7 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │      Radius: 1.500000     │
 │          Dims: 3          │
-│    Projections: pk (l)    │
+│      Projections: pk      │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘

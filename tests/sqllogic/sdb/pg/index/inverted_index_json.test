@@ -454,7 +454,7 @@ QUERY PLAN
 │ 'val')(numeric)=\\xa0\\xc0E │
 │    \\x0\\x0\\x0\\x0\\x0\\x0)]   │
 │                           │
-│    Projections: id (l)    │
+│      Projections: id      │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -483,7 +483,7 @@ QUERY PLAN
 │  AND[Term(("content" ->   │
 │    'val')(bool)=\\xff)]    │
 │                           │
-│    Projections: id (l)    │
+│      Projections: id      │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -524,8 +524,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│        content (l)        │
-│           id (l)          │
+│          content          │
+│             id            │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -566,8 +566,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│        content (l)        │
-│           id (l)          │
+│          content          │
+│             id            │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘

@@ -413,7 +413,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │  sdb_inverted_index_score │
 │                           │
 │          ~7 rows          │
@@ -449,7 +449,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │  sdb_inverted_index_score │
 │                           │
 │          ~7 rows          │
@@ -469,9 +469,9 @@ Candidate tables: "unnamed_subquery"
 
 # UNION of two subqueries from same index with outer ORDER BY BM25(docs_idx.tableoid)
 query
-(SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3)
+(SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC, id LIMIT 3)
 UNION ALL
-(SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('lazy') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3)
+(SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE body @@ ts_phrase('lazy') ORDER BY BM25(docs_idx.tableoid) DESC, id LIMIT 3)
 ORDER BY id;
 ----
 id	has_score
@@ -544,7 +544,7 @@ QUERY PLAN
 │  tfidf(with_norms=false)  │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │  sdb_inverted_index_score │
 │                           │
 │          ~7 rows          │
@@ -716,7 +716,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │  sdb_inverted_index_score │
 │                           │
 │          ~7 rows          │
@@ -771,7 +771,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
 │                           ││                           │
 │        Projections:       ││        Projections:       │
-│           id (l)          ││           id (l)          │
+│             id            ││             id            │
 │  sdb_inverted_index_score ││  sdb_inverted_index_score │
 │                           ││                           │
 │          ~7 rows          ││          ~7 rows          │
@@ -839,7 +839,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │  sdb_inverted_index_score │
 │                           │
 │          ~7 rows          │
@@ -883,7 +883,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │  sdb_inverted_index_score │
 │                           │
 │          ~7 rows          │
@@ -913,8 +913,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│           id (l)          │
-│          body (l)         │
+│             id            │
+│            body           │
 │                           │
 │          ~36 rows         │
 └───────────────────────────┘
@@ -1049,11 +1049,11 @@ QUERY PLAN
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
 │    <Term:fox(0, 0); >]]   ││    <Term:fox(0, 0); >]]   │
 │                           ││                           │
-│           Score:          ││    Projections: id (l)    │
+│           Score:          ││      Projections: id      │
 │    bm25(k1=1.2, b=0.75)   ││                           │
 │                           ││                           │
 │        Projections:       ││                           │
-│           id (l)          ││                           │
+│             id            ││                           │
 │  sdb_inverted_index_score ││                           │
 │                           ││                           │
 │          ~7 rows          ││           ~1 row          │
@@ -1119,7 +1119,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   ││                           │
 │                           ││                           │
 │        Projections:       ││                           │
-│           id (l)          ││                           │
+│             id            ││                           │
 │  sdb_inverted_index_score ││                           │
 │                           ││                           │
 │          ~7 rows          ││          ~3 rows          │
@@ -1221,7 +1221,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││                           ││                           │
 │                           ││                           ││                           ││                           │
 │        Projections:       ││        Projections:       ││                           ││                           │
-│           id (l)          ││           id (l)          ││                           ││                           │
+│             id            ││             id            ││                           ││                           │
 │  sdb_inverted_index_score ││  sdb_inverted_index_score ││                           ││                           │
 │                           ││                           ││                           ││                           │
 │          ~7 rows          ││          ~7 rows          ││          ~2 rows          ││          ~2 rows          │
@@ -1240,7 +1240,7 @@ QUERY PLAN
                                                           │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
                                                           │                           ││                           │
                                                           │        Projections:       ││        Projections:       │
-                                                          │           id (l)          ││           id (l)          │
+                                                          │             id            ││             id            │
                                                           │  sdb_inverted_index_score ││  sdb_inverted_index_score │
                                                           │                           ││                           │
                                                           │          ~7 rows          ││          ~7 rows          │
@@ -1304,7 +1304,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   ││                           ││                           │
 │                           ││                           ││                           ││                           │
 │        Projections:       ││        Projections:       ││                           ││                           │
-│           id (l)          ││           id (l)          ││                           ││                           │
+│             id            ││             id            ││                           ││                           │
 │  sdb_inverted_index_score ││  sdb_inverted_index_score ││                           ││                           │
 │                           ││                           ││                           ││                           │
 │          ~7 rows          ││          ~7 rows          ││          ~2 rows          ││          ~2 rows          │
@@ -1323,7 +1323,7 @@ QUERY PLAN
                                                           │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
                                                           │                           ││                           │
                                                           │        Projections:       ││        Projections:       │
-                                                          │           id (l)          ││           id (l)          │
+                                                          │             id            ││             id            │
                                                           │  sdb_inverted_index_score ││  sdb_inverted_index_score │
                                                           │                           ││                           │
                                                           │          ~7 rows          ││          ~7 rows          │

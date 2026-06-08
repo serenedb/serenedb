@@ -127,7 +127,7 @@ QUERY PLAN
 │      Score: raw_dl()      │
 │                           │
 │        Projections:       │
-│           id (l)          │
+│             id            │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │

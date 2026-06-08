@@ -70,7 +70,7 @@ class SegmentPkSequentialFetcher {
     _pk_col = &pk_col;
   }
 
-  template<class DocIds>
+  template<typename DocIds>
   void Fetch(const DocIds& docs, duckdb::Vector& out) {
     if (docs.size() == 0) {
       return;

@@ -52,7 +52,7 @@ int ReadEfSearch(duckdb::ClientContext& context) {
   return 0;
 }
 
-template<class Lstate>
+template<typename Lstate>
 void AttachTextFilter(Lstate& lstate, const SearchAnnScanGlobalState& gstate) {
   if (!gstate.scan->stored_filter) {
     return;
@@ -62,7 +62,7 @@ void AttachTextFilter(Lstate& lstate, const SearchAnnScanGlobalState& gstate) {
   lstate.text_filter.emplace(*lstate.text_filter_query);
 }
 
-template<class Buf>
+template<typename Buf>
 void BuildSortedHits(const Buf& buf, size_t count,
                      const VectorScorerOptions& vs,
                      std::vector<irs::ScoreDoc>& out) {
@@ -84,7 +84,7 @@ void BuildSortedHits(const Buf& buf, size_t count,
   });
 }
 
-template<class Lstate, class Gstate>
+template<typename Lstate, typename Gstate>
 bool EmitHitsChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& lstate,
                    duckdb::DataChunk& output) {
   const size_t remaining = lstate.hits.size() - lstate.current_idx;

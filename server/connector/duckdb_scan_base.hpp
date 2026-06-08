@@ -193,7 +193,7 @@ struct StreamingHitsView {
   }
 };
 
-template<class View, class F>
+template<typename View, typename F>
 void ForEachSegmentRun(const View& view, F&& body) {
   size_t i = 0;
   while (i < view.size()) {
@@ -206,7 +206,7 @@ void ForEachSegmentRun(const View& view, F&& body) {
   }
 }
 
-template<class View>
+template<typename View>
 void MaterializeIncludeColumnsBatched(CommonScanLocalState& lstate,
                                       const CommonScanGlobalState& gstate,
                                       const irs::IndexReader& reader,
@@ -238,7 +238,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
   duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
   duckdb::GlobalTableFunctionState* global_state);
 
-template<class View>
+template<typename View>
 void WriteVirtualColumns(CommonScanGlobalState& gstate, duckdb::idx_t row_base,
                          duckdb::idx_t num_rows, const View& view,
                          duckdb::DataChunk& output) {
@@ -266,7 +266,7 @@ void WriteVirtualColumns(CommonScanGlobalState& gstate, duckdb::idx_t row_base,
   }
 }
 
-template<class Lstate, class View>
+template<typename Lstate, typename View>
 void WriteChunkOffsets(Lstate& lstate, const irs::Filter::Query& query,
                        const irs::IndexReader& reader, const View& view,
                        duckdb::DataChunk& output) {
@@ -299,7 +299,7 @@ void WriteChunkOffsets(Lstate& lstate, const irs::Filter::Query& query,
   }
 }
 
-template<class Pk, class Lstate, class Gstate, class View>
+template<typename Pk, typename Lstate, typename Gstate, typename View>
 void ReadIResearchSegments(Pk& pk, Lstate& l, Gstate& g, const View& view,
                            bool include_cs, duckdb::DataChunk& output) {
   ForEachSegmentRun(view, [&](uint32_t seg_id, size_t begin, auto slice) {
@@ -336,7 +336,7 @@ void ReadIResearchSegments(Pk& pk, Lstate& l, Gstate& g, const View& view,
   });
 }
 
-template<class Gstate, class Lstate, class View>
+template<typename Gstate, typename Lstate, typename View>
 duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
                                const View& view, duckdb::DataChunk& output) {
   const auto num_rows = static_cast<duckdb::idx_t>(view.size());
@@ -387,7 +387,7 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   return num_rows;
 }
 
-template<class Gstate, class Lstate>
+template<typename Gstate, typename Lstate>
 void RunCollectThenEmitScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
                             duckdb::DataChunk& output) {
   while (!l.segments_exhausted) {
@@ -405,7 +405,7 @@ void RunCollectThenEmitScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   output.SetChildCardinality(0);
 }
 
-template<class Gstate, class Lstate>
+template<typename Gstate, typename Lstate>
 void RunStreamingScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
                       duckdb::DataChunk& output) {
   while (true) {

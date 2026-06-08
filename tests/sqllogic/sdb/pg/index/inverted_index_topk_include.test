@@ -62,9 +62,9 @@ QUERY PLAN
 │          TopK: 3          │
 │                           │
 │        Projections:       │
-│           id (i)          │
-│          val (i)          │
-│         label (i)         │
+│             id            │
+│            val            │
+│           label           │
 │  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │

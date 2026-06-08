@@ -157,7 +157,7 @@ struct SearchScan : ScanSource {
 
   bool IsMatchAll() const noexcept;
 
-  std::optional<catalog::ScorerOptions> scorer;
+  std::optional<catalog::ScorerOptions> text_scorer;
   std::optional<VectorScorerOptions> vector_scorer;
   std::optional<size_t> score_top_k;
 
@@ -170,7 +170,7 @@ struct SearchScan : ScanSource {
 
   bool EmitOffsets() const { return !offsets.empty(); }
 
-  bool count_star = false;
+  bool count_only = false;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,

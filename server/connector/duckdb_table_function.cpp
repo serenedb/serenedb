@@ -92,22 +92,12 @@ uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
 }
 
 duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
-  const SereneDBScanBindData& bind, std::optional<uint64_t> row_fallback) {
+  const SereneDBScanBindData& bind) {
   const auto& ss = bind.scan_source->Cast<SearchScan>();
   const auto live = ss.snapshot->reader.live_docs_count();
-  // HNSW-only index: iresearch reader has no text segments, so live=0 even
-  // though the table has rows. Trust the caller's row count instead.
-  const auto effective = (live == 0 && row_fallback) ? *row_fallback : live;
-  if (ss.score_top_k) {
-    const auto k = std::min<uint64_t>(*ss.score_top_k, effective);
-    return duckdb::make_uniq<duckdb::NodeStatistics>(k, k);
-  }
-  if (ss.stored_filter) {
-    const auto estimate =
-      EstimateFilterMatchCount(*ss.stored_filter, effective);
-    return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, effective);
-  }
-  return duckdb::make_uniq<duckdb::NodeStatistics>(effective, effective);
+  const auto estimate =
+    ss.stored_filter ? EstimateFilterMatchCount(*ss.stored_filter, live) : live;
+  return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, live);
 }
 
 }  // namespace
@@ -141,7 +131,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
   if (scan_source) {
     switch (scan_source->Kind()) {
       case ScanSourceKind::Search:
-        return InvertedIndexCardinality(*this, num_rows);
+        return InvertedIndexCardinality(*this);
       case ScanSourceKind::PkPoint: {
         const auto& pk = scan_source->Cast<PkPointScan>();
         const auto n = std::min<duckdb::idx_t>(pk.points.size(), num_rows);
@@ -224,7 +214,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ViewScanBindData::Cardinality(
   if (scan_source->Kind() != ScanSourceKind::Search) {
     return nullptr;
   }
-  return InvertedIndexCardinality(*this, std::nullopt);
+  return InvertedIndexCardinality(*this);
 }
 
 ObjectId ViewScanBindData::RelationId() const { return view->GetId(); }
@@ -484,16 +474,16 @@ void SearchScan::AppendSummary(
                            *stored_filter,
                            MakeFieldNameResolver(bind, *bind.inverted_index)));
   }
-  if (count_star) {
+  if (count_only) {
     out.insert("Output", "row-count only");
     return;
   }
-  if (scorer) {
-    out.insert("Score", scorer->ToString());
+  if (text_scorer) {
+    out.insert("Score", text_scorer->ToString());
   }
   if (score_top_k) {
     std::string topk_val = std::to_string(*score_top_k);
-    if (WandEnabled(bind.inverted_index.get(), scorer)) {
+    if (WandEnabled(bind.inverted_index.get(), text_scorer)) {
       absl::StrAppend(&topk_val, ", optimized");
     }
     out.insert("TopK", std::move(topk_val));
@@ -693,8 +683,7 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   }
   bind.scan_source->AppendSummary(bind, result);
   if (!entries.empty()) {
-    const bool annotate =
-      bind.IsInvertedIndexEntry() && (has_index || has_lookup);
+    const bool annotate = has_index && has_lookup;
     result.insert("Projections", FormatProjections(entries, annotate));
   }
   return result;
@@ -829,7 +818,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   auto& bind_data = const_cast<SereneDBScanBindData&>(
     input.bind_data->Cast<SereneDBScanBindData>());
 
-  bind_data.scan_source->Cast<SearchScan>().count_star =
+  bind_data.scan_source->Cast<SearchScan>().count_only =
     IsCountOnlyScan(bind_data, input);
 
   switch (bind_data.scan_source->Kind()) {

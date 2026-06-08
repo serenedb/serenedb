@@ -121,7 +121,12 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
         queue->StartListening();
         SendCopyResponse(send_buffer, PQ_MSG_COPY_IN_RESPONSE);
       }
-      _state.copy_stdin_buffer = std::make_shared<std::string>();
+      // The replay buffer only bridges a re-open (the CSV sniff). Binary COPY
+      // opens once, so skipping it avoids duplicating the whole input; DoRead
+      // then streams straight from the bridge (_buffer stays null).
+      if (!_state.copy_stdin_no_replay) {
+        _state.copy_stdin_buffer = std::make_shared<std::string>();
+      }
     }
     _buffer = _state.copy_stdin_buffer;
     if (queue) {

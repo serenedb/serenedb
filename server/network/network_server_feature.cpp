@@ -74,6 +74,13 @@ ABSL_FLAG(bool, network_http_test_api, false,
           "Register test-only HTTP endpoints under /_test/ (echo, ping, bytes, "
           "fuzz, status). For tests/benchmarks only -- never in production.");
 
+ABSL_FLAG(uint64_t, network_pg_max_message_bytes,
+          sdb::network::kDefaultMaxMessageBytes,
+          "Maximum size of a single pg-wire message (statement text / bound "
+          "parameter value). Bulk data should use COPY, which streams and is "
+          "not bounded by this. Over-cap messages get a clean error, not a "
+          "silent drop.");
+
 namespace sdb {
 namespace {
 
@@ -177,6 +184,9 @@ void NetworkServerFeature::start() {
   }
 
   _pg_context.cancel = &_cancel;
+  _pg_context.max_message_bytes = static_cast<std::uint32_t>(
+    std::min<std::uint64_t>(absl::GetFlag(FLAGS_network_pg_max_message_bytes),
+                            0xFFFFFFFFull));
 
   _pool = std::make_unique<network::IoThreadPool>(_io_threads);
   _pool->Start();

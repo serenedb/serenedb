@@ -98,6 +98,7 @@ struct PgServerContext {
   const CredentialProvider* credentials = nullptr;
   bool allow_cleartext_without_tls = false;
   CancelRegistry* cancel = nullptr;
+  uint32_t max_message_bytes = kDefaultMaxMessageBytes;
 };
 
 // A bound portal: a prepared statement plus its pending/streaming execution and
@@ -244,7 +245,8 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
       _io{io},
       _credentials{ctx.credentials},
       _allow_cleartext{ctx.allow_cleartext_without_tls},
-      _cancel{ctx.cancel} {}
+      _cancel{ctx.cancel},
+      _max_message{ctx.max_message_bytes} {}
 
   PgWireSession(PgServerContext& ctx, asio_ns::io_context& io)
     requires(Kind == SocketKind::MaybeTls)
@@ -252,7 +254,8 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
       _io{io},
       _credentials{ctx.credentials},
       _allow_cleartext{ctx.allow_cleartext_without_tls},
-      _cancel{ctx.cancel} {}
+      _cancel{ctx.cancel},
+      _max_message{ctx.max_message_bytes} {}
 
   void Start() { Run().Detach(); }
 
@@ -327,6 +330,7 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   CancelRegistry* _cancel = nullptr;
   std::shared_ptr<CancelToken> _cancel_token;
   uint64_t _cancel_key = 0;
+  uint32_t _max_message = kDefaultMaxMessageBytes;
   message::Buffer _recv{kReadBlock, kBufferMaxGrowth};
   message::Buffer _send{kReadBlock, kBufferMaxGrowth};
   std::string _scratch;
@@ -712,7 +716,7 @@ yaclib::Future<bool> PgWireSession<Kind>::AuthenticateCleartext(
   }
   WriteAuthRequest(_send, 3, {});  // AuthenticationCleartextPassword
   co_await Flush();
-  auto frame = co_await NextFrame(true, kBufferMaxGrowth);
+  auto frame = co_await NextFrame(true, _max_message);
   if (frame.status != FrameStatus::Ok ||
       frame.type != PQ_MSG_PASSWORD_MESSAGE) {
     if (frame.recv_consume) {
@@ -759,7 +763,7 @@ yaclib::Future<bool> PgWireSession<Kind>::AuthenticateScram(
   co_await Flush();
 
   // --- client-first (SASLInitialResponse) ---
-  auto first = co_await NextFrame(true, kBufferMaxGrowth);
+  auto first = co_await NextFrame(true, _max_message);
   if (first.status != FrameStatus::Ok ||
       first.type != PQ_MSG_PASSWORD_MESSAGE) {
     if (first.recv_consume) {
@@ -842,7 +846,7 @@ yaclib::Future<bool> PgWireSession<Kind>::AuthenticateScram(
   co_await Flush();
 
   // --- client-final (SASLResponse) ---
-  auto final_frame = co_await NextFrame(true, kBufferMaxGrowth);
+  auto final_frame = co_await NextFrame(true, _max_message);
   if (final_frame.status != FrameStatus::Ok ||
       final_frame.type != PQ_MSG_PASSWORD_MESSAGE) {
     if (final_frame.recv_consume) {
@@ -909,9 +913,18 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     co_return {};
   }
   auto extracted = _conn->ExtractStatements(std::string{query});
+  if (extracted.empty()) {
+    // A non-empty but statement-less query (";", a bare comment): postgres
+    // replies EmptyQueryResponse, not just a bare ReadyForQuery.
+    WriteEmptyFrame(_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
+    co_return {};
+  }
   for (auto& statement : extracted) {
     if (IsCopyFromStdin(*statement)) {
       co_await RunCopyFromStdin(std::move(statement));
+      // RunCopyFromStdin returns pinned to _ioexec; the remaining statements'
+      // Prepare/Execute must run on the DuckDB worker, not the io thread.
+      co_await yaclib::On(*_duck);
       continue;
     }
     auto prepared = _conn->Prepare(std::move(statement));
@@ -966,6 +979,7 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   client_state.copy_stdin_open_count = 0;
   client_state.copy_stdin_done = false;
   client_state.copy_stdin_buffer.reset();
+  client_state.copy_stdin_no_replay = is_binary;
   sdb::pg::CopyInBridge bridge;
   _connection_ctx->SetCopyInBridge(&bridge);
   auto feeder = RunCopyInFeeder(bridge, is_binary);
@@ -1016,7 +1030,7 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyInFeeder(
   sdb::pg::CopyInBridge& bridge, bool is_binary) {
   co_await yaclib::On(*_ioexec);
   for (;;) {
-    auto frame = co_await NextFrame(true, kBufferMaxGrowth);
+    auto frame = co_await NextFrame(true, _max_message);
     if (frame.status != FrameStatus::Ok) {
       bridge.Fail(std::make_exception_ptr(
         sdb::SqlException{sdb::pg::SqlErrorData{
@@ -1382,6 +1396,10 @@ void PgWireSession<Kind>::HandleDescribe(std::string_view payload) {
     }
   } else if (what == 'P') {
     if (name.empty()) {
+      if (!_anon_portal.stmt) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
+                        ERR_MSG("portal \"\" does not exist"));
+      }
       DescribePortal(_anon_portal);
     } else {
       const auto it = _portals.find(name);
@@ -1694,7 +1712,16 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
     // ignore_till_sync). A coroutine makes this a plain loop local.
     bool ignore_till_sync = false;
     for (;;) {
-      auto frame = co_await NextFrame(true, kBufferMaxGrowth);
+      auto frame = co_await NextFrame(true, _max_message);
+      if (frame.status == FrameStatus::TooLarge) {
+        // PG sends an error then closes rather than silently dropping the
+        // connection on an over-cap message.
+        WriteErrorResponse(_send, "incoming message exceeds maximum size",
+                           "54000");
+        co_await Flush();
+        _socket.Close();
+        co_return {};
+      }
       if (frame.status != FrameStatus::Ok || frame.type == PQ_MSG_TERMINATE) {
         break;
       }

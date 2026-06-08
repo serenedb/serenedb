@@ -223,10 +223,16 @@ HttpRequest H1Codec::TakeHead() noexcept {
 
 void H1Codec::EncodeHead(const HttpResponse& response, bool keep_alive,
                          message::Buffer& out) const {
+  // 1xx/204/304 carry neither a body nor a framing length (RFC 9112 6.1);
+  // emitting Content-Length/Transfer-Encoding for them desyncs keep-alive.
+  const bool bodiless = response.status == 204 || response.status == 304 ||
+                        (response.status >= 100 && response.status < 200);
   std::string head =
     absl::StrCat("HTTP/1.1 ", response.status, " ", response.reason,
                  "\r\nContent-Type: ", response.content_type);
-  if (response.IsStreaming()) {
+  if (bodiless) {
+    // no Content-Length, no Transfer-Encoding
+  } else if (response.IsStreaming()) {
     absl::StrAppend(&head, "\r\nTransfer-Encoding: chunked");
   } else {
     absl::StrAppend(&head, "\r\nContent-Length: ", response.body.size());

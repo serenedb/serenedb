@@ -22,11 +22,19 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 
 namespace sdb::network {
 
 inline constexpr size_t kReadBlock = 16 * 1024;
 inline constexpr size_t kBufferMaxGrowth = 1u << 20;
+
+// Largest single pg-wire message accepted -- a distinct concept from the
+// buffer's chunk-growth ceiling above (they previously shared one constant).
+// Bounds per-connection peak memory; bulk data goes through COPY, which streams
+// per CopyData frame and is not subject to this. Default for PgServerContext;
+// overridable via --network_pg_max_message_bytes.
+inline constexpr uint32_t kDefaultMaxMessageBytes = 64u * 1024 * 1024;
 
 // Per-read HTTP inactivity timeouts: bound how long one async socket read may
 // stall so a slow/idle client cannot pin an io thread (slow-loris). Re-armed

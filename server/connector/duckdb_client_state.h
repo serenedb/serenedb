@@ -61,6 +61,10 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   std::shared_ptr<std::string> copy_stdin_buffer;
   int copy_stdin_open_count = 0;
   bool copy_stdin_done = false;
+  // Binary COPY opens /dev/stdin exactly once (no CSV sniff -> no re-open), so
+  // it must not accumulate the replay buffer, which would duplicate the entire
+  // input in memory.
+  bool copy_stdin_no_replay = false;
 
   void TransactionPreCommit(duckdb::MetaTransaction& transaction,
                             duckdb::ClientContext& context) final;

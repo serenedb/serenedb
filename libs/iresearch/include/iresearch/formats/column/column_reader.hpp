@@ -51,6 +51,15 @@ template<typename Rows>
 inline size_t ConsecutiveRunLength(
   const Rows& rows, size_t i,
   uint64_t upper_bound = std::numeric_limits<uint64_t>::max()) noexcept {
+  if constexpr (requires { typename Rows::contiguous_range_tag; }) {
+    const uint64_t v0 = static_cast<uint64_t>(rows[i]);
+    if (upper_bound <= v0) {
+      return 1;
+    }
+    size_t run = rows.size() - i;
+    const size_t bound = static_cast<size_t>(upper_bound - v0);
+    return bound < run ? bound : run;
+  }
   size_t run = 1;
   while (i + run < rows.size() &&
          static_cast<uint64_t>(rows[i + run]) ==

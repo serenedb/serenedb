@@ -88,9 +88,9 @@ class ColumnstoreMaterializer {
     const auto& b = _bound[i];
     if (b.IsExtract()) {
       SDB_ASSERT(_context);
-      irs::MaterializeExtractNode(
-        *b.reader, *b.state, doc_ids, b.extract_path, b.extract_scan_type,
-        out_vec, output_start, *_context);
+      irs::MaterializeExtractNode(*b.reader, *b.state, doc_ids, b.extract_path,
+                                  b.extract_scan_type, out_vec, output_start,
+                                  *_context);
       return;
     }
     irs::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec, output_start);
@@ -107,9 +107,9 @@ class ColumnstoreMaterializer {
       auto& out_vec = output.data[b.output_slot];
       if (b.IsExtract()) {
         SDB_ASSERT(_context);
-        irs::MaterializeExtractNode(
-          *b.reader, *b.state, doc_ids, b.extract_path, b.extract_scan_type,
-          out_vec, output_start, *_context);
+        irs::MaterializeExtractNode(*b.reader, *b.state, doc_ids,
+                                    b.extract_path, b.extract_scan_type,
+                                    out_vec, output_start, *_context);
         continue;
       }
       const auto type_id = b.reader->Type().id();
@@ -132,8 +132,8 @@ class ColumnstoreMaterializer {
       if (b.IsExtract()) {
         SDB_ASSERT(_context);
         irs::MaterializeExtractNode(
-          *b.reader, *b.state, irs::IotaRange{start_doc, count},
-          b.extract_path, b.extract_scan_type, out_vec, 0, *_context);
+          *b.reader, *b.state, irs::IotaRange{start_doc, count}, b.extract_path,
+          b.extract_scan_type, out_vec, 0, *_context);
         continue;
       }
       const auto type_id = b.reader->Type().id();

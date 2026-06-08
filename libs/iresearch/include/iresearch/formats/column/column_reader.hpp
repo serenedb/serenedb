@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector_buffer.hpp>
@@ -53,13 +54,12 @@ inline size_t ConsecutiveRunLength(
   const Rows& rows, size_t i,
   uint64_t upper_bound = std::numeric_limits<uint64_t>::max()) noexcept {
   if constexpr (requires { typename Rows::contiguous_range_tag; }) {
-    const uint64_t v0 = static_cast<uint64_t>(rows[i]);
-    if (upper_bound <= v0) {
+    SDB_ASSERT(i < rows.size());
+    const uint64_t begin = static_cast<uint64_t>(rows[i]);
+    if (begin > upper_bound) {
       return 1;
     }
-    size_t run = rows.size() - i;
-    const size_t bound = static_cast<size_t>(upper_bound - v0);
-    return bound < run ? bound : run;
+    return std::min(rows.size() - i, static_cast<size_t>(upper_bound - begin));
   }
   size_t run = 1;
   while (i + run < rows.size() &&

@@ -762,9 +762,10 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
     case HUGEINT:
     case UHUGEINT: {
       auto str = PgNumericToString(data);
-      if (!str.empty()) {
-        return duckdb::Value{str}.DefaultCastAs(type);
+      if (str.empty()) {
+        return MakeInvalid();
       }
+      return duckdb::Value{str}.DefaultCastAs(type);
     }
     case LIST: {
       if (data.size() < 12) {
@@ -858,7 +859,9 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
       return duckdb::Value::STRUCT(std::move(fields));
     }
     default:
-      SDB_ASSERT(false, "unsupported binary parameter type");
+      // An unsupported binary type is bad client input (e.g. a binary COPY into
+      // an exotic column type), not a programmer error: return an error the
+      // caller maps to a clean SQL error rather than terminating the server.
       return MakeInvalid();
   }
   return MakeInvalid();

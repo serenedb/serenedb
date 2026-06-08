@@ -74,25 +74,46 @@ def test_copy_from_stdin_bare_keyword(conn: psycopg.Connection,
         _drop(conn, table_name)
 
 
-def test_copy_from_stdin_binary_errors_cleanly(conn: psycopg.Connection,
-                                                table_name: str) -> None:
+def test_copy_binary_round_trip(conn: psycopg.Connection,
+                                table_name: str) -> None:
+    # COPY ... TO STDOUT (FORMAT BINARY) produces the PostgreSQL binary (PGCOPY)
+    # stream, and COPY ... FROM STDIN (FORMAT BINARY) loads it back unchanged --
+    # including NULLs. Also exercises the unquoted (FORMAT BINARY) spelling.
+    dest = f"{table_name}_dst"
     _create_int_varchar(conn, table_name)
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{dest}"(x INT, label VARCHAR)')
     try:
         with conn.cursor() as cur:
-            with pytest.raises(psycopg.Error):
-                with cur.copy(
-                    f'COPY public."{table_name}" FROM STDIN (FORMAT BINARY)'
-                ) as cp:
-                    cp.write(
-                        b"PGCOPY\n\xff\r\n\x00"
-                        b"\x00\x00\x00\x00"
-                        b"\x00\x00\x00\x00"
-                    )
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1")
-            assert cur.fetchone() == (1,)
+            cur.execute(
+                f'INSERT INTO public."{table_name}" VALUES '
+                f"(1,'one'),(2,NULL),(3,'three')"
+            )
+            chunks: list[bytes] = []
+            with cur.copy(
+                f'COPY public."{table_name}" TO STDOUT (FORMAT BINARY)'
+            ) as cp:
+                for chunk in cp:
+                    chunks.append(bytes(chunk))
+            blob = b"".join(chunks)
+            assert blob.startswith(b"PGCOPY\n\xff\r\n\x00"), \
+                f"expected PGCOPY signature, got {blob[:11]!r}"
+            assert blob.endswith(b"\xff\xff"), "expected PGCOPY -1 trailer"
+
+            with cur.copy(
+                f'COPY public."{dest}" FROM STDIN (FORMAT BINARY)'
+            ) as cp:
+                cp.write(blob)
+            cur.execute(
+                f'SELECT count(*), sum(x), count(label) FROM public."{dest}"'
+            )
+            n, s, labels = cur.fetchone()
+            assert n == 3
+            assert s == 6
+            assert labels == 2  # the NULL label is preserved
     finally:
         _drop(conn, table_name)
+        _drop(conn, dest)
 
 
 @pytest.mark.parametrize(

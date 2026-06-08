@@ -280,11 +280,11 @@ void WriteAuthRequest(message::Buffer& out, int32_t code,
   out.Commit(false);
 }
 
-void WriteCopyInResponse(message::Buffer& out) {
+void WriteCopyInResponse(message::Buffer& out, bool binary) {
   auto* data = out.GetContiguousData(8);
   data[0] = PQ_MSG_COPY_IN_RESPONSE;
   absl::big_endian::Store32(data + 1, 7);  // length: format(1)+cols(2)+self(4)
-  data[5] = 0;                             // overall format: text
+  data[5] = binary ? 1 : 0;                // overall format
   absl::big_endian::Store16(data + 6, 0);  // column count
   out.Commit(false);
 }

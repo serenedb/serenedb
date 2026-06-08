@@ -167,6 +167,45 @@ inline bool IsCopyFromStdin(const duckdb::SQLStatement& statement) {
          copy.info->file_path == "/dev/stdin";
 }
 
+// COPY ... (FORMAT binary): info->format is the lowercased copy-function name;
+// "binary" selects the PGCOPY wire format (CopyInResponse format byte 1, and no
+// text "\." end-marker to strip).
+inline bool IsBinaryCopy(const duckdb::SQLStatement& statement) {
+  if (statement.type != duckdb::StatementType::COPY_STATEMENT) {
+    return false;
+  }
+  const auto& copy = statement.Cast<duckdb::CopyStatement>();
+  return copy.info && copy.info->format == "binary";
+}
+
+// Cheap gate for the COPY-FROM-STDIN parse-probe in HandleParse: does the text
+// begin with the COPY keyword (case-insensitive, after leading whitespace)?
+// Only COPY-prefixed statements get a parse-only ExtractStatements; everything
+// else takes the normal Prepare path unchanged. A false negative (e.g. COPY
+// behind a comment) just falls through to Prepare, which still errors cleanly.
+inline bool StartsWithCopy(std::string_view query) {
+  const auto start = query.find_first_not_of(" \t\r\n\f\v");
+  if (start == std::string_view::npos) {
+    return false;
+  }
+  query.remove_prefix(start);
+  static constexpr std::string_view kCopy = "copy";
+  if (query.size() < kCopy.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < kCopy.size(); ++i) {
+    if ((query[i] | 0x20) != kCopy[i]) {
+      return false;
+    }
+  }
+  if (query.size() == kCopy.size()) {
+    return true;
+  }
+  const char c = query[kCopy.size()];
+  return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_');
+}
+
 inline sdb::pg::VarFormat FormatFor(std::span<const sdb::pg::VarFormat> formats,
                                     size_t column) {
   if (formats.empty()) {
@@ -245,7 +284,8 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   yaclib::Future<> RunSimpleQuery(std::string_view query);
   yaclib::Future<> RunCopyFromStdin(
     duckdb::unique_ptr<duckdb::SQLStatement> statement);
-  yaclib::Future<> RunCopyInFeeder(sdb::pg::CopyInBridge& bridge);
+  yaclib::Future<> RunCopyInFeeder(sdb::pg::CopyInBridge& bridge,
+                                   bool is_binary);
   void HandleParse(std::string_view payload);
   void HandleBind(std::string_view payload);
   void HandleDescribe(std::string_view payload);
@@ -893,6 +933,7 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   duckdb::unique_ptr<duckdb::SQLStatement> statement) {
+  const bool is_binary = statement && IsBinaryCopy(*statement);
   // Handshake first (no bridge needed yet); a Flush failure here is clean. The
   // client streams CopyData only after CopyInResponse, so it must go out before
   // Prepare (which sniffs /dev/stdin).
@@ -901,7 +942,7 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
     _recv.Consume(_dispatch_consume);
     _dispatch_consume = 0;
   }
-  WriteCopyInResponse(_send);
+  WriteCopyInResponse(_send, is_binary);
   co_await Flush();
 
   auto& client_state = *_conn->context->registered_state
@@ -912,7 +953,7 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   client_state.copy_stdin_buffer.reset();
   sdb::pg::CopyInBridge bridge;
   _connection_ctx->SetCopyInBridge(&bridge);
-  auto feeder = RunCopyInFeeder(bridge);
+  auto feeder = RunCopyInFeeder(bridge, is_binary);
 
   co_await yaclib::On(*_duck);
   std::exception_ptr error;
@@ -957,7 +998,7 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
 
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::RunCopyInFeeder(
-  sdb::pg::CopyInBridge& bridge) {
+  sdb::pg::CopyInBridge& bridge, bool is_binary) {
   co_await yaclib::On(*_ioexec);
   for (;;) {
     auto frame = co_await NextFrame(true, kBufferMaxGrowth);
@@ -973,10 +1014,14 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyInFeeder(
     if (type == PQ_MSG_COPY_DATA) {
       if (!bridge.Aborted()) {
         auto payload = frame.payload;
-        if (payload.ends_with(std::string_view{"\\.\n"})) {
-          payload.remove_suffix(3);
-        } else if (payload.ends_with(std::string_view{"\\.\r\n"})) {
-          payload.remove_suffix(4);
+        // The text "\." end-marker is a text-COPY convention; binary COPY ends
+        // with the in-stream PGCOPY -1 trailer, so its bytes pass through raw.
+        if (!is_binary) {
+          if (payload.ends_with(std::string_view{"\\.\n"})) {
+            payload.remove_suffix(3);
+          } else if (payload.ends_with(std::string_view{"\\.\r\n"})) {
+            payload.remove_suffix(4);
+          }
         }
         bridge.Publish(payload.data(), payload.size());
         co_await bridge.Drained(*_ioexec);
@@ -1065,6 +1110,18 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     statement = &it->second;
   }
   statement->Reset();
+  // COPY ... FROM STDIN can't be prepared here (the CSV sniff would open
+  // /dev/stdin before the CopyData feeder is live). Parse-probe COPY-prefixed
+  // statements only, and stash the unbound statement; the bind happens at
+  // Execute via RunCopyFromStdin.
+  if (StartsWithCopy(query)) {
+    auto extracted = _conn->ExtractStatements(std::string{query});
+    if (extracted.size() == 1 && IsCopyFromStdin(*extracted[0])) {
+      statement->deferred_copy = std::move(extracted[0]);
+      WriteEmptyFrame(_send, PQ_MSG_PARSE_COMPLETE);
+      return;
+    }
+  }
   statement->prepared = _conn->Prepare(
     std::string{query}, type_hints.empty() ? nullptr : &type_hints);
   if (statement->prepared->HasError()) {
@@ -1186,18 +1243,23 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     }
     statement = &it->second;
   }
-  if (!statement->prepared) {
+  if (!statement->prepared && !statement->deferred_copy) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
                     ERR_MSG("prepared statement is not ready"));
   }
 
   Portal portal;
   portal.stmt = statement;
-  portal.bind_info = ParseBindVars(payload, *statement);
-  portal.pending =
-    PendingQueryEnsured(*statement->prepared, portal.bind_info.param_values);
-  if (portal.pending->HasError()) {
-    ThrowDuck(portal.pending->GetErrorObject());
+  // A deferred COPY FROM STDIN has no prepared statement, no parameters, and no
+  // result columns; just record the (empty) bind. ParseBindVars would otherwise
+  // dereference the null prepared.
+  if (!statement->deferred_copy) {
+    portal.bind_info = ParseBindVars(payload, *statement);
+    portal.pending =
+      PendingQueryEnsured(*statement->prepared, portal.bind_info.param_values);
+    if (portal.pending->HasError()) {
+      ThrowDuck(portal.pending->GetErrorObject());
+    }
   }
 
   if (portal_name.empty()) {
@@ -1215,6 +1277,12 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
 
 template<SocketKind Kind>
 void PgWireSession<Kind>::DescribeStatement(sdb::pg::DuckDBStatement& stmt) {
+  if (stmt.deferred_copy) {
+    // COPY FROM STDIN takes no parameters and returns no rows.
+    WriteParameterDescription(_send, {});
+    WriteEmptyFrame(_send, PQ_MSG_NO_DATA);
+    return;
+  }
   if (!stmt.prepared) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
                     ERR_MSG("prepared statement is not ready"));
@@ -1263,6 +1331,10 @@ void PgWireSession<Kind>::DescribeStatement(sdb::pg::DuckDBStatement& stmt) {
 
 template<SocketKind Kind>
 void PgWireSession<Kind>::DescribePortal(Portal& portal) {
+  if (portal.stmt && portal.stmt->deferred_copy) {
+    WriteEmptyFrame(_send, PQ_MSG_NO_DATA);
+    return;
+  }
   const auto return_type =
     portal.stmt->prepared->GetStatementProperties().return_type;
   if (return_type != duckdb::StatementReturnType::QUERY_RESULT) {
@@ -1333,6 +1405,14 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
                       ERR_MSG("portal \"", portal_name, "\" does not exist"));
     }
     portal = &it->second;
+  }
+  if (portal->stmt && portal->stmt->deferred_copy) {
+    // Deferred COPY FROM STDIN: now safe to bind -- RunCopyFromStdin brings the
+    // feeder live before the sniff. Consume the stashed statement so a stray
+    // re-Execute (or a second portal bound to it) gets a clean "not bound"
+    // error rather than re-running the COPY.
+    co_await RunCopyFromStdin(std::move(portal->stmt->deferred_copy));
+    co_return {};
   }
   if (!portal->stmt || !portal->pending) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),

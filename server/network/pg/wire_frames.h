@@ -89,9 +89,9 @@ void WriteNegotiateProtocolVersion(
   message::Buffer& out, int32_t newest_minor,
   std::span<const std::string_view> unrecognized_options);
 
-// CopyInResponse for a text-format COPY FROM STDIN (overall format 0, 0 column
-// formats). Sent by the session before it starts reading CopyData.
-void WriteCopyInResponse(message::Buffer& out);
+// CopyInResponse for a COPY FROM STDIN: overall format 0 (text) or 1 (binary),
+// with 0 per-column formats. Sent by the session before it reads CopyData.
+void WriteCopyInResponse(message::Buffer& out, bool binary);
 
 // An AuthenticationRequest ('R' + Int32 code + payload), e.g. code 3
 // (CleartextPassword), 10 (SASL), 11 (SASLContinue), 12 (SASLFinal).

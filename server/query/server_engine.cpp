@@ -29,6 +29,7 @@
 #include <duckdb/catalog/default/default_views.hpp>
 
 #include "connector/duckdb_copy_filesystem.h"
+#include "connector/duckdb_pg_binary_copy.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_tokenizer_function.h"
@@ -240,6 +241,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgJsonFunctions(db);
 
   connector::RegisterVacuumFunction(db);
+
+  connector::RegisterPgBinaryCopyFunction(db);
 
   connector::RegisterTruncateFunction(db);
 

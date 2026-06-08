@@ -34,11 +34,17 @@ namespace sdb::pg {
 struct DuckDBStatement {
   void Reset() noexcept {
     prepared.reset();
+    deferred_copy.reset();
     extracted.clear();
     current_stmt_idx = 0;
   }
 
   duckdb::unique_ptr<duckdb::PreparedStatement> prepared;
+  // COPY ... FROM STDIN cannot be prepared at Parse time (the CSV sniff opens
+  // /dev/stdin before the CopyData feeder exists), so the unbound, un-sniffed
+  // statement is stashed here and bound at Execute. Non-null => deferred COPY,
+  // and `prepared` stays null.
+  duckdb::unique_ptr<duckdb::SQLStatement> deferred_copy;
   // For simple protocol multi-statement support
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> extracted;
   uint32_t current_stmt_idx = 0;

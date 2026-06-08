@@ -206,24 +206,6 @@ void ForEachSegmentRun(const View& view, F&& body) {
   }
 }
 
-template<typename View>
-void MaterializeIncludeColumnsBatched(CommonScanLocalState& lstate,
-                                      const CommonScanGlobalState& gstate,
-                                      const irs::IndexReader& reader,
-                                      const View& view,
-                                      duckdb::DataChunk& output,
-                                      duckdb::idx_t output_start) {
-  if (view.size() == 0 || gstate.cs_projections.empty()) {
-    return;
-  }
-  ForEachSegmentRun(view, [&](uint32_t seg_id, size_t begin, auto slice) {
-    auto* mat = GetOrOpenSegmentMaterializer(lstate, gstate, reader, seg_id);
-    if (mat && mat->HasAny()) {
-      mat->SelectByDocIds(slice, output, output_start + begin);
-    }
-  });
-}
-
 // Read generated PK int64 values from RocksDB iterator keys into output.
 // Key format: [ObjectId(8)][ColumnId(8)][PK int64 big-endian XOR 0x80].
 duckdb::idx_t ReadGeneratedPKFromKeys(rocksdb::Iterator& it,
@@ -248,8 +230,8 @@ void WriteVirtualColumns(CommonScanGlobalState& gstate,
   if (!gstate.scan_score) {
     return;
   }
-  auto* score_data =
-    duckdb::FlatVector::GetDataMutable<float>(output.data[gstate.score_output_idx]);
+  auto* score_data = duckdb::FlatVector::GetDataMutable<float>(
+    output.data[gstate.score_output_idx]);
   for (duckdb::idx_t i = 0; i < num_rows; ++i) {
     score_data[output_start + i] = view.score(i);
   }
@@ -290,34 +272,41 @@ void WriteChunkOffsets(Lstate& lstate, const irs::Filter::Query& query,
   }
 }
 
-template<typename Pk, typename Lstate, typename Gstate, typename View>
-void ReadIResearchSegments(Pk& pk, Lstate& l, Gstate& g, const View& view,
+template<typename Lstate, typename Gstate, typename View>
+void ReadIResearchSegments(Lstate& l, Gstate& g, const View& view,
                            bool include_cs, duckdb::DataChunk& output,
                            duckdb::idx_t output_start) {
   ForEachSegmentRun(view, [&](uint32_t seg_id, size_t begin, auto slice) {
     SDB_ASSERT(slice.size() <= STANDARD_VECTOR_SIZE);
 
-    const auto [cs_reader, pk_col] = SegmentPkColumn(*g.reader, seg_id);
-    SDB_ASSERT(pk_col);
-    if (!l.pk_lookup.seg_pk_vec) {
-      l.pk_lookup.seg_pk_vec = std::make_unique<duckdb::Vector>(
-        duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE);
-    }
-    if (!l.pk_lookup.fetcher) {
-      l.pk_lookup.fetcher =
-        std::make_unique<SegmentPkSequentialFetcher>(*cs_reader, *pk_col);
-    } else if (l.pk_lookup.last_seg_idx != seg_id) {
-      l.pk_lookup.fetcher->Reset(*cs_reader, *pk_col);
-    }
-    l.pk_lookup.last_seg_idx = seg_id;
-    l.pk_lookup.fetcher->Fetch(slice, *l.pk_lookup.seg_pk_vec);
-    auto* data =
-      duckdb::FlatVector::GetData<duckdb::string_t>(*l.pk_lookup.seg_pk_vec);
-    // TODO: we can probably remove this cycle by removing redundant buffer.
-    for (size_t k = 0; k < slice.size(); ++k) {
-      std::string_view bytes{data[k].GetData(), data[k].GetSize()};
-      AppendPrimaryKey(pk, bytes);
-    }
+    std::visit(
+      [&](auto& pk) {
+        using T = std::decay_t<decltype(pk)>;
+        if constexpr (!std::is_same_v<T, std::monostate>) {
+          const auto [cs_reader, pk_col] = SegmentPkColumn(*g.reader, seg_id);
+          SDB_ASSERT(pk_col);
+          if (!l.pk_lookup.seg_pk_vec) {
+            l.pk_lookup.seg_pk_vec = std::make_unique<duckdb::Vector>(
+              duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE);
+          }
+          if (!l.pk_lookup.fetcher) {
+            l.pk_lookup.fetcher =
+              std::make_unique<SegmentPkSequentialFetcher>(*cs_reader, *pk_col);
+          } else if (l.pk_lookup.last_seg_idx != seg_id) {
+            l.pk_lookup.fetcher->Reset(*cs_reader, *pk_col);
+          }
+          l.pk_lookup.last_seg_idx = seg_id;
+          l.pk_lookup.fetcher->Fetch(slice, *l.pk_lookup.seg_pk_vec);
+          auto* data = duckdb::FlatVector::GetData<duckdb::string_t>(
+            *l.pk_lookup.seg_pk_vec);
+          // TODO: remove this cycle by removing the redundant buffer.
+          for (size_t k = 0; k < slice.size(); ++k) {
+            std::string_view bytes{data[k].GetData(), data[k].GetSize()};
+            AppendPrimaryKey(pk, bytes);
+          }
+        }
+      },
+      l.pk_batch);
 
     if (include_cs) {
       auto* mat = GetOrOpenSegmentMaterializer(l, g, *g.reader, seg_id);
@@ -347,25 +336,22 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
     if (std::holds_alternative<std::monostate>(l.pk_batch)) {
       l.pk_batch = l.index_source->CreatePkBatch();
     }
-    std::visit(
-      [&](auto& pk) {
-        using T = std::decay_t<decltype(pk)>;
-        if constexpr (std::is_same_v<T, std::monostate>) {
-          SDB_ASSERT(false, "pk_batch must be initialised");
-        } else {
-          if (output_start == 0) {
+    if (output_start == 0) {
+      std::visit(
+        [&](auto& pk) {
+          using T = std::decay_t<decltype(pk)>;
+          if constexpr (!std::is_same_v<T, std::monostate>) {
             pk.Reset();
+            if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
+              pk.EnsureInit(duckdb::Allocator::Get(ctx));
+            }
           }
-          if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
-            pk.EnsureInit(duckdb::Allocator::Get(ctx));
-          }
-          ReadIResearchSegments(pk, l, g, view, need_cs, output, output_start);
-        }
-      },
-      l.pk_batch);
-  } else if (need_cs) {
-    MaterializeIncludeColumnsBatched(l, g, *g.reader, view, output,
-                                     output_start);
+        },
+        l.pk_batch);
+    }
+  }
+  if (g.has_external_projections || need_cs) {
+    ReadIResearchSegments(l, g, view, need_cs, output, output_start);
   }
   if constexpr (requires { l.offsets_entries; }) {
     if (!l.offsets_entries.empty()) {

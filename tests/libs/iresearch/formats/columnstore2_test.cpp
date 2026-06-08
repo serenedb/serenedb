@@ -55,9 +55,9 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/column_writer.hpp"
-#include "iresearch/columnstore/format.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -78,15 +78,15 @@ class Columnstore2TestCase : public ::testing::TestWithParam<bool> {
   // Open a BLOB column and write every doc in [lo, hi] as an empty BLOB
   // (validity bit = present, payload = empty bytes) -- the new-cs analog
   // of a legacy "dense mask column" with `target_row` rows total.
-  static void WriteEmptyBlobRange(irs::columnstore::ColumnWriter& cw,
-                                  irs::doc_id_t lo, irs::doc_id_t hi) {
+  static void WriteEmptyBlobRange(irs::ColumnWriter& cw, irs::doc_id_t lo,
+                                  irs::doc_id_t hi) {
     for (irs::doc_id_t doc = lo; doc <= hi; ++doc) {
       irs::tests::AppendBlob(cw, doc, {});
     }
   }
 };
 
-// Sanity: a fresh `MemoryDirectory` has no `.cs` file, so `MakeCsReader`
+// Sanity: a fresh `MemoryDirectory` has no `.col` file, so `MakeCsReader`
 // returns nullptr (legacy `Reader::prepare` -> empty result). Also covers
 // (d) repeated calls remain stable, (e) probing different non-existent
 // segment names returns nullptr each time, (f) after a real segment is
@@ -119,7 +119,7 @@ TEST_P(Columnstore2TestCase, reader_ctor) {
   //     while other names still return nullptr.
   constexpr std::string_view kSegment = "real_segment";
   {
-    irs::columnstore::Writer w{_dir, kSegment, Db()};
+    irs::ColWriter w{_dir, kSegment, Db()};
     auto filename = w.Commit(/*target_row=*/0);
     EXPECT_FALSE(filename.empty());
   }
@@ -134,7 +134,7 @@ TEST_P(Columnstore2TestCase, reader_ctor) {
 TEST_P(Columnstore2TestCase, empty_columnstore) {
   constexpr std::string_view kSegment = "empty_cs";
   {
-    irs::columnstore::Writer w{_dir, kSegment, Db()};
+    irs::ColWriter w{_dir, kSegment, Db()};
     auto filename = w.Commit(/*target_row=*/0);
     EXPECT_FALSE(filename.empty());
   }
@@ -207,7 +207,7 @@ TEST_P(Columnstore2TestCase, empty_column) {
 
   // (a) Point-read every row: 1..kDoc-1 are gap (null), kDoc carries payload.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col1};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col1};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc < kDoc; ++doc) {
       EXPECT_TRUE(pr.IsNullDoc(doc)) << "doc=" << doc;
     }
@@ -245,7 +245,7 @@ TEST_P(Columnstore2TestCase, empty_column) {
 
   // (d) Boundary docs on the populated column.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col1};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col1};
     EXPECT_TRUE(pr.IsNullDoc(irs::doc_limits::min()));
     EXPECT_FALSE(pr.IsNullDoc(kDoc));
     const auto bytes = pr.FetchDoc(kDoc);
@@ -257,8 +257,7 @@ TEST_P(Columnstore2TestCase, empty_column) {
 
   // (e) Fresh-reader probes on the empty columns return null for any doc.
   for (irs::field_id empty_id : {0, 2}) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{
-      *reader, *reader->Column(empty_id)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(empty_id)};
     for (irs::doc_id_t doc :
          {irs::doc_limits::min(), static_cast<irs::doc_id_t>(10), kDoc,
           static_cast<irs::doc_id_t>(kDoc + 1)}) {
@@ -304,8 +303,7 @@ TEST_P(Columnstore2TestCase, empty_columns) {
 
   // (b) Fresh-reader probes on every column return null for any doc.
   for (irs::field_id id : {0, 1}) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(id)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(id)};
     for (irs::doc_id_t doc :
          {irs::doc_limits::min(), static_cast<irs::doc_id_t>(10),
           static_cast<irs::doc_id_t>(100), static_cast<irs::doc_id_t>(1000)}) {
@@ -374,7 +372,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
 
   // (a) Stateful pass: one reader, every doc in order.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       EXPECT_EQ(pr.IsNullDoc(doc), !is_present(doc)) << "doc=" << doc;
       if (is_present(doc)) {
@@ -386,7 +384,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
   // (b) Stateless pass: fresh reader per doc, strided so we don't ride the
   // cached row group.
   for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 137) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     EXPECT_EQ(pr.IsNullDoc(doc), !is_present(doc)) << "doc=" << doc;
     if (is_present(doc)) {
       EXPECT_TRUE(pr.FetchDoc(doc).empty()) << "doc=" << doc;
@@ -415,7 +413,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
 
   // (d) "next + seek": fresh reader, hit one doc deep inside the range.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kProbe = 6001;
     const auto target =
       is_present(kProbe) ? kProbe : static_cast<irs::doc_id_t>(kProbe + 1);
@@ -429,7 +427,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
   //     to 2 and to the row-group size), verifying row-group cache survives
   //     wild jumps. Repeated with a SECOND fresh reader.
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     // Reverse pass.
     for (irs::doc_id_t doc = kMax; doc >= irs::doc_limits::min(); --doc) {
       EXPECT_EQ(pr.IsNullDoc(doc), !is_present(doc))
@@ -455,7 +453,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
   // (f) Boundary docs: min present (kMin), last_valid present (kMax-1 or
   //     last even-from-min), past-end null.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     EXPECT_FALSE(pr.IsNullDoc(irs::doc_limits::min()));
     EXPECT_TRUE(pr.FetchDoc(irs::doc_limits::min()).empty());
 
@@ -480,7 +478,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
   //     ..., 4095, 4096, 4097). With kRgSize=512 these straddle every
   //     row-group boundary in the file.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < kMax / kRgSize; ++rg) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -496,7 +494,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
 
   // (h) Seek + iterate: fetch K, then K+1, K+2, ... K+5 sequentially.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStart = 3333;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       EXPECT_EQ(pr.IsNullDoc(doc), !is_present(doc)) << "doc=" << doc;
@@ -510,13 +508,13 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
   //     the BlobPointReader is forward-only, so use a fresh reader for the
   //     earlier doc. Verifies both readers can be alive concurrently.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     constexpr irs::doc_id_t kFar = 7777;
     const auto far_target =
       is_present(kFar) ? kFar : static_cast<irs::doc_id_t>(kFar + 1);
     EXPECT_FALSE(forward.IsNullDoc(far_target));
 
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     constexpr irs::doc_id_t kEarly = 123;
     const auto early_target =
       is_present(kEarly) ? kEarly : static_cast<irs::doc_id_t>(kEarly + 1);
@@ -571,7 +569,7 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
 
   // (a) Stateful pass: walk every doc in order.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
       if (is_present(doc)) {
         assert_payload(doc, pr.FetchDoc(doc));
@@ -584,7 +582,7 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
     if (!is_present(doc)) {
       continue;
     }
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(doc, pr.FetchDoc(doc));
   }
 
@@ -602,7 +600,7 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
 
   // (d) Random-order point access via TWO fresh BlobPointReaders.
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     // Reverse pass over present docs.
     for (irs::doc_id_t doc = kMax; doc > irs::doc_limits::min(); doc -= 2) {
       if (is_present(doc)) {
@@ -612,7 +610,7 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
     // Prime-stepped pass on the same reader (forward-only, so wrap into a
     // monotonic schedule via a fresh reader at the end).
     constexpr irs::doc_id_t kStep = 263;
-    irs::columnstore::ColumnReader::BlobPointReader pr2{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr2{*reader, *col};
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                             (off * kStep) % kMax);
@@ -620,7 +618,7 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
         doc = static_cast<irs::doc_id_t>(doc + 1);
       }
       if (is_present(doc)) {
-        irs::columnstore::ColumnReader::BlobPointReader scratch{*reader, *col};
+        irs::ColumnReader::BlobPointReader scratch{*reader, *col};
         assert_payload(doc, scratch.FetchDoc(doc));
       }
     }
@@ -628,7 +626,7 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
 
   // (e) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     EXPECT_FALSE(pr.IsNullDoc(irs::doc_limits::min()));
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     irs::doc_id_t last_valid = kMax;
@@ -642,7 +640,7 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
 
   // (f) Row-group transitions: probe near each rg boundary.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < kMax / kRgSize; ++rg) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -656,7 +654,7 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
 
   // (g) Seek + iterate K..K+5.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStart = 3333;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       if (is_present(doc)) {
@@ -669,14 +667,14 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
 
   // (h) Seek backwards via a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     constexpr irs::doc_id_t kFar = 7777;
     auto far_target =
       is_present(kFar) ? kFar : static_cast<irs::doc_id_t>(kFar + 1);
     if (is_present(far_target)) {
       assert_payload(far_target, forward.FetchDoc(far_target));
     }
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     constexpr irs::doc_id_t kEarly = 123;
     auto early_target =
       is_present(kEarly) ? kEarly : static_cast<irs::doc_id_t>(kEarly + 1);
@@ -732,8 +730,7 @@ TEST_P(Columnstore2TestCase, sparse_column_mr) {
   {
     auto reader = irs::tests::MakeCsReader(_dir, kSegment);
     ASSERT_NE(reader, nullptr);
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 100) {
       if (is_present(doc)) {
         assert_payload(doc, pr.FetchDoc(doc));
@@ -758,8 +755,7 @@ TEST_P(Columnstore2TestCase, sparse_column_mr) {
   {
     auto reader = irs::tests::MakeCsReader(_dir, kSegment);
     ASSERT_NE(reader, nullptr);
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
     for (irs::doc_id_t doc = kMax; doc > irs::doc_limits::min(); doc -= 333) {
       if (is_present(doc)) {
         assert_payload(doc, pr.FetchDoc(doc));
@@ -770,8 +766,7 @@ TEST_P(Columnstore2TestCase, sparse_column_mr) {
   {
     auto reader = irs::tests::MakeCsReader(_dir, kSegment);
     ASSERT_NE(reader, nullptr);
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     EXPECT_TRUE(pr.IsNullDoc(static_cast<irs::doc_id_t>(kMax + 1)));
   }
@@ -779,8 +774,7 @@ TEST_P(Columnstore2TestCase, sparse_column_mr) {
   {
     auto reader = irs::tests::MakeCsReader(_dir, kSegment);
     ASSERT_NE(reader, nullptr);
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
     for (uint32_t rg = 1; rg < kMax / kRgSize; rg += 3) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -795,8 +789,7 @@ TEST_P(Columnstore2TestCase, sparse_column_mr) {
   {
     auto reader = irs::tests::MakeCsReader(_dir, kSegment);
     ASSERT_NE(reader, nullptr);
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
     constexpr irs::doc_id_t kStart = 4444;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       if (is_present(doc)) {
@@ -804,8 +797,7 @@ TEST_P(Columnstore2TestCase, sparse_column_mr) {
       }
     }
     // Backwards: fresh reader at a doc earlier than kStart.
-    irs::columnstore::ColumnReader::BlobPointReader backward{
-      *reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader backward{*reader, *reader->Column(0)};
     constexpr irs::doc_id_t kEarly = 137;
     auto target =
       is_present(kEarly) ? kEarly : static_cast<irs::doc_id_t>(kEarly + 1);
@@ -862,7 +854,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
 
   // (a) Stateful: one reader, every populated doc.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
       if (is_present(doc)) {
         assert_payload(doc, pr.FetchDoc(doc));
@@ -880,7 +872,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
     if (!is_present(target)) {
       continue;
     }
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(target, pr.FetchDoc(target));
   }
 
@@ -898,7 +890,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
 
   // (d) "next + seek": min + a deep seek, both via point reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     EXPECT_FALSE(pr.IsNullDoc(irs::doc_limits::min()));
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     constexpr irs::doc_id_t kDeep = 15001;
@@ -910,7 +902,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
 
   // (e) Random-order point access via TWO fresh BlobPointReaders.
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     // Reverse pass over a strided sample of present docs.
     for (irs::doc_id_t doc = kMax; doc > irs::doc_limits::min(); doc -= 511) {
       if (is_present(doc)) {
@@ -929,7 +921,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
         doc = static_cast<irs::doc_id_t>(doc + 1);
       }
       if (is_present(doc)) {
-        irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+        irs::ColumnReader::BlobPointReader pr{*reader, *col};
         assert_payload(doc, pr.FetchDoc(doc));
       }
     }
@@ -937,7 +929,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
 
   // (f) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     EXPECT_FALSE(pr.IsNullDoc(irs::doc_limits::min()));
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     irs::doc_id_t last_valid = kMax;
@@ -952,7 +944,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
 
   // (g) Row-group transitions: probe near each rg boundary.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < kMax / kRgSize; rg += 3) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -966,7 +958,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
 
   // (h) Seek + iterate K..K+5.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStart = 9999;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       if (is_present(doc)) {
@@ -979,14 +971,14 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
 
   // (i) Seek backwards via a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     constexpr irs::doc_id_t kFar = 14001;
     auto far_target =
       is_present(kFar) ? kFar : static_cast<irs::doc_id_t>(kFar + 1);
     if (is_present(far_target)) {
       assert_payload(far_target, forward.FetchDoc(far_target));
     }
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     constexpr irs::doc_id_t kEarly = 234;
     auto early_target =
       is_present(kEarly) ? kEarly : static_cast<irs::doc_id_t>(kEarly + 1);
@@ -1046,7 +1038,7 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
 
   // (a) Stateful: walk every doc; gap docs report null, others their bytes.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       if (in_gap(doc)) {
         EXPECT_TRUE(pr.IsNullDoc(doc)) << "doc=" << doc;
@@ -1061,7 +1053,7 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
        {kGapBegin, static_cast<irs::doc_id_t>(kGapBegin + 1),
         static_cast<irs::doc_id_t>((kGapBegin + kGapEnd) / 2), kGapEnd,
         static_cast<irs::doc_id_t>(kGapEnd + 1)}) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     if (in_gap(doc)) {
       EXPECT_TRUE(pr.IsNullDoc(doc)) << "gap doc=" << doc;
     } else {
@@ -1092,7 +1084,7 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
   //     access pattern spans the gap region, exercising the validity-cache
   //     transition between populated / null rows.
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     // Forward strided pass to walk all RGs once.
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 197) {
       if (in_gap(doc)) {
@@ -1104,14 +1096,14 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
   }
   // Reverse pass needs a fresh reader (BlobPointReader is forward-only).
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = kMax; doc > irs::doc_limits::min(); doc -= 1) {
       // Use a fresh reader per probe to allow backwards motion at any
       // step. Cheap enough at stride.
       if (doc % 311 != 0) {
         continue;
       }
-      irs::columnstore::ColumnReader::BlobPointReader scratch{*reader, *col};
+      irs::ColumnReader::BlobPointReader scratch{*reader, *col};
       if (in_gap(doc)) {
         EXPECT_TRUE(scratch.IsNullDoc(doc)) << "doc=" << doc;
       } else {
@@ -1122,7 +1114,7 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
 
   // (e) Boundary docs: min, last_valid (= kMax-1 outside gap), past-end.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     EXPECT_FALSE(pr.IsNullDoc(irs::doc_limits::min()));
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     EXPECT_FALSE(pr.IsNullDoc(kMax));
@@ -1134,7 +1126,7 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
   // (f) Row-group transitions: probe around each rg boundary, paying
   //     extra attention to the boundaries near the gap (4096, 4608).
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < kMax / kRgSize; ++rg) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -1151,7 +1143,7 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
   // (g) Seek + iterate across the gap edge: K, K+1, ... K+5 with K just
   //     before the gap.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     const irs::doc_id_t kStart = static_cast<irs::doc_id_t>(kGapBegin - 2);
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       if (in_gap(doc)) {
@@ -1165,10 +1157,10 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
   // (h) Seek backwards: after a forward fetch deep into the tail, a fresh
   //     reader on a doc near the head.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     constexpr irs::doc_id_t kFar = 7777;
     assert_payload(kFar, forward.FetchDoc(kFar));
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     constexpr irs::doc_id_t kEarly = 123;
     assert_payload(kEarly, backward.FetchDoc(kEarly));
   }
@@ -1226,7 +1218,7 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
 
   // (a) Stateful walk over every doc.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
     }
@@ -1247,11 +1239,11 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
   // (c) Re-seek into the tail with a fresh reader, then back to head via
   //     a second fresh reader (BlobPointReader is forward-only per reader).
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kProbe = kTailBegin + 17;
     static_assert(kProbe > kTailBegin && kProbe <= kMax);
     assert_payload(kProbe, pr.FetchDoc(kProbe));
-    irs::columnstore::ColumnReader::BlobPointReader pr2{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr2{*reader, *col};
     assert_payload(irs::doc_limits::min(),
                    pr2.FetchDoc(irs::doc_limits::min()));
   }
@@ -1259,11 +1251,11 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
   // (d) Random-order point access via TWO fresh readers (reverse stride
   //     + prime-stepped forward), exercising row-group cache survival.
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     // Reverse pass over the entire range.
     for (irs::doc_id_t doc = kMax; doc >= irs::doc_limits::min(); doc -= 263) {
       // Use a fresh scratch reader so we can move backwards freely.
-      irs::columnstore::ColumnReader::BlobPointReader scratch{*reader, *col};
+      irs::ColumnReader::BlobPointReader scratch{*reader, *col};
       assert_payload(doc, scratch.FetchDoc(doc));
       if (doc < 263) {
         break;
@@ -1274,14 +1266,14 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader scratch{*reader, *col};
+      irs::ColumnReader::BlobPointReader scratch{*reader, *col};
       assert_payload(doc, scratch.FetchDoc(doc));
     }
   }
 
   // (e) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     // kTailBegin is head (shorter payload); kTailBegin+1 is tail (longer).
     assert_payload(kTailBegin, pr.FetchDoc(kTailBegin));
@@ -1295,7 +1287,7 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
   // (f) Row-group transitions: probe near each rg boundary, including the
   //     one that coincides with kTailBegin (head->tail payload-size change).
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < kMax / kRgSize; ++rg) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -1307,7 +1299,7 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
 
   // (g) Seek + iterate K..K+5 across the head/tail boundary.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     const irs::doc_id_t kStart = static_cast<irs::doc_id_t>(kTailBegin - 2);
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
@@ -1316,10 +1308,10 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
 
   // (h) Seek backwards via a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     constexpr irs::doc_id_t kFar = 7777;
     assert_payload(kFar, forward.FetchDoc(kFar));
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     constexpr irs::doc_id_t kEarly = 234;
     assert_payload(kEarly, backward.FetchDoc(kEarly));
   }
@@ -1373,7 +1365,7 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
 
   // (a) Stateful walk via BlobPointReader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
     }
@@ -1393,32 +1385,32 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
 
   // (c) Spot-check the very last doc through a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(kMax, pr.FetchDoc(kMax));
   }
 
   // (d) Random-order point access via two fresh readers.
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStep = 263;
     // Strided forward jumps on `pr` (forward-only).
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader scratch{*reader, *col};
+      irs::ColumnReader::BlobPointReader scratch{*reader, *col};
       assert_payload(doc, scratch.FetchDoc(doc));
     }
   }
   // Reverse pass via fresh readers per probe.
   for (irs::doc_id_t doc = kMax; doc >= irs::doc_limits::min() + 137;
        doc -= 137) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(doc, pr.FetchDoc(doc));
   }
 
   // (e) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     assert_payload(static_cast<irs::doc_id_t>(kMax - 1),
                    pr.FetchDoc(static_cast<irs::doc_id_t>(kMax - 1)));
@@ -1428,7 +1420,7 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
 
   // (f) Row-group transitions.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < kMax / kRgSize; rg += 2) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -1440,7 +1432,7 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
 
   // (g) Seek + iterate K..K+5 ending exactly at the very last doc.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     const irs::doc_id_t kStart = static_cast<irs::doc_id_t>(kMax - 5);
     for (irs::doc_id_t doc = kStart; doc <= kMax; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
@@ -1449,9 +1441,9 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
 
   // (h) Seek backwards via a fresh reader after touching kMax.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     assert_payload(kMax, forward.FetchDoc(kMax));
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     constexpr irs::doc_id_t kEarly = 234;
     assert_payload(kEarly, backward.FetchDoc(kEarly));
   }
@@ -1518,7 +1510,7 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
 
   // (a) Stateful walk.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
     }
@@ -1538,7 +1530,7 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
 
   // (c) Two cross-boundary probes via the same point reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(static_cast<irs::doc_id_t>(2 * kRgSize),
                    pr.FetchDoc(static_cast<irs::doc_id_t>(2 * kRgSize)));
     assert_payload(kMax, pr.FetchDoc(kMax));
@@ -1547,24 +1539,24 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
   // (d) Random-order point access via two fresh readers (forward strided
   //     + fresh-per-probe reverse).
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStep = 4099;
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader scratch{*reader, *col};
+      irs::ColumnReader::BlobPointReader scratch{*reader, *col};
       assert_payload(doc, scratch.FetchDoc(doc));
     }
   }
   for (irs::doc_id_t doc = kMax; doc >= irs::doc_limits::min() + 137;
        doc -= 137) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(doc, pr.FetchDoc(doc));
   }
 
   // (e) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     assert_payload(kTailBegin, pr.FetchDoc(kTailBegin));
     assert_payload(static_cast<irs::doc_id_t>(kTailBegin + 1),
@@ -1575,7 +1567,7 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
 
   // (f) Row-group transitions at every rg boundary.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < (kMax + 1) / kRgSize; ++rg) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -1587,7 +1579,7 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
 
   // (g) Seek + iterate K..K+5 across the head/tail boundary (kTailBegin).
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     const irs::doc_id_t kStart = static_cast<irs::doc_id_t>(kTailBegin - 2);
     for (irs::doc_id_t doc = kStart; doc <= kMax; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
@@ -1596,9 +1588,9 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
 
   // (h) Seek backwards via a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     assert_payload(kMax, forward.FetchDoc(kMax));
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     constexpr irs::doc_id_t kEarly = 234;
     assert_payload(kEarly, backward.FetchDoc(kEarly));
   }
@@ -1644,7 +1636,7 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
 
   // (a) Strided point reads.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 7) {
       assert_payload(pr.FetchDoc(doc));
     }
@@ -1664,7 +1656,7 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
 
   // (c) Cross-boundary probes via the same point reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(pr.FetchDoc(irs::doc_limits::min()));
     assert_payload(pr.FetchDoc(static_cast<irs::doc_id_t>(2 * kRgSize)));
     assert_payload(pr.FetchDoc(kMax));
@@ -1672,24 +1664,24 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
 
   // (d) Random-order point access via two fresh readers.
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStep = 263;
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader scratch{*reader, *col};
+      irs::ColumnReader::BlobPointReader scratch{*reader, *col};
       assert_payload(scratch.FetchDoc(doc));
     }
   }
   for (irs::doc_id_t doc = kMax; doc >= irs::doc_limits::min() + 137;
        doc -= 137) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(pr.FetchDoc(doc));
   }
 
   // (e) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(pr.FetchDoc(irs::doc_limits::min()));
     assert_payload(pr.FetchDoc(kMax));
     EXPECT_TRUE(pr.IsNullDoc(static_cast<irs::doc_id_t>(kMax + 1)));
@@ -1698,7 +1690,7 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
 
   // (f) Row-group transitions at every rg boundary.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < (kMax + 1) / kRgSize; ++rg) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -1710,7 +1702,7 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
 
   // (g) Seek + iterate K..K+5.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStart = 5555;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       assert_payload(pr.FetchDoc(doc));
@@ -1719,9 +1711,9 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
 
   // (h) Seek backwards via a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     assert_payload(forward.FetchDoc(kMax));
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     assert_payload(backward.FetchDoc(static_cast<irs::doc_id_t>(234)));
   }
 }
@@ -1753,7 +1745,7 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
 
   // (a) Stateful walk: every doc present, payload empty.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       EXPECT_FALSE(pr.IsNullDoc(doc)) << "doc=" << doc;
       EXPECT_TRUE(pr.FetchDoc(doc).empty()) << "doc=" << doc;
@@ -1762,7 +1754,7 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
 
   // (b) Strided fresh-reader spot checks.
   for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 211) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     EXPECT_FALSE(pr.IsNullDoc(doc)) << "doc=" << doc;
     EXPECT_TRUE(pr.FetchDoc(doc).empty()) << "doc=" << doc;
   }
@@ -1786,7 +1778,7 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
 
   // (d) Legacy "next + seek": fresh reader hits min(), then deep doc.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     EXPECT_FALSE(pr.IsNullDoc(irs::doc_limits::min()));
     EXPECT_TRUE(pr.FetchDoc(irs::doc_limits::min()).empty());
     constexpr irs::doc_id_t kProbe = 7777;
@@ -1797,12 +1789,12 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
 
   // (e) Random-order point access via two fresh readers.
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStep = 4099;
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader scratch{*reader, *col};
+      irs::ColumnReader::BlobPointReader scratch{*reader, *col};
       EXPECT_FALSE(scratch.IsNullDoc(doc)) << "pass=" << pass << " doc=" << doc;
       EXPECT_TRUE(scratch.FetchDoc(doc).empty());
     }
@@ -1810,7 +1802,7 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
 
   // (f) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     EXPECT_FALSE(pr.IsNullDoc(irs::doc_limits::min()));
     EXPECT_TRUE(pr.FetchDoc(irs::doc_limits::min()).empty());
     EXPECT_FALSE(pr.IsNullDoc(kMax));
@@ -1821,7 +1813,7 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
 
   // (g) Row-group transitions at every rg boundary.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < kMax / kRgSize; ++rg) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -1834,7 +1826,7 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
 
   // (h) Seek + iterate K..K+5.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStart = 3333;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       EXPECT_FALSE(pr.IsNullDoc(doc)) << "doc=" << doc;
@@ -1844,10 +1836,10 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
 
   // (i) Seek backwards via a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     EXPECT_FALSE(forward.IsNullDoc(static_cast<irs::doc_id_t>(7777)));
     EXPECT_TRUE(forward.FetchDoc(static_cast<irs::doc_id_t>(7777)).empty());
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     EXPECT_FALSE(backward.IsNullDoc(static_cast<irs::doc_id_t>(234)));
     EXPECT_TRUE(backward.FetchDoc(static_cast<irs::doc_id_t>(234)).empty());
   }
@@ -1890,7 +1882,7 @@ TEST_P(Columnstore2TestCase, dense_column) {
 
   // (a) Stateful walk.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
     }
@@ -1898,7 +1890,7 @@ TEST_P(Columnstore2TestCase, dense_column) {
 
   // (b) Strided fresh-reader spot checks.
   for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 313) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(doc, pr.FetchDoc(doc));
   }
 
@@ -1916,7 +1908,7 @@ TEST_P(Columnstore2TestCase, dense_column) {
 
   // (d) Legacy "next + seek": min + deep target via fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     constexpr irs::doc_id_t kProbe = 7777;
     static_assert(kProbe <= kMax);
@@ -1925,24 +1917,24 @@ TEST_P(Columnstore2TestCase, dense_column) {
 
   // (e) Random-order point access via two fresh readers.
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStep = 4099;
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader scratch{*reader, *col};
+      irs::ColumnReader::BlobPointReader scratch{*reader, *col};
       assert_payload(doc, scratch.FetchDoc(doc));
     }
   }
   for (irs::doc_id_t doc = kMax; doc >= irs::doc_limits::min() + 137;
        doc -= 137) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(doc, pr.FetchDoc(doc));
   }
 
   // (f) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     assert_payload(kMax, pr.FetchDoc(kMax));
     EXPECT_TRUE(pr.IsNullDoc(static_cast<irs::doc_id_t>(kMax + 1)));
@@ -1951,7 +1943,7 @@ TEST_P(Columnstore2TestCase, dense_column) {
 
   // (g) Row-group transitions.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < kMax / kRgSize; ++rg) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -1963,7 +1955,7 @@ TEST_P(Columnstore2TestCase, dense_column) {
 
   // (h) Seek + iterate K..K+5.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStart = 5555;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
@@ -1972,9 +1964,9 @@ TEST_P(Columnstore2TestCase, dense_column) {
 
   // (i) Seek backwards via a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     assert_payload(kMax, forward.FetchDoc(kMax));
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     assert_payload(static_cast<irs::doc_id_t>(234),
                    backward.FetchDoc(static_cast<irs::doc_id_t>(234)));
   }
@@ -2023,7 +2015,7 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
 
   // (a) Stateful walk over the full range.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc < kMin; ++doc) {
       EXPECT_TRUE(pr.IsNullDoc(doc)) << "doc=" << doc;
     }
@@ -2035,7 +2027,7 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
   // (b) "Seek before range": fresh reader hitting docs in [min, kMin)
   //     reports null. Followed by a forward read into the populated range.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kBefore = 42;
     static_assert(kBefore < kMin);
     EXPECT_TRUE(pr.IsNullDoc(kBefore));
@@ -2068,12 +2060,12 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
   // (d) Random-order point access via two fresh readers, including
   //     pre-range nulls.
   for (int pass = 0; pass < 2; ++pass) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStep = 263;
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader scratch{*reader, *col};
+      irs::ColumnReader::BlobPointReader scratch{*reader, *col};
       if (doc < kMin) {
         EXPECT_TRUE(scratch.IsNullDoc(doc))
           << "pass=" << pass << " doc=" << doc;
@@ -2085,7 +2077,7 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
 
   // (e) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     EXPECT_TRUE(pr.IsNullDoc(irs::doc_limits::min()));
     EXPECT_TRUE(pr.IsNullDoc(static_cast<irs::doc_id_t>(kMin - 1)));
     assert_payload(kMin, pr.FetchDoc(kMin));
@@ -2096,7 +2088,7 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
 
   // (f) Row-group transitions.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < kMax / kRgSize; ++rg) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -2112,7 +2104,7 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
 
   // (g) Seek + iterate K..K+5 across the kMin transition.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     const irs::doc_id_t kStart = static_cast<irs::doc_id_t>(kMin - 2);
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       if (doc < kMin) {
@@ -2125,13 +2117,13 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
 
   // (h) Seek backwards via a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     assert_payload(kMax, forward.FetchDoc(kMax));
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     assert_payload(static_cast<irs::doc_id_t>(kMin + 50),
                    backward.FetchDoc(static_cast<irs::doc_id_t>(kMin + 50)));
     // And one in the pre-range gap with a third reader.
-    irs::columnstore::ColumnReader::BlobPointReader gap{*reader, *col};
+    irs::ColumnReader::BlobPointReader gap{*reader, *col};
     EXPECT_TRUE(gap.IsNullDoc(static_cast<irs::doc_id_t>(100)));
   }
 }
@@ -2192,10 +2184,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_m) {
 
   // (b) Stateful walk on both columns interleaved.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       assert_a(doc, pa.FetchDoc(doc));
       assert_b(doc, pb.FetchDoc(doc));
@@ -2226,10 +2216,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_m) {
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                         *reader->Column(0)};
-      irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                         *reader->Column(1)};
+      irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+      irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
       assert_a(doc, pa.FetchDoc(doc));
       assert_b(doc, pb.FetchDoc(doc));
     }
@@ -2237,10 +2225,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_m) {
 
   // (e) Boundary docs on both columns.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     assert_a(irs::doc_limits::min(), pa.FetchDoc(irs::doc_limits::min()));
     assert_b(irs::doc_limits::min(), pb.FetchDoc(irs::doc_limits::min()));
     assert_a(kMax, pa.FetchDoc(kMax));
@@ -2254,10 +2240,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_m) {
   // (f) Row-group transitions: explicitly probe doc=511/512/513 and
   //     doc=1023/1024/1025 -- the legacy "multi-block" boundaries.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     for (irs::doc_id_t base : {static_cast<irs::doc_id_t>(kRgSize),
                                static_cast<irs::doc_id_t>(2 * kRgSize)}) {
       for (int off = -1; off <= 1; ++off) {
@@ -2273,10 +2257,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_m) {
   // (g) Seek + iterate K..K+5 on both columns -- K=510 puts the run across
   //     the first rg boundary.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     constexpr irs::doc_id_t kStart = 510;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       assert_a(doc, pa.FetchDoc(doc));
@@ -2286,16 +2268,12 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_m) {
 
   // (h) Seek backwards via fresh readers per column.
   {
-    irs::columnstore::ColumnReader::BlobPointReader fa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader fb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader fa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader fb{*reader, *reader->Column(1)};
     assert_a(kMax, fa.FetchDoc(kMax));
     assert_b(kMax, fb.FetchDoc(kMax));
-    irs::columnstore::ColumnReader::BlobPointReader ba{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader bb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader ba{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader bb{*reader, *reader->Column(1)};
     assert_a(static_cast<irs::doc_id_t>(123), ba.FetchDoc(123));
     assert_b(static_cast<irs::doc_id_t>(123), bb.FetchDoc(123));
   }
@@ -2350,10 +2328,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_mr) {
 
   // (a) Stateful walk on both columns.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       assert_a(doc, pa.FetchDoc(doc));
       assert_b(doc, pb.FetchDoc(doc));
@@ -2380,10 +2356,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_mr) {
   // (c) Fresh point reader per column at an interior doc.
   {
     constexpr irs::doc_id_t kProbe = 777;
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     assert_a(kProbe, pa.FetchDoc(kProbe));
     assert_b(kProbe, pb.FetchDoc(kProbe));
   }
@@ -2394,10 +2368,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_mr) {
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                         *reader->Column(0)};
-      irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                         *reader->Column(1)};
+      irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+      irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
       assert_a(doc, pa.FetchDoc(doc));
       assert_b(doc, pb.FetchDoc(doc));
     }
@@ -2405,10 +2377,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_mr) {
 
   // (e) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     assert_a(irs::doc_limits::min(), pa.FetchDoc(irs::doc_limits::min()));
     assert_b(irs::doc_limits::min(), pb.FetchDoc(irs::doc_limits::min()));
     assert_a(kMax, pa.FetchDoc(kMax));
@@ -2419,10 +2389,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_mr) {
 
   // (f) Row-group transitions: doc=511/512/513 and 1023/1024/1025.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     for (irs::doc_id_t base : {static_cast<irs::doc_id_t>(kRgSize),
                                static_cast<irs::doc_id_t>(2 * kRgSize)}) {
       for (int off = -1; off <= 1; ++off) {
@@ -2437,10 +2405,8 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_mr) {
 
   // (g) Seek + iterate K..K+5 across the first rg boundary.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     constexpr irs::doc_id_t kStart = 510;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       assert_a(doc, pa.FetchDoc(doc));
@@ -2450,16 +2416,12 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_mr) {
 
   // (h) Seek backwards via fresh readers per column.
   {
-    irs::columnstore::ColumnReader::BlobPointReader fa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader fb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader fa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader fb{*reader, *reader->Column(1)};
     assert_a(kMax, fa.FetchDoc(kMax));
     assert_b(kMax, fb.FetchDoc(kMax));
-    irs::columnstore::ColumnReader::BlobPointReader ba{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader bb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader ba{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader bb{*reader, *reader->Column(1)};
     assert_a(static_cast<irs::doc_id_t>(123), ba.FetchDoc(123));
     assert_b(static_cast<irs::doc_id_t>(123), bb.FetchDoc(123));
   }
@@ -2519,10 +2481,8 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
 
   // (b) Stateful walk on both columns interleaved.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       assert_a(doc, pa.FetchDoc(doc));
       assert_b(doc, pb.FetchDoc(doc));
@@ -2550,10 +2510,8 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
   {
     constexpr irs::doc_id_t kProbe = 14774;
     static_assert(kProbe <= kMax);
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     assert_a(kProbe, pa.FetchDoc(kProbe));
     assert_b(kProbe, pb.FetchDoc(kProbe));
   }
@@ -2564,10 +2522,8 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                         *reader->Column(0)};
-      irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                         *reader->Column(1)};
+      irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+      irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
       assert_a(doc, pa.FetchDoc(doc));
       assert_b(doc, pb.FetchDoc(doc));
     }
@@ -2575,10 +2531,8 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
 
   // (f) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     assert_a(irs::doc_limits::min(), pa.FetchDoc(irs::doc_limits::min()));
     assert_b(irs::doc_limits::min(), pb.FetchDoc(irs::doc_limits::min()));
     assert_a(kMax, pa.FetchDoc(kMax));
@@ -2589,10 +2543,8 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
 
   // (g) Row-group transitions: probe near every rg boundary in both cols.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     for (uint32_t rg = 1; rg < kMax / kRgSize; rg += 2) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -2605,10 +2557,8 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
 
   // (h) Seek + iterate K..K+5 on both columns.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader pb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pb{*reader, *reader->Column(1)};
     constexpr irs::doc_id_t kStart = 9999;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       assert_a(doc, pa.FetchDoc(doc));
@@ -2618,16 +2568,12 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
 
   // (i) Seek backwards via fresh readers per column.
   {
-    irs::columnstore::ColumnReader::BlobPointReader fa{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader fb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader fa{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader fb{*reader, *reader->Column(1)};
     assert_a(kMax, fa.FetchDoc(kMax));
     assert_b(kMax, fb.FetchDoc(kMax));
-    irs::columnstore::ColumnReader::BlobPointReader ba{*reader,
-                                                       *reader->Column(0)};
-    irs::columnstore::ColumnReader::BlobPointReader bb{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader ba{*reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader bb{*reader, *reader->Column(1)};
     assert_a(static_cast<irs::doc_id_t>(234), ba.FetchDoc(234));
     assert_b(static_cast<irs::doc_id_t>(234), bb.FetchDoc(234));
   }
@@ -2677,8 +2623,7 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
 
   // (b) Stateful walk on the populated column.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
     }
@@ -2710,8 +2655,7 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
   {
     constexpr irs::doc_id_t kProbe = 7774;
     static_assert(kProbe <= kMax);
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
     assert_payload(kProbe, pr.FetchDoc(kProbe));
   }
 
@@ -2721,31 +2665,27 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                         *reader->Column(0)};
+      irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
       assert_payload(doc, pr.FetchDoc(doc));
     }
   }
 
   // (f) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     assert_payload(kMax, pr.FetchDoc(kMax));
     EXPECT_TRUE(pr.IsNullDoc(static_cast<irs::doc_id_t>(kMax + 1)));
     EXPECT_TRUE(pr.IsNullDoc(static_cast<irs::doc_id_t>(kMax + 100)));
     // Empty column: every doc lookup should be null.
-    irs::columnstore::ColumnReader::BlobPointReader pe{*reader,
-                                                       *reader->Column(1)};
+    irs::ColumnReader::BlobPointReader pe{*reader, *reader->Column(1)};
     EXPECT_TRUE(pe.IsNullDoc(irs::doc_limits::min()));
     EXPECT_TRUE(pe.IsNullDoc(static_cast<irs::doc_id_t>(1)));
   }
 
   // (g) Row-group transitions on the populated column.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
     for (uint32_t rg = 1; rg < kMax / kRgSize; rg += 2) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -2757,8 +2697,7 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
 
   // (h) Seek + iterate K..K+5 on the populated column.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader,
-                                                       *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader pr{*reader, *reader->Column(0)};
     constexpr irs::doc_id_t kStart = 3333;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
@@ -2767,11 +2706,9 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
 
   // (i) Seek backwards via a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader,
-                                                            *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader forward{*reader, *reader->Column(0)};
     assert_payload(kMax, forward.FetchDoc(kMax));
-    irs::columnstore::ColumnReader::BlobPointReader backward{
-      *reader, *reader->Column(0)};
+    irs::ColumnReader::BlobPointReader backward{*reader, *reader->Column(0)};
     assert_payload(static_cast<irs::doc_id_t>(234), backward.FetchDoc(234));
   }
 }
@@ -2823,7 +2760,7 @@ TEST_P(Columnstore2TestCase, dense_fixed_large_values) {
 
   // (a) Stateful walk.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
     }
@@ -2843,7 +2780,7 @@ TEST_P(Columnstore2TestCase, dense_fixed_large_values) {
 
   // (c) Strided fresh-reader spot checks.
   for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 13) {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(doc, pr.FetchDoc(doc));
   }
 
@@ -2853,14 +2790,14 @@ TEST_P(Columnstore2TestCase, dense_fixed_large_values) {
     for (irs::doc_id_t off = 0; off * kStep <= kMax; ++off) {
       const auto doc = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
                                                   (off * kStep) % kMax);
-      irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+      irs::ColumnReader::BlobPointReader pr{*reader, *col};
       assert_payload(doc, pr.FetchDoc(doc));
     }
   }
 
   // (e) Boundary docs.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     assert_payload(irs::doc_limits::min(), pr.FetchDoc(irs::doc_limits::min()));
     assert_payload(kMax, pr.FetchDoc(kMax));
     EXPECT_TRUE(pr.IsNullDoc(static_cast<irs::doc_id_t>(kMax + 1)));
@@ -2869,7 +2806,7 @@ TEST_P(Columnstore2TestCase, dense_fixed_large_values) {
 
   // (f) Row-group transitions.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     for (uint32_t rg = 1; rg < kMax / kRgSize; ++rg) {
       const auto base = static_cast<irs::doc_id_t>(rg * kRgSize);
       for (int off = -1; off <= 1; ++off) {
@@ -2881,7 +2818,7 @@ TEST_P(Columnstore2TestCase, dense_fixed_large_values) {
 
   // (g) Seek + iterate K..K+5.
   {
-    irs::columnstore::ColumnReader::BlobPointReader pr{*reader, *col};
+    irs::ColumnReader::BlobPointReader pr{*reader, *col};
     constexpr irs::doc_id_t kStart = 555;
     for (irs::doc_id_t doc = kStart; doc <= kStart + 5; ++doc) {
       assert_payload(doc, pr.FetchDoc(doc));
@@ -2890,9 +2827,9 @@ TEST_P(Columnstore2TestCase, dense_fixed_large_values) {
 
   // (h) Seek backwards via a fresh reader.
   {
-    irs::columnstore::ColumnReader::BlobPointReader forward{*reader, *col};
+    irs::ColumnReader::BlobPointReader forward{*reader, *col};
     assert_payload(kMax, forward.FetchDoc(kMax));
-    irs::columnstore::ColumnReader::BlobPointReader backward{*reader, *col};
+    irs::ColumnReader::BlobPointReader backward{*reader, *col};
     assert_payload(static_cast<irs::doc_id_t>(50), backward.FetchDoc(50));
   }
 }

@@ -31,21 +31,23 @@ uint64_t SegmentReader::CountMappedMemory() const {
   return _impl->CountMappedMemory();
 }
 
-FieldIterator::ptr SegmentReader::fields() const { return _impl->fields(); }
+std::span<const field_id> SegmentReader::field_ids() const {
+  return _impl->field_ids();
+}
 
 NormReader::ptr SegmentReader::norms(field_id field) const {
   return _impl->norms(field);
 }
 
-const columnstore::ColumnReader* SegmentReader::Column(field_id field) const {
+const ColumnReader* SegmentReader::Column(field_id field) const {
   return _impl->Column(field);
 }
 
-const columnstore::HNSWReader* SegmentReader::HNSW(field_id field) const {
+const HnswReader* SegmentReader::HNSW(field_id field) const {
   return _impl->HNSW(field);
 }
 
-const columnstore::Reader* SegmentReader::CsReader() const {
+const ColReader* SegmentReader::CsReader() const {
   return _impl ? _impl->CsReader() : nullptr;
 }
 
@@ -54,8 +56,8 @@ DocIterator::ptr SegmentReader::mask(DocIterator::ptr&& it) const {
   return _impl->mask(std::move(it));
 }
 
-const TermReader* SegmentReader::field(std::string_view name) const {
-  return _impl->field(name);
+const TermReader* SegmentReader::field(field_id id) const {
+  return _impl->field(id);
 }
 
 DocIterator::ptr SegmentReader::docs_iterator() const {

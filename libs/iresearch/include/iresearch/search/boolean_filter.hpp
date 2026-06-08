@@ -31,119 +31,141 @@
 
 namespace irs {
 
-class BooleanFilter;
-
-class MutableFilter {
- public:
-  std::vector<Filter::ptr>& Children() const noexcept { return _incl; }
-  std::vector<Filter::ptr>& Excludes() const noexcept { return _excl; }
-  std::span<Filter::ptr> ChildSlots() const noexcept { return _incl; }
-  std::span<Filter::ptr> ExcludeSlots() const noexcept { return _excl; }
-
-  void Erase(size_t to) const {
-    SDB_ASSERT(to <= _incl.size());
-    _incl.erase(_incl.begin() + to, _incl.end());
-  }
-
- private:
-  friend class BooleanFilter;
-  MutableFilter(std::vector<Filter::ptr>& incl,
-                std::vector<Filter::ptr>& excl) noexcept
-    : _incl{incl}, _excl{excl} {}
-
-  std::vector<Filter::ptr>& _incl;
-  std::vector<Filter::ptr>& _excl;
-};
-
-class FilterMutator;
-
+// Represents user-side boolean filter as the container for other filters
 class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
  public:
-  BooleanFilter() = default;
-  BooleanFilter(std::vector<Filter::ptr> incl, std::vector<Filter::ptr> excl,
-                ScoreMergeType merge_type)
-    : _incl{std::move(incl)}, _excl{std::move(excl)}, _merge_type{merge_type} {}
+  auto begin() const { return _filters.begin(); }
+  auto end() const { return _filters.end(); }
 
-  auto begin() const { return _incl.begin(); }
-  auto end() const { return _incl.end(); }
+  ScoreMergeType merge_type() const noexcept { return _merge_type; }
 
-  auto MergeType() const noexcept { return _merge_type; }
+  void merge_type(ScoreMergeType merge_type) noexcept {
+    _merge_type = merge_type;
+  }
 
-  bool empty() const { return _incl.empty() && _excl.empty(); }
-  size_t size() const { return _incl.size(); }
+  template<typename T, typename... Args>
+  T& add(Args&&... args) {
+    return add(std::make_unique<T>(std::forward<Args>(args)...));
+  }
+
+  template<typename T>
+  T& add(std::unique_ptr<T>&& filter) {
+    SDB_ASSERT(filter);
+    return sdb::basics::downCast<T>(*_filters.emplace_back(std::move(filter)));
+  }
+
+  void clear() { _filters.clear(); }
+  bool empty() const { return _filters.empty(); }
+  size_t size() const { return _filters.size(); }
   auto& operator[](this auto& self, size_t i) noexcept {
-    SDB_ASSERT(i < self._incl.size());
-    return *self._incl[i];
+    SDB_ASSERT(i < self._filters.size());
+    return *self._filters[i];
   }
 
-  auto ExcludesBegin() const { return _excl.begin(); }
-  auto ExcludesEnd() const { return _excl.end(); }
-  bool ExcludesEmpty() const { return _excl.empty(); }
-  size_t ExcludesSize() const { return _excl.size(); }
-  auto& Exclude(this auto& self, size_t i) noexcept {
-    SDB_ASSERT(i < self._excl.size());
-    return *self._excl[i];
+  Filter::ptr PopBack() {
+    if (_filters.empty()) {
+      return nullptr;
+    }
+    auto result = std::move(_filters.back());
+    _filters.pop_back();
+    return result;
   }
+
+  void Erase(size_t to) {
+    SDB_ASSERT(to <= _filters.size());
+    _filters.erase(_filters.begin() + to, _filters.end());
+  }
+
+  std::vector<Filter::ptr>& mutable_filters() noexcept { return _filters; }
+
+  Query::ptr PrepareImpl(const PrepareContext& ctx) const;
 
  protected:
   bool equals(const Filter& rhs) const noexcept final;
 
-  std::vector<Filter::ptr> _incl;
-  std::vector<Filter::ptr> _excl;
-  ScoreMergeType _merge_type = ScoreMergeType::Sum;
+  virtual Query::ptr PrepareBoolean(std::span<const Filter::ptr> filters,
+                                    const PrepareContext& ctx) const = 0;
 
- private:
-  friend class FilterMutator;
-  MutableFilter GetMutable() noexcept { return {_incl, _excl}; }
+  std::vector<Filter::ptr> _filters;
+  ScoreMergeType _merge_type = ScoreMergeType::Sum;
 };
 
+// Represents conjunction
 class And final : public BooleanFilter {
  public:
-  And() = default;
-
-  explicit And(std::vector<Filter::ptr> filters,
-               ScoreMergeType merge_type = ScoreMergeType::Sum);
-
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<And>::id(); }
+
+ protected:
+  Query::ptr PrepareBoolean(std::span<const Filter::ptr> filters,
+                            const PrepareContext& ctx) const final;
 };
 
 // Represents disjunction
 class Or final : public BooleanFilter {
  public:
-  Or() = default;
+  // Return minimum number of subqueries which must be satisfied
+  size_t min_match_count() const { return _min_match_count; }
 
-  explicit Or(std::vector<Filter::ptr> incl,
-              ScoreMergeType merge_type = ScoreMergeType::Sum,
-              size_t min_match_count = 1)
-    : BooleanFilter{std::move(incl), {}, merge_type},
-      _min_match_count{min_match_count} {}
-
-  auto MinMatchCount() const { return _min_match_count; }
+  // Sets minimum number of subqueries which must be satisfied
+  Or& min_match_count(size_t count) {
+    _min_match_count = count;
+    return *this;
+  }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<Or>::id(); }
 
+ protected:
+  Query::ptr PrepareBoolean(std::span<const Filter::ptr> filters,
+                            const PrepareContext& ctx) const final;
+
  private:
-  size_t _min_match_count = 1;
+  uint32_t _min_match_count{1};
 };
 
-// Represents negation
-class Not : public FilterWithType<Not>, public AllDocsProvider {
+class Exclusion : public FilterWithType<Exclusion> {
  public:
-  Not() = default;
-  explicit Not(Filter::ptr filter) : _filter{std::move(filter)} {}
-
-  const Filter* filter() const { return _filter.get(); }
+  const Filter* include() const { return _include.get(); }
+  const Filter* exclude() const { return _exclude.get(); }
 
   template<typename T>
-  const T* filter() const {
-    return sdb::basics::downCast<T>(_filter.get());
+  const T* exclude() const {
+    return sdb::basics::downCast<T>(_exclude.get());
   }
 
-  bool empty() const { return nullptr == _filter; }
+  template<typename T, typename... Args>
+  T& include(Args&&... args) {
+    static_assert(std::is_base_of_v<irs::Filter, T>);
+    _include = std::make_unique<T>(std::forward<Args>(args)...);
+    return sdb::basics::downCast<T>(*_include);
+  }
+
+  template<typename T, typename... Args>
+  T& exclude(Args&&... args) {
+    static_assert(std::is_base_of_v<irs::Filter, T>);
+    _exclude = std::make_unique<T>(std::forward<Args>(args)...);
+    return sdb::basics::downCast<T>(*_exclude);
+  }
+
+  Filter& include(Filter::ptr filter) {
+    SDB_ASSERT(filter);
+    _include = std::move(filter);
+    return *_include;
+  }
+
+  Filter& exclude(Filter::ptr filter) {
+    SDB_ASSERT(filter);
+    _exclude = std::move(filter);
+    return *_exclude;
+  }
+
+  bool empty() const { return _exclude == nullptr; }
+
+  Filter::ptr& mutable_include() noexcept { return _include; }
+  Filter::ptr& mutable_exclude() noexcept { return _exclude; }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
@@ -151,26 +173,14 @@ class Not : public FilterWithType<Not>, public AllDocsProvider {
   bool equals(const irs::Filter& rhs) const noexcept final;
 
  private:
-  friend class And;
-  friend class FilterMutator;
-  Filter::ptr& ChildSlot() noexcept { return _filter; }
-
-  Filter::ptr _filter;
+  Filter::ptr _include;
+  Filter::ptr _exclude;
 };
 
-inline And::And(std::vector<Filter::ptr> filters, ScoreMergeType merge_type) {
-  _incl.reserve(filters.size());
-  for (auto& filter : filters) {
-    if (irs::Type<Not>::id() == filter->type()) {
-      auto& not_node = sdb::basics::downCast<Not>(*filter);
-      if (!not_node.empty()) {
-        _excl.emplace_back(std::move(not_node.ChildSlot()));
-        continue;
-      }
-    }
-    _incl.emplace_back(std::move(filter));
-  }
-  _merge_type = merge_type;
+inline Filter::ptr Not(Filter::ptr inner) {
+  auto exclusion = std::make_unique<Exclusion>();
+  exclusion->exclude(std::move(inner));
+  return exclusion;
 }
 
 }  // namespace irs

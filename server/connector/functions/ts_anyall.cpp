@@ -23,7 +23,6 @@
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search.h"
@@ -50,7 +49,7 @@ bool IsTokenizeListCall(const duckdb::Expression& expr) {
 }
 
 void FromTokenizeListInAnyAllOf(
-  BooleanFilterBuilder& parent, const FilterContext& ctx,
+  irs::BooleanFilter& parent, const FilterContext& ctx,
   const SearchColumnInfo& column_info,
   const duckdb::BoundFunctionExpression& outer,
   const duckdb::BoundFunctionExpression& tokenize_call, bool is_any) {
@@ -184,16 +183,13 @@ void FromTokenizeListInAnyAllOf(
     return;
   }
 
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   // Single-token short-circuit -> ByTerm.
   if (tokens.size() == 1) {
     auto& term = ctx.negated ? Negate<irs::ByTerm>(parent)
                              : AddFilter<irs::ByTerm>(parent);
     term.boost(ctx.boost);
-    *term.mutable_field() = field_name;
+    *term.mutable_field_id() =
+      PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
     term.mutable_options()->term.assign(tokens[0]);
     return;
   }
@@ -211,7 +207,8 @@ void FromTokenizeListInAnyAllOf(
   auto& terms = ctx.negated ? Negate<irs::ByTerms>(parent)
                             : AddFilter<irs::ByTerms>(parent);
   terms.boost(ctx.boost);
-  *terms.mutable_field() = std::move(field_name);
+  *terms.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& opts = *terms.mutable_options();
   opts.min_match = min_match_value;
   for (auto& t : tokens) {
@@ -313,7 +310,7 @@ void ExtractAnyAllOfArgs(
   }
 }
 
-void FromAnyAllOf(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func, bool is_any) {
   // Special case: ts_any/ts_all wrapping a ts_tokenize(text_array[, name])
@@ -335,7 +332,7 @@ void FromAnyAllOf(BooleanFilterBuilder& parent, const FilterContext& ctx,
   sub_ctx.boost = irs::kNoBoost;
   sub_ctx.negated = false;
 
-  BooleanFilterBuilder* group;
+  irs::BooleanFilter* group;
   if (is_any) {
     auto& or_group =
       ctx.negated ? Negate<irs::Or>(parent) : AddFilter<irs::Or>(parent);

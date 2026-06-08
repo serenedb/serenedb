@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string_view>
 
 #include "basics/async_utils.hpp"
@@ -355,9 +356,7 @@ class IndexWriter : private util::Noncopyable {
     // Per-segment columnstore writer; nullptr when the index was opened
     // without a DatabaseInstance. Callers open a typed column at switch
     // time and append duckdb::Vectors via ColumnWriter::Append.
-    columnstore::Writer* Columnstore() noexcept {
-      return _writer.Columnstore();
-    }
+    ColWriter* Columnstore() noexcept { return _writer.Columnstore(); }
     doc_id_t DocId() const noexcept { return _doc_id; }
 
    private:
@@ -614,7 +613,7 @@ class IndexWriter : private util::Noncopyable {
   struct CompactionContext : util::Noncopyable {
     std::shared_ptr<const DirectoryReaderImpl> compaction_reader;
     Compaction candidates;
-    MergeWriter merger;
+    std::optional<MergeWriter> merger;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
@@ -634,14 +633,24 @@ class IndexWriter : private util::Noncopyable {
                        .candidates = std::move(compaction_candidates),
                        .merger = std::move(merger)} {}
 
-    ImportContext(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
-                  std::shared_ptr<const SegmentReaderImpl>&& reader,
-                  IResourceManager& resource_manager) noexcept
+    ImportContext(
+      IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
+      Compaction&& compaction_candidates,
+      std::shared_ptr<const SegmentReaderImpl>&& reader,
+      std::shared_ptr<const DirectoryReaderImpl>&& compaction_reader) noexcept
       : tick{tick},
         segment{std::move(segment)},
         refs{std::move(refs)},
         reader{std::move(reader)},
-        compaction_ctx{.merger{resource_manager}} {}
+        compaction_ctx{.compaction_reader = std::move(compaction_reader),
+                       .candidates = std::move(compaction_candidates)} {}
+
+    ImportContext(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
+                  std::shared_ptr<const SegmentReaderImpl>&& reader) noexcept
+      : tick{tick},
+        segment{std::move(segment)},
+        refs{std::move(refs)},
+        reader{std::move(reader)} {}
 
     ImportContext(ImportContext&&) = default;
 
@@ -660,15 +669,14 @@ class IndexWriter : private util::Noncopyable {
  public:
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
-    explicit FlushedSegment(
-      IndexSegment&& segment, DocMap&& old2new, DocsMask&& docs_mask,
-      size_t docs_begin,
-      columnstore::PreloadedHnswGraphs&& cs_hnsw_graphs = {}) noexcept
+    explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
+                            DocsMask&& docs_mask, size_t docs_begin,
+                            PreloadedHnswGraphs&& hnsw_graphs = {}) noexcept
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
         document_mask{{this->docs_mask.set.get_allocator()}},
-        cs_hnsw_graphs{std::move(cs_hnsw_graphs)},
+        hnsw_graphs{std::move(hnsw_graphs)},
         _docs_begin{docs_begin},
         _docs_end{_docs_begin + meta.docs_count} {}
 
@@ -687,7 +695,7 @@ class IndexWriter : private util::Noncopyable {
     // Flushed segment removals
     DocsMask docs_mask;
     DocumentMask document_mask;
-    columnstore::PreloadedHnswGraphs cs_hnsw_graphs;
+    PreloadedHnswGraphs hnsw_graphs;
     bool was_flush = false;
 
    private:

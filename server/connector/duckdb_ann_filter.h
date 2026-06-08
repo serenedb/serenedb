@@ -75,7 +75,7 @@ class ANNFilter {
   mutable std::shared_ptr<IndexSource> _index_source;
   // Owns the per-(query, segment) ReadContext for the PK column. Reset()
   // per segment.
-  mutable irs::columnstore::ColumnReader::BlobPointReader _pk_cursor;
+  mutable irs::ColumnReader::BlobPointReader _pk_cursor;
 };
 
 void InitAnnFilterContext(

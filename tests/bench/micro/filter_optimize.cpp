@@ -29,31 +29,42 @@
 
 namespace {
 
+inline constexpr irs::field_id kKw = 1;
+
 irs::bytes_view AsBytes(std::string_view s) noexcept {
   return irs::ViewCast<irs::byte_type>(s);
 }
 
+template<typename T>
+irs::Filter::ptr MakeBoolean(std::vector<irs::Filter::ptr> children) {
+  auto node = std::make_unique<T>();
+  for (auto& child : children) {
+    node->add(std::move(child));
+  }
+  return node;
+}
+
 irs::Filter::ptr MakeTerm() {
   auto term = std::make_unique<irs::ByTerm>();
-  *term->mutable_field() = "kw";
+  *term->mutable_field_id() = kKw;
   term->mutable_options()->term = AsBytes("term_0042");
   return term;
 }
 
 irs::Filter::ptr MakeTermValue(std::string_view value) {
   auto term = std::make_unique<irs::ByTerm>();
-  *term->mutable_field() = "kw";
+  *term->mutable_field_id() = kKw;
   term->mutable_options()->term = AsBytes(value);
   return term;
 }
 
 irs::Filter::ptr MakeNotChain(size_t depth) {
   auto term = std::make_unique<irs::ByTerm>();
-  *term->mutable_field() = "kw";
+  *term->mutable_field_id() = kKw;
   term->mutable_options()->term = AsBytes("term_0042");
   irs::Filter::ptr root = std::move(term);
   for (size_t i = 0; i < depth; ++i) {
-    root = std::make_unique<irs::Not>(std::move(root));
+    root = irs::Not(std::move(root));
   }
   return root;
 }
@@ -64,10 +75,9 @@ irs::Filter::ptr MakeNestedAnd() {
   inner_children.emplace_back(MakeTermValue("term_0100"));
 
   std::vector<irs::Filter::ptr> root_children;
-  root_children.emplace_back(
-    std::make_unique<irs::And>(std::move(inner_children)));
+  root_children.emplace_back(MakeBoolean<irs::And>(std::move(inner_children)));
   root_children.emplace_back(MakeTermValue("term_0250"));
-  return std::make_unique<irs::And>(std::move(root_children));
+  return MakeBoolean<irs::And>(std::move(root_children));
 }
 
 irs::Filter::ptr MakeNestedOr() {
@@ -76,10 +86,9 @@ irs::Filter::ptr MakeNestedOr() {
   inner_children.emplace_back(MakeTermValue("term_0100"));
 
   std::vector<irs::Filter::ptr> root_children;
-  root_children.emplace_back(
-    std::make_unique<irs::Or>(std::move(inner_children)));
+  root_children.emplace_back(MakeBoolean<irs::Or>(std::move(inner_children)));
   root_children.emplace_back(MakeTermValue("term_0250"));
-  return std::make_unique<irs::Or>(std::move(root_children));
+  return MakeBoolean<irs::Or>(std::move(root_children));
 }
 
 void BmBuildLeaf(benchmark::State& state) {

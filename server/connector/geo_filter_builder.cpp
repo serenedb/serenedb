@@ -31,7 +31,6 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "catalog/geo_validate.h"
-#include "catalog/mangling.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
 #include "functions/vector.h"
@@ -89,8 +88,9 @@ Result SetupGeoFilter(const SearchColumnInfo& column_info,
     options.source_is_wkb =
       column_info.logical_type.id() == duckdb::LogicalTypeId::GEOMETRY;
   } else {
-    SDB_ASSERT(column_info.tokenizer.tokenizer_column);
-    options.store_field_id = *column_info.tokenizer.tokenizer_column;
+    SDB_ASSERT(
+      irs::field_limits::valid(column_info.tokenizer.tokenizer_column));
+    options.store_field_id = column_info.tokenizer.tokenizer_column;
   }
   return {};
 }
@@ -158,7 +158,7 @@ Result ParseGeoConstant(const duckdb::Value& value,
 // ---------------------------------------------------------------------------
 
 ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
-  BooleanFilterBuilder& parent, const FilterContext& ctx,
+  irs::BooleanFilter& parent, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& geo_call,
   const duckdb::Expression& dist_expr) {
   SDB_ASSERT(geo_call.children.size() == 2);
@@ -209,14 +209,10 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
       "Geo distance: field has no analyzer attached"};
   }
 
-  std::string field_name;
-  MakeFieldName(column_info->field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(parent)
                                  : AddFilter<irs::GeoDistanceFilter>(parent);
   geo_filter.boost(ctx.boost);
-  *geo_filter.mutable_field() = std::move(field_name);
+  *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
   if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
@@ -245,7 +241,7 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
 // default to inclusive.
 // ---------------------------------------------------------------------------
 
-Result FromGeoInRange(BooleanFilterBuilder& filter, const FilterContext& ctx,
+Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::BoundFunctionExpression& func) {
   const auto num_inputs = func.children.size();
   if (num_inputs < 4 || num_inputs > 6) {
@@ -310,14 +306,10 @@ Result FromGeoInRange(BooleanFilterBuilder& filter, const FilterContext& ctx,
             "ST_Distance_Between field has no analyzer attached"};
   }
 
-  std::string field_name;
-  MakeFieldName(column_info->field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(filter)
                                  : AddFilter<irs::GeoDistanceFilter>(filter);
   geo_filter.boost(ctx.boost);
-  *geo_filter.mutable_field() = std::move(field_name);
+  *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
   if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
@@ -353,7 +345,7 @@ Result FromGeoInRange(BooleanFilterBuilder& filter, const FilterContext& ctx,
 // pick different GeoFilterType values.
 // ---------------------------------------------------------------------------
 
-Result FromGeoFilter(BooleanFilterBuilder& filter, const FilterContext& ctx,
+Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
                      const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 2) {
     return {ERROR_BAD_PARAMETER, func.function.GetName(), " has ",
@@ -393,14 +385,10 @@ Result FromGeoFilter(BooleanFilterBuilder& filter, const FilterContext& ctx,
             ": field has no analyzer attached"};
   }
 
-  std::string field_name;
-  MakeFieldName(column_info->field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& geo_filter = ctx.negated ? Negate<irs::GeoFilter>(filter)
                                  : AddFilter<irs::GeoFilter>(filter);
   geo_filter.boost(ctx.boost);
-  *geo_filter.mutable_field() = std::move(field_name);
+  *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
   if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
@@ -476,7 +464,7 @@ const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
 
 // ST_Distance_Centroid(field, centroid) OP distance  --  range one-sided.
 Result FromGeoDistanceComparison(
-  BooleanFilterBuilder& filter, const FilterContext& ctx,
+  irs::BooleanFilter& filter, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& geo_call,
   const duckdb::Expression& dist_expr, ComparisonOp op) {
   auto setup = PrepareGeoDistanceFilter(filter, ctx, geo_call, dist_expr);
@@ -509,7 +497,7 @@ Result FromGeoDistanceComparison(
 }
 
 // ST_Distance_Centroid(field, centroid) = distance  --  point range [d, d].
-Result FromGeoDistanceBinaryEq(BooleanFilterBuilder& filter,
+Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
                                const FilterContext& ctx,
                                const duckdb::BoundFunctionExpression& geo_call,
                                const duckdb::Expression& dist_expr) {
@@ -526,7 +514,7 @@ Result FromGeoDistanceBinaryEq(BooleanFilterBuilder& filter,
 }
 
 std::optional<Result> TryDispatchGeoFunction(
-  BooleanFilterBuilder& filter, const FilterContext& ctx,
+  irs::BooleanFilter& filter, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& func) {
   const auto& name = func.function.GetName();
   if (name == kGeoInRange) {

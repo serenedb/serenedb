@@ -93,6 +93,39 @@ constexpr auto kScoreDescending = [](const auto& l, const auto& r) noexcept {
   return l.score > r.score;
 };
 
+constexpr irs::field_id kNameFieldId = 1;
+constexpr irs::field_id kPrefixFieldId = 2;
+constexpr irs::field_id kSeqFieldId = 3;
+constexpr irs::field_id kSameFieldId = 4;
+constexpr irs::field_id kValueFieldId = 5;
+constexpr irs::field_id kDuplicatedFieldId = 6;
+
+// Wrap tests::GenericJsonFieldFactory to assign per-name field ids to the
+// freshly inserted indexed field. The factory itself is shared with other
+// tests, so we cannot modify it directly.
+auto WrapFactory = [](tests::Document& doc, const std::string& name,
+                      const tests::JsonDocGenerator::JsonValue& data) {
+  const auto before = doc.indexed.size();
+  tests::GenericJsonFieldFactory(doc, name, data);
+  if (doc.indexed.size() == before) {
+    return;
+  }
+  auto& f = doc.indexed.back<tests::FieldBase>();
+  if (name == "name") {
+    f.id = kNameFieldId;
+  } else if (name == "prefix") {
+    f.id = kPrefixFieldId;
+  } else if (name == "seq") {
+    f.id = kSeqFieldId;
+  } else if (name == "same") {
+    f.id = kSameFieldId;
+  } else if (name == "value") {
+    f.id = kValueFieldId;
+  } else if (name == "duplicated") {
+    f.id = kDuplicatedFieldId;
+  }
+};
+
 class DocCollectorTestCase : public IndexTestBase {};
 
 TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
@@ -105,7 +138,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -140,7 +174,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -162,21 +197,24 @@ TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
 }
 
 TEST_P(DocCollectorTestCase, test_execute_topk_empty_results) {
-  // Create index with documents
+  // Create index with documents; WrapFactory pins indexed `name` to
+  // `kNameFieldId` so the negative-match filter below targets the same id
+  // the docs were indexed under.
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &tests::GenericJsonFieldFactory);
+                                WrapFactory);
     add_segment(gen);
   }
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
 
   // Test with non-matching filter
   {
     irs::ByTerm filter;
-    *filter.mutable_field() = "name";
+    *filter.mutable_field_id() = kNameFieldId;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("nonexistent_term_xyz"));
     constexpr size_t k = 10;
@@ -200,7 +238,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_filter) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -255,7 +294,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
   ASSERT_EQ(2, reader.size());
 
   size_t total_docs = 0;
@@ -286,18 +326,19 @@ TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
   // Create index with documents
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &tests::GenericJsonFieldFactory);
+                                WrapFactory);
     add_segment(gen);
   }
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
 
   // Test with term filter
   {
     irs::ByTerm filter;
-    *filter.mutable_field() = "prefix";
+    *filter.mutable_field_id() = kPrefixFieldId;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("abcd"));
     constexpr size_t k = 3;
@@ -318,27 +359,30 @@ TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
   // Create index with documents
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &tests::GenericJsonFieldFactory);
+                                WrapFactory);
     add_segment(gen);
   }
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
 
   // Test with disjunction filter (OR)
   {
-    irs::Or filter = std::move(*tests::MakeOr(
-      tests::Make<irs::ByTerm>([](irs::ByTerm& sub) {
-        *sub.mutable_field() = "prefix";
-        sub.mutable_options()->term =
-          irs::ViewCast<irs::byte_type>(std::string_view("abcd"));
-      }),
-      tests::Make<irs::ByTerm>([](irs::ByTerm& sub) {
-        *sub.mutable_field() = "prefix";
-        sub.mutable_options()->term =
-          irs::ViewCast<irs::byte_type>(std::string_view("abcde"));
-      })));
+    irs::Or filter;
+    {
+      auto& sub = filter.add<irs::ByTerm>();
+      *sub.mutable_field_id() = kPrefixFieldId;
+      sub.mutable_options()->term =
+        irs::ViewCast<irs::byte_type>(std::string_view("abcd"));
+    }
+    {
+      auto& sub = filter.add<irs::ByTerm>();
+      *sub.mutable_field_id() = kPrefixFieldId;
+      sub.mutable_options()->term =
+        irs::ViewCast<irs::byte_type>(std::string_view("abcde"));
+    }
     constexpr size_t k = 5;
 
     std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
@@ -363,7 +407,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -395,7 +440,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
 
   DocIdScorer scorer;
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -434,7 +480,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
   // This creates many documents with identical scores
   DocIdScorer scorer{3};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 
@@ -492,7 +539,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
   // Use DocIdScorer with divisor 1, so all scores are 0
   DocIdScorer scorer{1};
 
-  auto reader = irs::DirectoryReader(dir(), codec());
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), tests::CsDefaultReaderOptions());
   auto& segment = *reader.begin();
   auto total_docs = segment.docs_count();
 

@@ -28,13 +28,24 @@
 #include "index_meta.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/norm_writer.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
+namespace {
+
+duckdb::DatabaseInstance& DerefDb(duckdb::DatabaseInstance* db) {
+  SDB_ASSERT(db != nullptr);
+  return *db;
+}
+
+}  // namespace
 
 doc_id_t SegmentWriter::begin(DocContext ctx, doc_id_t batch_size) {
   SDB_ASSERT(LastDocId() < doc_limits::eof());
@@ -94,15 +105,15 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _scorer{options.scorer},
     _docs_context{{options.resource_manager}},
     _fields{options.resource_manager, options.scorers_features},
-    _db{options.db},
+    _db{DerefDb(options.db)},
     _column_options{options.column_options},
     _norm_column_options{options.norm_column_options} {
   _docs_mask.set = decltype(_docs_mask.set){{options.resource_manager}};
 }
 
-bool SegmentWriter::index(const hashed_string_view& name, doc_id_t doc,
+bool SegmentWriter::index(field_id id, doc_id_t doc,
                           IndexFeatures index_features, Tokenizer& tokens) {
-  auto* slot = _fields.emplace(name, index_features);
+  auto* slot = _fields.emplace(id, index_features);
 
   if (IsSubsetOf(index_features, slot->requested_features()) &&
       slot->invert(tokens, doc)) {
@@ -146,28 +157,33 @@ void SegmentWriter::FlushFields(FlushState& state) {
     .doc_count = buffered_docs(),
   };
 
+  IdxWriter idx{_dir, _seg_name, _db};
+
   if (_columnstore) {
     _columnstore->Commit(buffered_docs());
-    _built_hnsw_graphs = _columnstore->TakeBuiltHnswGraphs();
+    auto built = _columnstore->TakeBuiltHnsw();
     _columnstore.reset();
+    if (!built.empty()) {
+      _built_hnsw_graphs.reserve(built.size());
+      for (auto& b : built) {
+        _built_hnsw_graphs.emplace(b.column_id, b.graph);
+        idx.AddHNSW(b.column_id, b.info, std::move(b.graph));
+      }
+    }
   }
 
-  // Phase B: open a Reader on the just-committed `.cs` so the scorer norm
-  // reads in FlushFields go through the disk-backed norm reader.
-  // SegmentWriter::norms(field_id) consults
-  // `_cs_reader`. The reader is only opened when there's actually a `.cs`
-  // file -- segments with no docs never created the columnstore.
-  if (_db != nullptr && state.doc_count != 0) {
-    _cs_reader = std::make_unique<columnstore::Reader>(_dir, _seg_name, *_db);
-  }
-
-  // Phase C: write postings. Wand / BM25 / TFIDF / LM-* / DFI / Indri
-  // scorers in here pick up norms via norms(field.norm) -> _cs_reader.
   if (state.doc_count != 0) {
+    _cs_reader = std::make_unique<ColReader>(_dir, _seg_name, _db);
+  }
+
+  if (state.doc_count != 0) {
+    _field_writer->SetIdxWriter(idx);
     FlushFields(state);
   }
 
   _cs_reader.reset();
+
+  idx.Commit();
 
   SDB_ASSERT(_docs_mask.set.count() == _docs_mask.count);
   docs_mask = std::move(_docs_mask);
@@ -203,16 +219,14 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   _seg_name = meta.name;
 
   if (!_field_writer) {
-    _field_writer = meta.codec->get_field_writer(
-      false, _docs_context.get_allocator().Manager());
-    SDB_ASSERT(_field_writer);
+    auto& rm = _docs_context.get_allocator().Manager();
+    _field_writer = std::make_unique<burst_trie::FieldWriter>(
+      meta.codec->get_postings_writer(/*compaction=*/false, rm),
+      /*compaction=*/false, rm);
   }
 
-  if (_db != nullptr) {
-    _columnstore = std::make_unique<columnstore::Writer>(
-      _dir, meta.name, *_db, _column_options, _norm_column_options);
-  }
-  // FieldsData consults this on every emplace -- when set, fields with
+  _columnstore = std::make_unique<ColWriter>(
+    _dir, meta.name, _db, _column_options, _norm_column_options);
   _fields.SetColumnstore(_columnstore.get(), _norm_column_options);
 
   _initialized = true;

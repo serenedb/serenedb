@@ -29,16 +29,18 @@
 #include "iresearch/search/terms_filter.hpp"
 
 namespace irs {
-
-class FilterMutator {
- public:
-  static MutableFilter Of(BooleanFilter& node) noexcept {
-    return node.GetMutable();
-  }
-  static Filter::ptr& Child(Not& node) noexcept { return node.ChildSlot(); }
-};
-
 namespace {
+
+template<typename T>
+std::unique_ptr<T> MakeBoolean(std::vector<Filter::ptr> children,
+                               ScoreMergeType merge_type) {
+  auto node = std::make_unique<T>();
+  node->merge_type(merge_type);
+  for (auto& child : children) {
+    node->add(std::move(child));
+  }
+  return node;
+}
 
 template<typename Visitor>
 void EnumerateChildSlots(Filter& node, Visitor&& visit) {
@@ -46,14 +48,16 @@ void EnumerateChildSlots(Filter& node, Visitor&& visit) {
 
   if (tid == Type<And>::id() || tid == Type<Or>::id()) {
     for (auto& slot :
-         FilterMutator::Of(sdb::basics::downCast<BooleanFilter>(node))
-           .ChildSlots()) {
+         sdb::basics::downCast<BooleanFilter>(node).mutable_filters()) {
       visit(slot);
     }
-  } else if (tid == Type<Not>::id()) {
-    if (auto& slot = FilterMutator::Child(sdb::basics::downCast<Not>(node));
-        slot) {
-      visit(slot);
+  } else if (tid == Type<Exclusion>::id()) {
+    auto& node_ex = sdb::basics::downCast<Exclusion>(node);
+    if (auto& inc = node_ex.mutable_include(); inc) {
+      visit(inc);
+    }
+    if (auto& exc = node_ex.mutable_exclude(); exc) {
+      visit(exc);
     }
   } else if (tid == Type<MixedBooleanFilter>::id()) {
     auto& mixed = sdb::basics::downCast<MixedBooleanFilter>(node);
@@ -69,11 +73,11 @@ bool CanSplice(const T& parent, const Filter& child) noexcept {
   }
   const auto& inner = sdb::basics::downCast<T>(child);
   if (inner.empty() || inner.Boost() != kNoBoost ||
-      inner.MergeType() != parent.MergeType()) {
+      inner.merge_type() != parent.merge_type()) {
     return false;
   }
   if constexpr (std::is_same_v<T, Or>) {
-    return inner.MinMatchCount() == 1 && parent.MinMatchCount() == 1;
+    return inner.min_match_count() == 1 && parent.min_match_count() == 1;
   } else {
     return true;
   }
@@ -81,7 +85,7 @@ bool CanSplice(const T& parent, const Filter& child) noexcept {
 
 template<typename T>
 bool Flatten(T& node) {
-  auto& children = FilterMutator::Of(node).Children();
+  auto& children = node.mutable_filters();
 
   size_t spliced = 0;
   for (const auto& child : children) {
@@ -98,7 +102,7 @@ bool Flatten(T& node) {
   for (auto& child : children) {
     if (CanSplice(node, *child)) {
       for (auto& grandchild :
-           FilterMutator::Of(sdb::basics::downCast<T>(*child)).Children()) {
+           sdb::basics::downCast<T>(*child).mutable_filters()) {
         flat.push_back(std::move(grandchild));
       }
     } else {
@@ -109,26 +113,34 @@ bool Flatten(T& node) {
   return true;
 }
 
-struct NotRule {
-  static constexpr std::string_view kName = "not_to_exclude";
-  static constexpr std::array kTargets{Type<Not>::id()};
+struct ExclusionRule {
+  static constexpr std::string_view kName = "exclusion_simplify";
+  static constexpr std::array kTargets{Type<Exclusion>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
-    auto& node = sdb::basics::downCast<Not>(*slot);
-    auto& child = FilterMutator::Child(node);
-    if (!child) {
-      slot = std::make_unique<Empty>();
+    auto& node = sdb::basics::downCast<Exclusion>(*slot);
+    auto& incl = node.mutable_include();
+    auto& excl = node.mutable_exclude();
+    if (!excl) {
+      if (incl) {
+        slot = std::move(incl);
+      } else {
+        slot = AllDocsProvider::Default(kNoBoost);
+      }
       return true;
     }
-    if (child->type() == Type<Not>::id()) {
-      auto inner =
-        std::move(FilterMutator::Child(sdb::basics::downCast<Not>(*child)));
-      slot = inner ? std::move(inner) : Filter::ptr{std::make_unique<Empty>()};
-      return true;
-    }
-    if (const auto all = node.MakeAllDocsFilter(kNoBoost); *all == *child) {
-      slot = std::make_unique<Empty>();
-      return true;
+    if (incl == nullptr) {
+      if (excl->type() == Type<Exclusion>::id()) {
+        auto& inner = sdb::basics::downCast<Exclusion>(*excl);
+        if (inner.include() == nullptr && inner.mutable_exclude()) {
+          slot = std::move(inner.mutable_exclude());
+          return true;
+        }
+      }
+      if (const auto all = AllDocsProvider::Default(kNoBoost); *all == *excl) {
+        slot = std::make_unique<Empty>();
+        return true;
+      }
     }
     return false;
   }
@@ -169,28 +181,13 @@ struct AndEmptyRule {
   }
 };
 
-struct AndExcludeOnlyRule {
-  static constexpr std::string_view kName = "and_exclude_only";
-  static constexpr std::array kTargets{Type<And>::id()};
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
-    auto& node = sdb::basics::downCast<And>(*slot);
-    if (node.size() != 0 || node.ExcludesEmpty()) {
-      return false;
-    }
-    FilterMutator::Of(node).Children().emplace_back(
-      node.MakeAllDocsFilter(kNoBoost));
-    return true;
-  }
-};
-
 struct OrEmptyRule {
   static constexpr std::string_view kName = "or_empty";
   static constexpr std::array kTargets{Type<Or>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
     auto& node = sdb::basics::downCast<Or>(*slot);
-    auto& children = FilterMutator::Of(node).Children();
+    auto& children = node.mutable_filters();
     const auto it = std::remove_if(
       children.begin(), children.end(),
       [](const auto& child) { return child->type() == Type<Empty>::id(); });
@@ -220,7 +217,7 @@ std::pair<size_t, score_t> CountAllDocs(const T& node, const Filter& all) {
 
 template<typename T>
 void EraseAllDocs(T& node, const Filter& all) {
-  auto& children = FilterMutator::Of(node).Children();
+  auto& children = node.mutable_filters();
   const auto it =
     std::remove_if(children.begin(), children.end(),
                    [&](const auto& child) { return all == *child; });
@@ -239,9 +236,6 @@ struct AndAllFoldRule {
       return false;
     }
     if (all_count == node.size()) {
-      if (!node.ExcludesEmpty()) {
-        return false;
-      }
       slot = node.MakeAllDocsFilter(node.Boost() * all_boost);
       return true;
     }
@@ -250,7 +244,7 @@ struct AndAllFoldRule {
     }
     EraseAllDocs(node, *all);
     if (ctx.scorer != nullptr) {
-      FilterMutator::Of(node).Children().emplace_back(
+      node.mutable_filters().emplace_back(
         node.MakeAllDocsFilter(all_boost));
     }
     return true;
@@ -263,7 +257,7 @@ struct OrAllFoldRule {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     auto& node = sdb::basics::downCast<Or>(*slot);
-    const auto min_match = node.MinMatchCount();
+    const auto min_match = node.min_match_count();
     if (min_match == 0) {
       return false;
     }
@@ -280,12 +274,12 @@ struct OrAllFoldRule {
       return false;
     }
     EraseAllDocs(node, *all);
-    auto& children = FilterMutator::Of(node).Children();
+    auto& children = node.mutable_filters();
     children.emplace_back(node.MakeAllDocsFilter(all_boost));
     const size_t new_min_match =
       min_match > all_count - 1 ? min_match - (all_count - 1) : 1;
-    auto replacement = std::make_unique<Or>(std::move(children),
-                                            node.MergeType(), new_min_match);
+    auto replacement = MakeBoolean<Or>(std::move(children), node.merge_type());
+    replacement->min_match_count(new_min_match);
     replacement->boost(node.Boost());
     slot = std::move(replacement);
     return true;
@@ -298,17 +292,17 @@ struct SingleChildRule {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     auto& node = sdb::basics::downCast<BooleanFilter>(*slot);
-    if (node.size() != 1 || !node.ExcludesEmpty()) {
+    if (node.size() != 1) {
       return false;
     }
     if (slot->type() == Type<Or>::id() &&
-        sdb::basics::downCast<Or>(node).MinMatchCount() != 1) {
+        sdb::basics::downCast<Or>(node).min_match_count() != 1) {
       return false;
     }
     if (node.Boost() != kNoBoost && ctx.scorer != nullptr) {
       return false;
     }
-    auto child = std::move(FilterMutator::Of(node).Children().front());
+    auto child = std::move(node.mutable_filters().front());
     slot = std::move(child);
     return true;
   }
@@ -325,23 +319,23 @@ struct ByTermsRule {
     }
     const bool is_and = slot->type() == Type<And>::id();
     const size_t min_match =
-      is_and ? 0 : sdb::basics::downCast<Or>(node).MinMatchCount();
+      is_and ? 0 : sdb::basics::downCast<Or>(node).min_match_count();
     if (!is_and && min_match == 0) {
       return false;
     }
     if (node[0].type() != Type<ByTerm>::id()) {
       return false;
     }
-    const auto field = sdb::basics::downCast<ByTerm>(node[0]).field();
+    const auto field = sdb::basics::downCast<ByTerm>(node[0]).field_id();
     const bool same_field = absl::c_all_of(node, [&](const auto& child) {
       return child->type() == Type<ByTerm>::id() &&
-             sdb::basics::downCast<ByTerm>(*child).field() == field;
+             sdb::basics::downCast<ByTerm>(*child).field_id() == field;
     });
     if (!same_field) {
       return false;
     }
     ByTermsOptions options;
-    options.merge_type = node.MergeType();
+    options.merge_type = node.merge_type();
     bool has_duplicates = false;
     for (const auto& child : node) {
       auto& term_filter = sdb::basics::downCast<ByTerm>(*child);
@@ -357,7 +351,7 @@ struct ByTermsRule {
     }
     options.min_match = is_and ? options.terms.size() : min_match;
     auto by_terms = std::make_unique<ByTerms>();
-    *by_terms->mutable_field() = std::string{field};
+    *by_terms->mutable_field_id() = field;
     *by_terms->mutable_options() = std::move(options);
     by_terms->boost(node.Boost());
     slot = std::move(by_terms);
@@ -371,7 +365,7 @@ struct OrMinMatchZeroRule {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
     auto& node = sdb::basics::downCast<Or>(*slot);
-    if (node.MinMatchCount() != 0) {
+    if (node.min_match_count() != 0) {
       return false;
     }
     slot = node.MakeAllDocsFilter(node.Boost());
@@ -385,7 +379,7 @@ struct OrUnsatRule {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
     const auto& node = sdb::basics::downCast<Or>(*slot);
-    const auto min_match = node.MinMatchCount();
+    const auto min_match = node.min_match_count();
     if (min_match == 0 || min_match <= node.size()) {
       return false;
     }
@@ -400,12 +394,11 @@ struct OrAllRequiredRule {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
     auto& node = sdb::basics::downCast<Or>(*slot);
-    if (node.size() < 2 || node.MinMatchCount() != node.size()) {
+    if (node.size() < 2 || node.min_match_count() != node.size()) {
       return false;
     }
-    auto& children = FilterMutator::Of(node).Children();
-    auto replacement =
-      std::make_unique<And>(std::move(children), node.MergeType());
+    auto& children = node.mutable_filters();
+    auto replacement = MakeBoolean<And>(std::move(children), node.merge_type());
     replacement->boost(node.Boost());
     slot = std::move(replacement);
     return true;
@@ -427,14 +420,14 @@ struct ByTermsMinMatchZeroRule {
     }
     auto terms = std::make_unique<ByTerms>();
     terms->boost(node.Boost());
-    *terms->mutable_field() = std::string{node.field()};
+    *terms->mutable_field_id() = node.field_id();
     *terms->mutable_options() = node.options();
     terms->mutable_options()->min_match = 1;
 
     std::vector<Filter::ptr> children;
     children.emplace_back(node.MakeAllDocsFilter(0.F));
     children.emplace_back(std::move(terms));
-    slot = std::make_unique<Or>(std::move(children));
+    slot = MakeBoolean<Or>(std::move(children), ScoreMergeType::Sum);
     return true;
   }
 };
@@ -469,10 +462,9 @@ struct MixedDegenerateRule {
   }
 };
 
-constexpr std::array<RuleDesc, 15> kDefaultRulesStorage{{
-  MakeRule<NotRule>(),
+constexpr std::array<RuleDesc, 14> kDefaultRulesStorage{{
+  MakeRule<ExclusionRule>(),
   MakeRule<AndEmptyRule>(),
-  MakeRule<AndExcludeOnlyRule>(),
   MakeRule<OrEmptyRule>(),
   MakeRule<OrMinMatchZeroRule>(),
   MakeRule<OrUnsatRule>(),

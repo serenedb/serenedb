@@ -36,7 +36,6 @@
 #include <vector>
 
 #include "catalog/catalog.h"
-#include "catalog/mangling.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
@@ -64,18 +63,18 @@ bool OffsetsBindData::Equals(const duckdb::FunctionData& other) const {
 
 namespace {
 
-constexpr catalog::Column::Id kStandaloneSyntheticColumnId{};
+constexpr irs::field_id kStandaloneFieldId =
+  catalog::Column::kMaxRealIdValue + 4;
+constexpr catalog::Column::Id kStandaloneSyntheticColumnId{kStandaloneFieldId};
 
 struct IndexField {
   void Reset(catalog::Column::Id column_id,
              catalog::Tokenizer::TokenizerWrapper analyzer) {
+    id = static_cast<irs::field_id>(column_id);
     tokenizer = std::move(analyzer);
-    name.clear();
-    MakeFieldName(column_id, name);
-    search::mangling::MangleString(name);
   }
 
-  std::string_view Name() const noexcept { return name; }
+  irs::field_id Id() const noexcept { return id; }
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
            irs::IndexFeatures::Offs;
@@ -84,7 +83,7 @@ struct IndexField {
   bool Write(irs::DataOutput&) const noexcept { return false; }
   void SetValue(std::string_view value) const { tokenizer->reset(value); }
 
-  std::string name;
+  irs::field_id id{irs::field_limits::invalid()};
   catalog::Tokenizer::TokenizerWrapper tokenizer;
 };
 
@@ -103,8 +102,8 @@ auto& EnsureField(duckdb::ClientContext& context,
                               std::move(*wrapper_or));
     } else {
       auto snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
-      auto column_tokenizer =
-        bind.inverted_index->GetColumnTokenizer(snapshot, bind.column_id);
+      auto column_tokenizer = bind.inverted_index->GetTokenizer(
+        snapshot, static_cast<irs::field_id>(bind.column_id));
       local_state.field.Reset(bind.column_id,
                               std::move(column_tokenizer.analyzer));
     }
@@ -179,7 +178,7 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     return;
   }
 
-  FieldEntry entry{.name = field.name};
+  FieldEntry entry{.id = field.Id()};
   OffsetsCollector visitor{std::span{&entry, 1}};
   query->visit(*segment, visitor, irs::kNoBoost);
 
@@ -282,20 +281,19 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
     options.scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
   }
 
-  BooleanFilterBuilder root_builder{BooleanFilterBuilder::Kind::And};
+  auto root = std::make_unique<irs::And>();
   duckdb::unique_ptr<duckdb::Expression> match_owner = std::move(match_expr);
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts{
     &match_owner, 1};
-  auto result =
-    MakeSearchFilter(root_builder, conjuncts, column_getter, options);
+  auto result = MakeSearchFilter(*root, conjuncts, column_getter, options);
   if (!result.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("failed to build filter from tsquery: ", result.errorMessage()));
   }
-  irs::Filter::ptr root = root_builder.Build();
-  irs::Optimize(root);
-  return root;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+  return filter;
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(

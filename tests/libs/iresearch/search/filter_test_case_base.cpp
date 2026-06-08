@@ -26,7 +26,6 @@
 #include <compare>
 
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/filter_optimizer.hpp"
 
 namespace tests {
 
@@ -243,14 +242,6 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
   GetQueryResult(filter.prepare({.index = index}), index, result, result_costs,
                  source_location);
   ASSERT_EQ(expected, result);
-}
-
-void FilterTestCaseBase::CheckQuery(irs::Filter::ptr filter,
-                                    const Docs& expected,
-                                    const irs::IndexReader& index,
-                                    std::string_view source_location) {
-  irs::Optimize(filter);
-  CheckQuery(*filter, expected, index, source_location);
 }
 
 void FilterTestCaseBase::MakeResult(const irs::Filter& filter,

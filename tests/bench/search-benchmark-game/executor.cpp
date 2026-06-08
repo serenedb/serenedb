@@ -26,10 +26,10 @@
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/store/store_utils.hpp>
 
 #include "basics/duckdb_engine.h"
+#include "index_builder.h"
 
 namespace bench {
 
@@ -90,14 +90,20 @@ size_t Executor::ExecuteCount(std::string_view query) {
 
 irs::Filter::ptr Executor::ParseFilter(std::string_view str) {
   auto root = std::make_unique<irs::MixedBooleanFilter>();
-  sdb::ParserContext context{*root, "text", *_tokenizer};
+  sdb::ParserContext context{*root, kTextFieldId, *_tokenizer};
   auto r = sdb::ParseQuery(context, str);
   if (!r.ok()) {
     return {};
   }
-  irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter);
-  return filter;
+  auto& opt = root->GetOptional();
+  auto& req = root->GetRequired();
+  if (opt.size() == 1 && req.empty()) {
+    return opt.PopBack();
+  }
+  if (req.size() == 1 && opt.empty()) {
+    return req.PopBack();
+  }
+  return root;
 }
 
 }  // namespace bench

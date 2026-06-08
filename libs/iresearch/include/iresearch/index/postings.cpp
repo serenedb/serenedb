@@ -31,22 +31,25 @@ void Postings::get_sorted_postings(
   std::vector<const Posting*>& postings) const {
   SDB_ASSERT(_terms.size() == _postings.size());
 
-  postings.resize(_postings.size());
-
-  for (auto* p = postings.data(); const auto& posting : _postings) {
-    *p++ = &posting;
+  const auto n = _postings.size();
+  postings.resize(n);
+  if (n == 0) {
+    return;
   }
 
-  absl::c_sort(postings, [](const auto lhs, const auto rhs) {
-    return MemcmpLess(lhs->term, rhs->term);
+  for (size_t i = 0; i < n; ++i) {
+    postings[i] = &_postings[i];
+  }
+
+  absl::c_sort(postings, [](const auto* lhs, const auto* rhs) {
+    SDB_ASSERT(lhs);
+    SDB_ASSERT(rhs);
+    return lhs->term < rhs->term;
   });
 }
 
 Posting* Postings::emplace(bytes_view term) {
-  auto& parent = _writer.parent();
-
-  // maximum number to bytes needed for storage of term length and data
-  const auto term_size = term.size();  // + vencode_size(term.size());
+  const auto term_size = term.size();
 
   if (writer_t::container::block_type::kSize < term_size) {
     // TODO: maybe move big terms it to a separate storage
@@ -54,19 +57,23 @@ Posting* Postings::emplace(bytes_view term) {
     return nullptr;
   }
 
-  const auto slice_end = _writer.pool_offset() + term_size;
-  const auto next_block_start =
-    _writer.pool_offset() < parent.value_count()
-      ? _writer.position().block_offset() +
-          writer_t::container::block_type::kSize
-      : writer_t::container::block_type::kSize * parent.block_count();
+  const bool inline_term = term_size <= duckdb::string_t::INLINE_LENGTH;
 
-  // do not span slice over 2 blocks, start slice at the start of the next block
-  if (slice_end > next_block_start) {
-    _writer.seek(next_block_start);
+  if (!inline_term) {
+    auto& parent = _writer.parent();
+    const auto slice_end = _writer.pool_offset() + term_size;
+    const auto next_block_start =
+      _writer.pool_offset() < parent.value_count()
+        ? _writer.position().block_offset() +
+            writer_t::container::block_type::kSize
+        : writer_t::container::block_type::kSize * parent.block_count();
+
+    if (slice_end > next_block_start) {
+      _writer.seek(next_block_start);
+    }
   }
 
-  SDB_ASSERT(size() < doc_limits::eof());  // not larger then the static flag
+  SDB_ASSERT(size() < doc_limits::eof());
   SDB_ASSERT(_terms.size() == _postings.size());
 
   const hashed_bytes_view hashed_term{term};
@@ -80,14 +87,15 @@ Posting* Postings::emplace(bytes_view term) {
   if (!is_new) [[likely]] {
     return &_postings[it->ref];
   }
-  // for new terms also write out their value
   try {
+    if (inline_term) {
+      return &_postings.emplace_back(term.data(), term_size);
+    }
     auto* start = _writer.position().buffer();
     _writer.write(term.data(), term_size);
     SDB_ASSERT(start == (_writer.position() - term_size).buffer());
     return &_postings.emplace_back(start, term_size);
   } catch (...) {
-    // we leave some garbage in block pool
     _terms.erase(it);
     throw;
   }

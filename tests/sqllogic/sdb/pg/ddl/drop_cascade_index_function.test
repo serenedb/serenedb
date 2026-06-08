@@ -23,7 +23,7 @@ INSERT INTO kostya_t VALUES (1, 10), (2, 50), (3, 100);
 
 
 statement ok
-CREATE INDEX kostya_idx ON kostya_t USING inverted(id, (babsky_double(n)) clickclack_dict);
+CREATE INDEX kostya_idx ON kostya_t USING inverted(id, (babsky_double(n)));
 
 
 statement ok

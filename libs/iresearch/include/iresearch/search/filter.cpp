@@ -49,6 +49,8 @@ Filter::Query::ptr Filter::Query::empty() {
   return memory::to_managed<Query>(gEmptyQuery);
 }
 
+Filter::ptr Filter::empty() { return std::make_unique<Empty>(); }
+
 Filter::Query::ptr Empty::prepare(const PrepareContext& /*ctx*/) const {
   return memory::to_managed<Query>(gEmptyQuery);
 }

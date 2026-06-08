@@ -35,65 +35,146 @@ bool BooleanFilter::equals(const Filter& rhs) const noexcept {
     return false;
   }
   const auto& typed_rhs = sdb::basics::downCast<BooleanFilter>(rhs);
-  const auto eq = [](const auto& lhs, const auto& rhs) { return *lhs == *rhs; };
-  return absl::c_equal(_incl, typed_rhs._incl, eq) &&
-         absl::c_equal(_excl, typed_rhs._excl, eq);
+  return absl::c_equal(*this, typed_rhs, [](const auto& lhs, const auto& rhs) {
+    return *lhs == *rhs;
+  });
+}
+
+Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx) const {
+  const auto size = _filters.size();
+
+  if (size == 0) [[unlikely]] {
+    return Query::empty();
+  }
+
+  if (size == 1) {
+    auto* filter = _filters.front().get();
+    SDB_ASSERT(filter);
+    return filter->prepare(ctx.Boost(Boost()));
+  }
+
+  return PrepareBoolean(_filters, ctx);
+}
+
+Filter::Query::ptr And::PrepareBoolean(std::span<const Filter::ptr> filters,
+                                       const PrepareContext& ctx) const {
+  if (filters.empty()) {
+    return Query::empty();
+  }
+
+  PrepareContext sub_ctx = ctx;
+  sub_ctx.boost *= Boost();
+
+  // single node case
+  if (1 == filters.size()) {
+    return filters.front()->prepare(sub_ctx);
+  }
+
+  BooleanQuery::queries_t queries{{sub_ctx.memory}};
+  queries.reserve(filters.size());
+  for (const auto& filter : filters) {
+    queries.emplace_back(filter->prepare(sub_ctx));
+  }
+  auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
+  q->prepare(sub_ctx, merge_type(), std::move(queries));
+  return q;
 }
 
 Filter::Query::ptr And::prepare(const PrepareContext& ctx) const {
-  if (empty()) {
-    return Query::empty();
-  }
-
-  SDB_ASSERT(!_incl.empty());
-
-  const PrepareContext sub_ctx = ctx.Boost(Boost());
-  auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-  q->prepare(sub_ctx, MergeType(), _incl, _excl);
-  return q;
+  return BooleanFilter::PrepareImpl(ctx);
 }
 
 Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
-  const PrepareContext sub_ctx = ctx.Boost(Boost());
-
-  SDB_ASSERT(0 != _min_match_count);
-  SDB_ASSERT(!_incl.empty());
-  SDB_ASSERT(_min_match_count <= _incl.size());
-
-  memory::managed_ptr<BooleanQuery> q;
-  if (_min_match_count == _incl.size()) {
-    q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-  } else if (1 == _min_match_count) {
-    q = memory::make_tracked<OrQuery>(sub_ctx.memory);
-  } else {
-    q = memory::make_tracked<MinMatchQuery>(sub_ctx.memory, _min_match_count);
+  if (0 == _min_match_count) {  // only explicit 0 min match counts!
+    // all conditions are satisfied
+    return MakeAllDocsFilter(kNoBoost)->prepare(ctx.Boost(Boost()));
   }
 
-  q->prepare(sub_ctx, MergeType(), _incl, {});
-  return q;
+  return BooleanFilter::PrepareImpl(ctx);
 }
 
-Filter::Query::ptr Not::prepare(const PrepareContext& ctx) const {
-  if (!_filter) {
+Filter::Query::ptr Or::PrepareBoolean(std::span<const Filter::ptr> filters,
+                                      const PrepareContext& ctx) const {
+  const PrepareContext sub_ctx = ctx.Boost(Boost());
+
+  if (0 == _min_match_count) {  // only explicit 0 min match counts!
+    // all conditions are satisfied
+    return MakeAllDocsFilter(kNoBoost)->prepare(sub_ctx);
+  }
+
+  if (filters.empty()) {
     return Query::empty();
   }
 
-  const PrepareContext sub_ctx = ctx.Boost(Boost());
+  if (_min_match_count > filters.size()) {
+    return Query::empty();
+  }
 
-  Filter::ptr all_docs = MakeAllDocsFilter(kNoBoost);
+  // single node case
+  if (filters.size() == 1) {
+    return filters.front()->prepare(sub_ctx);
+  }
 
-  auto q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-  q->prepare(sub_ctx, ScoreMergeType::Sum, {&all_docs, 1}, {&_filter, 1});
+  BooleanQuery::queries_t queries{{sub_ctx.memory}};
+  queries.reserve(filters.size());
+  for (const auto& filter : filters) {
+    queries.emplace_back(filter->prepare(sub_ctx));
+  }
+
+  memory::managed_ptr<BooleanQuery> q;
+  if (_min_match_count == filters.size()) {
+    q = memory::make_tracked<AndQuery>(sub_ctx.memory);
+  } else if (1 == _min_match_count) {
+    q = memory::make_tracked<OrQuery>(sub_ctx.memory);
+  } else {  // 1 < _min_match_count < filters.size()
+    q = memory::make_tracked<MinMatchQuery>(sub_ctx.memory, _min_match_count);
+  }
+
+  q->prepare(sub_ctx, merge_type(), std::move(queries));
   return q;
 }
 
-bool Not::equals(const irs::Filter& rhs) const noexcept {
+Filter::Query::ptr Exclusion::prepare(const PrepareContext& ctx) const {
+  const PrepareContext sub_ctx = ctx.Boost(Boost());
+
+  if (_exclude == nullptr) {
+    if (_include == nullptr) {
+      return AllDocsProvider::Default(kNoBoost)->prepare(sub_ctx);
+    }
+    return _include->prepare(sub_ctx);
+  }
+
+  if (_include == nullptr) {
+    const Filter* inner = _exclude.get();
+    bool negated = true;
+    while (inner->type() == Type<Exclusion>::id()) {
+      const auto& ex = sdb::basics::downCast<Exclusion>(*inner);
+      if (ex._include != nullptr || ex._exclude == nullptr) {
+        break;
+      }
+      inner = ex._exclude.get();
+      negated = !negated;
+    }
+    if (!negated) {
+      return inner->prepare(sub_ctx);
+    }
+    return PrepareExclusion(sub_ctx, nullptr, inner);
+  }
+
+  return PrepareExclusion(sub_ctx, _include.get(), _exclude.get());
+}
+
+bool Exclusion::equals(const irs::Filter& rhs) const noexcept {
   if (!Filter::equals(rhs)) {
     return false;
   }
-  const auto& typed_rhs = sdb::basics::downCast<Not>(rhs);
-  return (!empty() && !typed_rhs.empty() && *_filter == *typed_rhs._filter) ||
-         (empty() && typed_rhs.empty());
+  const auto& typed_rhs = sdb::basics::downCast<Exclusion>(rhs);
+  const auto same = [](const Filter::ptr& lhs, const Filter::ptr& rhs) {
+    return (lhs == nullptr && rhs == nullptr) ||
+           (lhs != nullptr && rhs != nullptr && *lhs == *rhs);
+  };
+  return same(_include, typed_rhs._include) &&
+         same(_exclude, typed_rhs._exclude);
 }
 
 }  // namespace irs

@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/base/internal/endian.h>
 #include <s2/s2latlng.h>
 
 #include <duckdb.hpp>
@@ -58,10 +57,7 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
-#include "basics/string_utils.h"
-#include "catalog/mangling.h"
 #include "connector/functions/search.h"
-#include "connector/functions/ts_common.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
 #include "gtest/gtest.h"
@@ -71,6 +67,14 @@ namespace {
 using namespace sdb;
 using sdb::connector::ColumnGetter;
 using sdb::connector::SearchColumnInfo;
+
+// Sentinel tokenizer column id shared by analyzer-provider stubs that need
+// a non-null column reference but do not care which one. Use a value
+// outside `[1, kMaxRealIdValue]` (the real-column range) and outside the
+// {PK, score, offsets} synthetics so it can never collide with anything
+// the catalog or filter machinery might allocate.
+constexpr catalog::Column::Id kTestTokenizerColumnId =
+  catalog::Column::Id{catalog::Column::kMaxRealIdValue + 4};
 
 // ---------------------------------------------------------------------------
 // Plan capture: the production MakeSearchFilter runs from an OptimizerExtension
@@ -120,10 +124,10 @@ FindFilterAndGet(const duckdb::LogicalOperator& op) {
 
 // ---------------------------------------------------------------------------
 // ColumnSpec: the test fixture's view of a table column. `id` is the catalog
-// column id carried through into the iresearch field name mangling; `type`
-// is the DuckDB column type used both for CREATE TABLE and for the
-// SearchColumnInfo returned by the ColumnGetter; `name` is the unquoted
-// column name that the SQL query references.
+// column id carried through into the iresearch field_id; `type` is the DuckDB
+// column type used both for CREATE TABLE and for the SearchColumnInfo returned
+// by the ColumnGetter; `name` is the unquoted column name that the SQL query
+// references.
 // ---------------------------------------------------------------------------
 struct ColumnSpec {
   uint64_t id;
@@ -156,8 +160,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   return {.analyzer = *std::move(tokenizer), .features = Features};
 }
 
-[[maybe_unused]] catalog::ColumnTokenizer SegmentationAnalyzerProvider(
-  uint64_t id) {
+catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   return SegmentationAnalyzerProviderBase<irs::IndexFeatures::Pos |
                                           irs::IndexFeatures::Freq>(id);
 }
@@ -193,7 +196,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   return {
     .analyzer = *std::move(tokenizer),
     .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq,
-    .tokenizer_column = catalog::Column::Id{catalog::Column::kMaxRealIdValue},
+    .tokenizer_column = kTestTokenizerColumnId,
   };
 }
 
@@ -207,41 +210,34 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   return {
     .analyzer = *std::move(tokenizer),
     .features = irs::IndexFeatures::None,
-    .tokenizer_column = catalog::Column::Id{catalog::Column::kMaxRealIdValue},
+    .tokenizer_column = kTestTokenizerColumnId,
   };
 }
 
 // Expected-filter builders (ported from velox test suite).
-// Type dispatch is now by duckdb::LogicalType / native C++ type.
-template<typename T>
-std::string MakeFieldName(uint64_t column_id) {
-  std::string field_name;
-  basics::StrResize(field_name, sizeof(column_id));
-  absl::big_endian::Store(field_name.data(), column_id);
-  if constexpr (std::is_same_v<T, bool>) {
-    search::mangling::MangleBool(field_name);
-  } else if constexpr (std::is_same_v<T, std::string_view> ||
-                       std::is_same_v<T, std::string>) {
-    search::mangling::MangleString(field_name);
-  } else if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>) {
-    search::mangling::MangleNumeric(field_name);
+// The test's ColumnGetter returns a `SearchColumnInfo` with the column id
+// stored as `field_id` and no per-kind ids set. With the field_id-only
+// rewrite, the production filter builder's `PickPerKindFieldId` falls
+// back to the entry's primary `field_id`, so the expected
+// `mutable_field_id()` is simply the catalog column id cast to
+// `irs::field_id`.
+constexpr irs::field_id ExpectedFieldId(uint64_t column_id) {
+  return static_cast<irs::field_id>(column_id);
+}
+
+template<typename Filter, typename Source>
+auto& AddFilter(Source& parent) {
+  if constexpr (std::is_same_v<irs::Exclusion, Source>) {
+    return parent.template exclude<Filter>();
   } else {
-    static_assert(sizeof(T) == 0, "Unsupported term type for MakeFieldName");
+    return parent.template add<Filter>();
   }
-  return field_name;
 }
 
-using sdb::connector::BooleanFilterBuilder;
-
-template<typename Filter>
-auto& AddLeaf(BooleanFilterBuilder& parent, bool negated = false) {
-  return negated ? sdb::connector::Negate<Filter>(parent)
-                 : sdb::connector::AddFilter<Filter>(parent);
-}
-
-template<typename T>
-irs::ByTerm& SetTermFilter(irs::ByTerm& term, uint64_t column, const T& value) {
-  *term.mutable_field() = MakeFieldName<T>(column);
+template<typename T, typename Filter>
+irs::ByTerm& AddTermFilter(Filter& root, uint64_t column, const T& value) {
+  auto& term = AddFilter<irs::ByTerm>(root);
+  *term.mutable_field_id() = ExpectedFieldId(column);
   if constexpr (std::is_same_v<T, bool>) {
     term.mutable_options()->term.assign(
       irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(value)));
@@ -264,30 +260,16 @@ irs::ByTerm& SetTermFilter(irs::ByTerm& term, uint64_t column, const T& value) {
   return term;
 }
 
-template<typename T>
-irs::Filter::ptr MakeTermPtr(uint64_t column, const T& value) {
-  auto term = std::make_unique<irs::ByTerm>();
-  SetTermFilter(*term, column, value);
-  return term;
-}
-
-template<typename T>
-irs::ByTerm& AddTermFilter(BooleanFilterBuilder& root, uint64_t column,
-                           const T& value, bool negated = false) {
-  return SetTermFilter(AddLeaf<irs::ByTerm>(root, negated), column, value);
-}
-
-template<typename T>
-irs::FilterWithBoost& AddRangeFilter(BooleanFilterBuilder& root,
-                                     uint64_t column,
+template<typename T, typename Filter>
+irs::FilterWithBoost& AddRangeFilter(Filter& root, uint64_t column,
                                      const std::optional<T>& min_value,
                                      bool min_inclusive,
                                      const std::optional<T>& max_value,
-                                     bool max_inclusive, bool negated = false) {
+                                     bool max_inclusive) {
   if constexpr (std::is_same_v<T, std::string_view> ||
                 std::is_same_v<T, std::string>) {
-    auto& range = AddLeaf<irs::ByRange>(root, negated);
-    *range.mutable_field() = MakeFieldName<T>(column);
+    auto& range = AddFilter<irs::ByRange>(root);
+    *range.mutable_field_id() = ExpectedFieldId(column);
     auto& options = range.mutable_options()->range;
     irs::StringTokenizer stream;
     const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
@@ -313,8 +295,8 @@ irs::FilterWithBoost& AddRangeFilter(BooleanFilterBuilder& root,
   } else {
     static_assert(std::is_floating_point_v<T> || std::is_integral_v<T>,
                   "Unexpected range type");
-    auto& range = AddLeaf<irs::ByGranularRange>(root, negated);
-    *range.mutable_field() = MakeFieldName<T>(column);
+    auto& range = AddFilter<irs::ByGranularRange>(root);
+    *range.mutable_field_id() = ExpectedFieldId(column);
     auto& options = range.mutable_options()->range;
     irs::NumericTokenizer stream;
     if (min_value.has_value()) {
@@ -337,52 +319,55 @@ irs::FilterWithBoost& AddRangeFilter(BooleanFilterBuilder& root,
   }
 }
 
-irs::ByTerm& AddNullFilter(BooleanFilterBuilder& root, uint64_t column,
-                           bool negated = false) {
-  auto& term = AddLeaf<irs::ByTerm>(root, negated);
-  std::string field_name;
-  basics::StrResize(field_name, sizeof(column));
-  absl::big_endian::Store(field_name.data(), column);
-  search::mangling::MangleNull(field_name);
-  *term.mutable_field() = field_name;
+template<typename Filter>
+irs::ByTerm& AddNullFilter(Filter& root, uint64_t column) {
+  auto& term = AddFilter<irs::ByTerm>(root);
+  // Test catalog doesn't allocate a per-column `null_field_id`, so
+  // production's
+  // `valid(null_field_id) ? null_field_id : column_info.field_id` resolves
+  // to the primary id.
+  *term.mutable_field_id() = ExpectedFieldId(column);
   term.mutable_options()->term.assign(
     irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
   return term;
 }
 
-irs::ByWildcard& AddLikeFilter(BooleanFilterBuilder& root, uint64_t column,
-                               std::string_view value, bool negated = false) {
-  auto& wc = AddLeaf<irs::ByWildcard>(root, negated);
-  *wc.mutable_field() = MakeFieldName<std::string_view>(column);
+template<typename Filter>
+irs::ByWildcard& AddLikeFilter(Filter& root, uint64_t column,
+                               std::string_view value) {
+  auto& wc = AddFilter<irs::ByWildcard>(root);
+  *wc.mutable_field_id() = ExpectedFieldId(column);
   wc.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(value));
   return wc;
 }
 
-irs::ByPrefix& AddPrefixFilter(BooleanFilterBuilder& root, uint64_t column,
-                               std::string_view value, bool negated = false) {
-  auto& pf = AddLeaf<irs::ByPrefix>(root, negated);
-  *pf.mutable_field() = MakeFieldName<std::string_view>(column);
+template<typename Filter>
+irs::ByPrefix& AddPrefixFilter(Filter& root, uint64_t column,
+                               std::string_view value) {
+  auto& pf = AddFilter<irs::ByPrefix>(root);
+  *pf.mutable_field_id() = ExpectedFieldId(column);
   pf.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(value));
   return pf;
 }
 
+template<typename Filter>
 irs::ByRegexp& AddRegexpFilter(
-  BooleanFilterBuilder& root, uint64_t column, std::string_view pattern,
-  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl, bool negated = false) {
-  auto& re = AddLeaf<irs::ByRegexp>(root, negated);
-  *re.mutable_field() = MakeFieldName<std::string_view>(column);
+  Filter& root, uint64_t column, std::string_view pattern,
+  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
+  auto& re = AddFilter<irs::ByRegexp>(root);
+  *re.mutable_field_id() = ExpectedFieldId(column);
   auto* opts = re.mutable_options();
   opts->pattern.assign(irs::ViewCast<irs::byte_type>(pattern));
   opts->syntax = syntax;
   return re;
 }
 
+template<typename Filter>
 irs::ByNGramSimilarity& AddNgramSimilarityFilter(
-  BooleanFilterBuilder& root, uint64_t column,
-  std::vector<std::string_view> ngrams, float threshold = 0.7f,
-  bool negated = false) {
-  auto& ngf = AddLeaf<irs::ByNGramSimilarity>(root, negated);
-  *ngf.mutable_field() = MakeFieldName<std::string_view>(column);
+  Filter& root, uint64_t column, std::vector<std::string_view> ngrams,
+  float threshold = 0.7f) {
+  auto& ngf = AddFilter<irs::ByNGramSimilarity>(root);
+  *ngf.mutable_field_id() = ExpectedFieldId(column);
   ngf.mutable_options()->threshold = threshold;
   for (auto ngram : ngrams) {
     ngf.mutable_options()->ngrams.emplace_back(
@@ -391,12 +376,15 @@ irs::ByNGramSimilarity& AddNgramSimilarityFilter(
   return ngf;
 }
 
-irs::ByEditDistance& AddEditDistanceFilter(
-  BooleanFilterBuilder& root, uint64_t column, std::string_view term,
-  uint8_t max_distance, bool with_transpositions = true,
-  size_t max_terms = 1024, std::string_view prefix = "", bool negated = false) {
-  auto& ed = AddLeaf<irs::ByEditDistance>(root, negated);
-  *ed.mutable_field() = MakeFieldName<std::string_view>(column);
+template<typename Filter>
+irs::ByEditDistance& AddEditDistanceFilter(Filter& root, uint64_t column,
+                                           std::string_view term,
+                                           uint8_t max_distance,
+                                           bool with_transpositions = true,
+                                           size_t max_terms = 1024,
+                                           std::string_view prefix = "") {
+  auto& ed = AddFilter<irs::ByEditDistance>(root);
+  *ed.mutable_field_id() = ExpectedFieldId(column);
   ed.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(term));
   ed.mutable_options()->max_distance = max_distance;
   ed.mutable_options()->with_transpositions = with_transpositions;
@@ -407,11 +395,11 @@ irs::ByEditDistance& AddEditDistanceFilter(
   return ed;
 }
 
-irs::ByPhrase& AddPhraseFilter(BooleanFilterBuilder& root, uint64_t column,
-                               std::vector<std::string_view> values,
-                               bool negated = false) {
-  auto& wc = AddLeaf<irs::ByPhrase>(root, negated);
-  *wc.mutable_field() = MakeFieldName<std::string_view>(column);
+template<typename Filter>
+irs::ByPhrase& AddPhraseFilter(Filter& root, uint64_t column,
+                               std::vector<std::string_view> values) {
+  auto& wc = AddFilter<irs::ByPhrase>(root);
+  *wc.mutable_field_id() = ExpectedFieldId(column);
   for (auto value : values) {
     wc.mutable_options()->template push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(value);
@@ -431,13 +419,15 @@ S2Point GeoPointFromDegrees(double lat, double lng) {
 // not part of the equality contract), so the expected filter only needs to
 // set those two -- exactly what FromGeoInRange / FromGeoDistanceComparison
 // populate from user inputs.
-irs::GeoDistanceFilter& AddGeoDistanceFilter(
-  BooleanFilterBuilder& root, uint64_t column, const S2Point& origin,
-  std::optional<double> min_distance, bool min_inclusive,
-  std::optional<double> max_distance, bool max_inclusive,
-  bool negated = false) {
-  auto& geo = AddLeaf<irs::GeoDistanceFilter>(root, negated);
-  *geo.mutable_field() = MakeFieldName<std::string_view>(column);
+template<typename Filter>
+irs::GeoDistanceFilter& AddGeoDistanceFilter(Filter& root, uint64_t column,
+                                             const S2Point& origin,
+                                             std::optional<double> min_distance,
+                                             bool min_inclusive,
+                                             std::optional<double> max_distance,
+                                             bool max_inclusive) {
+  auto& geo = AddFilter<irs::GeoDistanceFilter>(root);
+  *geo.mutable_field_id() = ExpectedFieldId(column);
   auto* options = geo.mutable_options();
   options->origin = origin;
   if (min_distance.has_value()) {
@@ -453,8 +443,8 @@ irs::GeoDistanceFilter& AddGeoDistanceFilter(
   // FromGeoDistanceComparison stamps the tokenizer column id onto the
   // filter; mirror that here so operator== matches.
   auto column_analyzer = GeoJsonAnalyzerProvider(column);
-  SDB_ASSERT(column_analyzer.tokenizer_column);
-  options->store_field_id = *column_analyzer.tokenizer_column;
+  SDB_ASSERT(irs::field_limits::valid(column_analyzer.tokenizer_column));
+  options->store_field_id = column_analyzer.tokenizer_column;
   return geo;
 }
 
@@ -465,46 +455,45 @@ irs::GeoDistanceFilter& AddGeoDistanceFilter(
 // the same `reset(S2Point, ...)` path, and ShapeContainer::equals checks
 // type + S2 contents (coding compared via IsSameLoss, where Invalid and
 // any non-U32 coding compare equal).
-irs::GeoFilter& AddGeoFilter(BooleanFilterBuilder& root, uint64_t column,
+template<typename Filter>
+irs::GeoFilter& AddGeoFilter(Filter& root, uint64_t column,
                              const S2Point& shape_point,
-                             irs::GeoFilterType type, bool negated = false) {
-  auto& gf = AddLeaf<irs::GeoFilter>(root, negated);
-  *gf.mutable_field() = MakeFieldName<std::string_view>(column);
+                             irs::GeoFilterType type) {
+  auto& gf = AddFilter<irs::GeoFilter>(root);
+  *gf.mutable_field_id() = ExpectedFieldId(column);
   auto* options = gf.mutable_options();
   options->type = type;
   options->shape.reset(shape_point);
   // FromGeoInRange stamps the tokenizer column id onto the filter;
   // mirror that here so operator== matches.
   auto column_analyzer = GeoJsonAnalyzerProvider(column);
-  SDB_ASSERT(column_analyzer.tokenizer_column);
-  options->store_field_id = *column_analyzer.tokenizer_column;
+  SDB_ASSERT(irs::field_limits::valid(column_analyzer.tokenizer_column));
+  options->store_field_id = column_analyzer.tokenizer_column;
   return gf;
 }
 
-irs::ByWildcardNgram& AddWildcardNgramFilter(BooleanFilterBuilder& root,
-                                             uint64_t column,
+template<typename Filter>
+irs::ByWildcardNgram& AddWildcardNgramFilter(Filter& root, uint64_t column,
                                              std::string_view pattern,
-                                             bool has_positions,
-                                             bool negated = false) {
+                                             bool has_positions) {
   auto column_analyzer = WildcardAnalyzerProvider(column);
-  auto& wf = AddLeaf<irs::ByWildcardNgram>(root, negated);
-  *wf.mutable_field() = MakeFieldName<std::string_view>(column);
+  auto& wf = AddFilter<irs::ByWildcardNgram>(root);
+  *wf.mutable_field_id() = ExpectedFieldId(column);
   auto* opts = wf.mutable_options();
   *opts = {pattern,
            basics::downCast<irs::analysis::WildcardAnalyzer>(
              *column_analyzer.analyzer.get()),
            has_positions};
-  SDB_ASSERT(column_analyzer.tokenizer_column);
-  opts->store_field_id = *column_analyzer.tokenizer_column;
+  SDB_ASSERT(irs::field_limits::valid(column_analyzer.tokenizer_column));
+  opts->store_field_id = column_analyzer.tokenizer_column;
   return wf;
 }
 
-template<typename T>
-irs::ByTerms& AddTermsFilter(BooleanFilterBuilder& root, uint64_t column,
-                             const std::vector<T>& values,
-                             bool negated = false) {
-  auto& terms = AddLeaf<irs::ByTerms>(root, negated);
-  *terms.mutable_field() = MakeFieldName<T>(column);
+template<typename T, typename Filter>
+irs::ByTerms& AddTermsFilter(Filter& root, uint64_t column,
+                             const std::vector<T>& values) {
+  auto& terms = AddFilter<irs::ByTerms>(root);
+  *terms.mutable_field_id() = ExpectedFieldId(column);
   for (const auto& value : values) {
     if constexpr (std::is_same_v<T, bool>) {
       terms.mutable_options()->terms.emplace(
@@ -568,7 +557,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
   // throw a user-visible validation error whose message contains that
   // substring; `must_succeed` and `expected` are ignored in that case.
   void AssertFilter(
-    const irs::Filter& expected, std::string_view sql,
+    const irs::And& expected, std::string_view sql,
     const std::vector<ColumnSpec>& columns, bool must_succeed,
     const AnalyzerProvider& analyzer_provider = IdentityAnalyzerProvider,
     std::string_view expected_error = {}) {
@@ -625,8 +614,12 @@ class SearchFilterBuilderTest : public ::testing::Test {
       SDB_ASSERT(ref.binding.table_index == table_index);
       const auto local = ref.binding.column_index.GetIndexUnsafe();
       const auto phys = projected[local].GetPrimaryIndex();
+      // FromIsNull SDB_ENSUREs `null_field_id` is valid; production mints a
+      // separate NextId() for the IS-NULL marker. The test schema doesn't
+      // allocate per-kind columns, so reusing the column id here is safe.
       return SearchColumnInfo{
         .field_id = static_cast<irs::field_id>(columns[phys].id),
+        .null_field_id = static_cast<irs::field_id>(columns[phys].id),
         .logical_type = columns[phys].type,
         .tokenizer = analyzer_provider(columns[phys].id)};
     };
@@ -640,7 +633,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     // introduce predicates the iresearch builder doesn't translate on its
     // own. When `expected_error` is set, the first throw is captured and
     // validated; remaining expressions are not processed.
-    BooleanFilterBuilder root{BooleanFilterBuilder::Kind::And};
+    irs::And root;
     size_t claimed = 0;
     std::string caught_message;
     for (const auto& expr : filter_op->expressions) {
@@ -658,7 +651,9 @@ class SearchFilterBuilderTest : public ::testing::Test {
         if (result.ok() && root.size() > before) {
           ++claimed;
         } else {
-          root.Resize(before);
+          while (root.size() > before) {
+            root.PopBack();
+          }
         }
       } catch (const std::exception& e) {
         caught_message = e.what();
@@ -678,10 +673,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
       << "MakeSearchFilter threw unexpectedly: " << caught_message;
     ASSERT_EQ(claimed > 0, must_succeed);
     if (must_succeed) {
-      auto produced = root.Build();
-      ASSERT_EQ(*produced, expected)
-        << "actual:   " << irs::ToString(*produced) << "\n"
-        << "expected: " << irs::ToString(expected);
+      ASSERT_EQ(root, expected) << "actual:   " << irs::ToString(root) << "\n"
+                                << "expected: " << irs::ToString(expected);
     }
   }
 
@@ -706,52 +699,47 @@ TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
   {
     std::vector<ColumnSpec> columns{
       {.id = 1, .type = duckdb::LogicalType::FLOAT, .name = "b"}};
-    BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-    AddTermFilter<float>(expected_b, 1, 10);
-    AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b = 10", columns,
-                 true);
+    irs::And expected;
+    AddTermFilter<float>(expected, 1, 10);
+    AssertFilter(expected, "SELECT * FROM foo WHERE b = 10", columns, true);
   }
   {
     std::vector<ColumnSpec> columns{
       {.id = 1, .type = duckdb::LogicalType::DOUBLE, .name = "b"}};
-    BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-    AddTermFilter<double>(expected_b, 1, 10);
-    AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b = 10", columns,
-                 true);
+    irs::And expected;
+    AddTermFilter<double>(expected, 1, 10);
+    AssertFilter(expected, "SELECT * FROM foo WHERE b = 10", columns, true);
   }
   {
     std::vector<ColumnSpec> columns{
       {.id = 1, .type = duckdb::LogicalType::TINYINT, .name = "b"}};
-    BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-    AddTermFilter<int32_t>(expected_b, 1, 1);
-    AssertFilter(*expected_b.Build(),
-                 "SELECT * FROM foo WHERE b = CAST(1 AS VARCHAR)", columns,
-                 true);
+    irs::And expected;
+    AddTermFilter<int32_t>(expected, 1, 1);
+    AssertFilter(expected, "SELECT * FROM foo WHERE b = CAST(1 AS VARCHAR)",
+                 columns, true);
   }
   {
     std::vector<ColumnSpec> columns{
       {.id = 1, .type = duckdb::LogicalType::SMALLINT, .name = "b"}};
-    BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-    AddTermFilter<int32_t>(expected_b, 1, 10);
-    AssertFilter(*expected_b.Build(),
-                 "SELECT * FROM foo WHERE b = CAST(10 AS SMALLINT)", columns,
-                 true);
+    irs::And expected;
+    AddTermFilter<int32_t>(expected, 1, 10);
+    AssertFilter(expected, "SELECT * FROM foo WHERE b = CAST(10 AS SMALLINT)",
+                 columns, true);
   }
   {
     std::vector<ColumnSpec> columns{
       {.id = 1, .type = duckdb::LogicalType::SMALLINT, .name = "b"}};
-    BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-    AddRangeFilter<int32_t>(expected_b, 1, 10, false, std::nullopt, false);
-    AssertFilter(*expected_b.Build(),
-                 "SELECT * FROM foo WHERE b > CAST(10 AS SMALLINT)", columns,
-                 true);
+    irs::And expected;
+    AddRangeFilter<int32_t>(expected, 1, 10, false, std::nullopt, false);
+    AssertFilter(expected, "SELECT * FROM foo WHERE b > CAST(10 AS SMALLINT)",
+                 columns, true);
   }
   {
     std::vector<ColumnSpec> columns{
       {.id = 1, .type = duckdb::LogicalType::SMALLINT, .name = "b"}};
-    BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-    AddTermsFilter<int32_t>(expected_b, 1, {10, 11});
-    AssertFilter(*expected_b.Build(),
+    irs::And expected;
+    AddTermsFilter<int32_t>(expected, 1, {10, 11});
+    AssertFilter(expected,
                  "SELECT * FROM foo WHERE b IN (CAST(10 AS SMALLINT), "
                  "CAST(11 AS SMALLINT))",
                  columns, true);
@@ -759,19 +747,18 @@ TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
   {
     std::vector<ColumnSpec> columns{
       {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
-    BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-    AddTermFilter<bool>(expected_b, 1, true);
-    AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b = true",
-                 columns, true);
+    irs::And expected;
+    AddTermFilter<bool>(expected, 1, true);
+    AssertFilter(expected, "SELECT * FROM foo WHERE b = true", columns, true);
   }
   {
     // Non-keyword analyzer rejects plain a = 'foo' on a VARCHAR column.
     // Use the TSQUERY surface (`b @@ 'foo'`) for analyzed columns.
     std::vector<ColumnSpec> columns{
       {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-    BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-    AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b = 'foo'",
-                 columns, false, SegmentationAnalyzerProvider);
+    irs::And expected;
+    AssertFilter(expected, "SELECT * FROM foo WHERE b = 'foo'", columns, false,
+                 SegmentationAnalyzerProvider);
   }
   {
     // TSQUERY-surface equality is accepted on a segmenting analyzer:
@@ -779,10 +766,10 @@ TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
     // ByTerm for the single resulting token.
     std::vector<ColumnSpec> columns{
       {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-    BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-    AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"});
-    AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ 'foo'",
-                 columns, true, SegmentationAnalyzerProvider);
+    irs::And expected;
+    AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
+    AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'foo'", columns, true,
+                 SegmentationAnalyzerProvider);
   }
 }
 
@@ -793,49 +780,47 @@ TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
 TEST_F(SearchFilterBuilderTest, test_SimpleDisjunction) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<int32_t>(or_filter, 1, 10);
   AddTermFilter<int32_t>(or_filter, 1, 11);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b = 10 OR b = 11",
-               columns, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b = 10 OR b = 11", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimpleDisjunctionDifferentFields) {
   std::vector<ColumnSpec> columns{
     {.id = 300, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 512, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<int32_t>(or_filter, 300, 10);
   AddTermFilter<std::string_view>(or_filter, 512, std::string_view{"foobar"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a = '10' OR b = 'foobar'", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a = '10' OR b = 'foobar'",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_MultipleOr) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<int32_t>(or_filter, 1, 5);
   AddTermFilter<int32_t>(or_filter, 1, 10);
   AddTermFilter<int32_t>(or_filter, 1, 15);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a = 5 OR a = 10 OR a = 15", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a = 5 OR a = 10 OR a = 15",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimpleConjunction) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<int32_t>(expected_b, 1, 10);
-  AddTermFilter<int32_t>(expected_b, 2, 20);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a = 10 AND b = 20",
-               columns, true);
+  irs::And expected;
+  AddTermFilter<int32_t>(expected, 1, 10);
+  AddTermFilter<int32_t>(expected, 2, 20);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a = 10 AND b = 20", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_MultipleAnd) {
@@ -843,11 +828,11 @@ TEST_F(SearchFilterBuilderTest, test_MultipleAnd) {
     {.id = 1000, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 2000, .type = duckdb::LogicalType::VARCHAR, .name = "b"},
     {.id = 3000, .type = duckdb::LogicalType::BOOLEAN, .name = "c"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<int32_t>(expected_b, 1000, 10);
-  AddTermFilter<std::string_view>(expected_b, 2000, std::string_view{"test"});
-  AddTermFilter<bool>(expected_b, 3000, true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddTermFilter<int32_t>(expected, 1000, 10);
+  AddTermFilter<std::string_view>(expected, 2000, std::string_view{"test"});
+  AddTermFilter<bool>(expected, 3000, true);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE a = 10 AND b = 'test' AND c = true",
                columns, true);
 }
@@ -855,34 +840,36 @@ TEST_F(SearchFilterBuilderTest, test_MultipleAnd) {
 TEST_F(SearchFilterBuilderTest, test_NotTerm) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<int32_t>(expected_b, 1, 10, /*negated=*/true);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE NOT (a = '10')",
-               columns, true);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddTermFilter<int32_t>(not_filter, 1, 10);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a = '10')", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NotOr) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::Negate<irs::Or>(expected_b);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  auto& or_filter = AddFilter<irs::Or>(not_filter);
   AddTermFilter<int32_t>(or_filter, 1, 10);
   AddTermFilter<int32_t>(or_filter, 1, 20);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT (a = 10 OR a = 20)", columns, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a = 10 OR a = 20)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NotAnd) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::Negate<irs::And>(expected_b);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  auto& and_filter = AddFilter<irs::And>(not_filter);
   AddTermFilter<int32_t>(and_filter, 1, 10);
   AddTermFilter<int32_t>(and_filter, 2, 20);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT (a = 10 AND b = 20)", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a = 10 AND b = 20)",
+               columns, true);
 }
 
 // ===========================================================================
@@ -892,85 +879,77 @@ TEST_F(SearchFilterBuilderTest, test_NotAnd) {
 TEST_F(SearchFilterBuilderTest, test_LessThanInteger) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, std::nullopt, false, 100, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a < 100", columns,
-               true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a < 100", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LessThanString) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::nullopt, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"xyz"}, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a < 'xyz'",
-               columns, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a < 'xyz'", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualInteger) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, std::nullopt, false, 100, true);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a <= 100", columns,
-               true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a <= 100", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualString) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::nullopt, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"test"}, true);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a <= 'test'",
-               columns, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a <= 'test'", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualStringNotIdentity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a <= 'test'",
-               columns, false, SegmentationAnalyzerProvider);
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE a <= 'test'", columns, false,
+               SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GreaterThanInteger) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 50, false, std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a > 50", columns,
-               true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 50, false, std::nullopt, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a > 50", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GreaterThanString) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::string_view{"abc"},
-                                   false, std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a > 'abc'",
-               columns, true);
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"abc"}, false,
+                                   std::nullopt, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a > 'abc'", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GreaterThanOrEqualInteger) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 50, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a >= 50", columns,
-               true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 50, true, std::nullopt, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a >= 50", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GreaterThanOrEqualString) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::string_view{"start"},
-                                   true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a >= 'start'",
-               columns, true);
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"start"}, true,
+                                   std::nullopt, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a >= 'start'", columns, true);
 }
 
 // ===========================================================================
@@ -980,22 +959,22 @@ TEST_F(SearchFilterBuilderTest, test_GreaterThanOrEqualString) {
 TEST_F(SearchFilterBuilderTest, test_BetweenInteger) {
   std::vector<ColumnSpec> columns{
     {.id = 500, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 500, 10, true, std::nullopt, false);
-  AddRangeFilter<int32_t>(expected_b, 500, std::nullopt, false, 100, true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a BETWEEN 10 AND 100", columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 500, 10, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 500, std::nullopt, false, 100, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a BETWEEN 10 AND 100",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_BetweenString) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::string_view{"apple"},
-                                   true, std::nullopt, false);
-  AddRangeFilter<std::string_view>(expected_b, 1, std::nullopt, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"apple"}, true,
+                                   std::nullopt, false);
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"orange"}, true);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE a BETWEEN 'apple' AND 'orange'",
                columns, true);
 }
@@ -1003,13 +982,12 @@ TEST_F(SearchFilterBuilderTest, test_BetweenString) {
 TEST_F(SearchFilterBuilderTest, test_NotBetween) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddRangeFilter<int32_t>(or_filter, 1, std::nullopt, false, 10, false);
   AddRangeFilter<int32_t>(or_filter, 1, 50, false, std::nullopt, false);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a NOT BETWEEN 10 AND 50", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a NOT BETWEEN 10 AND 50",
+               columns, true);
 }
 
 // ===========================================================================
@@ -1020,12 +998,12 @@ TEST_F(SearchFilterBuilderTest, test_AndWithOr) {
   std::vector<ColumnSpec> columns{
     {.id = 400, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 800, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<int32_t>(expected_b, 400, 10);
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  AddTermFilter<int32_t>(expected, 400, 10);
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 800, std::string_view{"foo"});
   AddTermFilter<std::string_view>(or_filter, 800, std::string_view{"bar"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE a = 10 AND (b = 'foo' OR b = 'bar')",
                columns, true);
 }
@@ -1033,32 +1011,32 @@ TEST_F(SearchFilterBuilderTest, test_AndWithOr) {
 TEST_F(SearchFilterBuilderTest, test_AndWithComparison) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 10, true, std::nullopt, false);
-  AddRangeFilter<int32_t>(expected_b, 1, std::nullopt, false, 100, true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a >= 10 AND a <= 100", columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 10, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a >= 10 AND a <= 100",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_OrWithComparison) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddRangeFilter<int32_t>(or_filter, 1, std::nullopt, false, 10, false);
   AddRangeFilter<int32_t>(or_filter, 1, 100, false, std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a < 10 OR a > 100",
-               columns, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a < 10 OR a > 100", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_MixedEqualsAndComparison) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "status"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "age"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"active"});
-  AddRangeFilter<int32_t>(expected_b, 2, 18, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"active"});
+  AddRangeFilter<int32_t>(expected, 2, 18, true, std::nullopt, false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE status = 'active' AND age >= 18",
                columns, true);
 }
@@ -1067,9 +1045,9 @@ TEST_F(SearchFilterBuilderTest, test_ComparisonNotConst) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "status"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "age"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE status <= age",
-               columns, false);
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE status <= age", columns,
+               false);
 }
 
 // ===========================================================================
@@ -1079,50 +1057,50 @@ TEST_F(SearchFilterBuilderTest, test_ComparisonNotConst) {
 TEST_F(SearchFilterBuilderTest, test_NotWithComparison) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, std::nullopt, false, 50, true);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE NOT (a > 50)",
-               columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 50, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a > 50)", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NotLessThan) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 100, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE NOT (a < 100)",
-               columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 100, true, std::nullopt, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a < 100)", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NotGreaterThanOrEqual) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, std::nullopt, false, 50, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE NOT (a >= 50)",
-               columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 50, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a >= 50)", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NotLessThanOrEqual) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 25, false, std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE NOT (a <= 25)",
-               columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 25, false, std::nullopt, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a <= 25)", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_AndWithNotOr) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "active"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "value"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<bool>(expected_b, 1, true);
-  auto& or_filter = sdb::connector::Negate<irs::Or>(expected_b);
+  irs::And expected;
+  AddTermFilter<bool>(expected, 1, true);
+  auto& not_filter = expected.add<irs::Exclusion>();
+  auto& or_filter = AddFilter<irs::Or>(not_filter);
   AddTermFilter<int32_t>(or_filter, 2, 10);
   AddTermFilter<int32_t>(or_filter, 2, 20);
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE active = true AND NOT (value = 10 OR value = 20)",
     columns, true);
 }
@@ -1131,23 +1109,22 @@ TEST_F(SearchFilterBuilderTest, test_OrWithNot) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<int32_t>(or_filter, 1, 5);
-  AddTermFilter<std::string_view>(or_filter, 2, std::string_view{"test"},
-                                  /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a = 5 OR NOT (b = 'test')", columns,
-               true);
+  auto& not_filter = or_filter.add<irs::And>().add<irs::Exclusion>();
+  AddTermFilter<std::string_view>(not_filter, 2, std::string_view{"test"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE a = 5 OR NOT (b = 'test')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_DoubleNegation) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<int32_t>(expected_b, 1, 10);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT (NOT (a = 10))", columns, true);
+  irs::And expected;
+  AddTermFilter<int32_t>(expected, 1, 10);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (NOT (a = 10))", columns,
+               true);
 }
 
 // ===========================================================================
@@ -1159,13 +1136,14 @@ TEST_F(SearchFilterBuilderTest, test_ComplexNested) {
     {.id = 1024, .type = duckdb::LogicalType::INTEGER, .name = "price"},
     {.id = 2048, .type = duckdb::LogicalType::VARCHAR, .name = "tier"},
     {.id = 4096, .type = duckdb::LogicalType::BOOLEAN, .name = "enabled"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1024, 100, true, std::nullopt, false);
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1024, 100, true, std::nullopt, false);
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 2048, std::string_view{"premium"});
   AddTermFilter<std::string_view>(or_filter, 2048, std::string_view{"gold"});
-  AddTermFilter<bool>(expected_b, 4096, false, /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddTermFilter<bool>(not_filter, 4096, false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE price >= 100 AND (tier = 'premium' OR "
                "tier = 'gold') AND NOT (enabled = false)",
                columns, true);
@@ -1175,24 +1153,22 @@ TEST_F(SearchFilterBuilderTest, test_NestedNotWithComparisons) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddRangeFilter<int32_t>(or_filter, 1, std::nullopt, false, 50, true);
   AddRangeFilter<int32_t>(or_filter, 2, 100, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT (a > 50 AND b < 100)", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a > 50 AND b < 100)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NestedNotWithOr) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder root_b{BooleanFilterBuilder::Kind::And};
-  auto& expected = sdb::connector::AddFilter<irs::And>(root_b);
+  irs::And root;
+  auto& expected = root.add<irs::And>();
   AddRangeFilter<int32_t>(expected, 1, 10, true, std::nullopt, false);
   AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, true);
-  AssertFilter(*root_b.Build(),
-               "SELECT * FROM foo WHERE NOT (a < 10 OR a > 100)", columns,
+  AssertFilter(root, "SELECT * FROM foo WHERE NOT (a < 10 OR a > 100)", columns,
                true);
 }
 
@@ -1203,51 +1179,48 @@ TEST_F(SearchFilterBuilderTest, test_NestedNotWithOr) {
 TEST_F(SearchFilterBuilderTest, test_ImplicitCastIntegerToString) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<int32_t>(expected_b, 1, 42);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a = '42'", columns,
-               true);
+  irs::And expected;
+  AddTermFilter<int32_t>(expected, 1, 42);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a = '42'", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_ImplicitCastInComparison) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 10, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a >= '10'",
-               columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 10, true, std::nullopt, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a >= '10'", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_ImplicitCastInBetween) {
   std::vector<ColumnSpec> columns{
     {.id = 65535, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 65535, 5, true, std::nullopt, false);
-  AddRangeFilter<int32_t>(expected_b, 65535, std::nullopt, false, 15, true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a BETWEEN '5' AND '15'", columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 65535, 5, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 65535, std::nullopt, false, 15, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a BETWEEN '5' AND '15'",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_MultipleComparisonsOnSameField) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 10, false, std::nullopt, false);
-  AddRangeFilter<int32_t>(expected_b, 1, std::nullopt, false, 100, false);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a > 10 AND a < 100", columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 10, false, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a > 10 AND a < 100", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_MixedOperatorsOnSameField) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "value"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<int32_t>(or_filter, 1, 0);
   AddRangeFilter<int32_t>(or_filter, 1, 100, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE value = 0 OR value >= 100", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE value = 0 OR value >= 100",
+               columns, true);
 }
 
 // ===========================================================================
@@ -1257,22 +1230,22 @@ TEST_F(SearchFilterBuilderTest, test_MixedOperatorsOnSameField) {
 TEST_F(SearchFilterBuilderTest, test_InOperatorIntegers) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermsFilter<int32_t>(expected_b, 1, {10, 20, 30, 40});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a IN (10, 20, 30, 40)", columns, true);
+  irs::And expected;
+  AddTermsFilter<int32_t>(expected, 1, {10, 20, 30, 40});
+  AssertFilter(expected, "SELECT * FROM foo WHERE a IN (10, 20, 30, 40)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_InOperatorStrings) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "status"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1,
+    expected, 1,
     {std::string_view{"active"}, std::string_view{"pending"},
      std::string_view{"completed"}});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE status IN ('active', 'pending', 'completed')",
     columns, true);
 }
@@ -1280,9 +1253,9 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorStrings) {
 TEST_F(SearchFilterBuilderTest, test_InOperatorStringsNotIdentity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "status"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE status IN ('active', 'pending', 'completed')",
     columns, false, SegmentationAnalyzerProvider);
 }
@@ -1290,9 +1263,9 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorStringsNotIdentity) {
 TEST_F(SearchFilterBuilderTest, test_InOperatorLongStrings) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "status"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1,
+    expected, 1,
     {std::string_view{
        "ACTIVE LONG STRING THAT WILL NOT FIT INTO INLINE STRINGVIEW"},
      std::string_view{
@@ -1300,7 +1273,7 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorLongStrings) {
      std::string_view{
        "COMPLETED FULL STRING THAT WILL NOT FIT INTO INLINE STRING VIEW"}});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE status IN (UPPER('active long string that will "
     "not fit into inline stringView'), LOWER('pending super strinG that will "
     "not fit into inline string view'), UPPER('completed full string that will "
@@ -1311,10 +1284,10 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorLongStrings) {
 TEST_F(SearchFilterBuilderTest, test_InOperatorWithImplicitCast) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "fibonacci"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermsFilter<int32_t>(expected_b, 1, {1, 2, 3, 5, 8, 13});
+  irs::And expected;
+  AddTermsFilter<int32_t>(expected, 1, {1, 2, 3, 5, 8, 13});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE fibonacci IN ('1', '2', '3', '5', '8', '13')",
     columns, true);
 }
@@ -1323,10 +1296,10 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorWithAnd) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "type"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "value"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermsFilter<int32_t>(expected_b, 1, {10, 20, 30});
-  AddRangeFilter<int32_t>(expected_b, 2, 100, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddTermsFilter<int32_t>(expected, 1, {10, 20, 30});
+  AddRangeFilter<int32_t>(expected, 2, 100, true, std::nullopt, false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE type IN (10, 20, 30) AND value >= 100",
                columns, true);
 }
@@ -1335,12 +1308,12 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorWithOr) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "category"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "name"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermsFilter<int32_t>(or_filter, 1, {1, 2, 3});
   AddTermFilter<std::string_view>(or_filter, 2, std::string_view{"special"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE category IN (1, 2, 3) OR name = 'special'",
     columns, true);
 }
@@ -1348,9 +1321,10 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorWithOr) {
 TEST_F(SearchFilterBuilderTest, test_NotIn) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "excluded"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermsFilter<int32_t>(expected_b, 1, {100, 200, 300}, /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddTermsFilter<int32_t>(not_filter, 1, {100, 200, 300});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE excluded NOT IN (100, 200, 300)",
                columns, true);
 }
@@ -1358,57 +1332,54 @@ TEST_F(SearchFilterBuilderTest, test_NotIn) {
 TEST_F(SearchFilterBuilderTest, test_InWithSingleValue) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "answer"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermsFilter<int32_t>(expected_b, 1, {42});
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE answer IN (42)",
-               columns, true);
+  irs::And expected;
+  AddTermsFilter<int32_t>(expected, 1, {42});
+  AssertFilter(expected, "SELECT * FROM foo WHERE answer IN (42)", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_InOperatorLargeColumnId) {
   std::vector<ColumnSpec> columns{
     {.id = 8192, .type = duckdb::LogicalType::INTEGER, .name = "code"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermsFilter<int32_t>(expected_b, 8192, {10, 20, 30, 40, 50});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE code IN (10, 20, 30, 40, 50)", columns,
-               true);
+  irs::And expected;
+  AddTermsFilter<int32_t>(expected, 8192, {10, 20, 30, 40, 50});
+  AssertFilter(expected, "SELECT * FROM foo WHERE code IN (10, 20, 30, 40, 50)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_InNotConst) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a IN (10, b, 30, 40)", columns, false);
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE a IN (10, b, 30, 40)",
+               columns, false);
 }
 
 TEST_F(SearchFilterBuilderTest, test_InNotConst2) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a IN (b)", columns,
-               false);
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE a IN (b)", columns, false);
 }
 
 TEST_F(SearchFilterBuilderTest, test_InOperatorIntegersNulls) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermsFilter<int32_t>(expected_b, 1, {10, 20, 30, 40});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a IN (10, 20, NULL, 30, 40)", columns,
-               true);
+  irs::And expected;
+  AddTermsFilter<int32_t>(expected, 1, {10, 20, 30, 40});
+  AssertFilter(expected, "SELECT * FROM foo WHERE a IN (10, 20, NULL, 30, 40)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_InOperatorOnlyNulls) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  sdb::connector::AddFilter<irs::Empty>(expected_b);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a IN (NULL, NULL)",
-               columns, true);
+  irs::And expected;
+  AddFilter<irs::Empty>(expected);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a IN (NULL, NULL)", columns,
+               true);
 }
 
 // ===========================================================================
@@ -1418,37 +1389,37 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorOnlyNulls) {
 TEST_F(SearchFilterBuilderTest, test_IsNull) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "optional_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNullFilter(expected_b, 1);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE optional_field IS NULL", columns, true);
+  irs::And expected;
+  AddNullFilter(expected, 1);
+  AssertFilter(expected, "SELECT * FROM foo WHERE optional_field IS NULL",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_IsNullString) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "description"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNullFilter(expected_b, 1);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE description IS NULL", columns, true);
+  irs::And expected;
+  AddNullFilter(expected, 1);
+  AssertFilter(expected, "SELECT * FROM foo WHERE description IS NULL", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_IsNotNull) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "required_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNullFilter(expected_b, 1, /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE required_field IS NOT NULL", columns,
-               true);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddNullFilter(not_filter, 1);
+  AssertFilter(expected, "SELECT * FROM foo WHERE required_field IS NOT NULL",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_IsNotNotNull) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "required_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNullFilter(expected_b, 1);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddNullFilter(expected, 1);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT(required_field IS NOT NULL)",
                columns, true);
 }
@@ -1456,22 +1427,22 @@ TEST_F(SearchFilterBuilderTest, test_IsNotNotNull) {
 TEST_F(SearchFilterBuilderTest, test_NotIsNull) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "required_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNullFilter(expected_b, 1, /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT(required_field IS NULL)", columns,
-               true);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddNullFilter(not_filter, 1);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT(required_field IS NULL)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_IsNullWithAnd) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "deleted_at"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "status"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNullFilter(expected_b, 1);
-  AddTermFilter<std::string_view>(expected_b, 2, std::string_view{"active"});
+  irs::And expected;
+  AddNullFilter(expected, 1);
+  AddTermFilter<std::string_view>(expected, 2, std::string_view{"active"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE deleted_at IS NULL AND status = 'active'", columns,
     true);
 }
@@ -1479,36 +1450,35 @@ TEST_F(SearchFilterBuilderTest, test_IsNullWithAnd) {
 TEST_F(SearchFilterBuilderTest, test_IsNullWithOr) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "count"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddNullFilter(or_filter, 1);
   AddTermFilter<int32_t>(or_filter, 1, 0);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE count IS NULL OR count = 0", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE count IS NULL OR count = 0",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_IsNullLargeColumnId) {
   std::vector<ColumnSpec> columns{
     {.id = 16384, .type = duckdb::LogicalType::VARCHAR, .name = "extra_data"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNullFilter(expected_b, 16384);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE extra_data IS NULL", columns, true);
+  irs::And expected;
+  AddNullFilter(expected, 16384);
+  AssertFilter(expected, "SELECT * FROM foo WHERE extra_data IS NULL", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_IsNullOrNotInside) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "field1"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "field2"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddNullFilter(or_filter, 1);
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(or_filter);
-  AddTermFilter<std::string_view>(and_filter, 2, std::string_view{"invalid"},
-                                  /*negated=*/true);
+  auto& and_filter = or_filter.add<irs::And>();
+  auto& not_filter = and_filter.add<irs::Exclusion>();
+  AddTermFilter<std::string_view>(not_filter, 2, std::string_view{"invalid"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE field1 IS NULL OR NOT (field2 = 'invalid')",
     columns, true);
 }
@@ -1517,12 +1487,12 @@ TEST_F(SearchFilterBuilderTest, test_ComplexWithInAndNull) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "category"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "priority"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermsFilter<int32_t>(expected_b, 1, {1, 2, 3});
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  AddTermsFilter<int32_t>(expected, 1, {1, 2, 3});
+  auto& or_filter = expected.add<irs::Or>();
   AddNullFilter(or_filter, 2);
   AddRangeFilter<int32_t>(or_filter, 2, 100, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE category IN (1, 2, 3) AND (priority IS "
                "NULL OR priority >= 100)",
                columns, true);
@@ -1535,21 +1505,19 @@ TEST_F(SearchFilterBuilderTest, test_ComplexWithInAndNull) {
 TEST_F(SearchFilterBuilderTest, test_Like) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo_");
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE required_field LIKE '%foo_'", columns,
-               true);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo_");
+  AssertFilter(expected, "SELECT * FROM foo WHERE required_field LIKE '%foo_'",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LikeOp) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo_");
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE required_field ~~ '%foo_'", columns,
-               true);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo_");
+  AssertFilter(expected, "SELECT * FROM foo WHERE required_field ~~ '%foo_'",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LikeCustomEscape) {
@@ -1558,10 +1526,10 @@ TEST_F(SearchFilterBuilderTest, test_LikeCustomEscape) {
   // literal '!' -- equivalent to '!' on its own as far as matching goes.)
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "\\%\\!foo_");
+  irs::And expected;
+  AddLikeFilter(expected, 1, "\\%\\!foo_");
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE required_field LIKE '!%!!foo_' ESCAPE '!'",
     columns, true);
 }
@@ -1572,9 +1540,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQLikeEscape) {
   // because the function form takes a raw wildcard pattern.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "\\%!foo_");
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddLikeFilter(expected, 1, "\\%!foo_");
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE required_field @@ ts_like('\\%!foo_')",
                columns, true);
 }
@@ -1582,9 +1550,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQLikeEscape) {
 TEST_F(SearchFilterBuilderTest, test_NotLike) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%bar_", /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddLikeFilter(not_filter, 1, "%bar_");
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT(required_field LIKE '%bar_')",
                columns, true);
 }
@@ -1592,9 +1561,9 @@ TEST_F(SearchFilterBuilderTest, test_NotLike) {
 TEST_F(SearchFilterBuilderTest, test_LikeWithFunc) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "!!!%FOO_");
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddLikeFilter(expected, 1, "!!!%FOO_");
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE required_field LIKE UPPER('!!!%foo_')",
                columns, true);
 }
@@ -1603,29 +1572,29 @@ TEST_F(SearchFilterBuilderTest, test_LikeNotConst) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "value_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE required_field LIKE UPPER(value_field)",
                columns, false);
 }
 
 TEST_F(SearchFilterBuilderTest, test_FieldCastError) {
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::SMALLINT, .name = "b"}};
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b = 999999999999",
+  AssertFilter(expected, "SELECT * FROM foo WHERE b = 999999999999", columns,
+               false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b <= 999999999999", columns,
+               false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b IN (1.24, 3.0, 4.5)",
                columns, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b <= 999999999999",
-               columns, false);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b IN (1.24, 3.0, 4.5)", columns, false);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LikeWithNotIdentity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE required_field LIKE UPPER('!!!%foo_')",
                columns, false, SegmentationAnalyzerProvider);
 }
@@ -1637,10 +1606,10 @@ TEST_F(SearchFilterBuilderTest, test_LikeWithNotIdentity) {
 TEST_F(SearchFilterBuilderTest, test_SimplePhrase) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"});
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE category @@ ts_phrase('quick brown fox')", columns,
     true, SegmentationAnalyzerProvider);
 }
@@ -1648,9 +1617,9 @@ TEST_F(SearchFilterBuilderTest, test_SimplePhrase) {
 TEST_F(SearchFilterBuilderTest, test_SimplePhraseNoFeatures) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE category @@ ts_phrase('quick brown fox')", columns,
     false, SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>,
     "Positions and Frequency");
@@ -1659,11 +1628,11 @@ TEST_F(SearchFilterBuilderTest, test_SimplePhraseNoFeatures) {
 TEST_F(SearchFilterBuilderTest, test_SimpleAndPhrase) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"});
-  AddPhraseFilter(expected_b, 1, {"quick", "lazy", "fox"});
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
+  AddPhraseFilter(expected, 1, {"quick", "lazy", "fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE category @@ ts_phrase('quick brown fox') "
     "AND category @@ ts_phrase('quick lazy fox')",
     columns, true, SegmentationAnalyzerProvider);
@@ -1672,12 +1641,12 @@ TEST_F(SearchFilterBuilderTest, test_SimpleAndPhrase) {
 TEST_F(SearchFilterBuilderTest, test_SimpleOrPhrase) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddPhraseFilter(or_filter, 1, {"quick", "brown", "fox"});
   AddPhraseFilter(or_filter, 1, {"quick", "lazy", "fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE category @@ ts_phrase('quick brown fox') OR "
     "category @@ ts_phrase('quick lazy fox')",
     columns, true, SegmentationAnalyzerProvider);
@@ -1688,9 +1657,9 @@ TEST_F(SearchFilterBuilderTest, test_PhraseExactGap) {
   // 'fox', e.g. "quick brown lazy fox"
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   // First term: offsets zeroed by insert() for the first element
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
@@ -1698,7 +1667,7 @@ TEST_F(SearchFilterBuilderTest, test_PhraseExactGap) {
   phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE category @@ ts_phrase('quick', 2, 'fox')", columns,
     true, SegmentationAnalyzerProvider);
 }
@@ -1708,16 +1677,16 @@ TEST_F(SearchFilterBuilderTest, test_PhraseRangeGap) {
   // 'quick' and 'fox'
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
   // gap=[1,2] words -> offs_min=2, offs_max=3 (min+1, max+1)
   phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE category @@ ts_phrase('quick', ARRAY[1,2], 'fox')",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -1726,9 +1695,9 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMultipleGaps) {
   // ts_phrase(field, 'quick', 1, 'brown', 2, 'fox') -- multiple gaps
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
   // gap=1 -> offs=2 (1+1)
@@ -1737,7 +1706,7 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMultipleGaps) {
   // gap=2 -> offs=3 (2+1)
   phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE category @@ ts_phrase('quick', 1, "
                "'brown', 2, 'fox')",
                columns, true, SegmentationAnalyzerProvider);
@@ -1748,9 +1717,9 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGapBetweenMultiTokenPatterns) {
   // a gap: 'quick' adj 'brown', then gap=2, then 'lazy' adj 'fox'
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
   // 'brown' is adjacent to 'quick' (within same pattern)
@@ -1762,7 +1731,7 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGapBetweenMultiTokenPatterns) {
   // 'fox' is adjacent to 'lazy' (within same pattern)
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE category @@ ts_phrase('quick brown', "
                "2, 'lazy fox')",
                columns, true, SegmentationAnalyzerProvider);
@@ -1821,14 +1790,14 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGap_BroadNumericTypes) {
          "CAST(2.0 AS DOUBLE)",
          "CAST(2.0 AS DECIMAL(5,2))",
        }) {
-    BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-    auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-    *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+    irs::And expected;
+    auto& phrase = AddFilter<irs::ByPhrase>(expected);
+    *phrase.mutable_field_id() = ExpectedFieldId(1);
     phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
     phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
-    AssertFilter(*expected_b.Build(),
+    AssertFilter(expected,
                  "SELECT * FROM foo WHERE category @@ ts_phrase('quick', " +
                    std::string{gap_expr} + ", 'fox')",
                  columns, true, SegmentationAnalyzerProvider);
@@ -1849,29 +1818,27 @@ TEST_F(SearchFilterBuilderTest, test_TermEq_Segmentation) {
   // ByTerm; multi-token would emit ByTerms with min_match=1).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"});
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ 'fOo'",
-               columns, true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'fOo'", columns, true,
+               SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermEq_Identity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"});
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b = 'foo'",
-               columns, true);
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b = 'foo'", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLess_Identity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::nullopt, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"Foo"}, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b < 'Foo'",
-               columns, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b < 'Foo'", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLess_Segmentation) {
@@ -1881,31 +1848,31 @@ TEST_F(SearchFilterBuilderTest, test_TermLess_Segmentation) {
   // token as the range bound.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::nullopt, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"foo"}, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ ts_lt('Foo')",
-               columns, true, SegmentationAnalyzerProvider);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_lt('Foo')", columns,
+               true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermGreater_Segmentation) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::string_view{"foo"},
-                                   false, std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ ts_gt('foo')",
-               columns, true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"foo"}, false,
+                                   std::nullopt, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_gt('foo')", columns,
+               true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLessEq_Segmentation) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::nullopt, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"foo"}, true);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ ts_le('foo')",
-               columns, true, SegmentationAnalyzerProvider);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_le('foo')", columns,
+               true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_Segmentation) {
@@ -1913,11 +1880,11 @@ TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_Segmentation) {
   // the inclusive lower bound.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::string_view{"foo"}, true,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"foo"}, true,
                                    std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ ts_ge('fOo')",
-               columns, true, SegmentationAnalyzerProvider);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_ge('fOo')", columns,
+               true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_AndLessEq_Composed) {
@@ -1925,13 +1892,13 @@ TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_AndLessEq_Composed) {
   // And of two ByRange filters.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_group = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
   AddRangeFilter<std::string_view>(and_group, 1, std::string_view{"apple"},
                                    true, std::nullopt, false);
   AddRangeFilter<std::string_view>(and_group, 1, std::nullopt, false,
                                    std::string_view{"orange"}, true);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE a @@ (ts_ge('apple') && "
                "ts_le('orange'))",
                columns, true, SegmentationAnalyzerProvider);
@@ -1943,13 +1910,13 @@ TEST_F(SearchFilterBuilderTest, test_TermGe_AndTermLe_Range_SqlAnd) {
   // ByRange filters at the top-level And.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::string_view{"apple"},
-                                   true, std::nullopt, false);
-  AddRangeFilter<std::string_view>(expected_b, 1, std::nullopt, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"apple"}, true,
+                                   std::nullopt, false);
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"orange"}, true);
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE a @@ ts_ge('apple') AND a @@ ts_le('orange')",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -1959,34 +1926,34 @@ TEST_F(SearchFilterBuilderTest, test_TermLess_IntegerColumn) {
   // as RANGE's numeric path).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, std::nullopt, false, 100, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ ts_lt(100)",
-               columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_lt(100)", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_IntegerColumn) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 50, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ ts_ge(50)",
-               columns, true);
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 50, true, std::nullopt, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_ge(50)", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLessEq_BooleanColumn) {
   // LESS_EQUAL on a BOOLEAN column emits irs::ByRange via BooleanTokenizer.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& range = sdb::connector::AddFilter<irs::ByRange>(expected_b);
-  *range.mutable_field() = MakeFieldName<bool>(1);
+  irs::And expected;
+  auto& range = expected.add<irs::ByRange>();
+  *range.mutable_field_id() = ExpectedFieldId(1);
   auto& opts = range.mutable_options()->range;
   opts.max.assign(
     irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(true)));
   opts.max_type = irs::BoundType::Inclusive;
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ ts_le(true)",
-               columns, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_le(true)", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLess_TypeMismatchVarcharVsInt) {
@@ -1994,9 +1961,8 @@ TEST_F(SearchFilterBuilderTest, test_TermLess_TypeMismatchVarcharVsInt) {
   // as RANGE's mismatch error.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  AssertFilter(irs::And{}, "SELECT * FROM foo WHERE b @@ ts_lt('foo')", columns,
-               false, IdentityAnalyzerProvider,
-               "incompatible with column type");
+  AssertFilter({}, "SELECT * FROM foo WHERE b @@ ts_lt('foo')", columns, false,
+               IdentityAnalyzerProvider, "incompatible with column type");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLess_NullBoundRejected) {
@@ -2004,8 +1970,8 @@ TEST_F(SearchFilterBuilderTest, test_TermLess_NullBoundRejected) {
   // unbounded semantics.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  AssertFilter(irs::And{}, "SELECT * FROM foo WHERE b @@ ts_lt(NULL)", columns,
-               false, IdentityAnalyzerProvider, "bound must be non-null");
+  AssertFilter({}, "SELECT * FROM foo WHERE b @@ ts_lt(NULL)", columns, false,
+               IdentityAnalyzerProvider, "bound must be non-null");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLike_Segmentation) {
@@ -2013,20 +1979,19 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_Segmentation) {
   // it's a raw wildcard match against indexed terms.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foO_");
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ (ts_like('%foO_'))", columns, true,
-               SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foO_");
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (ts_like('%foO_'))",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLike_Identity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%fOo_");
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b LIKE '%fOo_'",
-               columns, true);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%fOo_");
+  AssertFilter(expected, "SELECT * FROM foo WHERE b LIKE '%fOo_'", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLike_EscapedPatternIdentity) {
@@ -2037,10 +2002,10 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_EscapedPatternIdentity) {
   // by `!foo` followed by exactly one trailing character.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "\\%!foo_");
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b LIKE '\\%!foo_'",
-               columns, true);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "\\%!foo_");
+  AssertFilter(expected, "SELECT * FROM foo WHERE b LIKE '\\%!foo_'", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLike_EscapedPatternSegmentation) {
@@ -2050,11 +2015,10 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_EscapedPatternSegmentation) {
   // bytes against indexed terms exactly like the identity case.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "\\%!foo_");
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ (ts_like('\\%!foo_'))", columns,
-               true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "\\%!foo_");
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (ts_like('\\%!foo_'))",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 // Columns indexed by WildcardAnalyzer get the ngram-aware ByWildcardNgram
@@ -2063,10 +2027,10 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_EscapedPatternSegmentation) {
 TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddWildcardNgramFilter(expected_b, 1, "%foo_", true);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b LIKE '%foo_'",
-               columns, true, WildcardAnalyzerProvider);
+  irs::And expected;
+  AddWildcardNgramFilter(expected, 1, "%foo_", true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b LIKE '%foo_'", columns,
+               true, WildcardAnalyzerProvider);
 }
 
 // Same column kind, accessed via the TSQUERY surface -- exercises
@@ -2074,30 +2038,29 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer) {
 TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_TSQuery) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddWildcardNgramFilter(expected_b, 1, "%foo_", true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ (ts_like('%foo_'))", columns, true,
-               WildcardAnalyzerProvider);
+  irs::And expected;
+  AddWildcardNgramFilter(expected, 1, "%foo_", true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (ts_like('%foo_'))",
+               columns, true, WildcardAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_NotConst) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a LIKE b", columns,
-               false, WildcardAnalyzerProvider);
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE a LIKE b", columns, false,
+               WildcardAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_WithNot) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddWildcardNgramFilter(expected_b, 1, "%foo_", true, /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT(a LIKE '%foo_')", columns, true,
-               WildcardAnalyzerProvider);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddWildcardNgramFilter(not_filter, 1, "%foo_", true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT(a LIKE '%foo_')", columns,
+               true, WildcardAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermIn_Segmentation) {
@@ -2106,12 +2069,12 @@ TEST_F(SearchFilterBuilderTest, test_TermIn_Segmentation) {
   // tokenised input.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"foo"});
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"bar"});
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"baz"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_any(['foo', 'bar', 'baZ'])",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -2119,60 +2082,57 @@ TEST_F(SearchFilterBuilderTest, test_TermIn_Segmentation) {
 TEST_F(SearchFilterBuilderTest, test_TermIn_Identity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1,
+    expected, 1,
     {std::string_view{"foo"}, std::string_view{"bAr"},
      std::string_view{"baz"}});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b IN ('foo', 'bAr', 'baz')", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b IN ('foo', 'bAr', 'baz')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermEq_WithAnd) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"});
-  AddRangeFilter<int32_t>(expected_b, 2, 10, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a @@ 'foo' AND b >= 10", columns, true,
-               SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
+  AddRangeFilter<int32_t>(expected, 2, 10, true, std::nullopt, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a @@ 'foo' AND b >= 10",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermEq_WithOr) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"foo"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"bar"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE a @@ 'foo' OR a @@ 'bar'", columns,
-               true, SegmentationAnalyzerProvider);
+  AssertFilter(expected, "SELECT * FROM foo WHERE a @@ 'foo' OR a @@ 'bar'",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLike_WithNot) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo_", /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT(a @@ (ts_like('%foo_')))", columns,
-               true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddLikeFilter(not_filter, 1, "%foo_");
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT(a @@ (ts_like('%foo_')))",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermIn_WithAnd) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"y"});
-  AddRangeFilter<int32_t>(expected_b, 2, 10, true, std::nullopt, false);
-  AssertFilter(*expected_b.Build(),
+  AddRangeFilter<int32_t>(expected, 2, 10, true, std::nullopt, false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE a @@ ts_any(['x', 'y']) AND b >= 10",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -2183,9 +2143,8 @@ TEST_F(SearchFilterBuilderTest, test_TermEq_NotConst) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE a = b", columns,
-               false);
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE a = b", columns, false);
 }
 
 // ===========================================================================
@@ -2197,21 +2156,19 @@ TEST_F(SearchFilterBuilderTest, test_TermEq_NotConst) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramBasic) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNgramSimilarityFilter(expected_b, 1, {"he", "el", "ll", "lo"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ts_ngram('hello')", columns, true,
-               NgramAnalyzerProvider);
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_ngram('hello')",
+               columns, true, NgramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramWithThreshold) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNgramSimilarityFilter(expected_b, 1, {"he", "el", "ll", "lo"}, 0.5f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ts_ngram('hello', 0.5)", columns,
-               true, NgramAnalyzerProvider);
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_ngram('hello', 0.5)",
+               columns, true, NgramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramNoFeatures) {
@@ -2219,10 +2176,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramNoFeatures) {
   // for NGRAM -- bind-time error.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ts_ngram('hello')", columns, false,
-               IdentityAnalyzerProvider, "ts_ngram");
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_ngram('hello')",
+               columns, false, IdentityAnalyzerProvider, "ts_ngram");
 }
 
 // ===========================================================================
@@ -2234,9 +2190,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramNoFeatures) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinNoTranspositions) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2, false);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2, false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_levenshtein('test', 2, false)",
                columns, true);
 }
@@ -2244,8 +2200,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinNoTranspositions) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinDistanceTooHigh) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_levenshtein('test', 5)",
                columns, false, IdentityAnalyzerProvider, "ts_levenshtein");
 }
@@ -2254,8 +2210,8 @@ TEST_F(SearchFilterBuilderTest,
        test_TSQueryMatch_LevenshteinTranspositionDistanceTooHigh) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_levenshtein('test', 4, true)",
                columns, false, IdentityAnalyzerProvider, "ts_levenshtein");
 }
@@ -2263,10 +2219,10 @@ TEST_F(SearchFilterBuilderTest,
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinNotNegation) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2, /*with_transpositions=*/true,
-                        /*max_terms=*/1024, /*prefix=*/"", /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& negated = expected.add<irs::Exclusion>();
+  AddEditDistanceFilter(negated, 1, "test", 2);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ !!ts_levenshtein('test', 2)",
                columns, true);
 }
@@ -2276,12 +2232,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinNotNegation) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinWithPrefix) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "roximate", 1,
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "roximate", 1,
                         /*with_transpositions=*/true,
                         /*max_terms=*/1024, /*prefix=*/"app");
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_levenshtein('roximate', 1, true, 'app')",
     columns, true);
 }
@@ -2290,11 +2246,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinWithPrefix) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinEmptyPrefix) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2,
-                        /*with_transpositions=*/false);
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2, /*with_transpositions=*/false);
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_levenshtein('test', 2, false, '')",
     columns, true);
 }
@@ -2303,10 +2258,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinEmptyPrefix) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinTooManyArgs) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   // DuckDB rejects the call at bind time because there is no
   // (VARCHAR, INTEGER, BOOLEAN, VARCHAR, VARCHAR) overload.
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_levenshtein('test', 1, true, "
                "'p', 'extra')",
                columns, false, IdentityAnalyzerProvider, "ts_levenshtein");
@@ -2323,23 +2278,22 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinTooManyArgs) {
 TEST_F(SearchFilterBuilderTest, test_Boost_TermEq) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"})
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
     .boost(2.0f);
   // The `'foo'::TSQUERY` cast disambiguates `^` from the numeric
   // power overload -- without it DuckDB tries `^(VARCHAR, DOUBLE)`
   // which doesn't exist.
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY ^ 2.0", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY ^ 2.0",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_Phrase) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"}).boost(1.5f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"}).boost(1.5f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE category @@ "
                "ts_phrase('quick brown fox') ^ 1.5",
                columns, true, SegmentationAnalyzerProvider);
@@ -2348,11 +2302,10 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Phrase) {
 TEST_F(SearchFilterBuilderTest, test_Boost_Like) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "foo%").boost(3.0f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ (ts_like('foo%')) ^ 3.0", columns,
-               true);
+  irs::And expected;
+  AddPrefixFilter(expected, 1, "foo").boost(3.0f);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (ts_like('foo%')) ^ 3.0",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_WildcardFilter) {
@@ -2360,31 +2313,29 @@ TEST_F(SearchFilterBuilderTest, test_Boost_WildcardFilter) {
   // dispatches to ByWildcardNgram and threads the boost through.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddWildcardNgramFilter(expected_b, 1, "foo%", true).boost(3.0f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ (ts_like('foo%')) ^ 3.0", columns,
-               true, WildcardAnalyzerProvider);
+  irs::And expected;
+  AddWildcardNgramFilter(expected, 1, "foo%", true).boost(3.0f);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (ts_like('foo%')) ^ 3.0",
+               columns, true, WildcardAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramBoost) {
   // ts_ngram(...) ^ N -- TSQUERY-surface boost on n-gram similarity.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNgramSimilarityFilter(expected_b, 1, {"fo", "oo"}).boost(2.5f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ts_ngram('foo') ^ 2.5", columns,
-               true, NgramAnalyzerProvider);
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"fo", "oo"}).boost(2.5f);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_ngram('foo') ^ 2.5",
+               columns, true, NgramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinBoost) {
   // ts_levenshtein(...) ^ N -- TSQUERY-surface boost on Levenshtein.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2).boost(1.5f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2).boost(1.5f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_levenshtein('test', 2) ^ 1.5",
                columns, true);
 }
@@ -2392,12 +2343,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinBoost) {
 TEST_F(SearchFilterBuilderTest, test_Boost_TermIn) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
   or_group.boost(2.0f);
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"foo"});
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"bar"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_any(['foo', 'bar']) ^ 2.0",
                columns, true);
 }
@@ -2406,26 +2357,25 @@ TEST_F(SearchFilterBuilderTest, test_Boost_RangeComparison) {
   // `^` on an LT/LE/GT/GE TSQUERY value boosts the resulting ByRange.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::nullopt, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"foo"}, false)
     .boost(1.5f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ts_lt('foo') ^ 1.5", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_lt('foo') ^ 1.5",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_AndGroup) {
   // `^` on a TSQUERY `&&` group boosts the whole conjunction.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& group = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& group = expected.add<irs::And>();
   group.boost(3.0f);
   AddTermFilter<std::string_view>(group, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(group, 1, std::string_view{"y"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY && 'y'::TSQUERY) ^ 3.0",
     columns, true);
 }
@@ -2433,13 +2383,13 @@ TEST_F(SearchFilterBuilderTest, test_Boost_AndGroup) {
 TEST_F(SearchFilterBuilderTest, test_Boost_OrGroup) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& group = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& group = expected.add<irs::Or>();
   group.boost(2.0f);
   AddTermFilter<std::string_view>(group, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(group, 1, std::string_view{"y"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY || 'y'::TSQUERY) ^ 2.0",
     columns, true);
 }
@@ -2448,22 +2398,20 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Zero) {
   // Boost factor 0 disables scoring contribution but still claims.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"})
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
     .boost(0.0f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY ^ 0.0", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY ^ 0.0",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_Negative) {
   // Negative boost factor is rejected at bind time.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY ^ -1.0", columns,
-               false, IdentityAnalyzerProvider, "boost");
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY ^ -1.0",
+               columns, false, IdentityAnalyzerProvider, "boost");
 }
 
 // `::boost(K)` parameterised-type cast -- composable analogue of `^ K`.
@@ -2474,10 +2422,10 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Negative) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastSimple) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"})
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
     .boost(2.0f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY::boost(2.0)",
                columns, true);
 }
@@ -2485,9 +2433,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastSimple) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastPhrase) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"}).boost(1.5f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"}).boost(1.5f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_phrase('quick brown fox')::boost(1.5)",
                columns, true, SegmentationAnalyzerProvider);
@@ -2498,12 +2446,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastAndGroup) {
   // own boost slot (mirrors `^` on a `&&` group).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& group = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& group = expected.add<irs::And>();
   group.boost(3.0f);
   AddTermFilter<std::string_view>(group, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(group, 1, std::string_view{"y"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "('x'::TSQUERY && 'y'::TSQUERY)::boost(3.0)",
                columns, true);
@@ -2513,23 +2461,22 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNestedWithCaret) {
   // `(expr ^ 2)::boost(3)` -- multiplicative compose: 6x.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"})
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
     .boost(6.0f);
   AssertFilter(
-    *expected_b.Build(),
-    "SELECT * FROM foo WHERE b @@ ('foo'::TSQUERY ^ 2.0)::boost(3.0)", columns,
-    true);
+    expected, "SELECT * FROM foo WHERE b @@ ('foo'::TSQUERY ^ 2.0)::boost(3.0)",
+    columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastCaretOnTop) {
   // `expr::boost(2) ^ 3` -- symmetric, also 6x.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"})
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
     .boost(6.0f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY::boost(2.0) ^ 3.0",
                columns, true);
 }
@@ -2539,13 +2486,13 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastTokenizeThenBoost) {
   // forces raw-bytes phrase parts; outer boost multiplies.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.boost(42.0f);
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_phrase('quick fox')::tokenize('keyword')::boost(42.0)",
                columns, true, SegmentationAnalyzerProvider);
@@ -2556,13 +2503,13 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastBoostThenTokenize) {
   // both effects must apply (tokenize override + boost 42).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.boost(42.0f);
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_phrase('quick fox')::boost(42.0)::tokenize('keyword')",
                columns, true, SegmentationAnalyzerProvider);
@@ -2571,10 +2518,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastBoostThenTokenize) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastZero) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"})
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
     .boost(0.0f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY::boost(0.0)",
                columns, true);
 }
@@ -2583,8 +2530,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNegative) {
   // Negative boost factor is rejected at bind time (mirrors `^ -K`).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY::boost(-1.0)",
                columns, false);
 }
@@ -2600,11 +2547,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNegative) {
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoInRange) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        500.0, true)
     .boost(2.5f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0))"
                "::boost(2.5)",
@@ -2619,11 +2566,11 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoDistance) {
   // ::boost(K).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), std::nullopt,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
                        false, 100.0, false)
     .boost(1.5f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0)"
                "::boost(1.5)",
@@ -2633,11 +2580,11 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoDistance) {
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoIntersects) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoFilter(expected_b, 1, GeoPointFromDegrees(20, 10),
+  irs::And expected;
+  AddGeoFilter(expected, 1, GeoPointFromDegrees(20, 10),
                irs::GeoFilterType::Intersects)
     .boost(2.0f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (ST_Intersects(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}'))::boost(2.0)",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2648,11 +2595,11 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains) {
   // within indexed data).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoFilter(expected_b, 1, GeoPointFromDegrees(20, 10),
+  irs::And expected;
+  AddGeoFilter(expected, 1, GeoPointFromDegrees(20, 10),
                irs::GeoFilterType::IsContained)
     .boost(3.0f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (ST_Contains(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}'))::boost(3.0)",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2663,11 +2610,11 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains_SwappedArgs) {
   // data); the boost should still propagate.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoFilter(expected_b, 1, GeoPointFromDegrees(20, 10),
+  irs::And expected;
+  AddGeoFilter(expected, 1, GeoPointFromDegrees(20, 10),
                irs::GeoFilterType::Contains)
     .boost(0.75f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (ST_Contains("
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', g))"
                "::boost(0.75)",
@@ -2686,10 +2633,10 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains_SwappedArgs) {
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_Basic) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        500.0, true);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2698,10 +2645,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_Basic) {
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_GeometryField) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::GEOMETRY(), .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        500.0, true);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2713,10 +2660,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_MinZeroLeavesUnbounded) {
   // at its default 0.0).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), std::nullopt,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
                        false, 500.0, true);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 0.0, 500.0)",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2725,10 +2672,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_MinZeroLeavesUnbounded) {
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_ExclusiveBounds) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), 100.0, false,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, false,
                        500.0, false);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0, "
                "false, false)",
@@ -2739,11 +2686,11 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_FiveArgsExclusiveMin) {
   // 5-arg form: only include_min explicit; include_max defaults to true.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), 100.0, false,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, false,
                        500.0, true);
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE ST_Distance_Between(g, "
     "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0, false)",
     columns, true, GeoJsonAnalyzerProvider);
@@ -2752,10 +2699,11 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_FiveArgsExclusiveMin) {
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_NotNegation) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), 100.0, true,
-                       500.0, true, /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& negated = expected.add<irs::Exclusion>();
+  AddGeoDistanceFilter(negated, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+                       500.0, true);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2765,11 +2713,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_NonConstantCentroid) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "c"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AssertFilter(
-    *expected_b.Build(),
-    "SELECT * FROM foo WHERE ST_Distance_Between(g, c, 100.0, 500.0)", columns,
-    false, GeoJsonAnalyzerProvider);
+    expected, "SELECT * FROM foo WHERE ST_Distance_Between(g, c, 100.0, 500.0)",
+    columns, false, GeoJsonAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_WrongAnalyzer) {
@@ -2777,8 +2724,8 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_WrongAnalyzer) {
   // rejects it.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
                columns, false, SegmentationAnalyzerProvider);
@@ -2787,8 +2734,8 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_WrongAnalyzer) {
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_InvalidGeoJsonCentroid) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'not a geojson', 100.0, 500.0)",
                columns, false, GeoJsonAnalyzerProvider);
@@ -2803,10 +2750,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_InvalidGeoJsonCentroid) {
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_Eq) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        100.0, true);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') = 100.0",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2815,10 +2762,11 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Eq) {
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_NotEq) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), 100.0, true,
-                       100.0, true, /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& negated = expected.add<irs::Exclusion>();
+  AddGeoDistanceFilter(negated, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+                       100.0, true);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') != 100.0",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2827,10 +2775,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_NotEq) {
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_Lt) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), std::nullopt,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
                        false, 100.0, false);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2839,10 +2787,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Lt) {
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_Le) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), std::nullopt,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
                        false, 100.0, true);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') <= 100.0",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2851,10 +2799,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Le) {
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_Gt) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), 100.0, false,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, false,
                        std::nullopt, false);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') > 100.0",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2863,10 +2811,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Gt) {
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_Ge) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        std::nullopt, false);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') >= 100.0",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2875,10 +2823,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Ge) {
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_GeometryField) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::GEOMETRY(), .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddGeoDistanceFilter(expected_b, 1, GeoPointFromDegrees(20, 10), std::nullopt,
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
                        false, 500.0, false);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 500.0",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2888,8 +2836,8 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_NonConstantDistance) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"},
     {.id = 2, .type = duckdb::LogicalType::DOUBLE, .name = "d"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < d",
                columns, false, GeoJsonAnalyzerProvider);
@@ -2898,8 +2846,8 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_NonConstantDistance) {
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_WrongAnalyzer) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
                columns, false, SegmentationAnalyzerProvider);
@@ -2908,10 +2856,10 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_WrongAnalyzer) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLevenshtein) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2).boost(2.5f);
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2).boost(2.5f);
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_levenshtein('test', 2)::boost(2.5)",
     columns, true);
 }
@@ -2919,9 +2867,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLevenshtein) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNgram) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNgramSimilarityFilter(expected_b, 1, {"fo", "oo"}).boost(2.5f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"fo", "oo"}).boost(2.5f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_ngram('foo')::boost(2.5)",
                columns, true, NgramAnalyzerProvider);
 }
@@ -2929,9 +2877,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNgram) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLike) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "foo%").boost(3.0f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddPrefixFilter(expected, 1, "foo").boost(3.0f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ (ts_like('foo%'))::boost(3.0)",
                columns, true);
 }
@@ -2939,11 +2887,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLike) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastRange) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::nullopt, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"foo"}, false)
     .boost(1.5f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_lt('foo')::boost(1.5)", columns,
                true);
 }
@@ -2957,35 +2905,34 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlComparison) {
   // (b > 50)::boost(2.0) -- numeric range gets boost 2.0.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 50, false, std::nullopt, false)
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 50, false, std::nullopt, false)
     .boost(2.0f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE (b > 50)::boost(2.0)", columns, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE (b > 50)::boost(2.0)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_SqlEquality) {
   // (b = 'foo')::boost(0.5) -- term filter gets boost 0.5.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"})
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
     .boost(0.5f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE (b = 'foo')::boost(0.5)", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE (b = 'foo')::boost(0.5)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_SqlBetween) {
   // (b BETWEEN 1 AND 10)::boost(2.0) -- BETWEEN's And group gets boost 2.0.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& group = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& group = expected.add<irs::And>();
   group.boost(2.0f);
   AddRangeFilter<int32_t>(group, 1, 1, true, std::nullopt, false);
   AddRangeFilter<int32_t>(group, 1, std::nullopt, false, 10, true);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (b BETWEEN 1 AND 10)::boost(2.0)",
                columns, true);
 }
@@ -2994,13 +2941,12 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlIn) {
   // (a IN ('x','y'))::boost(2.0) -- ByTerms gets boost 2.0.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"x"}, std::string_view{"y"}})
+    expected, 1, {std::string_view{"x"}, std::string_view{"y"}})
     .boost(2.0f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE (a IN ('x','y'))::boost(2.0)", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE (a IN ('x','y'))::boost(2.0)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_SqlLike) {
@@ -3008,9 +2954,9 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlLike) {
   // path; the wildcard pattern is preserved as-is.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "col"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo_").boost(2.0f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo_").boost(2.0f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (col LIKE '%foo_')::boost(2.0)",
                columns, true);
 }
@@ -3022,9 +2968,9 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlLikePrefix) {
   // scan).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "col"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPrefixFilter(expected_b, 1, std::string_view{"pre"}).boost(2.0f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddPrefixFilter(expected, 1, std::string_view{"pre"}).boost(2.0f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (col LIKE 'pre%')::boost(2.0)", columns,
                true);
 }
@@ -3034,10 +2980,10 @@ TEST_F(SearchFilterBuilderTest, test_SqlPrefixUnboosted) {
   // `prefix(col, 'pre')` and emit irs::ByPrefix directly.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "col"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPrefixFilter(expected_b, 1, std::string_view{"pre"});
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE col LIKE 'pre%'",
-               columns, true);
+  irs::And expected;
+  AddPrefixFilter(expected, 1, std::string_view{"pre"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE col LIKE 'pre%'", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_SqlEqualityInOr) {
@@ -3046,12 +2992,12 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlEqualityInOr) {
   // dispatch and onto the per-leg ByTerm filter.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "sku"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"alpha-1"});
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"beta-1"})
     .boost(1000.0f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE sku = 'alpha-1' OR (sku = "
                "'beta-1')::boost(1000.0)",
                columns, true);
@@ -3062,11 +3008,11 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlPrefixInOr) {
   // an OR group -- verifies boost propagates onto the ByPrefix leg.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "sku"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
   AddPrefixFilter(or_group, 1, std::string_view{"alpha-"});
   AddPrefixFilter(or_group, 1, std::string_view{"beta-"}).boost(1000.0f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE sku LIKE 'alpha-%' OR (sku LIKE "
                "'beta-%')::boost(1000.0)",
                columns, true);
@@ -3077,11 +3023,11 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlAndCombined) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"q"});
-  AddRangeFilter<int32_t>(expected_b, 2, 50, false, std::nullopt, false)
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"q"});
+  AddRangeFilter<int32_t>(expected, 2, 50, false, std::nullopt, false)
     .boost(2.0f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE a @@ 'q' AND (b > 50)::boost(2.0)",
                columns, true);
 }
@@ -3093,12 +3039,11 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlNegated) {
   // (with boost still applied).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, std::nullopt, false, 50, true)
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 50, true)
     .boost(2.0f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT (b > 50)::boost(2.0)", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (b > 50)::boost(2.0)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_SqlUnclaimable_BindError) {
@@ -3131,67 +3076,61 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlUnclaimable_NonConstRhs) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialFalse) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  sdb::connector::AddFilter<irs::Empty>(expected_b);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ false",
-               columns, true);
+  irs::And expected;
+  expected.add<irs::Empty>();
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ false", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialTrue) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  sdb::connector::AddFilter<irs::All>(expected_b);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ true",
-               columns, true);
+  irs::And expected;
+  expected.add<irs::All>();
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ true", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialOrAll) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"x"});
-  sdb::connector::AddFilter<irs::All>(or_group);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY || true)", columns,
-               true);
+  or_group.add<irs::All>();
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY || true)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialOrFalse) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"x"});
-  sdb::connector::AddFilter<irs::Empty>(or_group);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY || false)", columns,
-               true);
+  or_group.add<irs::Empty>();
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY || false)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialAndFalse) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_group = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_group, 1, std::string_view{"x"});
-  sdb::connector::AddFilter<irs::Empty>(and_group);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY && false)", columns,
-               true);
+  and_group.add<irs::Empty>();
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY && false)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialAndTrue) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_group = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_group, 1, std::string_view{"x"});
-  sdb::connector::AddFilter<irs::All>(and_group);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY && true)", columns,
-               true);
+  and_group.add<irs::All>();
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY && true)",
+               columns, true);
 }
 
 // Bool on the LHS of a binary combinator -- commutative shape.
@@ -3199,25 +3138,23 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialAndTrue) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialBoolOrTsquery) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(expected_b);
-  sdb::connector::AddFilter<irs::All>(or_group);
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
+  or_group.add<irs::All>();
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"x"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ (true || 'x'::TSQUERY)", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (true || 'x'::TSQUERY)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialBoolAndTsquery) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_group = sdb::connector::AddFilter<irs::And>(expected_b);
-  sdb::connector::AddFilter<irs::Empty>(and_group);
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
+  and_group.add<irs::Empty>();
   AddTermFilter<std::string_view>(and_group, 1, std::string_view{"x"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ (false && 'x'::TSQUERY)", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (false && 'x'::TSQUERY)",
+               columns, true);
 }
 
 // Nested compounds with bool legs.
@@ -3227,14 +3164,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialOrAndCompound) {
   // outer And combines that with another term.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_group = sdb::connector::AddFilter<irs::And>(expected_b);
-  auto& inner_or = sdb::connector::AddFilter<irs::Or>(and_group);
-  sdb::connector::AddFilter<irs::All>(inner_or);
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
+  auto& inner_or = and_group.add<irs::Or>();
+  inner_or.add<irs::All>();
   AddTermFilter<std::string_view>(inner_or, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(and_group, 1, std::string_view{"y"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ((true || 'x'::TSQUERY) && 'y'::TSQUERY)",
     columns, true);
 }
@@ -3244,11 +3181,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialBothBoolsOr) {
   // (DuckDB doesn't pre-fold this because the operator is our stub.)
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(expected_b);
-  sdb::connector::AddFilter<irs::All>(or_group);
-  sdb::connector::AddFilter<irs::Empty>(or_group);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
+  or_group.add<irs::All>();
+  or_group.add<irs::Empty>();
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ (true::TSQUERY || false::TSQUERY)",
                columns, true);
 }
@@ -3259,11 +3196,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialBothBoolsOr) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundMustOnly) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"y"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_compound(['x'::TSQUERY, 'y'::TSQUERY], NULL, NULL)",
                columns, true);
@@ -3273,10 +3210,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundMustSingleClause) {
   // Single TSQUERY without list wrapping.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_compound('x'::TSQUERY, NULL, NULL)",
                columns, true);
@@ -3285,11 +3222,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundMustSingleClause) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundMustNotOnly) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
-  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"},
-                                  /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  auto& not_filter = and_filter.add<irs::Exclusion>();
+  AddTermFilter<std::string_view>(not_filter, 1, std::string_view{"x"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_compound(NULL, 'x'::TSQUERY, NULL)",
                columns, true);
@@ -3298,12 +3235,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundMustNotOnly) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundShouldOnly) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(and_filter);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  auto& or_filter = and_filter.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"y"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_compound(NULL, NULL, ['x'::TSQUERY, 'y'::TSQUERY])",
                columns, true);
@@ -3312,14 +3249,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundShouldOnly) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundShouldMin2) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(and_filter);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  auto& or_filter = and_filter.add<irs::Or>();
   or_filter.min_match_count(2);
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"a"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"b"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"c"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_compound(NULL, NULL, "
                "['a'::TSQUERY, 'b'::TSQUERY, 'c'::TSQUERY], 2)",
@@ -3329,8 +3266,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundShouldMin2) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundShouldMinOutOfRange) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_compound(NULL, NULL, ['a'::TSQUERY, 'b'::TSQUERY], 5)",
                columns, false, IdentityAnalyzerProvider,
@@ -3340,8 +3277,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundShouldMinOutOfRange) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundShouldMinNoShould) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_compound('x'::TSQUERY, NULL, NULL, 2)",
                columns, false, IdentityAnalyzerProvider,
@@ -3353,9 +3290,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundAllEmpty) {
   // SQL NULL semantics of `b @@ NULL` -- no error, just zero rows.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  sdb::connector::AddFilter<irs::Empty>(expected_b);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  expected.add<irs::Empty>();
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_compound(NULL, NULL, NULL)",
                columns, true);
 }
@@ -3364,16 +3301,16 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundFull) {
   // All three buckets populated: must=[x, y], must_not=z, should=[a, b].
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"y"});
-  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"z"},
-                                  /*negated=*/true);
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(and_filter);
+  auto& not_filter = and_filter.add<irs::Exclusion>();
+  AddTermFilter<std::string_view>(not_filter, 1, std::string_view{"z"});
+  auto& or_filter = and_filter.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"a"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"b"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_compound("
                "['x'::TSQUERY, 'y'::TSQUERY], "
                "'z'::TSQUERY, "
@@ -3385,11 +3322,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundCommutative) {
   // ts_compound(...) on the LHS of @@.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE ts_compound('x'::TSQUERY, NULL, NULL) @@ b",
     columns, true);
 }
@@ -3398,12 +3335,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundBoostCast) {
   // ts_compound(...)::boost(K) puts boost K on the top And.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   and_filter.boost(2.5f);
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"y"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_compound("
                "['x'::TSQUERY, 'y'::TSQUERY], NULL, NULL)::boost(2.5)",
                columns, true);
@@ -3415,14 +3352,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundTokenizeCast) {
   // part.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(and_filter);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  auto& phrase = and_filter.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ "
     "ts_compound(ts_phrase('quick fox'), NULL, NULL)::tokenize('keyword')",
     columns, true, SegmentationAnalyzerProvider);
@@ -3434,16 +3371,17 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundPerClauseTokenize) {
   // must_not = ts_phrase('z') -> uses the column analyzer (segmentation).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   // must clause -- identity-tokenized phrase.
-  auto& phrase_must = sdb::connector::AddFilter<irs::ByPhrase>(and_filter);
-  *phrase_must.mutable_field() = MakeFieldName<std::string_view>(1);
+  auto& phrase_must = and_filter.add<irs::ByPhrase>();
+  *phrase_must.mutable_field_id() = ExpectedFieldId(1);
   phrase_must.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
   // must_not clause -- segmentation analyzer.
-  AddPhraseFilter(and_filter, 1, {"z"}, /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  auto& not_filter = and_filter.add<irs::Exclusion>();
+  AddPhraseFilter(not_filter, 1, {"z"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_compound("
                "ts_phrase('quick fox')::tokenize('keyword'), "
                "ts_phrase('z'), NULL)",
@@ -3456,21 +3394,21 @@ TEST_F(SearchFilterBuilderTest,
   // constructor), should = ['x', 'y'] (bare-string list auto-lifted).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   // must: Or { ts_phrase('a'), term('b') }.
-  auto& or_must = sdb::connector::AddFilter<irs::Or>(and_filter);
+  auto& or_must = and_filter.add<irs::Or>();
   AddPhraseFilter(or_must, 1, {"a"});
   AddTermFilter<std::string_view>(or_must, 1, std::string_view{"b"});
   // must_not: ByRange (string lower=open, upper=z exclusive).
-  AddRangeFilter<std::string_view>(and_filter, 1, std::nullopt, false,
-                                   std::string_view{"z"}, false,
-                                   /*negated=*/true);
+  auto& not_filter = and_filter.add<irs::Exclusion>();
+  AddRangeFilter<std::string_view>(not_filter, 1, std::nullopt, false,
+                                   std::string_view{"z"}, false);
   // should: Or { term('x'), term('y') }.
-  auto& or_should = sdb::connector::AddFilter<irs::Or>(and_filter);
+  auto& or_should = and_filter.add<irs::Or>();
   AddTermFilter<std::string_view>(or_should, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(or_should, 1, std::string_view{"y"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_compound("
                "ts_phrase('a') || 'b', ts_lt('z'), ['x', 'y'])",
                columns, true, SegmentationAnalyzerProvider);
@@ -3481,12 +3419,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundWithCaretBoost) {
   // returns TSQUERY (not TOK) so `[expr ^ K, expr]` is LIST(TSQUERY).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"})
     .boost(2.0f);
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"y"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_compound("
                "['x'::TSQUERY ^ 2.0, 'y'::TSQUERY], NULL, NULL)",
                columns, true);
@@ -3497,14 +3435,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundNested) {
   // outer must = ts_compound(must='a', must_not=NULL, should='b')
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& outer_and = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& outer_and = expected.add<irs::And>();
   // outer's must: inner compound.
-  auto& inner_and = sdb::connector::AddFilter<irs::And>(outer_and);
+  auto& inner_and = outer_and.add<irs::And>();
   AddTermFilter<std::string_view>(inner_and, 1, std::string_view{"a"});
-  auto& inner_or = sdb::connector::AddFilter<irs::Or>(inner_and);
+  auto& inner_or = inner_and.add<irs::Or>();
   AddTermFilter<std::string_view>(inner_or, 1, std::string_view{"b"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_compound("
                "ts_compound('a'::TSQUERY, NULL, 'b'::TSQUERY), "
                "NULL, NULL)",
@@ -3533,9 +3471,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundNested) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Phrase) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"});
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_phrase('quick brown fox')",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -3544,20 +3482,19 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BareStringIsTerm) {
   // v1: bare string is a raw ByTerm (no tokenisation yet).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"quick"});
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ 'quick'",
-               columns, true);
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'quick'", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_OrOfPhrases) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddPhraseFilter(or_filter, 1, {"quick", "brown"});
   AddPhraseFilter(or_filter, 1, {"lazy", "dog"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "(ts_phrase('quick brown') || ts_phrase('lazy dog'))",
                columns, true, SegmentationAnalyzerProvider);
@@ -3566,11 +3503,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_OrOfPhrases) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AndOfPhrases) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddPhraseFilter(and_filter, 1, {"quick", "brown"});
   AddPhraseFilter(and_filter, 1, {"lazy", "dog"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "(ts_phrase('quick brown') && ts_phrase('lazy dog'))",
                columns, true, SegmentationAnalyzerProvider);
@@ -3579,46 +3516,45 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AndOfPhrases) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Not) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& inner = sdb::connector::Negate<irs::ByTerm>(expected_b);
-  *inner.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& not_group = expected.add<irs::Exclusion>();
+  auto& inner = not_group.exclude<irs::ByTerm>();
+  *inner.mutable_field_id() = ExpectedFieldId(1);
   irs::StringTokenizer stream;
   const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
   stream.reset(std::string_view{"spam"});
   stream.next();
   inner.mutable_options()->term.assign(token->value);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ !!'spam'",
-               columns, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ !!'spam'", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostOperator) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"quick"})
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick"})
     .boost(2.0f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ 'quick'::TSQUERY ^ 2.0", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'quick'::TSQUERY ^ 2.0",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsLiteral) {
   // `'quick' @@ b` -- column is on RHS. Same filter tree as `b @@ 'quick'`.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"quick"});
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE 'quick' @@ b",
-               columns, true);
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE 'quick' @@ b", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsPhrase) {
   // ts_phrase(...) @@ b -- mirrors test_TSQueryMatch_Phrase.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"});
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ts_phrase('quick brown fox') @@ b",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -3627,11 +3563,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsOr) {
   // (PHRASE || PHRASE) @@ b -- mirrors test_TSQueryMatch_OrOfPhrases.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddPhraseFilter(or_filter, 1, {"quick", "brown"});
   AddPhraseFilter(or_filter, 1, {"lazy", "dog"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE "
                "(ts_phrase('quick brown') || ts_phrase('lazy dog')) @@ b",
                columns, true, SegmentationAnalyzerProvider);
@@ -3641,11 +3577,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsAnd) {
   // (PHRASE && PHRASE) @@ b -- mirrors test_TSQueryMatch_AndOfPhrases.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddPhraseFilter(and_filter, 1, {"quick", "brown"});
   AddPhraseFilter(and_filter, 1, {"lazy", "dog"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE "
                "(ts_phrase('quick brown') && ts_phrase('lazy dog')) @@ b",
                columns, true, SegmentationAnalyzerProvider);
@@ -3655,11 +3591,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsAnyOf) {
   // ts_any([..::TSQUERY]) @@ b -- list form on LHS, column on RHS.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"a"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"b"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE "
                "ts_any(['a'::TSQUERY, 'b'::TSQUERY]) @@ b",
                columns, true);
@@ -3669,13 +3605,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsAnyOfList) {
   // ts_any([list]) @@ b -- bare-string list form on LHS.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"a"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"b"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE ts_any(['a', 'b']) @@ b", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE ts_any(['a', 'b']) @@ b",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsPhraseSeq) {
@@ -3684,51 +3619,49 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsPhraseSeq) {
   // is required because ## emits a phrase that needs Pos+Freq features.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"a"});
   phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"b"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE ('a' ## 1 ## 'b') @@ b", columns, true,
-               SegmentationAnalyzerProvider);
+  AssertFilter(expected, "SELECT * FROM foo WHERE ('a' ## 1 ## 'b') @@ b",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsBoost) {
   // (PHRASE ^ 2.0) @@ b -- mirrors test_TSQueryMatch_BoostOperator.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"quick"})
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick"})
     .boost(2.0f);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE 'quick'::TSQUERY ^ 2.0 @@ b", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE 'quick'::TSQUERY ^ 2.0 @@ b",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsLike) {
   // ts_like(pattern) @@ b -- mirrors test_TSQueryMatch_LikeWildcard.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, std::string_view{"quic%"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE ts_like('quic%') @@ b", columns, true);
+  irs::And expected;
+  AddPrefixFilter(expected, 1, std::string_view{"quic"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE ts_like('quic%') @@ b",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsToTsquery) {
   // to_tsquery(...) @@ b -- mirrors test_TSQueryMatch_ToTsqueryAnd.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  std::vector<irs::Filter::ptr> required;
-  required.emplace_back(MakeTermPtr(1, std::string_view{"quick"}));
-  required.emplace_back(MakeTermPtr(1, std::string_view{"brown"}));
-  expected_b.AddInclude(std::make_unique<irs::MixedBooleanFilter>(
-    std::move(required), std::vector<irs::Filter::ptr>{}));
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& mixed = expected.add<irs::MixedBooleanFilter>();
+  AddTermFilter<std::string_view>(mixed.GetRequired(), 1,
+                                  std::string_view{"quick"});
+  AddTermFilter<std::string_view>(mixed.GetRequired(), 1,
+                                  std::string_view{"brown"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE to_tsquery('quick AND brown') @@ b",
                columns, true);
 }
@@ -3738,9 +3671,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsTokenizerCast) {
   // test_TSQueryMatch_TokenizerCastIdentity.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"quick fox"});
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE 'quick fox'::tokenize('keyword') @@ b",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -3750,48 +3683,46 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeAmbiguousColumns) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "c"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ c", columns,
-               false, IdentityAnalyzerProvider,
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ c", columns, false,
+               IdentityAnalyzerProvider,
                "@@ has column references on both sides");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LikeWildcard) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, std::string_view{"quic%"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ts_like('quic%')", columns, true);
+  irs::And expected;
+  AddPrefixFilter(expected, 1, std::string_view{"quic"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_like('quic%')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Prefix) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPrefixFilter(expected_b, 1, std::string_view{"qu"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ts_starts_with('qu')", columns,
-               true);
+  irs::And expected;
+  AddPrefixFilter(expected, 1, std::string_view{"qu"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_starts_with('qu')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Regexp) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRegexpFilter(expected_b, 1, std::string_view{"qu.*ck"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ts_regexp('qu.*ck')", columns,
-               true);
+  irs::And expected;
+  AddRegexpFilter(expected, 1, std::string_view{"qu.*ck"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_regexp('qu.*ck')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpPerlExplicit) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRegexpFilter(expected_b, 1, std::string_view{"\\d+"},
+  irs::And expected;
+  AddRegexpFilter(expected, 1, std::string_view{"\\d+"},
                   irs::RegexpSyntax::Perl);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_regexp('\\d+', 'perl')",
                columns, true);
 }
@@ -3799,23 +3730,23 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpPerlExplicit) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpPosix) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRegexpFilter(expected_b, 1, std::string_view{"[[:alpha:]]+"},
+  irs::And expected;
+  AddRegexpFilter(expected, 1, std::string_view{"[[:alpha:]]+"},
                   irs::RegexpSyntax::PosixEre);
   AssertFilter(
-    *expected_b.Build(),
-    "SELECT * FROM foo WHERE b @@ ts_regexp('[[:alpha:]]+', 'posix')", columns,
-    true);
+    expected, "SELECT * FROM foo WHERE b @@ ts_regexp('[[:alpha:]]+', 'posix')",
+    columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpSyntaxCaseInsensitive) {
   // Syntax names are matched case-insensitively.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRegexpFilter(expected_b, 1, std::string_view{"abc"},
-                  irs::RegexpSyntax::PosixEre);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  expected.add(irs::CreateByRegexp(
+    ExpectedFieldId(1),
+    irs::ViewCast<irs::byte_type>(std::string_view{"abc"})));
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_regexp('abc', 'POSIX')",
                columns, true);
 }
@@ -3823,17 +3754,16 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpSyntaxCaseInsensitive) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnknownSyntax) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter(irs::And{},
-               "SELECT * FROM foo WHERE b @@ ts_regexp('abc', 'pcre')", columns,
-               false, IdentityAnalyzerProvider,
+  AssertFilter({}, "SELECT * FROM foo WHERE b @@ ts_regexp('abc', 'pcre')",
+               columns, false, IdentityAnalyzerProvider,
                "ts_regexp syntax must be one of");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpNonVarcharColumn) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  AssertFilter(irs::And{}, "SELECT * FROM foo WHERE b @@ ts_regexp('abc')",
-               columns, false, IdentityAnalyzerProvider,
+  AssertFilter({}, "SELECT * FROM foo WHERE b @@ ts_regexp('abc')", columns,
+               false, IdentityAnalyzerProvider,
                "ts_regexp field is not VARCHAR");
 }
 
@@ -3841,22 +3771,20 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnderNot) {
   // Negated regexp: NOT ts_regexp('foo.*').
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& re = sdb::connector::Negate<irs::ByRegexp>(expected_b);
-  *re.mutable_field() = MakeFieldName<std::string_view>(1);
-  re.mutable_options()->pattern.assign(
-    irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"}));
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ !!ts_regexp('foo.*')", columns,
-               true);
+  irs::And expected;
+  expected.add(irs::Not(irs::CreateByRegexp(
+    ExpectedFieldId(1),
+    irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"}))));
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ !!ts_regexp('foo.*')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Levenshtein) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, std::string_view{"quikc"}, 2, true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, std::string_view{"quikc"}, 2, true);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_levenshtein('quikc', 2)",
                columns, true);
 }
@@ -3864,10 +3792,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Levenshtein) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeVarchar) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::string_view{"a"}, true,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"a"}, true,
                                    std::string_view{"f"}, false);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_between('a', 'f', true, false)",
                columns, true);
 }
@@ -3875,23 +3803,22 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeVarchar) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeVarcharOpenLeft) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::nullopt, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"m"}, true);
   AssertFilter(
-    *expected_b.Build(),
-    "SELECT * FROM foo WHERE b @@ ts_between(NULL, 'm', false, true)", columns,
-    true);
+    expected, "SELECT * FROM foo WHERE b @@ ts_between(NULL, 'm', false, true)",
+    columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeVarcharOpenRight) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<std::string_view>(expected_b, 1, std::string_view{"a"}, false,
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"a"}, false,
                                    std::nullopt, false);
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_between('a', NULL, false, false)", columns,
     true);
 }
@@ -3899,9 +3826,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeVarcharOpenRight) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeInt) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 10, true, 100, false);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 10, true, 100, false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_between(10, 100, true, false)",
                columns, true);
 }
@@ -3909,9 +3836,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeInt) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBool) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& range = sdb::connector::AddFilter<irs::ByRange>(expected_b);
-  *range.mutable_field() = MakeFieldName<bool>(1);
+  irs::And expected;
+  auto& range = expected.add<irs::ByRange>();
+  *range.mutable_field_id() = ExpectedFieldId(1);
   auto& opts = range.mutable_options()->range;
   opts.min.assign(
     irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(false)));
@@ -3920,7 +3847,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBool) {
     irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(true)));
   opts.max_type = irs::BoundType::Inclusive;
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_between(false, true, true, true)", columns,
     true);
 }
@@ -3928,10 +3855,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBool) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBothNullMatchesAll) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  sdb::connector::AddFilter<irs::All>(expected_b);
+  irs::And expected;
+  expected.add<irs::All>();
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_between(NULL, NULL, false, false)",
     columns, true);
 }
@@ -3941,9 +3868,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhrasePart) {
   // emits a ByRangeOptions slot at the phrase position.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"a"});
   auto& rng_opts =
@@ -3954,7 +3881,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhrasePart) {
   rng_opts.range.max.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{"d"}));
   rng_opts.range.max_type = irs::BoundType::Inclusive;
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_between('b', 'd', true, true))",
                columns, true, SegmentationAnalyzerProvider);
@@ -3968,16 +3895,15 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhrasePart) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedVarcharInt) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter(irs::And{},
-               "SELECT * FROM foo WHERE b @@ ts_between('a', 5, true, true)",
-               columns, false, IdentityAnalyzerProvider,
-               "ts_between bounds have mismatched types");
+  AssertFilter(
+    {}, "SELECT * FROM foo WHERE b @@ ts_between('a', 5, true, true)", columns,
+    false, IdentityAnalyzerProvider, "ts_between bounds have mismatched types");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedIntVarchar) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  AssertFilter(irs::And{},
+  AssertFilter({},
                "SELECT * FROM foo WHERE b @@ ts_between(1, 'foo', true, true)",
                columns, false, IdentityAnalyzerProvider,
                "ts_between bounds have mismatched types");
@@ -3986,7 +3912,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedIntVarchar) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedBoolInt) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
-  AssertFilter(irs::And{},
+  AssertFilter({},
                "SELECT * FROM foo WHERE b @@ ts_between(false, 1, true, true)",
                columns, false, IdentityAnalyzerProvider,
                "ts_between bounds have mismatched types");
@@ -3995,7 +3921,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedBoolInt) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedVarcharBool) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter(irs::And{},
+  AssertFilter({},
                "SELECT * FROM foo WHERE b @@ ts_between('a', true, true, true)",
                columns, false, IdentityAnalyzerProvider,
                "ts_between bounds have mismatched types");
@@ -4007,7 +3933,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeIntBigintMismatch) {
   // bounds the same type.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  AssertFilter(irs::And{},
+  AssertFilter({},
                "SELECT * FROM foo WHERE b @@ "
                "ts_between(1::INTEGER, 100::BIGINT, true, true)",
                columns, false, IdentityAnalyzerProvider,
@@ -4021,7 +3947,7 @@ TEST_F(SearchFilterBuilderTest,
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
   AssertFilter(
-    irs::And{}, "SELECT * FROM foo WHERE b @@ ts_between('a', 'z', true, true)",
+    {}, "SELECT * FROM foo WHERE b @@ ts_between('a', 'z', true, true)",
     columns, false, IdentityAnalyzerProvider, "incompatible with column type");
 }
 
@@ -4031,8 +3957,8 @@ TEST_F(SearchFilterBuilderTest,
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   AssertFilter(
-    irs::And{}, "SELECT * FROM foo WHERE b @@ ts_between(1, 100, true, true)",
-    columns, false, IdentityAnalyzerProvider, "incompatible with column type");
+    {}, "SELECT * FROM foo WHERE b @@ ts_between(1, 100, true, true)", columns,
+    false, IdentityAnalyzerProvider, "incompatible with column type");
 }
 
 TEST_F(SearchFilterBuilderTest,
@@ -4042,7 +3968,7 @@ TEST_F(SearchFilterBuilderTest,
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   AssertFilter(
-    irs::And{}, "SELECT * FROM foo WHERE b @@ ts_between(NULL, 5, false, true)",
+    {}, "SELECT * FROM foo WHERE b @@ ts_between(NULL, 5, false, true)",
     columns, false, IdentityAnalyzerProvider, "incompatible with column type");
 }
 
@@ -4052,7 +3978,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeNonIdentityVarchar) {
   // line up with them).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter(irs::And{},
+  AssertFilter({},
                "SELECT * FROM foo WHERE b @@ ts_between('a', 'm', true, true)",
                columns, false, SegmentationAnalyzerProvider,
                "requires keyword-analyzed column");
@@ -4063,7 +3989,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhraseNumericRejected) {
   // live on the analyzed text field). Numeric bounds throw.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter(irs::And{},
+  AssertFilter({},
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_between(1, 5, true, true))",
                columns, false, SegmentationAnalyzerProvider,
@@ -4073,7 +3999,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhraseNumericRejected) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhraseBoolRejected) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter(irs::And{},
+  AssertFilter({},
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_between(false, true, true, true))",
                columns, false, SegmentationAnalyzerProvider,
@@ -4084,9 +4010,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeIntExclusiveBoth) {
   // Exclusive bounds on numeric: a > 1 AND a < 5.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 1, false, 5, false);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 1, false, 5, false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_between(1, 5, false, false)",
                columns, true);
 }
@@ -4095,9 +4021,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeIntInclusiveExclusive) {
   // Mixed inclusivity: a >= 1 AND a < 5.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int32_t>(expected_b, 1, 1, true, 5, false);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 1, true, 5, false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_between(1, 5, true, false)",
                columns, true);
 }
@@ -4106,9 +4032,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBigint) {
   // BIGINT column accepts BIGINT bounds.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BIGINT, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<int64_t>(expected_b, 1, int64_t{10}, true, int64_t{100}, true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddRangeFilter<int64_t>(expected, 1, int64_t{10}, true, int64_t{100}, true);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_between(10::BIGINT, 100::BIGINT, true, true)",
                columns, true);
@@ -4118,9 +4044,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeDouble) {
   // DOUBLE column accepts DOUBLE bounds.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::DOUBLE, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRangeFilter<double>(expected_b, 1, 1.5, true, 9.5, false);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddRangeFilter<double>(expected, 1, 1.5, true, 9.5, false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_between(1.5, 9.5, true, false)",
                columns, true);
 }
@@ -4129,15 +4055,15 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBoolOpenRight) {
   // Open-right BOOLEAN range: just `false` (or unbounded above).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& range = sdb::connector::AddFilter<irs::ByRange>(expected_b);
-  *range.mutable_field() = MakeFieldName<bool>(1);
+  irs::And expected;
+  auto& range = expected.add<irs::ByRange>();
+  *range.mutable_field_id() = ExpectedFieldId(1);
   auto& opts = range.mutable_options()->range;
   opts.min.assign(
     irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(false)));
   opts.min_type = irs::BoundType::Inclusive;
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_between(false, NULL, true, false)",
     columns, true);
 }
@@ -4146,11 +4072,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTsqueryList) {
   // ts_any([..::TSQUERY]) -- list of explicitly-typed TSQUERYs.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"quick"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"fox"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_any(['quick'::TSQUERY, "
                "'fox'::TSQUERY])",
                columns, true);
@@ -4160,11 +4086,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfTsqueryList) {
   // ts_all([..::TSQUERY]) -- list of explicitly-typed TSQUERYs.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"quick"});
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"brown"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_all(['quick'::TSQUERY, "
                "'brown'::TSQUERY])",
                columns, true);
@@ -4176,11 +4102,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfBareStringList) {
   // scalar cast.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"quick"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"fox"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_any(['quick', 'fox'])", columns,
                true);
 }
@@ -4191,11 +4117,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTsqueryArray) {
   // branch of the filter-builder dispatch.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"quick"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"fox"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_any(CAST(['quick'::TSQUERY, 'fox'::TSQUERY] AS TSQUERY[2]))",
                columns, true);
@@ -4205,12 +4131,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfTsqueryArray) {
   // ts_all(CAST(... AS TSQUERY[N])) -- ARRAY input on the AND side.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"quick"});
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"brown"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ "
     "ts_all(CAST(['quick'::TSQUERY, 'brown'::TSQUERY] AS TSQUERY[2]))",
     columns, true);
@@ -4220,11 +4146,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfBareStringList) {
   // ts_all([bare strings]) via VARCHAR[] -> TSQUERY[] list cast.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"quick"});
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"brown"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_all(['quick', 'brown'])",
                columns, true);
 }
@@ -4234,13 +4160,12 @@ TEST_F(SearchFilterBuilderTest,
   // ts_any([bare strings]) @@ b -- column on RHS.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"a"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"b"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE ts_any(['a', 'b']) @@ b", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE ts_any(['a', 'b']) @@ b",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest,
@@ -4248,25 +4173,24 @@ TEST_F(SearchFilterBuilderTest,
   // ts_all([bare strings]) @@ b.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"a"});
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"b"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE ts_all(['a', 'b']) @@ b", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE ts_all(['a', 'b']) @@ b",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfList) {
   // ts_any([list]) -- explicit list form. Equivalent to variadic.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"a"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"b"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"c"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_any(['a'::TSQUERY, 'b'::TSQUERY, 'c'::TSQUERY])",
                columns, true);
@@ -4277,13 +4201,13 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfListMinMatch) {
   // alternatives must match. Encoded via irs::Or.min_match_count.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   or_filter.min_match_count(2);
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"a"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"b"});
   AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"c"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_any(['a', 'b', 'c'], 2)",
                columns, true);
@@ -4293,11 +4217,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfList) {
   // ts_all([list]) -- explicit list form, no min_match.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_filter = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
   AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"y"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_all(['x'::TSQUERY, 'y'::TSQUERY])",
                columns, true);
@@ -4307,20 +4231,18 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfMinExceedsArgs) {
   // min_match exceeds number of args -> bind-time error.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ts_any(['a', 'b'], 5)", columns,
-               false, IdentityAnalyzerProvider, "min_match");
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_any(['a', 'b'], 5)",
+               columns, false, IdentityAnalyzerProvider, "min_match");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfRejectsMinMatchArg) {
   // ALL_OF doesn't accept a min_match argument (no `(list, int)` arm).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ ts_all(['x', 'y'], 1)", columns,
-               false);
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_all(['x', 'y'], 1)",
+               columns, false);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_ToTsqueryTerm) {
@@ -4328,27 +4250,25 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_ToTsqueryTerm) {
   // analyzer keeps the term raw.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  std::vector<irs::Filter::ptr> optional;
-  optional.emplace_back(MakeTermPtr(1, std::string_view{"quick"}));
-  expected_b.AddInclude(std::make_unique<irs::MixedBooleanFilter>(
-    std::vector<irs::Filter::ptr>{}, std::move(optional)));
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE b @@ to_tsquery('quick')", columns,
-               true);
+  irs::And expected;
+  auto& mixed = expected.add<irs::MixedBooleanFilter>();
+  AddTermFilter<std::string_view>(mixed.GetOptional(), 1,
+                                  std::string_view{"quick"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ to_tsquery('quick')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_ToTsqueryAnd) {
   // to_tsquery('quick AND brown') -- conjunction via Lucene's AND.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  std::vector<irs::Filter::ptr> required;
-  required.emplace_back(MakeTermPtr(1, std::string_view{"quick"}));
-  required.emplace_back(MakeTermPtr(1, std::string_view{"brown"}));
-  expected_b.AddInclude(std::make_unique<irs::MixedBooleanFilter>(
-    std::move(required), std::vector<irs::Filter::ptr>{}));
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& mixed = expected.add<irs::MixedBooleanFilter>();
+  AddTermFilter<std::string_view>(mixed.GetRequired(), 1,
+                                  std::string_view{"quick"});
+  AddTermFilter<std::string_view>(mixed.GetRequired(), 1,
+                                  std::string_view{"brown"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ to_tsquery('quick AND brown')",
                columns, true);
 }
@@ -4357,13 +4277,13 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_ToTsqueryOr) {
   // to_tsquery('quick OR brown') -- disjunction via Lucene's OR.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  std::vector<irs::Filter::ptr> optional;
-  optional.emplace_back(MakeTermPtr(1, std::string_view{"quick"}));
-  optional.emplace_back(MakeTermPtr(1, std::string_view{"brown"}));
-  expected_b.AddInclude(std::make_unique<irs::MixedBooleanFilter>(
-    std::vector<irs::Filter::ptr>{}, std::move(optional)));
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& mixed = expected.add<irs::MixedBooleanFilter>();
+  AddTermFilter<std::string_view>(mixed.GetOptional(), 1,
+                                  std::string_view{"quick"});
+  AddTermFilter<std::string_view>(mixed.GetOptional(), 1,
+                                  std::string_view{"brown"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ to_tsquery('quick OR brown')",
                columns, true);
 }
@@ -4372,8 +4292,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_ToTsqueryError) {
   // Bad Lucene syntax surfaces as a bind-time error.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ to_tsquery('AND AND AND')",
                columns, false, IdentityAnalyzerProvider, "to_tsquery");
 }
@@ -4382,9 +4302,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseToTsquery) {
   // phraseto_tsquery shares PHRASE's body.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown"});
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ phraseto_tsquery('quick brown')",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -4393,15 +4313,15 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqExactGap) {
   // 'a' ## 2 ## 'b' -- bare INTEGER gap operand (no FTS_NEAR).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"a"});
   phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"b"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ('a'::TSQUERY ## 2 ## 'b'::TSQUERY)", columns,
     true, SegmentationAnalyzerProvider);
 }
@@ -4410,14 +4330,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqInterval) {
   // 'a' ## [1, 3] ## 'b' -- bare INTEGER[] interval gap.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"a"});
   phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 4).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"b"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## [1, 3] ## 'b'::TSQUERY)",
                columns, true, SegmentationAnalyzerProvider);
@@ -4428,14 +4348,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqIntervalArray) {
   // gap.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"a"});
   phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 4).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"b"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## CAST([1, 3] AS INTEGER[2]) ## 'b'::TSQUERY)",
                columns, true, SegmentationAnalyzerProvider);
@@ -4446,16 +4366,16 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqAnyOfPart) {
   // ByTermsOptions slot at the phrase position with min_match=1.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"a"});
   auto& terms = phrase.mutable_options()->push_back<irs::ByTermsOptions>(1, 1);
   terms.min_match = 1;
   terms.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"b"}));
   terms.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"c"}));
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_any(['b', 'c']))",
                columns, true, SegmentationAnalyzerProvider);
@@ -4466,16 +4386,16 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqAnyOfPartExplicit1) {
   // and is the only accepted form besides the no-min_match default.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"a"});
   auto& terms = phrase.mutable_options()->push_back<irs::ByTermsOptions>(1, 1);
   terms.min_match = 1;
   terms.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"b"}));
   terms.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"c"}));
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_any(['b', 'c'], 1))",
                columns, true, SegmentationAnalyzerProvider);
@@ -4487,7 +4407,7 @@ TEST_F(SearchFilterBuilderTest,
   // can match only one token, so min_match > 1 is unsatisfiable.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter(irs::And{},
+  AssertFilter({},
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_any(['b', 'c'], 2))",
                columns, false, SegmentationAnalyzerProvider,
@@ -4499,7 +4419,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqAllOfPartRejected) {
   // with min_match > 1: a phrase position holds at most one token).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter(irs::And{},
+  AssertFilter({},
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_all(['b', 'c']))",
                columns, false, SegmentationAnalyzerProvider,
@@ -4511,14 +4431,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TsqueryPhraseFunction) {
   // form of ##.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"hello"});
   phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"world"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "tsquery_phrase(ts_phrase('hello'), ts_phrase('world'), 3)",
                columns, true, SegmentationAnalyzerProvider);
@@ -4545,29 +4465,29 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BareMultiTokenOr) {
   // containing either token.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermsFilter<std::string_view>(expected_b, 1, {"quick", "fox"});
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ 'quick fox'",
-               columns, true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddTermsFilter<std::string_view>(expected, 1, {"quick", "fox"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'quick fox'", columns,
+               true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BareSingleTokenTerm) {
   // Single-token bare string stays as ByTerm (no ByTerms wrapping).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"quick"});
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ 'quick'",
-               columns, true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'quick'", columns, true,
+               SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizeFunction) {
   // ts_tokenize(text) 1-arg is same as bare-string semantics.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermsFilter<std::string_view>(expected_b, 1, {"quick", "fox"});
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddTermsFilter<std::string_view>(expected, 1, {"quick", "fox"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_tokenize('quick fox')", columns,
                true, SegmentationAnalyzerProvider);
 }
@@ -4577,10 +4497,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizeIdentity) {
   // and emits a raw ByTerm -- matches the unsplit input string as-is.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"quick fox"});
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_tokenize('quick fox', 'keyword')", columns,
     true, SegmentationAnalyzerProvider);
 }
@@ -4590,9 +4510,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastIdentity) {
   // to ts_tokenize(text, 'keyword'). Bypasses the column analyzer.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"quick fox"});
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('keyword')",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -4609,16 +4529,16 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastIdentity) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseCastIdentity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   // PHRASE under identity tokeniser: identity emits a single raw token
   // for the whole input string, so the phrase has one part.
   {
-    auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-    *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& phrase = expected.add<irs::ByPhrase>();
+    *phrase.mutable_field_id() = ExpectedFieldId(1);
     phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
       irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_phrase('quick "
                "fox')::tokenize('keyword')",
                columns, true, SegmentationAnalyzerProvider);
@@ -4631,9 +4551,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseCastIdentity) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinCastIdentity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "Quikc", 1);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "Quikc", 1);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_levenshtein('Quikc', 1)::tokenize('keyword')",
                columns, true, SegmentationAnalyzerProvider);
@@ -4644,9 +4564,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNullSugar) {
   // bypass the column analyzer and emit a single raw ByTerm.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"quick fox"});
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize(NULL)",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -4659,8 +4579,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNamedNoCatalog) {
   // a real catalog lives in sqllogic.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('english')",
                columns, false, SegmentationAnalyzerProvider,
                "tokenizer not found in catalog");
@@ -4675,9 +4595,9 @@ TEST_F(SearchFilterBuilderTest,
   // lives in sqllogic.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_tokenize('quick fox', 'english')", columns,
     false, SegmentationAnalyzerProvider, "tokenizer not found in catalog");
 }
@@ -4688,10 +4608,10 @@ TEST_F(SearchFilterBuilderTest,
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListIdentity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
-  AssertFilter(*expected_b.Build(),
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['foo', "
                "'bar'], 'keyword'))",
                columns, true, SegmentationAnalyzerProvider);
@@ -4703,10 +4623,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListIdentity) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeArrayIdentity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
-  AssertFilter(*expected_b.Build(),
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_any(ts_tokenize(['foo', 'bar']::VARCHAR[2], 'keyword'))",
                columns, true, SegmentationAnalyzerProvider);
@@ -4717,10 +4637,10 @@ TEST_F(SearchFilterBuilderTest,
        test_TSQueryMatch_AnyOfTokenizeListIdentitySingle) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"});
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['foo'], 'keyword'))",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -4731,11 +4651,11 @@ TEST_F(SearchFilterBuilderTest,
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListAmbient) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['Foo', 'Bar']))", columns,
     true, SegmentationAnalyzerProvider);
 }
@@ -4745,16 +4665,16 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListAmbient) {
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfTokenizeListIdentity) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_all(ts_tokenize(['foo', "
                "'bar'], 'keyword'))",
                columns, true, SegmentationAnalyzerProvider);
@@ -4768,8 +4688,8 @@ TEST_F(SearchFilterBuilderTest,
        test_TSQueryMatch_AnyOfTokenizeListNamedNoCatalog) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['foo','bar'], "
                "'english'))",
                columns, false, SegmentationAnalyzerProvider,
@@ -4783,10 +4703,10 @@ TEST_F(SearchFilterBuilderTest,
        test_TSQueryMatch_AnyOfTokenizeListIdentityKeepsSpaces) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo bar"});
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo bar"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['foo bar'], 'keyword'))",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -4798,13 +4718,13 @@ TEST_F(SearchFilterBuilderTest,
        test_TSQueryMatch_AnyOfTokenizeListAmbientFlattens) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1,
+    expected, 1,
     {std::string_view{"foo"}, std::string_view{"bar"},
      std::string_view{"baz"}});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['Foo Bar', 'BAZ']))",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -4813,10 +4733,10 @@ TEST_F(SearchFilterBuilderTest,
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListSkipsNulls) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
-  AssertFilter(*expected_b.Build(),
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_any(ts_tokenize(['foo', NULL, 'bar'], 'keyword'))",
                columns, true, SegmentationAnalyzerProvider);
@@ -4829,9 +4749,9 @@ TEST_F(SearchFilterBuilderTest,
        test_TSQueryMatch_AnyOfTokenizeListEmptyTokensYieldsEmpty) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  sdb::connector::AddFilter<irs::Empty>(expected_b);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  expected.add<irs::Empty>();
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['', '   ']))",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -4842,32 +4762,32 @@ TEST_F(SearchFilterBuilderTest,
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListMinMatch) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"baz"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "ts_any(ts_tokenize(['foo','bar','baz'], 'keyword'), 2)",
                columns, true, SegmentationAnalyzerProvider);
 }
 
 // Negation via NOT(b @@ ts_any(ts_tokenize(...))): wraps the resulting
-// ByTerms in irs::Not.
+// ByTerms in irs::Exclusion.
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListWithNot) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}},
-    /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+    not_filter, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT(b @@ "
                "ts_any(ts_tokenize(['foo','bar'], 'keyword')))",
                columns, true, SegmentationAnalyzerProvider);
@@ -4881,8 +4801,8 @@ TEST_F(SearchFilterBuilderTest,
        test_TSQueryMatch_TokenizeListBareRejectedByBinder) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_tokenize(['foo','bar'])",
                columns, false, SegmentationAnalyzerProvider);
 }
@@ -4896,8 +4816,8 @@ TEST_F(SearchFilterBuilderTest,
     {.id = 2,
      .type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
      .name = "tags"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(tags))",
                columns, false, SegmentationAnalyzerProvider, "ts_tokenize");
 }
@@ -4906,10 +4826,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PlainToTsqueryAnd) {
   // plainto_tsquery(text) = tokenise + AND of all tokens (min_match=count).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;  // ALL of 2 tokens
     {
@@ -4923,7 +4843,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PlainToTsqueryAnd) {
       opts.terms.emplace(token->value);
     }
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ plainto_tsquery('quick fox')",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -4934,19 +4854,19 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BareEmptyStopwordsEmpty) {
   // an empty string produces no tokens.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  sdb::connector::AddFilter<irs::Empty>(expected_b);
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b @@ ''", columns,
-               true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  expected.add<irs::Empty>();
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ''", columns, true,
+               SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchSingleWord) {
   // Single bare word -- same as `col @@ 'quick'` via BuildFtsTokens.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"quick"});
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('quick')",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -4957,12 +4877,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchAndOfWords) {
   // which for single-token input emits ByTerm directly.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_group = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_group, 1, std::string_view{"quick"});
   AddTermFilter<std::string_view>(and_group, 1, std::string_view{"brown"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('quick brown')", columns,
     true, SegmentationAnalyzerProvider);
 }
@@ -4971,10 +4891,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchPhrase) {
   // Quoted phrase `"quick brown"` is a ByPhrase.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown"});
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('\"quick brown\"')",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -4983,12 +4903,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchOrChain) {
   // `quick OR fox` -> single group of OR'd atoms.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"quick"});
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('quick OR fox')",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -4998,14 +4918,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchOrPrecedence) {
   // than implicit AND.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_group = sdb::connector::AddFilter<irs::And>(expected_b);
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(and_group);
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
+  auto& or_group = and_group.add<irs::Or>();
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"quick"});
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"fox"});
   AddTermFilter<std::string_view>(and_group, 1, std::string_view{"brown"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('quick OR fox brown')",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -5014,11 +4934,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchNegation) {
   // `quick -spam` -> quick AND NOT spam.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_group = sdb::connector::AddFilter<irs::And>(expected_b);
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
   AddTermFilter<std::string_view>(and_group, 1, std::string_view{"quick"});
-  auto& inner = sdb::connector::Negate<irs::ByTerm>(and_group);
-  *inner.mutable_field() = MakeFieldName<std::string_view>(1);
+  auto& not_group = and_group.add<irs::Exclusion>();
+  auto& inner = not_group.exclude<irs::ByTerm>();
+  *inner.mutable_field_id() = ExpectedFieldId(1);
   {
     irs::StringTokenizer stream;
     const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
@@ -5027,7 +4948,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchNegation) {
     inner.mutable_options()->term.assign(token->value);
   }
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('quick -spam')", columns,
     true, SegmentationAnalyzerProvider);
 }
@@ -5037,13 +4958,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchFullExample) {
   //   AND { OR { ByPhrase[quick, fox], ByTerm(slow) }, NOT ByTerm(spam) }
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& and_group = sdb::connector::AddFilter<irs::And>(expected_b);
-  auto& or_group = sdb::connector::AddFilter<irs::Or>(and_group);
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
+  auto& or_group = and_group.add<irs::Or>();
   AddPhraseFilter(or_group, 1, {"quick", "fox"});
   AddTermFilter<std::string_view>(or_group, 1, std::string_view{"slow"});
-  auto& inner = sdb::connector::Negate<irs::ByTerm>(and_group);
-  *inner.mutable_field() = MakeFieldName<std::string_view>(1);
+  auto& not_group = and_group.add<irs::Exclusion>();
+  auto& inner = not_group.exclude<irs::ByTerm>();
+  *inner.mutable_field_id() = ExpectedFieldId(1);
   {
     irs::StringTokenizer stream;
     const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
@@ -5051,7 +4973,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchFullExample) {
     stream.next();
     inner.mutable_options()->term.assign(token->value);
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "websearch_to_tsquery('\"Quick Fox\" OR slow -spam')",
                columns, true, SegmentationAnalyzerProvider);
@@ -5061,9 +4983,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchEmpty) {
   // Empty input -> Empty filter (no match claim).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  sdb::connector::AddFilter<irs::Empty>(expected_b);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  expected.add<irs::Empty>();
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('')", columns,
                true, SegmentationAnalyzerProvider);
 }
@@ -5077,10 +4999,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchEmpty) {
 TEST_F(SearchFilterBuilderTest, test_PhraseMatches_eq_AtAtTsPhrase) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"});
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE phrase_matches(category, 'quick brown fox')",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -5088,15 +5010,15 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_eq_AtAtTsPhrase) {
 TEST_F(SearchFilterBuilderTest, test_PhraseMatches_WithGap_eq_AtAtTsPhrase) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
   phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE phrase_matches(category, 'quick', 2, 'fox')",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -5104,20 +5026,19 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_WithGap_eq_AtAtTsPhrase) {
 TEST_F(SearchFilterBuilderTest, test_NgramMatches_eq_AtAtTsNgram) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNgramSimilarityFilter(expected_b, 1, {"he", "el", "ll", "lo"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE ngram_matches(b, 'hello')", columns,
-               true, NgramAnalyzerProvider);
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE ngram_matches(b, 'hello')",
+               columns, true, NgramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest,
        test_NgramMatches_WithThreshold_eq_AtAtTsNgram) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNgramSimilarityFilter(expected_b, 1, {"he", "el", "ll", "lo"}, 0.5f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ngram_matches(b, 'hello', 0.5)",
                columns, true, NgramAnalyzerProvider);
 }
@@ -5125,10 +5046,10 @@ TEST_F(SearchFilterBuilderTest,
 TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_eq_AtAtTsLevenshtein) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2, false);
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2, false);
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE levenshtein_matches(b, 'test', 2, false)", columns,
     true);
 }
@@ -5137,11 +5058,11 @@ TEST_F(SearchFilterBuilderTest,
        test_LevenshteinMatches_WithPrefix_eq_AtAtTsLevenshtein) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "roximate", 1,
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "roximate", 1,
                         /*with_transpositions=*/true,
                         /*max_terms=*/1024, /*prefix=*/"app");
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE levenshtein_matches(b, 'roximate', 1, "
                "true, 'app')",
                columns, true);
@@ -5150,16 +5071,16 @@ TEST_F(SearchFilterBuilderTest,
 TEST_F(SearchFilterBuilderTest, test_HasAllTokens_eq_AtAtTsAllTsTokenize) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo', 'Bar'])",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -5167,10 +5088,10 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_eq_AtAtTsAllTsTokenize) {
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_List_eq_AtAtTsAnyTsTokenize) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
-  AssertFilter(*expected_b.Build(),
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_any_tokens(b, ['Foo', 'Bar'])",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -5179,10 +5100,10 @@ TEST_F(SearchFilterBuilderTest,
        test_HasAnyToken_ListWithMinMatch_eq_AtAtTsAnyTsTokenizeMinMatch) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
@@ -5190,7 +5111,7 @@ TEST_F(SearchFilterBuilderTest,
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"baz"}));
   }
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE has_any_tokens(b, ['Foo', 'Bar', 'Baz'], 2)",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -5198,29 +5119,28 @@ TEST_F(SearchFilterBuilderTest,
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Text_eq_AtAtBareString) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE has_any_tokens(b, 'Foo')", columns,
-               true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE has_any_tokens(b, 'Foo')",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest,
        test_HasAnyToken_TextWithMinMatch_eq_AtAtTsAnyListValueTokenize) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   // 'foo bar' tokenises to two tokens through the segmentation
   // analyzer -- both must match (min_match=2).
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_any_tokens(b, 'Foo Bar', 2)",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -5230,9 +5150,9 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_BoostCastWraps) {
   // through the same machinery as direct `@@` results.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"}).boost(2.0f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"}).boost(2.0f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (phrase_matches(category, 'quick "
                "brown fox'))::boost(2.0)",
                columns, true, SegmentationAnalyzerProvider);
@@ -5252,26 +5172,25 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_BoostCastWraps) {
 TEST_F(SearchFilterBuilderTest, test_PhraseMatches_SingleToken) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"foo"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE phrase_matches(b, 'foo')", columns,
-               true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"foo"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE phrase_matches(b, 'foo')",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_PhraseMatches_MultipleGaps) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
   phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"brown"});
   phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE phrase_matches(category, 'quick', 1, "
                "'brown', 2, 'fox')",
                columns, true, SegmentationAnalyzerProvider);
@@ -5280,14 +5199,14 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_MultipleGaps) {
 TEST_F(SearchFilterBuilderTest, test_PhraseMatches_RangeGap) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& phrase = sdb::connector::AddFilter<irs::ByPhrase>(expected_b);
-  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
   phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
   phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE phrase_matches(category, 'quick', "
                "ARRAY[1,2], 'fox')",
                columns, true, SegmentationAnalyzerProvider);
@@ -5296,11 +5215,11 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_RangeGap) {
 TEST_F(SearchFilterBuilderTest, test_PhraseMatches_AndedWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"});
-  AddPhraseFilter(expected_b, 1, {"quick", "lazy", "fox"});
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
+  AddPhraseFilter(expected, 1, {"quick", "lazy", "fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE phrase_matches(category, 'quick brown fox') "
     "AND phrase_matches(category, 'quick lazy fox')",
     columns, true, SegmentationAnalyzerProvider);
@@ -5309,12 +5228,12 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_AndedWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_PhraseMatches_OredWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddPhraseFilter(or_filter, 1, {"quick", "brown", "fox"});
   AddPhraseFilter(or_filter, 1, {"quick", "lazy", "fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE phrase_matches(category, 'quick brown fox') "
     "OR phrase_matches(category, 'quick lazy fox')",
     columns, true, SegmentationAnalyzerProvider);
@@ -5323,10 +5242,11 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_OredWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_PhraseMatches_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"}, /*negated=*/true);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddPhraseFilter(not_filter, 1, {"quick", "brown", "fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE NOT phrase_matches(category, 'quick brown fox')",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -5335,11 +5255,11 @@ TEST_F(SearchFilterBuilderTest, test_PhraseMatches_AndedWithNumericRange) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "n"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown", "fox"});
-  AddRangeFilter<int32_t>(expected_b, 2, 10, true, std::nullopt, false);
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
+  AddRangeFilter<int32_t>(expected, 2, 10, true, std::nullopt, false);
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE phrase_matches(category, 'quick brown fox') "
     "AND n >= 10",
     columns, true, SegmentationAnalyzerProvider);
@@ -5364,20 +5284,19 @@ TEST_F(SearchFilterBuilderTest, test_NgramMatches_DefaultThreshold) {
   // Default threshold = 0.7 (matches AddNgramSimilarityFilter default).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNgramSimilarityFilter(expected_b, 1, {"he", "el", "ll", "lo"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE ngram_matches(b, 'hello')", columns,
-               true, NgramAnalyzerProvider);
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE ngram_matches(b, 'hello')",
+               columns, true, NgramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NgramMatches_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNgramSimilarityFilter(expected_b, 1, {"he", "el", "ll", "lo"},
-                           /*threshold=*/0.7f, /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddNgramSimilarityFilter(not_filter, 1, {"he", "el", "ll", "lo"});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT ngram_matches(b, 'hello')", columns,
                true, NgramAnalyzerProvider);
 }
@@ -5385,10 +5304,10 @@ TEST_F(SearchFilterBuilderTest, test_NgramMatches_Negated) {
 TEST_F(SearchFilterBuilderTest, test_NgramMatches_AndedWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNgramSimilarityFilter(expected_b, 1, {"he", "el", "ll", "lo"});
-  AddNgramSimilarityFilter(expected_b, 1, {"wo", "or", "rl", "ld"}, 0.5f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
+  AddNgramSimilarityFilter(expected, 1, {"wo", "or", "rl", "ld"}, 0.5f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ngram_matches(b, 'hello') AND "
                "ngram_matches(b, 'world', 0.5)",
                columns, true, NgramAnalyzerProvider);
@@ -5397,11 +5316,11 @@ TEST_F(SearchFilterBuilderTest, test_NgramMatches_AndedWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_NgramMatches_OredWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddNgramSimilarityFilter(or_filter, 1, {"he", "el", "ll", "lo"}, 0.5f);
   AddNgramSimilarityFilter(or_filter, 1, {"wo", "or", "rl", "ld"}, 0.5f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ngram_matches(b, 'hello', 0.5) OR "
                "ngram_matches(b, 'world', 0.5)",
                columns, true, NgramAnalyzerProvider);
@@ -5410,10 +5329,10 @@ TEST_F(SearchFilterBuilderTest, test_NgramMatches_OredWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_NgramMatches_BoostCastWraps) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddNgramSimilarityFilter(expected_b, 1, {"he", "el", "ll", "lo"}, 0.5f)
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"}, 0.5f)
     .boost(3.5f);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (ngram_matches(b, 'hello', "
                "0.5))::boost(3.5)",
                columns, true, NgramAnalyzerProvider);
@@ -5435,9 +5354,9 @@ TEST_F(SearchFilterBuilderTest, test_NgramMatches_NoFeaturesError) {
 TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_3Arg) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE levenshtein_matches(b, 'test', 2)",
                columns, true);
 }
@@ -5445,10 +5364,9 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_3Arg) {
 TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_5Arg_EmptyPrefix) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2,
-                        /*with_transpositions=*/false);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2, /*with_transpositions=*/false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE levenshtein_matches(b, 'test', 2, "
                "false, '')",
                columns, true);
@@ -5457,10 +5375,10 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_5Arg_EmptyPrefix) {
 TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2, /*with_transpositions=*/true,
-                        /*max_terms=*/1024, /*prefix=*/"", /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddEditDistanceFilter(not_filter, 1, "test", 2);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT levenshtein_matches(b, 'test', 2)",
                columns, true);
 }
@@ -5468,10 +5386,10 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_Negated) {
 TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_AndedWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 1);
-  AddEditDistanceFilter(expected_b, 1, "best", 1);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 1);
+  AddEditDistanceFilter(expected, 1, "best", 1);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE levenshtein_matches(b, 'test', 1) AND "
                "levenshtein_matches(b, 'best', 1)",
                columns, true);
@@ -5480,11 +5398,11 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_AndedWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_OredWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddEditDistanceFilter(or_filter, 1, "test", 1);
   AddEditDistanceFilter(or_filter, 1, "best", 1);
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE levenshtein_matches(b, 'test', 1) OR "
                "levenshtein_matches(b, 'best', 1)",
                columns, true);
@@ -5493,9 +5411,9 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_OredWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_BoostCastWraps) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2).boost(1.5f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2).boost(1.5f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (levenshtein_matches(b, 'test', "
                "2))::boost(1.5)",
                columns, true);
@@ -5507,11 +5425,11 @@ TEST_F(SearchFilterBuilderTest, test_LevenshteinMatches_AndedWithRange) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "n"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddEditDistanceFilter(expected_b, 1, "test", 2);
-  AddRangeFilter<int32_t>(expected_b, 2, 0, false, std::nullopt, false);
-  AddRangeFilter<int32_t>(expected_b, 2, std::nullopt, false, 100, false);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2);
+  AddRangeFilter<int32_t>(expected, 2, 0, false, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 2, std::nullopt, false, 100, false);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE levenshtein_matches(b, 'test', 2) "
                "AND n > 0 AND n < 100",
                columns, true);
@@ -5526,11 +5444,10 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_SingleElementList) {
   // (FromTokenizeListInAnyAllOf single-token short-circuit).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo'])", columns,
-               true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo'])",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_HasAllTokens_MultiTokenElement) {
@@ -5539,17 +5456,17 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_MultiTokenElement) {
   // (ALL_OF semantics).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 3;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"baz"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo Bar', 'Baz'])",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -5557,16 +5474,17 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_MultiTokenElement) {
 TEST_F(SearchFilterBuilderTest, test_HasAllTokens_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
   {
-    auto& terms = sdb::connector::Negate<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = AddFilter<irs::ByTerms>(not_filter);
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT has_all_tokens(b, ['Foo', 'Bar'])",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -5574,24 +5492,24 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_Negated) {
 TEST_F(SearchFilterBuilderTest, test_HasAllTokens_AndedWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"baz"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"qux"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo', 'Bar']) "
                "AND has_all_tokens(b, ['Baz', 'Qux'])",
                columns, true, SegmentationAnalyzerProvider);
@@ -5600,25 +5518,25 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_AndedWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_HasAllTokens_OredWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(or_filter);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = or_filter.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(or_filter);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = or_filter.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"baz"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"qux"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo', 'Bar']) "
                "OR has_all_tokens(b, ['Baz', 'Qux'])",
                columns, true, SegmentationAnalyzerProvider);
@@ -5627,17 +5545,17 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_OredWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_HasAllTokens_BoostCastWraps) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
     static_cast<irs::FilterWithBoost&>(terms).boost(2.5f);
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (has_all_tokens(b, ['Foo', "
                "'Bar']))::boost(2.5)",
                columns, true, SegmentationAnalyzerProvider);
@@ -5651,16 +5569,16 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_IdentityAnalyzer) {
   // each element is preserved verbatim with min_match = list size.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"Foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"Bar"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo', 'Bar'])",
                columns, true, IdentityAnalyzerProvider);
 }
@@ -5673,10 +5591,10 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_List_MinMatch1Default) {
   // Default min_match for ts_any is 1 -- equivalent to no min_match arg.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
-  AssertFilter(*expected_b.Build(),
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_any_tokens(b, ['Foo', 'Bar'], 1)",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -5685,16 +5603,16 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_List_MinMatchEqualsSize) {
   // min_match = list size -- behaves like has_all_tokens.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_any_tokens(b, ['Foo', 'Bar'], 2)",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -5703,11 +5621,10 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Text_SingleToken) {
   // Single-token text via segmentation -> bare-string @@ produces a ByTerm.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddTermFilter<std::string_view>(expected_b, 1, std::string_view{"foo"});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE has_any_tokens(b, 'Foo')", columns,
-               true, SegmentationAnalyzerProvider);
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE has_any_tokens(b, 'Foo')",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Text_MultiToken) {
@@ -5715,22 +5632,21 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Text_MultiToken) {
   // with min_match=1 (OR semantics).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE has_any_tokens(b, 'Foo Bar')", columns,
-               true, SegmentationAnalyzerProvider);
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+  AssertFilter(expected, "SELECT * FROM foo WHERE has_any_tokens(b, 'Foo Bar')",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}},
-    /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+    not_filter, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT has_any_tokens(b, ['Foo', 'Bar'])",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -5738,12 +5654,12 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Negated) {
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_AndedWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"baz"}, std::string_view{"qux"}});
-  AssertFilter(*expected_b.Build(),
+    expected, 1, {std::string_view{"baz"}, std::string_view{"qux"}});
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_any_tokens(b, ['Foo', 'Bar']) AND "
                "has_any_tokens(b, ['Baz', 'Qux'])",
                columns, true, SegmentationAnalyzerProvider);
@@ -5752,13 +5668,13 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_AndedWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_OredWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddTermsFilter<std::string_view>(
     or_filter, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AddTermsFilter<std::string_view>(
     or_filter, 1, {std::string_view{"baz"}, std::string_view{"qux"}});
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE has_any_tokens(b, ['Foo', 'Bar']) OR "
                "has_any_tokens(b, ['Baz', 'Qux'])",
                columns, true, SegmentationAnalyzerProvider);
@@ -5767,12 +5683,12 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_OredWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_BoostCastWraps) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}})
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}})
     .boost(0.5f);
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE (has_any_tokens(b, ['Foo', 'Bar']))::boost(0.5)",
     columns, true, SegmentationAnalyzerProvider);
 }
@@ -5780,17 +5696,17 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_BoostCastWraps) {
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_TextWithMinMatch_BoostCast) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
+  irs::And expected;
   {
-    auto& terms = sdb::connector::AddFilter<irs::ByTerms>(expected_b);
-    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
     static_cast<irs::FilterWithBoost&>(terms).boost(4.0f);
   }
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (has_any_tokens(b, 'Foo Bar', "
                "2))::boost(4.0)",
                columns, true, SegmentationAnalyzerProvider);
@@ -5803,11 +5719,11 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_TextWithMinMatch_BoostCast) {
 TEST_F(SearchFilterBuilderTest, test_PredicateMix_PhraseAndLevenshtein) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown"});
-  AddEditDistanceFilter(expected_b, 1, "test", 2);
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown"});
+  AddEditDistanceFilter(expected, 1, "test", 2);
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE phrase_matches(category, 'quick brown') AND "
     "levenshtein_matches(category, 'test', 2)",
     columns, true, SegmentationAnalyzerProvider);
@@ -5816,13 +5732,13 @@ TEST_F(SearchFilterBuilderTest, test_PredicateMix_PhraseAndLevenshtein) {
 TEST_F(SearchFilterBuilderTest, test_PredicateMix_OrOfDifferentPredicates) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddPhraseFilter(or_filter, 1, {"quick", "brown"});
   AddTermsFilter<std::string_view>(
     or_filter, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE phrase_matches(category, 'quick brown') OR "
     "has_any_tokens(category, ['Foo', 'Bar'])",
     columns, true, SegmentationAnalyzerProvider);
@@ -5834,12 +5750,13 @@ TEST_F(SearchFilterBuilderTest, test_PredicateMix_NotOfAnd) {
   // shape with a Not over an And.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& inner_and = sdb::connector::Negate<irs::And>(expected_b);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  auto& inner_and = AddFilter<irs::And>(not_filter);
   AddPhraseFilter(inner_and, 1, {"quick", "brown"});
   AddPhraseFilter(inner_and, 1, {"red", "fox"});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE NOT (phrase_matches(category, 'quick brown') "
     "AND phrase_matches(category, 'red fox'))",
     columns, true, SegmentationAnalyzerProvider);
@@ -5848,13 +5765,13 @@ TEST_F(SearchFilterBuilderTest, test_PredicateMix_NotOfAnd) {
 TEST_F(SearchFilterBuilderTest, test_PredicateMix_AndOfThree) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPhraseFilter(expected_b, 1, {"quick", "brown"});
-  AddEditDistanceFilter(expected_b, 1, "test", 2);
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown"});
+  AddEditDistanceFilter(expected, 1, "test", 2);
   AddTermsFilter<std::string_view>(
-    expected_b, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE phrase_matches(category, 'quick brown') AND "
     "levenshtein_matches(category, 'test', 2) AND "
     "has_any_tokens(category, ['Foo', 'Bar'])",
@@ -5885,10 +5802,10 @@ TEST_F(SearchFilterBuilderTest, test_Predicate_NonColumnFirstArg) {
 TEST_F(SearchFilterBuilderTest, test_Contains_eq_AtAtTsLikeWrapped) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo%");
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE contains(b, 'foo')", columns, true);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo%");
+  AssertFilter(expected, "SELECT * FROM foo WHERE contains(b, 'foo')", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Contains_EscapesSpecialChars) {
@@ -5896,20 +5813,20 @@ TEST_F(SearchFilterBuilderTest, test_Contains_EscapesSpecialChars) {
   // matched, not interpreted as a wildcard.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%50\\%%");
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE contains(b, '50%')", columns, true);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%50\\%%");
+  AssertFilter(expected, "SELECT * FROM foo WHERE contains(b, '50%')", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Contains_AndedWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo%");
-  AddLikeFilter(expected_b, 1, "%bar%");
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo%");
+  AddLikeFilter(expected, 1, "%bar%");
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE contains(b, 'foo') AND contains(b, 'bar')",
     columns, true);
 }
@@ -5917,12 +5834,12 @@ TEST_F(SearchFilterBuilderTest, test_Contains_AndedWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_Contains_OredWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddLikeFilter(or_filter, 1, "%foo%");
   AddLikeFilter(or_filter, 1, "%bar%");
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE contains(b, 'foo') OR contains(b, 'bar')", columns,
     true);
 }
@@ -5930,18 +5847,19 @@ TEST_F(SearchFilterBuilderTest, test_Contains_OredWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_Contains_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo%", /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT contains(b, 'foo')", columns, true);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddLikeFilter(not_filter, 1, "%foo%");
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT contains(b, 'foo')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Contains_BoostCastWraps) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo%").boost(2.0f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo%").boost(2.0f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (contains(b, 'foo'))::boost(2.0)",
                columns, true);
 }
@@ -5959,8 +5877,8 @@ TEST_F(SearchFilterBuilderTest, test_Contains_DeclinesListShape) {
   // contains([1,2,3]::INT[], 2) -- LIST shape; our claim declines.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE contains([1, 2, 3]::INT[], 2)", columns,
                false);
 }
@@ -5980,30 +5898,29 @@ TEST_F(SearchFilterBuilderTest, test_Contains_DeclinesNonConstant) {
 TEST_F(SearchFilterBuilderTest, test_StartsWith_eq_AtAtTsStartsWith) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPrefixFilter(expected_b, 1, "foo");
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE starts_with(b, 'foo')", columns, true);
+  irs::And expected;
+  AddPrefixFilter(expected, 1, "foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE starts_with(b, 'foo')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_StartsWith_OperatorAlias) {
   // `b ^@ 'foo'` lowers to the same function as `starts_with`.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPrefixFilter(expected_b, 1, "foo");
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE b ^@ 'foo'",
-               columns, true);
+  irs::And expected;
+  AddPrefixFilter(expected, 1, "foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE b ^@ 'foo'", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_StartsWith_AndedWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPrefixFilter(expected_b, 1, "foo");
-  AddPrefixFilter(expected_b, 1, "ba");
+  irs::And expected;
+  AddPrefixFilter(expected, 1, "foo");
+  AddPrefixFilter(expected, 1, "ba");
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE starts_with(b, 'foo') AND starts_with(b, 'ba')",
     columns, true);
 }
@@ -6011,19 +5928,19 @@ TEST_F(SearchFilterBuilderTest, test_StartsWith_AndedWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_StartsWith_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPrefixFilter(expected_b, 1, "foo", /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT starts_with(b, 'foo')", columns,
-               true);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddPrefixFilter(not_filter, 1, "foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT starts_with(b, 'foo')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_StartsWith_BoostCastWraps) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddPrefixFilter(expected_b, 1, "foo").boost(3.0f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddPrefixFilter(expected, 1, "foo").boost(3.0f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (starts_with(b, 'foo'))::boost(3.0)",
                columns, true);
 }
@@ -6042,38 +5959,38 @@ TEST_F(SearchFilterBuilderTest, test_StartsWith_DeclinesNonKeywordAnalyzer) {
 TEST_F(SearchFilterBuilderTest, test_EndsWith_eq_AtAtTsLikeAnchored) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo");
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE ends_with(b, 'foo')", columns, true);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE ends_with(b, 'foo')", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_EndsWith_AliasSuffix) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo");
-  AssertFilter(*expected_b.Build(), "SELECT * FROM foo WHERE suffix(b, 'foo')",
-               columns, true);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE suffix(b, 'foo')", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_EndsWith_EscapesSpecialChars) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%a\\_b");
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE ends_with(b, 'a_b')", columns, true);
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%a\\_b");
+  AssertFilter(expected, "SELECT * FROM foo WHERE ends_with(b, 'a_b')", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_EndsWith_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%foo", /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
-               "SELECT * FROM foo WHERE NOT ends_with(b, 'foo')", columns,
-               true);
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddLikeFilter(not_filter, 1, "%foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT ends_with(b, 'foo')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_EndsWith_DeclinesNonKeywordAnalyzer) {
@@ -6094,9 +6011,9 @@ TEST_F(SearchFilterBuilderTest, test_EndsWith_DeclinesNonKeywordAnalyzer) {
 TEST_F(SearchFilterBuilderTest, test_RegexpMatches_eq_AtAtTsRegexp) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRegexpFilter(expected_b, 1, "[a-z]+[0-9]+");
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddRegexpFilter(expected, 1, "[a-z]+[0-9]+");
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+[0-9]+')",
                columns, true);
 }
@@ -6104,9 +6021,9 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_eq_AtAtTsRegexp) {
 TEST_F(SearchFilterBuilderTest, test_RegexpMatches_AliasRegexpLike) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRegexpFilter(expected_b, 1, "[a-z]+[0-9]+");
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddRegexpFilter(expected, 1, "[a-z]+[0-9]+");
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE regexp_like(b, '[a-z]+[0-9]+')",
                columns, true);
 }
@@ -6114,10 +6031,10 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_AliasRegexpLike) {
 TEST_F(SearchFilterBuilderTest, test_RegexpMatches_AndedWithSelf) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRegexpFilter(expected_b, 1, "[a-z]+");
-  AddRegexpFilter(expected_b, 1, "[0-9]+");
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddRegexpFilter(expected, 1, "[a-z]+");
+  AddRegexpFilter(expected, 1, "[0-9]+");
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+') AND "
                "regexp_matches(b, '[0-9]+')",
                columns, true);
@@ -6126,10 +6043,10 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_AndedWithSelf) {
 TEST_F(SearchFilterBuilderTest, test_RegexpMatches_Negated) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRegexpFilter(expected_b, 1, "[a-z]+[0-9]+", irs::RegexpSyntax::Perl,
-                  /*negated=*/true);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Exclusion>();
+  AddRegexpFilter(not_filter, 1, "[a-z]+[0-9]+");
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT regexp_matches(b, '[a-z]+[0-9]+')",
                columns, true);
 }
@@ -6137,9 +6054,9 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_Negated) {
 TEST_F(SearchFilterBuilderTest, test_RegexpMatches_BoostCastWraps) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddRegexpFilter(expected_b, 1, "[a-z]+[0-9]+").boost(1.5f);
-  AssertFilter(*expected_b.Build(),
+  irs::And expected;
+  AddRegexpFilter(expected, 1, "[a-z]+[0-9]+").boost(1.5f);
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE (regexp_matches(b, "
                "'[a-z]+[0-9]+'))::boost(1.5)",
                columns, true);
@@ -6169,11 +6086,11 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesNonKeywordAnalyzer) {
 TEST_F(SearchFilterBuilderTest, test_BuiltinMix_ContainsAndStartsWith) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  AddLikeFilter(expected_b, 1, "%bar%");
-  AddPrefixFilter(expected_b, 1, "foo");
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%bar%");
+  AddPrefixFilter(expected, 1, "foo");
   AssertFilter(
-    *expected_b.Build(),
+    expected,
     "SELECT * FROM foo WHERE contains(b, 'bar') AND starts_with(b, 'foo')",
     columns, true);
 }
@@ -6181,11 +6098,11 @@ TEST_F(SearchFilterBuilderTest, test_BuiltinMix_ContainsAndStartsWith) {
 TEST_F(SearchFilterBuilderTest, test_BuiltinMix_OrEndsWithRegexp) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  BooleanFilterBuilder expected_b{BooleanFilterBuilder::Kind::And};
-  auto& or_filter = sdb::connector::AddFilter<irs::Or>(expected_b);
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
   AddLikeFilter(or_filter, 1, "%bar");
   AddRegexpFilter(or_filter, 1, "[a-z]+[0-9]+");
-  AssertFilter(*expected_b.Build(),
+  AssertFilter(expected,
                "SELECT * FROM foo WHERE ends_with(b, 'bar') OR "
                "regexp_matches(b, '[a-z]+[0-9]+')",
                columns, true);

@@ -23,14 +23,13 @@
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
 
-void FromPrefix(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
   SDB_ASSERT(func.children.size() == 1);
@@ -48,13 +47,11 @@ void FromPrefix(BooleanFilterBuilder& parent, const FilterContext& ctx,
                     ERR_HINT("Example: ts_starts_with('pre'). ts_starts_with "
                              "requires a VARCHAR column."));
   }
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
   auto& filter = ctx.negated ? Negate<irs::ByPrefix>(parent)
                              : AddFilter<irs::ByPrefix>(parent);
   filter.boost(ctx.boost);
-  *filter.mutable_field() = std::move(field_name);
+  *filter.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& pf_opts = *filter.mutable_options();
   pf_opts.scored_terms_limit = ctx.scored_terms_limit;
   pf_opts.term.assign(irs::ViewCast<irs::byte_type>(std::string_view{prefix}));

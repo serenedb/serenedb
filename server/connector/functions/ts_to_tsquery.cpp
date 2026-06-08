@@ -24,7 +24,6 @@
 #include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -130,15 +129,14 @@ std::vector<std::vector<WsToken>> GroupWebsearch(
 
 void ParseWebsearchQuery(std::string_view text,
                          const SearchColumnInfo& column_info,
-                         const FilterContext& ctx,
-                         BooleanFilterBuilder& parent) {
+                         const FilterContext& ctx, irs::BooleanFilter& parent) {
   const auto groups = GroupWebsearch(LexWebsearch(text));
   if (groups.empty()) {
     AddFilter<irs::Empty>(parent);
     return;
   }
 
-  auto emit_atom = [&](const WsToken& tok, BooleanFilterBuilder& into,
+  auto emit_atom = [&](const WsToken& tok, irs::BooleanFilter& into,
                        const FilterContext& c) {
     auto ac = c;
     ac.negated = c.negated ^ tok.negated;
@@ -150,7 +148,7 @@ void ParseWebsearchQuery(std::string_view text,
   };
 
   auto emit_group = [&](const std::vector<WsToken>& group,
-                        BooleanFilterBuilder& into, const FilterContext& c) {
+                        irs::BooleanFilter& into, const FilterContext& c) {
     if (group.size() == 1) {
       emit_atom(group[0], into, c);
       return;
@@ -184,7 +182,7 @@ void ParseWebsearchQuery(std::string_view text,
 
 }  // namespace
 
-void FromPlainToTsquery(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void FromPlainToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
                         const SearchColumnInfo& column_info,
                         const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -201,7 +199,7 @@ void FromPlainToTsquery(BooleanFilterBuilder& parent, const FilterContext& ctx,
 
 // websearch_to_tsquery(text): PG-style web-search syntax (quoted
 // phrases, OR keyword, leading `-` for NOT).
-void FromWebsearchToTsquery(BooleanFilterBuilder& parent,
+void FromWebsearchToTsquery(irs::BooleanFilter& parent,
                             const FilterContext& ctx,
                             const SearchColumnInfo& column_info,
                             const duckdb::BoundFunctionExpression& func) {
@@ -221,7 +219,7 @@ void FromWebsearchToTsquery(BooleanFilterBuilder& parent,
 // tsquery_phrase(q1, q2 [, distance]): function form of `##`, PG
 // semantics (distance = lexemes apart, N=1 = adjacent). Same shape as
 // the `##` walker: flatten + emit.
-void FromTsqueryPhrase(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
                        const SearchColumnInfo& column_info,
                        const duckdb::BoundFunctionExpression& func) {
   PhraseSeq seq;
@@ -229,7 +227,7 @@ void FromTsqueryPhrase(BooleanFilterBuilder& parent, const FilterContext& ctx,
   EmitPhraseSeq(parent, ctx, column_info, seq);
 }
 
-void FromToTsquery(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info,
                    const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -242,19 +240,18 @@ void FromToTsquery(BooleanFilterBuilder& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
   auto& mixed = ctx.negated ? Negate<irs::MixedBooleanFilter>(parent)
                             : AddFilter<irs::MixedBooleanFilter>(parent);
-  sdb::ParserContext parser_ctx{mixed, field_name, ctx.tokenizer};
+  mixed.boost(ctx.boost);
+  sdb::ParserContext parser_ctx{
+    mixed, PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
+    ctx.tokenizer};
   parser_ctx.strict_field = true;
   if (auto r = sdb::ParseQuery(parser_ctx, text); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("to_tsquery parse error: ", r.errorMessage()),
                     ERR_HINT(kSyntaxHint));
   }
-  mixed.boost(ctx.boost);
 }
 
 }  // namespace sdb::connector

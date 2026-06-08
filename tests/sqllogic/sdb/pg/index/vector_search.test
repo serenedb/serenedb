@@ -819,7 +819,8 @@ DROP INDEX m_real_real;
 statement error
 CREATE INDEX m_real_bare ON t_err USING inverted(emb hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]
+db error: ERROR: Unknown opclass 'hnsw' on column 'emb': no text dictionary by that name in schema 'public'
+HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
 
 
 statement error
@@ -843,7 +844,7 @@ db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on 
 statement error
 CREATE INDEX m_fake_name ON t_err USING inverted(emb fake_dict);
 ----
-db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]
+db error: ERROR: Failed to create index: Unknown opclass 'fake_dict' on column 'emb': no text dictionary by that name in schema 'public'
 
 
 

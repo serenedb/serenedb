@@ -23,18 +23,16 @@
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
 
-Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
-                       const SearchColumnInfo& column_info,
+Result SetupTermFilter(irs::ByTerm& filter, const SearchColumnInfo& column_info,
                        const duckdb::Value& value);
 
-void BuildFtsTerm(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Value& value) {
   if (value.IsNull()) {
@@ -44,16 +42,14 @@ void BuildFtsTerm(BooleanFilterBuilder& parent, const FilterContext& ctx,
   auto& term =
     ctx.negated ? Negate<irs::ByTerm>(parent) : AddFilter<irs::ByTerm>(parent);
   term.boost(ctx.boost);
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  if (auto r = SetupTermFilter(term, field_name, column_info, value); !r.ok()) {
+  if (auto r = SetupTermFilter(term, column_info, value); !r.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG(r.errorMessage()),
       ERR_HINT("The value's type must match the column's indexed type."));
   }
 }
 
-void BuildFtsTokens(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
@@ -73,19 +69,17 @@ void BuildFtsTokens(BooleanFilterBuilder& parent, const FilterContext& ctx,
     tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
   }
 
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   if (tokens.empty()) {
     AddFilter<irs::Empty>(parent);
     return;
   }
+  const auto field_id =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   if (tokens.size() == 1) {
     auto& term = ctx.negated ? Negate<irs::ByTerm>(parent)
                              : AddFilter<irs::ByTerm>(parent);
     term.boost(ctx.boost);
-    *term.mutable_field() = field_name;
+    *term.mutable_field_id() = field_id;
     term.mutable_options()->term.assign(tokens[0]);
     return;
   }
@@ -93,14 +87,14 @@ void BuildFtsTokens(BooleanFilterBuilder& parent, const FilterContext& ctx,
   auto& terms = ctx.negated ? Negate<irs::ByTerms>(parent)
                             : AddFilter<irs::ByTerms>(parent);
   terms.boost(ctx.boost);
-  *terms.mutable_field() = field_name;
+  *terms.mutable_field_id() = field_id;
   auto& opts = *terms.mutable_options();
   opts.min_match = require_all ? tokens.size() : 1;
   for (auto& t : tokens) {
     opts.terms.emplace(std::move(t));
   }
 }
-void FromTerm(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void FromTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,
               const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 1) {

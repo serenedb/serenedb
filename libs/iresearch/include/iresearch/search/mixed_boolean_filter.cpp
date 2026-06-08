@@ -26,7 +26,12 @@ namespace irs {
 
 Filter::Query::ptr MixedBooleanFilter::prepare(
   const PrepareContext& ctx) const {
-  SDB_ASSERT(!HasNoClauses(*_and) && !HasNoClauses(*_or));
+  if (HasNoClauses(*_and)) {
+    return _or->prepare(ctx);
+  }
+  if (HasNoClauses(*_or)) {
+    return _and->prepare(ctx);
+  }
   auto q = memory::make_tracked<BoostQuery>(ctx.memory);
   q->Prepare(ctx, *_and, *_or);
   return q;

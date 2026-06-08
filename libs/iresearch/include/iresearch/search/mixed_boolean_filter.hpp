@@ -31,8 +31,16 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
 
   MixedBooleanFilter(std::vector<Filter::ptr> required,
                      std::vector<Filter::ptr> optional)
-    : _and{std::make_unique<And>(std::move(required))},
-      _or{std::make_unique<Or>(std::move(optional))} {}
+    : _and{std::make_unique<And>()}, _or{std::make_unique<Or>()} {
+    auto& and_node = sdb::basics::downCast<And>(*_and);
+    for (auto& filter : required) {
+      and_node.add(std::move(filter));
+    }
+    auto& or_node = sdb::basics::downCast<Or>(*_or);
+    for (auto& filter : optional) {
+      or_node.add(std::move(filter));
+    }
+  }
 
   MixedBooleanFilter(MixedBooleanFilter&&) = default;
   MixedBooleanFilter& operator=(MixedBooleanFilter&&) = default;

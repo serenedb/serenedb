@@ -24,8 +24,8 @@
 #include <iostream>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
-#include <iresearch/columnstore/column_writer.hpp>
-#include <iresearch/columnstore/format.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -67,12 +67,12 @@ inline constexpr irs::field_id kGeoColumnId = 1;
 // analyzer is constructed once per field instance; reset() is called per
 // document with the shape text to index.
 struct GeoField {
-  std::string_view name;
+  irs::field_id id{kGeoColumnId};
   std::string_view shape_text;
   irs::analysis::Analyzer::ptr analyzer{irs::analysis::GeoJsonAnalyzer::Make(
     irs::analysis::GeoJsonAnalyzer::Options{})};
 
-  std::string_view Name() const noexcept { return name; }
+  irs::field_id Id() const noexcept { return id; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::None;
@@ -86,7 +86,7 @@ struct GeoField {
 
 // Append one BLOB row (the GeoJSON source text of the shape) to the cs column.
 // Source coding force-includes this column and the filter re-parses it.
-void AppendStoredShape(irs::columnstore::ColumnWriter& cw, irs::doc_id_t doc,
+void AppendStoredShape(irs::ColumnWriter& cw, irs::doc_id_t doc,
                        std::string_view shape) {
   duckdb::Vector v{duckdb::LogicalType::BLOB, /*capacity=*/1};
   auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
@@ -161,7 +161,7 @@ irs::IndexWriterOptions MakeWriterOptions() {
   };
   options.norm_column_options =
     [next = std::make_shared<std::atomic<irs::field_id>>(0)](
-      std::string_view) -> irs::NormColumnOptions {
+      irs::field_id) -> irs::NormColumnOptions {
     return {.id = next->fetch_add(1, std::memory_order_relaxed),
             .row_group_size = DEFAULT_ROW_GROUP_SIZE};
   };
@@ -177,11 +177,10 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
     irs::IndexWriter::Make(dir, format, irs::kOmCreate, MakeWriterOptions());
 
   GeoField geo;
-  geo.name = "geometry";
 
   {
     auto trx = writer->GetBatch();
-    irs::columnstore::ColumnWriter* geo_cw = nullptr;
+    irs::ColumnWriter* geo_cw = nullptr;
     for (const auto& entry : docs) {
       names_out.emplace_back(entry.name);
 
@@ -258,7 +257,7 @@ int main() {
     {
       std::cout << "=== GeoDistanceFilter (radius 300m) ===\n";
       irs::GeoDistanceFilter q;
-      *q.mutable_field() = "geometry";
+      *q.mutable_field_id() = kGeoColumnId;
       q.mutable_options()->store_field_id = kGeoColumnId;
       q.mutable_options()->origin =
         S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
@@ -274,7 +273,7 @@ int main() {
     {
       std::cout << "\n=== GeoDistanceFilter (annulus 1km..5km) ===\n";
       irs::GeoDistanceFilter q;
-      *q.mutable_field() = "geometry";
+      *q.mutable_field_id() = kGeoColumnId;
       q.mutable_options()->store_field_id = kGeoColumnId;
       q.mutable_options()->origin =
         S2LatLng::FromDegrees(55.704, 37.615).ToPoint();
@@ -312,7 +311,7 @@ int main() {
                   sdb::geo::ShapeContainer::Type::S2Polygon);
 
       irs::GeoFilter q;
-      *q.mutable_field() = "geometry";
+      *q.mutable_field_id() = kGeoColumnId;
       q.mutable_options()->store_field_id = kGeoColumnId;
       q.mutable_options()->type = irs::GeoFilterType::Intersects;
       q.mutable_options()->shape = std::move(shape);

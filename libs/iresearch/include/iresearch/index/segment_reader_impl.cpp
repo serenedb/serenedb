@@ -22,15 +22,20 @@
 
 #include "segment_reader_impl.hpp"
 
+#include <absl/strings/str_cat.h>
+
+#include <duckdb/common/types.hpp>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/hnsw.hpp"
-#include "iresearch/columnstore/norm_reader.hpp"
+#include "iresearch/error/error.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
+#include "iresearch/formats/hnsw/hnsw_reader.hpp"
+#include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/index/norm_column_reader.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -183,16 +188,28 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) {
   SDB_ASSERT(meta.codec);
+  bool has_idx = false;
+  bool has_col = false;
+  dir.exists(has_idx, absl::StrCat(meta.name, ".", kIdxFormatExt));
+  dir.exists(has_col, absl::StrCat(meta.name, ".", kColFormatExt));
+  if (!has_idx && !has_col) {
+    throw IoError{
+      absl::StrCat("Failed to open segment '", meta.name, "': no files")};
+  }
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
-  reader->_field_reader =
-    meta.codec->get_field_reader(*dir.ResourceManager().readers);
-  if (options.index) {
-    reader->_field_reader->prepare(
-      ReaderState{.dir = &dir, .meta = &meta, .scorer = options.scorer});
-  }
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options);
+  reader->_field_reader = std::make_shared<burst_trie::FieldReader>(
+    meta.codec->get_postings_reader(), *dir.ResourceManager().readers);
+  if (options.index) {
+    reader->_field_reader->prepare(ReaderState{
+      .dir = &dir,
+      .meta = &meta,
+      .scorer = options.scorer,
+      .idx = reader->_data->idx_reader.get(),
+    });
+  }
   return reader;
 }
 
@@ -227,7 +244,7 @@ uint64_t SegmentReaderImpl::CountMappedMemory() const {
 }
 
 NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
-  if (!_data || !_data->cs_reader) {
+  if (!_data) {
     return {};
   }
   const auto* nc = _data->cs_reader->NormColumn(field);
@@ -237,19 +254,16 @@ NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
   return MakePersistedNormReader(*nc);
 }
 
-const columnstore::ColumnReader* SegmentReaderImpl::Column(
-  field_id field) const {
-  if (!_data->cs_reader) {
-    return nullptr;
-  }
+const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
   return _data->cs_reader->Column(field);
 }
 
-const columnstore::HNSWReader* SegmentReaderImpl::HNSW(field_id field) const {
-  if (!_data->cs_reader) {
+const HnswReader* SegmentReaderImpl::HNSW(field_id field) const {
+  if (!_data) {
     return nullptr;
   }
-  return _data->cs_reader->HNSW(field);
+  auto it = _data->hnsw_by_id.find(field);
+  return it == _data->hnsw_by_id.end() ? nullptr : it->second;
 }
 
 DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
@@ -275,11 +289,28 @@ DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
                                          const SegmentMeta& meta,
                                          const IndexReaderOptions& options) {
-  if (options.db == nullptr) {
-    return;
+  SDB_ASSERT(options.db != nullptr);
+  cs_reader = std::make_unique<ColReader>(dir, meta.name, *options.db);
+  idx_reader = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_graphs);
+
+  const auto entries = idx_reader->HNSWEntries();
+  hnsw_readers.reserve(entries.size());
+  hnsw_by_id.reserve(entries.size());
+  for (const auto& [id, entry] : entries) {
+    const auto* col_reader = cs_reader->Column(id);
+    if (col_reader == nullptr) {
+      continue;
+    }
+    HNSWInfo info = entry.info;
+    const auto& col_type = col_reader->Type();
+    if (col_type.id() == duckdb::LogicalTypeId::ARRAY) {
+      info.d = static_cast<int>(duckdb::ArrayType::GetSize(col_type));
+    }
+    auto reader =
+      std::make_unique<HnswReader>(id, entry.graph, info, *col_reader);
+    hnsw_by_id.emplace(id, reader.get());
+    hnsw_readers.push_back(std::move(reader));
   }
-  cs_reader = std::make_unique<columnstore::Reader>(dir, meta.name, *options.db,
-                                                    options.cs_hnsw_graphs);
 }
 
 }  // namespace irs

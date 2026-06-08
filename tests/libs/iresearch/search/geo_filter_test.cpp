@@ -134,7 +134,7 @@ TEST(GeoFilterTest, options) {
 TEST(GeoFilterTest, ctor) {
   GeoFilter q;
   ASSERT_EQ(irs::Type<GeoFilter>::id(), q.type());
-  ASSERT_EQ("", q.field());
+  ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 #ifndef SDB_DEV
   ASSERT_EQ(GeoFilterOptions{}, q.options());
@@ -147,7 +147,7 @@ TEST(GeoFilterTest, equal) {
   q.mutable_options()->shape.reset(
     std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
     ShapeContainer::Type::S2Point);
-  *q.mutable_field() = "field";
+  *q.mutable_field_id() = 1;
 
   {
     GeoFilter q1;
@@ -155,7 +155,7 @@ TEST(GeoFilterTest, equal) {
     q1.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
       ShapeContainer::Type::S2Point);
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = 1;
     ASSERT_EQ(q, q1);
   }
 
@@ -166,7 +166,7 @@ TEST(GeoFilterTest, equal) {
     q1.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
       ShapeContainer::Type::S2Point);
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = 1;
     ASSERT_EQ(q, q1);
   }
 
@@ -176,7 +176,7 @@ TEST(GeoFilterTest, equal) {
     q1.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
       ShapeContainer::Type::S2Point);
-    *q1.mutable_field() = "field1";
+    *q1.mutable_field_id() = 2;
     ASSERT_NE(q, q1);
   }
 
@@ -186,7 +186,7 @@ TEST(GeoFilterTest, equal) {
     q1.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
       ShapeContainer::Type::S2Point);
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = 1;
     ASSERT_NE(q, q1);
   }
 
@@ -195,7 +195,7 @@ TEST(GeoFilterTest, equal) {
     q1.mutable_options()->type = GeoFilterType::Contains;
     q1.mutable_options()->shape.reset(std::make_unique<S2Polygon>(),
                                       ShapeContainer::Type::S2Polygon);
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = 1;
     ASSERT_NE(q, q1);
   }
 }
@@ -208,7 +208,7 @@ TEST(GeoFilterTest, boost) {
     q.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
       ShapeContainer::Type::S2Point);
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = 1;
     q.mutable_options()->store_field_id = kGeo;
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
@@ -223,7 +223,7 @@ TEST(GeoFilterTest, boost) {
     q.mutable_options()->shape.reset(
       std::make_unique<S2PointRegion>(S2Point{1., 0., 0.}),
       ShapeContainer::Type::S2Point);
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = 1;
     q.mutable_options()->store_field_id = kGeo;
     q.boost(boost);
 
@@ -277,8 +277,10 @@ TEST(GeoFilterTest, query) {
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
+    geo_field.id = kGeo;
     StringField name_field;
     name_field.field_name = "name";
+    name_field.id = kName;
     {
       auto segment0 = writer->GetBatch();
       auto segment1 = writer->GetBatch();
@@ -412,7 +414,7 @@ TEST(GeoFilterTest, query) {
     ASSERT_TRUE(
       json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
     ASSERT_EQ(ShapeContainer::Type::S2Point, q.mutable_options()->shape.type());
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
 
     ASSERT_EQ(expected, execute_query(q, {2, 0}));
@@ -440,7 +442,7 @@ TEST(GeoFilterTest, query) {
       json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
 
     ASSERT_EQ(expected, execute_query(q, {2, 2}));
@@ -451,7 +453,7 @@ TEST(GeoFilterTest, query) {
     std::set<std::string> expected{origin.name};
 
     GeoFilter q;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
@@ -468,7 +470,7 @@ TEST(GeoFilterTest, query) {
     std::set<std::string> expected{origin.name};
 
     GeoFilter q;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
@@ -485,7 +487,7 @@ TEST(GeoFilterTest, query) {
     std::set<std::string> expected{origin.name};
 
     GeoFilter q;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
@@ -528,7 +530,7 @@ TEST(GeoFilterTest, query) {
     }
 
     GeoFilter q;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
       shape_json.value(), q.mutable_options()->shape, cache,
@@ -570,7 +572,7 @@ TEST(GeoFilterTest, query) {
     }
 
     GeoFilter q;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
       shape_json.value(), q.mutable_options()->shape, cache,
@@ -600,7 +602,7 @@ TEST(GeoFilterTest, query) {
     std::vector<S2LatLng> cache;
 
     GeoFilter q;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
       shape_json.value(), q.mutable_options()->shape, cache,
@@ -656,8 +658,10 @@ TEST(GeoFilterTest, checkScorer) {
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
+    geo_field.id = kGeo;
     StringField name_field;
     name_field.field_name = "name";
+    name_field.id = kName;
     {
       auto segment0 = writer->GetBatch();
       auto segment1 = writer->GetBatch();
@@ -777,7 +781,7 @@ TEST(GeoFilterTest, checkScorer) {
       json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
 
     size_t collector_finish_count = 0;
@@ -839,7 +843,7 @@ TEST(GeoFilterTest, checkScorer) {
       json::ParseRegion(json.value(), q.mutable_options()->shape).ok());
     ASSERT_EQ(ShapeContainer::Type::S2Polygon,
               q.mutable_options()->shape.type());
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->store_field_id = kGeo;
 
     size_t collector_finish_count = 0;

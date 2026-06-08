@@ -25,7 +25,7 @@ INSERT INTO vedernikoff_t VALUES (1, 5), (2, 9);
 
 
 statement ok
-CREATE INDEX vedernikoff_idx ON vedernikoff_t USING inverted(id, (babsky(n)) clickclack_dict);
+CREATE INDEX vedernikoff_idx ON vedernikoff_t USING inverted(id, (babsky(n)));
 
 
 statement ok

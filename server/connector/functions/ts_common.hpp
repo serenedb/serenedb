@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/planner/column_binding_map.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -28,7 +29,6 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/scorer.hpp>
@@ -36,8 +36,6 @@
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
-#include <optional>
-#include <type_traits>
 
 #include "basics/containers/node_hash_map.h"
 #include "basics/result.h"
@@ -56,8 +54,8 @@ struct FilterContext {
   irs::score_t boost = irs::kNoBoost;
   const ColumnGetter& column_getter;
   const ExpressionGetter* expr_getter = nullptr;
-  containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache;
-  std::string& cache_key;
+  duckdb::column_binding_map_t<SearchColumnInfo>& column_cache;
+  containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
   irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;
   duckdb::ClientContext& client_context;
@@ -70,7 +68,7 @@ struct FilterContext {
       .column_getter = column_getter,
       .expr_getter = expr_getter,
       .column_cache = column_cache,
-      .cache_key = cache_key,
+      .expr_cache = expr_cache,
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
@@ -85,7 +83,7 @@ struct FilterContext {
       .column_getter = column_getter,
       .expr_getter = expr_getter,
       .column_cache = column_cache,
-      .cache_key = cache_key,
+      .expr_cache = expr_cache,
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
@@ -94,49 +92,30 @@ struct FilterContext {
   }
 };
 
-namespace detail {
-
-template<typename Filter>
-auto& EmitInto(BooleanFilterBuilder& parent, bool exclude) {
-  if constexpr (std::is_same_v<Filter, irs::And> ||
-                std::is_same_v<Filter, irs::Or>) {
-    return exclude ? parent.AddExcludeGroup<Filter>()
-                   : parent.AddIncludeGroup<Filter>();
-  } else if constexpr (std::is_same_v<Filter, irs::MixedBooleanFilter>) {
-    return exclude ? parent.AddExclude<irs::MixedBooleanFilter>()
-                   : parent.AddInclude<irs::MixedBooleanFilter>();
+template<typename Filter, typename Source>
+auto& AddFilter(Source& parent) {
+  if constexpr (std::is_same_v<Filter, irs::All>) {
+    static_assert(std::is_base_of_v<irs::BooleanFilter, Source>);
+    return parent.add(std::make_unique<irs::All>());
+  } else if constexpr (std::is_same_v<irs::Exclusion, Source>) {
+    return parent.template exclude<Filter>();
   } else {
-    return exclude ? parent.AddExclude<Filter>() : parent.AddInclude<Filter>();
+    return parent.template add<Filter>();
   }
 }
 
-}  // namespace detail
-
-template<typename Filter>
-auto& AddFilter(BooleanFilterBuilder& parent) {
-  return detail::EmitInto<Filter>(parent, /*exclude=*/false);
-}
-
-template<typename Filter>
-auto& Negate(BooleanFilterBuilder& parent) {
-  // An Or cannot exclude directly: nest a sub-And and negate inside it.
-  if (parent.type() == irs::Type<irs::Or>::id()) {
-    return detail::EmitInto<Filter>(parent.AddIncludeGroup<irs::And>(),
-                                    /*exclude=*/true);
-  }
-  return detail::EmitInto<Filter>(parent, /*exclude=*/true);
+template<typename Filter, typename Source>
+Filter& Negate(Source& parent) {
+  return AddFilter<Filter>(AddFilter<irs::Exclusion>(
+    parent.type() == irs::Type<irs::Or>::id() ? AddFilter<irs::And>(parent)
+                                              : parent));
 }
 
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
-void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
-// JSON-path-aware overload: emits `[BE col_id]/path/...` so per-path
-// inverted-index fields are reachable from queries that pass through a
-// SearchColumnInfo (e.g. `content->>'host' @@ ts_like(...)`).
-void MakeFieldName(const SearchColumnInfo& column, std::string& field_name);
-Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name);
+Result ValidateFilterType(duckdb::LogicalTypeId type_id);
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id);
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
@@ -155,16 +134,16 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
                         const duckdb::Value& value);
 
 // All throw THROW_SQL_ERROR on any failure.
-void BuildTSQuery(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Expression& expr);
 
-void BuildFtsPhrase(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text);
-void BuildFtsTerm(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Value& value);
-void BuildFtsTokens(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all);
 
@@ -223,7 +202,7 @@ struct PhraseSeq {
 PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr);
 void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq);
 void AttachPart(PhraseSeq& seq, const duckdb::Expression& next);
-void EmitPhraseSeq(BooleanFilterBuilder& parent, const FilterContext& ctx,
+void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq);
 
 enum class TSQueryOp {

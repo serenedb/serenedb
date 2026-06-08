@@ -98,22 +98,16 @@ mod_clause:
 term_expr:
     boosted_expr
     | TERM COLON                    {
-                                      // strict_field allows the prefix only
-                                      // when it names the default field --
-                                      // any other field would silently miss
-                                      // because indexed fields are mangled
-                                      // by column id, not user-facing name.
                                       if (ctx.strict_field &&
-                                          std::string_view{$1} != ctx.default_field) {
+                                          std::string_view{$1} !=
+                                              ctx.default_field_name) {
                                         ctx.error_message =
                                           "field-prefix in strict-field mode "
                                           "must match the default field";
                                         YYABORT;
                                       }
-                                      $<sv>$ = {ctx.default_field.data(), ctx.default_field.size()};
-                                      ctx.default_field = $1;
                                     }
-      term_expr                     { ctx.default_field = $<sv>3; }
+      term_expr
     ;
 
 boosted_expr:
@@ -138,8 +132,14 @@ base_term:
     | SUFFIX                        { $$ = &ctx.AddWildcard($1); }
     | WILDCARD                      { $$ = &ctx.AddWildcard($1); }
     | range_expr                    { $$ = $1; }
-    | LPAREN                        { ctx.PushGroup(); }
-        clause_list RPAREN          { $$ = ctx.PopGroupAsClause(); }
+    | LPAREN                        {
+                                      $<filter>$ = ctx.current_root;
+                                      ctx.current_root = &ctx.current_root->GetOptional().add<irs::MixedBooleanFilter>();
+                                    }
+        clause_list RPAREN          {
+                                      $$ = ctx.current_root;
+                                      ctx.current_root = sdb::basics::downCast<irs::MixedBooleanFilter>($<filter>2);
+                                    }
     ;
 
 range_expr:
@@ -171,7 +171,6 @@ sdb::Result sdb::ParseQuery(sdb::ParserContext& ctx, std::string_view input) {
     LexerSetInput(input);
     int result = yyparse(ctx);
     LexerCleanup();
-    ctx.Finalize();
     if (result != 0) {
         return {sdb::ERROR_BAD_PARAMETER, std::move(ctx.error_message)};
     }

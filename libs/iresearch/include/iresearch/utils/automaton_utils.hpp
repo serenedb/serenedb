@@ -457,7 +457,7 @@ inline automaton MakeAll() {
 /// @returns compiled filter
 //////////////////////////////////////////////////////////////////////////////
 Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
-                                          std::string_view field,
+                                          irs::field_id id,
                                           const automaton& acceptor,
                                           size_t scored_terms_limit);
 

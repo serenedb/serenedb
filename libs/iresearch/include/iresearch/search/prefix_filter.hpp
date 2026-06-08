@@ -66,7 +66,7 @@ struct ByPrefixOptions : ByPrefixFilterOptions {
 ////////////////////////////////////////////////////////////////////////////////
 class ByPrefix : public FilterWithField<ByPrefixOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
                             bytes_view prefix, size_t scored_terms_limit);
 
   static void visit(const SubReader& segment, const TermReader& reader,
@@ -75,7 +75,7 @@ class ByPrefix : public FilterWithField<ByPrefixOptions> {
   Query::ptr prepare(const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;
     sub_ctx.boost *= Boost();
-    return prepare(sub_ctx, field(), options().term,
+    return prepare(sub_ctx, field_id(), options().term,
                    options().scored_terms_limit);
   }
 };

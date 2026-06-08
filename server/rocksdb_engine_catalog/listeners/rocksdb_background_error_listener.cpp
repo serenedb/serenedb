@@ -41,28 +41,22 @@ void RocksDBBackgroundErrorListener::OnBackgroundError(
     switch (reason) {
       case rocksdb::BackgroundErrorReason::kFlush: {
         operation = "flush";
-        break;
-      }
+      } break;
       case rocksdb::BackgroundErrorReason::kCompaction: {
         operation = "compaction";
-        break;
-      }
+      } break;
       case rocksdb::BackgroundErrorReason::kWriteCallback: {
         operation = "write callback";
-        break;
-      }
+      } break;
       case rocksdb::BackgroundErrorReason::kMemTable: {
         operation = "memtable";
-        break;
-      }
+      } break;
       case rocksdb::BackgroundErrorReason::kManifestWrite: {
         operation = "manifest write";
-        break;
-      }
+      } break;
       case rocksdb::BackgroundErrorReason::kManifestWriteNoWAL: {
         operation = "manifest write no WAL";
-        break;
-      }
+      } break;
       case rocksdb::BackgroundErrorReason::kFlushNoWAL: {
         operation = "flush no WAL";
         break;

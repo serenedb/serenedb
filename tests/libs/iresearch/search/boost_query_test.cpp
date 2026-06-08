@@ -20,13 +20,13 @@
 
 #include <gtest/gtest.h>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/parser/parser.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/doc_collector.hpp"
-#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
@@ -35,12 +35,14 @@
 
 namespace {
 
+constexpr irs::field_id kContentFieldId = 1;
+
 // A field that tokenises its value by spaces (for multi-term documents).
 class SpaceField : public tests::FieldBase {
  public:
-  explicit SpaceField(std::string_view field_name)
+  explicit SpaceField(irs::field_id field_id)
     : _tokenizer{std::make_unique<irs::analysis::DelimitedTokenizer>(" ")} {
-    name = field_name;
+    id = field_id;
     index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
   }
 
@@ -65,13 +67,12 @@ class BoostQueryTestCase : public tests::IndexTestBase {
  protected:
   // Collect all (score, doc_id) results sorted by score descending.
   std::vector<irs::ScoreDoc> CollectAll(const irs::DirectoryReader& reader,
-                                        irs::Filter::ptr filter) {
+                                        const irs::Filter& filter) {
     constexpr size_t kK = 1024;
     irs::TFIDF scorer{/*normalize=*/false};
-    irs::Optimize(filter, {.scorer = &scorer});
     std::vector<irs::ScoreDoc> hits(irs::BlockSize(kK));
     size_t count =
-      irs::ExecuteTopKWithCount(reader, *filter, scorer, kK, std::span{hits});
+      irs::ExecuteTopKWithCount(reader, filter, scorer, kK, std::span{hits});
     hits.resize(std::min(count, kK));
     return hits;
   }
@@ -80,7 +81,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
   static irs::Filter::ptr ParseQuery(std::string_view query) {
     irs::analysis::DelimitedTokenizer tokenizer(" ");
     auto root = std::make_unique<irs::MixedBooleanFilter>();
-    sdb::ParserContext ctx{*root, "content", tokenizer};
+    sdb::ParserContext ctx{*root, kContentFieldId, tokenizer};
     EXPECT_TRUE(sdb::ParseQuery(ctx, query).ok());
     return root;
   }
@@ -94,7 +95,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
     auto writer = open_writer(irs::kOmCreate);
 
     auto insert = [&](std::string_view content) {
-      SpaceField f{"content"};
+      SpaceField f{kContentFieldId};
       f.value(content);
       auto batch = writer->GetBatch();
       auto d = batch.Insert();
@@ -108,7 +109,8 @@ class BoostQueryTestCase : public tests::IndexTestBase {
 
     writer->RefreshCommit();
 
-    auto reader = irs::DirectoryReader(dir(), codec());
+    auto reader =
+      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     EXPECT_EQ(1, reader.size());
     return reader;
   }
@@ -121,7 +123,7 @@ TEST_P(BoostQueryTestCase, RequiredExcludesNonMatchingDocs) {
   auto filter = ParseQuery("+open source software");
   ASSERT_NE(nullptr, filter);
 
-  auto hits = CollectAll(reader, std::move(filter));
+  auto hits = CollectAll(reader, *filter);
   ASSERT_EQ(3u, hits.size())
     << "Expected exactly 3 docs matching required 'open'";
 
@@ -139,7 +141,7 @@ TEST_P(BoostQueryTestCase, MoreOptionalMatchesYieldHigherScore) {
   auto filter = ParseQuery("+open source software");
   ASSERT_NE(nullptr, filter);
 
-  auto hits = CollectAll(reader, std::move(filter));
+  auto hits = CollectAll(reader, *filter);
   ASSERT_EQ(3u, hits.size());
 
   // hits[0] = doc C (2 optionals),
@@ -157,7 +159,7 @@ TEST_P(BoostQueryTestCase, RequiredOnlyReturnsAllMatchingDocs) {
   auto filter = ParseQuery("+open");
   ASSERT_NE(nullptr, filter);
 
-  auto hits = CollectAll(reader, std::move(filter));
+  auto hits = CollectAll(reader, *filter);
   ASSERT_EQ(3u, hits.size());
 }
 
@@ -167,7 +169,7 @@ TEST_P(BoostQueryTestCase, OptionalOnlyActsAsDisjunction) {
   auto filter = ParseQuery("source software");
   ASSERT_NE(nullptr, filter);
 
-  auto hits = CollectAll(reader, std::move(filter));
+  auto hits = CollectAll(reader, *filter);
   // Docs B, C, D all contain at least one of "source" / "software"
   ASSERT_EQ(3u, hits.size());
 }
@@ -176,23 +178,20 @@ TEST_P(BoostQueryTestCase, OptionalOnlyActsAsDisjunction) {
 // the parser path.
 TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
   auto reader = CreateIndex();
+  auto root = std::make_unique<irs::MixedBooleanFilter>();
 
   auto make_term = [](std::string_view value) {
     auto f = std::make_unique<irs::ByTerm>();
-    *f->mutable_field() = "content";
+    *f->mutable_field_id() = kContentFieldId;
     f->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
     return f;
   };
 
-  std::vector<irs::Filter::ptr> required;
-  required.emplace_back(make_term("open"));
-  std::vector<irs::Filter::ptr> optional;
-  optional.emplace_back(make_term("source"));
-  optional.emplace_back(make_term("software"));
-  auto root = std::make_unique<irs::MixedBooleanFilter>(std::move(required),
-                                                        std::move(optional));
+  root->GetRequired().add(make_term("open"));
+  root->GetOptional().add(make_term("source"));
+  root->GetOptional().add(make_term("software"));
 
-  auto hits = CollectAll(reader, std::move(root));
+  auto hits = CollectAll(reader, *root);
   ASSERT_EQ(3u, hits.size());
 
   // Score ordering must be: C > B > A

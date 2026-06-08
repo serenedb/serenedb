@@ -22,7 +22,6 @@
 
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "basics/result.h"
 #include "iresearch/analysis/analyzer.hpp"
@@ -44,82 +43,57 @@ enum class Conjunction { Or, And };
 enum class Modifier { None, Required, Not };
 
 struct ParserContext {
-  struct Group {
-    std::vector<irs::Filter::ptr> req;
-    std::vector<irs::Filter::ptr> opt;
-  };
-
-  std::string_view default_field;
-  irs::MixedBooleanFilter* out;
+  irs::field_id default_field_id{irs::field_limits::invalid()};
+  std::string_view default_field_name;
+  irs::MixedBooleanFilter* current_root;
   irs::analysis::Analyzer* tokenizer;
-  std::vector<Group> stack;
   std::string error_message;
   Modifier last_mod{Modifier::None};
   bool strict_field = false;
 
-  ParserContext(irs::MixedBooleanFilter& out, std::string_view field,
+  ParserContext(irs::MixedBooleanFilter& root, irs::field_id field_id,
                 irs::analysis::Analyzer& tokenizer)
-    : default_field(field), out{&out}, tokenizer{&tokenizer} {
-    stack.emplace_back();
-  }
-
-  Group& Current() noexcept { return stack.back(); }
-
-  void PushGroup() { stack.emplace_back(); }
-
-  irs::FilterWithBoost* PopGroupAsClause() {
-    Group group = std::move(stack.back());
-    stack.pop_back();
-    auto mixed = std::make_unique<irs::MixedBooleanFilter>(
-      std::move(group.req), std::move(group.opt));
-    auto& ref = *mixed;
-    Current().opt.emplace_back(std::move(mixed));
-    return &ref;
-  }
-
-  void Finalize() {
-    auto& group = stack.front();
-    *out = irs::MixedBooleanFilter{std::move(group.req), std::move(group.opt)};
-  }
+    : default_field_id(field_id), current_root{&root}, tokenizer{&tokenizer} {}
 
   void AddClause(Conjunction conj) {
     if (conj != Conjunction::And && last_mod == Modifier::None) {
       return;
     }
 
-    auto& opt = Current().opt;
-    if (opt.empty()) {
+    auto& opt = current_root->GetOptional();
+    auto& req = current_root->GetRequired();
+
+    auto current = opt.PopBack();
+    if (!current) {
       return;
     }
 
-    auto current_clause = std::move(opt.back());
-    opt.pop_back();
+    irs::Filter::ptr prev;
+    if (conj == Conjunction::And) {
+      prev = opt.PopBack();
+    }
 
-    if (conj == Conjunction::And && !opt.empty()) {
-      Current().req.emplace_back(std::move(opt.back()));
-      opt.pop_back();
+    if (prev) {
+      req.add(std::move(prev));
     }
 
     if (last_mod == Modifier::Not) {
-      std::vector<irs::Filter::ptr> target;
-      target.emplace_back(std::move(current_clause));
-      Current().req.emplace_back(std::make_unique<irs::Not>(
-        std::make_unique<irs::Or>(std::move(target))));
+      req.add<irs::Exclusion>().exclude<irs::Or>().add(std::move(current));
     } else {
-      Current().req.emplace_back(std::move(current_clause));
+      req.add(std::move(current));
     }
   }
 
   irs::ByTerm& AddTerm(std::string_view value) {
-    auto& f = Emplace<irs::ByTerm>();
-    *f.mutable_field() = default_field;
+    auto& f = current_root->GetOptional().add<irs::ByTerm>();
+    *f.mutable_field_id() = default_field_id;
     f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
     return f;
   }
 
   irs::ByPhrase& AddPhrase(std::string_view value, int slop = 0) {
-    auto& f = Emplace<irs::ByPhrase>();
-    *f.mutable_field() = default_field;
+    auto& f = current_root->GetOptional().add<irs::ByPhrase>();
+    *f.mutable_field_id() = default_field_id;
     tokenizer->reset(value);
     auto token = irs::get<irs::TermAttr>(*tokenizer);
     for (; tokenizer->next();) {
@@ -129,8 +103,8 @@ struct ParserContext {
   }
 
   irs::ByPrefix& AddPrefix(std::string_view value) {
-    auto& f = Emplace<irs::ByPrefix>();
-    *f.mutable_field() = default_field;
+    auto& f = current_root->GetOptional().add<irs::ByPrefix>();
+    *f.mutable_field_id() = default_field_id;
     if (!value.empty() && value.back() == '*') {
       value.remove_suffix(1);
     }
@@ -139,16 +113,17 @@ struct ParserContext {
   }
 
   irs::ByWildcard& AddWildcard(std::string_view value) {
-    auto& f = Emplace<irs::ByWildcard>();
-    *f.mutable_field() = default_field;
-    f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
+    auto& f = current_root->GetOptional().add<irs::ByWildcard>();
+    *f.mutable_field_id() = default_field_id;
+    *f.mutable_options() =
+      irs::ByWildcardOptions{irs::ViewCast<irs::byte_type>(value)};
     return f;
   }
 
   irs::ByRange& AddRange(std::string_view min_val, std::string_view max_val,
                          bool inc_min, bool inc_max) {
-    auto& f = Emplace<irs::ByRange>();
-    *f.mutable_field() = default_field;
+    auto& f = current_root->GetOptional().add<irs::ByRange>();
+    *f.mutable_field_id() = default_field_id;
     auto& range = f.mutable_options()->range;
     if (min_val == "*") {
       range.min_type = irs::BoundType::Unbounded;
@@ -168,20 +143,11 @@ struct ParserContext {
   }
 
   irs::ByEditDistance& AddFuzzy(std::string_view value, int distance) {
-    auto& f = Emplace<irs::ByEditDistance>();
-    *f.mutable_field() = default_field;
+    auto& f = current_root->GetOptional().add<irs::ByEditDistance>();
+    *f.mutable_field_id() = default_field_id;
     f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
     f.mutable_options()->max_distance = static_cast<uint8_t>(distance);
     return f;
-  }
-
- private:
-  template<typename T>
-  T& Emplace() {
-    auto filter = std::make_unique<T>();
-    auto& ref = *filter;
-    Current().opt.emplace_back(std::move(filter));
-    return ref;
   }
 };
 

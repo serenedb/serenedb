@@ -23,7 +23,7 @@
 #include "index_reader.hpp"
 
 #include "basics/resource_manager.hpp"
-#include "iresearch/columnstore/hnsw.hpp"
+#include "iresearch/formats/hnsw/hnsw_reader.hpp"
 
 namespace irs {
 namespace {
@@ -37,10 +37,8 @@ struct EmptySubReader final : SubReader {
   const SegmentInfo& Meta() const final { return kEmptyInfo; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
   DocIterator::ptr docs_iterator() const final { return DocIterator::empty(); }
-  const irs::TermReader* field(std::string_view) const final { return nullptr; }
-  irs::FieldIterator::ptr fields() const final {
-    return irs::FieldIterator::empty();
-  }
+  const irs::TermReader* field(field_id) const final { return nullptr; }
+  std::span<const field_id> field_ids() const final { return {}; }
 };
 
 const EmptySubReader kEmpty;
@@ -49,7 +47,7 @@ const EmptySubReader kEmpty;
 
 void SubReader::Search(field_id field, HNSWSearchInfo info,
                        HNSWAnnSearchBuffer& buffer, uint32_t segment_id,
-                       columnstore::ReadContext& read_ctx) const {
+                       ReadContext& read_ctx) const {
   const auto* hnsw_reader = HNSW(field);
   if (!hnsw_reader) {
     return;
@@ -69,7 +67,7 @@ void SubReader::Search(field_id field, HNSWSearchInfo info,
 
 void SubReader::RangeSearch(field_id field, HNSWRangeSearchInfo info,
                             HNSWRangeSearchBuffer& buffer, uint32_t segment_id,
-                            columnstore::ReadContext& read_ctx) const {
+                            ReadContext& read_ctx) const {
   const auto* hnsw_reader = HNSW(field);
   if (!hnsw_reader) {
     return;

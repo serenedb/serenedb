@@ -24,7 +24,7 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/execution/expression_executor.hpp>
-#include <iresearch/formats/column/hnsw_index.hpp>
+#include <iresearch/formats/hnsw/hnsw_writer.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/proxy_filter.hpp>
 #include <memory>

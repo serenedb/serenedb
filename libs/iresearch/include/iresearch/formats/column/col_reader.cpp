@@ -27,6 +27,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/data_pointer.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <utility>
 #include <vector>
 
@@ -153,8 +154,11 @@ PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
         VariantRowGroupLayout l;
         l.row_start = vo.ReadProperty<uint64_t>(0, "row_start");
         l.row_count = vo.ReadProperty<uint64_t>(1, "row_count");
-        l.shred_state = static_cast<VariantShredState>(
+        const auto shred_state = magic_enum::enum_cast<VariantShredState>(
           vo.ReadProperty<uint8_t>(2, "shred_state"));
+        SDB_ENSURE(shred_state, sdb::ERROR_INTERNAL,
+                   "corrupt columnstore footer: invalid variant shred_state");
+        l.shred_state = *shred_state;
         vo.ReadObject(3, "unshredded", [&](duckdb::Deserializer& u) {
           l.unshredded =
             std::make_unique<PersistentColumnData>(DeserializeColumnData(u));

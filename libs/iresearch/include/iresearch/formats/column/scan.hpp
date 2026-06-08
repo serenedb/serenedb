@@ -164,7 +164,7 @@ inline void ReconstructVariantRun(MaterializeState::VariantRgState& rgstate,
 
 inline constexpr size_t kShreddedTypedValueIndex = 0;
 
-inline const ColumnReader* ResolveShreddedLeaf(
+[[nodiscard]] inline const ColumnReader* ResolveShreddedLeaf(
   const ColumnReader& shredded_node, std::span<const std::string> path) {
   const ColumnReader* node = &shredded_node;
   for (const auto& field : path) {

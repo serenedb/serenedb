@@ -34,13 +34,6 @@ namespace sdb::wal_log_data {
 
 inline constexpr uint8_t kIndexOnlyCp = 0x01;  // see indexonly_marker.h
 inline constexpr uint8_t kIndexOnlyRd = 0x02;  // see indexonly_marker.h
-// Search-table inserts come in two payload shapes; see
-// search_table_marker.h for the dispatch rule and Appendix A of
-// search_table_shard_sink.md for the wire layout.
-inline constexpr uint8_t kSearchTableInsertCdc = 0x03;  // CDC payload
-inline constexpr uint8_t kSearchTableDelete =
-  0x04;  // see search_table_marker.h
-inline constexpr uint8_t kSearchTableInsertChunk = 0x05;  // DataChunk payload
 
 inline constexpr uint8_t kExtended = 0xFF;
 

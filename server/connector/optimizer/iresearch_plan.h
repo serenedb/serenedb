@@ -28,7 +28,6 @@ namespace duckdb {
 class ClientContext;
 class DatabaseInstance;
 class LogicalGet;
-class LogicalOperator;
 class FunctionData;
 
 }  // namespace duckdb

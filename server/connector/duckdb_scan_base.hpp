@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <algorithm>
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>

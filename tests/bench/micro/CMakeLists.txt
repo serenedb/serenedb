@@ -10,6 +10,7 @@ function(add_bench FILE_NAME)
     add_dependencies(serenedb-bench-micro ${NAME})
 endfunction()
 
+add_bench(automaton_combinators)
 add_bench(call_once)
 add_bench(crc32c)
 add_bench(function)
@@ -28,6 +29,7 @@ add_bench(norm_gather)
 add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(filter_prepare)
+add_bench(filter_rules)
 
 target_include_directories(
     serenedb-bench-micro-regexp_vs_wildcard

@@ -110,10 +110,13 @@ set(IResearch_core_sources
     ./search/all_docs_provider.cpp
     ./search/all_filter.cpp
     ./search/all_iterator.cpp
+    ./search/automaton_filter.cpp
+    ./search/boost_scorer.cpp
     ./search/granular_range_filter.cpp
     ./search/scorer.cpp
     ./search/score_function.cpp
     ./search/cost.cpp
+    ./search/filter_rules.cpp
     ./search/collectors.cpp
     ./search/bitset_doc_iterator.cpp
     ./search/filter.cpp
@@ -157,6 +160,7 @@ set(IResearch_core_sources
     ./store/memory_directory.cpp
     ./store/store_utils.cpp
     ./utils/attributes.cpp
+    ./utils/automaton_combinators.cpp
     ./utils/automaton_utils.cpp
     ./utils/encryption.cpp
     ./utils/ctr_encryption.cpp

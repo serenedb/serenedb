@@ -64,8 +64,8 @@ struct VariantRowGroupLayout {
   uint64_t row_count = 0;
   bool shredded = false;
   bool fully_shredded = false;
-  std::shared_ptr<PersistentColumnData> unshredded;
-  std::shared_ptr<PersistentColumnData> shredded_node;
+  std::unique_ptr<PersistentColumnData> unshredded;
+  std::unique_ptr<PersistentColumnData> shredded_node;
 };
 
 struct PersistentColumnData {
@@ -122,11 +122,11 @@ inline PersistentColumnData Clone(const PersistentColumnData& src) {
     cl.fully_shredded = l.fully_shredded;
     if (l.unshredded) {
       cl.unshredded =
-        std::make_shared<PersistentColumnData>(Clone(*l.unshredded));
+        std::make_unique<PersistentColumnData>(Clone(*l.unshredded));
     }
     if (l.shredded_node) {
       cl.shredded_node =
-        std::make_shared<PersistentColumnData>(Clone(*l.shredded_node));
+        std::make_unique<PersistentColumnData>(Clone(*l.shredded_node));
     }
     out.variant_layouts.emplace_back(std::move(cl));
   }

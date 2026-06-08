@@ -214,12 +214,12 @@ PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
         l.shredded = vo.ReadProperty<bool>(2, "shredded");
         vo.ReadObject(3, "unshredded", [&](duckdb::Deserializer& u) {
           l.unshredded =
-            std::make_shared<PersistentColumnData>(DeserializeColumnData(u));
+            std::make_unique<PersistentColumnData>(DeserializeColumnData(u));
         });
         if (l.shredded) {
           vo.ReadObject(4, "shredded_node", [&](duckdb::Deserializer& s) {
             l.shredded_node =
-              std::make_shared<PersistentColumnData>(DeserializeColumnData(s));
+              std::make_unique<PersistentColumnData>(DeserializeColumnData(s));
           });
           l.fully_shredded =
             vo.ReadPropertyWithDefault<bool>(5, "fully_shredded");

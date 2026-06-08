@@ -373,11 +373,11 @@ void MaterializeExtractNode(const ColumnReader& reader, MaterializeState& state,
       auto& leaf_state = EnsureExtractLeafState(state, w.rg, *leaf, rg_count);
       if (leaf->Type() == scan_type) {
         MaterializeNode(*leaf, leaf_state, IotaRange{local_start, run}, out_vec,
-                        output_start + i);
+                        output_start + i, /*may_use_entire=*/true);
       } else {
         duckdb::Vector scratch{leaf->Type(), static_cast<duckdb::idx_t>(run)};
         MaterializeNode(*leaf, leaf_state, IotaRange{local_start, run}, scratch,
-                        /*output_start=*/0);
+                        /*output_start=*/0, /*may_use_entire=*/true);
         CastExtractInto(context, scratch, out_vec, run, output_start + i);
       }
       i += run;

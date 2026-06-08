@@ -503,7 +503,7 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
       layout.row_start = row_start;
       layout.row_count = row_count;
       layout.shredded = should_shred;
-      layout.unshredded = std::make_shared<PersistentColumnData>();
+      layout.unshredded = std::make_unique<PersistentColumnData>();
 
       if (!should_shred) {
         layout.unshredded->type = duckdb::VariantShredding::GetUnshreddedType();
@@ -525,7 +525,7 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
           unshredded_fmt.validity.CountValid(row_count) == 0;
       }
 
-      layout.shredded_node = std::make_shared<PersistentColumnData>();
+      layout.shredded_node = std::make_unique<PersistentColumnData>();
       layout.unshredded->type = shred_entries[0].GetType();
       layout.shredded_node->type = shred_entries[1].GetType();
       FlushNode(write_ctx, layout.unshredded->type, shred_entries[0], row_count,

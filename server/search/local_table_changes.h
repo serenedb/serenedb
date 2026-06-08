@@ -28,11 +28,12 @@
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 
-namespace sdb::query {
+namespace sdb::search {
 
 // Per-search-table, per-transaction buffer of in-flight changes.
 //
-// Lives on query::Transaction (one entry per touched search table). The
+// Lives on search::SearchTableTransaction (one entry per touched search
+// table). The
 // parallel SereneDBSearchInsert operator registers one ColumnDataCollection
 // per sink thread here (see GetLocalSinkState) and each thread appends only
 // to its own collection during Sink -- so the per-thread append is
@@ -70,16 +71,11 @@ struct LocalTableChangesEntry {
   // entries are 0 (replay re-derives the key from the columns and ignores
   // them).
   std::vector<std::unique_ptr<std::vector<uint64_t>>> insert_pk_bases;
-
-  // Affected-row identifiers for in-flight UPDATE/DELETE (M6). Empty until
-  // then -- carried here now to match DuckLake's struct shape and avoid a
-  // layout migration later.
-  std::vector<int64_t> row_ids;
 };
 
 // Map keyed by SearchTableShard's table_id (one search table -> one
-// entry). Cleared on Transaction::Destroy.
+// entry). Cleared when the SearchTableTransaction is reset (Transaction::Destroy).
 using LocalTableChanges =
   containers::FlatHashMap<ObjectId, LocalTableChangesEntry>;
 
-}  // namespace sdb::query
+}  // namespace sdb::search

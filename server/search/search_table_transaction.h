@@ -31,7 +31,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
 #include "catalog/identifiers/object_id.h"
-#include "query/local_table_changes.h"
+#include "search/local_table_changes.h"
 
 namespace sdb {
 
@@ -119,10 +119,10 @@ class SearchTableTransaction {
     return it->second;
   }
 
-  // Per-search-table in-flight INSERT buffer (see query/local_table_changes.h).
+  // Per-search-table in-flight INSERT buffer (see search/local_table_changes.h).
   // Lazily populated by SereneDBSearchInsert; read back at commit for the INLINE
   // WAL record (and future RYOW overlay).
-  query::LocalTableChanges& Changes() noexcept { return _changes; }
+  LocalTableChanges& Changes() noexcept { return _changes; }
 
   // --- Lifecycle (query::Transaction delegates) ---
 
@@ -159,7 +159,7 @@ class SearchTableTransaction {
   // in one txn alias the same reader.
   containers::FlatHashMap<ObjectId, std::shared_ptr<irs::DirectoryReader>>
     _readers;
-  query::LocalTableChanges _changes;
+  LocalTableChanges _changes;
 };
 
 }  // namespace sdb::search

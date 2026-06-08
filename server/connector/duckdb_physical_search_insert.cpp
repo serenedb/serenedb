@@ -51,8 +51,8 @@
 #include "connector/search_table_dispatch.h"
 #include "connector/search_table_sink_writer.h"
 #include "pg/connection_context.h"
-#include "query/local_table_changes.h"
 #include "query/transaction.h"
+#include "search/local_table_changes.h"
 #include "search/search_table_shard.h"
 #include "storage_engine/table_shard.h"
 

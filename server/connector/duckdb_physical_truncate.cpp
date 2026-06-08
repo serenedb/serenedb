@@ -26,6 +26,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_truncate_function.h"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "storage_engine/table_shard.h"
 

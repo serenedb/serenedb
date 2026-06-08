@@ -38,6 +38,7 @@
 #include "connector/duckdb_table_entry.h"
 #include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"

@@ -22,8 +22,11 @@
 
 namespace sdb::search {
 
-// Called once from SearchEngine::start, after CatalogFeature has loaded
-// every shard and after the search thread pools have started.
-void InitInvertedIndexes(bool skip_wal_recovery);
+// Search-table (StorageKind::kSearch) WAL recovery (WAL_DESIGN.md §11). Called
+// once from SearchEngine::start after InitInvertedIndexes. For each database,
+// replays the per-db central WAL's committed-but-unpublished records into their
+// shards' iresearch writers (reconstructing PKs via the shared
+// WriteChunkToSearchSink), then RefreshCommit + sets num_rows from the index.
+void RunSearchTableRecovery(bool skip_wal_recovery);
 
 }  // namespace sdb::search

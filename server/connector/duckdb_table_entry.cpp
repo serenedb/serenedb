@@ -37,6 +37,7 @@
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -45,15 +46,6 @@
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
-
-void RejectIfSearchTable(const TableShard& shard, std::string_view operation) {
-  if (shard.GetStorage() == catalog::StorageKind::kSearch) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG(operation,
-              " on a search-backed table is not yet supported (M3-M6)"));
-  }
-}
 
 SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table) {
   // RTTI is unavoidable here: the caller hands us a generic

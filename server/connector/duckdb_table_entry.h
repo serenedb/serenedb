@@ -113,11 +113,4 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
 // reinterpret_cast assertion.
 SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table);
 
-// Throws ERRCODE_FEATURE_NOT_SUPPORTED if `shard` is search-backed. Called
-// at every physical-operator construction site that would otherwise mutate
-// rocksdb state (INSERT / UPDATE / DELETE / TRUNCATE / CTAS / SST / SCAN /
-// CREATE INDEX). Each parallel search operator landing in M3-M6 deletes
-// its corresponding call; the helper is gone once the last one lands.
-void RejectIfSearchTable(const TableShard& shard, std::string_view operation);
-
 }  // namespace sdb::connector

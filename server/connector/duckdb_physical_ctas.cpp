@@ -33,6 +33,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 
 namespace sdb::connector {

@@ -34,6 +34,7 @@
 #include "connector/duckdb_table_entry.h"
 #include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"

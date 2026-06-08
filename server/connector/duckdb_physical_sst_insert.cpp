@@ -32,6 +32,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/key_utils.hpp"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"

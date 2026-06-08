@@ -38,13 +38,6 @@ void ApplyColumnModes(std::vector<catalog::Column>& columns,
                       const duckdb::case_insensitive_map_t<
                         duckdb::unique_ptr<duckdb::ParsedExpression>>& options);
 
-// Reads `storage = 'rocksdb' | 'search'` from the WITH clause and sets
-// options.storage. Throws on unknown values or non-string shapes.
-void ApplyStorageKind(
-  catalog::CreateTableOptions& options,
-  const duckdb::case_insensitive_map_t<
-    duckdb::unique_ptr<duckdb::ParsedExpression>>& options_map);
-
 class SereneDBSchemaEntry final : public duckdb::SchemaCatalogEntry {
  public:
   using SchemaCatalogEntry::SchemaCatalogEntry;

@@ -48,6 +48,7 @@
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/key_utils.hpp"
+#include "connector/search_table_dispatch.h"
 #include "connector/search_table_sink_writer.h"
 #include "pg/connection_context.h"
 #include "query/local_table_changes.h"

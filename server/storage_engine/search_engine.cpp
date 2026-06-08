@@ -58,6 +58,7 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
 #include "search/search_db_wal.h"
+#include "search/search_table_recovery.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
 

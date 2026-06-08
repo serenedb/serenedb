@@ -240,37 +240,18 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
   duckdb::GlobalTableFunctionState* global_state);
 
 template<typename View>
-void WriteVirtualColumns(CommonScanGlobalState& gstate, duckdb::idx_t row_base,
-                         duckdb::idx_t num_rows, const View& view,
-                         duckdb::DataChunk& output,
+void WriteVirtualColumns(CommonScanGlobalState& gstate,
+                         duckdb::idx_t /*row_base*/, duckdb::idx_t num_rows,
+                         const View& view, duckdb::DataChunk& output,
                          duckdb::idx_t output_start) {
   SDB_ASSERT(!gstate.scan_score || view.size() == num_rows);
-  for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
-    if (gstate.projected_columns[proj] != duckdb::DConstants::INVALID_INDEX) {
-      continue;
-    }
-    if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
-      // Reference would overwrite the whole vector; write the constant
-      // into the flat slot range instead to coexist with prior offset
-      // writes from earlier StartSegment/EmitChunk calls.
-      auto* data =
-        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-      for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-        data[output_start + i] = gstate.tableoid_value;
-      }
-    } else if (gstate.scan_score && proj == gstate.score_output_idx) {
-      auto* score_data =
-        duckdb::FlatVector::GetDataMutable<float>(output.data[proj]);
-      for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-        score_data[output_start + i] = view.score(i);
-      }
-    } else if (gstate.scan_rowid && proj == gstate.rowid_output_idx) {
-      auto* data =
-        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-      for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-        data[output_start + i] = row_base + i;
-      }
-    }
+  if (!gstate.scan_score) {
+    return;
+  }
+  auto* score_data =
+    duckdb::FlatVector::GetDataMutable<float>(output.data[gstate.score_output_idx]);
+  for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+    score_data[output_start + i] = view.score(i);
   }
 }
 

@@ -1,80 +1,376 @@
+# DOCS_SETUP: generated_wide_fixtures
+
+statement ok
+CREATE TABLE lineitem AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
 control substitution on
 
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM 'test.parquet';
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_001_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| SELECT * FROM 'test.parquet';
+# DOCS_RAW_END
+
+query
+SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_001_1_test_parquet.parquet';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_002_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| DESCRIBE SELECT * FROM 'test.parquet';
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-DESCRIBE SELECT * FROM 'test.parquet';
+query
+DESCRIBE SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_002_1_test_parquet.parquet';
+----
+column_name	column_type	null	key	default	extra
+id	INTEGER	YES	NULL	NULL	NULL
+name	VARCHAR	YES	NULL	NULL	NULL
+value	INTEGER	YES	NULL	NULL	NULL
+
+
+# DOCS_SETUP: file_fixtures_example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_003_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| CREATE TABLE test AS
+#|     SELECT * FROM 'test.parquet';
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
+statement ok
 CREATE TABLE test AS
-    SELECT * FROM 'test.parquet';
+    SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_003_1_test_parquet.parquet';
+
+# DOCS_SETUP: file_fixtures_example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_004_1_test_parq.parq' (FORMAT parquet);
 
 # DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_parquet('test.parq');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM read_parquet('test.parq');
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_004_1_test_parq.parq');
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_005_1_file1_parquet.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_005_2_file2_parquet.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_005_3_file3_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_parquet(['file1.parquet', 'file2.parquet', 'file3.parquet']);
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM read_parquet(['file1.parquet', 'file2.parquet', 'file3.parquet']);
+FROM read_parquet(['/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_005_1_file1_parquet.parquet', '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_005_2_file2_parquet.parquet', '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_005_3_file3_parquet.parquet']);
+----
+id	name	value
+1	alpha	10
+2	beta	20
+1	alpha	10
+2	beta	20
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_006
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_006_1_parquet_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_006_1_parquet_2.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_006
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM 'test/*.parquet';
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM 'test/*.parquet';
+FROM '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_006_1_parquet_*.parquet';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_007
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_007_1_parquet_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_007_1_parquet_2.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_007
+# DOCS_RAW_BEGIN
+#| SELECT *, filename
+#| FROM read_parquet('test/*.parquet');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *, filename
-FROM read_parquet('test/*.parquet');
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_007_1_parquet_*.parquet');
+----
+id	name	value	filename
+1	alpha	10	/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_007_1_parquet_1.parquet
+2	beta	20	/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_007_1_parquet_1.parquet
+1	alpha	10	/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_007_1_parquet_2.parquet
+2	beta	20	/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_007_1_parquet_2.parquet
+
+
+# DOCS_SETUP: file_fixtures_example_008
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_008_1_parquet_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_008_1_parquet_2.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_008_2_parquet_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_008_2_parquet_2.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_008
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_parquet(['folder1/*.parquet', 'folder2/*.parquet']);
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM read_parquet(['folder1/*.parquet', 'folder2/*.parquet']);
+FROM read_parquet(['/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_008_1_parquet_*.parquet', '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_008_2_parquet_*.parquet']);
+----
+id	name	value
+1	alpha	10
+2	beta	20
+1	alpha	10
+2	beta	20
+1	alpha	10
+2	beta	20
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_009
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_009_1_some_file_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_009
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_parquet('https://some.url/some_file.parquet');
+# DOCS_RAW_END
 
-query error (?i)Could not resolve hostname error .*
+query
 SELECT *
-FROM read_parquet('https://some.url/some_file.parquet');
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_009_1_some_file_parquet.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_010
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_010
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM parquet_metadata('test.parquet');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM parquet_metadata('test.parquet');
+FROM parquet_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet');
+----
+file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	column_id	file_offset	num_values	path_in_schema	type	stats_min	stats_max	stats_null_count	stats_distinct_count	stats_min_value	stats_max_value	compression	encodings	index_page_offset	dictionary_page_offset	data_page_offset	total_compressed_size	total_uncompressed_size	key_value_metadata	bloom_filter_offset	bloom_filter_length	min_is_exact	max_is_exact	row_group_compressed_bytes	geo_bbox	geo_types
+/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet	0	2	3	102	0	0	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	4	33	31	{}	NULL	NULL	t	t	108	NULL	NULL
+/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet	0	2	3	102	1	0	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	37	42	40	{}	NULL	NULL	t	t	108	NULL	NULL
+/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet	0	2	3	102	2	0	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	79	33	31	{}	NULL	NULL	t	t	108	NULL	NULL
+
+
+# DOCS_SETUP: file_fixtures_example_011
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_011_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_011
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM parquet_file_metadata('test.parquet');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM parquet_file_metadata('test.parquet');
+FROM parquet_file_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_011_1_test_parquet.parquet');
+----
+file_name	created_by	num_rows	num_row_groups	format_version	encryption_algorithm	footer_signing_key_metadata	file_size_bytes	footer_size	column_orders
+/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_011_1_test_parquet.parquet	DuckDB version v0.0.1 (build 8c42e3b1)	2	1	1	NULL	NULL	424	304	{ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder())}
+
+
+# DOCS_SETUP: file_fixtures_example_012
+
+statement ok
+COPY (
+    SELECT
+        42 AS number,
+        true AS is_even
+) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_012_1_test_parquet.parquet' (
+    FORMAT parquet,
+    KV_METADATA {
+        number: 'Answer to life, universe, and everything',
+        is_even: 'not ''odd'''
+    }
+);
 
 # DOCS_TEST: example_012
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM parquet_kv_metadata('test.parquet');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT *
-FROM parquet_kv_metadata('test.parquet');
+query
+SELECT
+    replace(
+        file_name,
+        '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_012_1_test_parquet.parquet',
+        'test.parquet'
+    ) AS file_name,
+    key,
+    value
+FROM parquet_kv_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_012_1_test_parquet.parquet')
+ORDER BY key;
+----
+file_name	key	value
+test.parquet	\\x69735f6576656e	\\x6e6f7420276f646427
+test.parquet	\\x6e756d626572	\\x416e7377657220746f206c6966652c20756e6976657273652c20616e642065766572797468696e67
+
+
+# DOCS_SETUP: file_fixtures_example_013
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_013
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM parquet_schema('test.parquet');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM parquet_schema('test.parquet');
+FROM parquet_schema('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet');
+----
+file_name	name	type	type_length	repetition_type	num_children	converted_type	scale	precision	field_id	logical_type	duckdb_type	column_id
+/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet	duckdb_schema	NULL	NULL	REQUIRED	3	NULL	NULL	NULL	NULL	NULL	NULL	0
+/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet	id	INT32	NULL	OPTIONAL	NULL	INT_32	NULL	NULL	NULL	NULL	INTEGER	1
+/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet	name	BYTE_ARRAY	NULL	OPTIONAL	NULL	UTF8	NULL	NULL	NULL	NULL	VARCHAR	2
+/tmp/tests_sqllogic_sdb_pg_site_docs_data_import_and_export_xeq2zzqm_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet	value	INT32	NULL	OPTIONAL	NULL	INT_32	NULL	NULL	NULL	NULL	INTEGER	3
+
 
 # DOCS_SETUP
 
@@ -103,107 +399,303 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_014
+# DOCS_SETUP: file_fixtures_example_014
 
-statement error (?i)Cannot open file .*
+
+# DOCS_TEST: example_014
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (SELECT * FROM tbl)
+#|     TO 'result-snappy.parquet'
+#|     (FORMAT parquet);
+# DOCS_RAW_END
+
+statement ok
 COPY
     (SELECT * FROM tbl)
-    TO 'result-snappy.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_014_1_result_snappy_parquet.parquet'
     (FORMAT parquet);
 
-# DOCS_TEST: example_015
+# DOCS_SETUP: file_fixtures_example_015
 
-statement error (?i)Cannot open file .*
+
+# DOCS_TEST: example_015
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (FROM generate_series(100_000))
+#|     TO 'test.parquet'
+#|     (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);
+# DOCS_RAW_END
+
+statement ok
 COPY
     (FROM generate_series(100_000))
-    TO 'test.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_015_1_test_parquet.parquet'
     (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);
 
 # DOCS_TEST: example_016
+# DOCS_RAW_BEGIN
+#| EXPORT DATABASE 'target_directory' (FORMAT parquet);
+# DOCS_RAW_END
 
-statement error (?i)Failed to create directory .*
-EXPORT DATABASE 'target_directory' (FORMAT parquet);
+statement ok
+DETACH IF EXISTS parquet_overview_export_016;
+
+statement ok
+ATTACH ':memory:' AS parquet_overview_export_016;
+
+statement ok
+USE parquet_overview_export_016;
+
+statement ok
+CREATE TABLE export_example_016 AS SELECT 16 AS id, 'parquet overview' AS name;
+
+statement ok
+EXPORT DATABASE '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_016_target_directory' (FORMAT parquet);
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DETACH parquet_overview_export_016;
+
+
+# DOCS_SETUP: file_fixtures_example_017
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_017_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_017
+# DOCS_RAW_BEGIN
+#| SELECT * FROM 'test.parquet';
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM 'test.parquet';
+query
+SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_017_1_test_parquet.parquet';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_018
+
 
 # DOCS_TEST: example_018
+# DOCS_RAW_BEGIN
+#| COPY (SELECT 42::INTEGER AS i) TO 'integers.parquet' (FIELD_IDS {i: 0});
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-COPY (SELECT 42::INTEGER AS i) TO 'integers.parquet' (FIELD_IDS {i: 0});
+statement ok
+COPY (SELECT 42::INTEGER AS i) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_018_1_integers_parquet.parquet' (FIELD_IDS {i: 0});
+
+# DOCS_SETUP: file_fixtures_example_019
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_019_1_integers_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_019
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_parquet('integers.parquet', schema = MAP {
+#|                     0: {name: 'renamed_i', type: 'BIGINT', default_value: NULL},
+#|                     1: {name: 'new_column', type: 'UTINYINT', default_value: 43}
+#|                   });
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM read_parquet('integers.parquet', schema = MAP {
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_019_1_integers_parquet.parquet', schema = MAP {
                     0: {name: 'renamed_i', type: 'BIGINT', default_value: NULL},
                     1: {name: 'new_column', type: 'UTINYINT', default_value: 43}
                   });
+----
+renamed_i	new_column
+NULL	43
+NULL	43
+
+
+# DOCS_SETUP: local_people_insert_target
+
+statement ok
+DROP TABLE IF EXISTS people;
+
+statement ok
+CREATE TABLE people (id INTEGER, name VARCHAR, value INTEGER);
+
+statement ok
+INSERT INTO people VALUES
+    (1, 'Ada', 10),
+    (2, 'Bob', 20);
+
+# DOCS_SETUP: file_fixtures_example_020
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_020_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_020
+# DOCS_RAW_BEGIN
+#| INSERT INTO people
+#|     SELECT * FROM read_parquet('test.parquet');
+# DOCS_RAW_END
 
-statement error
+statement ok
 INSERT INTO people
-    SELECT * FROM read_parquet('test.parquet');
-----
-db error: ERROR: Table with name people does not exist!
-Did you mean "<slt:ignore>"?
+    SELECT * FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_020_1_test_parquet.parquet');
 
+# DOCS_SETUP: drop_people_before_create_example
+
+statement ok
+DROP TABLE IF EXISTS people;
+
+# DOCS_SETUP: file_fixtures_example_021
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_021_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_021
+# DOCS_RAW_BEGIN
+#| CREATE TABLE people AS
+#|     SELECT * FROM read_parquet('test.parquet');
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
+statement ok
 CREATE TABLE people AS
-    SELECT * FROM read_parquet('test.parquet');
+    SELECT * FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_021_1_test_parquet.parquet');
+
+# DOCS_SETUP: file_fixtures_example_022
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_022_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_022
+# DOCS_RAW_BEGIN
+#| CREATE VIEW people AS
+#|     SELECT * FROM read_parquet('test.parquet');
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
+statement ok
+DROP VIEW IF EXISTS people;
+
+statement ok
+DROP TABLE IF EXISTS people;
+
+statement ok
 CREATE VIEW people AS
-    SELECT * FROM read_parquet('test.parquet');
+    SELECT * FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_022_1_test_parquet.parquet');
+
+# DOCS_SETUP: local_people_select_fixture
+
+statement ok
+DROP VIEW IF EXISTS people;
+
+statement ok
+DROP TABLE IF EXISTS people;
+
+
+statement ok
+CREATE TABLE people (id INTEGER, name VARCHAR);
+
+statement ok
+INSERT INTO people VALUES
+    (1, 'Ada'),
+    (2, 'Bob');
 
 # DOCS_TEST: example_023
 
-query error
+query ??
 SELECT * FROM people;
 ----
-db error: ERROR: Table with name people does not exist!
-Did you mean "<slt:ignore>"?
+id	name
+1	Ada
+2	Bob
+
+# DOCS_SETUP: file_fixtures_example_024
 
 
 # DOCS_TEST: example_024
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (SELECT * FROM tbl)
+#|     TO 'result-snappy.parquet'
+#|     (FORMAT parquet);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
+statement ok
 COPY
     (SELECT * FROM tbl)
-    TO 'result-snappy.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_024_1_result_snappy_parquet.parquet'
     (FORMAT parquet);
 
-# DOCS_TEST: example_025
+# DOCS_SETUP: file_fixtures_example_025
 
-statement error (?i)Cannot open file .*
+
+# DOCS_TEST: example_025
+# DOCS_RAW_BEGIN
+#| COPY tbl
+#|     TO 'result-zstd.parquet'
+#|     (FORMAT parquet, COMPRESSION zstd);
+# DOCS_RAW_END
+
+statement ok
 COPY tbl
-    TO 'result-zstd.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_025_1_result_zstd_parquet.parquet'
     (FORMAT parquet, COMPRESSION zstd);
 
-# DOCS_TEST: example_026
+# DOCS_SETUP: file_fixtures_example_026
 
-statement error (?i)Cannot open file .*
+
+# DOCS_TEST: example_026
+# DOCS_RAW_BEGIN
+#| COPY tbl
+#|     TO 'result-zstd.parquet'
+#|     (FORMAT parquet, COMPRESSION zstd, COMPRESSION_LEVEL 1);
+# DOCS_RAW_END
+
+statement ok
 COPY tbl
-    TO 'result-zstd.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_026_1_result_zstd_parquet.parquet'
     (FORMAT parquet, COMPRESSION zstd, COMPRESSION_LEVEL 1);
 
-# DOCS_TEST: example_027
+# DOCS_SETUP: file_fixtures_example_027
 
-statement error (?i)Cannot open file .*
+
+# DOCS_TEST: example_027
+# DOCS_RAW_BEGIN
+#| COPY (
+#|     SELECT
+#|         42 AS number,
+#|         true AS is_even
+#| ) TO 'kv_metadata.parquet' (
+#|     FORMAT parquet,
+#|     KV_METADATA {
+#|         number: 'Answer to life, universe, and everything',
+#|         is_even: 'not ''odd''' -- single quotes in values must be escaped
+#|     }
+#| );
+# DOCS_RAW_END
+
+statement ok
 COPY (
     SELECT
         42 AS number,
         true AS is_even
-) TO 'kv_metadata.parquet' (
+) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_027_1_kv_metadata_parquet.parquet' (
     FORMAT parquet,
     KV_METADATA {
         number: 'Answer to life, universe, and everything',
@@ -211,69 +703,154 @@ COPY (
     }
 );
 
-# DOCS_TEST: example_028
+# DOCS_SETUP: file_fixtures_example_028
 
-statement error (?i)Cannot open file .*
+
+# DOCS_TEST: example_028
+# DOCS_RAW_BEGIN
+#| COPY tbl
+#|     TO 'result-v2.parquet'
+#|     (FORMAT parquet, PARQUET_VERSION 'V2');
+# DOCS_RAW_END
+
+statement ok
 COPY tbl
-    TO 'result-v2.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_028_1_result_v2_parquet.parquet'
     (FORMAT parquet, PARQUET_VERSION 'V2');
 
-# DOCS_TEST: example_029
+# DOCS_SETUP: file_fixtures_example_029
 
-statement error (?i)No files found that match the pattern .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_029_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_029
+# DOCS_RAW_BEGIN
+#| COPY
+#|     'test.csv'
+#|     TO 'result-uncompressed.parquet'
+#|     (FORMAT parquet, COMPRESSION uncompressed);
+# DOCS_RAW_END
+
+statement ok
 COPY
-    'test.csv'
-    TO 'result-uncompressed.parquet'
+    '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_029_1_test_csv.csv'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_029_2_result_uncompressed_parquet.parquet'
     (FORMAT parquet, COMPRESSION uncompressed);
 
-# DOCS_TEST: example_030
+# DOCS_SETUP: file_fixtures_example_030
 
-statement error (?i)Cannot open file .*
+
+# DOCS_TEST: example_030
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (FROM generate_series(100_000))
+#|     TO 'row-groups-zstd.parquet'
+#|     (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);
+# DOCS_RAW_END
+
+statement ok
 COPY
     (FROM generate_series(100_000))
-    TO 'row-groups-zstd.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_030_1_row_groups_zstd_parquet.parquet'
     (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 100_000);
 
-# DOCS_TEST: example_031
+# DOCS_SETUP: file_fixtures_example_031
 
-statement error (?i)Cannot open file .*
+
+# DOCS_TEST: example_031
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (FROM generate_series(100_000))
+#|     TO 'result-lz4.parquet'
+#|     (FORMAT parquet, COMPRESSION lz4);
+# DOCS_RAW_END
+
+statement ok
 COPY
     (FROM generate_series(100_000))
-    TO 'result-lz4.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_031_1_result_lz4_parquet.parquet'
     (FORMAT parquet, COMPRESSION lz4);
 
-# DOCS_TEST: example_032
+# DOCS_SETUP: file_fixtures_example_032
 
-statement error (?i)Cannot open file .*
+
+# DOCS_TEST: example_032
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (FROM generate_series(100_000))
+#|     TO 'result-lz4.parquet'
+#|     (FORMAT parquet, COMPRESSION lz4_raw);
+# DOCS_RAW_END
+
+statement ok
 COPY
     (FROM generate_series(100_000))
-    TO 'result-lz4.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_032_1_result_lz4_parquet.parquet'
     (FORMAT parquet, COMPRESSION lz4_raw);
 
-# DOCS_TEST: example_033
+# DOCS_SETUP: file_fixtures_example_033
 
-statement error (?i)Cannot open file .*
+
+# DOCS_TEST: example_033
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (FROM generate_series(100_000))
+#|     TO 'result-brotli.parquet'
+#|     (FORMAT parquet, COMPRESSION brotli);
+# DOCS_RAW_END
+
+statement ok
 COPY
     (FROM generate_series(100_000))
-    TO 'result-brotli.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_033_1_result_brotli_parquet.parquet'
     (FORMAT parquet, COMPRESSION brotli);
 
-# DOCS_TEST: example_034
+# DOCS_SETUP: file_fixtures_example_034
 
-statement error
+
+# DOCS_TEST: example_034
+# DOCS_RAW_BEGIN
+#| COPY
+#|     lineitem
+#|     TO 'lineitem-with-custom-dictionary-size.parquet'
+#|     (FORMAT parquet, STRING_DICTIONARY_PAGE_SIZE_LIMIT 100_000);
+# DOCS_RAW_END
+
+statement ok
 COPY
     lineitem
-    TO 'lineitem-with-custom-dictionary-size.parquet'
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_034_1_lineitem_with_custom_dictionary_size_parquet.parquet'
     (FORMAT parquet, STRING_DICTIONARY_PAGE_SIZE_LIMIT 100_000);
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_035
+# DOCS_RAW_BEGIN
+#| EXPORT DATABASE 'target_directory' (FORMAT parquet);
+# DOCS_RAW_END
 
-statement error (?i)Failed to create directory .*
-EXPORT DATABASE 'target_directory' (FORMAT parquet);
+statement ok
+DETACH IF EXISTS parquet_overview_export_035;
+
+statement ok
+ATTACH ':memory:' AS parquet_overview_export_035;
+
+statement ok
+USE parquet_overview_export_035;
+
+statement ok
+CREATE TABLE export_example_035 AS SELECT 35 AS id, 'parquet export' AS name;
+
+statement ok
+EXPORT DATABASE '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_035_target_directory' (FORMAT parquet);
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DETACH parquet_overview_export_035;
+
 
 # DOCS_TEST: example_036
 

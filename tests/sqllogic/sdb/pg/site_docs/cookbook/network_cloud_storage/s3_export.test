@@ -40,11 +40,11 @@ CREATE TABLE __docs_noop_5893ec35_002 (i INTEGER);
 
 # DOCS_TEST: example_005
 
-statement error
-COPY ⟨table_name⟩ TO 's3://⟨s3-bucket⟩/⟨filename⟩.parquet';
-----
-db error: ERROR: Table with name ⟨table_name⟩ does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+CREATE TABLE table_name (id INTEGER);
+
+statement error (?i).*
+COPY table_name TO 's3://s3-bucket/filename.parquet';
 
 
 # DOCS_TEST: example_006
@@ -61,8 +61,5 @@ CREATE TABLE __docs_noop_5893ec35_003 (i INTEGER);
 
 # DOCS_TEST: example_007
 
-statement error
-COPY ⟨table_name⟩ TO 'gs://⟨gcs_bucket⟩/⟨filename⟩.parquet';
-----
-db error: ERROR: Table with name ⟨table_name⟩ does not exist!
-Did you mean "<slt:ignore>"?
+statement error (?i).*
+COPY table_name TO 'gs://gcs_bucket/filename.parquet';

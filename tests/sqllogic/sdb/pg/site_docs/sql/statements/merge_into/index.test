@@ -8,7 +8,7 @@ INSERT INTO people VALUES (1, 'John', 92_000.0), (2, 'Anna', 100_000.0);
 
 # DOCS_TEST: example_002
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement error
 MERGE INTO people
     USING (
         SELECT
@@ -19,6 +19,9 @@ MERGE INTO people
     ON (upserts.id = people.id)
     WHEN MATCHED THEN UPDATE
     WHEN NOT MATCHED THEN INSERT;
+----
+db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+
 
 query
 FROM people
@@ -30,7 +33,7 @@ id	name	salary
 
 # DOCS_TEST: example_003
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement error
 MERGE INTO people
     USING (
         SELECT
@@ -39,6 +42,9 @@ MERGE INTO people
     ) AS salary_updates
     USING (id)
     WHEN MATCHED THEN UPDATE SET salary = salary_updates.salary;
+----
+db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+
 
 query
 FROM people
@@ -50,7 +56,7 @@ id	name	salary
 
 # DOCS_TEST: example_004
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement error
 MERGE INTO people
     USING (
         SELECT
@@ -58,6 +64,9 @@ MERGE INTO people
     ) AS deletes
     USING (id)
     WHEN MATCHED THEN DELETE;
+----
+db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+
 
 query
 FROM people
@@ -69,7 +78,7 @@ id	name	salary
 
 # DOCS_TEST: example_005
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement error
 MERGE INTO people
     USING (
         SELECT
@@ -77,6 +86,9 @@ MERGE INTO people
     ) AS deletes
     USING (id)
     WHEN MATCHED AND people.salary >= 100_000.0 THEN DELETE;
+----
+db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+
 
 query
 FROM people
@@ -92,7 +104,7 @@ statement ok
 -- Let's get John back in!
 INSERT INTO people VALUES (1, 'John', 105_000.0);
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement error
 MERGE INTO people
     USING (
         SELECT
@@ -105,6 +117,9 @@ MERGE INTO people
     WHEN MATCHED AND people.salary > 100_000.0 THEN DELETE
     WHEN NOT MATCHED THEN INSERT BY NAME
     RETURNING merge_action, *;
+----
+db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+
 
 # DOCS_TEST: example_007
 
@@ -112,10 +127,13 @@ statement ok
 CREATE TABLE target AS
     SELECT unnest([1,2]) AS id;
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement error
 MERGE INTO target
     USING (SELECT 1 AS id) source
     USING (id)
     WHEN MATCHED THEN UPDATE
     WHEN NOT MATCHED BY SOURCE THEN DELETE
     RETURNING merge_action, *;
+----
+db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+

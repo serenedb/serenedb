@@ -17,15 +17,29 @@ name	id
 Amsterdam	1
 London	2
 
+# DOCS_SETUP: local_cities_insert_target
+
+statement ok
+DROP TABLE IF EXISTS cities;
+
+statement ok
+CREATE TABLE cities (name VARCHAR, id INTEGER);
+
+statement ok
+INSERT INTO cities VALUES
+    ('Paris', 3),
+    ('Berlin', 4);
+
 # DOCS_TEST: example_003
 
-statement error
+statement ok
 INSERT INTO cities
 VALUES ('Amsterdam', 1), ('London', 2);
-----
-db error: ERROR: Table with name cities does not exist!
-Did you mean "<slt:ignore>"?
 
+# DOCS_SETUP: drop_cities_before_create_example
+
+statement ok
+DROP TABLE IF EXISTS cities;
 
 # DOCS_TEST: example_004
 

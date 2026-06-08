@@ -336,21 +336,30 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_017
 
-query error db error: ERROR: syntax error at or near "SELECT"
+query error
 SELECT map_top_n(map(ARRAY['a', 'b', 'c'], ARRAY[2, 3, 1]), 2) --- \{'b' -> 3, 'a' -> 2\}
 SELECT map_top_n(map(ARRAY['a', 'b', 'c'], ARRAY[NULL, 3, NULL]), 2) --- \{'b' -> 3, 'c' -> NULL\}
+----
+db error: ERROR: syntax error at or near "SELECT"
+
 
 # DOCS_TEST: example_018
 
-query error db error: ERROR: syntax error at or near "SELECT"
+query error
 SELECT map_keys_by_top_n_values(map(ARRAY['a', 'b', 'c'], ARRAY[2, 3, 1]), 2) --- ['b', 'a']
 SELECT map_keys_by_top_n_values(map(ARRAY['a', 'b', 'c'], ARRAY[NULL, 3, NULL]), 2) --- ['b', 'c']
+----
+db error: ERROR: syntax error at or near "SELECT"
+
 
 # DOCS_TEST: example_019
 
-query error db error: ERROR: syntax error at or near "SELECT"
+query error
 SELECT map_top_n_keys(map(ARRAY['a', 'b', 'c'], ARRAY[1, 2, 3]), 2) --- ['c', 'b']
 SELECT map_top_n_keys(map(ARRAY['a', 'b', 'c'], ARRAY[1, 2, 3]), 0) --- []
+----
+db error: ERROR: syntax error at or near "SELECT"
+
 
 # DOCS_TEST: example_020
 
@@ -491,3 +500,4 @@ SELECT transform_values(MAP(ARRAY [1, 2], ARRAY [1.0, 1.4]), -- \{1 -> one_1.0, 
 ----
 db error: ERROR: Scalar Function with name transform_values does not exist!
 Did you mean "<slt:ignore>"?
+

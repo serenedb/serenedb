@@ -27,9 +27,12 @@ db error: ERROR: No function matches the given name and argument types 'map(INTE
 	map(K[], V[]) -> MAP(K, V)
 
 
-statement error db error: ERROR: syntax error at or near ">"
+statement error
 >
 SELECT map(array(1, 2), array(3, 4));
+----
+db error: ERROR: syntax error at or near ">"
+
 
 # DOCS_TEST: example_002
 
@@ -97,8 +100,11 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_005
 
-query error db error: ERROR: syntax error at or near "1\.0"
+query error
 SELECT map_from_arrays(array(1.0, 3.0), array('2', '4'));
+----
+db error: ERROR: syntax error at or near "1\.0"
+
 
 # DOCS_TEST: example_006
 
@@ -131,8 +137,11 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_007
 
-query error db error: ERROR: syntax error at or near "1"
+query error
 SELECT size(map(array(1, 2), array(3, 4)), true);
+----
+db error: ERROR: syntax error at or near "1"
+
 
 query error
 SELECT size(NULL, true);
@@ -146,3 +155,4 @@ SELECT size(NULL, false);
 ----
 db error: ERROR: Scalar Function with name size does not exist!
 Did you mean "<slt:ignore>"?
+

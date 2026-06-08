@@ -27,17 +27,35 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-statement error (?i)Cannot open file .*
-COPY tbl TO 'output.json';
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| COPY tbl TO 'output.json';
+# DOCS_RAW_END
+
+statement ok
+COPY tbl TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_export_example_001_1_output_json.json';
+
+# DOCS_SETUP: file_fixtures_example_002
+
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| COPY (SELECT * FROM range(3) tbl(n)) TO 'output.json';
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-COPY (SELECT * FROM range(3) tbl(n)) TO 'output.json';
+statement ok
+COPY (SELECT * FROM range(3) tbl(n)) TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_export_example_002_1_output_json.json';
+
+# DOCS_SETUP: file_fixtures_example_003
+
 
 # DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| COPY (SELECT * FROM range(3) tbl(n)) TO 'output.json' (ARRAY);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-COPY (SELECT * FROM range(3) tbl(n)) TO 'output.json' (ARRAY);
+statement ok
+COPY (SELECT * FROM range(3) tbl(n)) TO '/tmp/${__DATABASE__}_cookbook_file_formats_json_export_example_003_1_output_json.json' (ARRAY);

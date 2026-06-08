@@ -168,3 +168,4 @@ SELECT is_private_ip(IPADDRESS '2a03:2880:f031:12:face:b00c:0:2');
 ----
 db error: ERROR: Scalar Function with name is_private_ip does not exist!
 Did you mean "<slt:ignore>"?
+

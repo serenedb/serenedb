@@ -1,19 +1,67 @@
 control substitution on
 
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_csv('flights.csv', header = true);
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_001_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_csv('flights.csv', header = true);
+# DOCS_RAW_END
+
+query
+SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_001_1_flights_csv.csv', header = true);
+----
+flightdate	uniquecarrier	origincityname	destcityname
+2024-01-01	AA	New York, NY	Los Angeles, CA
+2024-01-02	UA	San Francisco, CA	Seattle, WA
+
+
+# DOCS_SETUP: file_fixtures_example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_002_1_flights_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_csv('flights.csv', names = ['DateOfFlight', 'CarrierName']);
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_csv('flights.csv', names = ['DateOfFlight', 'CarrierName']);
+query
+SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_002_1_flights_csv.csv', names = ['DateOfFlight', 'CarrierName']);
+----
+dateofflight	carriername	column2	column3
+2024-01-01	AA	New York, NY	Los Angeles, CA
+2024-01-02	UA	San Francisco, CA	Seattle, WA
+
+
+# DOCS_SETUP: file_fixtures_example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_003_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_csv('flights.csv', types = {'FlightDate': 'DATE'});
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_csv('flights.csv', types = {'FlightDate': 'DATE'});
+query
+SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_003_1_flights_csv.csv', types = {'FlightDate': 'DATE'});
+----
+flightdate	uniquecarrier	origincityname	destcityname
+2024-01-01	AA	New York, NY	Los Angeles, CA
+2024-01-02	UA	San Francisco, CA	Seattle, WA
+
 
 # DOCS_SETUP
 
@@ -42,23 +90,85 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_004
+# DOCS_SETUP: file_fixtures_example_004
 
-statement error (?i)No files found that match the pattern .*
-COPY tbl FROM 'test.csv';
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_004_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
+# DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| COPY tbl FROM 'test.csv';
+# DOCS_RAW_END
+
+statement ok
+COPY tbl FROM '/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_004_1_test_csv.csv';
+
+# DOCS_SETUP: file_fixtures_example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_005_1_flights_csv_1.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_005_1_flights_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_csv('flights*.csv', union_by_name = true);
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_csv('flights*.csv', union_by_name = true);
+query
+SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_005_1_flights_csv_*.csv', union_by_name = true);
+----
+flightdate	uniquecarrier	origincityname	destcityname
+2024-01-01	AA	New York, NY	Los Angeles, CA
+2024-01-02	UA	San Francisco, CA	Seattle, WA
+2024-01-01	AA	New York, NY	Los Angeles, CA
+2024-01-02	UA	San Francisco, CA	Seattle, WA
+
+
+# DOCS_SETUP: file_fixtures_example_006
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_006_1_input_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_006
+# DOCS_RAW_BEGIN
+#| INSERT INTO tbl BY NAME
+#|     SELECT * FROM read_csv('input.csv');
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
+statement ok
 INSERT INTO tbl BY NAME
-    SELECT * FROM read_csv('input.csv');
+    SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_006_1_input_csv.csv');
+
+# DOCS_SETUP: file_fixtures_example_007
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_007_1_my_csv_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_007
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_csv('my_csv_file.csv', sample_size = -1);
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT * FROM read_csv('my_csv_file.csv', sample_size = -1);
+query
+SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_tips_example_007_1_my_csv_file_csv.csv', sample_size = -1);
+----
+id	name	value
+1	alpha	10
+2	beta	20

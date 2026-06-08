@@ -1,0 +1,10 @@
+# DOCS_SETUP: local_integers_rename_column_fixture
+
+statement ok
+CREATE TABLE integers (i INTEGER);
+
+# DOCS_TEST: example_015
+
+statement ok
+ALTER TABLE integers
+RENAME COLUMN i TO j;

@@ -66,6 +66,25 @@ Duck Town	2
 DuckTown	2
 Mallard	2
 
+# DOCS_SETUP: local_limit_percent_addresses_fixture
+
+statement ok
+DELETE FROM addresses;
+
+statement ok
+INSERT INTO addresses
+SELECT
+    'Address ' || i,
+    CASE WHEN i % 2 = 0 THEN 'DuckTown' ELSE 'Mallard' END,
+    'Street ' || i,
+    50000 + i * 1000,
+    'ZIP' || i,
+    CASE WHEN i % 2 = 0 THEN 'NL' ELSE 'UK' END,
+    100 + i,
+    i,
+    i * 10
+FROM range(20) t(i);
+
 # DOCS_TEST: example_004
 
 query
@@ -74,3 +93,5 @@ FROM addresses
 LIMIT 10%;
 ----
 address	city	street_name	income	zip	country	population	number1	number2
+Address 0	DuckTown	Street 0	50000	ZIP0	NL	100	0	0
+Address 1	Mallard	Street 1	51000	ZIP1	UK	101	1	10

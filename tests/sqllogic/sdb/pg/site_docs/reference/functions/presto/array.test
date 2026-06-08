@@ -1,8 +1,11 @@
 # DOCS_TEST: example_001
 
-query error db error: ERROR: syntax error at or near "SELECT"
+query error
 SELECT array_cum_sum(ARRAY [1, 2, 3]) -- array[1, 3, 6]
 SELECT array_cum_sum(ARRAY [1, 2, null, 3]) -- array[1, 3, null, null]
+----
+db error: ERROR: syntax error at or near "SELECT"
+
 
 # DOCS_TEST: example_002
 
@@ -150,11 +153,17 @@ db error: ERROR: Scalar Function with name array_max does not exist!
 Did you mean "<slt:ignore>"?
 
 
-query error db error: ERROR: syntax error at or near "\\"
+query error
 SELECT array_max(ARRAY[\{-1, -2, -3, nan()]);
+----
+db error: ERROR: syntax error at or near "\\"
 
-query error db error: ERROR: syntax error at or near "\\"
+
+query error
 SELECT array_max(ARRAY[\{infinity(), nan()]);
+----
+db error: ERROR: syntax error at or near "\\"
+
 
 # DOCS_TEST: example_008
 
@@ -193,11 +202,17 @@ db error: ERROR: Scalar Function with name array_min does not exist!
 Did you mean "<slt:ignore>"?
 
 
-query error db error: ERROR: syntax error at or near "\\"
+query error
 SELECT array_min(ARRAY[\{-1, -2, -3, nan()]);
+----
+db error: ERROR: syntax error at or near "\\"
 
-query error db error: ERROR: syntax error at or near "\\"
+
+query error
 SELECT array_min(ARRAY[\{infinity(), nan()]);
+----
+db error: ERROR: syntax error at or near "\\"
+
 
 # DOCS_TEST: example_009
 
@@ -217,11 +232,17 @@ SELECT array_sort(ARRAY [3, 2, 1]);
 array_sort
 <slt:ignore>
 
-query error db error: ERROR: syntax error at or near "\)"
+query error
 SELECT array_sort(ARRAY [infinity(), -1.1, nan(), 1.1, -Infinity(), 0]));
+----
+db error: ERROR: syntax error at or near "\)"
 
-query error db error: ERROR: syntax error at or near ";"
+
+query error
 SELECT array_sort(ARRAY [2, 1, NULL];
+----
+db error: ERROR: syntax error at or near ";"
+
 
 query
 SELECT array_sort(ARRAY [NULL, 1, NULL]);
@@ -272,8 +293,11 @@ db error: ERROR: Scalar Function with name array_sort_desc does not exist!
 Did you mean "<slt:ignore>"?
 
 
-query error db error: ERROR: syntax error at or near ";"
+query error
 SELECT array_sort_desc(ARRAY [2, 1, NULL];
+----
+db error: ERROR: syntax error at or near ";"
+
 
 query error
 SELECT array_sort_desc(ARRAY [NULL, 1, NULL]);
@@ -715,3 +739,4 @@ SELECT zip_with(ARRAY['a'], ARRAY['d', null, 'f'], (x, y) -> coalesce(x, y));
 ----
 db error: ERROR: Scalar Function with name zip_with does not exist!
 Did you mean "<slt:ignore>"?
+

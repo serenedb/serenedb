@@ -27,12 +27,24 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-statement error (?i)Cannot open file .*
-COPY tbl TO 'output.parquet' (FORMAT parquet);
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| COPY tbl TO 'output.parquet' (FORMAT parquet);
+# DOCS_RAW_END
+
+statement ok
+COPY tbl TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_export_example_001_1_output_parquet.parquet' (FORMAT parquet);
+
+# DOCS_SETUP: file_fixtures_example_002
+
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| COPY (SELECT * FROM tbl) TO 'output.parquet' (FORMAT parquet);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-COPY (SELECT * FROM tbl) TO 'output.parquet' (FORMAT parquet);
+statement ok
+COPY (SELECT * FROM tbl) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_export_example_002_1_output_parquet.parquet' (FORMAT parquet);

@@ -1,9 +1,15 @@
 # DOCS_TEST: example_001
 
-query error db error: ERROR: syntax error at or near "⟨query⟩"
+query error
 EXPLAIN ⟨query⟩;
+----
+db error: ERROR: syntax error at or near "⟨query⟩"
+
 
 # DOCS_TEST: example_002
 
-query error db error: ERROR: syntax error at or near "⟨query⟩"
+query error
 EXPLAIN ANALYZE ⟨query⟩;
+----
+db error: ERROR: syntax error at or near "⟨query⟩"
+

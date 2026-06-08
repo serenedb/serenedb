@@ -34,10 +34,13 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_002
 
-statement error db error: ERROR: syntax error at or near "\{"
+statement error
 -- Semantically equivalent outputs
 {"x": 1, "y": "10.00"}
 {"y": "10.00", "x": 1}
+----
+db error: ERROR: syntax error at or near "\{"
+
 
 # DOCS_TEST: example_003
 
@@ -69,3 +72,4 @@ FROM metrics;
 ----
 db error: ERROR: Table with name metrics does not exist!
 Did you mean "<slt:ignore>"?
+

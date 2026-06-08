@@ -12,8 +12,11 @@ SET sdb_write_conflict_policy = 'replace';
 statement ok
 SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
 
-statement error db error: ERROR: SET LOCAL can only be used in transaction blocks
+statement error
 SET LOCAL execution_threads = 4;
+----
+db error: ERROR: SET LOCAL can only be used in transaction blocks
+
 
 statement ok
 RESET search_path;

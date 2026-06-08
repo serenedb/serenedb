@@ -1,34 +1,111 @@
+# DOCS_SETUP: generated_wide_fixtures
+
+statement ok
+DROP TABLE IF EXISTS tbl1;
+
+statement ok
+CREATE TABLE tbl1 AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
+statement ok
+DROP TABLE IF EXISTS tbl2;
+
+statement ok
+CREATE TABLE tbl2 AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
 control substitution on
 
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-statement error (?i)Cannot open file .*
-ATTACH 'file.db';
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| ATTACH 'file.db';
+# DOCS_RAW_END
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_001_1_file_db.csv';
+
+# DOCS_SETUP: file_fixtures_example_002
+
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| ATTACH 'file.db' AS file_db;
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-ATTACH 'file.db' AS file_db;
+statement ok
+DETACH IF EXISTS file_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_002_1_file_db.csv' AS file_db;
+
+# DOCS_SETUP: file_fixtures_example_003
+
+statement ok
+DETACH IF EXISTS file;
+
+statement ok
+DETACH IF EXISTS file_readonly_fixture;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_003_file.db' AS file_readonly_fixture;
+
+statement ok
+CREATE TABLE file_readonly_fixture.items AS SELECT 1 AS id, 'alpha' AS name;
+
+statement ok
+DETACH file_readonly_fixture;
 
 # DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| ATTACH 'file.db' (READ_ONLY);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open database .*
-ATTACH 'file.db' (READ_ONLY);
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_003_file.db' AS file (READ_ONLY);
+
+statement ok
+DETACH file;
+
+
+# DOCS_SETUP: file_fixtures_example_004
+
 
 # DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| ATTACH 'file.db' (BLOCK_SIZE 16_384);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-ATTACH 'file.db' (BLOCK_SIZE 16_384);
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_004_1_file_db.csv' (BLOCK_SIZE 16_384);
+
+# DOCS_SETUP: file_fixtures_example_005
+
 
 # DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| ATTACH 'file.db' (ROW_GROUP_SIZE 2048);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-ATTACH 'file.db' (ROW_GROUP_SIZE 2048);
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_005_1_file_db.csv' (ROW_GROUP_SIZE 2048);
+
+# DOCS_SETUP: file_fixtures_example_006
+
 
 # DOCS_TEST: example_006
+# DOCS_RAW_BEGIN
+#| ATTACH 'file.db' (RECOVERY_MODE no_wal_writes);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-ATTACH 'file.db' (RECOVERY_MODE no_wal_writes);
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_006_1_file_db.csv' (RECOVERY_MODE no_wal_writes);
 
 # DOCS_TEST: example_007
 
@@ -41,30 +118,54 @@ Extension "sqlite" is an existing extension.
 Install it first using "INSTALL sqlite".
 
 
-# DOCS_TEST: example_008
+# DOCS_SETUP: file_fixtures_example_008
 
-statement error (?i)Cannot open file .*
-ATTACH IF NOT EXISTS 'file.db';
+
+# DOCS_TEST: example_008
+# DOCS_RAW_BEGIN
+#| ATTACH IF NOT EXISTS 'file.db';
+# DOCS_RAW_END
+
+statement ok
+ATTACH IF NOT EXISTS '/tmp/${__DATABASE__}_sql_statements_attach_index_example_008_1_file_db.csv';
+
+# DOCS_SETUP: file_fixtures_example_009
+
 
 # DOCS_TEST: example_009
+# DOCS_RAW_BEGIN
+#| ATTACH IF NOT EXISTS 'file.db' AS file_db;
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-ATTACH IF NOT EXISTS 'file.db' AS file_db;
+statement ok
+ATTACH IF NOT EXISTS '/tmp/${__DATABASE__}_sql_statements_attach_index_example_009_1_file_db.csv' AS file_db;
+
+# DOCS_SETUP: file_fixtures_example_010
+
 
 # DOCS_TEST: example_010
+# DOCS_RAW_BEGIN
+#| ATTACH OR REPLACE 'file2.db' AS file_db;
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-ATTACH OR REPLACE 'file2.db' AS file_db;
+statement ok
+ATTACH OR REPLACE '/tmp/${__DATABASE__}_sql_statements_attach_index_example_010_1_file2_db.csv' AS file_db;
 
 # DOCS_TEST: example_011
 
-statement error (?i)Catalog with name .* does not exist!
+statement error
 CREATE TABLE file.new_table (i INTEGER);
+----
+(?i)Catalog with name .* does not exist!
+
 
 # DOCS_TEST: example_012
 
-statement error db error: ERROR: Failed to detach database with name "file": database not found
+statement error
 DETACH file;
+----
+db error: ERROR: Failed to detach database with name "file": database not found
+
 
 # DOCS_TEST: example_013
 
@@ -76,47 +177,154 @@ SHOW DATABASES;
 statement ok
 USE file;
 
+# DOCS_SETUP: file_fixtures_example_015
+
+statement ok
+DETACH IF EXISTS stations_fixture;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_015_stations.duckdb' AS stations_fixture;
+
+statement ok
+CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
+    (1, 'Amsterdam Centraal'),
+    (2, 'Rotterdam Centraal')
+) AS t(station_id, station_name);
+
+statement ok
+DETACH stations_fixture;
+
 # DOCS_TEST: example_015
+# DOCS_RAW_BEGIN
+#| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+#|
+#| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db (READ_ONLY);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open database .*
-ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+statement ok
+DETACH IF EXISTS stations_db;
 
-statement error (?i)Cannot open database .*
-ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db (READ_ONLY);
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_015_stations.duckdb' AS stations_db;
+
+statement ok
+DETACH stations_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_015_stations.duckdb' AS stations_db (READ_ONLY);
+
+
+# DOCS_SETUP: file_fixtures_example_016
+
+statement ok
+DETACH IF EXISTS stations_db;
+
+statement ok
+DETACH IF EXISTS stations_fixture;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_fixture;
+
+statement ok
+CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
+    (1, 'Amsterdam Centraal'),
+    (2, 'Rotterdam Centraal')
+) AS t(station_id, station_name);
+
+statement ok
+DETACH stations_fixture;
 
 # DOCS_TEST: example_016
+# DOCS_RAW_BEGIN
+#| ATTACH 's3://⟨blobs-duckdb⟩/databases/stations.duckdb' AS stations_db;
+#|
+#| ATTACH 's3://⟨blobs-duckdb⟩/databases/stations.duckdb' AS stations_db (READ_ONLY);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open database .*
-ATTACH 's3://⟨blobs-duckdb⟩/databases/stations.duckdb' AS stations_db;
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_db;
 
-statement error (?i)Cannot open database .*
-ATTACH 's3://⟨blobs-duckdb⟩/databases/stations.duckdb' AS stations_db (READ_ONLY);
+statement ok
+DETACH stations_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_db (READ_ONLY);
+
+
+# DOCS_SETUP: file_fixtures_example_017
+
 
 # DOCS_TEST: example_017
+# DOCS_RAW_BEGIN
+#| ATTACH 'file.db' (STORAGE_VERSION 'v1.2.0');
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-ATTACH 'file.db' (STORAGE_VERSION 'v1.2.0');
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_017_1_file_db.csv' (STORAGE_VERSION 'v1.2.0');
+
+# DOCS_SETUP: file_fixtures_example_018
+
 
 # DOCS_TEST: example_018
+# DOCS_RAW_BEGIN
+#| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack');
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack');
+statement ok
+DETACH IF EXISTS enc_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_018_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'quack_quack');
+
+statement ok
+DETACH enc_db;
+
+# DOCS_SETUP: file_fixtures_example_019
+
 
 # DOCS_TEST: example_019
+# DOCS_RAW_BEGIN
+#| LOAD httpfs;
+#|
+#| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack');
+# DOCS_RAW_END
 
 statement ok
 LOAD httpfs;
 
-statement error (?i)Cannot open file .*
-ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack');
+statement ok
+DETACH IF EXISTS enc_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_019_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'quack_quack');
+
+statement ok
+DETACH enc_db;
+
+# DOCS_SETUP: file_fixtures_example_020
+
 
 # DOCS_TEST: example_020
+# DOCS_RAW_BEGIN
+#| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CBC');
+#|
+#| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CTR');
+# DOCS_RAW_END
 
-statement error db error: ERROR: CBC encryption is disabled
+statement error
 ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CBC');
+----
+db error: ERROR: CBC encryption is disabled
 
-statement error (?i)Cannot open file .*
-ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CTR');
+
+statement ok
+DETACH IF EXISTS enc_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_020_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CTR');
+
+statement ok
+DETACH enc_db;
 
 # DOCS_SETUP
 
@@ -131,25 +339,40 @@ ATTACH ':memory:' AS memory_db;
 statement ok
 USE memory_db;
 
-# DOCS_TEST: example_022
+# DOCS_SETUP: file_fixtures_example_022
 
-statement error (?i)Cannot open file .*
-ATTACH 'new_db.db';
+
+# DOCS_TEST: example_022
+# DOCS_RAW_BEGIN
+#| ATTACH 'new_db.db';
+# DOCS_RAW_END
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_022_1_new_db_db.csv';
 
 # DOCS_TEST: example_023
 
-statement error (?i)Catalog .* does not exist!
+statement error
 CREATE SCHEMA new_db.my_schema;
+----
+(?i)Catalog .* does not exist!
+
 
 # DOCS_TEST: example_024
 
-statement error (?i)Catalog with name .* does not exist!
+statement error
 CREATE TABLE new_db.my_schema.my_table (col INTEGER);
+----
+(?i)Catalog with name .* does not exist!
+
 
 # DOCS_TEST: example_025
 
-query error (?i)Catalog .* does not exist!
+query error
 SELECT new_db.my_schema.my_table.col FROM new_db.my_schema.my_table;
+----
+(?i)Catalog .* does not exist!
+
 
 # DOCS_TEST: example_026
 
@@ -163,13 +386,24 @@ USE new_db;
 
 # DOCS_TEST: example_028
 
-statement error db error: ERROR: SET schema: No catalog \+ schema named "new_db\.my_schema" found\.
+statement error
 USE new_db.my_schema;
+----
+db error: ERROR: SET schema: No catalog \+ schema named "new_db\.my_schema" found\.
+
+
+# DOCS_SETUP: file_fixtures_example_029
+
 
 # DOCS_TEST: example_029
+# DOCS_RAW_BEGIN
+#| ATTACH 'new_db.db';
+#|
+#| CREATE SCHEMA my_schema;
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-ATTACH 'new_db.db';
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_029_1_new_db_db.csv';
 
 statement ok
 CREATE SCHEMA my_schema;
@@ -184,12 +418,15 @@ DROP TABLE IF EXISTS new_db;
 
 # DOCS_TEST: example_030
 
-statement error (?i)Catalog with name .* does not exist!
+statement error
 CREATE TABLE new_db.tbl (i INTEGER);
+----
+db error: ERROR: Catalog with name tests_sqllogic_sdb_pg_site_docs_sql_statements_attach__hksfmpan does not exist!
+
 
 # DOCS_TEST: example_031
 
-statement error (?i)Catalog with name .* does not exist!
+statement error db error: ERROR: Catalog with name tests_sqllogic_sdb_pg_site_docs_sql_statements_attach__hksfmpan does not exist!
 CREATE TABLE my_schema.tbl (i INTEGER);
 
 # DOCS_SETUP
@@ -253,15 +490,16 @@ j
 statement ok
 SET search_path = 'db1,db2';
 
-query error
+query ???????????????????????????????????????????????????????????????????
 SELECT * FROM tbl1;
 ----
-db error: ERROR: Table with name tbl1 does not exist!
-Did you mean "<slt:ignore>"?
+id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	product_id	employee_id	title	body	content	description	name	tag	category	genre	region	country	city	product	customer	status	symbol	amount	quantity	price	views	runtime	year	revenue	salary	grade	balance	count	value	published_at	created_at	updated_at	date	sale_date	ts	time	l_orderkey	l_partkey	l_suppkey	l_linenumber	l_quantity	l_extendedprice	l_discount	l_tax	l_returnflag	l_linestatus	l_shipdate	l_commitdate	l_receiptdate	l_shipinstruct	l_shipmode	l_comment
+1	1	10	100	1	2	3	1	2	3	1	1	1	1	1	1	1	Intro to Search	search analytics body	search content	alien galaxy film	alpha	search	engineering	sci-fi	north	US	Berlin	widget	Alice	open	AAPL	100	10	9.5	4200	120	2024	1000	70000	1	500	1	42	2025-01-15	2025-01-15 10:00:00	2025-01-16 10:00:00	2025-01-15	2025-01-15	2025-01-15 10:00:00	2025-01-15 10:00:00	1	1	1	1	10	100	0.05	0.01	N	O	1998-09-01	1998-08-15	1998-09-05	DELIVER IN PERSON	AIR	first lineitem
+2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem
 
-
-query error
+query ???????????????????????????????????????????????????????????????????
 SELECT * FROM tbl2;
 ----
-db error: ERROR: Table with name tbl2 does not exist!
-Did you mean "<slt:ignore>"?
+id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	product_id	employee_id	title	body	content	description	name	tag	category	genre	region	country	city	product	customer	status	symbol	amount	quantity	price	views	runtime	year	revenue	salary	grade	balance	count	value	published_at	created_at	updated_at	date	sale_date	ts	time	l_orderkey	l_partkey	l_suppkey	l_linenumber	l_quantity	l_extendedprice	l_discount	l_tax	l_returnflag	l_linestatus	l_shipdate	l_commitdate	l_receiptdate	l_shipinstruct	l_shipmode	l_comment
+1	1	10	100	1	2	3	1	2	3	1	1	1	1	1	1	1	Intro to Search	search analytics body	search content	alien galaxy film	alpha	search	engineering	sci-fi	north	US	Berlin	widget	Alice	open	AAPL	100	10	9.5	4200	120	2024	1000	70000	1	500	1	42	2025-01-15	2025-01-15 10:00:00	2025-01-16 10:00:00	2025-01-15	2025-01-15	2025-01-15 10:00:00	2025-01-15 10:00:00	1	1	1	1	10	100	0.05	0.01	N	O	1998-09-01	1998-08-15	1998-09-05	DELIVER IN PERSON	AIR	first lineitem
+2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem

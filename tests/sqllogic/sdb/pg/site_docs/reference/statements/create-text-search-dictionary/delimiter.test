@@ -1,15 +1,15 @@
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY pipe_delim (
-    TEMPLATE = 'delimiter',
-    DELIMITER = '|'
+    template = 'delimiter',
+    delimiter = '|'
 );
 
 # DOCS_TEST: example_002
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY comma_delim (
-    TEMPLATE = 'delimiter',
-    DELIMITER = ','
+    template = 'delimiter',
+    delimiter = ','
 );

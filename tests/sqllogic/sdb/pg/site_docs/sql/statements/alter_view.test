@@ -1,7 +1,12 @@
+# DOCS_SETUP: local_view_fixture
+
+statement ok
+CREATE TABLE view_source (i INTEGER);
+
+statement ok
+CREATE VIEW view1 AS SELECT i FROM view_source;
+
 # DOCS_TEST: example_001
 
-statement error
+statement ok
 ALTER VIEW view1 RENAME TO view2;
-----
-db error: ERROR: View with name view1 does not exist!
-Did you mean "<slt:ignore>"?

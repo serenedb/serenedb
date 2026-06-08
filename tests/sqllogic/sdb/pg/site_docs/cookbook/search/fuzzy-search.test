@@ -1,12 +1,12 @@
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY fuzzy_dict (
-    TEMPLATE = 'text',
-    LOCALE = 'en_US.UTF-8',
-    CASE = 'lower',
-    STEMMING = false,
-    ACCENT = false
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false
 );
 
 statement ok
@@ -15,7 +15,7 @@ CREATE TABLE products (
     name TEXT
 );
 
-statement error db error: ERROR: Failed to create index: Unknown opclass 'fuzzy_dict' on column 'name': not a built\-in type \(known: included, hnsw\) and no text dictionary by that name in schema 'public'
+statement ok
 CREATE INDEX idx_products ON products
     USING inverted (id, name fuzzy_dict);
 
@@ -35,7 +35,7 @@ SELECT id, name FROM idx_products
 WHERE LEVENSHTEIN_MATCH(name, 'cat', 0)
 ORDER BY id;
 ----
-db error: ERROR: Table with name idx_products does not exist!
+db error: ERROR: Scalar Function with name levenshtein_match does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -45,7 +45,7 @@ SELECT id, name FROM idx_products
 WHERE LEVENSHTEIN_MATCH(name, 'cat', 1)
 ORDER BY id;
 ----
-db error: ERROR: Table with name idx_products does not exist!
+db error: ERROR: Scalar Function with name levenshtein_match does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -55,7 +55,7 @@ SELECT id, name FROM idx_products
 WHERE LEVENSHTEIN_MATCH(name, 'cat', 2)
 ORDER BY id;
 ----
-db error: ERROR: Table with name idx_products does not exist!
+db error: ERROR: Scalar Function with name levenshtein_match does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -66,7 +66,7 @@ SELECT id, name FROM idx_products
 WHERE LEVENSHTEIN_MATCH(name, 'cat', 1, false)
 ORDER BY id;
 ----
-db error: ERROR: Table with name idx_products does not exist!
+db error: ERROR: Scalar Function with name levenshtein_match does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -78,19 +78,19 @@ SELECT id, name FROM idx_products
 WHERE LEVENSHTEIN_MATCH(name, 't', 1, true, 64, 'ca')
 ORDER BY id;
 ----
-db error: ERROR: Table with name idx_products does not exist!
+db error: ERROR: Scalar Function with name levenshtein_match does not exist!
 Did you mean "<slt:ignore>"?
 
 
 # DOCS_TEST: example_005
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY bigram_dict (
-    TEMPLATE = 'ngram',
-    MINGRAM = 2,
-    MAXGRAM = 2,
-    FREQUENCY = true,
-    POSITION = true
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 2,
+    frequency = true,
+    position = true
 );
 
 statement ok
@@ -99,7 +99,7 @@ CREATE TABLE articles (
     title TEXT
 );
 
-statement error db error: ERROR: Failed to create index: Unknown opclass 'bigram_dict' on column 'title': not a built\-in type \(known: included, hnsw\) and no text dictionary by that name in schema 'public'
+statement ok
 CREATE INDEX idx_articles_ngram ON articles
     USING inverted (id, title bigram_dict);
 
@@ -119,7 +119,7 @@ SELECT id, title FROM idx_articles_ngram
 WHERE NGRAM_MATCH(title, 'hello')
 ORDER BY id;
 ----
-db error: ERROR: Table with name idx_articles_ngram does not exist!
+db error: ERROR: Scalar Function with name ngram_match does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -129,7 +129,7 @@ SELECT id, title FROM idx_articles_ngram
 WHERE NGRAM_MATCH(title, 'hello', 0.3)
 ORDER BY id;
 ----
-db error: ERROR: Table with name idx_articles_ngram does not exist!
+db error: ERROR: Scalar Function with name ngram_match does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -139,7 +139,7 @@ SELECT id, title FROM idx_articles_ngram
 WHERE NGRAM_MATCH(title, 'hello', 0.0)
 ORDER BY id;
 ----
-db error: ERROR: Table with name idx_articles_ngram does not exist!
+db error: ERROR: Scalar Function with name ngram_match does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -151,7 +151,7 @@ SELECT id, name FROM idx_products
 WHERE LEVENSHTEIN_MATCH(name, 'cat', 1) AND id < 4
 ORDER BY id;
 ----
-db error: ERROR: Table with name idx_products does not exist!
+db error: ERROR: Scalar Function with name levenshtein_match does not exist!
 Did you mean "<slt:ignore>"?
 
 
@@ -161,5 +161,6 @@ SELECT id, title FROM idx_articles_ngram
 WHERE NGRAM_MATCH(title, 'hello', 0.3) AND PHRASE(title, 'world')
 ORDER BY id;
 ----
-db error: ERROR: Table with name idx_articles_ngram does not exist!
+db error: ERROR: Scalar Function with name ngram_match does not exist!
 Did you mean "<slt:ignore>"?
+

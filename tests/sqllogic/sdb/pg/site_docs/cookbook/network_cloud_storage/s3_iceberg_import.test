@@ -50,8 +50,20 @@ CREATE TABLE __docs_noop_f6ee28f4_001 (i INTEGER);
 statement ok
 CREATE TABLE __docs_noop_f6ee28f4_002 (i INTEGER);
 
-# DOCS_TEST: example_005
+# DOCS_SETUP: file_fixtures_example_005
 
-query error (?i)Could not resolve hostname error .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_iceberg_import_example_005_1_id_metadata_json.json' (FORMAT json);
+
+# DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM iceberg_scan('s3://⟨bucket⟩/⟨iceberg_table_folder⟩/metadata/⟨id⟩.metadata.json');
+# DOCS_RAW_END
+
+query error db error: ERROR: Fails to parse iceberg metadata from /tmp/\$\{__DATABASE__\}_cookbook_network_cloud_storage_s3_iceberg_import_example_005_1_id_metadata_json\.json
 SELECT *
-FROM iceberg_scan('s3://⟨bucket⟩/⟨iceberg_table_folder⟩/metadata/⟨id⟩.metadata.json');
+FROM iceberg_scan('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_iceberg_import_example_005_1_id_metadata_json.json');

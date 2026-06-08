@@ -1,8 +1,11 @@
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: syntax error at or near "b'1010'"
+statement error
 b'1010'   -- binary notation
 x'a'      -- hexadecimal notation, equivalent to b'1010'
+----
+db error: ERROR: syntax error at or near "b'1010'"
+
 
 # DOCS_TEST: example_002
 
@@ -30,3 +33,4 @@ SELECT status, options FROM flags;
 ----
 db error: ERROR: Table with name flags does not exist!
 Did you mean "<slt:ignore>"?
+

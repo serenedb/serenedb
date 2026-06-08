@@ -12,7 +12,7 @@ db error: ERROR: Scalar Function with name collect_set does not exist!
 Did you mean "<slt:ignore>"?
 
 
-statement error db error: ERROR: syntax error at or near ">"
+statement error
 -- ARRAY[1]
 >
 SELECT collect_set(elements)
@@ -21,6 +21,9 @@ FROM (
         ARRAY[1, 2],
         ARRAY[1, null]
 ) AS t(elements);
+----
+db error: ERROR: syntax error at or near ">"
+
 
 # DOCS_TEST: example_002
 
@@ -64,10 +67,13 @@ mode
 
 # DOCS_TEST: example_005
 
-query error db error: ERROR: syntax error at or near "L"
+query error
 SELECT SUM(x)
 FROM (
     VALUES
         (9223372036854775807L),
         (1L)
 ) AS t(x);
+----
+db error: ERROR: syntax error at or near "L"
+

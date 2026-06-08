@@ -1,8 +1,8 @@
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY pipe_dict (
-    TEMPLATE = 'pipeline',
+    template = 'pipeline',
     STEP1_TEMPLATE = 'delimiter',
     STEP1_DELIMITER = ',',
     STEP2_TEMPLATE = 'text',
@@ -13,9 +13,9 @@ CREATE TEXT SEARCH DICTIONARY pipe_dict (
 
 # DOCS_TEST: example_002
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY advanced_pipe (
-    TEMPLATE = 'pipeline',
+    template = 'pipeline',
     STEP1_TEMPLATE = 'delimiter',
     STEP1_DELIMITER = 'A',
     STEP2_TEMPLATE = 'text',
@@ -31,9 +31,9 @@ CREATE TEXT SEARCH DICTIONARY advanced_pipe (
 
 # DOCS_TEST: example_003
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY ngram_norm (
-    TEMPLATE = 'pipeline',
+    template = 'pipeline',
     STEP1_TEMPLATE = 'ngram',
     STEP1_MINGRAM = 2,
     STEP1_MAXGRAM = 3,
@@ -44,9 +44,9 @@ CREATE TEXT SEARCH DICTIONARY ngram_norm (
 
 # DOCS_TEST: example_004
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY nested_pipe (
-    TEMPLATE = 'pipeline',
+    template = 'pipeline',
     STEP1_TEMPLATE = 'norm',
     STEP1_LOCALE = 'en_US.UTF-8',
     STEP1_CASE = 'lower',

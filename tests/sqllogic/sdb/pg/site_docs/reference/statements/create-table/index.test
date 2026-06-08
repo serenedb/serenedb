@@ -21,7 +21,7 @@ CREATE TABLE comments (
 
 # DOCS_TEST: example_003
 
-statement error db error: ERROR: syntax error at or near "USING"
+statement error
 CREATE TABLE movies_external (
     title TEXT,
     year INTEGER,
@@ -29,10 +29,13 @@ CREATE TABLE movies_external (
 ) USING EXTERNAL WITH (
     PATH = '/data/movies.parquet'
 );
+----
+db error: ERROR: syntax error at or near "USING"
+
 
 # DOCS_TEST: example_004
 
-statement error db error: ERROR: syntax error at or near "USING"
+statement error
 CREATE TABLE movies_s3 (
     title TEXT,
     year INTEGER,
@@ -44,8 +47,14 @@ CREATE TABLE movies_s3 (
     S3_SECRET_KEY = 'your-secret-key',
     S3_REGION = 'us-east-1'
 );
+----
+db error: ERROR: syntax error at or near "USING"
+
 
 # DOCS_TEST: example_005
 
-statement error db error: ERROR: syntax error at or near "USING"
+statement error
 CREATE TABLE t (id INT) USING EXTERNAL WITH (HELP);
+----
+db error: ERROR: syntax error at or near "USING"
+

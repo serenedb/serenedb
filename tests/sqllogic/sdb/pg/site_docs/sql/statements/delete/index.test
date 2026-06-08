@@ -45,8 +45,11 @@ CREATE TABLE employees (name VARCHAR, age INTEGER);
 statement ok
 INSERT INTO employees VALUES ('Kat', 32);
 
-statement error db error: ERROR: Vector::Reference used on vector of different type \(source VARCHAR referenced BIGINT\)
+statement error
 DELETE FROM employees RETURNING name, 2025 - age AS approx_birthyear;
+----
+db error: ERROR: Vector::Reference used on vector of different type \(source VARCHAR referenced BIGINT\)
+
 
 # DOCS_TEST: example_004
 

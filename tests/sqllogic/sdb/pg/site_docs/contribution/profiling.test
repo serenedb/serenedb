@@ -4,11 +4,20 @@ statement ok
 EXPLAIN (FORMAT html) SELECT 42 AS x;
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| CALL enable_profiling(
+#|     format := 'json',
+#|     save_location := '/path/to/output.json',
+#|     coverage := 'select',
+#|     mode := 'standard',
+#|     metrics := ['QUERY_NAME', 'LATENCY', 'OPERATOR_TIMING']
+#| );
+# DOCS_RAW_END
 
 query
 CALL enable_profiling(
     format := 'json',
-    save_location := '/path/to/output.json',
+    save_location := '/tmp/${__DATABASE__}_contribution_profiling_example_002_output.json',
     coverage := 'select',
     mode := 'standard',
     metrics := ['QUERY_NAME', 'LATENCY', 'OPERATOR_TIMING']
@@ -18,8 +27,11 @@ success
 
 # DOCS_TEST: example_003
 
-query error (?i)Cannot open file .*
+query
 CALL enable_profiling(['LATENCY', 'RESULT_SET_SIZE']);
+----
+success
+
 
 # DOCS_TEST: example_004
 

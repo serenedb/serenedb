@@ -1,3 +1,12 @@
+# DOCS_SETUP: generated_wide_fixtures
+
+statement ok
+CREATE TABLE tbl2 AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem'),
+    (3, 3, 30, 300, 3, 4, 5, 3, 4, 5, 3, 3, 3, 3, 3, 3, 3, 'Sampling Joins', 'sample text body', 'sample content', 'sampling example story', 'gamma', 'sampling', 'operations', 'documentary', 'east', 'GB', 'Madrid', 'thing', 'Carol', 'pending', 'GOOG', 300, 30, 29.5e0, 6100, 110, 2026, 3500, 90000, 3, 900, 3, 126, DATE '2025-04-01', TIMESTAMP '2025-04-01 12:00:00', TIMESTAMP '2025-04-02 12:00:00', DATE '2025-04-01', DATE '2025-04-01', TIMESTAMP '2025-04-01 12:00:00', TIMESTAMP '2025-04-01 12:00:00', 3, 3, 3, 3, 30, 300e0, 15e-2, 3e-2, 'A', 'B', DATE '1998-09-03', DATE '1998-08-17', DATE '1998-09-07', 'NONE', 'TRUCK', 'third lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
 control substitution on
 
 # DOCS_SETUP
@@ -82,60 +91,83 @@ USING SAMPLE 20% (system, 377);
 
 # DOCS_TEST: example_007
 
-query error
+statement ok
 SELECT *
 FROM tbl TABLESAMPLE reservoir(20%), tbl2
 WHERE tbl.i = tbl2.i;
-----
-db error: ERROR: Table with name tbl2 does not exist!
-Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_008
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM tbl, tbl2
+#| WHERE tbl.i = tbl2.i
+#| USING SAMPLE reservoir(20%);
+# DOCS_RAW_END
 
-query error
+query ??????????????????????????????????????????????????????????????????????????????? rowsort
 SELECT *
 FROM tbl, tbl2
 WHERE tbl.i = tbl2.i
-USING SAMPLE reservoir(20%);
+USING SAMPLE reservoir(20%)
+REPEATABLE (100);
 ----
-db error: ERROR: Table with name tbl2 does not exist!
-Did you mean "<slt:ignore>"?
-
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2	id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	product_id	employee_id	title	body	content	description	name	tag	category	genre	region	country	city	product	customer	status	symbol	amount	quantity	price	views	runtime	year	revenue	salary	grade	balance	count	value	published_at	created_at	updated_at	date	sale_date	ts	time	l_orderkey	l_partkey	l_suppkey	l_linenumber	l_quantity	l_extendedprice	l_discount	l_tax	l_returnflag	l_linestatus	l_shipdate	l_commitdate	l_receiptdate	l_shipinstruct	l_shipmode	l_comment
+1	mark	1	2	alpha	1	10	20	30	10	100	1000	1	1	10	100	1	2	3	1	2	3	1	1	1	1	1	1	1	Intro to Search	search analytics body	search content	alien galaxy film	alpha	search	engineering	sci-fi	north	US	Berlin	widget	Alice	open	AAPL	100	10	9.5	4200	120	2024	1000	70000	1	500	1	42	2025-01-15	2025-01-15 10:00:00	2025-01-16 10:00:00	2025-01-15	2025-01-15	2025-01-15 10:00:00	2025-01-15 10:00:00	1	1	1	1	10	100	0.05	0.01	N	O	1998-09-01	1998-08-15	1998-09-05	DELIVER IN PERSON	AIR	first lineitem
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000	2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem
 
 # DOCS_TEST: example_009
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM
+#|     tbl TABLESAMPLE reservoir(20%),
+#|     tbl2
+#| WHERE tbl.i = tbl2.i;
+# DOCS_RAW_END
 
-query error
+query ??????????????????????????????????????????????????????????????????????????????? rowsort
 SELECT *
 FROM
-    tbl TABLESAMPLE reservoir(20%),
+    tbl TABLESAMPLE reservoir(20%) REPEATABLE (100),
     tbl2
 WHERE tbl.i = tbl2.i;
 ----
-db error: ERROR: Table with name tbl2 does not exist!
-Did you mean "<slt:ignore>"?
-
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2	id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	product_id	employee_id	title	body	content	description	name	tag	category	genre	region	country	city	product	customer	status	symbol	amount	quantity	price	views	runtime	year	revenue	salary	grade	balance	count	value	published_at	created_at	updated_at	date	sale_date	ts	time	l_orderkey	l_partkey	l_suppkey	l_linenumber	l_quantity	l_extendedprice	l_discount	l_tax	l_returnflag	l_linestatus	l_shipdate	l_commitdate	l_receiptdate	l_shipinstruct	l_shipmode	l_comment
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000	2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem
 
 # DOCS_TEST: example_010
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM
+#|     (SELECT * FROM tbl USING SAMPLE reservoir(20%)) tbl,
+#|     tbl2
+#| WHERE tbl.i = tbl2.i;
+# DOCS_RAW_END
 
-query error
+query ??????????????????????????????????????????????????????????????????????????????? rowsort
 SELECT *
 FROM
-    (SELECT * FROM tbl USING SAMPLE reservoir(20%)) tbl,
+    (SELECT * FROM tbl USING SAMPLE reservoir(20%) REPEATABLE (100)) tbl,
     tbl2
 WHERE tbl.i = tbl2.i;
 ----
-db error: ERROR: Table with name tbl2 does not exist!
-Did you mean "<slt:ignore>"?
-
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2	id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	product_id	employee_id	title	body	content	description	name	tag	category	genre	region	country	city	product	customer	status	symbol	amount	quantity	price	views	runtime	year	revenue	salary	grade	balance	count	value	published_at	created_at	updated_at	date	sale_date	ts	time	l_orderkey	l_partkey	l_suppkey	l_linenumber	l_quantity	l_extendedprice	l_discount	l_tax	l_returnflag	l_linestatus	l_shipdate	l_commitdate	l_receiptdate	l_shipinstruct	l_shipmode	l_comment
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000	2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem
 
 # DOCS_TEST: example_011
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM tbl, tbl2
+#| WHERE tbl.i = tbl2.i
+#| USING SAMPLE reservoir(20%);
+# DOCS_RAW_END
 
-query error
+query ??????????????????????????????????????????????????????????????????????????????? rowsort
 SELECT *
 FROM tbl, tbl2
 WHERE tbl.i = tbl2.i
-USING SAMPLE reservoir(20%);
+USING SAMPLE reservoir(20%)
+REPEATABLE (100);
 ----
-db error: ERROR: Table with name tbl2 does not exist!
-Did you mean "<slt:ignore>"?
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2	id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	product_id	employee_id	title	body	content	description	name	tag	category	genre	region	country	city	product	customer	status	symbol	amount	quantity	price	views	runtime	year	revenue	salary	grade	balance	count	value	published_at	created_at	updated_at	date	sale_date	ts	time	l_orderkey	l_partkey	l_suppkey	l_linenumber	l_quantity	l_extendedprice	l_discount	l_tax	l_returnflag	l_linestatus	l_shipdate	l_commitdate	l_receiptdate	l_shipinstruct	l_shipmode	l_comment
+1	mark	1	2	alpha	1	10	20	30	10	100	1000	1	1	10	100	1	2	3	1	2	3	1	1	1	1	1	1	1	Intro to Search	search analytics body	search content	alien galaxy film	alpha	search	engineering	sci-fi	north	US	Berlin	widget	Alice	open	AAPL	100	10	9.5	4200	120	2024	1000	70000	1	500	1	42	2025-01-15	2025-01-15 10:00:00	2025-01-16 10:00:00	2025-01-15	2025-01-15	2025-01-15 10:00:00	2025-01-15 10:00:00	1	1	1	1	10	100	0.05	0.01	N	O	1998-09-01	1998-08-15	1998-09-05	DELIVER IN PERSON	AIR	first lineitem
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000	2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem

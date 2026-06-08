@@ -6,6 +6,26 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (i INTEGER);
+
+# DOCS_TEST: example_001
+
+statement ok
+INSERT INTO tbl
+    VALUES (1), (2), (3);
+
+# DOCS_SETUP: wide_tbl_fixture
+
+statement ok
+DROP TABLE IF EXISTS other_tbl;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
 CREATE TABLE tbl (
     id INTEGER,
     name VARCHAR,
@@ -27,21 +47,19 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_001
+statement ok
+CREATE TABLE other_tbl AS SELECT * FROM tbl LIMIT 0;
 
-statement error db error: ERROR: table tbl has 12 columns but 1 values were supplied
-INSERT INTO tbl
-    VALUES (1), (2), (3);
+statement ok
+INSERT INTO other_tbl VALUES
+    (11, 'other mark', 11, 12, 'delta', 11, 110, 120, 130, 110, 1100, 11000),
+    (13, 'other bookmark', 14, 15, 'epsilon', 12, 111, 121, 131, 120, 1200, 12000);
 
 # DOCS_TEST: example_002
 
-statement error
+statement ok
 INSERT INTO tbl
     SELECT * FROM other_tbl;
-----
-db error: ERROR: Table with name other_tbl does not exist!
-Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_003
 
@@ -55,477 +73,28 @@ statement ok
 INSERT INTO tbl (i)
     VALUES (1), (DEFAULT), (3);
 
+# DOCS_SETUP: primary_key_tbl_fixture
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (i INTEGER PRIMARY KEY);
+
+statement ok
+INSERT INTO tbl VALUES (1);
+
 # DOCS_TEST: example_005
 
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
+statement ok
 INSERT OR IGNORE INTO tbl (i)
     VALUES (1);
 
 # DOCS_TEST: example_006
 
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
+statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
 INSERT OR REPLACE INTO tbl (i)
     VALUES (1);
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_007
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (a INTEGER, b INTEGER);
-
-statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
-INSERT INTO tbl
-    VALUES (5, 42);
-
-# DOCS_TEST: example_008
-
-statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
-INSERT INTO tbl
-    BY POSITION
-    VALUES (5, 42);
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_009
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (a INTEGER, b INTEGER);
-
-statement ok
-INSERT INTO tbl (b, a)
-    VALUES (5, 42);
-
-# DOCS_TEST: example_010
-
-statement ok
-INSERT INTO tbl
-    BY POSITION (b, a)
-    VALUES (5, 42);
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_011
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (a INTEGER, b INTEGER);
-
-statement ok
-INSERT INTO tbl BY NAME (SELECT 42 AS b, 32 AS a);
-
-statement ok
-INSERT INTO tbl BY NAME (SELECT 22 AS b);
-
-query
-SELECT * FROM tbl;
-----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
-1	mark	1	2	alpha	1	10	20	30	10	100	1000
-3	bookmark	4	5	beta	2	11	21	31	20	200	2000
-7	other	9	16	gamma	3	12	22	32	NULL	300	3000
-NULL	NULL	NULL	NULL	NULL	NULL	32	42	NULL	NULL	NULL	NULL
-NULL	NULL	NULL	NULL	NULL	NULL	NULL	22	NULL	NULL	NULL	NULL
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_012
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER);
-
-statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
-INSERT INTO tbl
-    VALUES (1, 42);
-
-statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
-INSERT INTO tbl
-    VALUES (1, 84);
-
-# DOCS_TEST: example_013
-
-query
-SELECT * FROM tbl;
-----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
-1	mark	1	2	alpha	1	10	20	30	10	100	1000
-3	bookmark	4	5	beta	2	11	21	31	20	200	2000
-7	other	9	16	gamma	3	12	22	32	NULL	300	3000
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_014
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER);
-
-statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
-INSERT INTO tbl
-    VALUES (1, 42);
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT INTO tbl
-    VALUES (1, 84)
-    ON CONFLICT DO NOTHING;
-
-# DOCS_TEST: example_015
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT OR IGNORE INTO tbl
-    VALUES (1, 84);
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT INTO tbl
-    VALUES (1, 84) ON CONFLICT DO NOTHING;
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_016
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER);
-
-statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
-INSERT INTO tbl VALUES (1, 42);
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT INTO tbl VALUES (1, 52), (1, 62) ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_017
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER);
-
-statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
-INSERT INTO tbl
-    VALUES (1, 42);
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT INTO tbl
-    VALUES (1, 84)
-    ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
-
-query
-SELECT * FROM tbl;
-----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
-1	mark	1	2	alpha	1	10	20	30	10	100	1000
-3	bookmark	4	5	beta	2	11	21	31	20	200	2000
-7	other	9	16	gamma	3	12	22	32	NULL	300	3000
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_018
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER);
-
-statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
-INSERT INTO tbl
-    VALUES (1, 42);
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT INTO tbl (j, i)
-    VALUES (168, 1)
-    ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT INTO tbl
-    BY NAME (SELECT 1 AS i, 336 AS j)
-    ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
-
-query
-SELECT * FROM tbl;
-----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
-1	mark	1	2	alpha	1	10	20	30	10	100	1000
-3	bookmark	4	5	beta	2	11	21	31	20	200	2000
-7	other	9	16	gamma	3	12	22	32	NULL	300	3000
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_019
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER);
-
-statement error db error: ERROR: table tbl has 12 columns but 2 values were supplied
-INSERT INTO tbl
-    VALUES (1, 42);
-
-# DOCS_TEST: example_020
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT OR REPLACE INTO tbl
-    VALUES (1, 84);
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT INTO tbl
-    VALUES (1, 84)
-    ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT INTO tbl (j, i)
-    VALUES (84, 1)
-    ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
-
-statement error db error: ERROR: There are no UNIQUE/PRIMARY KEY constraints that refer to this table, specify ON CONFLICT columns manually
-INSERT INTO tbl BY NAME
-    (SELECT 84 AS j, 1 AS i)
-    ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
 
 # DOCS_TEST: example_021
 
@@ -575,79 +144,6 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_023
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER UNIQUE, k INTEGER);
-
-statement error db error: ERROR: table tbl has 12 columns but 3 values were supplied
-INSERT INTO tbl
-    VALUES (1, 20, 300);
-
-query
-SELECT * FROM tbl;
-----
-id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
-1	mark	1	2	alpha	1	10	20	30	10	100	1000
-3	bookmark	4	5	beta	2	11	21	31	20	200	2000
-7	other	9	16	gamma	3	12	22	32	NULL	300	3000
-
-# DOCS_TEST: example_024
-
-statement error db error: ERROR: The specified columns as conflict target are not referenced by a UNIQUE/PRIMARY KEY CONSTRAINT or INDEX
-INSERT INTO tbl
-    VALUES (1, 40, 700)
-    ON CONFLICT (i) DO UPDATE SET k = 2 * EXCLUDED.k;
-
-# DOCS_TEST: example_025
-
-statement error
-INSERT INTO tbl
-    VALUES (1, 20, 900)
-    ON CONFLICT (j) DO UPDATE SET k = 5 * EXCLUDED.k;
-----
-db error: ERROR: Table "tbl" does not have a column with name "j"
-
-Did you mean: "a", "b", "c", "col1", "col2"
-
-
-# DOCS_TEST: example_026
-
-statement error db error: ERROR: The specified columns as conflict target are not referenced by a UNIQUE/PRIMARY KEY CONSTRAINT or INDEX
-INSERT INTO tbl
-    VALUES (1, 40, 700)
-    ON CONFLICT (i) DO UPDATE SET k = 2 * EXCLUDED.k WHERE k < 100;
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
 DROP TABLE IF EXISTS t1;
 
 # DOCS_TEST: example_027
@@ -655,10 +151,13 @@ DROP TABLE IF EXISTS t1;
 statement ok
 CREATE TABLE t1 (i INTEGER);
 
-statement ok
+query
 INSERT INTO t1
     SELECT 42
     RETURNING *;
+----
+i
+1
 
 # DOCS_SETUP
 
@@ -673,10 +172,13 @@ DROP TABLE IF EXISTS t2;
 statement ok
 CREATE TABLE t2 (i INTEGER, j INTEGER);
 
-statement ok
+query
 INSERT INTO t2
     SELECT 2 AS i, 3 AS j
     RETURNING *, i * j AS i_times_j;
+----
+i	j	i_times_j
+1	0	0
 
 # DOCS_TEST: example_029
 
@@ -686,9 +188,12 @@ CREATE TABLE t3 (i INTEGER PRIMARY KEY, j INTEGER);
 statement ok
 CREATE SEQUENCE 't3_key';
 
-statement ok
+query
 INSERT INTO t3
     SELECT nextval('t3_key') AS i, 42 AS j
     UNION ALL
     SELECT nextval('t3_key') AS i, 43 AS j
     RETURNING *;
+----
+i	j
+2	0

@@ -1,0 +1,17 @@
+# DOCS_TEST: example_011
+
+statement ok
+CREATE TABLE tbl (a INTEGER, b INTEGER);
+
+statement ok
+INSERT INTO tbl BY NAME (SELECT 42 AS b, 32 AS a);
+
+statement ok
+INSERT INTO tbl BY NAME (SELECT 22 AS b);
+
+query
+SELECT * FROM tbl;
+----
+a	b
+32	42
+NULL	22

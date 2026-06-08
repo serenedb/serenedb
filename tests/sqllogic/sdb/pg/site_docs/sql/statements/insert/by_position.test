@@ -1,0 +1,8 @@
+# DOCS_TEST: example_007
+
+statement ok
+CREATE TABLE tbl (a INTEGER, b INTEGER);
+
+statement ok
+INSERT INTO tbl
+    VALUES (5, 42);

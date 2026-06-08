@@ -145,34 +145,71 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
+# DOCS_SETUP: local_struct_dot_notation_fixture
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (
+    part1 STRUCT(part2 STRUCT(part3 INTEGER))
+);
+
+statement ok
+INSERT INTO tbl VALUES ({'part2': {'part3': 42}});
+
 # DOCS_TEST: example_015
 
-query error
+query
 SELECT part1
 FROM tbl;
 ----
-db error: ERROR: Referenced column "part1" not found in FROM clause!
-Candidate bindings: "a"
+part1
+("(42)")
 
+# DOCS_SETUP: local_struct_dot_notation_part2_fixture
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (
+    part1 STRUCT(part2 STRUCT(part3 INTEGER))
+);
+
+statement ok
+INSERT INTO tbl VALUES ({'part2': {'part3': 42}});
 
 # DOCS_TEST: example_016
 
-query error
+query
 SELECT part1.part2
 FROM tbl;
 ----
-db error: ERROR: Referenced table "part1" not found!
-Candidate tables: "tbl"
+part2
+(42)
 
+# DOCS_SETUP: local_struct_dot_notation_part3_fixture
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (
+    part1 STRUCT(part2 STRUCT(part3 INTEGER))
+);
+
+statement ok
+INSERT INTO tbl VALUES ({'part2': {'part3': 42}});
 
 # DOCS_TEST: example_017
 
-query error
+query
 SELECT part1.part2.part3
 FROM tbl;
 ----
-db error: ERROR: Referenced table "part1" not found!
-Candidate tables: "tbl"
+part3
+42
 
 
 # DOCS_TEST: example_018
@@ -191,8 +228,11 @@ s
 
 # DOCS_TEST: example_019
 
-statement error db error: ERROR: syntax error at or near "\{"
+statement error
 {'v': a, 'i': 42}
+----
+db error: ERROR: syntax error at or near "\{"
+
 
 # DOCS_SETUP
 
@@ -216,10 +256,13 @@ CREATE TABLE t2 AS SELECT row('a');
 
 # DOCS_TEST: example_022
 
-query error db error: ERROR: STRUCT to STRUCT cast must have at least one matching member
+query error
 SELECT a::STRUCT(y INTEGER) AS b
 FROM
     (SELECT {'x': 42} AS a);
+----
+db error: ERROR: STRUCT to STRUCT cast must have at least one matching member
+
 
 # DOCS_TEST: example_023
 
@@ -345,8 +388,11 @@ INSERT INTO test VALUES (ROW(1, 1)), (ROW(2, 2));
 
 # DOCS_TEST: example_038
 
-statement error db error: ERROR: ALTER TABLE through DuckDB
+statement error
 ALTER TABLE test ADD COLUMN s.k INTEGER;
+----
+db error: ERROR: ALTER TABLE through DuckDB
+
 
 query
 FROM test;
@@ -357,8 +403,11 @@ s
 
 # DOCS_TEST: example_039
 
-statement error db error: ERROR: ALTER TABLE through DuckDB
+statement error
 ALTER TABLE test DROP COLUMN s.i;
+----
+db error: ERROR: ALTER TABLE through DuckDB
+
 
 query
 FROM test;
@@ -369,8 +418,11 @@ s
 
 # DOCS_TEST: example_040
 
-statement error db error: ERROR: ALTER TABLE through DuckDB
+statement error
 ALTER TABLE test RENAME s.j TO v1;
+----
+db error: ERROR: ALTER TABLE through DuckDB
+
 
 query
 FROM test;

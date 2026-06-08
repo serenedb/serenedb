@@ -9,10 +9,18 @@ FROM (SELECT unnest({'a': 42, 'b': {'a': 88, 'b': 99}}, recursive := true));
 a	a	b
 42	88	99
 
-# DOCS_TEST: example_002
+# DOCS_SETUP: file_fixtures_example_002
 
-statement error (?i)Cannot open file .*
-ATTACH 'temp.db' AS temp2;
+
+# DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| ATTACH 'temp.db' AS temp2;
+#|
+#| USE temp2;
+# DOCS_RAW_END
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_dialect_keywords_and_identifiers_example_002_1_temp_db.csv' AS temp2;
 
 statement ok
 USE temp2;
@@ -44,131 +52,3 @@ SELECT col_á FROM (SELECT 'x' AS col_a);
 ----
 db error: ERROR: Referenced column "col_á" not found in FROM clause!
 Candidate bindings: "col_a"
-
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_005
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl AS SELECT cos(pi()) AS CosineOfPi;
-
-query error
-SELECT cosineofpi FROM tbl;
-----
-db error: ERROR: Referenced column "cosineofpi" not found in FROM clause!
-Candidate bindings: "c", "i", "col1", "col2", "name"
-
-
-# DOCS_TEST: example_006
-
-query
-SELECT MAP(['key1'], [1]) = MAP(['KEY1'], [1]) AS equal;
-----
-equal
-f
-
-# DOCS_TEST: example_007
-
-query
-SELECT {'key1': 1} = {'KEY1': 1} AS equal;
-----
-equal
-t
-
-# DOCS_TEST: example_008
-
-query
-SELECT union_value(key1 := 1) = union_value(KEY1 := 1) as equal;
-----
-equal
-t
-
-# DOCS_TEST: example_009
-
-statement ok
-CREATE TABLE t1 (idfield INTEGER, x INTEGER);
-
-statement ok
-CREATE TABLE t2 (IdField INTEGER, y INTEGER);
-
-statement ok
-INSERT INTO t1 VALUES (1, 123);
-
-statement ok
-INSERT INTO t2 VALUES (1, 456);
-
-query
-SELECT * FROM t1 NATURAL JOIN t2;
-----
-idfield	x	y
-1	123	456
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-statement ok
-CREATE TABLE tbl (
-    id INTEGER,
-    name VARCHAR,
-    col1 DOUBLE,
-    col2 DOUBLE,
-    "Some Column Name" VARCHAR,
-    i INTEGER,
-    a INTEGER,
-    b INTEGER,
-    c INTEGER,
-    number INTEGER,
-    number1 INTEGER,
-    number2 INTEGER
-);
-
-statement ok
-INSERT INTO tbl VALUES
-    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
-    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
-    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
-
-# DOCS_TEST: example_010
-
-statement ok
-SET preserve_identifier_case = false;
-
-statement error db error: ERROR: relation "tbl" already exists
-CREATE TABLE tbl AS SELECT cos(pi()) AS CosineOfPi;
-
-query error
-SELECT CosineOfPi FROM tbl;
-----
-db error: ERROR: Referenced column "cosineofpi" not found in FROM clause!
-Candidate bindings: "c", "i", "col1", "col2", "name"

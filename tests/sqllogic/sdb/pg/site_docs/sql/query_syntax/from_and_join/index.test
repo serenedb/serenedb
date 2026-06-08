@@ -1,3 +1,29 @@
+# DOCS_SETUP: generated_wide_fixtures
+
+statement ok
+CREATE TABLE other_table AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
+statement ok
+CREATE TABLE a AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
+statement ok
+CREATE TABLE west AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
+statement ok
+CREATE TABLE trades AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
 control substitution on
 
 # DOCS_SETUP
@@ -81,11 +107,27 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
 
+# DOCS_SETUP: local_schema_name_tbl_fixture
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS schema_name;
+
+statement ok
+CREATE TABLE schema_name.tbl AS
+SELECT *
+FROM tbl;
+
 # DOCS_TEST: example_006
 
-query error db error: ERROR: Table with name "schema_name\.tbl" does not exist because schema "schema_name" does not exist\.
+query
 SELECT *
 FROM schema_name.tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
 
 # DOCS_TEST: example_007
 
@@ -195,11 +237,28 @@ i
 98
 99
 
-# DOCS_TEST: example_008
+# DOCS_SETUP: file_fixtures_example_008
 
-query error (?i)No files found that match the pattern .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_008_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_008
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM 'test.csv';
+# DOCS_RAW_END
+
+query
 SELECT *
-FROM 'test.csv';
+FROM '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_008_1_test_csv.csv';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
 
 # DOCS_TEST: example_009
 
@@ -212,14 +271,28 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
 
+# DOCS_SETUP: local_table_t_fixture
+
+statement ok
+DROP TABLE IF EXISTS t;
+
+statement ok
+CREATE TABLE t (t INTEGER, x INTEGER);
+
+statement ok
+INSERT INTO t VALUES
+    (1, 1),
+    (2, 2);
+
 # DOCS_TEST: example_010
 
-query error
+query ?
 SELECT t
 FROM t;
 ----
-db error: ERROR: Table with name t does not exist!
-Did you mean "<slt:ignore>"?
+t
+1
+2
 
 
 # DOCS_TEST: example_011
@@ -233,16 +306,76 @@ t
 (42,hello)
 (43,hello)
 
+# DOCS_SETUP: local_join_key_fixture
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (
+    key INTEGER,
+    value VARCHAR
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'left one'),
+    (2, 'left two'),
+    (3, 'left only');
+
+statement ok
+DROP TABLE IF EXISTS other_table;
+
+statement ok
+CREATE TABLE other_table (
+    key INTEGER,
+    description VARCHAR
+);
+
+statement ok
+INSERT INTO other_table VALUES
+    (1, 'right one'),
+    (2, 'right two'),
+    (4, 'right only');
+
 # DOCS_TEST: example_012
 
-query error
+query ???? rowsort
 SELECT *
 FROM tbl
 JOIN other_table
   ON tbl.key = other_table.key;
 ----
-db error: ERROR: Table with name other_table does not exist!
-Did you mean "<slt:ignore>"?
+key	value	key	description
+1	left one	1	right one
+2	left two	2	right two
+
+# DOCS_SETUP: restore_tbl_fixture
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
 
 # DOCS_TEST: example_013
@@ -274,43 +407,124 @@ WHERE i % 2 = 0;
 sum
 2450
 
-# DOCS_TEST: example_016
+# DOCS_SETUP: file_fixtures_example_016
 
-query error (?i)No files found that match the pattern .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_016_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_016
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM 'test.csv';
+# DOCS_RAW_END
+
+query
 SELECT *
-FROM 'test.csv';
+FROM '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_016_1_test_csv.csv';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_017
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_017_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_017
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_csv('test.csv');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM read_csv('test.csv');
+FROM read_csv('/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_017_1_test_csv.csv');
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_018
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_018_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST: example_018
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_csv('test.csv') WITH ORDINALITY;
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM read_csv('test.csv') WITH ORDINALITY;
+FROM read_csv('/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_018_1_test_csv.csv') WITH ORDINALITY;
+----
+id	name	value	ordinality
+1	alpha	10	1
+2	beta	20	2
+
+
+# DOCS_SETUP: local_table_b_fixture
+
+statement ok
+DROP TABLE IF EXISTS a;
+
+statement ok
+CREATE TABLE a (id INTEGER, x INTEGER);
+
+statement ok
+INSERT INTO a VALUES
+    (1, 100),
+    (2, 200);
+
+statement ok
+DROP TABLE IF EXISTS b;
+
+statement ok
+CREATE TABLE b (id INTEGER, x INTEGER);
+
+statement ok
+INSERT INTO b VALUES
+    (1, 10),
+    (2, 20);
 
 # DOCS_TEST: example_019
 
-query error
+query ????
 SELECT a.*, b.*
 FROM a
 CROSS JOIN b;
 ----
-db error: ERROR: Table with name a does not exist!
-Did you mean "<slt:ignore>"?
+id	x	id	x
+1	100	1	10
+2	200	1	10
+1	100	2	20
+2	200	2	20
 
 
 # DOCS_TEST: example_020
 
-query error
+query ????
 SELECT a.*, b.*
 FROM a, b;
 ----
-db error: ERROR: Table with name a does not exist!
-Did you mean "<slt:ignore>"?
+id	x	id	x
+1	100	1	10
+2	200	1	10
+1	100	2	20
+2	200	2	20
 
 
 # DOCS_TEST: example_021
@@ -331,14 +545,33 @@ CREATE TABLE l_nations (
     FOREIGN KEY (n_regionkey) REFERENCES l_regions(r_regionkey)
 );
 
+# DOCS_SETUP: local_l_nations_regions_rows
+
+statement ok
+INSERT INTO l_regions VALUES
+    (0, 'AFRICA', 'lar deposits. blithely final packages cajole. regular waters are final requests. regular accounts are according to'),
+    (1, 'AMERICA', 'hs use ironic, even requests. s'),
+    (2, 'ASIA', 'ges. thinly even pinto beans ca');
+
+statement ok
+INSERT INTO l_nations VALUES
+    (0, 'ALGERIA', 0, ' haggle. carefully final deposits detect slyly agai'),
+    (1, 'ARGENTINA', 1, 'al foxes promise slyly according to the regular accounts. bold requests alon'),
+    (2, 'BRAZIL', 1, 'y alongside of the pending deposits. carefully special packages are about the ironic forges. slyly special '),
+    (3, 'CHINA', 2, 'even packages wake furiously alongside of the regular courts. final requests haggle carefully.');
+
 # DOCS_TEST: example_022
 
-query
+query ??????? rowsort
 SELECT n.*, r.*
 FROM l_nations n
 JOIN l_regions r ON (n_regionkey = r_regionkey);
 ----
 n_nationkey	n_name	n_regionkey	n_comment	r_regionkey	r_name	r_comment
+0	ALGERIA	0	 haggle. carefully final deposits detect slyly agai	0	AFRICA	lar deposits. blithely final packages cajole. regular waters are final requests. regular accounts are according to
+1	ARGENTINA	1	al foxes promise slyly according to the regular accounts. bold requests alon	1	AMERICA	hs use ironic, even requests. s
+2	BRAZIL	1	y alongside of the pending deposits. carefully special packages are about the ironic forges. slyly special 	1	AMERICA	hs use ironic, even requests. s
+3	CHINA	2	even packages wake furiously alongside of the regular courts. final requests haggle carefully.	2	ASIA	ges. thinly even pinto beans ca
 
 # DOCS_SETUP
 
@@ -365,26 +598,66 @@ CREATE TABLE l_nations (nationkey INTEGER NOT NULL PRIMARY KEY,
                         comment   VARCHAR(152),
                         FOREIGN KEY (regionkey) REFERENCES l_regions(regionkey));
 
+# DOCS_SETUP: local_l_nations_regions_using_rows
+
+statement ok
+INSERT INTO l_regions VALUES
+    (0, 'AFRICA', 'lar deposits. blithely final packages cajole. regular waters are final requests. regular accounts are according to'),
+    (1, 'AMERICA', 'hs use ironic, even requests. s'),
+    (2, 'ASIA', 'ges. thinly even pinto beans ca');
+
+statement ok
+INSERT INTO l_nations VALUES
+    (0, 'ALGERIA', 0, ' haggle. carefully final deposits detect slyly agai'),
+    (1, 'ARGENTINA', 1, 'al foxes promise slyly according to the regular accounts. bold requests alon'),
+    (2, 'BRAZIL', 1, 'y alongside of the pending deposits. carefully special packages are about the ironic forges. slyly special '),
+    (3, 'CHINA', 2, 'even packages wake furiously alongside of the regular courts. final requests haggle carefully.');
+
 # DOCS_TEST: example_024
 
-query
+query ??????? rowsort
 SELECT n.*, r.*
 FROM l_nations n
 JOIN l_regions r USING (regionkey);
 ----
 nationkey	name	regionkey	comment	regionkey	name	comment
+0	ALGERIA	0	 haggle. carefully final deposits detect slyly agai	0	AFRICA	lar deposits. blithely final packages cajole. regular waters are final requests. regular accounts are according to
+1	ARGENTINA	1	al foxes promise slyly according to the regular accounts. bold requests alon	1	AMERICA	hs use ironic, even requests. s
+2	BRAZIL	1	y alongside of the pending deposits. carefully special packages are about the ironic forges. slyly special 	1	AMERICA	hs use ironic, even requests. s
+3	CHINA	2	even packages wake furiously alongside of the regular courts. final requests haggle carefully.	2	ASIA	ges. thinly even pinto beans ca
+
+# DOCS_SETUP: local_west_jobs_fixture
+
+statement ok
+DROP TABLE IF EXISTS west;
+
+statement ok
+CREATE TABLE west (
+    t_id INTEGER,
+    time INTEGER,
+    cost INTEGER
+);
+
+statement ok
+INSERT INTO west VALUES
+    (1, 10, 100),
+    (2, 20, 80),
+    (3, 30, 120),
+    (4, 40, 70);
 
 # DOCS_TEST: example_025
 
-query error
+query ?? rowsort
 SELECT s1.t_id, s2.t_id
 FROM west s1, west s2
 WHERE s1.time > s2.time
   AND s1.cost < s2.cost;
 ----
-db error: ERROR: Table with name west does not exist!
-Did you mean "<slt:ignore>"?
-
+t_id	t_id
+2	1
+4	1
+4	2
+4	3
 
 # DOCS_TEST: example_026
 
@@ -550,60 +823,95 @@ x	s
 2	b
 3	NULL
 
+# DOCS_SETUP: local_asof_prices_fixture
+
+statement ok
+DROP TABLE IF EXISTS trades;
+
+statement ok
+CREATE TABLE trades (symbol VARCHAR, "when" TIMESTAMP, quantity INTEGER);
+
+statement ok
+INSERT INTO trades VALUES
+    ('AAPL', TIMESTAMP '2025-01-01 10:00:00', 5),
+    ('MSFT', TIMESTAMP '2025-01-01 10:15:00', 2);
+
+statement ok
+DROP TABLE IF EXISTS prices;
+
+statement ok
+CREATE TABLE prices (symbol VARCHAR, "when" TIMESTAMP, price DOUBLE, ticker VARCHAR);
+
+statement ok
+INSERT INTO prices VALUES
+    ('AAPL', TIMESTAMP '2025-01-01 09:30:00', 100.0, 'AAPL'),
+    ('MSFT', TIMESTAMP '2025-01-01 09:45:00', 200.0, 'MSFT');
+
 # DOCS_TEST: example_037
 
-query error
+query ???? rowsort
 SELECT t.*, p.price
 FROM trades t
 ASOF JOIN prices p
        ON t.symbol = p.symbol AND t.when >= p.when;
 ----
-db error: ERROR: Table with name trades does not exist!
-Did you mean "<slt:ignore>"?
+symbol	when	quantity	price
+AAPL	2025-01-01 10:00:00	5	100
+MSFT	2025-01-01 10:15:00	2	200
 
 
 # DOCS_TEST: example_038
 
-query error
+query ??????? rowsort
 SELECT *
 FROM trades t
 ASOF LEFT JOIN prices p
             ON t.symbol = p.symbol
            AND t.when >= p.when;
 ----
-db error: ERROR: Table with name trades does not exist!
-Did you mean "<slt:ignore>"?
+symbol	when	quantity	symbol	when	price	ticker
+AAPL	2025-01-01 10:00:00	5	AAPL	2025-01-01 09:30:00	100	AAPL
+MSFT	2025-01-01 10:15:00	2	MSFT	2025-01-01 09:45:00	200	MSFT
 
 
 # DOCS_TEST: example_039
 
-query error
+query ????? rowsort
 SELECT *
 FROM trades t
 ASOF JOIN prices p USING (symbol, "when");
 ----
-db error: ERROR: Table with name trades does not exist!
-Did you mean "<slt:ignore>"?
+symbol	when	quantity	price	ticker
+AAPL	2025-01-01 10:00:00	5	100	AAPL
+MSFT	2025-01-01 10:15:00	2	200	MSFT
 
 
 # DOCS_TEST: example_040
 
-query error
+query ???? rowsort
 SELECT t.symbol, t.when AS trade_when, p.when AS price_when, price
 FROM trades t
 ASOF LEFT JOIN prices p USING (symbol, "when");
 ----
-db error: ERROR: Table with name trades does not exist!
-Did you mean "<slt:ignore>"?
+symbol	trade_when	price_when	price
+AAPL	2025-01-01 10:00:00	2025-01-01 09:30:00	100
+MSFT	2025-01-01 10:15:00	2025-01-01 09:45:00	200
 
+# DOCS_SETUP: drop_table_t_before_alias_example
+
+statement ok
+DROP TABLE IF EXISTS t;
 
 # DOCS_TEST: example_041
 
 statement ok
 CREATE TABLE t (x INTEGER);
 
-query error (?i)Ambiguous reference to table .*duplicate alias .*explicitly alias one of the tables using "AS my_alias"
+query error
 SELECT * FROM t JOIN t USING(x);
+----
+(?i)Ambiguous reference to table .*duplicate alias .*explicitly alias one of the tables using "AS my_alias"
+
 
 # DOCS_TEST: example_042
 

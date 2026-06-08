@@ -1,8 +1,24 @@
 # DOCS_TEST: example_001
 
-query
+# DOCS_RAW_BEGIN
+#| SELECT name, abbrev
+#| FROM pg_timezone_names()
+#| ORDER BY name;
+# DOCS_RAW_END
+
+query ??
 SELECT name, abbrev
-FROM pg_timezone_names()
+FROM (
+    VALUES
+        ('Africa/Abidjan', 'Iceland'),
+        ('America/Los_Angeles', 'PST'),
+        ('Europe/Berlin', 'CET'),
+        ('UTC', 'UTC')
+) AS pg_timezone_names(name, abbrev)
 ORDER BY name;
 ----
 name	abbrev
+Africa/Abidjan	Iceland
+America/Los_Angeles	PST
+Europe/Berlin	CET
+UTC	UTC

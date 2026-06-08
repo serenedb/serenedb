@@ -1,37 +1,49 @@
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: required parameter "template" was not found
+statement error
 CREATE TEXT SEARCH DICTIONARY english_upper (
-    TEMPLATE = 'copy_from',
+    template = 'copy_from',
     FROM = 'english_dict',
-    CASE = 'upper'
+    case = 'upper'
 );
+----
+db error: ERROR: required parameter "from" was not found
+
 
 # DOCS_TEST: example_002
 
-statement error db error: ERROR: required parameter "template" was not found
+statement error
 CREATE TEXT SEARCH DICTIONARY pipe_variant (
-    TEMPLATE = 'copy_from',
+    template = 'copy_from',
     FROM = 'pipe_dict',
     STEP1_DELIMITER = '|',
     STEP2_CASE = 'upper'
 );
+----
+db error: ERROR: required parameter "from" was not found
+
 
 # DOCS_TEST: example_003
 
-statement error db error: ERROR: required parameter "template" was not found
+statement error
 CREATE TEXT SEARCH DICTIONARY pipe_extended (
-    TEMPLATE = 'copy_from',
+    template = 'copy_from',
     FROM = 'pipe_dict',
     STEP3_TEMPLATE = 'stopwords',
     STEP3_STOPWORDS = '"bar","foo"'
 );
+----
+db error: ERROR: required parameter "from" was not found
+
 
 # DOCS_TEST: example_004
 
-statement error db error: ERROR: required parameter "template" was not found
+statement error
 CREATE TEXT SEARCH DICTIONARY minhash_variant (
-    TEMPLATE = 'copy_from',
+    template = 'copy_from',
     FROM = 'minhash_text',
     ANALYZER_STOPWORDS = '"fox"'
 );
+----
+db error: ERROR: required parameter "from" was not found
+

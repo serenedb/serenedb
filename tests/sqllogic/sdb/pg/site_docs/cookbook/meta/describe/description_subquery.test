@@ -1,0 +1,9 @@
+# DOCS_SETUP: local_describe_tbl_fixture
+
+statement ok
+CREATE TABLE tbl (i INTEGER PRIMARY KEY, j VARCHAR);
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE tbl_description AS SELECT * FROM (DESCRIBE TABLE tbl);

@@ -1,0 +1,4 @@
+# DOCS_TEST: example_003
+
+statement ok
+CREATE SEQUENCE serial START WITH 1 INCREMENT BY 2;

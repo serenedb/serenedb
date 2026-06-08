@@ -6,8 +6,11 @@ select cast('1.1232154' as decimal(38, 7)) + cast('1' as decimal(10, 0));
 ?column?
 2.1232154
 
-query error db error: ERROR: Overflow in addition of DECIMAL\(38\) \(99999999999999999999999999999992345678 \+ 10000000\);
+query error
 select cast('9999999999999999999999999999999.2345678' as decimal(38, 7)) + cast('1' as decimal(10, 0));
+----
+db error: ERROR: Overflow in addition of DECIMAL\(38\) \(99999999999999999999999999999992345678 \+ 10000000\);
+
 
 # DOCS_TEST: example_002
 
@@ -17,27 +20,45 @@ select cast('1.1232154' as decimal(38, 7)) + cast('1' as decimal(10, 0));
 ?column?
 2.1232154
 
-query error db error: ERROR: Overflow in addition of DECIMAL\(38\) \(99999999999999999999999999999992345678 \+ 10000000\);
+query error
 select cast('9999999999999999999999999999999.2345678' as decimal(38, 7)) + cast('1' as decimal(10, 0));
+----
+db error: ERROR: Overflow in addition of DECIMAL\(38\) \(99999999999999999999999999999992345678 \+ 10000000\);
+
 
 # DOCS_TEST: example_003
 
-query error db error: ERROR: Overflow in multiplication of DECIMAL\(38\) \(123456789101100000 \* 1234100000000000000000\)\. You might want to add an explicit cast to a decimal with a smaller scale\.
+query error
 select cast(0.1234567891011 as decimal(38, 18)) * cast(1234.1 as decimal(38, 18));
+----
+db error: ERROR: Overflow in multiplication of DECIMAL\(38\) \(123456789101100000 \* 1234100000000000000000\)\. You might want to add an explicit cast to a decimal with a smaller scale\.
+
 
 # DOCS_TEST: example_004
 
-query error db error: ERROR: syntax error at or near "CAST"
+query error
 SELECT CAST(1 as DECIMAL(17, 3)) div CAST(2 as DECIMAL(17, 3));
+----
+db error: ERROR: syntax error at or near "CAST"
 
-query error db error: ERROR: syntax error at or near "CAST"
+
+query error
 SELECT CAST(21 as DECIMAL(20, 3)) div CAST(20 as DECIMAL(20, 2));
+----
+db error: ERROR: syntax error at or near "CAST"
 
-query error db error: ERROR: syntax error at or near "CAST"
+
+query error
 SELECT CAST(1 as DECIMAL(20, 3)) div CAST(0 as DECIMAL(20, 3));
+----
+db error: ERROR: syntax error at or near "CAST"
 
-query error db error: ERROR: syntax error at or near "CAST"
+
+query error
 SELECT CAST(99999999999999999999999999999999999 as DECIMAL(38, 1)) div CAST(0.001 as DECIMAL(7, 4));
+----
+db error: ERROR: syntax error at or near "CAST"
+
 
 # DOCS_TEST: example_005
 

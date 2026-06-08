@@ -8,8 +8,11 @@ bytea
 
 # DOCS_TEST: example_002
 
-query error db error: ERROR: invalid hexadecimal digit: "\\"
+query error
 SELECT '\xAA\xAB\xAC'::BLOB;
+----
+db error: ERROR: invalid hexadecimal digit: "\\"
+
 
 # DOCS_TEST: example_003
 

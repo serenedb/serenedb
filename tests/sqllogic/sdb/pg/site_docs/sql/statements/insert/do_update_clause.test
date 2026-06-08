@@ -1,0 +1,10 @@
+# DOCS_TEST: example_016
+
+statement ok
+CREATE TABLE tbl (i INTEGER PRIMARY KEY, j INTEGER);
+
+statement ok
+INSERT INTO tbl VALUES (1, 42);
+
+statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+INSERT INTO tbl VALUES (1, 52), (1, 62) ON CONFLICT DO UPDATE SET j = EXCLUDED.j;

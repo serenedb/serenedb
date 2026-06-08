@@ -97,3 +97,4 @@ SELECT regexp_split('1a 2b 14m', '');
 ----
 db error: ERROR: Scalar Function with name regexp_split does not exist!
 Did you mean "<slt:ignore>"?
+

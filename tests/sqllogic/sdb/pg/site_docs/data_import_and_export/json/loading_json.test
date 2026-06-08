@@ -1,94 +1,309 @@
 control substitution on
 
-# DOCS_TEST: example_001
+# DOCS_SETUP: file_fixtures_example_001
 
-query error (?i)No files found that match the pattern .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 1, 'write docs fixtures', false),
+    (1, 2, 'run sqllogictest', true)
+) AS t("userId", "id", "title", "completed")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_001_1_todos_json.json' (FORMAT json);
+
+# DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_json('todos.json')
+#| LIMIT 5;
+# DOCS_RAW_END
+
+query
 SELECT *
-FROM read_json('todos.json')
+FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_001_1_todos_json.json')
 LIMIT 5;
+----
+userid	id	title	completed
+1	1	write docs fixtures	f
+1	2	run sqllogictest	t
+
+
+# DOCS_SETUP: file_fixtures_example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 1, 'write docs fixtures', false),
+    (1, 2, 'run sqllogictest', true)
+) AS t("userId", "id", "title", "completed")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_002_1_todos_json.json' (FORMAT json);
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| CREATE TABLE todos AS
+#|     SELECT *
+#|     FROM read_json('todos.json');
+#|
+#| DESCRIBE todos;
+# DOCS_RAW_END
 
-statement error (?i)No files found that match the pattern .*
+statement ok
 CREATE TABLE todos AS
     SELECT *
-    FROM read_json('todos.json');
+    FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_002_1_todos_json.json');
 
-query error
-DESCRIBE todos;
+query
+DESCRIBE TABLE todos;
 ----
-db error: ERROR: unrecognized configuration parameter "todos"
+column_name	column_type	null	key	default	extra
+userid	BIGINT	YES	NULL	NULL	NULL
+id	BIGINT	YES	NULL	NULL	NULL
+title	VARCHAR	YES	NULL	NULL	NULL
+completed	BOOLEAN	YES	NULL	NULL	NULL
 
-Did you mean: "auto_checkpoint_skip_wal_threshold"
 
+# DOCS_SETUP: file_fixtures_example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 1, 'write docs fixtures', false),
+    (1, 2, 'run sqllogictest', true)
+) AS t("userId", "id", "title", "completed")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_003_1_todos_json.json' (FORMAT json);
 
 # DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_json(
+#|         'todos.json',
+#|         columns = {userId: 'UBIGINT', completed: 'BOOLEAN'}
+#|     )
+#| LIMIT 5;
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
 FROM read_json(
-        'todos.json',
+        '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_003_1_todos_json.json',
         columns = {userId: 'UBIGINT', completed: 'BOOLEAN'}
     )
 LIMIT 5;
+----
+userid	completed
+1	f
+1	t
+
+
+# DOCS_SETUP: file_fixtures_example_004
+
+statement ok
+COPY (
+    SELECT '{"duck":42}' AS line
+    UNION ALL
+    SELECT '{"goose":[1,2,3]}' AS line
+) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_004_1_birds_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| FROM read_json_objects('birds.json', format = 'unstructured');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-FROM read_json_objects('birds.json', format = 'unstructured');
+query
+FROM read_json_objects('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_004_1_birds_json.json', format = 'unstructured');
+----
+json
+{"duck":42}
+{"goose":[1,2,3]}
+
+
+# DOCS_SETUP: file_fixtures_example_005
+
+statement ok
+COPY (
+    SELECT '{"duck":42}' AS line
+    UNION ALL
+    SELECT '{"goose":[1,2,3]}' AS line
+) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_005_1_birds_nd_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| FROM read_json_objects('birds-nd.json', format = 'newline_delimited');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-FROM read_json_objects('birds-nd.json', format = 'newline_delimited');
+query
+FROM read_json_objects('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_005_1_birds_nd_json.json', format = 'newline_delimited');
+----
+json
+{"duck":42}
+{"goose":[1,2,3]}
+
+
+# DOCS_SETUP: file_fixtures_example_006
+
+statement ok
+COPY (
+    SELECT '[{"duck":42},{"goose":[1,2,3]}]' AS line
+) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_006_1_birds_array_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST: example_006
+# DOCS_RAW_BEGIN
+#| FROM read_json_objects('birds-array.json', format = 'array');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-FROM read_json_objects('birds-array.json', format = 'array');
+query
+FROM read_json_objects('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_006_1_birds_array_json.json', format = 'array');
+----
+json
+{"duck":42}
+{"goose":[1,2,3]}
+
+
+# DOCS_SETUP: file_fixtures_example_007
+
+statement ok
+COPY (
+    SELECT '{"duck":42,"goose":[1,2,3]}' AS line
+) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_1_birds1_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+statement ok
+COPY (
+    SELECT '{"duck":43,"goose":[4,5,6],"swan":3.3}' AS line
+) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_2_birds2_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST: example_007
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_json(
+#|     ['birds1.json', 'birds2.json'],
+#|     columns = {duck: 'INTEGER', goose: 'INTEGER[]', swan: 'DOUBLE'}
+#| );
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
 FROM read_json(
-    ['birds1.json', 'birds2.json'],
+    ['/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_1_birds1_json.json', '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_2_birds2_json.json'],
     columns = {duck: 'INTEGER', goose: 'INTEGER[]', swan: 'DOUBLE'}
 );
+----
+duck	goose	swan
+42	{1,2,3}	NULL
+43	{4,5,6}	3.3
+
+# DOCS_SETUP: file_fixtures_example_008
+
+statement ok
+COPY (
+    SELECT '{"duck":42,"goose":[1,2,3]}' AS line
+) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_1.json.gz' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '', COMPRESSION 'GZIP');
+
+statement ok
+COPY (
+    SELECT '{"duck":43,"goose":[4,5,6]}' AS line
+) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_2.json.gz' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '', COMPRESSION 'GZIP');
 
 # DOCS_TEST: example_008
+# DOCS_RAW_BEGIN
+#| SELECT goose, duck FROM read_json('*.json.gz');
+#|
+#| SELECT goose, duck FROM '*.json.gz';
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
-SELECT goose, duck FROM read_json('*.json.gz');
+query
+SELECT goose, duck FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_*.json.gz');
+----
+goose	duck
+{1,2,3}	42
+{4,5,6}	43
 
-query error (?i)No files found that match the pattern .*
-SELECT goose, duck FROM '*.json.gz';
+
+query
+SELECT goose, duck FROM '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_*.json.gz';
+----
+goose	duck
+{1,2,3}	42
+{4,5,6}	43
+
+
+# DOCS_SETUP: file_fixtures_example_009
+
+statement ok
+COPY (
+    SELECT '{"duck":42,"goose":4.2}' AS line
+    UNION ALL
+    SELECT '{"duck":43,"goose":4.3}' AS line
+) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_009_1_birds_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST: example_009
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_json('birds.json');
+# DOCS_RAW_END
 
-query error db error: ERROR: SELECT clause without selection list
+query
 SELECT
-FROM read_json('birds.json');
+    *
+FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_009_1_birds_json.json');
+----
+duck	goose
+42	4.2
+43	4.3
+
+
+# DOCS_SETUP: file_fixtures_example_010
+
+statement ok
+COPY (
+    SELECT '{"duck":42,"goose":[1,2,3]}' AS line
+    UNION ALL
+    SELECT '{"duck":43,"goose":[4,5,6]}' AS line
+) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_010_1_birds_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST: example_010
+# DOCS_RAW_BEGIN
+#| SELECT *
+#| FROM read_json('birds-records.json');
+# DOCS_RAW_END
 
-query error (?i)No files found that match the pattern .*
+query
 SELECT *
-FROM read_json('birds-records.json');
+FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_010_1_birds_records_json.json');
+----
+duck	goose
+42	{1,2,3}
+43	{4,5,6}
+
+
+# DOCS_SETUP: file_fixtures_example_011
+
 
 # DOCS_TEST: example_011
+# DOCS_RAW_BEGIN
+#| COPY (SELECT * FROM range(5) r(i))
+#| TO 'numbers.json' (ARRAY true);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
+statement ok
 COPY (SELECT * FROM range(5) r(i))
-TO 'numbers.json' (ARRAY true);
+TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_011_1_numbers_json.json' (ARRAY true);
+
+# DOCS_SETUP: file_fixtures_example_012
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (0),
+    (1),
+    (2),
+    (3),
+    (4)
+) AS t("i")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_012_1_numbers_json.json' (FORMAT json, ARRAY true);
 
 # DOCS_TEST: example_012
+# DOCS_RAW_BEGIN
+#| CREATE TABLE numbers (i BIGINT);
+#|
+#| COPY numbers FROM 'numbers.json' (ARRAY true);
+# DOCS_RAW_END
 
 statement ok
 CREATE TABLE numbers (i BIGINT);
 
-statement error (?i)No files found that match the pattern .*
-COPY numbers FROM 'numbers.json' (ARRAY true);
+statement ok
+COPY numbers FROM '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_012_1_numbers_json.json' (ARRAY true);
 
 # DOCS_SETUP
 
@@ -97,14 +312,30 @@ USE $__DATABASE__;
 
 statement ok
 DROP TABLE IF EXISTS numbers;
+
+# DOCS_SETUP: file_fixtures_example_013
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (0),
+    (1),
+    (2),
+    (3),
+    (4)
+) AS t("i")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_013_1_numbers_json.json' (FORMAT json);
 
 # DOCS_TEST: example_013
+# DOCS_RAW_BEGIN
+#| CREATE TABLE numbers (i BIGINT);
+#|
+#| COPY numbers FROM 'numbers.json' (AUTO_DETECT true);
+# DOCS_RAW_END
 
 statement ok
 CREATE TABLE numbers (i BIGINT);
 
-statement error (?i)No files found that match the pattern .*
-COPY numbers FROM 'numbers.json' (AUTO_DETECT true);
+statement ok
+COPY numbers FROM '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_013_1_numbers_json.json' (AUTO_DETECT true);
 
 # DOCS_SETUP
 
@@ -114,8 +345,23 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS numbers;
 
-# DOCS_TEST: example_014
+# DOCS_SETUP: file_fixtures_example_014
 
-statement error (?i)No files found that match the pattern .*
+statement ok
+COPY (SELECT * FROM (VALUES
+    (0),
+    (1),
+    (2),
+    (3),
+    (4)
+) AS t("i")) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_014_1_numbers_json.json' (FORMAT json);
+
+# DOCS_TEST: example_014
+# DOCS_RAW_BEGIN
+#| CREATE TABLE numbers AS
+#|     FROM 'numbers.json';
+# DOCS_RAW_END
+
+statement ok
 CREATE TABLE numbers AS
-    FROM 'numbers.json';
+    FROM '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_014_1_numbers_json.json';

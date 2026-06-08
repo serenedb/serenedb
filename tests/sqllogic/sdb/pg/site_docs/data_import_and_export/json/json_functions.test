@@ -17,35 +17,73 @@ statement ok
 INSERT INTO example VALUES
     ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
 
+# DOCS_SETUP
+
+statement ok
+DROP TABLE IF EXISTS example;
+
+statement ok
+CREATE TABLE example (j JSON);
+
+statement ok
+INSERT INTO example VALUES
+    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+
 # DOCS_TEST: example_003
 
-query error substitution failed: Missing variable name
+# DOCS_RAW_BEGIN
+#| SELECT json_extract(j, '$.family') FROM example;
+# DOCS_RAW_END
+control substitution off
+
+query
 SELECT json_extract(j, '$.family') FROM example;
+----
+json_extract
+NULL
+
+control substitution on
+
 
 # DOCS_TEST: example_004
 
-query error substitution failed: Missing variable name
+query error
 SELECT j->'$.family' FROM example;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_005
 
-query error substitution failed: Missing variable name
+query error
 SELECT j->'$.species[0]' FROM example;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_006
 
-query error substitution failed: Missing variable name
+query error
 SELECT j->'$.species[*]' FROM example;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_007
 
-query error substitution failed: Missing variable name
+query error
 SELECT j->>'$.species[*]' FROM example;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_008
 
-query error substitution failed: Missing variable name
+query error
 SELECT j->'$.species'->0 FROM example;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_009
 
@@ -57,18 +95,27 @@ SELECT j->'species'->['/0', '/1'] FROM example;
 
 # DOCS_TEST: example_010
 
-query error substitution failed: Missing variable name
+query error
 SELECT json_extract_string(j, '$.family') FROM example;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_011
 
-query error substitution failed: Missing variable name
+query error
 SELECT j->>'$.family' FROM example;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_012
 
-query error substitution failed: Missing variable name
+query error
 SELECT j->>'$.species[0]' FROM example;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_013
 
@@ -122,18 +169,27 @@ json_extract
 
 # DOCS_TEST: example_018
 
-query error substitution failed: Missing variable name
+query error
 SELECT json_extract('{"duck": [1, 2, 3]}', '$.duck[0]');
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_019
 
-query error substitution failed: Missing variable name
+query error
 SELECT json_extract('{"duck": [1, 2, 3]}', '$.duck[#-1]');
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_020
 
-query error substitution failed: Missing variable name
+query error
 SELECT json_extract('{"duck.goose": [1, 2, 3]}', '$."duck.goose"[1]');
+----
+substitution failed: Missing variable name
+
 
 # DOCS_SETUP
 
@@ -152,13 +208,37 @@ statement ok
 INSERT INTO example VALUES
     ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
 
+# DOCS_SETUP
+
+statement ok
+DROP TABLE IF EXISTS example;
+
+statement ok
+CREATE TABLE example (j VARCHAR);
+
+statement ok
+INSERT INTO example VALUES
+    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+
 # DOCS_TEST: example_022
 
 query
 SELECT json(j) FROM example;
 ----
 json
-NULL
+{"family":"anatidae","species":["duck","goose","swan",null]}
+
+# DOCS_SETUP
+
+statement ok
+DROP TABLE IF EXISTS example;
+
+statement ok
+CREATE TABLE example (j JSON);
+
+statement ok
+INSERT INTO example VALUES
+    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
 
 # DOCS_TEST: example_023
 
@@ -218,13 +298,19 @@ json_array_length
 
 # DOCS_TEST: example_030
 
-query error substitution failed: Missing variable name
+query error
 SELECT json_array_length(j, '$.species') FROM example;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_031
 
-query error substitution failed: Missing variable name
+query error
 SELECT json_array_length(j, ['$.species']) FROM example;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_032
 
@@ -362,8 +448,11 @@ json_transform
 
 # DOCS_TEST: example_047
 
-query error db error: ERROR: Failed to cast value to numerical: "canidae"
+query error
 SELECT json_transform_strict(j, '{"family": "TINYINT", "coolness": "DOUBLE"}') FROM example;
+----
+db error: ERROR: Failed to cast value to numerical: "canidae"
+
 
 # DOCS_SETUP
 
@@ -399,9 +488,12 @@ hair	true	BOOLEAN	true	8	NULL	$.hair	$	2
 
 # DOCS_TEST: example_050
 
-query error substitution failed: Missing variable name
+query error
 SELECT je.*, je.rowid
 FROM example AS e, json_each(e.j, '$.species') AS je;
+----
+substitution failed: Missing variable name
+
 
 # DOCS_TEST: example_051
 

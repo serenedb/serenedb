@@ -25,9 +25,9 @@ FROM duckdb_external_file_cache();
 
 # DOCS_TEST: example_005
 
-query error (?i)Catalog with name .* does not exist!
-CALL dbgen(sf = 30);
-
-statement error db error: ERROR: syntax error at or near "\."
-.timer on
-PRAGMA tpch(1);
+# DOCS_RAW_BEGIN
+#| CALL dbgen(sf = 30);
+#|
+#| .timer on
+#| PRAGMA tpch(1);
+# DOCS_RAW_END

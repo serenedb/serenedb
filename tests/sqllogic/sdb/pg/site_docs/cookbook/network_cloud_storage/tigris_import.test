@@ -12,10 +12,38 @@
 statement ok
 CREATE TABLE __docs_noop_2a4fbb77_001 (i INTEGER);
 
+# DOCS_SETUP: file_fixtures_example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_tigris_import_example_002_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_tigris_import_example_002_1_file_parquet.parquet' (FORMAT parquet);
+
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| SELECT * FROM 's3://⟨tigris-bucket-name⟩/⟨file⟩.csv';
+#|
+#| SELECT * FROM read_parquet('s3://⟨tigris-bucket-name⟩/⟨file⟩.parquet');
+# DOCS_RAW_END
 
-query error (?i)Could not resolve hostname error .*
-SELECT * FROM 's3://⟨tigris-bucket-name⟩/⟨file⟩.csv';
+query
+SELECT * FROM '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_tigris_import_example_002_1_file_csv.csv';
+----
+id	name	value
+1	alpha	10
+2	beta	20
 
-query error (?i)Could not resolve hostname error .*
-SELECT * FROM read_parquet('s3://⟨tigris-bucket-name⟩/⟨file⟩.parquet');
+
+query
+SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_tigris_import_example_002_1_file_parquet.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20

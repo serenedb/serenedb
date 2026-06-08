@@ -1,17 +1,17 @@
 # DOCS_TEST: example_001
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY ngram_dict (
-    TEMPLATE = 'ngram',
-    MINGRAM = 2,
-    MAXGRAM = 3
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 3
 );
 
 # DOCS_TEST: example_002
 
-statement error db error: ERROR: required parameter "template" was not found
+statement ok
 CREATE TEXT SEARCH DICTIONARY unigram_dict (
-    TEMPLATE = 'ngram',
-    MINGRAM = 1,
-    MAXGRAM = 2
+    template = 'ngram',
+    mingram = 1,
+    maxgram = 2
 );

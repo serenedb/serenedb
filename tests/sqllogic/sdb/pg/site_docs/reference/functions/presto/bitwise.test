@@ -50,3 +50,4 @@ db error: ERROR: No function matches the given name and argument types 'bit_coun
 	bit_count(BIGINT) -> TINYINT
 	bit_count(HUGEINT) -> TINYINT
 	bit_count(BIT) -> BIGINT
+

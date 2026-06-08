@@ -92,10 +92,16 @@ db error: ERROR: No function matches the given name and argument types 'regexp_r
 	regexp_replace(VARCHAR, VARCHAR, VARCHAR, VARCHAR) -> VARCHAR
 
 
-statement error db error: ERROR: syntax error at or near ">"
+statement error
 >
 SELECT regexp_replace('Hello, World!', 'l', 'L', 5);
+----
+db error: ERROR: syntax error at or near ">"
 
-statement error db error: ERROR: syntax error at or near ">"
+
+statement error
 >
 SELECT regexp_replace('Hello, World!', 'l', 'L', 100);
+----
+db error: ERROR: syntax error at or near ">"
+

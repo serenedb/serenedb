@@ -52,8 +52,11 @@ SELECT '0xFF_FF'::INTEGER;
 int4
 65535
 
-query error db error: ERROR: Could not convert string '1_2\.1_2E0_1' to DOUBLE
+query error
 SELECT 1_2.1_2E0_1;
+----
+db error: ERROR: Could not convert string '1_2\.1_2E0_1' to DOUBLE
+
 
 query
 SELECT '0b0_1_0_1'::INTEGER;
@@ -83,8 +86,11 @@ Hello World
 
 # DOCS_TEST: example_006
 
-query error db error: ERROR: syntax error at or near "' '"
+query error
 SELECT 'Hello' ' ' 'World' AS greeting;
+----
+db error: ERROR: syntax error at or near "' '"
+
 
 # DOCS_TEST: example_007
 
@@ -97,9 +103,12 @@ f
 
 # DOCS_TEST: example_008
 
-query error db error: ERROR: Cannot compare values of type DATE and type VARCHAR \- an explicit cast is required
+query error
 SELECT d > '1992-01-01'::VARCHAR
 FROM (VALUES (DATE '1992-01-01')) t(d);
+----
+db error: ERROR: Cannot compare values of type DATE and type VARCHAR \- an explicit cast is required
+
 
 # DOCS_TEST: example_009
 

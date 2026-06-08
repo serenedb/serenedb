@@ -1,94 +1,173 @@
 control substitution on
 
+# DOCS_SETUP: local_copy_fixtures
+
+statement ok
+CREATE TABLE lineitem (
+    l_orderkey INTEGER,
+    l_partkey INTEGER,
+    l_comment VARCHAR
+);
+
+statement ok
+INSERT INTO lineitem VALUES
+    (1, 10, 'first lineitem'),
+    (2, 20, 'second lineitem');
+
+statement ok
+CREATE TABLE test (id INTEGER, name VARCHAR);
+
+statement ok
+CREATE TABLE category (name VARCHAR);
+
+statement ok
+CREATE TABLE tbl1 (i INTEGER);
+
+statement ok
+INSERT INTO tbl1 VALUES (1), (2);
+
+statement ok
+CREATE TABLE tbl2 (i INTEGER);
+
+# DOCS_SETUP: file_fixtures_example_001
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_001_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
 # DOCS_TEST: example_001
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM 'lineitem.csv';
+# DOCS_RAW_END
 
-statement error
-COPY lineitem FROM 'lineitem.csv';
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_001_1_lineitem_csv.csv';
 
+# DOCS_SETUP: file_fixtures_example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_002_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER '|');
 
 # DOCS_TEST: example_002
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM 'lineitem.csv' (DELIMITER '|');
+# DOCS_RAW_END
 
-statement error
-COPY lineitem FROM 'lineitem.csv' (DELIMITER '|');
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_002_1_lineitem_csv.csv' (DELIMITER '|');
 
+# DOCS_SETUP: file_fixtures_example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_003_1_lineitem_pq.pq' (FORMAT parquet);
 
 # DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM 'lineitem.pq' (FORMAT parquet);
+# DOCS_RAW_END
 
-statement error
-COPY lineitem FROM 'lineitem.pq' (FORMAT parquet);
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_003_1_lineitem_pq.pq' (FORMAT parquet);
 
+# DOCS_SETUP: file_fixtures_example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_004_1_lineitem_json.json' (FORMAT json);
 
 # DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM 'lineitem.json' (FORMAT json, AUTO_DETECT true);
+# DOCS_RAW_END
 
-statement error
-COPY lineitem FROM 'lineitem.json' (FORMAT json, AUTO_DETECT true);
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_004_1_lineitem_json.json' (FORMAT json, AUTO_DETECT true);
 
+# DOCS_SETUP: file_fixtures_example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_005_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM "lineitem.csv";
+# DOCS_RAW_END
 
-statement error
-COPY lineitem FROM "lineitem.csv";
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_005_1_lineitem_csv.csv';
 
+# DOCS_SETUP: file_fixtures_example_006
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_006_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
 # DOCS_TEST: example_006
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM lineitem.csv;
+# DOCS_RAW_END
 
-statement error
-COPY lineitem FROM lineitem.csv;
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_006_1_lineitem_csv.csv';
+
+# DOCS_SETUP: file_fixtures_example_007
 
 
 # DOCS_TEST: example_007
+# DOCS_RAW_BEGIN
+#| COPY lineitem TO 'lineitem.csv' (FORMAT csv, DELIMITER '|', HEADER);
+# DOCS_RAW_END
 
-statement error
-COPY lineitem TO 'lineitem.csv' (FORMAT csv, DELIMITER '|', HEADER);
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_007_1_lineitem_csv.csv' (FORMAT csv, DELIMITER '|', HEADER);
+
+# DOCS_SETUP: file_fixtures_example_008
 
 
 # DOCS_TEST: example_008
+# DOCS_RAW_BEGIN
+#| COPY lineitem TO "lineitem.csv";
+# DOCS_RAW_END
 
-statement error
-COPY lineitem TO "lineitem.csv";
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_008_1_lineitem_csv.csv';
+
+# DOCS_SETUP: file_fixtures_example_009
 
 
 # DOCS_TEST: example_009
+# DOCS_RAW_BEGIN
+#| COPY lineitem TO lineitem.csv;
+# DOCS_RAW_END
 
-statement error
-COPY lineitem TO lineitem.csv;
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_009_1_lineitem_csv.csv';
+
+# DOCS_SETUP: file_fixtures_example_010
 
 
 # DOCS_TEST: example_010
+# DOCS_RAW_BEGIN
+#| COPY (SELECT l_orderkey, l_partkey FROM lineitem) TO 'lineitem.parquet' (COMPRESSION zstd);
+# DOCS_RAW_END
 
-statement error
-COPY (SELECT l_orderkey, l_partkey FROM lineitem) TO 'lineitem.parquet' (COMPRESSION zstd);
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
-
+statement ok
+COPY (SELECT l_orderkey, l_partkey FROM lineitem) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_010_1_lineitem_parquet.parquet' (COMPRESSION zstd);
 
 # DOCS_SETUP
 
@@ -115,94 +194,154 @@ CREATE TABLE db1.tbl1 AS SELECT 42 AS x, 3 AS y;
 statement ok
 COPY FROM DATABASE db1 TO db2;
 
-# DOCS_TEST: example_012
-
-statement error db error: ERROR: Table with name "tbl1" already exists!
-COPY FROM DATABASE db1 TO db2 (SCHEMA);
-
-# DOCS_TEST: example_013
-
-statement error
-COPY test FROM 'test.csv';
-----
-db error: ERROR: Table with name test does not exist!
-Did you mean "<slt:ignore>"?
-
-
-# DOCS_TEST: example_014
-
-statement error
-COPY category FROM 'categories.csv' (HEADER);
-----
-db error: ERROR: Table with name category does not exist!
-Did you mean "<slt:ignore>"?
-
-
-# DOCS_TEST: example_015
-
-statement error
-COPY lineitem FROM 'lineitem.tbl' (DELIMITER '|');
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
-
-
-# DOCS_TEST: example_016
-
-statement error
-COPY lineitem FROM 'lineitem.tbl' (AUTO_DETECT true);
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
-
-
-# DOCS_TEST: example_017
-
-statement error
-COPY category(name) FROM 'names.csv';
-----
-db error: ERROR: Table with name category does not exist!
-Did you mean "<slt:ignore>"?
-
-
-# DOCS_TEST: example_018
-
-statement error
-COPY lineitem FROM 'lineitem.parquet' (FORMAT parquet);
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
-
-
-# DOCS_TEST: example_019
-
-statement error
-COPY lineitem FROM 'lineitem.ndjson' (FORMAT json);
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
-
-
-# DOCS_TEST: example_020
-
-statement error
-COPY lineitem FROM 'lineitem.json' (FORMAT json, ARRAY true);
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
-
-
-# DOCS_TEST: example_021
+# DOCS_SETUP: file_fixtures_example_013
 
 statement ok
-SET VARIABLE source_file = 'lineitem.json';
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha'),
+    (2, 'beta')
+) AS t("id", "name")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_013_1_test_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
-statement error
+# DOCS_TEST: example_013
+# DOCS_RAW_BEGIN
+#| COPY test FROM 'test.csv';
+# DOCS_RAW_END
+
+statement ok
+COPY test FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_013_1_test_csv.csv';
+
+# DOCS_SETUP: file_fixtures_example_014
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('product'),
+    ('engineering')
+) AS t("name")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_014_1_categories_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST: example_014
+# DOCS_RAW_BEGIN
+#| COPY category FROM 'categories.csv' (HEADER);
+# DOCS_RAW_END
+
+statement ok
+COPY category FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_014_1_categories_csv.csv' (HEADER);
+
+# DOCS_SETUP: file_fixtures_example_015
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_015_1_lineitem_tbl.tbl' (FORMAT CSV, HEADER false, DELIMITER '|');
+
+# DOCS_TEST: example_015
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM 'lineitem.tbl' (DELIMITER '|');
+# DOCS_RAW_END
+
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_015_1_lineitem_tbl.tbl' (DELIMITER '|');
+
+# DOCS_SETUP: file_fixtures_example_016
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_016_1_lineitem_tbl.tbl' (FORMAT CSV, HEADER false, DELIMITER '|');
+
+# DOCS_TEST: example_016
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM 'lineitem.tbl' (AUTO_DETECT true);
+# DOCS_RAW_END
+
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_016_1_lineitem_tbl.tbl' (AUTO_DETECT true);
+
+# DOCS_SETUP: file_fixtures_example_017
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('product'),
+    ('engineering')
+) AS t("name")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_017_1_names_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
+# DOCS_TEST: example_017
+# DOCS_RAW_BEGIN
+#| COPY category(name) FROM 'names.csv';
+# DOCS_RAW_END
+
+statement ok
+COPY category(name) FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_017_1_names_csv.csv';
+
+# DOCS_SETUP: file_fixtures_example_018
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_018_1_lineitem_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST: example_018
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM 'lineitem.parquet' (FORMAT parquet);
+# DOCS_RAW_END
+
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_018_1_lineitem_parquet.parquet' (FORMAT parquet);
+
+# DOCS_SETUP: file_fixtures_example_019
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_019_1_lineitem_ndjson.ndjson' (FORMAT json);
+
+# DOCS_TEST: example_019
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM 'lineitem.ndjson' (FORMAT json);
+# DOCS_RAW_END
+
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_019_1_lineitem_ndjson.ndjson' (FORMAT json);
+
+# DOCS_SETUP: file_fixtures_example_020
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_020_1_lineitem_json.json' (FORMAT json, ARRAY true);
+
+# DOCS_TEST: example_020
+# DOCS_RAW_BEGIN
+#| COPY lineitem FROM 'lineitem.json' (FORMAT json, ARRAY true);
+# DOCS_RAW_END
+
+statement ok
+COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_020_1_lineitem_json.json' (FORMAT json, ARRAY true);
+
+# DOCS_SETUP: file_fixtures_example_021
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_021_1_lineitem_json.json' (FORMAT json);
+
+# DOCS_TEST: example_021
+# DOCS_RAW_BEGIN
+#| SET VARIABLE source_file = 'lineitem.json';
+#|
+#| COPY lineitem FROM (getvariable('source_file'));
+# DOCS_RAW_END
+
+statement ok
+SET VARIABLE source_file = '/tmp/${__DATABASE__}_sql_statements_copy_index_example_021_1_lineitem_json.json';
+
+statement ok
 COPY lineitem FROM (getvariable('source_file'));
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_022
 
@@ -239,78 +378,129 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_023
+# DOCS_SETUP: file_fixtures_example_023
 
-statement error (?i)No files found that match the pattern .*
-COPY tbl FROM 'tbl.csv' WITH DELIMITER '|' CSV HEADER;
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_023_1_tbl_csv.csv' (FORMAT CSV, HEADER true, DELIMITER '|');
+
+# DOCS_TEST: example_023
+# DOCS_RAW_BEGIN
+#| COPY tbl FROM 'tbl.csv' WITH DELIMITER '|' CSV HEADER;
+# DOCS_RAW_END
+
+statement ok
+COPY tbl FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_023_1_tbl_csv.csv' WITH DELIMITER '|' CSV HEADER;
+
+# DOCS_SETUP: file_fixtures_example_024
+
 
 # DOCS_TEST: example_024
+# DOCS_RAW_BEGIN
+#| COPY lineitem TO 'lineitem.csv';
+# DOCS_RAW_END
 
-statement error
-COPY lineitem TO 'lineitem.csv';
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_024_1_lineitem_csv.csv';
+
+# DOCS_SETUP: file_fixtures_example_025
 
 
 # DOCS_TEST: example_025
+# DOCS_RAW_BEGIN
+#| COPY lineitem TO 'lineitem.tbl' (DELIMITER '|');
+# DOCS_RAW_END
 
-statement error
-COPY lineitem TO 'lineitem.tbl' (DELIMITER '|');
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
-
+statement ok
+COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_025_1_lineitem_tbl.tbl' (DELIMITER '|');
 
 # DOCS_TEST: example_026
 
 statement error substitution failed: Invalid escape sequence: \\t
 COPY lineitem TO 'lineitem.tsv' (DELIMITER '\t', HEADER false);
 
-# DOCS_TEST: example_027
+# DOCS_SETUP: file_fixtures_example_027
 
-statement error
-COPY lineitem(l_orderkey) TO 'orderkey.tbl' (DELIMITER '|');
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_027
+# DOCS_RAW_BEGIN
+#| COPY lineitem(l_orderkey) TO 'orderkey.tbl' (DELIMITER '|');
+# DOCS_RAW_END
+
+statement ok
+COPY lineitem(l_orderkey) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_027_1_orderkey_tbl.tbl' (DELIMITER '|');
+
+# DOCS_SETUP: file_fixtures_example_028
 
 
 # DOCS_TEST: example_028
+# DOCS_RAW_BEGIN
+#| COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.csv' (DELIMITER ',');
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.csv' (DELIMITER ',');
+statement ok
+COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_028_1_query_csv.csv' (DELIMITER ',');
+
+# DOCS_SETUP: file_fixtures_example_029
+
 
 # DOCS_TEST: example_029
+# DOCS_RAW_BEGIN
+#| COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.parquet' (FORMAT parquet);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.parquet' (FORMAT parquet);
+statement ok
+COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_029_1_query_parquet.parquet' (FORMAT parquet);
+
+# DOCS_SETUP: file_fixtures_example_030
+
 
 # DOCS_TEST: example_030
+# DOCS_RAW_BEGIN
+#| COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.ndjson' (FORMAT json);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.ndjson' (FORMAT json);
+statement ok
+COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_030_1_query_ndjson.ndjson' (FORMAT json);
+
+# DOCS_SETUP: file_fixtures_example_031
+
 
 # DOCS_TEST: example_031
+# DOCS_RAW_BEGIN
+#| COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.json' (FORMAT json, ARRAY true);
+# DOCS_RAW_END
 
-statement error (?i)Cannot open file .*
-COPY (SELECT 42 AS a, 'hello' AS b) TO 'query.json' (FORMAT json, ARRAY true);
+statement ok
+COPY (SELECT 42 AS a, 'hello' AS b) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_031_1_query_json.json' (FORMAT json, ARRAY true);
+
+# DOCS_SETUP: file_fixtures_example_032
+
 
 # DOCS_TEST: example_032
+# DOCS_RAW_BEGIN
+#| COPY (SELECT l_orderkey, l_comment FROM lineitem) TO 'lineitem_part.parquet' (RETURN_STATS);
+# DOCS_RAW_END
 
-statement error
-COPY (SELECT l_orderkey, l_comment FROM lineitem) TO 'lineitem_part.parquet' (RETURN_STATS);
-----
-db error: ERROR: Table with name lineitem does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+COPY (SELECT l_orderkey, l_comment FROM lineitem) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_032_1_lineitem_part_parquet.parquet' (RETURN_STATS);
+
+# DOCS_SETUP: file_fixtures_example_033
 
 
 # DOCS_TEST: example_033
+# DOCS_RAW_BEGIN
+#| SET VARIABLE target_file = 'target_file.parquet';
+#|
+#| COPY (SELECT 'hello world') TO (getvariable('target_file'));
+# DOCS_RAW_END
 
 statement ok
-SET VARIABLE target_file = 'target_file.parquet';
+SET VARIABLE target_file = '/tmp/${__DATABASE__}_sql_statements_copy_index_example_033_1_target_file_parquet.parquet';
 
-statement error (?i)Cannot open file .*
+statement ok
 COPY (SELECT 'hello world') TO (getvariable('target_file'));
 
 # DOCS_SETUP
@@ -330,137 +520,222 @@ query error db error: ERROR: Prepared statement "v1" does not exist
 EXECUTE v1('file.csv');
 
 # DOCS_TEST: example_035
+# DOCS_RAW_BEGIN
+#| SET VARIABLE my_format = 'parquet';
+#|
+#| COPY (SELECT 42 AS i) TO 'file' (FORMAT getvariable('my_format'));
+# DOCS_RAW_END
 
 statement ok
 SET VARIABLE my_format = 'parquet';
 
-statement error (?i)Cannot open file .*
-COPY (SELECT 42 AS i) TO 'file' (FORMAT getvariable('my_format'));
+statement ok
+COPY (SELECT 42 AS i) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_035_file.parquet' (FORMAT getvariable('my_format'));
+
+# DOCS_SETUP: file_fixtures_example_036
+
 
 # DOCS_TEST: example_036
-
-statement error (?i)Cannot open file .*
-COPY (SELECT 42 AS x, 84 AS y) TO 'out.csv' WITH DELIMITER '|' CSV HEADER;
-
-# DOCS_TEST: example_037
-
-statement error (?i)(Cannot open file .*|Failed to attach database: database with name .* already exists)
-ATTACH 'db1.db' AS db1;
+# DOCS_RAW_BEGIN
+#| COPY (SELECT 42 AS x, 84 AS y) TO 'out.csv' WITH DELIMITER '|' CSV HEADER;
+# DOCS_RAW_END
 
 statement ok
-CREATE TABLE db1.tbl AS SELECT 42 AS x, 3 AS y;
+COPY (SELECT 42 AS x, 84 AS y) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_036_1_out_csv.csv' WITH DELIMITER '|' CSV HEADER;
 
-statement ok
-CREATE MACRO db1.two_x_plus_y(x, y) AS 2 * x + y;
+# DOCS_SETUP: file_fixtures_example_039
 
-statement error (?i)(Cannot open file .*|Failed to attach database: database with name .* already exists)
-ATTACH 'db2.db' AS db2;
-
-statement error db error: ERROR: Table with name "tbl1" already exists!
-COPY FROM DATABASE db1 TO db2;
-
-query error db error: ERROR: Scalar Function with name two_x_plus_y does not exist!
-SELECT db2.two_x_plus_y(x, y) AS z FROM db2.tbl;
-
-# DOCS_TEST: example_038
-
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
-COPY FROM DATABASE db1 TO db2 (SCHEMA);
 
 # DOCS_TEST: example_039
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (SELECT 128 AS i)
+#|     TO 'my.parquet'
+#|     (FIELD_IDS 'auto');
+# DOCS_RAW_END
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+statement ok
 COPY
     (SELECT 128 AS i)
-    TO 'my.parquet'
+    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_039_1_my_parquet.parquet'
     (FIELD_IDS 'auto');
 
-# DOCS_TEST: example_040
+# DOCS_SETUP: file_fixtures_example_040
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+# DOCS_TEST: example_040
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (SELECT 128 AS i)
+#|     TO 'my.parquet'
+#|     (FIELD_IDS {i: 42});
+# DOCS_RAW_END
+
+statement ok
 COPY
     (SELECT 128 AS i)
-    TO 'my.parquet'
+    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_040_1_my_parquet.parquet'
     (FIELD_IDS {i: 42});
 
-# DOCS_TEST: example_041
+# DOCS_SETUP: file_fixtures_example_041
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+# DOCS_TEST: example_041
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (SELECT 128 AS i, 256 AS j)
+#|     TO 'my.parquet'
+#|     (FIELD_IDS {i: 42, j: 43});
+# DOCS_RAW_END
+
+statement ok
 COPY
     (SELECT 128 AS i, 256 AS j)
-    TO 'my.parquet'
+    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_041_1_my_parquet.parquet'
     (FIELD_IDS {i: 42, j: 43});
 
-# DOCS_TEST: example_042
+# DOCS_SETUP: file_fixtures_example_042
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+# DOCS_TEST: example_042
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (SELECT {i: 128} AS my_struct)
+#|     TO 'my.parquet'
+#|     (FIELD_IDS {my_struct: {__duckdb_field_id: 42, i: 43}});
+# DOCS_RAW_END
+
+statement ok
 COPY
     (SELECT {i: 128} AS my_struct)
-    TO 'my.parquet'
+    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_042_1_my_parquet.parquet'
     (FIELD_IDS {my_struct: {__duckdb_field_id: 42, i: 43}});
 
-# DOCS_TEST: example_043
+# DOCS_SETUP: file_fixtures_example_043
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+# DOCS_TEST: example_043
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (SELECT [128, 256] AS my_list)
+#|     TO 'my.parquet'
+#|     (FIELD_IDS {my_list: {__duckdb_field_id: 42, element: 43}});
+# DOCS_RAW_END
+
+statement ok
 COPY
     (SELECT [128, 256] AS my_list)
-    TO 'my.parquet'
+    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_043_1_my_parquet.parquet'
     (FIELD_IDS {my_list: {__duckdb_field_id: 42, element: 43}});
 
-# DOCS_TEST: example_044
+# DOCS_SETUP: file_fixtures_example_044
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+# DOCS_TEST: example_044
+# DOCS_RAW_BEGIN
+#| COPY
+#|     (SELECT MAP {'key1' : 128, 'key2': 256} my_map)
+#|     TO 'my.parquet'
+#|     (FIELD_IDS {my_map: {__duckdb_field_id: 42, key: 43, value: 44}});
+# DOCS_RAW_END
+
+statement ok
 COPY
     (SELECT MAP {'key1' : 128, 'key2': 256} my_map)
-    TO 'my.parquet'
+    TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_044_1_my_parquet.parquet'
     (FIELD_IDS {my_map: {__duckdb_field_id: 42, key: 43, value: 44}});
 
-# DOCS_TEST: example_045
+# DOCS_SETUP: file_fixtures_example_045
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
-COPY (SELECT 'QUACK!' AS hello) TO 'quack.json';
+
+# DOCS_TEST: example_045
+# DOCS_RAW_BEGIN
+#| COPY (SELECT 'QUACK!' AS hello) TO 'quack.json';
+# DOCS_RAW_END
+
+statement ok
+COPY (SELECT 'QUACK!' AS hello) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_045_1_quack_json.json';
+
+# DOCS_SETUP: file_fixtures_example_046
+
 
 # DOCS_TEST: example_046
+# DOCS_RAW_BEGIN
+#| COPY (SELECT [1, 2, 3] AS num_list) TO 'numbers.json';
+# DOCS_RAW_END
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
-COPY (SELECT [1, 2, 3] AS num_list) TO 'numbers.json';
+statement ok
+COPY (SELECT [1, 2, 3] AS num_list) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_046_1_numbers_json.json';
+
+# DOCS_SETUP: file_fixtures_example_047
+
 
 # DOCS_TEST: example_047
+# DOCS_RAW_BEGIN
+#| COPY (SELECT 'gzip_explicit' AS compression_type) TO 'explicit_compression.json' (FORMAT json, COMPRESSION 'GZIP');
+# DOCS_RAW_END
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
-COPY (SELECT 'gzip_explicit' AS compression_type) TO 'explicit_compression.json' (FORMAT json, COMPRESSION 'GZIP');
+statement ok
+COPY (SELECT 'gzip_explicit' AS compression_type) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_047_1_explicit_compression_json.json' (FORMAT json, COMPRESSION 'GZIP');
+
+# DOCS_SETUP: file_fixtures_example_048
+
 
 # DOCS_TEST: example_048
+# DOCS_RAW_BEGIN
+#| COPY (SELECT 1 AS id, 'Alice' AS name, [1, 2, 3] AS numbers
+#|       UNION ALL
+#|       SELECT 2, 'Bob', [4, 5, 6] AS numbers)
+#| TO 'array_true.json' (FORMAT json, ARRAY true);
+# DOCS_RAW_END
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+statement ok
 COPY (SELECT 1 AS id, 'Alice' AS name, [1, 2, 3] AS numbers
       UNION ALL
       SELECT 2, 'Bob', [4, 5, 6] AS numbers)
-TO 'array_true.json' (FORMAT json, ARRAY true);
+TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_048_1_array_true_json.json' (FORMAT json, ARRAY true);
+
+# DOCS_SETUP: file_fixtures_example_049
+
 
 # DOCS_TEST: example_049
+# DOCS_RAW_BEGIN
+#| COPY (SELECT 1 AS id, 'Alice' AS name, [1, 2, 3] AS numbers
+#|       UNION ALL
+#|       SELECT 2, 'Bob', [4, 5, 6] AS numbers)
+#| TO 'array_false.json' (FORMAT json, ARRAY false);
+# DOCS_RAW_END
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+statement ok
 COPY (SELECT 1 AS id, 'Alice' AS name, [1, 2, 3] AS numbers
       UNION ALL
       SELECT 2, 'Bob', [4, 5, 6] AS numbers)
-TO 'array_false.json' (FORMAT json, ARRAY false);
+TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_049_1_array_false_json.json' (FORMAT json, ARRAY false);
+
+# DOCS_SETUP: file_fixtures_example_050
+
 
 # DOCS_TEST: example_050
+# DOCS_RAW_BEGIN
+#| COPY (select 'foo'::BLOB) TO 'blob_output.blob' (FORMAT BLOB);
+# DOCS_RAW_END
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
-COPY (select 'foo'::BLOB) TO 'blob_output.blob' (FORMAT BLOB);
+statement ok
+COPY (select 'foo'::BLOB) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_050_1_blob_output_blob.blob' (FORMAT BLOB);
+
+# DOCS_SETUP: file_fixtures_example_051
+
 
 # DOCS_TEST: example_051
+# DOCS_RAW_BEGIN
+#| COPY (select 'foo'::BLOB) TO 'blob_output_gzip.blob' (FORMAT BLOB, COMPRESSION 'GZIP');
+# DOCS_RAW_END
 
-statement error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
-COPY (select 'foo'::BLOB) TO 'blob_output_gzip.blob' (FORMAT BLOB, COMPRESSION 'GZIP');
+statement ok
+COPY (select 'foo'::BLOB) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_051_1_blob_output_gzip_blob.blob' (FORMAT BLOB, COMPRESSION 'GZIP');
 
 # DOCS_TEST: example_052
 
-statement error
+statement ok
 INSERT INTO tbl2
     FROM tbl1;
-----
-db error: ERROR: Table with name tbl2 does not exist!
-Did you mean "<slt:ignore>"?

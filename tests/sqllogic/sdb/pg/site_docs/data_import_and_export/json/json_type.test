@@ -8,8 +8,11 @@ json
 
 # DOCS_TEST: example_002
 
-query error (?i)Malformed JSON.*
+query error
 SELECT 'unquoted'::JSON;
+----
+(?i)Malformed JSON.*
+
 
 # DOCS_TEST: example_003
 

@@ -89,12 +89,19 @@ SELECT
 
 # DOCS_TEST: example_007
 
-query error db error: ERROR: SELECT clause without selection list
+query error
 SELECT
 ;
+----
+db error: ERROR: SELECT clause without selection list
+
 
 # DOCS_TEST: example_008
 
-query error db error: ERROR: SELECT clause without selection list
+query
 SELECT
-;
+    datepart('day', TIMESTAMP '2020-01-02 00:00:00' - TIMESTAMP '2020-01-01 01:00:00') AS interval_part,
+    datediff('day', TIMESTAMP '2020-01-01 01:00:00', TIMESTAMP '2020-01-02 00:00:00') AS partition_boundaries;
+----
+interval_part	partition_boundaries
+0	1

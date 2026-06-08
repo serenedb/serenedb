@@ -67,8 +67,11 @@ Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_004
 
-statement error db error: ERROR: Copy Function with name "xlsx" is not in the catalog, but it exists in the excel extension\.
+statement error
 COPY (SELECT * FROM tbl) TO 'output.xlsx';
+----
+db error: ERROR: Copy Function with name "xlsx" is not in the catalog, but it exists in the excel extension\.
+
 
 # DOCS_TEST: example_005
 
@@ -95,3 +98,4 @@ COPY (SELECT CAST(a AS VARCHAR), b FROM tbl) TO 'output.xlsx' WITH (FORMAT xlsx)
 ----
 db error: ERROR: Copy Function with name xlsx does not exist!
 Did you mean "<slt:ignore>"?
+

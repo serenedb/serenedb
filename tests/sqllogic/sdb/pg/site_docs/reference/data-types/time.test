@@ -7,12 +7,15 @@ CREATE TABLE daily_schedule (
     start_time TIME
 );
 
-statement error db error: ERROR: time field value out of range: "11:00 am", expected format is \(\[YYYY\-MM\-DD \]HH:MM:SS\[\.MS\]\)
+statement error
 -- Insert sample times
 INSERT INTO daily_schedule VALUES
     ('Morning Meeting', '09:30'),
     ('Lunch Break', '11:00 am'),
     ('Evening Review', '5:45 pm');
+----
+db error: ERROR: time field value out of range: "11:00 am", expected format is \(\[YYYY\-MM\-DD \]HH:MM:SS\[\.MS\]\)
+
 
 query
 -- Query all events

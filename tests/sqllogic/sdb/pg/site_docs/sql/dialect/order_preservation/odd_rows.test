@@ -1,0 +1,17 @@
+# DOCS_SETUP: local_order_tbl_fixture
+
+statement ok
+CREATE TABLE tbl AS
+    SELECT *
+    FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) t(x, y);
+
+# DOCS_TEST: example_002
+
+query ??
+SELECT *
+FROM tbl
+WHERE x % 2 == 1;
+----
+x	y
+1	a
+3	c

@@ -64,6 +64,7 @@ success
 # DOCS_TEST: example_010
 
 skipif serenedb
+
 query
 CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
 ----
@@ -71,6 +72,7 @@ CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/l
 # DOCS_TEST: example_011
 
 skipif serenedb
+
 query
 CALL enable_logging(storage_path = 'path/to/store/logs');
 ----
@@ -118,18 +120,21 @@ success
 # DOCS_TEST: example_017
 
 skipif serenedb
+
 query
 -- regular invocation
 CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
 ----
 
 skipif serenedb
+
 query
 -- using shorthand for common path storage config param
 CALL enable_logging(storage = 'file', storage_path = 'path/to/store/logs');
 ----
 
 skipif serenedb
+
 query
 -- omitting `storage = 'file'` -> is implied from presence of `storage_config`
 CALL enable_logging(storage_config = {'path': 'path/to/store/logs'});

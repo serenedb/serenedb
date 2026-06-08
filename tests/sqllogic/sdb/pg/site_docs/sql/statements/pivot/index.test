@@ -189,7 +189,7 @@ US	8579	8783	9510	NULL	24962	1910
 
 # DOCS_TEST: example_015
 
-query error db error: ERROR: syntax error at or near "\.\."
+query error
 SELECT *
 FROM ⟨dataset⟩
 PIVOT (
@@ -200,6 +200,9 @@ PIVOT (
         ...
     GROUP BY ⟨rows⟩
 );
+----
+db error: ERROR: syntax error at or near "\.\."
+
 
 # DOCS_TEST: example_016
 

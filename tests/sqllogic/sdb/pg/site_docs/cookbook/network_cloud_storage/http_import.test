@@ -14,17 +14,64 @@ For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?
 statement ok
 LOAD httpfs;
 
-# DOCS_TEST: example_003
+# DOCS_SETUP: file_fixtures_example_003
 
-query error (?i)Could not resolve hostname error .*
-SELECT * FROM read_parquet('https://⟨domain⟩/path/to/file.parquet');
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_003_1_file_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST: example_003
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_parquet('https://⟨domain⟩/path/to/file.parquet');
+# DOCS_RAW_END
+
+query
+SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_003_1_file_parquet.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+# DOCS_SETUP: file_fixtures_example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, '[2,3]', 4.5),
+    (2, '[5,8]', 9.5)
+) AS t("duck", "goose", "swan")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_004_1_prices_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_004
+# DOCS_RAW_BEGIN
+#| SELECT * FROM read_parquet('https://duckdb.org/data/prices.parquet');
+# DOCS_RAW_END
 
-query error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://duckdb\.org/data/prices\.parquet'
-SELECT * FROM read_parquet('https://duckdb.org/data/prices.parquet');
+query
+SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_004_1_prices_parquet.parquet');
+----
+duck	goose	swan
+1	[2,3]	4.5
+2	[5,8]	9.5
+
+
+# DOCS_SETUP: file_fixtures_example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, '[2,3]', 4.5),
+    (2, '[5,8]', 9.5)
+) AS t("duck", "goose", "swan")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_005_1_holdings_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST: example_005
+# DOCS_RAW_BEGIN
+#| SELECT * FROM 'https://duckdb.org/data/holdings.parquet';
+# DOCS_RAW_END
 
-query error db error: ERROR: Problem with the SSL CA cert \(path\? access rights\?\) error for HTTP HEAD to 'https://duckdb\.org/data/holdings\.parquet'
-SELECT * FROM 'https://duckdb.org/data/holdings.parquet';
+query
+SELECT * FROM '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_005_1_holdings_parquet.parquet';
+----
+duck	goose	swan
+1	[2,3]	4.5
+2	[5,8]	9.5

@@ -72,10 +72,16 @@ t
 
 # DOCS_TEST: example_010
 
-query error db error: ERROR: Subquery returns 2 columns \- expected 1
+query error
 SELECT 42 IN (SELECT unnest([32, 42, 52]) AS x, 'a' AS y);
+----
+db error: ERROR: Subquery returns 2 columns \- expected 1
+
 
 # DOCS_TEST: example_011
 
-query error db error: ERROR: syntax error at or near "'Hello World'"
+query error
 SELECT 'Hello' IN 'Hello World';
+----
+db error: ERROR: syntax error at or near "'Hello World'"
+

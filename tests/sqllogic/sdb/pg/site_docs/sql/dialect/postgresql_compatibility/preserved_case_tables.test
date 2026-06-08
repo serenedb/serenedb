@@ -1,0 +1,44 @@
+# DOCS_SETUP: preserved_case_identifier_fixture
+
+statement ok
+SET preserve_identifier_case = true;
+
+# DOCS_TEST: example_007
+# DOCS_RAW_BEGIN
+#| CREATE TABLE MyTaBLe (x INTEGER);
+#|
+#| SELECT * FROM "MyTaBLe";
+#|
+#| CREATE TABLE "PreservedCase" (x INTEGER);
+#|
+#| SELECT * FROM PreservedCase;
+#|
+#| SELECT tbl FROM duckdb_tables();
+# DOCS_RAW_END
+
+statement ok
+CREATE TABLE MyTaBLe (x INTEGER);
+
+query ?
+SELECT * FROM "MyTaBLe";
+----
+x
+
+
+statement ok
+CREATE TABLE "PreservedCase" (x INTEGER);
+
+query ?
+SELECT * FROM PreservedCase;
+----
+x
+
+
+query ? rowsort
+SELECT DISTINCT table_name AS tbl
+FROM duckdb_tables()
+WHERE table_name IN ('MyTaBLe', 'PreservedCase');
+----
+tbl
+MyTaBLe
+PreservedCase

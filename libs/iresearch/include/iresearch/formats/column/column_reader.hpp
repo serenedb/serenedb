@@ -347,4 +347,7 @@ class ColumnReader final {
   std::vector<uint64_t> _variant_rg_starts;
 };
 
+std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
+                                               PersistentColumnData&& node);
+
 }  // namespace irs

@@ -41,6 +41,66 @@
 #include "iresearch/store/data_input.hpp"
 
 namespace irs {
+
+std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
+                                               PersistentColumnData&& node) {
+  std::unique_ptr<ColumnReader> element_child;
+  std::vector<std::unique_ptr<ColumnReader>> struct_children;
+  uint64_t array_size = 0;
+
+  switch (node.type.id()) {
+    case duckdb::LogicalTypeId::ARRAY: {
+      SDB_ASSERT(node.child_columns.size() == 1);
+      array_size = static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
+      element_child = MakeColumnReader(field_limits::invalid(),
+                                       std::move(node.child_columns.front()));
+      node.pointers.clear();  // ARRAY carries no self data on disk.
+    } break;
+    case duckdb::LogicalTypeId::MAP:
+    case duckdb::LogicalTypeId::LIST: {
+      // MAP rides on the LIST path: PhysicalType::LIST with a
+      // STRUCT<key, value> element.
+      SDB_ASSERT(node.child_columns.size() == 1);
+      element_child = MakeColumnReader(field_limits::invalid(),
+                                       std::move(node.child_columns.front()));
+    } break;
+    case duckdb::LogicalTypeId::VARIANT: {
+      std::vector<ColumnReader::VariantRgReader> variant_rgs;
+      variant_rgs.reserve(node.variant_layouts.size());
+      for (auto& variant_layout : node.variant_layouts) {
+        auto& row_group = variant_rgs.emplace_back();
+        row_group.row_count = variant_layout.row_count;
+        row_group.shred_state = variant_layout.shred_state;
+        row_group.unshredded = MakeColumnReader(
+          field_limits::invalid(), std::move(*variant_layout.unshredded));
+        if (variant_layout.shred_state != VariantShredState::Unshredded) {
+          row_group.shredded_node = MakeColumnReader(
+            field_limits::invalid(), std::move(*variant_layout.shredded_node));
+        }
+      }
+      return std::make_unique<ColumnReader>(id, std::move(node.type),
+                                            std::move(node.validity_pointers),
+                                            std::move(variant_rgs));
+    }
+    case duckdb::LogicalTypeId::STRUCT: {
+      struct_children.reserve(node.child_columns.size());
+      for (auto& cn : node.child_columns) {
+        struct_children.push_back(
+          MakeColumnReader(field_limits::invalid(), std::move(cn)));
+      }
+      node.pointers.clear();
+      break;
+    }
+    default:
+      break;  // primitive leaf: keep pointers, no children.
+  }
+
+  return std::make_unique<ColumnReader>(
+    id, std::move(node.type), std::move(node.pointers),
+    std::move(node.validity_pointers), std::move(element_child),
+    std::move(struct_children), array_size);
+}
+
 namespace {
 
 const duckdb::LogicalType kLengthsType{duckdb::LogicalTypeId::UBIGINT};

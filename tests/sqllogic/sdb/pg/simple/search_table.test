@@ -188,3 +188,60 @@ x	y
 
 statement ok
 DROP TABLE search_ctas;
+
+
+# Multiple writes to one search table in a SINGLE transaction: CTAS creates and
+# populates the table, then bare INSERTs add more rows. The CTAS reveal happens
+# at the operator's Finalize (mid-txn, before the commit point), so the table
+# name resolves for the following INSERTs, and all of it commits as ONE central
+# WAL record -- the per-statement inline buffers for the shard are folded
+# together into a single section (WAL_DESIGN.md §7/§9).
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE search_multi WITH (storage = 'search') AS
+  SELECT * FROM (VALUES (1, 'even'), (2, 'odd'), (3, 'even'), (4, 'odd'))
+    AS t(id, grp);
+
+statement ok
+INSERT INTO search_multi VALUES (10, 'even'), (11, 'odd'), (12, 'even');
+
+statement ok
+INSERT INTO search_multi VALUES (20, 'even');
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_multi;
+
+# Everything written in the txn is present, regardless of which statement
+# (CTAS vs either INSERT) produced it.
+query
+SELECT id, grp FROM search_multi ORDER BY id;
+----
+id	grp
+1	even
+2	odd
+3	even
+4	odd
+10	even
+11	odd
+12	even
+20	even
+
+# A WHERE on the non-PK `grp` column matches rows from BOTH the CTAS (1, 3)
+# and the VALUES inserts (10, 12, 20) -- ORDER BY for determinism.
+query
+SELECT id FROM search_multi WHERE grp = 'even' ORDER BY id;
+----
+id
+1
+3
+10
+12
+20
+
+statement ok
+DROP TABLE search_multi;

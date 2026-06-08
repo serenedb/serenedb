@@ -1,55 +1,72 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE MACRO add(a, b) AS a + b;
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE OR REPLACE MACRO add(a, b) AS a + b;
-
-# DOCS_SETUP: drop_add_before_if_not_exists
-
-statement ok
-DROP MACRO IF EXISTS add;
 
 # DOCS_TEST: example_003
 
 statement ok
+DROP MACRO IF EXISTS add;
+
+# DOCS_TEST_BODY
+
+statement ok
 CREATE MACRO IF NOT EXISTS add(a, b) AS a + b;
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE MACRO ifelse(a, b, c) AS CASE WHEN a THEN b ELSE c END;
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE MACRO one() AS (SELECT 1);
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE FUNCTION main.my_avg(x) AS sum(x) / count(x);
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE MACRO add_default(a, b := 5) AS a + b;
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE MACRO arr_append(l, e) AS list_concat(l, list_value(e));
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE MACRO is_maximal(a INTEGER) AS a = 2^31 - 1;
 
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE MACRO static_table() AS TABLE
@@ -57,11 +74,15 @@ CREATE MACRO static_table() AS TABLE
 
 # DOCS_TEST: example_011
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE MACRO dynamic_table(col1_value, col2_value) AS TABLE
     SELECT col1_value AS column1, col2_value AS column2;
 
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE TEMP MACRO dynamic_table(col1_value, col2_value) AS TABLE
@@ -69,7 +90,7 @@ CREATE OR REPLACE TEMP MACRO dynamic_table(col1_value, col2_value) AS TABLE
     UNION ALL
     SELECT 'Hello' AS col1_value, 456 AS col2_value;
 
-# DOCS_SETUP: local_users_for_macro_definition
+# DOCS_TEST: example_013
 
 statement ok
 DROP TABLE IF EXISTS users;
@@ -82,18 +103,18 @@ INSERT INTO users VALUES
     (1, 'Ada'),
     (5, 'Eve');
 
-# DOCS_TEST: example_013
+# DOCS_TEST_BODY
 
 statement ok
 CREATE MACRO get_users(i) AS TABLE
     SELECT * FROM users WHERE uid IN (SELECT unnest(i));
 
-# DOCS_SETUP: drop_users_before_visible_create
+# DOCS_TEST: example_014
 
 statement ok
 DROP TABLE IF EXISTS users;
 
-# DOCS_TEST: example_014
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE users AS
@@ -106,8 +127,9 @@ SELECT * FROM get_users([1, 5]);
 get_users	get_users
 1	Ada
 
-
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE MACRO checksum(tbl) AS TABLE
@@ -125,12 +147,16 @@ checksum	checksum
 
 # DOCS_TEST: example_016
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE MACRO add_x
     (a, b) AS a + b,
     (a, b, c) AS a + b + c;
 
 # DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
 
 query
 SELECT
@@ -142,12 +168,16 @@ two_args	three_args
 
 # DOCS_TEST: example_018
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE OR REPLACE MACRO is_maximal
     (a TINYINT) AS a = 2^7 - 1,
     (a INT) AS a = 2^31 - 1;
 
 # DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
 
 query
 SELECT
@@ -159,25 +189,26 @@ t	f
 
 # DOCS_TEST: example_020
 
+# DOCS_TEST_BODY
+
 statement error
 CREATE MACRO add(a) AS a + b;
 ----
 db error: ERROR: Referenced column "b" was not found because the FROM clause is missing
 
-
-# DOCS_SETUP: drop_add_before_working_example
+# DOCS_TEST: example_021
 
 statement ok
 DROP MACRO IF EXISTS add;
 
-
-# DOCS_TEST: example_021
+# DOCS_TEST_BODY
 
 statement ok
 CREATE MACRO add(a, b) AS a + b;
 
-
 # DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
 
 query
 SELECT add(1, 2) AS x;
@@ -187,24 +218,26 @@ x
 
 # DOCS_TEST: example_023
 
+# DOCS_TEST_BODY
+
 query error
 SELECT add('hello', 3);
 ----
 db error: ERROR: Could not convert string 'hello' to INT32
 
-
-# DOCS_SETUP: drop_add_default_before_default_example
+# DOCS_TEST: example_024
 
 statement ok
 DROP MACRO IF EXISTS add_default;
 
-# DOCS_TEST: example_024
+# DOCS_TEST_BODY
 
 statement ok
 CREATE MACRO add_default(a, b := 5) AS a + b;
 
-
 # DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
 
 query
 SELECT add_default(37);
@@ -214,10 +247,14 @@ add_default
 
 # DOCS_TEST: example_026
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE MACRO triple_add(a, b := 5, c := 10) AS a + b + c;
 
 # DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
 
 query
 SELECT triple_add(40, c := 1, b := 1) AS x;
@@ -227,6 +264,8 @@ x
 
 # DOCS_TEST: example_028
 
+# DOCS_TEST_BODY
+
 query
 SELECT add(40, 2) AS x;
 ----
@@ -235,13 +274,16 @@ x
 
 # DOCS_TEST: example_029
 
+# DOCS_TEST_BODY
+
 query error
 SELECT a + b AS x;
 ----
 db error: ERROR: Referenced column "a" was not found because the FROM clause is missing
 
-
 # DOCS_TEST: example_030
+
+# DOCS_TEST_BODY
 
 query
 SELECT 40 + 2 AS x;
@@ -250,6 +292,8 @@ x
 42
 
 # DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE FUNCTION fibo(n) AS (SELECT 1);
@@ -267,8 +311,9 @@ SELECT fibo(3);
 ----
 db error: ERROR: Max expression depth limit of 1000 exceeded\. Use "SET max_expression_depth TO x" to increase the maximum expression depth\.
 
-
 # DOCS_TEST: example_032
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE MACRO low(s) AS lower(s);
@@ -281,6 +326,8 @@ aa
 
 # DOCS_TEST: example_033
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE OR REPLACE MACRO low(s) AS s.lower();
 
@@ -291,6 +338,8 @@ low
 aa
 
 # DOCS_TEST: example_034
+
+# DOCS_TEST_BODY
 
 query error
 SELECT schema_name, function_name, function_type, parameters

@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT
     count() AS total_rows,
@@ -12,6 +14,8 @@ total_rows	lte_five	odds
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT
     sum(i) FILTER (i <= 5) AS lte_five_sum,
@@ -22,12 +26,12 @@ FROM generate_series(1, 10) tbl(i);
 lte_five_sum	odds_median	odds_lte_five_median
 15	5	3
 
-# DOCS_SETUP
+# DOCS_TEST: example_003
 
 statement ok
 SET memory_limit = '10GB';
 
-# DOCS_TEST: example_003
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEMP TABLE stacked_data AS
@@ -48,6 +52,8 @@ CREATE TEMP TABLE stacked_data AS
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query ?????
 SELECT
     count(i) FILTER (year = 2022) AS "2022",
@@ -61,6 +67,8 @@ FROM stacked_data;
 25000000	25000000	25000000	12500000	12500000
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query ?????
 SELECT
@@ -76,6 +84,8 @@ FROM stacked_data;
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query ?????
 SELECT
     first(i) FILTER (year = 2022) AS "2022",
@@ -89,6 +99,8 @@ FROM stacked_data;
 <slt:ignore>	<slt:ignore>	<slt:ignore>	<slt:ignore>	<slt:ignore>
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query ?????
 SELECT

@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'hello' = 'hElLO';
 ----
@@ -7,6 +9,8 @@ SELECT 'hello' = 'hElLO';
 f
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT 'hello' COLLATE NOCASE = 'hElLO';
@@ -16,6 +20,8 @@ t
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'hello' = 'hëllo';
 ----
@@ -23,6 +29,8 @@ SELECT 'hello' = 'hëllo';
 f
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT 'hello' COLLATE NOACCENT = 'hëllo';
@@ -32,6 +40,8 @@ t
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'hello' COLLATE NOCASE = 'hElLÖ';
 ----
@@ -39,6 +49,8 @@ SELECT 'hello' COLLATE NOCASE = 'hElLÖ';
 f
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query
 SELECT 'hello' COLLATE NOACCENT = 'hElLÖ';
@@ -48,6 +60,8 @@ f
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'hello' COLLATE NOCASE.NOACCENT = 'hElLÖ';
 ----
@@ -55,6 +69,8 @@ SELECT 'hello' COLLATE NOCASE.NOACCENT = 'hElLÖ';
 t
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 statement ok
 SET default_collation = NOCASE;
@@ -67,6 +83,8 @@ t
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE names (name VARCHAR COLLATE NOACCENT);
 
@@ -74,6 +92,8 @@ statement ok
 INSERT INTO names VALUES ('hännes');
 
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 query
 SELECT name
@@ -85,6 +105,8 @@ hännes
 
 # DOCS_TEST: example_011
 
+# DOCS_TEST_BODY
+
 query error
 SELECT name
 FROM names
@@ -92,8 +114,9 @@ WHERE name = 'hannes' COLLATE NOCASE;
 ----
 db error: ERROR: Cannot combine types with different collation!
 
-
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE other_names (name VARCHAR COLLATE NOCASE);
@@ -103,6 +126,8 @@ INSERT INTO other_names VALUES ('HÄNNES');
 
 # DOCS_TEST: example_013
 
+# DOCS_TEST_BODY
+
 query error
 SELECT names.name AS name, other_names.name AS other_name
 FROM names, other_names
@@ -110,8 +135,9 @@ WHERE names.name = other_names.name;
 ----
 db error: ERROR: Cannot combine types with different collation!
 
-
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 query
 SELECT names.name AS name, other_names.name AS other_name
@@ -122,6 +148,8 @@ name	other_name
 hännes	HÄNNES
 
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 query
 PRAGMA collations;
@@ -141,6 +169,8 @@ statement ok
 SET default_collation = 'binary';
 
 # DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TABLE strings (s VARCHAR COLLATE DE);
@@ -162,4 +192,3 @@ SELECT * FROM strings ORDER BY s;
 ----
 db error: ERROR: Table with name strings does not exist!
 Did you mean "<slt:ignore>"?
-

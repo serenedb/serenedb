@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cosine_similarity(MAP(ARRAY['a'], ARRAY[1.0]),
 MAP(ARRAY['a'], ARRAY[2.0]));
@@ -25,8 +27,9 @@ SELECT cosine_similarity(MAP(ARRAY[], ARRAY[]), MAP(ARRAY['a',
 ----
 db error: ERROR: syntax error at or near ">"
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cosine_similarity(ARRAY[1], ARRAY[2]);
@@ -59,8 +62,9 @@ SELECT cosine_similarity(ARRAY[], ARRAY[]);
 ----
 db error: ERROR: syntax error at or near "VeloxUserError"
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 SELECT l2_squared(ARRAY[1], ARRAY[2]);
@@ -89,8 +93,9 @@ SELECT l2_squared(ARRAY[], ARRAY[]);
 ----
 db error: ERROR: syntax error at or near ">"
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SELECT dot_product(ARRAY[1], ARRAY[2]);
@@ -118,4 +123,3 @@ statement error
 SELECT dot_product(ARRAY[], ARRAY[]);
 ----
 db error: ERROR: syntax error at or near ">"
-

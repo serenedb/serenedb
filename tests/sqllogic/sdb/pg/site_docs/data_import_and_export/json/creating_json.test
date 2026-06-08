@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT to_json('duck');
 ----
@@ -7,6 +9,8 @@ to_json
 "duck"
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT to_json([1, 2, 3]);
@@ -16,6 +20,8 @@ to_json
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT to_json({duck : 42});
 ----
@@ -23,6 +29,8 @@ to_json
 {"duck":42}
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT to_json(MAP(['duck'], [42]));
@@ -32,6 +40,8 @@ to_json
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT json_array('duck', 42, 'goose', 123);
 ----
@@ -40,6 +50,8 @@ json_array
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT json_object('duck', 42, 'goose', 123);
 ----
@@ -47,6 +59,8 @@ json_object
 {"duck":42,"goose":123}
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query
 SELECT json_merge_patch('{"duck": 42}', '{"goose": 123}');

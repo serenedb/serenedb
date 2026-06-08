@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT struct_pack(key1 := 'value1', key2 := 42) AS s;
 ----
@@ -9,6 +11,8 @@ s
 (value1,42)
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT {'key1': 'value1', 'key2': 42} AS s;
@@ -18,6 +22,8 @@ s
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT d AS s FROM (SELECT 'value1' AS key1, 42 AS key2) d;
 ----
@@ -25,6 +31,8 @@ s
 (value1,42)
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT {'x': 1, 'y': 2, 'z': 3} AS s;
@@ -34,6 +42,8 @@ s
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT {'yes': 'duck', 'maybe': 'goose', 'huh': NULL, 'no': 'heron'} AS s;
 ----
@@ -42,6 +52,8 @@ s
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT {'key1': 'string', 'key2': 1, 'key3': 12.345} AS s;
 ----
@@ -49,6 +61,8 @@ s
 (string,1,12.345)
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query
 SELECT {
@@ -62,6 +76,8 @@ s
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 query
 SELECT struct_update({'a': 1, 'b': 2}, b := 3, c := 4) AS s;
 ----
@@ -69,6 +85,8 @@ s
 (1,3,4)
 
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT a.x FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS a);
@@ -78,6 +96,8 @@ x
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query
 SELECT a."x space" FROM (SELECT {'x space': 1, 'y': 2, 'z': 3} AS a);
 ----
@@ -85,6 +105,8 @@ x space
 1
 
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query
 SELECT a['x space'] FROM (SELECT {'x space': 1, 'y': 2, 'z': 3} AS a);
@@ -94,6 +116,8 @@ a
 
 # DOCS_TEST: example_012
 
+# DOCS_TEST_BODY
+
 query
 SELECT struct_extract({'x space': 1, 'y': 2, 'z': 3}, 'x space');
 ----
@@ -101,6 +125,8 @@ struct_extract
 1
 
 # DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
 
 query
 SELECT unnest(a)
@@ -111,6 +137,8 @@ x	y	z
 
 # DOCS_TEST: example_014
 
+# DOCS_TEST_BODY
+
 query
 SELECT a.* EXCLUDE ('y')
 FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS a);
@@ -118,7 +146,7 @@ FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS a);
 x	z
 1	3
 
-# DOCS_SETUP
+# DOCS_TEST: example_015
 
 statement ok
 USE $__DATABASE__;
@@ -145,8 +173,6 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_SETUP: local_struct_dot_notation_fixture
-
 statement ok
 DROP TABLE IF EXISTS tbl;
 
@@ -158,7 +184,7 @@ CREATE TABLE tbl (
 statement ok
 INSERT INTO tbl VALUES ({'part2': {'part3': 42}});
 
-# DOCS_TEST: example_015
+# DOCS_TEST_BODY
 
 query
 SELECT part1
@@ -167,7 +193,7 @@ FROM tbl;
 part1
 ("(42)")
 
-# DOCS_SETUP: local_struct_dot_notation_part2_fixture
+# DOCS_TEST: example_016
 
 statement ok
 DROP TABLE IF EXISTS tbl;
@@ -180,7 +206,7 @@ CREATE TABLE tbl (
 statement ok
 INSERT INTO tbl VALUES ({'part2': {'part3': 42}});
 
-# DOCS_TEST: example_016
+# DOCS_TEST_BODY
 
 query
 SELECT part1.part2
@@ -189,7 +215,7 @@ FROM tbl;
 part2
 (42)
 
-# DOCS_SETUP: local_struct_dot_notation_part3_fixture
+# DOCS_TEST: example_017
 
 statement ok
 DROP TABLE IF EXISTS tbl;
@@ -202,7 +228,7 @@ CREATE TABLE tbl (
 statement ok
 INSERT INTO tbl VALUES ({'part2': {'part3': 42}});
 
-# DOCS_TEST: example_017
+# DOCS_TEST_BODY
 
 query
 SELECT part1.part2.part3
@@ -211,8 +237,9 @@ FROM tbl;
 part3
 42
 
-
 # DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (s STRUCT(v VARCHAR, i INTEGER));
@@ -228,13 +255,14 @@ s
 
 # DOCS_TEST: example_019
 
+# DOCS_TEST_BODY
+
 statement error
 {'v': a, 'i': 42}
 ----
 db error: ERROR: syntax error at or near "\{"
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_020
 
 statement ok
 USE $__DATABASE__;
@@ -242,7 +270,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_020
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 AS (
@@ -251,10 +279,14 @@ CREATE TABLE t1 AS (
 
 # DOCS_TEST: example_021
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE t2 AS SELECT row('a');
 
 # DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
 
 query error
 SELECT a::STRUCT(y INTEGER) AS b
@@ -263,8 +295,9 @@ FROM
 ----
 db error: ERROR: STRUCT to STRUCT cast must have at least one matching member
 
-
 # DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
 
 query
 SELECT struct_pack(y := a.x) AS b
@@ -276,6 +309,8 @@ b
 
 # DOCS_TEST: example_024
 
+# DOCS_TEST_BODY
+
 query
 SELECT row(x, x + 1, y) FROM (SELECT 1 AS x, 'a' AS y) AS s;
 ----
@@ -283,6 +318,8 @@ row
 (1,2,a)
 
 # DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
 
 query
 SELECT (x, x + 1, y) AS s FROM (SELECT 1 AS x, 'a' AS y);
@@ -292,6 +329,8 @@ s
 
 # DOCS_TEST: example_026
 
+# DOCS_TEST_BODY
+
 query
 SELECT {'k1': 0, 'k2': 0} < {'k1': 1, 'k2': 0};
 ----
@@ -299,6 +338,8 @@ SELECT {'k1': 0, 'k2': 0} < {'k1': 1, 'k2': 0};
 t
 
 # DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
 
 query
 SELECT {'k1': 'hello'} < {'k1': 'world'};
@@ -308,6 +349,8 @@ t
 
 # DOCS_TEST: example_028
 
+# DOCS_TEST_BODY
+
 query
 SELECT {'k1': 0, 'k2': 0} < {'k1': 0, 'k2': NULL};
 ----
@@ -315,6 +358,8 @@ SELECT {'k1': 0, 'k2': 0} < {'k1': 0, 'k2': NULL};
 t
 
 # DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
 
 query
 SELECT {'k1': 0} < {'k2': 0};
@@ -324,6 +369,8 @@ t
 
 # DOCS_TEST: example_030
 
+# DOCS_TEST_BODY
+
 query
 SELECT  {'k1': 0, 'k2': 0} < {'k2': 0, 'k3': 0};
 ----
@@ -331,6 +378,8 @@ SELECT  {'k1': 0, 'k2': 0} < {'k2': 0, 'k3': 0};
 t
 
 # DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
 
 query
 SELECT {'k1': 1, 'k2': 0} > {'k3': 0, 'k1': 0};
@@ -340,6 +389,8 @@ t
 
 # DOCS_TEST: example_032
 
+# DOCS_TEST_BODY
+
 query
 SELECT {'k1': 1, 'k2': 0} < {'k1': 0, 'k2': 1};
 ----
@@ -347,6 +398,8 @@ SELECT {'k1': 1, 'k2': 0} < {'k1': 0, 'k2': 1};
 f
 
 # DOCS_TEST: example_033
+
+# DOCS_TEST_BODY
 
 query
 SELECT {'k1': [0]} < {'k1': [0, 0]};
@@ -356,6 +409,8 @@ t
 
 # DOCS_TEST: example_034
 
+# DOCS_TEST_BODY
+
 query
 SELECT {'k1': 1} > {'k2': 0};
 ----
@@ -363,6 +418,8 @@ SELECT {'k1': 1} > {'k2': 0};
 f
 
 # DOCS_TEST: example_035
+
+# DOCS_TEST_BODY
 
 query
 SELECT {'k1': 0, 'k2': 0} < {'k3': 0, 'k1': 1};
@@ -372,6 +429,8 @@ t
 
 # DOCS_TEST: example_036
 
+# DOCS_TEST_BODY
+
 query
 SELECT  {'k1': 1, 'k2': 0} > {'k2': 0, 'k3': 0};
 ----
@@ -380,6 +439,8 @@ f
 
 # DOCS_TEST: example_037
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE test (s STRUCT(i INTEGER, j INTEGER));
 
@@ -387,6 +448,8 @@ statement ok
 INSERT INTO test VALUES (ROW(1, 1)), (ROW(2, 2));
 
 # DOCS_TEST: example_038
+
+# DOCS_TEST_BODY
 
 statement error
 ALTER TABLE test ADD COLUMN s.k INTEGER;
@@ -403,6 +466,8 @@ s
 
 # DOCS_TEST: example_039
 
+# DOCS_TEST_BODY
+
 statement error
 ALTER TABLE test DROP COLUMN s.i;
 ----
@@ -417,6 +482,8 @@ s
 (2,2)
 
 # DOCS_TEST: example_040
+
+# DOCS_TEST_BODY
 
 statement error
 ALTER TABLE test RENAME s.j TO v1;

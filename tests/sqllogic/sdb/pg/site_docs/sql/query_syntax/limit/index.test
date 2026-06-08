@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_001
 
 statement ok
 USE $__DATABASE__;
@@ -27,7 +27,7 @@ INSERT INTO addresses VALUES
     ('5 Pond Road', 'Mallard', 'Pond Road', 90000, '22222', 'UK', 25, 5, 50),
     ('9 Lake View', 'Mallard', 'Lake View', 40000, '33333', 'UK', 25, 6, 60);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -43,6 +43,8 @@ address	city	street_name	income	zip	country	population	number1	number2
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM addresses
@@ -53,6 +55,8 @@ address	city	street_name	income	zip	country	population	number1	number2
 9 Lake View	Mallard	Lake View	40000	33333	UK	25	6	60
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query ?? rowsort
 SELECT city, count(*) AS population
@@ -66,7 +70,7 @@ Duck Town	2
 DuckTown	2
 Mallard	2
 
-# DOCS_SETUP: local_limit_percent_addresses_fixture
+# DOCS_TEST: example_004
 
 statement ok
 DELETE FROM addresses;
@@ -85,7 +89,7 @@ SELECT
     i * 10
 FROM range(20) t(i);
 
-# DOCS_TEST: example_004
+# DOCS_TEST_BODY
 
 query
 SELECT *

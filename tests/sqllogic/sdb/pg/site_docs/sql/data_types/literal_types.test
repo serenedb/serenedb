@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT 1.5;
 ----
@@ -20,6 +22,8 @@ SELECT 2.;
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT 1e2;
 ----
@@ -39,6 +43,8 @@ SELECT 1e-10;
 1e-10
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT 100_000_000;
@@ -66,6 +72,8 @@ int4
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'Hello'
     ' '
@@ -75,6 +83,8 @@ greeting
 Hello World
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query
 SELECT 'Hello'
@@ -86,13 +96,16 @@ Hello World
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query error
 SELECT 'Hello' ' ' 'World' AS greeting;
 ----
 db error: ERROR: syntax error at or near "' '"
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query
 SELECT d > '1992-01-01' AS result
@@ -103,14 +116,17 @@ f
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 query error
 SELECT d > '1992-01-01'::VARCHAR
 FROM (VALUES (DATE '1992-01-01')) t(d);
 ----
 db error: ERROR: Cannot compare values of type DATE and type VARCHAR \- an explicit cast is required
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT e'Hello\nworld' AS msg;
@@ -119,6 +135,8 @@ msg
 Hello\nworld
 
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 query
 SELECT $$Hello
@@ -129,6 +147,8 @@ Hello\nworld
 
 # DOCS_TEST: example_011
 
+# DOCS_TEST_BODY
+
 query
 SELECT $$The price is $9.95$$ AS msg;
 ----
@@ -136,6 +156,8 @@ msg
 The price is $9.95
 
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 query
 SELECT $tag$ this string can contain newlines,

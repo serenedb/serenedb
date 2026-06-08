@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE grades (grade INTEGER, course VARCHAR);
 
@@ -7,6 +9,8 @@ statement ok
 INSERT INTO grades VALUES (7, 'Math'), (9, 'Math'), (8, 'CS');
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT min(grade) FROM grades;
@@ -16,6 +20,8 @@ min
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT course FROM grades WHERE grade = (SELECT min(grade) FROM grades);
 ----
@@ -23,6 +29,8 @@ course
 Math
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT ARRAY(SELECT grade FROM grades) AS all_grades;
@@ -32,6 +40,8 @@ all_grades
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT 6 <= ALL (SELECT grade FROM grades) AS adequate;
 ----
@@ -39,6 +49,8 @@ adequate
 t
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query
 SELECT 8 >= ALL (SELECT grade FROM grades) AS excellent;
@@ -48,6 +60,8 @@ f
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query
 SELECT 5 >= ANY (SELECT grade FROM grades) AS fail;
 ----
@@ -55,6 +69,8 @@ fail
 f
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query
 SELECT EXISTS (FROM grades WHERE course = 'Math') AS math_grades_present;
@@ -64,6 +80,8 @@ t
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 query
 SELECT EXISTS (FROM grades WHERE course = 'History') AS history_grades_present;
 ----
@@ -71,6 +89,8 @@ history_grades_present
 f
 
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE Person (id BIGINT, name VARCHAR);
@@ -94,6 +114,8 @@ id	name
 
 # DOCS_TEST: example_011
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'Math' IN (SELECT course FROM grades) AS math_grades_present;
 ----
@@ -101,6 +123,8 @@ math_grades_present
 t
 
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -116,6 +140,8 @@ grade	course
 
 # DOCS_TEST: example_013
 
+# DOCS_TEST_BODY
+
 query error
 SELECT min(grade)
 FROM grades
@@ -123,8 +149,9 @@ WHERE course = ?;
 ----
 (?i)(Values were not provided .*prepared statement parameters: 1|expected 1 parameters but got 0)
 
-
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 query
 SELECT t

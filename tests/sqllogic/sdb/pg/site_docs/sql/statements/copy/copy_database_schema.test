@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP: local_copy_database_schema_fixture
+# DOCS_TEST: example_038
 
 statement ok
 USE $__DATABASE__;
@@ -23,7 +23,7 @@ CREATE TABLE db1.tbl AS SELECT 42 AS x, 3 AS y;
 statement ok
 CREATE MACRO db1.two_x_plus_y(x, y) AS 2 * x + y;
 
-# DOCS_TEST: example_038
+# DOCS_TEST_BODY
 
 statement ok
 COPY FROM DATABASE db1 TO db2 (SCHEMA);

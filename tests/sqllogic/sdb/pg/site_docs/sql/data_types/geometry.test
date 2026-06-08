@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE geometries (
     id INTEGER,
@@ -23,8 +25,9 @@ SELECT * FROM geometries;
 ----
 db error: ERROR: Such type is not supported
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE points (
@@ -52,8 +55,9 @@ INSERT INTO points VALUES
 ----
 db error: ERROR: Failed to parse geometry: Expected number at offset 12
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 -- Disable shredding for geometry columns
@@ -63,7 +67,7 @@ statement ok
 -- Always shred geometry columns regardless of row group size
 SET geometry_minimum_shredding_size = 0;
 
-# DOCS_SETUP
+# DOCS_TEST: example_004
 
 statement ok
 USE $__DATABASE__;
@@ -77,11 +81,7 @@ DETACH IF EXISTS geometry_db;
 statement ok
 DETACH IF EXISTS shredded_db;
 
-# DOCS_SETUP: file_fixtures_example_004
-
-
-# DOCS_TEST: example_004
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| -- Attach a persistent database with storage version v1.5
 #| ATTACH 'geometry_db.db' as geometry_db (STORAGE_VERSION 'v1.5.0');
 #|
@@ -120,7 +120,8 @@ DETACH IF EXISTS shredded_db;
 #| -- While the geometry column in `shredded_db` is decomposed into primitive DOUBLE segments,
 #| -- which can be compressed much more efficiently!
 #| SELECT DISTINCT(segment_type) FROM pragma_storage_info('shredded_db.points');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 -- Attach a persistent database with storage version v1.5
@@ -183,8 +184,7 @@ segment_type
 DOUBLE
 VALIDITY
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_005
 
 statement ok
 USE $__DATABASE__;
@@ -192,7 +192,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS geometries;
 
-# DOCS_TEST: example_005
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE geometries as select 'POINT Z (30 10 5)'::GEOMETRY as geom;
@@ -202,13 +202,16 @@ SELECT stats(geom) AS geom_stats FROM geometries;
 ----
 db error: ERROR: Such type is not supported
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT * FROM duckdb_coordinate_systems();
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query error
 SELECT 'POINT(1 2)'::GEOMETRY('DUCK:1337') AS my_point;
@@ -219,8 +222,9 @@ The coordinate system definition may be incomplete or invalid. Your options are 
 * Provide a full coordinate system definition in e.g. "PROJJSON" or "WKT2" format
 * Set the 'ignore_unknown_crs' configuration option to drop the coordinate system from the resulting geometry type and make this error go away
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 statement ok
 -- Ignore any unknown CRS identifiers
@@ -231,8 +235,9 @@ select 'POINT(1 2)'::GEOMETRY('DUCK:1337') AS my_point;
 ----
 db error: ERROR: Such type is not supported
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 statement error
 LOAD spatial;
@@ -250,16 +255,18 @@ db error: ERROR: Scalar Function with name "st_transform" is not in the catalog,
 
 This feature relies on the "spatial" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
-
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 query error
 SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY, 'OGC:CRS84') AS with_crs;
 ----
 db error: ERROR: Such type is not supported
 
-
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query error
 SELECT 'POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84')::GEOMETRY AS no_crs;
@@ -272,8 +279,9 @@ SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84'), '') AS no_c
 ----
 db error: ERROR: Such type is not supported
 
-
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 query
 SELECT ST_CRS('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84')) AS crs;

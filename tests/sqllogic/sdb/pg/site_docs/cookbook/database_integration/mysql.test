@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement error
 INSTALL mysql;
 ----
@@ -12,6 +14,8 @@ For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement error
 LOAD mysql;
 ----
@@ -21,6 +25,8 @@ Extension "mysql" is an existing extension.
 Install it first using "INSTALL mysql".
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement error
 ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS mysql_db (TYPE mysql, READ_ONLY);

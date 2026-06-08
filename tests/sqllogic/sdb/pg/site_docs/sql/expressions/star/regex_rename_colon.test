@@ -1,5 +1,7 @@
 # DOCS_TEST: example_019
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE tbl ("Foo:Bar" INTEGER, "Foo:Baz" INTEGER, "Foo:Qux" INTEGER);
 

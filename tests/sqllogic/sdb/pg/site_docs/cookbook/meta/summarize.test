@@ -1,4 +1,4 @@
-# DOCS_SETUP: generated_wide_fixtures
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE part AS SELECT * FROM (VALUES
@@ -7,8 +7,6 @@ CREATE TABLE part AS SELECT * FROM (VALUES
 ) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
 
 control substitution on
-
-# DOCS_SETUP
 
 statement ok
 USE $__DATABASE__;
@@ -35,7 +33,7 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query
 SUMMARIZE TABLE tbl;
@@ -56,10 +54,12 @@ number2	INTEGER	1000	3000	3	2000	1000	1250	2000	2750	3	0.00
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 SUMMARIZE SELECT * FROM tbl;
 
-# DOCS_SETUP: local_tpch_partsupp_fixture
+# DOCS_TEST: example_003
 
 statement ok
 CREATE TABLE partsupp (
@@ -74,7 +74,7 @@ statement ok
 INSERT INTO partsupp VALUES
     (1, 1, 100, 10.5, 'sample partsupp');
 
-# DOCS_TEST: example_003
+# DOCS_TEST_BODY
 
 statement error
 INSTALL tpch;
@@ -94,8 +94,9 @@ CALL dbgen(sf = 1);
 db error: ERROR: Table with name supplier does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SUMMARIZE lineitem;
@@ -104,14 +105,14 @@ db error: ERROR: unrecognized configuration parameter "lineitem"
 
 Did you mean: "client_encoding"
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE tbl_summary AS SELECT * FROM (SUMMARIZE TABLE tbl);
 
-
-# DOCS_SETUP: file_fixtures_example_006
+# DOCS_TEST: example_006
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -119,10 +120,10 @@ COPY (SELECT * FROM (VALUES
     (2, '[5,8]', 9.5)
 ) AS t("duck", "goose", "swan")) TO '/tmp/${__DATABASE__}_cookbook_meta_summarize_example_006_1_star_trek_season_1_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_006
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SUMMARIZE TABLE 'https://blobs.duckdb.org/data/Star_Trek-Season_1.csv';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SUMMARIZE TABLE '/tmp/${__DATABASE__}_cookbook_meta_summarize_example_006_1_star_trek_season_1_csv.csv';

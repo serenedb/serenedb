@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement error
 -- Create a table with JSON and JSONB columns
 CREATE TABLE documents (
@@ -31,8 +33,9 @@ FROM documents;
 db error: ERROR: Table with name documents does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement error
 -- Semantically equivalent outputs
@@ -41,8 +44,9 @@ statement error
 ----
 db error: ERROR: syntax error at or near "\{"
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TABLE metrics (
@@ -72,4 +76,3 @@ FROM metrics;
 ----
 db error: ERROR: Table with name metrics does not exist!
 Did you mean "<slt:ignore>"?
-

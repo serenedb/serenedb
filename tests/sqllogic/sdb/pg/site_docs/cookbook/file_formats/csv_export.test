@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_001
 
 statement ok
 USE $__DATABASE__;
@@ -27,24 +27,20 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_SETUP: file_fixtures_example_001
-
-
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| COPY tbl TO 'output.csv' (HEADER, DELIMITER ',');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 COPY tbl TO '/tmp/${__DATABASE__}_cookbook_file_formats_csv_export_example_001_1_output_csv.csv' (HEADER, DELIMITER ',');
 
-# DOCS_SETUP: file_fixtures_example_002
-
-
 # DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| COPY (SELECT * FROM tbl) TO 'output.csv' (HEADER, DELIMITER ',');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 COPY (SELECT * FROM tbl) TO '/tmp/${__DATABASE__}_cookbook_file_formats_csv_export_example_002_1_output_csv.csv' (HEADER, DELIMITER ',');

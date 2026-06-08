@@ -1,13 +1,16 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 SELECT all_keys_match(map(array['a', 'b', 'c'], array[1, 2, 3]), x -> length(x) = 1);
 ----
 db error: ERROR: Scalar Function with name all_keys_match does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query error
 SELECT any_keys_match(map(array['a', 'b', 'c'], array[1, 2, 3]), x -> x = 'a');
@@ -15,8 +18,9 @@ SELECT any_keys_match(map(array['a', 'b', 'c'], array[1, 2, 3]), x -> x = 'a');
 db error: ERROR: Scalar Function with name any_keys_match does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 SELECT ANY_VALUES_MATCH(map(ARRAY['a', 'b', 'c'], ARRAY[1, 2, 3]), x -> x = 1);
@@ -24,8 +28,9 @@ SELECT ANY_VALUES_MATCH(map(ARRAY['a', 'b', 'c'], ARRAY[1, 2, 3]), x -> x = 1);
 db error: ERROR: Scalar Function with name any_values_match does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT map();
@@ -35,6 +40,8 @@ map
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT map(ARRAY[1,3], ARRAY[2,4]);
 ----
@@ -42,6 +49,8 @@ map
 {"(1,2)","(3,4)"}
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_append(MAP(ARRAY[1, 2], ARRAY[10, 20]), ARRAY[3, 4], ARRAY[30, 40]);
@@ -77,8 +86,9 @@ SELECT map_append(MAP(ARRAY[1], ARRAY[10]), ARRAY[], ARRAY[]);
 db error: ERROR: Scalar Function with name map_append does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query
 SELECT map_entries(MAP(ARRAY[1, 2], ARRAY['x', 'y']));
@@ -87,6 +97,8 @@ map_entries
 <slt:ignore>
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_filter(MAP(ARRAY[], ARRAY[]), (k, v) -> true);
@@ -108,8 +120,9 @@ SELECT map_filter(MAP(ARRAY['k1', 'k2', 'k3'], ARRAY[20, 3, 15]), (k, v) -> v > 
 db error: ERROR: Scalar Function with name map_filter does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT map_from_entries(ARRAY[(1, 'x'), (2, 'y')]);
@@ -118,6 +131,8 @@ map_from_entries
 {"(1,x)","(2,y)"}
 
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_normalize(map(array['a', 'b', 'c'], array[1, 4, 5]));
@@ -139,8 +154,9 @@ SELECT map_normalize(map(array['a', 'b', 'c'], array[1, 0, -1]));
 db error: ERROR: Scalar Function with name map_normalize does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_remove_null_values(MAP(ARRAY['ab', 'bc', 'cd'], ARRAY[null, null, null]));
@@ -169,8 +185,9 @@ SELECT map_remove_null_values(NULL);
 db error: ERROR: Scalar Function with name map_remove_null_values does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 query error
 SELECT remap_keys(MAP(ARRAY[1, 2, 3], ARRAY[10, 20, 30]), ARRAY[1, 3], ARRAY[100, 300]);
@@ -199,8 +216,9 @@ SELECT remap_keys(MAP(ARRAY[1, 2], ARRAY[10, 20]), ARRAY[], ARRAY[]);
 db error: ERROR: Scalar Function with name remap_keys does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_subset(MAP(ARRAY[1,2], ARRAY['a','b']), ARRAY[10]);
@@ -236,8 +254,9 @@ SELECT map_subset(MAP(ARRAY[], ARRAY[]), ARRAY[]);
 db error: ERROR: Scalar Function with name map_subset does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_intersect(MAP(ARRAY[1,2,3], ARRAY['a','b','c']), ARRAY[1,3]);
@@ -266,8 +285,9 @@ SELECT map_intersect(MAP(ARRAY[], ARRAY[]), ARRAY[1,2]);
 db error: ERROR: Scalar Function with name map_intersect does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_except(MAP(ARRAY[1,2], ARRAY['a','b']), ARRAY[10]);
@@ -303,8 +323,9 @@ SELECT map_except(MAP(ARRAY[], ARRAY[]), ARRAY[1,2]);
 db error: ERROR: Scalar Function with name map_except does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_keys_overlap(MAP(ARRAY[1, 2, 3], ARRAY[10, 20, 30]), ARRAY[1, 5]);
@@ -333,8 +354,9 @@ SELECT map_keys_overlap(MAP(ARRAY[], ARRAY[]), ARRAY[1]);
 db error: ERROR: Scalar Function with name map_keys_overlap does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_top_n(map(ARRAY['a', 'b', 'c'], ARRAY[2, 3, 1]), 2) --- \{'b' -> 3, 'a' -> 2\}
@@ -342,8 +364,9 @@ SELECT map_top_n(map(ARRAY['a', 'b', 'c'], ARRAY[NULL, 3, NULL]), 2) --- \{'b' -
 ----
 db error: ERROR: syntax error at or near "SELECT"
 
-
 # DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_keys_by_top_n_values(map(ARRAY['a', 'b', 'c'], ARRAY[2, 3, 1]), 2) --- ['b', 'a']
@@ -351,8 +374,9 @@ SELECT map_keys_by_top_n_values(map(ARRAY['a', 'b', 'c'], ARRAY[NULL, 3, NULL]),
 ----
 db error: ERROR: syntax error at or near "SELECT"
 
-
 # DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_top_n_keys(map(ARRAY['a', 'b', 'c'], ARRAY[1, 2, 3]), 2) --- ['c', 'b']
@@ -360,8 +384,9 @@ SELECT map_top_n_keys(map(ARRAY['a', 'b', 'c'], ARRAY[1, 2, 3]), 0) --- []
 ----
 db error: ERROR: syntax error at or near "SELECT"
 
-
 # DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_top_n_values(map(ARRAY['a', 'b', 'c'], ARRAY[1, 2, 3]), 2) --- [3, 2]
@@ -369,8 +394,9 @@ SELECT map_top_n_values(map(ARRAY['a', 'b', 'c'], ARRAY[1, 2, 3]), 2) --- [3, 2]
 db error: ERROR: Scalar Function with name map_top_n_values does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_zip_with(MAP(ARRAY[1, 2, 3], ARRAY['a', 'b', 'c']), -- \{1 -> ad, 2 -> be, 3 -> cf\}
@@ -398,8 +424,9 @@ SELECT map_zip_with(MAP(ARRAY['a', 'b', 'c'], ARRAY[1, 8, 27]), -- \{a -> a1, b 
 db error: ERROR: Scalar Function with name map_zip_with does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
 
 query error
 SELECT multimap_from_entries(ARRAY[(1, 'x'), (2, 'y'), (1, 'z')]);
@@ -407,8 +434,9 @@ SELECT multimap_from_entries(ARRAY[(1, 'x'), (2, 'y'), (1, 'z')]);
 db error: ERROR: Scalar Function with name multimap_from_entries does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
 
 query error
 SELECT no_keys_match(map(array['a', 'b', 'c'], array[1, 2, 3]), x -> x = 'd');
@@ -416,8 +444,9 @@ SELECT no_keys_match(map(array['a', 'b', 'c'], array[1, 2, 3]), x -> x = 'd');
 db error: ERROR: Scalar Function with name no_keys_match does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
 
 query error
 SELECT no_values_match(map(array['a', 'b', 'c'], array[1, 2, 3]), x -> x = 'd');
@@ -425,8 +454,9 @@ SELECT no_values_match(map(array['a', 'b', 'c'], array[1, 2, 3]), x -> x = 'd');
 db error: ERROR: Scalar Function with name no_values_match does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
 
 query error
 SELECT transform_keys(MAP(ARRAY[], ARRAY[]), (k, v) -> k + 1);
@@ -463,8 +493,9 @@ SELECT transform_keys(MAP(ARRAY [1, 2], ARRAY [1.0, 1.4]), -- \{one -> 1.0, two 
 db error: ERROR: Scalar Function with name transform_keys does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
 
 query error
 SELECT transform_values(MAP(ARRAY[], ARRAY[]), (k, v) -> v + 1);
@@ -500,4 +531,3 @@ SELECT transform_values(MAP(ARRAY [1, 2], ARRAY [1.0, 1.4]), -- \{1 -> one_1.0, 
 ----
 db error: ERROR: Scalar Function with name transform_values does not exist!
 Did you mean "<slt:ignore>"?
-

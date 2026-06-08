@@ -1,13 +1,16 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 SELECT like('abc', '%b%');
 ----
 db error: ERROR: Scalar Function with name like does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT regexp_extract('1a 2b 14m', '\d+');
@@ -17,6 +20,8 @@ regexp_extract
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT regexp_extract('1a 2b 14m', '(\d+)([a-z]+)', 2);
 ----
@@ -24,6 +29,8 @@ regexp_extract
 a
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT regexp_extract_all('1a 2b 14m', '\d+');
@@ -33,6 +40,8 @@ regexp_extract_all
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT regexp_extract_all('1a 2b 14m', '(\d+)([a-z]+)', 2);
 ----
@@ -40,6 +49,8 @@ regexp_extract_all
 {a,b,m}
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query
 SELECT regexp_like('1a 2b 14m', '\d+b');
@@ -49,6 +60,8 @@ t
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query error
 SELECT regexp_replace('1a 2b 14m', '\d+[ab] ');
 ----
@@ -57,8 +70,9 @@ db error: ERROR: No function matches the given name and argument types 'regexp_r
 	regexp_replace(VARCHAR, VARCHAR, VARCHAR) -> VARCHAR
 	regexp_replace(VARCHAR, VARCHAR, VARCHAR, VARCHAR) -> VARCHAR
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query
 SELECT regexp_replace('1a 2b 14m', '(\d+)([ab]) ', '3c$2 ');
@@ -74,14 +88,17 @@ regexp_replace
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 query error
 SELECT regexp_replace('new york', '(\w)(\w*)', x -> upper(x[1]) || lower(x[2]));
 ----
 db error: ERROR: failed to bind function, either: This scalar function does not support lambdas!
  or: Referenced column "x" was not found because the FROM clause is missing
 
-
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 query error
 SELECT regexp_split('1a 2b 14m', '\s*[a-z]+\s*');
@@ -89,12 +106,12 @@ SELECT regexp_split('1a 2b 14m', '\s*[a-z]+\s*');
 db error: ERROR: Scalar Function with name regexp_split does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query error
 SELECT regexp_split('1a 2b 14m', '');
 ----
 db error: ERROR: Scalar Function with name regexp_split does not exist!
 Did you mean "<slt:ignore>"?
-

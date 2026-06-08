@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT '2022-10-08 13:13:34-07'::TIMESTAMPTZ;
 ----
@@ -8,14 +10,17 @@ timestamp with time zone
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query error
 SELECT '2022-10-08 13:13:34 Europe/Amsterdam'::TIMESTAMPTZ::VARCHAR;
 ----
 db error: ERROR: timestamp field value "2022-10-08 13:13:34 Europe/Amsterdam" has a timestamp that is not UTC.
 Use the TIMESTAMPTZ type with the ICU extension loaded to handle non-UTC timestamps.
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 SELECT TIMESTAMP '2001-02-16 20:38:40' AT TIME ZONE 'America/Denver' AS ts;
@@ -26,8 +31,9 @@ Extension "icu" is an existing extension.
 
 Install it first using "INSTALL icu".
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SELECT TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40-05' AT TIME ZONE 'America/Denver' AS ts;
@@ -38,8 +44,9 @@ Extension "icu" is an existing extension.
 
 Install it first using "INSTALL icu".
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 SELECT TIMESTAMP '2001-02-16 20:38:40-05' AT TIME ZONE '0200' AS ts;
@@ -50,8 +57,9 @@ Extension "icu" is an existing extension.
 
 Install it first using "INSTALL icu".
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 statement ok
 SET timezone = 'Europe/Amsterdam';
@@ -104,4 +112,3 @@ db error: ERROR: No function matches the given name and argument types '+(TIMEST
 	+(DATE, TIME WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
 	+([ANY[]...]) -> ANY[]
 	+(BIGNUM, BIGNUM) -> BIGNUM
-

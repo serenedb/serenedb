@@ -2,36 +2,38 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE t1 (i INTEGER, j INTEGER);
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS t1;
 
 # DOCS_TEST: example_002
 
 statement ok
-CREATE TABLE t1 (id INTEGER PRIMARY KEY, j VARCHAR);
-
-# DOCS_SETUP
-
-statement ok
 USE $__DATABASE__;
 
 statement ok
 DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE t1 (id INTEGER PRIMARY KEY, j VARCHAR);
 
 # DOCS_TEST: example_003
 
 statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST_BODY
+
+statement ok
 CREATE TABLE t1 (id INTEGER, j VARCHAR, PRIMARY KEY (id, j));
 
-# DOCS_SETUP
+# DOCS_TEST: example_004
 
 statement ok
 USE $__DATABASE__;
@@ -39,7 +41,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_004
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (
@@ -49,7 +51,7 @@ CREATE TABLE t1 (
     time TIMESTAMP
 );
 
-# DOCS_SETUP
+# DOCS_TEST: example_005
 
 statement ok
 USE $__DATABASE__;
@@ -57,21 +59,19 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_005
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 AS
     SELECT 42 AS i, 84 AS j;
 
-# DOCS_SETUP
+# DOCS_TEST: example_006
 
 statement ok
 USE $__DATABASE__;
 
 statement ok
 DROP TABLE IF EXISTS t1;
-
-# DOCS_SETUP: file_fixtures_example_006
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -79,27 +79,25 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_006_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_006
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE TABLE t1 AS
 #|     SELECT *
 #|     FROM read_csv('path/file.csv');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 AS
     SELECT *
     FROM read_csv('/tmp/${__DATABASE__}_sql_statements_create_table_index_example_006_1_file_csv.csv');
 
-# DOCS_SETUP
+# DOCS_TEST: example_007
 
 statement ok
 USE $__DATABASE__;
 
 statement ok
 DROP TABLE IF EXISTS t1;
-
-# DOCS_SETUP: file_fixtures_example_007
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -107,25 +105,23 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_007_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_007
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE TABLE t1 AS
 #|     FROM read_csv('path/file.csv');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 AS
     FROM read_csv('/tmp/${__DATABASE__}_sql_statements_create_table_index_example_007_1_file_csv.csv');
 
-# DOCS_SETUP
+# DOCS_TEST: example_008
 
 statement ok
 USE $__DATABASE__;
 
 statement ok
 DROP TABLE IF EXISTS t1;
-
-# DOCS_SETUP: local_t2_fixture
 
 statement ok
 DROP TABLE IF EXISTS t2;
@@ -138,15 +134,14 @@ INSERT INTO t2 VALUES
     (1, 10),
     (2, 20);
 
-# DOCS_TEST: example_008
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 AS
     FROM t2
     LIMIT 0;
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_009
 
 statement ok
 USE $__DATABASE__;
@@ -154,20 +149,18 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_SETUP: file_fixtures_example_009
-
 statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_009_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_009
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE TEMP TABLE t1 AS
 #|     SELECT *
 #|     FROM read_csv('path/file.csv');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEMP TABLE t1 AS
@@ -176,23 +169,25 @@ CREATE TEMP TABLE t1 AS
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 statement ok
 SET temp_directory = '/path/to/directory/';
-
-# DOCS_SETUP
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS t1;
 
 # DOCS_TEST: example_011
 
 statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST_BODY
+
+statement ok
 CREATE OR REPLACE TABLE t1 (i INTEGER, j INTEGER);
 
-# DOCS_SETUP
+# DOCS_TEST: example_012
 
 statement ok
 USE $__DATABASE__;
@@ -200,19 +195,21 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_012
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE IF NOT EXISTS t1 (i INTEGER, j INTEGER);
 
 # DOCS_TEST: example_013
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE nums AS
     SELECT i
     FROM range(0, 3) t(i);
 
-# DOCS_SETUP: file_fixtures_example_014
+# DOCS_TEST: example_014
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -220,17 +217,17 @@ COPY (SELECT * FROM (VALUES
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
 ) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_014_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_014
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE TABLE flights AS
 #|     FROM 'https://duckdb.org/data/flights.csv';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE flights AS
     FROM '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_014_1_flights_csv.csv';
 
-# DOCS_SETUP
+# DOCS_TEST: example_015
 
 statement ok
 USE $__DATABASE__;
@@ -238,25 +235,23 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS flights;
 
-# DOCS_SETUP: file_fixtures_example_015
-
 statement ok
 COPY (SELECT * FROM (VALUES
     (DATE '2024-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
     (DATE '2024-01-02', 'UA', 'San Francisco, CA', 'Seattle, WA')
 ) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_015_1_flights_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_015
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE OR REPLACE TABLE flights AS
 #|     FROM 'https://duckdb.org/data/flights.csv';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE TABLE flights AS
     FROM '/tmp/${__DATABASE__}_sql_statements_create_table_index_example_015_1_flights_csv.csv';
 
-# DOCS_SETUP
+# DOCS_TEST: example_016
 
 statement ok
 USE $__DATABASE__;
@@ -264,15 +259,14 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_016
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 AS
     FROM t2
     WITH NO DATA;
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_017
 
 statement ok
 USE $__DATABASE__;
@@ -280,15 +274,14 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_017
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 AS
     FROM t2
     LIMIT 0;
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_018
 
 statement ok
 USE $__DATABASE__;
@@ -296,7 +289,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_018
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (
@@ -313,8 +306,9 @@ INSERT INTO t1 VALUES (2, -1);
 db error: ERROR: new row for relation "t1" violates check constraint "t1_percentage_check"
 DETAIL: Failing row contains (2, -1).
 
-
 # DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
 
 statement error
 INSERT INTO t1 VALUES (3, 101);
@@ -322,13 +316,12 @@ INSERT INTO t1 VALUES (3, 101);
 db error: ERROR: new row for relation "t1" violates check constraint "t1_percentage_check"
 DETAIL: Failing row contains (3, 101).
 
-
-# DOCS_SETUP: drop_t2_before_constraint_example
+# DOCS_TEST: example_020
 
 statement ok
 DROP TABLE IF EXISTS t2;
 
-# DOCS_TEST: example_020
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t2 (id INTEGER PRIMARY KEY, x INTEGER, y INTEGER CHECK (x < y));
@@ -342,8 +335,9 @@ INSERT INTO t2 VALUES (2, 5, 3);
 db error: ERROR: new row for relation "t2" violates check constraint "t2_check"
 DETAIL: Failing row contains (2, 5, 3).
 
-
 # DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t3 (
@@ -362,8 +356,7 @@ INSERT INTO t3 VALUES (2, 5, 3);
 db error: ERROR: new row for relation "t3" violates check constraint "x_smaller_than_y"
 DETAIL: Failing row contains (2, 5, 3).
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_022
 
 statement ok
 USE $__DATABASE__;
@@ -374,7 +367,7 @@ DROP TABLE IF EXISTS t1;
 statement ok
 DROP TABLE IF EXISTS t2;
 
-# DOCS_TEST: example_022
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (id INTEGER PRIMARY KEY, j VARCHAR);
@@ -388,6 +381,8 @@ CREATE TABLE t2 (
 
 # DOCS_TEST: example_023
 
+# DOCS_TEST_BODY
+
 statement ok
 INSERT INTO t1 VALUES (1, 'a');
 
@@ -397,7 +392,7 @@ INSERT INTO t2 VALUES (1, 1);
 statement ok
 INSERT INTO t2 VALUES (2, 2);
 
-# DOCS_SETUP
+# DOCS_TEST: example_024
 
 statement ok
 USE $__DATABASE__;
@@ -405,7 +400,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t3;
 
-# DOCS_TEST: example_024
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t3 (id INTEGER, j VARCHAR, PRIMARY KEY (id, j));
@@ -418,6 +413,8 @@ CREATE TABLE t4 (
 
 # DOCS_TEST: example_025
 
+# DOCS_TEST_BODY
+
 statement ok
 INSERT INTO t3 VALUES (1, 'a');
 
@@ -428,6 +425,8 @@ statement ok
 INSERT INTO t4 VALUES (2, 1, 'b');
 
 # DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t5 (id INTEGER UNIQUE, j VARCHAR);
@@ -441,8 +440,7 @@ CREATE TABLE t6 (
 ----
 db error: ERROR: Failed to create foreign key: there is no primary key or unique constraint for referenced table "t5"
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_027
 
 statement ok
 USE $__DATABASE__;
@@ -450,12 +448,12 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_027
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (x FLOAT, two_x AS (2 * x));
 
-# DOCS_SETUP
+# DOCS_TEST: example_028
 
 statement ok
 USE $__DATABASE__;
@@ -463,7 +461,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_028
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (x FLOAT, two_x FLOAT GENERATED ALWAYS AS (2 * x) VIRTUAL);

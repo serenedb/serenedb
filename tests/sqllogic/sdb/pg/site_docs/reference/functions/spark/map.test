@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 SELECT map(1, 2, 3, 4);
 ----
@@ -33,8 +35,9 @@ SELECT map(array(1, 2), array(3, 4));
 ----
 db error: ERROR: syntax error at or near ">"
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_concat(map(1, 'a', 2, 'b'), map(3, 'c'));
@@ -80,8 +83,9 @@ db error: ERROR: No function matches the given name and argument types 'map(INTE
 	map() -> MAP("NULL", "NULL")
 	map(K[], V[]) -> MAP(K, V)
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT map_entries(MAP(ARRAY[1, 2], ARRAY['x', 'y']));
@@ -91,22 +95,26 @@ map_entries
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query error
 SELECT map_filter(map(1, 0, 2, 2, 3, -1), (k, v) -> k > v);
 ----
 db error: ERROR: Scalar Function with name map_filter does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_from_arrays(array(1.0, 3.0), array('2', '4'));
 ----
 db error: ERROR: syntax error at or near "1\.0"
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query error
 SELECT map_zip_with(MAP(ARRAY[1, 2, 3], ARRAY['a', 'b', 'c']), -- \{1 -> ad, 2 -> be, 3 -> cf\}
@@ -134,8 +142,9 @@ SELECT map_zip_with(MAP(ARRAY['a', 'b', 'c'], ARRAY[1, 8, 27]), -- \{a -> a1, b 
 db error: ERROR: Scalar Function with name map_zip_with does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query error
 SELECT size(map(array(1, 2), array(3, 4)), true);
@@ -155,4 +164,3 @@ SELECT size(NULL, false);
 ----
 db error: ERROR: Scalar Function with name size does not exist!
 Did you mean "<slt:ignore>"?
-

@@ -1,9 +1,13 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CALL duckdb_functions();
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 CALL pragma_table_info('pg_am');
@@ -15,6 +19,8 @@ cid	name	type	notnull	dflt_value	pk
 3	amtype	char	f	NULL	f
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT function_name, parameters, parameter_types, return_type

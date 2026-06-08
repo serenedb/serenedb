@@ -1,4 +1,4 @@
-# DOCS_SETUP: local_stations_db_example_001
+# DOCS_TEST: example_001
 
 statement ok
 DETACH IF EXISTS stations_fixture;
@@ -18,19 +18,10 @@ CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
 statement ok
 DETACH stations_fixture;
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
-# DOCS_RAW_END
 
-statement ok
-DETACH IF EXISTS stations_db;
-
-statement ok
-ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_db;
-
-
-# DOCS_SETUP: local_stations_db_example_002
+# DOCS_TEST_BODY
 
 statement ok
 DETACH IF EXISTS stations_db;
@@ -40,6 +31,14 @@ ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or
 
 # DOCS_TEST: example_002
 
+statement ok
+DETACH IF EXISTS stations_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_001_stations.duckdb' AS stations_db;
+
+# DOCS_TEST_BODY
+
 query
 SELECT count(*) AS num_stations
 FROM stations_db.stations;
@@ -47,8 +46,7 @@ FROM stations_db.stations;
 num_stations
 2
 
-
-# DOCS_SETUP: local_stations_db_example_003
+# DOCS_TEST: example_003
 
 statement ok
 DETACH IF EXISTS stations_db;
@@ -71,16 +69,15 @@ CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
 statement ok
 DETACH stations_fixture;
 
-# DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_db;
 
-
-# DOCS_SETUP: local_stations_db_example_004
+# DOCS_TEST: example_004
 
 statement ok
 DETACH IF EXISTS stations_db;
@@ -88,7 +85,7 @@ DETACH IF EXISTS stations_db;
 statement ok
 ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_duckdb_over_https_or_s3_example_003_stations.duckdb' AS stations_db;
 
-# DOCS_TEST: example_004
+# DOCS_TEST_BODY
 
 query
 SELECT count(*) AS num_stations

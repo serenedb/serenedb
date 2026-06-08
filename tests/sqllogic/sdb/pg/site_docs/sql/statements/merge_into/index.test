@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE people (id INTEGER, name VARCHAR, salary FLOAT);
 
@@ -7,6 +9,8 @@ statement ok
 INSERT INTO people VALUES (1, 'John', 92_000.0), (2, 'Anna', 100_000.0);
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement error
 MERGE INTO people
@@ -33,6 +37,8 @@ id	name	salary
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 statement error
 MERGE INTO people
     USING (
@@ -56,6 +62,8 @@ id	name	salary
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 statement error
 MERGE INTO people
     USING (
@@ -77,6 +85,8 @@ id	name	salary
 1	John	92000
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement error
 MERGE INTO people
@@ -100,6 +110,8 @@ id	name	salary
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 statement ok
 -- Let's get John back in!
 INSERT INTO people VALUES (1, 'John', 105_000.0);
@@ -120,8 +132,9 @@ MERGE INTO people
 ----
 db error: ERROR: Unsupported MERGE INTO action type for SereneDB
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE target AS
@@ -136,4 +149,3 @@ MERGE INTO target
     RETURNING merge_action, *;
 ----
 db error: ERROR: Unsupported MERGE INTO action type for SereneDB
-

@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE OR REPLACE TABLE integers AS SELECT unnest([1, 2, 3]) AS i;
 
@@ -16,6 +18,8 @@ i	test
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT i, IF(i > 2, 1, 0) AS test
 FROM integers;
@@ -25,7 +29,7 @@ i	test
 2	0
 3	1
 
-# DOCS_SETUP
+# DOCS_TEST: example_003
 
 statement ok
 USE $__DATABASE__;
@@ -33,7 +37,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS integers;
 
-# DOCS_TEST: example_003
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE TABLE integers AS SELECT unnest([1, 2, 3]) AS i;
@@ -47,7 +51,7 @@ i	test
 2	20
 3	0
 
-# DOCS_SETUP
+# DOCS_TEST: example_004
 
 statement ok
 USE $__DATABASE__;
@@ -55,7 +59,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS integers;
 
-# DOCS_TEST: example_004
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE TABLE integers AS SELECT unnest([1, 2, 3]) AS i;
@@ -69,7 +73,7 @@ i	test
 2	NULL
 3	NULL
 
-# DOCS_SETUP
+# DOCS_TEST: example_005
 
 statement ok
 USE $__DATABASE__;
@@ -77,7 +81,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS integers;
 
-# DOCS_TEST: example_005
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE TABLE integers AS SELECT unnest([1, 2, 3]) AS i;
@@ -93,6 +97,8 @@ i	test
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT i, CASE WHEN i = 1 THEN 10 WHEN i = 2 THEN 20 WHEN i = 3 THEN 30 END AS test
 FROM integers;
@@ -102,7 +108,7 @@ i	test
 2	20
 3	30
 
-# DOCS_SETUP
+# DOCS_TEST: example_007
 
 statement ok
 USE $__DATABASE__;
@@ -110,7 +116,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS integers;
 
-# DOCS_TEST: example_007
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE TABLE integers AS SELECT unnest([1, 2, 3]) AS i;
@@ -125,6 +131,8 @@ i	test
 3	three
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query
 SELECT i, SWITCH(i, MAP {1: 'one', 2: 'two'}, 'other') AS test

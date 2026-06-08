@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement error
 CREATE TEXT SEARCH DICTIONARY english_upper (
     template = 'copy_from',
@@ -9,8 +11,9 @@ CREATE TEXT SEARCH DICTIONARY english_upper (
 ----
 db error: ERROR: required parameter "from" was not found
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TEXT SEARCH DICTIONARY pipe_variant (
@@ -22,8 +25,9 @@ CREATE TEXT SEARCH DICTIONARY pipe_variant (
 ----
 db error: ERROR: required parameter "from" was not found
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TEXT SEARCH DICTIONARY pipe_extended (
@@ -35,8 +39,9 @@ CREATE TEXT SEARCH DICTIONARY pipe_extended (
 ----
 db error: ERROR: required parameter "from" was not found
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TEXT SEARCH DICTIONARY minhash_variant (
@@ -46,4 +51,3 @@ CREATE TEXT SEARCH DICTIONARY minhash_variant (
 );
 ----
 db error: ERROR: required parameter "from" was not found
-

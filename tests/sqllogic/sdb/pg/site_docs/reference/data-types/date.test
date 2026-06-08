@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 -- Create a table with a date column
 CREATE TABLE events (
@@ -25,6 +27,8 @@ id	event_date
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 SET DateStyle = 'DMY';
 
@@ -35,6 +39,8 @@ SELECT '01/02/03';
 01/02/03
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 SET DateStyle = 'MDY';

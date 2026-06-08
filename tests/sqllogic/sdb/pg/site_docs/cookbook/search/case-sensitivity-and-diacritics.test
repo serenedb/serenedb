@@ -1,4 +1,4 @@
-# DOCS_SETUP: shared_search_dataset
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE movies (
@@ -53,7 +53,7 @@ statement ok
 CREATE INDEX movies_exact_idx ON movies
     USING inverted (id, title exact_dict, description exact_dict);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query ?
 SELECT ts_lexize('basic_dict', 'Café Résumé');
@@ -69,6 +69,8 @@ ts_lexize
 {Café,Résumé}
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query error
 -- All of these match "The Matrix"
@@ -91,8 +93,9 @@ SELECT id, title FROM movies_idx WHERE PHRASE(title, 'The Matrix');
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 -- Only matches the exact capitalization
@@ -101,8 +104,9 @@ SELECT id, title FROM movies_exact_idx WHERE PHRASE(title, 'The Matrix');
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 -- No results — wrong case
@@ -111,8 +115,9 @@ SELECT id, title FROM movies_exact_idx WHERE PHRASE(title, 'the matrix');
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title FROM movies_idx WHERE PHRASE(title, 'cafe society');
@@ -120,8 +125,9 @@ SELECT id, title FROM movies_idx WHERE PHRASE(title, 'cafe society');
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query error
 -- Also works with the accented form
@@ -130,8 +136,9 @@ SELECT id, title FROM movies_idx WHERE PHRASE(title, 'café society');
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query error
 -- Must use the exact accent to match
@@ -140,8 +147,9 @@ SELECT id, title FROM movies_exact_idx WHERE PHRASE(title, 'Café');
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query error
 -- No match — accent is missing
@@ -150,8 +158,9 @@ SELECT id, title FROM movies_exact_idx WHERE PHRASE(title, 'Cafe');
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY search_friendly (
@@ -166,6 +175,8 @@ CREATE TEXT SEARCH DICTIONARY search_friendly (
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY identifier_dict (
     template = 'text',
@@ -176,6 +187,8 @@ CREATE TEXT SEARCH DICTIONARY identifier_dict (
 );
 
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY upper_dict (

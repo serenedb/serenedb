@@ -3,7 +3,8 @@
 # that keeps this file valid for the sqllogictest runner.
 
 # DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| # load the DB from disk
 #| load __TEST_DIR__/storage_scan.db
 #|
@@ -26,19 +27,22 @@
 #| 13
 #| 14
 #| 15
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_98651e65_001 (i INTEGER);
 
 # DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| statement ok
 #| PRAGMA disable_checkpoint_on_shutdown
 #|
 #| statement ok
 #| PRAGMA wal_autocheckpoint = '1TB'
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_98651e65_002 (i INTEGER);

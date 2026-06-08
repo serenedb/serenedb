@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 PIVOT ⟨dataset⟩
 ON ⟨columns⟩
@@ -11,8 +13,9 @@ LIMIT ⟨number_of_rows⟩;
 db error: ERROR: Table with name ⟨dataset⟩ does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE cities (
@@ -33,6 +36,8 @@ INSERT INTO cities VALUES
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM cities;
@@ -50,6 +55,8 @@ US	New York City	2020	8772
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query ????? rowsort
 PIVOT cities
 ON year
@@ -61,6 +68,8 @@ US	New York City	8015	8175	8772
 US	Seattle	564	608	738
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query ????? rowsort
 PIVOT cities
@@ -74,6 +83,8 @@ US	Seattle	564	608	738
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query ???? rowsort
 PIVOT cities
 ON year
@@ -85,6 +96,8 @@ NL	1005	1065	1158
 US	8579	8783	9510
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query ??? rowsort
 PIVOT cities
@@ -98,6 +111,8 @@ US	8579	8783
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 query ??????? rowsort
 PIVOT cities
 ON country, name
@@ -109,6 +124,8 @@ year	nl_amsterdam	nl_new york city	nl_seattle	us_amsterdam	us_new york city	us_s
 2020	1158	NULL	NULL	NULL	8772	738
 
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query ???? rowsort
 PIVOT cities
@@ -122,6 +139,8 @@ year	nl_amsterdam	us_new york city	us_seattle
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query ??????? rowsort
 PIVOT cities
 ON year
@@ -133,6 +152,8 @@ NL	1005	1005	1065	1065	1158	1158
 US	8579	8015	8783	8175	9510	8772
 
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query ????? rowsort
 PIVOT cities
@@ -146,6 +167,8 @@ US	New York City	8015	8175	8772
 US	Seattle	564	608	738
 
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 query ???? rowsort
 WITH pivot_alias AS (
@@ -162,6 +185,8 @@ US	8579	8783	9510
 
 # DOCS_TEST: example_013
 
+# DOCS_TEST_BODY
+
 query ???? rowsort
 SELECT *
 FROM (
@@ -177,6 +202,8 @@ US	8579	8783	9510
 
 # DOCS_TEST: example_014
 
+# DOCS_TEST_BODY
+
 query ??????? rowsort
 SELECT *
 FROM (PIVOT cities ON year USING sum(population) GROUP BY country) year_pivot
@@ -188,6 +215,8 @@ NL	1005	1065	1158	3228	NULL	NULL
 US	8579	8783	9510	NULL	24962	1910
 
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 query error
 SELECT *
@@ -203,8 +232,9 @@ PIVOT (
 ----
 db error: ERROR: syntax error at or near "\.\."
 
-
 # DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
 
 query ???? rowsort
 SELECT *
@@ -221,6 +251,8 @@ NL	1005	1065	1158
 US	8579	8783	9510
 
 # DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
 
 query ????????? rowsort
 SELECT *
@@ -240,6 +272,8 @@ Seattle	NULL	0	564	1	NULL	0	608	1
 
 # DOCS_TEST: example_018
 
+# DOCS_TEST_BODY
+
 query ????? rowsort
 PIVOT cities
 ON year
@@ -251,6 +285,8 @@ US	New York City	8015000	8175000	8772000
 US	Seattle	564000	608000	738000
 
 # DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
 
 query ????? rowsort
 SELECT country, name, 1000 * COLUMNS(* EXCLUDE (country, name))

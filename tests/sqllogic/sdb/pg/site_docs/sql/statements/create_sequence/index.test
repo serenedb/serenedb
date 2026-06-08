@@ -2,25 +2,35 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE SEQUENCE serial;
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement error db error: ERROR: sequence INCREMENT must be positive \(negative increments not yet supported\)
 CREATE SEQUENCE serial START WITH 99 INCREMENT BY -1 MAXVALUE 99;
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE SEQUENCE IF NOT EXISTS serial;
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 statement ok
 DROP SEQUENCE serial;
 
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 statement ok
 DROP SEQUENCE IF EXISTS serial;

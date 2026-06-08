@@ -1,10 +1,9 @@
-# DOCS_SETUP: preserved_case_identifier_fixture
+# DOCS_TEST: example_007
 
 statement ok
 SET preserve_identifier_case = true;
 
-# DOCS_TEST: example_007
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE TABLE MyTaBLe (x INTEGER);
 #|
 #| SELECT * FROM "MyTaBLe";
@@ -14,7 +13,8 @@ SET preserve_identifier_case = true;
 #| SELECT * FROM PreservedCase;
 #|
 #| SELECT tbl FROM duckdb_tables();
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE MyTaBLe (x INTEGER);

@@ -1,5 +1,7 @@
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE tbl (x INTEGER);
 

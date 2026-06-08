@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT true, false, NULL::BOOLEAN;
 ----
@@ -8,6 +10,8 @@ t	f	NULL
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE integers (i INTEGER);
 
@@ -15,6 +19,8 @@ statement ok
 INSERT INTO integers VALUES (5), (15), (NULL);
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT * FROM integers WHERE i > 10;

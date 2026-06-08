@@ -1,5 +1,7 @@
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 statement ok
 SET preserve_identifier_case = false;
 

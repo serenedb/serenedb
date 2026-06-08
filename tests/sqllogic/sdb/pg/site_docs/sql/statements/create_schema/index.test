@@ -1,25 +1,30 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE SCHEMA s1;
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE SCHEMA IF NOT EXISTS s2;
-
-# DOCS_SETUP: drop_s2_before_or_replace_example
-
-statement ok
-DROP SCHEMA IF EXISTS s2 CASCADE;
 
 # DOCS_TEST: example_003
 
 statement ok
+DROP SCHEMA IF EXISTS s2 CASCADE;
+
+# DOCS_TEST_BODY
+
+statement ok
 CREATE OR REPLACE SCHEMA s2;
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE s1.t (id INTEGER PRIMARY KEY, other_id INTEGER);
@@ -27,7 +32,7 @@ CREATE TABLE s1.t (id INTEGER PRIMARY KEY, other_id INTEGER);
 statement ok
 CREATE TABLE s2.t (id INTEGER PRIMARY KEY, j VARCHAR);
 
-# DOCS_SETUP: local_schema_join_fixture
+# DOCS_TEST: example_005
 
 statement ok
 DELETE FROM s1.t;
@@ -46,7 +51,7 @@ INSERT INTO s2.t VALUES
     (1, 'a'),
     (2, 'b');
 
-# DOCS_TEST: example_005
+# DOCS_TEST_BODY
 
 query ???? rowsort
 SELECT *

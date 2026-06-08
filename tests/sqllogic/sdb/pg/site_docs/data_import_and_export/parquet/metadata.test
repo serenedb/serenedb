@@ -1,4 +1,4 @@
-# DOCS_SETUP: file_fixtures_example_001
+# DOCS_TEST: example_001
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -6,11 +6,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM parquet_metadata('test.parquet');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -21,8 +21,7 @@ file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	
 /tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet	0	2	3	102	1	0	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	37	42	40	{}	NULL	NULL	t	t	108	NULL	NULL
 /tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet	0	2	3	102	2	0	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	79	33	31	{}	NULL	NULL	t	t	108	NULL	NULL
 
-
-# DOCS_SETUP: file_fixtures_example_002
+# DOCS_TEST: example_002
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -36,11 +35,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_2.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM parquet_metadata('data/*.parquet');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -54,8 +53,7 @@ file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	
 /tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet	0	2	3	102	1	0	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	37	42	40	{}	NULL	NULL	t	t	108	NULL	NULL
 /tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet	0	2	3	102	2	0	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	79	33	31	{}	NULL	NULL	t	t	108	NULL	NULL
 
-
-# DOCS_SETUP: file_fixtures_example_003
+# DOCS_TEST: example_003
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -63,10 +61,10 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_003_1_test_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| DESCRIBE SELECT * FROM 'test.parquet';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 DESCRIBE SELECT * FROM '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_003_1_test_parquet.parquet';
@@ -76,8 +74,7 @@ id	INTEGER	YES	NULL	NULL	NULL
 name	VARCHAR	YES	NULL	NULL	NULL
 value	INTEGER	YES	NULL	NULL	NULL
 
-
-# DOCS_SETUP: file_fixtures_example_004
+# DOCS_TEST: example_004
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -85,11 +82,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_004
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM parquet_schema('test.parquet');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -101,8 +98,7 @@ file_name	name	type	type_length	repetition_type	num_children	converted_type	scal
 /tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet	name	BYTE_ARRAY	NULL	OPTIONAL	NULL	UTF8	NULL	NULL	NULL	NULL	VARCHAR	2
 /tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_004_1_test_parquet.parquet	value	INT32	NULL	OPTIONAL	NULL	INT_32	NULL	NULL	NULL	NULL	INTEGER	3
 
-
-# DOCS_SETUP: file_fixtures_example_005
+# DOCS_TEST: example_005
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -110,11 +106,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_005
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM parquet_file_metadata('test.parquet');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -123,8 +119,7 @@ FROM parquet_file_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_
 file_name	created_by	num_rows	num_row_groups	format_version	encryption_algorithm	footer_signing_key_metadata	file_size_bytes	footer_size	column_orders
 /tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet	DuckDB version v0.0.1 (build 8c42e3b1)	2	1	1	NULL	NULL	424	304	{ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder())}
 
-
-# DOCS_SETUP: file_fixtures_example_006
+# DOCS_TEST: example_006
 
 statement ok
 COPY (
@@ -139,11 +134,11 @@ COPY (
     }
 );
 
-# DOCS_TEST: example_006
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM parquet_kv_metadata('test.parquet');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT
@@ -161,8 +156,7 @@ file_name	key	value
 test.parquet	\\x69735f6576656e	\\x6e6f7420276f646427
 test.parquet	\\x6e756d626572	\\x416e7377657220746f206c6966652c20756e6976657273652c20616e642065766572797468696e67
 
-
-# DOCS_SETUP: file_fixtures_example_007
+# DOCS_TEST: example_007
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -170,11 +164,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_007
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM parquet_full_metadata('test.parquet');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -183,8 +177,7 @@ FROM parquet_full_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_
 parquet_file_metadata	parquet_metadata	parquet_schema	parquet_kv_metadata
 {"(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,\\"DuckDB version v0.0.1 (build 8c42e3b1)\\",2,1,1,,,424,304,\\"{ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder())}\\")"}	{"(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,0,2,3,102,0,0,2,id,INT32,1,2,0,,1,2,SNAPPY,PLAIN,,,4,33,31,{},,,t,t,108,,)","(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,0,2,3,102,1,0,2,name,BYTE_ARRAY,alpha,beta,0,,alpha,beta,SNAPPY,PLAIN,,,37,42,40,{},,,t,t,108,,)","(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,0,2,3,102,2,0,2,value,INT32,10,20,0,,10,20,SNAPPY,PLAIN,,,79,33,31,{},,,t,t,108,,)"}	{"(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,duckdb_schema,,,REQUIRED,3,,,,,,,0)","(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,id,INT32,,OPTIONAL,,INT_32,,,,,INTEGER,1)","(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,name,BYTE_ARRAY,,OPTIONAL,,UTF8,,,,,VARCHAR,2)","(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,value,INT32,,OPTIONAL,,INT_32,,,,,INTEGER,3)"}	{}
 
-
-# DOCS_SETUP: file_fixtures_example_008
+# DOCS_TEST: example_008
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -192,10 +185,10 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_008
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| FROM parquet_bloom_probe('my_file.parquet', 'my_col', 500);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query error db error: ERROR: Column my_col not found in /tmp/\$\{__DATABASE__\}_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet\.parquet
 FROM parquet_bloom_probe('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet', 'my_col', 500);

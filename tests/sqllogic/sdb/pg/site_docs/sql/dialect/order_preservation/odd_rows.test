@@ -1,11 +1,11 @@
-# DOCS_SETUP: local_order_tbl_fixture
+# DOCS_TEST: example_002
 
 statement ok
 CREATE TABLE tbl AS
     SELECT *
     FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) t(x, y);
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 query ??
 SELECT *

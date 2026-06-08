@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY english_dict (
     template = 'text',
@@ -12,6 +14,8 @@ CREATE TEXT SEARCH DICTIONARY english_dict (
 );
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY exact_dict (
@@ -26,6 +30,8 @@ CREATE TEXT SEARCH DICTIONARY exact_dict (
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY autocomplete_dict (
     template = 'text',
@@ -37,6 +43,8 @@ CREATE TEXT SEARCH DICTIONARY autocomplete_dict (
 );
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY filtered_dict (

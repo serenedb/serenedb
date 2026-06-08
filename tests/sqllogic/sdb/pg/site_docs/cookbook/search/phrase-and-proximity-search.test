@@ -1,4 +1,4 @@
-# DOCS_SETUP: shared_search_dataset
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE movies (
@@ -53,7 +53,7 @@ statement ok
 CREATE INDEX movies_exact_idx ON movies
     USING inverted (id, title exact_dict, description exact_dict);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title
@@ -64,8 +64,9 @@ ORDER BY id;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title
@@ -75,8 +76,9 @@ WHERE PHRASE(description, 'the war against its controllers');
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title
@@ -87,8 +89,9 @@ ORDER BY id;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title
@@ -99,8 +102,9 @@ ORDER BY id;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title
@@ -111,8 +115,9 @@ ORDER BY id;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title, genre
@@ -123,8 +128,9 @@ ORDER BY id;
 db error: ERROR: Scalar Function with name term_eq does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query error
 SELECT genre, COUNT(*) AS matches, AVG(runtime) AS avg_runtime
@@ -136,8 +142,9 @@ ORDER BY matches DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query error
 SELECT genre,
@@ -151,8 +158,9 @@ GROUP BY genre;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query ?
 -- The query "Biggest Blockbuster" becomes tokens: {biggest, blockbuster}

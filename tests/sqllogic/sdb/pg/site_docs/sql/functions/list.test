@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT [lower(x) FOR x IN strings] AS strings
 FROM (VALUES (['Hello', '', 'World'])) t(strings);
@@ -8,6 +10,8 @@ strings
 {hello,"",world}
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT [upper(x) FOR x IN strings IF len(x) > 0] AS strings
@@ -18,6 +22,8 @@ strings
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT [4, 5, 6] AS l, [x FOR x, i IN l IF i != 2] AS filtered;
 ----
@@ -26,6 +32,8 @@ l	filtered
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 statement error
 l.list_apply(lambda x, i: {'filter': g(x, i), 'result': f(x, i)})
     .list_filter(lambda x: x.filter)
@@ -33,8 +41,9 @@ l.list_apply(lambda x, i: {'filter': g(x, i), 'result': f(x, i)})
 ----
 db error: ERROR: syntax error at or near "l"
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query
 SELECT range(5);
@@ -44,6 +53,8 @@ range
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT range(2, 5);
 ----
@@ -52,6 +63,8 @@ range
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query
 SELECT range(2, 5, 3);
 ----
@@ -59,6 +72,8 @@ range
 {2}
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query
 SELECT generate_series(5);
@@ -73,6 +88,8 @@ generate_series
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 query
 SELECT generate_series(2, 5);
 ----
@@ -84,6 +101,8 @@ generate_series
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query
 SELECT generate_series(2, 5, 3);
 ----
@@ -92,6 +111,8 @@ generate_series
 5
 
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query
 SELECT generate_subscripts([4, 5, 6], 1) AS i;
@@ -103,6 +124,8 @@ i
 
 # DOCS_TEST: example_012
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM range(DATE '1992-01-01', DATE '1992-03-01', INTERVAL '1' MONTH);
@@ -112,6 +135,8 @@ range
 1992-02-01 00:00:00
 
 # DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -124,6 +149,8 @@ generate_series
 
 # DOCS_TEST: example_014
 
+# DOCS_TEST_BODY
+
 query
 SELECT list_slice([1, 2, 3, 4, 5], 2, 4);
 ----
@@ -131,6 +158,8 @@ list_slice
 {2,3,4}
 
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 query
 SELECT ([1, 2, 3, 4, 5])[2:4:2];
@@ -140,6 +169,8 @@ SELECT ([1, 2, 3, 4, 5])[2:4:2];
 
 # DOCS_TEST: example_016
 
+# DOCS_TEST_BODY
+
 query
 SELECT([1, 2, 3, 4, 5])[4:2:-2];
 ----
@@ -147,6 +178,8 @@ SELECT([1, 2, 3, 4, 5])[4:2:-2];
 {4,2}
 
 # DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
 
 query
 SELECT ([1, 2, 3, 4, 5])[:];
@@ -156,6 +189,8 @@ SELECT ([1, 2, 3, 4, 5])[:];
 
 # DOCS_TEST: example_018
 
+# DOCS_TEST_BODY
+
 query
 SELECT ([1, 2, 3, 4, 5])[:-:2];
 ----
@@ -163,6 +198,8 @@ SELECT ([1, 2, 3, 4, 5])[:-:2];
 {1,3,5}
 
 # DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
 
 query
 SELECT ([1, 2, 3, 4, 5])[:-:-2];
@@ -172,6 +209,8 @@ SELECT ([1, 2, 3, 4, 5])[:-:-2];
 
 # DOCS_TEST: example_020
 
+# DOCS_TEST_BODY
+
 query
 SELECT list_aggregate([1, 2, -4, NULL], 'min');
 ----
@@ -179,6 +218,8 @@ list_aggregate
 -4
 
 # DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
 
 query
 SELECT list_aggregate([2, 4, 8, 42], 'sum');
@@ -188,6 +229,8 @@ list_aggregate
 
 # DOCS_TEST: example_022
 
+# DOCS_TEST_BODY
+
 query
 SELECT list_aggregate([[1, 2], [NULL], [2, 10, 3]], 'last');
 ----
@@ -195,6 +238,8 @@ list_aggregate
 {2,10,3}
 
 # DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
 
 query
 SELECT list_aggregate([2, 4, 8, 42], 'string_agg', '|');
@@ -204,6 +249,8 @@ list_aggregate
 
 # DOCS_TEST: example_024
 
+# DOCS_TEST_BODY
+
 query
 SELECT list_min([1, 2, -4, NULL]);
 ----
@@ -211,6 +258,8 @@ list_min
 -4
 
 # DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
 
 query
 SELECT list_sum([2, 4, 8, 42]);
@@ -220,6 +269,8 @@ list_sum
 
 # DOCS_TEST: example_026
 
+# DOCS_TEST_BODY
+
 query
 SELECT list_last([[1, 2], [NULL], [2, 10, 3]]);
 ----
@@ -227,6 +278,8 @@ list_last
 {2,10,3}
 
 # DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
 
 query
 SELECT array_to_string([1, 2, 3], '-') AS str;
@@ -236,6 +289,8 @@ str
 
 # DOCS_TEST: example_028
 
+# DOCS_TEST_BODY
+
 query
 SELECT list_aggr([1, 2, 3], 'string_agg', '-') AS str;
 ----
@@ -243,6 +298,8 @@ str
 1-2-3
 
 # DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
 
 query
 SELECT list_sort([1, 3, NULL, 5, NULL, -5]);
@@ -252,13 +309,16 @@ list_sort
 
 # DOCS_TEST: example_030
 
+# DOCS_TEST_BODY
+
 statement error
 [-5, 1, 3, 5, NULL, NULL]
 ----
 db error: ERROR: syntax error at or near "\["
 
-
 # DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
 
 query
 SELECT list_sort([1, 3, NULL, 2], 'ASC');
@@ -268,13 +328,16 @@ list_sort
 
 # DOCS_TEST: example_032
 
+# DOCS_TEST_BODY
+
 statement error
 [1, 2, 3, NULL]
 ----
 db error: ERROR: syntax error at or near "\["
 
-
 # DOCS_TEST: example_033
+
+# DOCS_TEST_BODY
 
 query
 SELECT list_sort([1, 3, NULL, 2], 'DESC', 'NULLS FIRST');
@@ -284,13 +347,16 @@ list_sort
 
 # DOCS_TEST: example_034
 
+# DOCS_TEST_BODY
+
 statement error
 [NULL, 3, 2, 1]
 ----
 db error: ERROR: syntax error at or near "\["
 
-
 # DOCS_TEST: example_035
+
+# DOCS_TEST_BODY
 
 query
 SELECT list_sort([1, 3, NULL, 5, NULL, -5]);
@@ -300,13 +366,16 @@ list_sort
 
 # DOCS_TEST: example_036
 
+# DOCS_TEST_BODY
+
 statement error
 [-5, 1, 3, 5, NULL, NULL]
 ----
 db error: ERROR: syntax error at or near "\["
 
-
 # DOCS_TEST: example_037
+
+# DOCS_TEST_BODY
 
 query
 SELECT list_reverse_sort([1, 3, NULL, 2], 'NULLS LAST');
@@ -316,13 +385,16 @@ list_reverse_sort
 
 # DOCS_TEST: example_038
 
+# DOCS_TEST_BODY
+
 statement error
 [3, 2, 1, NULL]
 ----
 db error: ERROR: syntax error at or near "\["
 
-
 # DOCS_TEST: example_039
+
+# DOCS_TEST_BODY
 
 query
 SELECT
@@ -335,6 +407,8 @@ flatten
 {1,2,3,4}
 
 # DOCS_TEST: example_040
+
+# DOCS_TEST_BODY
 
 query
 SELECT
@@ -354,6 +428,8 @@ flatten
 
 # DOCS_TEST: example_041
 
+# DOCS_TEST_BODY
+
 query
 SELECT flatten([]);
 ----
@@ -361,6 +437,8 @@ flatten
 {}
 
 # DOCS_TEST: example_042
+
+# DOCS_TEST_BODY
 
 query
 SELECT flatten(NULL);
@@ -370,6 +448,8 @@ NULL
 
 # DOCS_TEST: example_043
 
+# DOCS_TEST_BODY
+
 query
 SELECT flatten([NULL]);
 ----
@@ -377,6 +457,8 @@ flatten
 {}
 
 # DOCS_TEST: example_044
+
+# DOCS_TEST_BODY
 
 query
 -- (Note the extra set of parentheses vs. the prior example)
@@ -386,6 +468,8 @@ flatten
 {NULL}
 
 # DOCS_TEST: example_045
+
+# DOCS_TEST_BODY
 
 query
 SELECT flatten([[NULL], [NULL]]);

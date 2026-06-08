@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY pipe_delim (
     template = 'delimiter',
@@ -7,6 +9,8 @@ CREATE TEXT SEARCH DICTIONARY pipe_delim (
 );
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY comma_delim (

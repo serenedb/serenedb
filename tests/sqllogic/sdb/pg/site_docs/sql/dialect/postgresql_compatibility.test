@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT 1.0 / 0.0 AS x;
 ----
@@ -46,6 +48,8 @@ Infinity
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT 1 / 2 AS x;
 ----
@@ -54,6 +58,8 @@ x
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT 1 // 2 AS x;
 ----
@@ -61,6 +67,8 @@ x
 0
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query ? rowsort
 SELECT true AS x
@@ -71,12 +79,12 @@ x
 1
 2
 
-# DOCS_SETUP: postgresql_identifier_case_fixture
+# DOCS_TEST: example_005
 
 statement ok
 SET preserve_identifier_case = false;
 
-# DOCS_TEST: example_005
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE MyTaBLe (x INTEGER);
@@ -86,13 +94,15 @@ SELECT * FROM "MyTaBLe";
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE "PreservedCase" (x INTEGER);
 
 query error db error: ERROR: Table with name preservedcase does not exist!
 SELECT * FROM PreservedCase;
 
-# DOCS_SETUP
+# DOCS_TEST: example_008
 
 statement ok
 USE $__DATABASE__;
@@ -100,14 +110,14 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS mytable;
 
-# DOCS_TEST: example_008
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SET preserve_identifier_case = false;
 #|
 #| CREATE TABLE MyTaBLe (x INTEGER);
 #|
 #| SELECT tbl FROM duckdb_tables();
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 SET preserve_identifier_case = false;
@@ -125,6 +135,8 @@ mytable
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 query
 SELECT 1 == 1 AS t;
 ----
@@ -133,6 +145,8 @@ t
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query
 SELECT ARRAY[''''];
 ----
@@ -140,6 +154,8 @@ array
 {'}
 
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE SCHEMA myschema;
@@ -151,6 +167,8 @@ statement ok
 CREATE TABLE myschema.mytable (v mytype);
 
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 statement ok
 DESCRIBE myschema.mytable;

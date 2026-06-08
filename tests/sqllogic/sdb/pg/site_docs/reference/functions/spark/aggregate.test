@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 SELECT collect_set(i)
 FROM (
@@ -24,8 +26,9 @@ FROM (
 ----
 db error: ERROR: syntax error at or near ">"
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT max_by(x, y)
@@ -41,6 +44,8 @@ b
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT min_by(x, y)
 FROM (
@@ -55,6 +60,8 @@ a
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query
 SELECT mode(x)
 FROM (
@@ -67,6 +74,8 @@ mode
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query error
 SELECT SUM(x)
 FROM (
@@ -76,4 +85,3 @@ FROM (
 ) AS t(x);
 ----
 db error: ERROR: syntax error at or near "L"
-

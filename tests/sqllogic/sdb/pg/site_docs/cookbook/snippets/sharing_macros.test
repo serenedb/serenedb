@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE MACRO pretty_print_integer(n) AS
     CASE
@@ -17,6 +19,8 @@ x
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement error
 INSTALL httpfs;
 ----
@@ -25,14 +29,15 @@ Extension "httpfs" is an existing extension.
 
 For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=httpfs (ERROR Problem with the SSL CA cert (path? access rights?))
 
-
 # DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'https://blobs.duckdb.org/data/pretty_print_integer_macro.duckdb'
 #|     AS pretty_print_macro_db;
 #|
 #| SELECT pretty_print_macro_db.pretty_print_integer(42_123) AS x;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 DETACH IF EXISTS pretty_print_macro_fixture;
@@ -65,8 +70,9 @@ SELECT pretty_print_macro_db.pretty_print_integer(42_123) AS x;
 x
 42k
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE MACRO checksum(table_name) AS TABLE
@@ -74,6 +80,8 @@ CREATE MACRO checksum(table_name) AS TABLE
     FROM query_table(table_name);
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement error
 INSTALL httpfs;
@@ -83,8 +91,7 @@ Extension "httpfs" is an existing extension.
 
 For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=httpfs (ERROR Problem with the SSL CA cert (path? access rights?))
 
-
-# DOCS_SETUP: file_fixtures_example_006
+# DOCS_TEST: example_006
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -109,8 +116,7 @@ CREATE OR REPLACE MACRO checksum_macro_fixture.checksum(table_name) AS TABLE
 statement ok
 DETACH checksum_macro_fixture;
 
-# DOCS_TEST: example_006
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| ATTACH 'https://blobs.duckdb.org/data/compute_table_checksum.duckdb'
 #|     AS compute_table_checksum_db;
 #|
@@ -119,7 +125,8 @@ DETACH checksum_macro_fixture;
 #|
 #| .mode line
 #| FROM compute_table_checksum_db.checksum('stations');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_006_compute_table_checksum.duckdb'

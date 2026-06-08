@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT cast(1234567 as bigint);
 ----
@@ -14,6 +16,8 @@ tinyint
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast(1234 as tinyint);
 ----
@@ -25,8 +29,9 @@ SELECT cast(1234567 as smallint);
 ----
 db error: ERROR: Type INT32 with value 1234567 can't be cast because the value is out of range for the destination type INT16
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(12345.12 as bigint);
@@ -66,8 +71,9 @@ SELECT cast(nan() as tinyint);
 db error: ERROR: Scalar Function with name nan does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(127.8 as tinyint);
@@ -87,8 +93,9 @@ SELECT cast(infinity() as bigint);
 db error: ERROR: Scalar Function with name infinity does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(nan() as bigint);
@@ -96,8 +103,9 @@ SELECT cast(nan() as bigint);
 db error: ERROR: Scalar Function with name nan does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast('12345' as bigint);
@@ -118,6 +126,8 @@ tinyint
 -1
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('12345.67' as tinyint);
@@ -172,8 +182,9 @@ SELECT cast('-.' as tinyint);
 ----
 db error: ERROR: Could not convert string '\-\.' to INT8
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(2.56 decimal(6, 2) as integer);
@@ -186,16 +197,18 @@ SELECT cast(3.46 decimal(6, 2) as integer);
 ----
 db error: ERROR: syntax error at or near "decimal"
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(214748364890 decimal(12, 2) as integer);
 ----
 db error: ERROR: syntax error at or near "decimal"
 
-
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(1 as boolean);
@@ -273,6 +286,8 @@ t
 
 # DOCS_TEST: example_011
 
+# DOCS_TEST_BODY
+
 query
 SELECT cast('1' as boolean);
 ----
@@ -322,6 +337,8 @@ bool
 t
 
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('1.7E308' as boolean);
@@ -373,6 +390,8 @@ f
 
 # DOCS_TEST: example_013
 
+# DOCS_TEST_BODY
+
 query
 SELECT cast(1 as real);
 ----
@@ -387,6 +406,8 @@ float4
 
 # DOCS_TEST: example_014
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast(1.7E308 as real);
 ----
@@ -398,8 +419,9 @@ SELECT cast(-1.7E308 as real);
 ----
 db error: ERROR: Type DOUBLE with value \-1\.7e\+308 can't be cast because the value is out of range for the destination type FLOAT
 
-
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast('1.' as real);
@@ -438,6 +460,8 @@ float4
 NaN
 
 # DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('1.2a' as real);
@@ -495,6 +519,8 @@ NaN
 
 # DOCS_TEST: example_017
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast('1.2f' as real);
 ----
@@ -518,8 +544,9 @@ SELECT cast('1.2d' as double);
 ----
 db error: ERROR: Could not convert string '1\.2d' to DOUBLE
 
-
 # DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(decimal '10.001' as double);
@@ -529,13 +556,16 @@ float8
 
 # DOCS_TEST: example_019
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast(decimal '300.001' as tinyint);
 ----
 db error: ERROR: Failed to cast decimal value 300 to type INT8
 
-
 # DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(123 as varchar);
@@ -619,6 +649,8 @@ text
 0.00
 
 # DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(double '123456789.01234567' as varchar);
@@ -734,6 +766,8 @@ text
 
 # DOCS_TEST: example_022
 
+# DOCS_TEST_BODY
+
 query
 SELECT cast(double '123456789.01234567' as varchar);
 ----
@@ -784,6 +818,8 @@ text
 
 # DOCS_TEST: example_023
 
+# DOCS_TEST_BODY
+
 query
 SELECT cast(date('2024-03-14') as varchar);
 ----
@@ -791,6 +827,8 @@ text
 2024-03-14
 
 # DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(timestamp '1970-01-01 00:00:00' as varchar);
@@ -824,6 +862,8 @@ text
 
 # DOCS_TEST: example_025
 
+# DOCS_TEST_BODY
+
 query
 SELECT cast(timestamp '1970-01-01 00:00:00' as varchar);
 ----
@@ -849,6 +889,8 @@ text
 0011-02-01 (BC) 10:00:00
 
 # DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(interval '1' day as varchar);
@@ -949,8 +991,9 @@ db error: ERROR: No function matches the given name and argument types '-(DATE, 
 	-(TIME WITH TIME ZONE, INTERVAL) -> TIME WITH TIME ZONE
 	-(INTERVAL) -> INTERVAL
 
-
 # DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(ipaddress '1.2.3.4' as varchar);
@@ -958,8 +1001,9 @@ SELECT cast(ipaddress '1.2.3.4' as varchar);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(ipaddress '2001:0db8:0000:0000:0000:ff00:0042:8329' as varchar);
@@ -974,8 +1018,9 @@ SELECT cast(ipaddress '0:0:0:0:0:0:13.1.68.3' as varchar);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(ipaddress '::ffff:ffff:ffff' as varchar);
@@ -983,8 +1028,9 @@ SELECT cast(ipaddress '::ffff:ffff:ffff' as varchar);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_030
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(ipprefix '1.2.0.0/16' as varchar);
@@ -992,8 +1038,9 @@ SELECT cast(ipprefix '1.2.0.0/16' as varchar);
 db error: ERROR: Type with name ipprefix does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(ipprefix '2001:db8::ff00:42:8329/128' as varchar);
@@ -1008,8 +1055,9 @@ SELECT cast(ipprefix '0:0:0:0:0:0:13.1.68.3/32' as varchar);
 db error: ERROR: Type with name ipprefix does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_032
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(ipaddress '::ffff:ffff:0000/16' as varchar);
@@ -1017,8 +1065,9 @@ SELECT cast(ipaddress '::ffff:ffff:0000/16' as varchar);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_033
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(ipaddress '2001:0db8:0000:0000:0000:ff00:0042:8329' as varbinary);
@@ -1026,8 +1075,9 @@ SELECT cast(ipaddress '2001:0db8:0000:0000:0000:ff00:0042:8329' as varbinary);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_034
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('1.2.3.4' as ipaddress);
@@ -1035,8 +1085,9 @@ SELECT cast('1.2.3.4' as ipaddress);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_035
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('::ffff:ffff:ffff' as ipaddress);
@@ -1044,8 +1095,9 @@ SELECT cast('::ffff:ffff:ffff' as ipaddress);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_036
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(tdigest_agg(cast(1.0 as double)) as varbinary);
@@ -1053,8 +1105,9 @@ SELECT cast(tdigest_agg(cast(1.0 as double)) as varbinary);
 db error: ERROR: Scalar Function with name tdigest_agg does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_037
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(qdigest_agg(cast(1.0 as double)) as varbinary);
@@ -1062,8 +1115,9 @@ SELECT cast(qdigest_agg(cast(1.0 as double)) as varbinary);
 db error: ERROR: Scalar Function with name qdigest_agg does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_038
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast('1970-01-01' as timestamp);
@@ -1091,13 +1145,16 @@ timestamp
 
 # DOCS_TEST: example_039
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast('2012-Oct-23' as timestamp);
 ----
 db error: ERROR: invalid timestamp field format: "2012\-Oct\-23", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
 
-
 # DOCS_TEST: example_040
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('1970-01-01 00:00:00 +09:00' as timestamp);
@@ -1117,8 +1174,9 @@ SELECT cast('1970-01-01 00:00:00 America/Sao_Paulo' as timestamp);
 db error: ERROR: timestamp field value "1970-01-01 00:00:00 America/Sao_Paulo" has a timestamp that is not UTC.
 Use the TIMESTAMPTZ type with the ICU extension loaded to handle non-UTC timestamps.
 
-
 # DOCS_TEST: example_041
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('1970-01-01 00:00 Z' as timestamp);
@@ -1131,8 +1189,9 @@ SELECT cast('1970-01-01 00:00Z' as timestamp);
 ----
 db error: ERROR: invalid timestamp field format: "1970\-01\-01 00:00Z", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
 
-
 # DOCS_TEST: example_042
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(date '1970-01-01' as timestamp);
@@ -1148,6 +1207,8 @@ timestamp
 
 # DOCS_TEST: example_043
 
+# DOCS_TEST_BODY
+
 query error
 -- `adjust_timestamp_to_session_timezone` is true
 SELECT to_unixtime(cast(timestamp '1970-01-01 00:00:00 America/Los_Angeles' as timestamp));
@@ -1204,10 +1265,11 @@ SELECT to_unixtime(cast(from_unixtime(0, '-02:00') as timestamp));
 ----
 db error: ERROR: Scalar Function with name to_unixtime does not exist!
 Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_044
 
+# DOCS_TEST_BODY
+
 query
 -- `adjust_timestamp_to_session_timezone` is true
 SELECT cast(timestamp '1970-01-01 00:00:00' as timestamp with time zone);
@@ -1247,8 +1309,9 @@ SELECT cast(from_unixtime(0) as timestamp with time zone);
 db error: ERROR: Scalar Function with name from_unixtime does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_045
+
+# DOCS_TEST_BODY
 
 query
 -- session_timezone = America/Los_Angeles
@@ -1266,6 +1329,8 @@ timestamp with time zone
 
 # DOCS_TEST: example_046
 
+# DOCS_TEST_BODY
+
 query
 SELECT cast('1970-01-01' as date);
 ----
@@ -1273,6 +1338,8 @@ date
 1970-01-01
 
 # DOCS_TEST: example_047
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('2012' as date);
@@ -1324,6 +1391,8 @@ date
 
 # DOCS_TEST: example_048
 
+# DOCS_TEST_BODY
+
 query
 SELECT cast(timestamp '1970-01-01 00:00:00' as date);
 ----
@@ -1338,14 +1407,17 @@ date
 
 # DOCS_TEST: example_049
 
+# DOCS_TEST_BODY
+
 query error
 SELECT CAST(timestamp '2024-06-01 01:38:00 America/New_York' as DATE);
 ----
 db error: ERROR: timestamp field value "2024-06-01 01:38:00 America/New_York" has a timestamp that is not UTC.
 Use the TIMESTAMPTZ type with the ICU extension loaded to handle non-UTC timestamps.
 
-
 # DOCS_TEST: example_050
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(true as decimal(4, 2));
@@ -1360,6 +1432,8 @@ numeric
 0.00
 
 # DOCS_TEST: example_051
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(1 as decimal(4, 2));
@@ -1381,6 +1455,8 @@ numeric
 
 # DOCS_TEST: example_052
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast(123 as decimal(6, 4));
 ----
@@ -1392,8 +1468,9 @@ SELECT cast(123 as decimal(4, 2));
 ----
 db error: ERROR: Could not cast value 123 to DECIMAL\(4,2\)
 
-
 # DOCS_TEST: example_053
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(0.12 as decimal(4, 4));
@@ -1427,6 +1504,8 @@ numeric
 
 # DOCS_TEST: example_054
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast(123.12 as decimal(6, 4));
 ----
@@ -1438,8 +1517,9 @@ SELECT cast(99999.99 as decimal(6, 2));
 ----
 db error: ERROR: Casting value "99999\.99" to type DECIMAL\(6,2\) failed: value is out of range!
 
-
 # DOCS_TEST: example_055
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(decimal '0.69' as decimal(4, 3));
@@ -1455,6 +1535,8 @@ numeric
 
 # DOCS_TEST: example_056
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast(decimal '-1000.000' as decimal(6, 4));
 ----
@@ -1466,8 +1548,9 @@ SELECT cast(decimal '123456789' as decimal(9, 1));
 ----
 db error: ERROR: Casting value "123456789\.000" to type DECIMAL\(9,1\) failed: value is out of range!
 
-
 # DOCS_TEST: example_057
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast('9999999999.99' as decimal(12, 2));
@@ -1561,6 +1644,8 @@ numeric
 
 # DOCS_TEST: example_058
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast('1.23e67' as decimal(38, 0));
 ----
@@ -1608,8 +1693,9 @@ SELECT cast('3E+' as decimal(12, 2));
 ----
 db error: ERROR: Could not convert string "3E\+" to DECIMAL\(12,2\)
 
-
 # DOCS_TEST: example_059
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('2001:0db8:0000:0000:0000:ff00:0042:8329' as ipaddress);
@@ -1631,8 +1717,9 @@ SELECT cast('::ffff:ffff:ffff' as ipaddress);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_060
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('2001:db8::1::1' as ipaddress);
@@ -1647,8 +1734,9 @@ SELECT cast('789.1.1.1' as ipaddress);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_061
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(from_hex('20010db8000000000000ff0000428329') as ipaddress);
@@ -1670,8 +1758,9 @@ SELECT cast(from_hex('00000000000000000000ffff01020304') as ipaddress);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_062
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(from_hex('f000001100') as ipaddress);
@@ -1679,8 +1768,9 @@ SELECT cast(from_hex('f000001100') as ipaddress);
 db error: ERROR: Type with name ipaddress does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_063
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(ipprefix '1.2.3.4/24' as ipaddress) -- ipaddress '1.2.3.0'
@@ -1688,16 +1778,18 @@ SELECT cast(ipprefix '2001:db8::ff00:42:8329/64' as ipaddress) -- ipaddress '200
 ----
 db error: ERROR: syntax error at or near "SELECT"
 
-
 # DOCS_TEST: example_064
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(stored_tdigest_binary as tdigest(double));
 ----
 db error: ERROR: Expected a constant as type modifier
 
-
 # DOCS_TEST: example_065
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(stored_qdigest_binary as qdigest(bigint));
@@ -1716,8 +1808,9 @@ SELECT cast(stored_qdigest_binary as qdigest(double));
 ----
 db error: ERROR: Expected a constant as type modifier
 
-
 # DOCS_TEST: example_066
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('2001:0db8:0000:0000:0000:ff00:0042:8329/32' as ipprefix);
@@ -1739,8 +1832,9 @@ SELECT cast('::ffff:ffff:ffff/16' as ipprefix);
 db error: ERROR: Type with name ipprefix does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_067
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('2001:db8::1::1/1' as ipprefix);
@@ -1776,8 +1870,9 @@ SELECT cast('::ffff:ffff:ffff/33' as ipprefix);
 db error: ERROR: Type with name ipprefix does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_068
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(ipaddress '1.2.3.4' as ipprefix) -- ipprefix '1.2.3.4/32'
@@ -1785,8 +1880,9 @@ SELECT cast(ipaddress '2001:db8::ff00:42:8329' as ipprefix) -- ipprefix '2001:db
 ----
 db error: ERROR: syntax error at or near "SELECT"
 
-
 # DOCS_TEST: example_069
+
+# DOCS_TEST_BODY
 
 query error
 SELECT parse_presto_data_size('1B');
@@ -1815,8 +1911,9 @@ SELECT parse_presto_data_size('2.3MB');
 db error: ERROR: Scalar Function with name parse_presto_data_size does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_070
+
+# DOCS_TEST_BODY
 
 query
 SELECT typeof(123);

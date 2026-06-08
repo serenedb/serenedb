@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP: file_fixtures_example_001
+# DOCS_TEST: example_001
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -8,8 +8,7 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_snippets_analyze_git_repository_example_001_1_git_log_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE TABLE commits AS
 #|     FROM read_csv(
 #|             'git-log.csv',
@@ -17,7 +16,8 @@ COPY (SELECT * FROM (VALUES
 #|             header = false,
 #|             column_names = ['timestamp', 'hash', 'author', 'message']
 #|         );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TABLE commits AS
@@ -40,8 +40,7 @@ Possible fixes:
 * Enable ignore errors (ignore_errors=true) to ignore potential errors
 * Enable null padding (null_padding=true) to pad missing columns with NULL values
 
-
-# DOCS_SETUP: local_git_commits_fixture
+# DOCS_TEST: example_002
 
 statement ok
 DROP TABLE IF EXISTS commits;
@@ -54,7 +53,7 @@ INSERT INTO commits VALUES
     (TIMESTAMP '2025-01-01 10:00:00', 'abc123', 'Ada', 'ci update python tests'),
     (TIMESTAMP '2025-02-01 11:00:00', 'def456', 'Bob', 'cli parser fix');
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 query ????
 FROM commits
@@ -65,6 +64,8 @@ timestamp	hash	author	message
 2025-02-01 11:00:00	def456	Bob	cli parser fix
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 SELECT
@@ -77,8 +78,9 @@ ORDER BY num_commits DESC;
 ----
 substitution failed: Invalid escape sequence: \\b
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TABLE words AS
@@ -93,16 +95,13 @@ FROM commits;
 ----
 substitution failed: Invalid escape sequence: \\W
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_005
 
 statement ok
 USE $__DATABASE__;
 
 statement ok
 DROP TABLE IF EXISTS words;
-
-# DOCS_SETUP: local_git_words_fixture
 
 statement ok
 DROP TABLE IF EXISTS words;
@@ -117,8 +116,7 @@ INSERT INTO words VALUES
     ('tests'),
     ('cli');
 
-# DOCS_TEST: example_005
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE TABLE stopwords AS
 #|     SELECT unnest(['a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by', 'can', 'did', 'do', 'does', 'doing', 'don', 'down', 'during', 'each', 'few', 'for', 'from', 'further', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'herself', 'him', 'himself', 'his', 'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'itself', 'just', 'me', 'more', 'most', 'my', 'myself', 'no', 'nor', 'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our', 'ourselves', 'out', 'over', 'own', 's', 'same', 'she', 'should', 'so', 'some', 'such', 't', 'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', 'these', 'they', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up', 'very', 'was', 'we', 'were', 'what', 'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with', 'you', 'your', 'yours', 'yourself', 'yourselves']) AS word;
 #|
@@ -126,7 +124,8 @@ INSERT INTO words VALUES
 #|     FROM words
 #|     NATURAL ANTI JOIN stopwords
 #|     WHERE word != '';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE stopwords AS
@@ -144,8 +143,9 @@ DROP TABLE words;
 statement ok
 ALTER TABLE words_filtered RENAME TO words;
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query ?? rowsort
 SELECT word, count(*) AS count FROM words
@@ -160,6 +160,8 @@ python	1
 tests	1
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query ???
 SELECT

@@ -1,4 +1,4 @@
-# DOCS_SETUP: file_fixtures_example_001
+# DOCS_TEST: example_001
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -6,18 +6,17 @@ COPY (SELECT * FROM (VALUES
     (1002, 'Sprinter', 'Rotterdam Centraal', 'Delft')
 ) AS t("service_id", "service_name", "origin", "destination")) TO '/tmp/${__DATABASE__}_cookbook_snippets_dutch_railway_datasets_example_001_services.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE TABLE services AS
 #|     FROM 'https://blobs.duckdb.org/nl-railway/services-2025-03.csv.gz';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE services AS
     FROM '/tmp/${__DATABASE__}_cookbook_snippets_dutch_railway_datasets_example_001_services.csv';
 
-
-# DOCS_SETUP: local_services_fixture
+# DOCS_TEST: example_002
 
 statement ok
 DROP TABLE IF EXISTS services;
@@ -28,7 +27,7 @@ CREATE TABLE services AS SELECT * FROM (VALUES
     (1002, 'Sprinter', 'Rotterdam Centraal', 'Delft')
 ) AS t(service_id, service_name, origin, destination);
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 query error
 DESCRIBE services;

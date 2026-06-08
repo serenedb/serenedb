@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 -- Create a table with a time column
 CREATE TABLE daily_schedule (
@@ -24,6 +26,8 @@ SELECT * FROM daily_schedule;
 event_name	start_time
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT TIME '23:00' + INTERVAL '8 hours' AS new_time;

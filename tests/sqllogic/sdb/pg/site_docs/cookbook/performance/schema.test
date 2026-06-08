@@ -1,4 +1,4 @@
-# DOCS_SETUP: comment_timestamp_fixture
+# DOCS_TEST: example_001
 
 statement ok
 DROP TABLE IF EXISTS Comment;
@@ -16,7 +16,7 @@ INSERT INTO Comment VALUES
     (2, 1, TIMESTAMP '2025-03-01 11:00:00'),
     (3, 1, TIMESTAMP '2025-03-20 12:00:00');
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query
 SELECT avg(extract('day' FROM creationDate)) FROM Comment;
@@ -24,8 +24,7 @@ SELECT avg(extract('day' FROM creationDate)) FROM Comment;
 avg
 12
 
-
-# DOCS_SETUP: comment_varchar_fixture
+# DOCS_TEST: example_002
 
 statement ok
 DROP TABLE IF EXISTS Comment;
@@ -43,7 +42,7 @@ INSERT INTO Comment VALUES
     (2, 1, '2025-03-01 11:00:00'),
     (3, 1, '2025-03-20 12:00:00');
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 query
 SELECT avg(CAST(creationDate[9:10] AS INTEGER)) FROM Comment;
@@ -51,8 +50,7 @@ SELECT avg(CAST(creationDate[9:10] AS INTEGER)) FROM Comment;
 avg
 12
 
-
-# DOCS_SETUP: comment_join_fixture
+# DOCS_TEST: example_003
 
 statement ok
 DROP TABLE IF EXISTS Comment;
@@ -71,7 +69,7 @@ INSERT INTO Comment VALUES
     (3, 1, TIMESTAMP '2025-03-20 12:00:00'),
     (4, 2, TIMESTAMP '2025-04-03 09:00:00');
 
-# DOCS_TEST: example_003
+# DOCS_TEST_BODY
 
 query
 SELECT count(*) AS count

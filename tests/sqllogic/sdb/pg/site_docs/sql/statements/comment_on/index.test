@@ -1,4 +1,4 @@
-# DOCS_SETUP: generated_wide_fixtures
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE test_table AS SELECT * FROM (VALUES
@@ -24,114 +24,137 @@ CREATE MACRO test_macro() AS 1;
 statement ok
 CREATE MACRO test_table_macro() AS TABLE SELECT 1 AS value;
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 statement error
 COMMENT ON TABLE test_table IS 'very nice table';
 ----
 db error: ERROR: ALTER through DuckDB
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement error
 COMMENT ON COLUMN test_table.test_table_column IS 'very nice column';
 ----
 db error: ERROR: ALTER through DuckDB
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement error
 COMMENT ON VIEW test_view IS 'very nice view';
 ----
 db error: ERROR: ALTER through DuckDB
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement error
 COMMENT ON INDEX test_index IS 'very nice index';
 ----
 db error: ERROR: ALTER through DuckDB
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement error
 COMMENT ON SEQUENCE test_sequence IS 'very nice sequence';
 ----
 db error: ERROR: ALTER through DuckDB
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 statement error
 COMMENT ON TYPE test_type IS 'very nice type';
 ----
 db error: ERROR: ALTER through DuckDB
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 statement error
 COMMENT ON MACRO test_macro IS 'very nice macro';
 ----
 db error: ERROR: ALTER through DuckDB
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 statement error
 COMMENT ON MACRO TABLE test_table_macro IS 'very nice table macro';
 ----
 db error: ERROR: ALTER through DuckDB
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 statement error
 COMMENT ON TABLE test_table IS NULL;
 ----
 db error: ERROR: ALTER through DuckDB
 
-
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT comment FROM duckdb_tables();
 
 # DOCS_TEST: example_011
 
+# DOCS_TEST_BODY
+
 statement ok
 SELECT comment FROM duckdb_columns();
 
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT comment FROM duckdb_views();
 
 # DOCS_TEST: example_013
 
+# DOCS_TEST_BODY
+
 statement ok
 SELECT comment FROM duckdb_indexes();
 
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT comment FROM duckdb_sequences();
 
 # DOCS_TEST: example_015
 
+# DOCS_TEST_BODY
+
 statement ok
 SELECT comment FROM duckdb_types();
 
 # DOCS_TEST: example_016
 
+# DOCS_TEST_BODY
+
 statement ok
 SELECT comment FROM duckdb_functions();
 
 # DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT comment FROM duckdb_functions();

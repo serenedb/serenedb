@@ -2,13 +2,15 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE tbl (i INTEGER);
 
 statement ok
 SHOW TABLES;
 
-# DOCS_SETUP
+# DOCS_TEST: example_002
 
 statement ok
 USE $__DATABASE__;
@@ -16,7 +18,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS tbl;
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE tbl (i INTEGER);
@@ -32,7 +34,7 @@ SHOW ALL TABLES;
 
 # DOCS_TEST: example_003
 
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| ATTACH 'db.duckdb';
 #|
 #| CREATE TABLE db.main_tbl (u VARCHAR);
@@ -42,16 +44,18 @@ SHOW ALL TABLES;
 #| CREATE TABLE db.s1.schema_tbl (v VARCHAR);
 #|
 #| SHOW TABLES FROM db;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEMP TABLE IF NOT EXISTS __docs_list_tables_noop (i INTEGER);
 
 # DOCS_TEST: example_004
 
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SHOW TABLES FROM db.s1;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEMP TABLE IF NOT EXISTS __docs_list_tables_noop (i INTEGER);

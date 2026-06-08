@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE tbl (i INTEGER PRIMARY KEY, j VARCHAR);
 

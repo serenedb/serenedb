@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_001
 
 statement ok
 USE $__DATABASE__;
@@ -27,7 +27,7 @@ INSERT INTO addresses VALUES
     ('5 Pond Road', 'Mallard', 'Pond Road', 90000, '22222', 'UK', 25, 5, 50),
     ('9 Lake View', 'Mallard', 'Lake View', 40000, '33333', 'UK', 25, 6, 60);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query ??? rowsort
 -- the syntax () denotes the empty set (i.e., computing an ungrouped aggregate)
@@ -52,6 +52,8 @@ NULL	Quack Blvd	50000
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query ??? rowsort
 SELECT city, street_name, avg(income)
 FROM addresses
@@ -74,6 +76,8 @@ NULL	Quack Blvd	50000
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query ??? rowsort
 SELECT city, street_name, avg(income)
 FROM addresses
@@ -92,6 +96,8 @@ NULL	NULL	65000
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE students (course VARCHAR, type VARCHAR);
 
@@ -102,6 +108,8 @@ VALUES
     ('CS', NULL), ('CS', NULL), ('Math', NULL);
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query ??? rowsort
 SELECT course, type, count(*)
@@ -123,6 +131,8 @@ NULL	NULL	7
 NULL	PhD	1
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query ??? rowsort
 -- Group by course, type:
@@ -159,6 +169,8 @@ NULL	NULL	7
 NULL	PhD	1
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query ???? rowsort
 WITH days AS (
@@ -199,6 +211,8 @@ y	q	m	grouping_id()
 NULL	NULL	NULL	7
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query ????? rowsort
 WITH days AS (

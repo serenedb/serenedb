@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE articles (
     id INTEGER PRIMARY KEY,
@@ -9,6 +11,8 @@ CREATE TABLE articles (
 );
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE comments (
@@ -21,6 +25,8 @@ CREATE TABLE comments (
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 statement error
 CREATE TABLE movies_external (
     title TEXT,
@@ -32,8 +38,9 @@ CREATE TABLE movies_external (
 ----
 db error: ERROR: syntax error at or near "USING"
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TABLE movies_s3 (
@@ -50,11 +57,11 @@ CREATE TABLE movies_s3 (
 ----
 db error: ERROR: syntax error at or near "USING"
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TABLE t (id INT) USING EXTERNAL WITH (HELP);
 ----
 db error: ERROR: syntax error at or near "USING"
-

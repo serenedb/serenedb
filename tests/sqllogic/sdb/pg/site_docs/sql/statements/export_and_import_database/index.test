@@ -1,9 +1,11 @@
 control substitution on
 
 # DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| EXPORT DATABASE 'target_directory';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 DETACH IF EXISTS export_docs_db_001;
@@ -26,11 +28,12 @@ USE $__DATABASE__;
 statement ok
 DETACH export_docs_db_001;
 
-
 # DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| EXPORT DATABASE 'target_directory' (FORMAT csv, DELIMITER '|');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 DETACH IF EXISTS export_docs_db_002;
@@ -53,11 +56,12 @@ USE $__DATABASE__;
 statement ok
 DETACH export_docs_db_002;
 
-
 # DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| EXPORT DATABASE 'target_directory' (FORMAT parquet);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 DETACH IF EXISTS export_docs_db_003;
@@ -80,15 +84,16 @@ USE $__DATABASE__;
 statement ok
 DETACH export_docs_db_003;
 
-
 # DOCS_TEST: example_004
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| EXPORT DATABASE 'target_directory' (
 #|     FORMAT parquet,
 #|     COMPRESSION zstd,
 #|     ROW_GROUP_SIZE 100_000
 #| );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 DETACH IF EXISTS export_docs_db_004;
@@ -115,8 +120,7 @@ USE $__DATABASE__;
 statement ok
 DETACH export_docs_db_004;
 
-
-# DOCS_SETUP: file_fixtures_example_005
+# DOCS_TEST: example_005
 
 statement ok
 DETACH IF EXISTS import_source_005;
@@ -151,23 +155,21 @@ ATTACH ':memory:' AS import_target_005;
 statement ok
 USE import_target_005;
 
-# DOCS_TEST: example_005
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| IMPORT DATABASE 'source_directory';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 IMPORT DATABASE '/tmp/${__DATABASE__}_sql_statements_export_and_import_database_example_005_source_directory';
 
-# DOCS_SETUP: reset_after_example_005
+# DOCS_TEST: example_006
 
 statement ok
 USE $__DATABASE__;
 
 statement ok
 DETACH import_target_005;
-
-# DOCS_SETUP: file_fixtures_example_006
 
 statement ok
 DETACH IF EXISTS import_source_006;
@@ -202,10 +204,10 @@ ATTACH ':memory:' AS import_target_006;
 statement ok
 USE import_target_006;
 
-# DOCS_TEST: example_006
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| PRAGMA import_database('source_directory');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 PRAGMA import_database('/tmp/${__DATABASE__}_sql_statements_export_and_import_database_example_006_source_directory');

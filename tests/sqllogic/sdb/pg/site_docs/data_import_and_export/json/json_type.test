@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT '[1, null, {"key": "value"}]'::JSON;
 ----
@@ -8,13 +10,16 @@ json
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query error
 SELECT 'unquoted'::JSON;
 ----
 (?i)Malformed JSON.*
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT '{ "a": 5 }'::JSON = '{"a":5}'::JSON;
@@ -24,6 +29,8 @@ f
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query
 SELECT '{  "a":5 }'::JSON::VARCHAR
 ----
@@ -31,6 +38,8 @@ text
 {  "a":5 }
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query
 SELECT '{"a":1,"b":2}'::JSON = '{"b":2,"a":1}'::JSON;
@@ -40,6 +49,8 @@ f
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT '{"a":1,"a":2}'::JSON;
 ----
@@ -47,6 +58,8 @@ json
 {"a":1,"a":2}
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query
 SELECT '{"duck": 42}'::JSON::STRUCT(duck INTEGER);
@@ -56,6 +69,8 @@ struct(duck integer)
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 query
 SELECT {duck: 42}::JSON;
 ----
@@ -63,6 +78,8 @@ struct_pack
 {"duck":42}
 
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT '2023-05-12'::DATE::JSON;

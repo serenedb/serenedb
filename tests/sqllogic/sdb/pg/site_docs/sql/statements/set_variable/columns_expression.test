@@ -1,5 +1,7 @@
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 statement ok
 SET VARIABLE column_to_exclude = 'col1';
 

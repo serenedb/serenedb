@@ -1,4 +1,4 @@
-# DOCS_SETUP: file_fixtures_example_001
+# DOCS_TEST: example_001
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -6,12 +6,12 @@ COPY (SELECT * FROM (VALUES
     ('B', 2, 20.5)
 ) AS t("group_name", "item_count", "score")) TO '/tmp/${__DATABASE__}_cookbook_data_viewers_tableau_example_001_h2oai_group_small.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE VIEW h2oai AS (
 #|     FROM read_parquet('/Users/username/duckdb/data/parquet-testing/h2oai/h2oai_group_small.parquet')
 #| );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE VIEW h2oai AS (

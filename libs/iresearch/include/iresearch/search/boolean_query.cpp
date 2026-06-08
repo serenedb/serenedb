@@ -119,93 +119,47 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
 
 }  // namespace
 
-DocIterator::ptr BooleanQuery::execute(const ExecutionContext& old) const {
+DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
   if (empty()) {
     return DocIterator::empty();
   }
+  return execute(ctx, begin(), end());
+}
 
-  SDB_ASSERT(_excl);
-  const auto excl_begin = this->excl_begin();
-  const auto end = this->end();
+DocIterator::ptr ExclusionQuery::execute(const ExecutionContext& old) const {
   ExecutionContext ctx{old};
-  if (excl_begin != end) {
-    // TODO(mbkkt) enable back?
-    ctx.wand.wand_enabled = false;
-  }
+  // TODO(mbkkt) enable back?
+  ctx.wand.wand_enabled = false;
 
-  auto incl = execute(ctx, begin(), excl_begin);
+  auto incl = _include->execute(ctx);
 
-  if (excl_begin == end) {
+  auto excl = _exclude->execute(ctx);
+  if (doc_limits::eof(excl->value())) {
     return incl;
   }
-
-  // TODO(gnusi): rewrite this to use ByTerms
-
-  ScoreAdapters excl_itrs;
-  excl_itrs.reserve(std::distance(excl_begin, end));
 
   using TermWithFreq = PostingIteratorBase<
     IteratorTraitsImpl<FormatTraits128, true, false, false>>;
   using TermWithoutFreq = PostingIteratorBase<
     IteratorTraitsImpl<FormatTraits128, false, false, false>>;
 
-  bool excl_has_term_with_freq = false;
-  bool excl_has_term_without_freq = false;
-  bool excl_has_abstract = false;
-
-  for (auto it = excl_begin; it != end; ++it) {
-    auto docs = (*it)->execute(ctx);
-    if (doc_limits::eof(docs->value())) {
-      continue;
-    }
-    if (dynamic_cast<TermWithFreq*>(docs.get())) {
-      excl_has_term_with_freq |= true;
-    } else if (dynamic_cast<TermWithoutFreq*>(docs.get())) {
-      excl_has_term_without_freq |= true;
-    } else {
-      excl_has_abstract |= true;
-    }
-    excl_itrs.emplace_back(std::move(docs));
-  }
-
-  if (excl_itrs.empty()) {
-    return incl;
-  }
-
-  auto make =
-    [&]<typename IncludeAdapter, typename ExcludeAdapter> -> DocIterator::ptr {
-    using ExcludeAdapters = std::vector<ExcludeAdapter>;
-    if (excl_itrs.size() == 1) {
-      return memory::make_managed<Exclusion<IncludeAdapter, ExcludeAdapter>>(
-        IncludeAdapter{std::move(incl)},
-        ExcludeAdapter{std::move(excl_itrs[0])});
-    }
-    if constexpr (std::is_same_v<ExcludeAdapters, ScoreAdapters>) {
-      return memory::make_managed<Exclusion<IncludeAdapter, ExcludeAdapters>>(
-        IncludeAdapter{std::move(incl)}, std::move(excl_itrs));
-    } else {
-      ExcludeAdapters excl;
-      excl.reserve(excl_itrs.size());
-      for (auto& it : excl_itrs) {
-        excl.emplace_back(std::move(it));
-      }
-      return memory::make_managed<Exclusion<IncludeAdapter, ExcludeAdapters>>(
-        IncludeAdapter{std::move(incl)}, std::move(excl));
-    }
+  auto make = [&]<typename IncludeAdapter, typename ExcludeAdapter>()
+    -> DocIterator::ptr {
+    return memory::make_managed<
+      ExclusionIterator<IncludeAdapter, ExcludeAdapter>>(
+      IncludeAdapter{std::move(incl)}, ExcludeAdapter{std::move(excl)});
   };
 
   auto make_excl = [&]<typename IncludeAdapter>() -> DocIterator::ptr {
-    if (excl_has_abstract ||
-        (excl_has_term_without_freq && excl_has_term_with_freq)) {
-      return make.template operator()<IncludeAdapter, ScoreAdapter>();
-    }
-    if (excl_has_term_with_freq) {
+    if (dynamic_cast<TermWithFreq*>(excl.get())) {
       return make
         .template operator()<IncludeAdapter, PostingAdapter<TermWithFreq>>();
     }
-    SDB_ASSERT(excl_has_term_without_freq);
-    return make
-      .template operator()<IncludeAdapter, PostingAdapter<TermWithoutFreq>>();
+    if (dynamic_cast<TermWithoutFreq*>(excl.get())) {
+      return make
+        .template operator()<IncludeAdapter, PostingAdapter<TermWithoutFreq>>();
+    }
+    return make.template operator()<IncludeAdapter, ScoreAdapter>();
   };
 
   if (dynamic_cast<TermWithFreq*>(incl.get())) {
@@ -225,41 +179,41 @@ void BooleanQuery::visit(const SubReader& segment,
     return;
   }
 
-  // FIXME(gnusi): visit exclude group?
-  for (auto it = begin(), end = excl_begin(); it != end; ++it) {
+  for (auto it = begin(), last = end(); it != last; ++it) {
     (*it)->visit(segment, visitor, boost);
   }
 }
 
 void BooleanQuery::prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
-                           queries_t queries, size_t exclude_start) {
+                           queries_t queries) {
   // apply boost to the current node
   _boost *= ctx.boost;
   // nothrow block
   _queries = std::move(queries);
-  _excl = exclude_start;
   _merge_type = merge_type;
 }
 
-void BooleanQuery::prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
-                           std::span<const Filter* const> incl,
-                           std::span<const Filter* const> excl) {
-  queries_t queries{{ctx.memory}};
-  queries.reserve(incl.size() + excl.size());
-  // prepare included
-  for (const auto* filter : incl) {
-    queries.emplace_back(filter->prepare(ctx));
+Filter::Query::ptr PrepareExclusion(const PrepareContext& ctx,
+                                    const Filter* include,
+                                    const Filter* exclude) {
+  SDB_ASSERT(exclude);
+  Filter::Query::ptr incl;
+  if (include == nullptr) {
+    auto all = AllDocsProvider::Default(kNoBoost);
+    incl = all->prepare(ctx);
+  } else {
+    incl = include->prepare(ctx);
   }
-  // prepare excluded
-  for (const auto* filter : excl) {
-    // exclusion part does not affect scoring at all
-    queries.emplace_back(filter->prepare({
-      .index = ctx.index,
-      .memory = ctx.memory,
-      .ctx = ctx.ctx,
-    }));
-  }
-  prepare(ctx, merge_type, std::move(queries), incl.size());
+
+  // exclusion part does not affect scoring at all
+  auto excl = exclude->prepare({
+    .index = ctx.index,
+    .memory = ctx.memory,
+    .ctx = ctx.ctx,
+  });
+
+  return memory::make_tracked<ExclusionQuery>(ctx.memory, std::move(incl),
+                                              std::move(excl));
 }
 
 DocIterator::ptr AndQuery::execute(const ExecutionContext& ctx, iterator begin,

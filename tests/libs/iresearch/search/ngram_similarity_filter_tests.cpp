@@ -1502,8 +1502,8 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
   const auto ngram_hits = collect(ngram);
   ASSERT_FALSE(ngram_hits.empty());
 
-  irs::Not not_ngram;
-  not_ngram.filter<irs::ByNGramSimilarity>() = ngram;
+  irs::Exclusion not_ngram;
+  not_ngram.exclude<irs::ByNGramSimilarity>() = ngram;
   const auto not_hits = collect(not_ngram);
 
   // Complement must be non-empty and disjoint from the positive hits.

@@ -314,8 +314,8 @@ void SetUpOr(irs::Or& o) {
   }
 }
 
-void SetUpNot(irs::Not& n) {
-  auto& inner = n.filter<irs::ByTerm>();
+void SetUpNot(irs::Exclusion& n) {
+  auto& inner = n.exclude<irs::ByTerm>();
   *inner.mutable_field_id() = kKwFieldId;
   inner.mutable_options()->term = AsBytes("term_0042");
 }
@@ -384,7 +384,7 @@ DEFINE_FILTER_VARIANTS(ByEditDistance, irs::ByEditDistance, SetUpEdit);
 DEFINE_FILTER_VARIANTS(ByPhrase, irs::ByPhrase, SetUpPhrase);
 DEFINE_FILTER_VARIANTS(And, irs::And, SetUpAnd);
 DEFINE_FILTER_VARIANTS(Or, irs::Or, SetUpOr);
-DEFINE_FILTER_VARIANTS(Not, irs::Not, SetUpNot);
+DEFINE_FILTER_VARIANTS(Not, irs::Exclusion, SetUpNot);
 
 #undef DEFINE_FILTER_VARIANTS
 

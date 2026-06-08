@@ -201,8 +201,17 @@ void StringifyOr(std::string* out, const Or& filter, FT&& ft) {
 }
 
 template<typename FT>
-void StringifyNot(std::string* out, const Not& filter, FT&& ft) {
-  absl::StrAppend(out, "NOT[", StringifyFilter(*filter.filter(), ft), "]");
+void StringifyExclusion(std::string* out, const Exclusion& filter, FT&& ft) {
+  const auto* include = filter.include();
+  const auto* exclude = filter.exclude();
+  std::string excluded =
+    exclude == nullptr ? std::string{} : StringifyFilter(*exclude, ft);
+  if (include == nullptr) {
+    absl::StrAppend(out, "NOT[", excluded, "]");
+  } else {
+    absl::StrAppend(out, "EXCLUDE[", StringifyFilter(*include, ft), " EXCEPT ",
+                    excluded, "]");
+  }
 }
 
 template<typename FT>
@@ -364,8 +373,8 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
     StringifyAnd(&out, static_cast<const And&>(filter), ft);
   } else if (type == Type<Or>::id()) {
     StringifyOr(&out, static_cast<const Or&>(filter), ft);
-  } else if (type == Type<Not>::id()) {
-    StringifyNot(&out, static_cast<const Not&>(filter), ft);
+  } else if (type == Type<Exclusion>::id()) {
+    StringifyExclusion(&out, static_cast<const Exclusion&>(filter), ft);
   } else if (type == Type<ByTerm>::id()) {
     StringifyTerm(&out, static_cast<const ByTerm&>(filter), ft);
   } else if (type == Type<ByTerms>::id()) {

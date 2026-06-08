@@ -7301,8 +7301,8 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
   const auto phrase_hits = collect(phrase);
   ASSERT_FALSE(phrase_hits.empty());
 
-  irs::Not not_phrase;
-  not_phrase.filter<irs::ByPhrase>() = phrase;
+  irs::Exclusion not_phrase;
+  not_phrase.exclude<irs::ByPhrase>() = phrase;
   const auto not_hits = collect(not_phrase);
 
   // Complement must be non-empty and disjoint from the positive hits.

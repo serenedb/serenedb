@@ -81,7 +81,7 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
     parent.add(std::move(wildcard));
     return;
   }
-  auto negated = std::make_unique<irs::Not>(std::move(wildcard));
+  auto negated = irs::Not(std::move(wildcard));
   if (parent.type() == irs::Type<irs::Or>::id()) {
     AddFilter<irs::And>(parent).add(std::move(negated));
   } else {

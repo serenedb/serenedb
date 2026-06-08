@@ -1312,14 +1312,14 @@ TEST(boolean_query_estimation, or_filter) {
     irs::Or root;
     root.add<detail::Estimated>().est = 100;
     root.add<detail::Estimated>().est = 320;
-    root.add<irs::Not>().filter<detail::Estimated>().est = 3;
+    root.add<irs::Exclusion>().exclude<detail::Estimated>().est = 3;
     root.add<detail::Unestimated>();
     root.add<detail::Estimated>().est = 10;
     root.add<detail::Unestimated>();
     root.add<detail::Estimated>().est = 7;
     root.add<detail::Estimated>().est = 100;
-    root.add<irs::Not>().filter<detail::Unestimated>();
-    root.add<irs::Not>().filter<detail::Estimated>().est = 0;
+    root.add<irs::Exclusion>().exclude<detail::Unestimated>();
+    root.add<irs::Exclusion>().exclude<detail::Estimated>().est = 0;
     root.add<detail::Unestimated>();
 
     // we need order to suppress optimization
@@ -1446,14 +1446,14 @@ TEST(boolean_query_estimation, and_filter) {
     irs::And root;
     root.add<detail::Estimated>().est = 100;
     root.add<detail::Estimated>().est = 320;
-    root.add<irs::Not>().filter<detail::Estimated>().est = 3;
+    root.add<irs::Exclusion>().exclude<detail::Estimated>().est = 3;
     root.add<detail::Unestimated>();
     root.add<detail::Estimated>().est = 10;
     root.add<detail::Unestimated>();
     root.add<detail::Estimated>().est = 7;
     root.add<detail::Estimated>().est = 100;
-    root.add<irs::Not>().filter<detail::Unestimated>();
-    root.add<irs::Not>().filter<detail::Estimated>().est = 0;
+    root.add<irs::Exclusion>().exclude<detail::Unestimated>();
+    root.add<irs::Exclusion>().exclude<detail::Estimated>().est = 0;
     root.add<detail::Unestimated>();
 
     auto prep = root.prepare({.index = irs::SubReader::empty()});
@@ -1468,7 +1468,7 @@ TEST(boolean_query_estimation, and_filter) {
       }
     }
 
-    ASSERT_EQ(7, irs::CostAttr::extract(*docs));
+    ASSERT_EQ(0, irs::CostAttr::extract(*docs));
   }
 
   // empty case
@@ -14889,7 +14889,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> expected{2, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
 
       // cost
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
@@ -14909,7 +14910,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> excluded{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
@@ -14927,7 +14929,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> excluded{1, 5, 6, 12, 29};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
         result.push_back(it.value());
@@ -14945,7 +14948,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
         result.push_back(it.value());
@@ -14962,7 +14966,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> excluded{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
@@ -14981,7 +14986,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
@@ -15009,7 +15015,8 @@ TEST(exclusion_test, seek) {
       {45, 45},
       {43, 45},
       {57, irs::doc_limits::eof()}};
-    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+    irs::ExclusionIterator it(MakeScoreAdapter(included),
+                              MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15026,7 +15033,8 @@ TEST(exclusion_test, seek) {
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
       {6, irs::doc_limits::eof()},
       {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
-    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+    irs::ExclusionIterator it(MakeScoreAdapter(included),
+                              MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15047,7 +15055,8 @@ TEST(exclusion_test, seek) {
       {13, irs::doc_limits::eof()},
       {45, irs::doc_limits::eof()},
       {57, irs::doc_limits::eof()}};
-    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+    irs::ExclusionIterator it(MakeScoreAdapter(included),
+                              MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15067,7 +15076,8 @@ TEST(exclusion_test, seek) {
       {irs::doc_limits::invalid(), 11},
       {45, 45},
       {57, irs::doc_limits::eof()}};
-    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+    irs::ExclusionIterator it(MakeScoreAdapter(included),
+                              MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15202,7 +15212,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     irs::Or root;
     Append<irs::ByTerm>(root, kFieldName, "A");  // 1
     Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
-    root.add<irs::Or>().add<irs::Not>().filter<irs::ByTerm>() =
+    root.add<irs::Or>().add<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldSame,
                               "xyz");  // none (not within an OR must be
                                        // wrapped inside a single-branch OR)
@@ -15215,7 +15225,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     irs::Or root;
     Append<irs::ByTerm>(root, kFieldName, "A");  // 1
     Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
-    root.add<irs::Or>().add<irs::Not>().filter<irs::ByTerm>() =
+    root.add<irs::Or>().add<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldSame,
                               "xyz");  // none (not within an OR must be
                                        // wrapped inside a single-branch OR)
@@ -15298,7 +15308,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name!=A OR false
   {
     irs::Or root;
-    root.add<irs::Not>().filter<irs::ByTerm>() =
+    root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldName, "A");  // 1
     root.add<irs::Empty>();
 
@@ -15311,7 +15321,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // Not with impossible name!=A OR same="NOT POSSIBLE"
   {
     irs::Or root;
-    root.add<irs::Not>().filter<irs::ByTerm>() =
+    root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldName, "A");  // 1
     Append<irs::ByTerm>(root, kFieldSame, "NOT POSSIBLE");
     CheckQuery(
@@ -15493,8 +15503,8 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
                                            20, 19, 18, 17, 16, 15, 14, 13, 12,
                                            10, 9,  8,  7,  6,  4,  3,  2};
 
-    irs::Not not_node;
-    not_node.filter<irs::ByTerm>() =
+    irs::Exclusion not_node;
+    not_node.exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(column_name, "abcd");
 
     size_t collector_finish_count = 0;
@@ -15579,7 +15589,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
                                            10, 9,  8,  7,  6,  4,  3,  2};
 
     irs::And root;
-    root.add<irs::Not>().filter<irs::ByTerm>() =
+    root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(column_name, "abcd");
 
     size_t collector_finish_count = 0;
@@ -15657,13 +15667,17 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
 
   // empty query
   {
-    CheckQuery(irs::Not(), Docs{}, rdr);
+    CheckQuery(
+      irs::Exclusion(),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // single not statement - empty result
   {
-    irs::Not root;
-    root.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
+    irs::Exclusion root;
+    root.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
 
     CheckQuery(root, Docs{}, rdr);
   }
@@ -15672,8 +15686,9 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   {
     irs::And root;
     root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-    root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>(kFieldName, "A");
+    root.add<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(root, Docs{1}, rdr);
   }
 
@@ -15681,12 +15696,12 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   {
     irs::And root;
     root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-    root.add<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    root.add<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
   }
 
@@ -15695,15 +15710,18 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
     {
       irs::And root;
       root.add<irs::All>();
-      root.add<irs::Not>().filter<irs::All>();
+      root.add<irs::Exclusion>().exclude<irs::All>();
       CheckQuery(root, Docs{}, rdr);
     }
 
     {
       irs::Or root;
       root.add<irs::All>();
-      root.add<irs::Not>().filter<irs::All>();
-      CheckQuery(root, Docs{}, rdr);
+      root.add<irs::Exclusion>().exclude<irs::All>();
+      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+                 rdr);
     }
 
   }  // namespace tests
@@ -15714,7 +15732,7 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::And root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
       CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
     }
@@ -15723,36 +15741,12 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::Or root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
-                            13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                            24, 25, 26, 27, 28, 29, 30, 31, 32},
+      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
                  rdr);
-    }
-    // check 'all' filter added for Not nodes does not affects score
-    {
-      irs::Or root;
-      auto& left_branch = root.add<irs::And>();
-      // this three filters fire at same doc so it will get score = 3
-      Append<irs::ByTerm>(left_branch, kFieldName, "A");
-      Append<irs::ByTerm>(left_branch, kFieldDuplicated, "abcd");
-      Append<irs::ByTerm>(left_branch, kFieldSame, "xyz");
-
-      auto& right_branch = root.add<irs::And>();
-      Append<irs::ByTerm>(right_branch, kFieldName, "B");  // +1 score
-      auto& sub = right_branch.add<irs::Or>();    // this OR we actually test
-      Append<irs::ByTerm>(sub, kFieldName, "B");  // +1 score
-      // will exclude some docs (but A will stay) and produce 'all'
-      sub.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>(kFieldPrefix, "abcde");
-      // will exclude some docs (but A will stay) and produce another 'all'
-      sub.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      // if 'all' will add at least 1 to score totals score will be 3 and
-      // expected order will break
-      irs::Scorer::ptr sort{std::make_unique<tests::sort::Boost>()};
-      CheckQuery(root, std::span{&sort, 1}, Docs{2, 1}, rdr);
     }
   }
 
@@ -15762,9 +15756,9 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::And root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
       CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
     }
@@ -15773,13 +15767,13 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::Or root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
-                            13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                            24, 25, 26, 27, 28, 29, 30, 31, 32},
+      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
                  rdr);
     }
   }
@@ -15790,9 +15784,9 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::And root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "E");
       CheckQuery(root, Docs{11, 21, 27, 31}, rdr);
     }
@@ -15801,13 +15795,13 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::Or root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldPrefix, "abcd");
-      CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
-                            13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                            24, 25, 26, 27, 28, 29, 30, 31, 32},
+      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
                  rdr);
     }
   }
@@ -15831,8 +15825,8 @@ TEST_P(BooleanFilterTestCase, not_and_conjunction_regression) {
   }
   auto rdr = open_reader();
 
-  irs::Not root;
-  auto& conj = root.filter<irs::And>();
+  irs::Exclusion root;
+  auto& conj = root.exclude<irs::And>();
   conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
   conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
 
@@ -15870,21 +15864,26 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
 
   // empty query
   {
-    CheckQuery(irs::Not(), Docs{}, rdr);
+    CheckQuery(
+      irs::Exclusion(),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // single not statement - empty result
   {
-    irs::Not not_node;
-    not_node.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz"),
+    irs::Exclusion not_node;
+    not_node.exclude<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldSame, "xyz"),
 
     CheckQuery(not_node, Docs{}, rdr);
   }
 
   // single not statement - all docs
   {
-    irs::Not not_node;
-    not_node.filter<irs::ByTerm>() =
+    irs::Exclusion not_node;
+    not_node.exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldSame, "invalid_term"),
 
     CheckQuery(not_node, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
@@ -15895,25 +15894,115 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
 
   // (NOT (NOT name=A))
   {
-    irs::Not not_node;
-    not_node.filter<irs::Not>().filter<irs::ByTerm>() =
+    irs::Exclusion not_node;
+    not_node.exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(not_node, Docs{1}, rdr);
   }
 
   // (NOT (NOT (NOT (NOT (NOT name=A)))))
   {
-    irs::Not not_node;
-    not_node.filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    irs::Exclusion not_node;
+    not_node.exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
 
     CheckQuery(not_node, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
                               13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
                               24, 25, 26, 27, 28, 29, 30, 31, 32},
                rdr);
+  }
+}
+
+TEST_P(BooleanFilterTestCase, exclusion_sequential) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    irs::Exclusion root;
+    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+               rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(
+      root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
+                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.include<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
+    CheckQuery(root, Docs{1, 5, 11, 21, 27, 31}, rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.include<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
+    root.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.include<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
+    auto& any = root.exclude<irs::Or>();
+    any.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    any.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "E");
+    CheckQuery(root, Docs{11, 21, 27, 31}, rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(root, Docs{1}, rdr);
+  }
+
+  {
+    irs::And root;
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");
+    root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(
+      root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
+                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
+  }
+
+  {
+    irs::And root;
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");
+    root.add(irs::Not(
+      std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldName, "A"))));
+    CheckQuery(
+      root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
+                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.include<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
+    root.exclude(irs::Not(
+      std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldName, "A"))));
+    CheckQuery(root, Docs{1}, rdr);
   }
 }
 
@@ -16064,7 +16153,7 @@ TEST_P(BooleanFilterTestCase, mixed) {
       irs::Or root;
 
       // NOT *
-      root.add<irs::Not>().filter<irs::All>();
+      root.add<irs::Exclusion>().exclude<irs::All>();
 
       // same=xyz AND duplicated=abcd
       {
@@ -16080,7 +16169,8 @@ TEST_P(BooleanFilterTestCase, mixed) {
         Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
-      CheckQuery(root, Docs{}, rdr);
+      CheckQuery(root, Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31},
+                 rdr);
     }
   }
 }
@@ -16148,36 +16238,93 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
   }
 }
 
-TEST(Not_test, ctor) {
-  irs::Not q;
-  ASSERT_EQ(irs::Type<irs::Not>::id(), q.type());
-  ASSERT_EQ(nullptr, q.filter());
+TEST(Exclusion_test, ctor) {
+  irs::Exclusion q;
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), q.type());
+  ASSERT_EQ(nullptr, q.include());
+  ASSERT_EQ(nullptr, q.exclude());
+  ASSERT_TRUE(q.empty());
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 }
 
-TEST(Not_test, equal) {
+TEST(Exclusion_test, equal) {
   {
-    irs::Not lhs, rhs;
+    irs::Exclusion lhs, rhs;
     ASSERT_EQ(lhs, rhs);
   }
 
   {
-    irs::Not lhs;
-    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    irs::Exclusion lhs;
+    lhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
 
-    irs::Not rhs;
-    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    irs::Exclusion rhs;
+    rhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
     ASSERT_EQ(lhs, rhs);
   }
 
   {
-    irs::Not lhs;
-    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    irs::Exclusion lhs;
+    lhs.include<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbcd, "def");
+    lhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
 
-    irs::Not rhs;
-    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbcd, "def");
+    irs::Exclusion rhs;
+    rhs.include<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbcd, "def");
+    rhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    ASSERT_EQ(lhs, rhs);
+  }
+
+  {
+    irs::Exclusion lhs;
+    lhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+
+    irs::Exclusion rhs;
+    rhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbcd, "def");
     ASSERT_NE(lhs, rhs);
   }
+
+  {
+    irs::Exclusion lhs;
+    lhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+
+    irs::Exclusion rhs;
+    rhs.include<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    rhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    ASSERT_NE(lhs, rhs);
+  }
+}
+
+TEST(Not_helper_test, shape) {
+  auto inner =
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldAbc, "def"));
+  const auto* inner_raw = inner.get();
+
+  auto filter = irs::Not(std::move(inner));
+  ASSERT_NE(nullptr, filter);
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), filter->type());
+
+  const auto* exclusion = dynamic_cast<const irs::Exclusion*>(filter.get());
+  ASSERT_NE(nullptr, exclusion);
+  ASSERT_EQ(nullptr, exclusion->include());
+  ASSERT_EQ(inner_raw, exclusion->exclude());
+  ASSERT_FALSE(exclusion->empty());
+}
+
+TEST(Not_helper_test, equal) {
+  irs::Exclusion expected;
+  expected.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+
+  auto filter = irs::Not(
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldAbc, "def")));
+  ASSERT_EQ(expected, *filter);
+}
+
+TEST(Not_helper_test, optimize_double_negation) {
+  irs::And root;
+  root.add(irs::Not(irs::Not(std::make_unique<irs::ByTerm>(
+    MakeFilter<irs::ByTerm>(kFieldTestField, "test_term")))));
+
+  auto prepared = root.prepare({.index = irs::SubReader::empty()});
+  ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
 }
 
 TEST(And_test, ctor) {
@@ -16239,7 +16386,7 @@ TEST(And_test, equal) {
 
 TEST(And_test, optimize_double_negation) {
   irs::And root;
-  root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
+  root.add<irs::Exclusion>().exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
     MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
   auto prepared = root.prepare({.index = irs::SubReader::empty()});
@@ -16332,15 +16479,17 @@ TEST(And_test, not_boosted) {
   tests::sort::Boost sort{};
   irs::And root;
   {
-    auto& neg = root.add<irs::Not>();
-    auto& node = neg.filter<detail::Boosted>();
-    node.docs = {5, 6};
-    node.boost(4);
-  }
-  {
-    auto& node = root.add<detail::Boosted>();
-    node.docs = {1};
-    node.boost(5);
+    auto& neg = root.add<irs::Exclusion>();
+    {
+      auto& node = neg.include<detail::Boosted>();
+      node.docs = {1};
+      node.boost(5);
+    }
+    {
+      auto& node = neg.exclude<detail::Boosted>();
+      node.docs = {5, 6};
+      node.boost(4);
+    }
   }
   auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
   auto docs =
@@ -16420,7 +16569,7 @@ TEST(Or_test, equal) {
 
 TEST(Or_test, optimize_double_negation) {
   irs::Or root;
-  root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
+  root.add<irs::Exclusion>().exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
     MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
   auto prepared = root.prepare({.index = irs::SubReader::empty()});
@@ -16520,8 +16669,8 @@ TEST(Or_test, boosted_not) {
   tests::sort::Boost sort{};
   irs::Or root;
   {
-    auto& neg = root.add<irs::Not>();
-    auto& node = neg.filter<detail::Boosted>();
+    auto& neg = root.add<irs::Exclusion>();
+    auto& node = neg.exclude<detail::Boosted>();
     node.docs = {5, 6};
     node.boost(4);
   }

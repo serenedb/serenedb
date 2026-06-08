@@ -307,9 +307,9 @@ void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   const bool has_real = absl::c_any_of(g.projected_columns, [](auto p) {
     return p != duckdb::DConstants::INVALID_INDEX;
   });
-  const bool bulk = has_real && !g.scan_score && !g.has_external_projections
-                    && g.scan->IsMatchAll() && !g.scan->EmitOffsets()
-                    && seg.live_docs_count() == seg.docs_count();
+  const bool bulk = has_real && !g.scan_score && !g.has_external_projections &&
+                    g.scan->IsMatchAll() && !g.scan->EmitOffsets() &&
+                    seg.live_docs_count() == seg.docs_count();
   if (bulk) {
     bulk_doc_in_seg = 0;
     bulk_seg_doc_count = seg.docs_count();

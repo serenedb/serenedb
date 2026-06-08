@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -165,12 +166,7 @@ struct ScoreDocsView {
     return doc(i) - irs::doc_limits::min();
   }
   bool IsSorted() const noexcept {
-    for (size_t i = 1; i < size(); ++i) {
-      if ((*this)[i] < (*this)[i - 1]) {
-        return false;
-      }
-    }
-    return true;
+    return std::ranges::is_sorted(hits, {}, &irs::ScoreDoc::doc);
   }
   ScoreDocsView subview(size_t off, size_t n) const noexcept {
     return {hits.subspan(off, n)};
@@ -190,12 +186,7 @@ struct StreamingHitsView {
     return doc(i) - irs::doc_limits::min();
   }
   bool IsSorted() const noexcept {
-    for (size_t i = 1; i < size(); ++i) {
-      if ((*this)[i] < (*this)[i - 1]) {
-        return false;
-      }
-    }
-    return true;
+    return std::ranges::is_sorted(docs);
   }
   StreamingHitsView subview(size_t off, size_t n) const noexcept {
     return {docs.subspan(off, n),

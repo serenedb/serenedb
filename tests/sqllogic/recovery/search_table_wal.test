@@ -278,3 +278,74 @@ DROP TABLE ctas_before;
 connection ctas_before_conn
 statement ok
 DROP TABLE ctas_after;
+
+
+###############################################################################
+# 5. MIXED bulk + inline in ONE transaction -> a single FOLDED REFERENCE.
+#    A bulk (parquet) INSERT produces chunk-file seg_ids; an inline VALUES
+#    INSERT into the same shard in the same txn produces an in-memory buffer.
+#    At the commit point AppendCommit flushes the inline buffer to its own chunk
+#    and emits ONE REFERENCE over all of them (bulk + flushed-inline), each
+#    chunk carrying its own pk_base. Recovery must replay that combined
+#    REFERENCE and restore rows from BOTH sources -- the most complex WAL path,
+#    and the only one that folds two write shapes into a single record. (Reuses
+#    the parquet written in section 4; on a single-core runner the bulk INSERT
+#    falls back to inline, so it becomes a multi-inline fold -- still one
+#    folded REFERENCE, assertions unchanged.)
+###############################################################################
+
+connection ctas_before_conn
+statement ok
+CREATE TABLE mix_t (x INTEGER, y TEXT) WITH (storage = 'search');
+
+connection ctas_before_conn
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection ctas_before_conn
+statement ok
+BEGIN;
+
+connection ctas_before_conn
+statement ok
+INSERT INTO mix_t SELECT x, y FROM read_parquet('/tmp/${__DATABASE__}_ctas_src.parquet');
+
+connection ctas_before_conn
+statement ok
+INSERT INTO mix_t VALUES (5, 'i5'), (7, 'i7');
+
+# COMMIT is the commit point -> AppendCommit folds the bulk seg_ids + the
+# flushed inline buffer into one REFERENCE, fsyncs, then crash_after aborts.
+connection ctas_before_conn
+statement error connection closed
+COMMIT;
+
+# --- restart ---
+connection mix_conn
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(x) AS n FROM mix_t;
+----
+n
+12002
+
+# x=5 and x=7 each have one bulk row (v5 / v7) AND one inline row (i5 / i7):
+# the folded REFERENCE replayed BOTH sources. ORDER BY y for determinism.
+connection mix_conn
+query
+SELECT y FROM mix_t WHERE x = 5 ORDER BY y;
+----
+y
+i5
+v5
+
+connection mix_conn
+query
+SELECT y FROM mix_t WHERE x = 7 ORDER BY y;
+----
+y
+i7
+v7
+
+connection mix_conn
+statement ok
+DROP TABLE mix_t;

@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM (SELECT unnest({'a': 42, 'b': {'a': 88, 'b': 99}}, recursive := true));
@@ -9,15 +11,14 @@ FROM (SELECT unnest({'a': 42, 'b': {'a': 88, 'b': 99}}, recursive := true));
 a	a	b
 42	88	99
 
-# DOCS_SETUP: file_fixtures_example_002
-
-
 # DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'temp.db' AS temp2;
 #|
 #| USE temp2;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_dialect_keywords_and_identifiers_example_002_1_temp_db.csv' AS temp2;
@@ -26,6 +27,8 @@ statement ok
 USE temp2;
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 select COS(Pi()) as CosineOfPi;
@@ -40,6 +43,8 @@ cosineofpi
 -1
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT col_A FROM (SELECT 'x' AS col_a);

@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 SELECT
     schema_name,
@@ -12,6 +14,8 @@ QUALIFY
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 SELECT
     schema_name,
@@ -22,6 +26,8 @@ QUALIFY
     function_rank < 3;
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT
@@ -37,6 +43,8 @@ QUALIFY
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 statement ok
 SELECT
     schema_name,
@@ -49,6 +57,8 @@ QUALIFY
     function_rank < 3;
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement ok
 WITH ranked_functions AS (

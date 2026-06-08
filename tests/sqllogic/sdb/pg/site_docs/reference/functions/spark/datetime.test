@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 SELECT add_months('2015-01-01', 10);
 ----
@@ -34,8 +36,9 @@ SELECT add_months('2015-03-31', -1);
 db error: ERROR: Scalar Function with name add_months does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query error
 SELECT date_trunc('YEAR', '2015-03-05T09:32:05.359');
@@ -223,8 +226,9 @@ db error: ERROR: Could not choose a best candidate function for the function cal
 	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
 	date_trunc(VARCHAR, DATE) -> TIMESTAMP
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 SELECT datediff('2009-07-31', '2009-07-30');
@@ -247,8 +251,9 @@ db error: ERROR: No function matches the given name and argument types 'datediff
 	datediff(VARCHAR, TIMESTAMP, TIMESTAMP) -> BIGINT
 	datediff(VARCHAR, TIMESTAMP WITH TIME ZONE, TIMESTAMP WITH TIME ZONE) -> BIGINT
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SELECT dayofmonth('2009-07-30');
@@ -260,8 +265,9 @@ db error: ERROR: Could not choose a best candidate function for the function cal
 	dayofmonth(TIMESTAMP WITH TIME ZONE) -> BIGINT
 	dayofmonth(DATE) -> BIGINT
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 SELECT dayofyear('2016-04-09');
@@ -273,8 +279,9 @@ db error: ERROR: Could not choose a best candidate function for the function cal
 	dayofyear(TIMESTAMP WITH TIME ZONE) -> BIGINT
 	dayofyear(DATE) -> BIGINT
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query error
 SELECT from_unixtime(100, 'yyyy-MM-dd HH:mm:ss');
@@ -295,10 +302,11 @@ SELECT from_unixtime(9223372036854775807, "yyyy-MM-dd HH:mm:ss");
 ----
 db error: ERROR: Scalar Function with name from_unixtime does not exist!
 Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query error
 SELECT from_unixtime(100, 'yyyy-MM-dd HH:mm:ss');
 ----
@@ -319,8 +327,9 @@ SELECT from_unixtime(9223372036854775807, "yyyy-MM-dd HH:mm:ss");
 db error: ERROR: Scalar Function with name from_unixtime does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query error
 SELECT from_utc_timestamp('2015-07-24 07:00:00', 'America/Los_Angeles');
@@ -328,8 +337,9 @@ SELECT from_utc_timestamp('2015-07-24 07:00:00', 'America/Los_Angeles');
 db error: ERROR: Scalar Function with name from_utc_timestamp does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query error
 SELECT get_timestamp('1970-01-01', 'yyyy-MM-dd);  -- timestamp `1970-01-01`
@@ -338,8 +348,9 @@ SELECT get_timestamp('1970-01-01', null);
 ----
 db error: ERROR: syntax error at or near "1970"
 
-
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 query error
 SELECT hour('2009-07-30 12:58:59');
@@ -354,8 +365,9 @@ db error: ERROR: Could not choose a best candidate function for the function cal
 	hour(TIMESTAMP WITH TIME ZONE) -> BIGINT
 	hour(DATE) -> BIGINT
 
-
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query
 SELECT make_timestamp(2014, 12, 28, 6, 30, 45.887);
@@ -402,8 +414,9 @@ SELECT make_timestamp(2014, 13, 28, 6, 30, 45.887);
 ----
 db error: ERROR: date field value out of range: 2014\-13\-28
 
-
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 query error
 SELECT make_ym_interval(1, 2);
@@ -460,8 +473,9 @@ SELECT make_ym_interval();
 db error: ERROR: Scalar Function with name make_ym_interval does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
 
 query error
 SELECT minute('2009-07-30 12:58:59');
@@ -476,8 +490,9 @@ db error: ERROR: Could not choose a best candidate function for the function cal
 	minute(TIMESTAMP WITH TIME ZONE) -> BIGINT
 	minute(DATE) -> BIGINT
 
-
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 query error
 SELECT month('2009-07-30');
@@ -489,8 +504,9 @@ db error: ERROR: Could not choose a best candidate function for the function cal
 	month(TIMESTAMP WITH TIME ZONE) -> BIGINT
 	month(DATE) -> BIGINT
 
-
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 query error
 SELECT months_between('1997-02-28 10:30:00', '1996-10-30', true);
@@ -526,8 +542,9 @@ SELECT months_between('1997-02-21 10:30:00', '1996-03-21 11:00:00', true);
 db error: ERROR: Scalar Function with name months_between does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
 
 query error
 SELECT next_day('2015-07-23', "Mon");
@@ -563,8 +580,9 @@ SELECT next_day('2015-07-23', "we");
 db error: ERROR: Scalar Function with name next_day does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
 
 query error
 SELECT quarter('2009-07-30');
@@ -576,8 +594,9 @@ db error: ERROR: Could not choose a best candidate function for the function cal
 	quarter(TIMESTAMP WITH TIME ZONE) -> BIGINT
 	quarter(DATE) -> BIGINT
 
-
 # DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
 
 query error
 SELECT second('2009-07-30 12:58:59');
@@ -592,8 +611,9 @@ db error: ERROR: Could not choose a best candidate function for the function cal
 	second(TIMESTAMP WITH TIME ZONE) -> BIGINT
 	second(DATE) -> BIGINT
 
-
 # DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
 
 query error
 SELECT timestampadd(YEAR, 1, '2030-02-28 10:00:00.500');
@@ -629,8 +649,9 @@ SELECT timestampadd(MICROSECOND, 500, '2019-02-28 10:01:00.500999');
 db error: ERROR: Scalar Function with name timestampadd does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
 
 query error
 SELECT timestampdiff(YEAR, '2020-02-29 10:00:00.500', '2030-02-28 10:00:00.500');
@@ -659,8 +680,9 @@ SELECT timestampdiff(MICROSECOND, '2019-02-28 10:00:00.000000', '2019-02-28 10:0
 db error: ERROR: Scalar Function with name timestampdiff does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
 
 query error
 SELECT timestamp_micros(1230219000123123);
@@ -668,8 +690,9 @@ SELECT timestamp_micros(1230219000123123);
 db error: ERROR: Scalar Function with name timestamp_micros does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
 
 query error
 SELECT timestamp_millis(1230219000123);
@@ -677,8 +700,9 @@ SELECT timestamp_millis(1230219000123);
 db error: ERROR: Scalar Function with name timestamp_millis does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
 
 query error
 SELECT timestamp_seconds(1230219000);
@@ -719,8 +743,9 @@ SELECT timestamp_seconds(float('nan'));
 ----
 db error: ERROR: syntax error at or near "'nan'"
 
-
 # DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
 
 query error
 SELECT to_utc_timestamp('2015-07-24 00:00:00', 'America/Los_Angeles');
@@ -728,8 +753,9 @@ SELECT to_utc_timestamp('2015-07-24 00:00:00', 'America/Los_Angeles');
 db error: ERROR: Scalar Function with name to_utc_timestamp does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
 
 query error
 SELECT trunc('2019-08-04', 'week');
@@ -844,8 +870,9 @@ db error: ERROR: Could not choose a best candidate function for the function cal
 	trunc(UHUGEINT, INTEGER) -> UHUGEINT
 	trunc(TINYINT, INTEGER) -> TINYINT
 
-
 # DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
 
 query error
 SELECT unix_date('1970-01-01');
@@ -867,8 +894,9 @@ SELECT unix_date('1969-12-31');
 db error: ERROR: Scalar Function with name unix_date does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
 
 query error
 SELECT unix_micros('1970-01-01 00:00:01');
@@ -876,8 +904,9 @@ SELECT unix_micros('1970-01-01 00:00:01');
 db error: ERROR: Scalar Function with name unix_micros does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
 
 query error
 SELECT unix_millis('1970-01-01 00:00:01');
@@ -885,8 +914,9 @@ SELECT unix_millis('1970-01-01 00:00:01');
 db error: ERROR: Scalar Function with name unix_millis does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
 
 query error
 SELECT unix_seconds('1970-01-01 00:00:01');
@@ -894,8 +924,9 @@ SELECT unix_seconds('1970-01-01 00:00:01');
 db error: ERROR: Scalar Function with name unix_seconds does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_030
+
+# DOCS_TEST_BODY
 
 query error
 SELECT unix_timestamp('1970-01-01');
@@ -917,8 +948,9 @@ SELECT unix_timestamp('-2025-02-18');
 db error: ERROR: Scalar Function with name unix_timestamp does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
 
 query error
 SELECT unix_timestamp(CAST(0 AS TIMESTAMP));
@@ -940,8 +972,9 @@ SELECT unix_timestamp(CAST(-1739933174 AS TIMESTAMP));
 db error: ERROR: Scalar Function with name unix_timestamp does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_032
+
+# DOCS_TEST_BODY
 
 query error
 SELECT weekday('2015-04-08');
@@ -964,9 +997,10 @@ db error: ERROR: Could not choose a best candidate function for the function cal
 	weekday(TIMESTAMP WITH TIME ZONE) -> BIGINT
 	weekday(DATE) -> BIGINT
 
-
 # DOCS_TEST: example_033
 
+# DOCS_TEST_BODY
+
 query error
 SELECT get_timestamp('2015-07-22 10:00:00', 'yyyy-MM-dd');
 ----
@@ -993,10 +1027,11 @@ SELECT unix_timestamp('2016-04-08 00:00:00', 'yyyy-MM-dd');
 ----
 db error: ERROR: Scalar Function with name unix_timestamp does not exist!
 Did you mean "<slt:ignore>"?
-
 
 # DOCS_TEST: example_034
 
+# DOCS_TEST_BODY
+
 query error
 SELECT from_unixtime(100, '!@#$%^&*');
 ----
@@ -1023,4 +1058,3 @@ SELECT get_timestamp('1970-01-01', '!@#$%^&*');
 ----
 db error: ERROR: Scalar Function with name get_timestamp does not exist!
 Did you mean "<slt:ignore>"?
-

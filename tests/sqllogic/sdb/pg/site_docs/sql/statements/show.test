@@ -1,9 +1,11 @@
 # DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'my.duckdb' AS my_database;
 #|
 #| SHOW DATABASES;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 DETACH IF EXISTS my_database;
@@ -14,7 +16,7 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_show_example_001_my.duckdb' AS my_da
 statement ok
 SHOW DATABASES;
 
-# DOCS_SETUP: local_my_database_fixture
+# DOCS_TEST: example_002
 
 statement ok
 DETACH IF EXISTS my_database;
@@ -22,7 +24,7 @@ DETACH IF EXISTS my_database;
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_show_example_002_my.duckdb' AS my_database;
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 statement ok
 DETACH my_database;
@@ -32,6 +34,8 @@ statement ok
 SHOW DATABASES;
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 SHOW SCHEMAS;

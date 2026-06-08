@@ -1,4 +1,4 @@
-# DOCS_SETUP: generated_wide_fixtures
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE articles AS SELECT * FROM (VALUES
@@ -46,7 +46,7 @@ INSERT INTO departments VALUES
     (1, 'Engineering'),
     (2, 'Product');
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 statement ok
 CREATE FUNCTION article_url(slug TEXT)
@@ -61,8 +61,9 @@ title	article_url
 Intro to Search	/articles/intro-to-search
 Scaling Analytics	/articles/scaling-analytics
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE FUNCTION top_employees()
@@ -80,8 +81,9 @@ name	grade
 alpha	17
 beta	20
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE FUNCTION employees_above_grade(grade_threshold INTEGER)
@@ -100,8 +102,7 @@ name	grade
 alpha	17
 beta	20
 
-
-# DOCS_SETUP: local_employees_above_grade_join_fixture
+# DOCS_TEST: example_004
 
 statement ok
 DROP FUNCTION IF EXISTS employees_above_grade;
@@ -116,7 +117,7 @@ BEGIN ATOMIC
     WHERE (2 * weight + age) / 10 > grade_threshold;
 END;
 
-# DOCS_TEST: example_004
+# DOCS_TEST_BODY
 
 query
 SELECT e.name, e.grade, d.department_name

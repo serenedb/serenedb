@@ -3,7 +3,8 @@
 # that keeps this file valid for the sqllogictest runner.
 
 # DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| # name: test/sql/projection/test_simple_projection.test
 #| # group [projection]
 #|
@@ -23,25 +24,30 @@
 #| SELECT * FROM a;
 #| ----
 #| 42	84
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_100b7bfb_001 (i INTEGER);
 
 # DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| statement ok
 #| PRAGMA enable_verification
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_100b7bfb_002 (i INTEGER);
 
 # DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| statement ok
 #| COPY csv_data TO '__TEST_DIR__/output_file.csv.gz' (COMPRESSION gzip);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_100b7bfb_003 (i INTEGER);

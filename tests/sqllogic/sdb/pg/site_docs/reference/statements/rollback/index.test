@@ -1,4 +1,4 @@
-# DOCS_SETUP: generated_wide_fixtures
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE articles AS SELECT * FROM (VALUES
@@ -6,7 +6,7 @@ CREATE TABLE articles AS SELECT * FROM (VALUES
     (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
 ) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 statement ok
 BEGIN;

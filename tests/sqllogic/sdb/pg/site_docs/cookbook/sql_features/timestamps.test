@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 SET timezone = 'America/Los_Angeles';
 
@@ -21,8 +23,7 @@ FROM times WHERE t <= '2025-08-30';
 db error: ERROR: Table with name times does not exist!
 Did you mean "<slt:ignore>"?
 
-
-# DOCS_SETUP: local_times_fixture
+# DOCS_TEST: example_002
 
 statement ok
 DROP TABLE IF EXISTS times;
@@ -36,7 +37,7 @@ INSERT INTO times VALUES
     (TIMESTAMP '2025-08-30 12:00:00'),
     (TIMESTAMP '2025-08-31 00:00:00');
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 statement ok
 SET timezone = 'HST';
@@ -47,8 +48,9 @@ FROM times WHERE t <= '2025-08-30';
 t
 2025-08-30 00:00:00
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 SET timezone = 'America/New_York';
@@ -59,8 +61,9 @@ FROM times WHERE t <= '2025-08-30';
 t
 2025-08-30 00:00:00
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement ok
 SET timezone = 'Europe/Amsterdam';
@@ -88,8 +91,9 @@ db error: ERROR: No function matches the given name and argument types 'generate
 	generate_series(BIGINT, BIGINT, BIGINT)
 	generate_series(TIMESTAMP, TIMESTAMP, INTERVAL)
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement error
 x BETWEEN begin AND end
@@ -99,4 +103,3 @@ begin <= x AND x <= end
 begin <= x AND x < end
 ----
 db error: ERROR: syntax error at or near "x"
-

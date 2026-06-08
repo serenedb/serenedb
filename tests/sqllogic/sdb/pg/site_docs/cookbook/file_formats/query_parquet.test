@@ -1,4 +1,4 @@
-# DOCS_SETUP: file_fixtures_example_001
+# DOCS_TEST: example_001
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -6,10 +6,10 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_query_parquet_example_001_input.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT * FROM read_parquet('input.parquet');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_file_formats_query_parquet_example_001_input.parquet');

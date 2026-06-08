@@ -1,16 +1,18 @@
 # DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| CREATE SECRET (
 #|     TYPE gcs,
 #|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
 #|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩'
 #| );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE IF NOT EXISTS __docs_noop_cded4207_001 (i INTEGER);
 
-# DOCS_SETUP: file_fixtures_example_002
+# DOCS_TEST: example_002
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -18,11 +20,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_gcs_import_example_002_1_file_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_parquet('gs://⟨gcs_bucket⟩/⟨file.parquet⟩');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query ???
 SELECT *
@@ -32,8 +34,14 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| LOAD httpfs;
+#|
+#| ATTACH 'gs://⟨gcs_bucket⟩/⟨file.duckdb⟩' AS ⟨duckdb_database⟩ (READ_ONLY);
+
+# DOCS_TEST_BODY
 
 statement ok
 LOAD httpfs;
@@ -56,11 +64,6 @@ CREATE TABLE duckdb_database_fixture.items AS SELECT 1 AS id, 'alpha' AS name;
 statement ok
 DETACH duckdb_database_fixture;
 
-# DOCS_RAW_BEGIN
-#| LOAD httpfs;
-#|
-#| ATTACH 'gs://⟨gcs_bucket⟩/⟨file.duckdb⟩' AS ⟨duckdb_database⟩ (READ_ONLY);
-# DOCS_RAW_END
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_gcs_import_example_003_file.duckdb' AS duckdb_database (READ_ONLY);

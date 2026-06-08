@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP: file_fixtures_example_001
+# DOCS_TEST: example_001
 
 statement ok
 COPY (SELECT 'Hello World!' AS content) TO '/tmp/${__DATABASE__}_cookbook_file_formats_read_file_example_001_one.txt' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
@@ -11,11 +11,11 @@ COPY (SELECT '42' AS content) TO '/tmp/${__DATABASE__}_cookbook_file_formats_rea
 statement ok
 COPY (SELECT 'Föö Bär' AS content) TO '/tmp/${__DATABASE__}_cookbook_file_formats_read_file_example_001_two.txt' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT size, parse_path(filename), content
 #| FROM read_text('test/sql/table_function/files/*.txt');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT
@@ -30,7 +30,7 @@ size	parse_path(filename)	content
 2	{test,sql,table_function,files,three.txt}	42
 10	{test,sql,table_function,files,two.txt}	Föö Bär
 
-# DOCS_SETUP: file_fixtures_example_002
+# DOCS_TEST: example_002
 
 statement ok
 COPY (SELECT 'blob fixture' AS content) TO '/tmp/${__DATABASE__}_cookbook_file_formats_read_file_example_002_four.blob' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
@@ -44,11 +44,11 @@ COPY (SELECT '42' AS content) TO '/tmp/${__DATABASE__}_cookbook_file_formats_rea
 statement ok
 COPY (SELECT 'Föö Bär' AS content) TO '/tmp/${__DATABASE__}_cookbook_file_formats_read_file_example_002_two.txt' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
-# DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT size, content, filename
 #| FROM read_blob('test/sql/table_function/files/*');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT
@@ -66,10 +66,12 @@ size	content	filename
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 statement ok
 DESCRIBE FROM read_text('README.md');
 
-# DOCS_SETUP: file_fixtures_example_004
+# DOCS_TEST: example_004
 
 statement ok
 COPY (
@@ -81,12 +83,12 @@ COPY (
 ) TO '/tmp/${__DATABASE__}_cookbook_file_formats_read_file_example_004_hive'
 (FORMAT parquet, PARTITION_BY (part, date), OVERWRITE_OR_IGNORE);
 
-# DOCS_TEST: example_004
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_blob('data/parquet-testing/hive-partitioning/simple/**/*.parquet')
 #| WHERE part IN ('a', 'b') AND date >= '2012-01-01';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 WITH files AS MATERIALIZED (

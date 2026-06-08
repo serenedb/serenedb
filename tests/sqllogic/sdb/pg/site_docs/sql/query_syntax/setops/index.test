@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query ? rowsort
 SELECT * FROM range(2) t1(x)
 UNION
@@ -11,6 +13,8 @@ x
 2
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query ? rowsort
 SELECT * FROM range(2) t1(x)
@@ -25,6 +29,8 @@ x
 2
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE capitals (city VARCHAR, country VARCHAR);
@@ -44,6 +50,8 @@ INSERT INTO weather VALUES
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query ???? rowsort
 SELECT * FROM capitals
 UNION BY NAME
@@ -57,6 +65,8 @@ Seattle	NULL	8	2022-10-12
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query ? rowsort
 SELECT * FROM range(2) t1(x)
 INTERSECT
@@ -67,6 +77,8 @@ x
 1
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query ? rowsort
 SELECT unnest([5, 5, 6, 6, 6, 6, 7, 8]) AS x
@@ -81,6 +93,8 @@ x
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query ? rowsort
 SELECT * FROM range(5) t1(x)
 EXCEPT
@@ -92,6 +106,8 @@ x
 4
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query ? rowsort
 SELECT unnest([5, 5, 6, 6, 6, 6, 7, 8]) AS x

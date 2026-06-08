@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_001
 
 statement ok
 USE $__DATABASE__;
@@ -27,7 +27,7 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query
 SUMMARIZE TABLE tbl;
@@ -47,6 +47,8 @@ number1	INTEGER	100	300	3	200	100	125	200	275	3	0.00
 number2	INTEGER	1000	3000	3	2000	1000	1250	2000	2750	3	0.00
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 SUMMARIZE SELECT * FROM tbl;

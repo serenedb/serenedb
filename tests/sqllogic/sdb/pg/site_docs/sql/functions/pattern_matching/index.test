@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'abc' LIKE 'abc';
 ----
@@ -44,6 +46,8 @@ f
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'abc' ILIKE '%C';
 ----
@@ -52,6 +56,8 @@ t
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'abc' NOT ILIKE '%C';
 ----
@@ -59,6 +65,8 @@ SELECT 'abc' NOT ILIKE '%C';
 f
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT 'a%c' LIKE 'a$%c' ESCAPE '$';
@@ -74,6 +82,8 @@ f
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'A%c' ILIKE 'a$%c' ESCAPE '$';
 ----
@@ -81,6 +91,8 @@ ilike_escape
 t
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query
 SELECT 'abc' SIMILAR TO 'abc';
@@ -114,6 +126,8 @@ f
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'best.txt' GLOB '*.txt';
 ----
@@ -146,6 +160,8 @@ t
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'Best.txt' GLOB '[a-z]est.txt';
 ----
@@ -160,6 +176,8 @@ t
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 query
 SELECT 'Best.txt' GLOB '[!a-zA-Z]est.txt';
 ----
@@ -168,13 +186,15 @@ f
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query
 SELECT NOT 'best.txt' GLOB '*.txt';
 ----
 ?column?
 f
 
-# DOCS_SETUP: file_fixtures_example_011
+# DOCS_TEST: example_011
 
 statement ok
 COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/site_docs_pattern_matching_example_011_duckdb.exe';
@@ -197,10 +217,10 @@ COPY (SELECT 2 AS id, 'beta' AS name) TO '/tmp/site_docs_pattern_matching_exampl
 statement ok
 COPY (SELECT 1 AS id, 'todo' AS task) TO '/tmp/site_docs_pattern_matching_example_011_todos.json' (FORMAT JSON);
 
-# DOCS_TEST: example_011
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT * FROM glob('*');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT replace(
@@ -220,15 +240,15 @@ test2.csv
 test2.parquet
 todos.json
 
-# DOCS_SETUP: file_fixtures_example_012
+# DOCS_TEST: example_012
 
 statement ok
 COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/site_docs_pattern_matching_example_012_README.md';
 
-# DOCS_TEST: example_012
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT * FROM glob('README.md');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT replace(
@@ -242,15 +262,15 @@ ORDER BY file;
 file
 README.md
 
-# DOCS_SETUP: file_fixtures_example_013
+# DOCS_TEST: example_013
 
 statement ok
 COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/site_docs_pattern_matching_example_013_README.md';
 
-# DOCS_TEST: example_013
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT * FROM glob('**/README.md');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT replace(

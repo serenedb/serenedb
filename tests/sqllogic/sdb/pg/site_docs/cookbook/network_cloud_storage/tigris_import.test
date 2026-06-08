@@ -1,5 +1,6 @@
 # DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| CREATE SECRET my_secret (
 #|     TYPE s3,
 #|     KEY_ID '⟨tid_xxxxxxxxxxxx⟩',
@@ -7,12 +8,13 @@
 #|     REGION 'auto',
 #|     ENDPOINT 'fly.storage.tigris.dev'
 #| );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_2a4fbb77_001 (i INTEGER);
 
-# DOCS_SETUP: file_fixtures_example_002
+# DOCS_TEST: example_002
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -26,12 +28,12 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_tigris_import_example_002_1_file_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT * FROM 's3://⟨tigris-bucket-name⟩/⟨file⟩.csv';
 #|
 #| SELECT * FROM read_parquet('s3://⟨tigris-bucket-name⟩/⟨file⟩.parquet');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT * FROM '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_tigris_import_example_002_1_file_csv.csv';

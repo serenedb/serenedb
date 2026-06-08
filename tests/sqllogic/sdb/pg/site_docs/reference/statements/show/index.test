@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SHOW search_path;
 ----
@@ -8,6 +10,8 @@ search_path
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SHOW transaction_isolation;
 ----
@@ -15,6 +19,8 @@ transaction_isolation
 repeatable read
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 SHOW ALL;

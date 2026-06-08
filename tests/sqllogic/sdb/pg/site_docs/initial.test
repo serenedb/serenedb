@@ -1,5 +1,7 @@
 # DOCS_TEST: json_literal
 
+# DOCS_TEST_BODY
+
 query
 select '5'::json;
 ----

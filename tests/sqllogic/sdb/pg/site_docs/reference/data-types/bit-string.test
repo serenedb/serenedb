@@ -1,13 +1,16 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement error
 b'1010'   -- binary notation
 x'a'      -- hexadecimal notation, equivalent to b'1010'
 ----
 db error: ERROR: syntax error at or near "b'1010'"
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TABLE flags (
@@ -33,4 +36,3 @@ SELECT status, options FROM flags;
 ----
 db error: ERROR: Table with name flags does not exist!
 Did you mean "<slt:ignore>"?
-

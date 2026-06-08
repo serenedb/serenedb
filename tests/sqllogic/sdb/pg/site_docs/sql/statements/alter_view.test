@@ -1,4 +1,4 @@
-# DOCS_SETUP: local_view_fixture
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE view_source (i INTEGER);
@@ -6,7 +6,7 @@ CREATE TABLE view_source (i INTEGER);
 statement ok
 CREATE VIEW view1 AS SELECT i FROM view_source;
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 statement ok
 ALTER VIEW view1 RENAME TO view2;

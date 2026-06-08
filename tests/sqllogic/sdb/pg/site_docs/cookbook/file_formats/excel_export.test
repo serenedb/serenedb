@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement error
 INSTALL excel;
 ----
@@ -19,8 +21,7 @@ Extension "excel" is an existing extension.
 
 Install it first using "INSTALL excel".
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_002
 
 statement ok
 USE $__DATABASE__;
@@ -47,7 +48,7 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 statement error
 COPY tbl TO 'output.xlsx' WITH (FORMAT xlsx);
@@ -55,8 +56,9 @@ COPY tbl TO 'output.xlsx' WITH (FORMAT xlsx);
 db error: ERROR: Copy Function with name xlsx does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement error
 COPY (SELECT * FROM tbl) TO 'output.xlsx' WITH (FORMAT xlsx);
@@ -64,16 +66,18 @@ COPY (SELECT * FROM tbl) TO 'output.xlsx' WITH (FORMAT xlsx);
 db error: ERROR: Copy Function with name xlsx does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement error
 COPY (SELECT * FROM tbl) TO 'output.xlsx';
 ----
 db error: ERROR: Copy Function with name "xlsx" is not in the catalog, but it exists in the excel extension\.
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement error
 COPY tbl TO 'output.xlsx' WITH (FORMAT xlsx, HEADER true);
@@ -81,8 +85,9 @@ COPY tbl TO 'output.xlsx' WITH (FORMAT xlsx, HEADER true);
 db error: ERROR: Copy Function with name xlsx does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 statement error
 COPY tbl TO 'output.xlsx' WITH (FORMAT xlsx, SHEET 'Sheet1');
@@ -90,12 +95,12 @@ COPY tbl TO 'output.xlsx' WITH (FORMAT xlsx, SHEET 'Sheet1');
 db error: ERROR: Copy Function with name xlsx does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 statement error
 COPY (SELECT CAST(a AS VARCHAR), b FROM tbl) TO 'output.xlsx' WITH (FORMAT xlsx);
 ----
 db error: ERROR: Copy Function with name xlsx does not exist!
 Did you mean "<slt:ignore>"?
-

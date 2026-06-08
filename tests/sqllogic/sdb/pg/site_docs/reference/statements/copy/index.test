@@ -1,4 +1,4 @@
-# DOCS_SETUP: generated_wide_fixtures
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE movies AS SELECT * FROM (VALUES
@@ -6,18 +6,16 @@ CREATE TABLE movies AS SELECT * FROM (VALUES
     (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
 ) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
 
-# DOCS_SETUP: file_fixtures_example_001
-
 statement ok
 COPY (SELECT * FROM (VALUES
     ('DuckDB: The Movie', 2024, 8.7),
     ('Serene Search', 2025, 9.1)
 ) AS t("title", "year", "rating")) TO '/tmp/${__DATABASE__}_reference_statements_copy_index_example_001_1_movies_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| COPY movies FROM '/data/movies.csv' WITH (FORMAT CSV, HEADER TRUE);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement error
 COPY movies FROM '/tmp/${__DATABASE__}_reference_statements_copy_index_example_001_1_movies_csv.csv' WITH (FORMAT CSV, HEADER TRUE);
@@ -43,16 +41,16 @@ Possible fixes:
 * Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
 * Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement error
 \copy movies FROM 'movies.csv' WITH (FORMAT CSV, HEADER TRUE);
 ----
 db error: ERROR: syntax error at or near "\\"
 
-
-# DOCS_SETUP: file_fixtures_example_003
+# DOCS_TEST: example_003
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -60,11 +58,11 @@ COPY (SELECT * FROM (VALUES
     ('Serene Search', 2025, 9.1)
 ) AS t("title", "year", "rating")) TO '/tmp/${__DATABASE__}_reference_statements_copy_index_example_003_1_movies_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| COPY movies FROM '/data/movies.csv' WITH (FORMAT CSV, HEADER TRUE)
 #| WHERE year > 2010;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement error
 COPY movies FROM '/tmp/${__DATABASE__}_reference_statements_copy_index_example_003_1_movies_csv.csv' WITH (FORMAT CSV, HEADER TRUE)
@@ -91,8 +89,7 @@ Possible fixes:
 * Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
 * Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
 
-
-# DOCS_SETUP: file_fixtures_example_004
+# DOCS_TEST: example_004
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -100,10 +97,10 @@ COPY (SELECT * FROM (VALUES
     ('Serene Search', 2025, 9.1)
 ) AS t("title", "year", "rating")) TO '/tmp/${__DATABASE__}_reference_statements_copy_index_example_004_1_movies_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_004
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| COPY movies FROM '/data/movies.parquet' WITH (FORMAT PARQUET);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement error
 COPY movies FROM '/tmp/${__DATABASE__}_reference_statements_copy_index_example_004_1_movies_parquet.parquet' WITH (FORMAT PARQUET);
@@ -115,8 +112,7 @@ Parquet schema: title VARCHAR, year INTEGER, rating DECIMAL(2,1)
 Possible solutions:
 * Manually specify which columns to insert using "INSERT INTO tbl SELECT ... FROM read_parquet(...)"
 
-
-# DOCS_SETUP: local_top_rated_movies_fixture
+# DOCS_TEST: example_005
 
 statement ok
 DROP TABLE IF EXISTS movies;
@@ -136,19 +132,19 @@ INSERT INTO movies VALUES
     ('12 Angry Men', 1957, 8.9),
     ('A Quiet Example', 2024, 7.9);
 
-# DOCS_TEST: example_005
-
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| COPY (SELECT title, year, rating FROM movies WHERE rating > 8.0)
 #|     TO '/data/top_rated.csv' WITH (FORMAT CSV, HEADER TRUE);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 COPY (SELECT title, year, rating FROM movies WHERE rating > 8.0)
     TO '/tmp/${__DATABASE__}_reference_statements_copy_index_example_005_top_rated_csv.csv' WITH (FORMAT CSV, HEADER TRUE);
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 statement error
 COPY movies FROM 's3://my-bucket/data/movies.csv' WITH (
@@ -161,8 +157,9 @@ COPY movies FROM 's3://my-bucket/data/movies.csv' WITH (
 ----
 (?i)Unrecognized option "s3_.*" for csv
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 statement error
 COPY movies TO 's3://my-bucket/data/movies.parquet' WITH (
@@ -176,8 +173,9 @@ db error: ERROR: Unrecognized option "s3_endpoint" for parquet
 
 Candidate options: "encryption_config", "parquet_version", "shredding", "filename_pattern", "string_dictionary_page_size_limit"
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 statement error
 COPY movies FROM '/data/movies.csv' WITH (HELP);

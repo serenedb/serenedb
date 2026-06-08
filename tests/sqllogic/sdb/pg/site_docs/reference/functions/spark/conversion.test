@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast(128 as tinyint);
 ----
@@ -11,8 +13,9 @@ SELECT cast('2012-Oct-23' as date);
 ----
 db error: ERROR: invalid date field format: "2012\-Oct\-23", expected format is \(YYYY\-MM\-DD\)
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT try_cast(128 as tinyint);
@@ -33,6 +36,8 @@ int4
 NULL
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(1234567 as bigint);
@@ -57,8 +62,9 @@ SELECT cast(1234567 as smallint);
 ----
 db error: ERROR: Type INT32 with value 1234567 can't be cast because the value is out of range for the destination type INT16
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(12345.12 as bigint);
@@ -119,8 +125,9 @@ SELECT cast(cast('nan' as double) as bigint);
 ----
 db error: ERROR: Type DOUBLE with value nan can't be cast because the value is out of range for the destination type INT64
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast('12345' as bigint);
@@ -199,8 +206,9 @@ SELECT cast('-.' as tinyint);
 ----
 db error: ERROR: Could not convert string '\-\.' to INT8
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast('1234567' as tinyint);
@@ -243,8 +251,9 @@ SELECT cast('infinity' as bigint);
 ----
 db error: ERROR: Could not convert string 'infinity' to INT64
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(cast(2.56 as DECIMAL(6, 2)) as bigint);
@@ -283,6 +292,8 @@ int8
 2147483649
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(cast('1970-01-01 00:00:00' as timestamp) as bigint);
@@ -331,8 +342,9 @@ SELECT cast(cast('2025-02-25 08:00:26.88' as timestamp) as tinyint);
 ----
 db error: ERROR: Unimplemented type for cast \(TIMESTAMP \-> TINYINT\)
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast('1' as boolean);
@@ -396,6 +408,8 @@ f
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast('1.7E308' as boolean);
 ----
@@ -437,8 +451,9 @@ SELECT cast('tru' as boolean);
 ----
 db error: ERROR: Could not convert string 'tru' to BOOL
 
-
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(cast('1970-01-01 00:00:00' as timestamp) as string);
@@ -484,6 +499,8 @@ text
 
 # DOCS_TEST: example_012
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast('1970' as date);
 ----
@@ -522,6 +539,8 @@ date
 
 # DOCS_TEST: example_013
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast('2012-Oct-23' as date);
 ----
@@ -539,8 +558,9 @@ SELECT cast('2012.10.23' as date);
 ----
 db error: ERROR: invalid date field format: "2012\.10\.23", expected format is \(YYYY\-MM\-DD\)
 
-
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast(' 1.23' as decimal(38, 0));
@@ -580,6 +600,8 @@ numeric
 
 # DOCS_TEST: example_015
 
+# DOCS_TEST_BODY
+
 query error
 SELECT cast(cast(18 as tinyint) as binary);
 ----
@@ -603,8 +625,9 @@ SELECT cast(cast(180000 as bigint) as binary);
 ----
 db error: ERROR: Unimplemented type for cast \(BIGINT \-> BLOB\)
 
-
 # DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(0 as timestamp);
@@ -629,8 +652,9 @@ SELECT cast(-9223372036855 as timestamp);
 ----
 db error: ERROR: Unimplemented type for cast \(BIGINT \-> TIMESTAMP\)
 
-
 # DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(0.0 as timestamp);
@@ -679,8 +703,9 @@ SELECT cast(cast('nan' as double) as timestamp);
 ----
 db error: ERROR: Unimplemented type for cast \(DOUBLE \-> TIMESTAMP\)
 
-
 # DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
 
 query error
 SELECT cast(true as timestamp);
@@ -692,4 +717,3 @@ query error
 SELECT cast(false as timestamp);
 ----
 db error: ERROR: Unimplemented type for cast \(BOOLEAN \-> TIMESTAMP\)
-

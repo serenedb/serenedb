@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT abs(-42);
 ----
@@ -26,6 +28,8 @@ abs
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT CAST(1.1232100 as DECIMAL(38, 7)) + CAST(1 as DECIMAL(10, 0));
 ----
@@ -49,8 +53,9 @@ SELECT CAST(-99999999999999999999999999999999990.0 as DECIMAL(38, 3)) + CAST(-0.
 ----
 db error: ERROR: Casting value "\-99999999999999999999999999999999990\.000" to type DECIMAL\(38,7\) failed: value is out of range!
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 SELECT 3 div 2;
@@ -69,8 +74,9 @@ SELECT 3 div 0;
 ----
 db error: ERROR: syntax error at or near "0"
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT 3 / 2;
@@ -92,6 +98,8 @@ NULL
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT CAST(1 as DECIMAL(17, 3)) / CAST(2 as DECIMAL(17, 3));
 ----
@@ -111,6 +119,8 @@ SELECT CAST(1 as DECIMAL(20, 3)) / CAST(0 as DECIMAL(20, 3));
 Infinity
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query
 SELECT factorial(0);
@@ -144,6 +154,8 @@ factorial
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query error
 SELECT hex("Spark SQL");
 ----
@@ -163,6 +175,8 @@ hex
 FFFFFFFFFFFFFFFF
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query
 SELECT CAST(1 as DECIMAL(17, 3)) * CAST(2 as DECIMAL(17, 3));
@@ -187,8 +201,9 @@ SELECT CAST(201e-38 as DECIMAL(38, 38)) * CAST(301e-38 as DECIMAL(38, 38));
 ----
 db error: ERROR: Needed scale 76 to accurately represent the multiplication result, but this is out of range of the DECIMAL type\. Max scale is 38; could not perform an accurate multiplication\. Either add a cast to DOUBLE, or add an explicit cast to a decimal with a lower scale\.
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT not true;
@@ -210,14 +225,17 @@ NULL
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query error
 SELECT rand();
 ----
 db error: ERROR: Scalar Function with name rand does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query error
 SELECT rand(0);
@@ -232,8 +250,9 @@ SELECT rand(NULL);
 db error: ERROR: Scalar Function with name rand does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 query error
 SELECT rint(12.3456);
@@ -241,8 +260,9 @@ SELECT rint(12.3456);
 db error: ERROR: Scalar Function with name rint does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
 
 query
 SELECT CAST(1.1232100 as DECIMAL(38, 7)) - CAST(1 as DECIMAL(10, 0));
@@ -267,8 +287,9 @@ SELECT CAST(-99999999999999999999999999999999990.0 as DECIMAL(38, 3)) - CAST(0.0
 ----
 db error: ERROR: Casting value "\-99999999999999999999999999999999990\.000" to type DECIMAL\(38,7\) failed: value is out of range!
 
-
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 query error
 SELECT unhex("23");
@@ -299,8 +320,9 @@ SELECT unhex("G23");
 ----
 db error: ERROR: Referenced column "G23" was not found because the FROM clause is missing
 
-
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 query
 SELECT width_bucket(-1.0, 0.0, 10.0, 5);
@@ -342,4 +364,3 @@ query error
 SELECT width_bucket(10.1, 10.0, 10.0, 5);
 ----
 db error: ERROR: lower bound must be less than upper bound
-

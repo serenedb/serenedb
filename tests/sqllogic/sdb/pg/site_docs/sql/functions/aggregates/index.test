@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP: local_sales_fixture
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE sales (
@@ -16,7 +16,7 @@ INSERT INTO sales VALUES
     (30, 'north', DATE '2024-01-03'),
     (110, 'east', DATE '2024-01-04');
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query
 SELECT sum(amount)
@@ -26,6 +26,8 @@ sum
 170
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query ?? rowsort
 SELECT region, sum(amount)
@@ -39,6 +41,8 @@ south	20
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT region
 FROM sales
@@ -50,6 +54,8 @@ east
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query
 SELECT count(DISTINCT region)
 FROM sales;
@@ -58,6 +64,8 @@ count
 3
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query
 SELECT sum(amount), sum(amount) FILTER (region != 'north')
@@ -68,6 +76,8 @@ sum	sum
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT list(region ORDER BY amount DESC)
 FROM sales;
@@ -77,6 +87,8 @@ list
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query
 SELECT first(amount ORDER BY date ASC)
 FROM sales;
@@ -85,6 +97,8 @@ first
 10
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query error
 SELECT ⟨aggregate_function⟩(⟨arg⟩, ⟨sep⟩ ORDER BY ⟨ordering_criteria⟩);

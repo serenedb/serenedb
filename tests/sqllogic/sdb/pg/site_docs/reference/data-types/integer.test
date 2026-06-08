@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 -- Create a table with different integer types
 CREATE TABLE counters (
@@ -24,6 +26,8 @@ id	small_counter	regular_counter
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 -- Create a table with integer values close to the upper limit
 CREATE TABLE integers(i) AS
@@ -36,8 +40,9 @@ SELECT i + i FROM integers;
 ----
 db error: ERROR: Overflow in addition of INT32 \(1073741824 \+ 1073741824\)!
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT TRY(i + i) AS safe_sum FROM integers;
@@ -47,6 +52,8 @@ safe_sum
 NULL
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT i::BIGINT + i AS big_sum FROM integers;

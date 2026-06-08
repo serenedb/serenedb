@@ -1,13 +1,15 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement error
 s3express-⟨availability_zone⟩.⟨region⟩.amazonaws.com
 ----
 db error: ERROR: syntax error at or near "s3express"
 
-
 # DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| CREATE SECRET (
 #|     TYPE s3,
 #|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
@@ -15,12 +17,13 @@ db error: ERROR: syntax error at or near "s3express"
 #|     REGION '⟨us-east-1⟩',
 #|     ENDPOINT 's3express-⟨use1-az5⟩.⟨us-east-1⟩.amazonaws.com'
 #| );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_01d3a915_001 (i INTEGER);
 
-# DOCS_SETUP: file_fixtures_example_003
+# DOCS_TEST: example_003
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -28,11 +31,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_express_one_example_003_1_my_file_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM 's3://express-bucket-name--use1-az5--x-s3/my-file.parquet';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *

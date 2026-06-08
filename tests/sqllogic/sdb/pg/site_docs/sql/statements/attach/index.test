@@ -1,4 +1,4 @@
-# DOCS_SETUP: generated_wide_fixtures
+# DOCS_TEST: example_001
 
 statement ok
 DROP TABLE IF EXISTS tbl1;
@@ -20,24 +20,20 @@ CREATE TABLE tbl2 AS SELECT * FROM (VALUES
 
 control substitution on
 
-# DOCS_SETUP: file_fixtures_example_001
-
-
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| ATTACH 'file.db';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_001_1_file_db.csv';
 
-# DOCS_SETUP: file_fixtures_example_002
-
-
 # DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'file.db' AS file_db;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 DETACH IF EXISTS file_db;
@@ -45,7 +41,7 @@ DETACH IF EXISTS file_db;
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_002_1_file_db.csv' AS file_db;
 
-# DOCS_SETUP: file_fixtures_example_003
+# DOCS_TEST: example_003
 
 statement ok
 DETACH IF EXISTS file;
@@ -62,10 +58,10 @@ CREATE TABLE file_readonly_fixture.items AS SELECT 1 AS id, 'alpha' AS name;
 statement ok
 DETACH file_readonly_fixture;
 
-# DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| ATTACH 'file.db' (READ_ONLY);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_003_file.db' AS file (READ_ONLY);
@@ -73,41 +69,39 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_003_file.db' AS
 statement ok
 DETACH file;
 
-
-# DOCS_SETUP: file_fixtures_example_004
-
-
 # DOCS_TEST: example_004
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'file.db' (BLOCK_SIZE 16_384);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_004_1_file_db.csv' (BLOCK_SIZE 16_384);
 
-# DOCS_SETUP: file_fixtures_example_005
-
-
 # DOCS_TEST: example_005
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'file.db' (ROW_GROUP_SIZE 2048);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_005_1_file_db.csv' (ROW_GROUP_SIZE 2048);
 
-# DOCS_SETUP: file_fixtures_example_006
-
-
 # DOCS_TEST: example_006
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'file.db' (RECOVERY_MODE no_wal_writes);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_006_1_file_db.csv' (RECOVERY_MODE no_wal_writes);
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 statement error
 ATTACH 'sqlite_file.db' AS sqlite_db (TYPE sqlite);
@@ -117,67 +111,69 @@ Extension "sqlite" is an existing extension.
 
 Install it first using "INSTALL sqlite".
 
-
-# DOCS_SETUP: file_fixtures_example_008
-
-
 # DOCS_TEST: example_008
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH IF NOT EXISTS 'file.db';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH IF NOT EXISTS '/tmp/${__DATABASE__}_sql_statements_attach_index_example_008_1_file_db.csv';
 
-# DOCS_SETUP: file_fixtures_example_009
-
-
 # DOCS_TEST: example_009
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH IF NOT EXISTS 'file.db' AS file_db;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH IF NOT EXISTS '/tmp/${__DATABASE__}_sql_statements_attach_index_example_009_1_file_db.csv' AS file_db;
 
-# DOCS_SETUP: file_fixtures_example_010
-
-
 # DOCS_TEST: example_010
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH OR REPLACE 'file2.db' AS file_db;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH OR REPLACE '/tmp/${__DATABASE__}_sql_statements_attach_index_example_010_1_file2_db.csv' AS file_db;
 
 # DOCS_TEST: example_011
 
+# DOCS_TEST_BODY
+
 statement error
 CREATE TABLE file.new_table (i INTEGER);
 ----
 (?i)Catalog with name .* does not exist!
 
-
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 statement error
 DETACH file;
 ----
 db error: ERROR: Failed to detach database with name "file": database not found
 
-
 # DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
 
 statement ok
 SHOW DATABASES;
 
 # DOCS_TEST: example_014
 
+# DOCS_TEST_BODY
+
 statement ok
 USE file;
 
-# DOCS_SETUP: file_fixtures_example_015
+# DOCS_TEST: example_015
 
 statement ok
 DETACH IF EXISTS stations_fixture;
@@ -194,12 +190,12 @@ CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
 statement ok
 DETACH stations_fixture;
 
-# DOCS_TEST: example_015
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
 #|
 #| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db (READ_ONLY);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 DETACH IF EXISTS stations_db;
@@ -213,8 +209,7 @@ DETACH stations_db;
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_015_stations.duckdb' AS stations_db (READ_ONLY);
 
-
-# DOCS_SETUP: file_fixtures_example_016
+# DOCS_TEST: example_016
 
 statement ok
 DETACH IF EXISTS stations_db;
@@ -234,12 +229,12 @@ CREATE TABLE stations_fixture.stations AS SELECT * FROM (VALUES
 statement ok
 DETACH stations_fixture;
 
-# DOCS_TEST: example_016
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| ATTACH 's3://⟨blobs-duckdb⟩/databases/stations.duckdb' AS stations_db;
 #|
 #| ATTACH 's3://⟨blobs-duckdb⟩/databases/stations.duckdb' AS stations_db (READ_ONLY);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_db;
@@ -250,25 +245,22 @@ DETACH stations_db;
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_016_stations.duckdb' AS stations_db (READ_ONLY);
 
-
-# DOCS_SETUP: file_fixtures_example_017
-
-
 # DOCS_TEST: example_017
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'file.db' (STORAGE_VERSION 'v1.2.0');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_017_1_file_db.csv' (STORAGE_VERSION 'v1.2.0');
 
-# DOCS_SETUP: file_fixtures_example_018
-
-
 # DOCS_TEST: example_018
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 DETACH IF EXISTS enc_db;
@@ -279,15 +271,14 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_018_1_encrypted
 statement ok
 DETACH enc_db;
 
-# DOCS_SETUP: file_fixtures_example_019
-
-
 # DOCS_TEST: example_019
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| LOAD httpfs;
 #|
 #| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 LOAD httpfs;
@@ -301,15 +292,14 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_019_1_encrypted
 statement ok
 DETACH enc_db;
 
-# DOCS_SETUP: file_fixtures_example_020
-
-
 # DOCS_TEST: example_020
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CBC');
 #|
 #| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CTR');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement error
 ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CBC');
@@ -326,12 +316,12 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_020_1_encrypted
 statement ok
 DETACH enc_db;
 
-# DOCS_SETUP
+# DOCS_TEST: example_021
 
 statement ok
 DETACH IF EXISTS memory_db;
 
-# DOCS_TEST: example_021
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH ':memory:' AS memory_db;
@@ -339,68 +329,74 @@ ATTACH ':memory:' AS memory_db;
 statement ok
 USE memory_db;
 
-# DOCS_SETUP: file_fixtures_example_022
-
-
 # DOCS_TEST: example_022
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'new_db.db';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_022_1_new_db_db.csv';
 
 # DOCS_TEST: example_023
 
+# DOCS_TEST_BODY
+
 statement error
 CREATE SCHEMA new_db.my_schema;
 ----
 (?i)Catalog .* does not exist!
 
-
 # DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
 
 statement error
 CREATE TABLE new_db.my_schema.my_table (col INTEGER);
 ----
 (?i)Catalog with name .* does not exist!
 
-
 # DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
 
 query error
 SELECT new_db.my_schema.my_table.col FROM new_db.my_schema.my_table;
 ----
 (?i)Catalog .* does not exist!
 
-
 # DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE my_table (col INTEGER);
 
 # DOCS_TEST: example_027
 
+# DOCS_TEST_BODY
+
 statement ok
 USE new_db;
 
 # DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
 
 statement error
 USE new_db.my_schema;
 ----
 db error: ERROR: SET schema: No catalog \+ schema named "new_db\.my_schema" found\.
 
-
-# DOCS_SETUP: file_fixtures_example_029
-
-
 # DOCS_TEST: example_029
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| ATTACH 'new_db.db';
 #|
 #| CREATE SCHEMA my_schema;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_029_1_new_db_db.csv';
@@ -408,7 +404,7 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_029_1_new_db_db
 statement ok
 CREATE SCHEMA my_schema;
 
-# DOCS_SETUP
+# DOCS_TEST: example_030
 
 statement ok
 USE $__DATABASE__;
@@ -416,20 +412,21 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS new_db;
 
-# DOCS_TEST: example_030
+# DOCS_TEST_BODY
 
 statement error
 CREATE TABLE new_db.tbl (i INTEGER);
 ----
 db error: ERROR: Catalog with name tests_sqllogic_sdb_pg_site_docs_sql_statements_attach__hksfmpan does not exist!
 
-
 # DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
 
 statement error db error: ERROR: Catalog with name tests_sqllogic_sdb_pg_site_docs_sql_statements_attach__hksfmpan does not exist!
 CREATE TABLE my_schema.tbl (i INTEGER);
 
-# DOCS_SETUP
+# DOCS_TEST: example_032
 
 statement ok
 USE $__DATABASE__;
@@ -440,7 +437,7 @@ DROP SCHEMA IF EXISTS new_db CASCADE;
 statement ok
 DROP TABLE IF EXISTS new_db;
 
-# DOCS_TEST: example_032
+# DOCS_TEST_BODY
 
 statement ok
 CREATE SCHEMA new_db;
@@ -448,7 +445,7 @@ CREATE SCHEMA new_db;
 statement ok
 CREATE TABLE new_db.tbl (i INTEGER);
 
-# DOCS_SETUP
+# DOCS_TEST: example_033
 
 statement ok
 USE $__DATABASE__;
@@ -459,7 +456,7 @@ DETACH IF EXISTS db1;
 statement ok
 DETACH IF EXISTS db2;
 
-# DOCS_TEST: example_033
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH ':memory:' AS db1;
@@ -475,6 +472,8 @@ CREATE table db2.tbl2 (j INTEGER);
 
 # DOCS_TEST: example_034
 
+# DOCS_TEST_BODY
+
 query
 SELECT * FROM db1.tbl1;
 ----
@@ -486,6 +485,8 @@ SELECT * FROM db2.tbl2;
 j
 
 # DOCS_TEST: example_035
+
+# DOCS_TEST_BODY
 
 statement ok
 SET search_path = 'db1,db2';

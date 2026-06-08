@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT DATE '1992-09-20';
 ----
@@ -7,6 +9,8 @@ date
 1992-09-20
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT

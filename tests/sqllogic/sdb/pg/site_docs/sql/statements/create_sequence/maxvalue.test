@@ -1,4 +1,6 @@
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE SEQUENCE serial START WITH 1 MAXVALUE 10;

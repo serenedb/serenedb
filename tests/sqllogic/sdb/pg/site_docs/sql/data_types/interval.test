@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT
     INTERVAL 1 YEAR, -- single unit using YEAR keyword; stored as 12 months
@@ -15,6 +17,8 @@ to_years	to_years	interval	interval	interval
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT INTERVAL '1.5' YEARS;
 ----
@@ -22,6 +26,8 @@ to_years
 1 year
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT DATE '2000-01-01' + INTERVAL (i) MONTH
@@ -42,6 +48,8 @@ FROM range(12) t(i);
 2000-12-01 00:00:00
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT
@@ -64,6 +72,8 @@ FROM (
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT
     datepart('decade', INTERVAL 12 YEARS), -- returns 1
@@ -77,6 +87,8 @@ datepart	datepart	datepart	datepart
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT
     DATE '2000-01-01' + INTERVAL 1 YEAR,
@@ -89,14 +101,17 @@ SELECT
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query error
 SELECT
 ;
 ----
 db error: ERROR: SELECT clause without selection list
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query
 SELECT

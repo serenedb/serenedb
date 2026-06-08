@@ -1,4 +1,4 @@
-# DOCS_SETUP: local_sequence_dependency_fixture
+# DOCS_TEST: example_018
 
 statement ok
 CREATE SEQUENCE id_sequence START 1;
@@ -9,12 +9,12 @@ CREATE TABLE tbl (
     s VARCHAR
 );
 
-# DOCS_TEST: example_018
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| DROP SEQUENCE id_sequence CASCADE;
 #|
 #| SELECT * FROM tbl;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 DROP SEQUENCE id_sequence CASCADE;

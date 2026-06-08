@@ -1,9 +1,9 @@
-# DOCS_SETUP: local_integers_rename_column_fixture
+# DOCS_TEST: example_015
 
 statement ok
 CREATE TABLE integers (i INTEGER);
 
-# DOCS_TEST: example_015
+# DOCS_TEST_BODY
 
 statement ok
 ALTER TABLE integers

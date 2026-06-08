@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_001
 
 statement ok
 USE $__DATABASE__;
@@ -11,13 +11,13 @@ DROP TABLE IF EXISTS tbl;
 statement ok
 CREATE TABLE tbl (i INTEGER);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 statement ok
 INSERT INTO tbl
     VALUES (1), (2), (3);
 
-# DOCS_SETUP: wide_tbl_fixture
+# DOCS_TEST: example_002
 
 statement ok
 DROP TABLE IF EXISTS other_tbl;
@@ -55,7 +55,7 @@ INSERT INTO other_tbl VALUES
     (11, 'other mark', 11, 12, 'delta', 11, 110, 120, 130, 110, 1100, 11000),
     (13, 'other bookmark', 14, 15, 'epsilon', 12, 111, 121, 131, 120, 1200, 12000);
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 statement ok
 INSERT INTO tbl
@@ -63,17 +63,21 @@ INSERT INTO tbl
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 statement ok
 INSERT INTO tbl (i)
     VALUES (1), (2), (3);
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 statement ok
 INSERT INTO tbl (i)
     VALUES (1), (DEFAULT), (3);
 
-# DOCS_SETUP: primary_key_tbl_fixture
+# DOCS_TEST: example_005
 
 statement ok
 DROP TABLE IF EXISTS tbl;
@@ -84,7 +88,7 @@ CREATE TABLE tbl (i INTEGER PRIMARY KEY);
 statement ok
 INSERT INTO tbl VALUES (1);
 
-# DOCS_TEST: example_005
+# DOCS_TEST_BODY
 
 statement ok
 INSERT OR IGNORE INTO tbl (i)
@@ -92,11 +96,15 @@ INSERT OR IGNORE INTO tbl (i)
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
 INSERT OR REPLACE INTO tbl (i)
     VALUES (1);
 
 # DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (id INTEGER PRIMARY KEY, val1 DOUBLE, val2 DOUBLE NOT NULL);
@@ -117,7 +125,7 @@ INSERT INTO t1 BY NAME (SELECT id, val1 FROM t2)
     ON CONFLICT DO UPDATE
     SET val1 = EXCLUDED.val1;
 
-# DOCS_SETUP
+# DOCS_TEST: example_022
 
 statement ok
 USE $__DATABASE__;
@@ -125,7 +133,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_022
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (id1 INTEGER, id2 INTEGER, val1 DOUBLE, PRIMARY KEY (id1, id2));
@@ -138,7 +146,7 @@ statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
 INSERT OR REPLACE INTO t1
     VALUES (1, 2, 4);
 
-# DOCS_SETUP
+# DOCS_TEST: example_027
 
 statement ok
 USE $__DATABASE__;
@@ -146,7 +154,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_027
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (i INTEGER);
@@ -159,7 +167,7 @@ INSERT INTO t1
 i
 1
 
-# DOCS_SETUP
+# DOCS_TEST: example_028
 
 statement ok
 USE $__DATABASE__;
@@ -167,7 +175,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t2;
 
-# DOCS_TEST: example_028
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t2 (i INTEGER, j INTEGER);
@@ -181,6 +189,8 @@ i	j	i_times_j
 1	0	0
 
 # DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t3 (i INTEGER PRIMARY KEY, j INTEGER);

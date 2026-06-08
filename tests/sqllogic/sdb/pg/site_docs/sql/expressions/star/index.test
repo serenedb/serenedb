@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_001
 
 statement ok
 USE $__DATABASE__;
@@ -35,7 +35,7 @@ INSERT INTO other_tbl VALUES
     (1, 'one'),
     (3, 'three');
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -48,6 +48,8 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT tbl.*
 FROM tbl
@@ -59,13 +61,15 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT st.* FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS st);
 ----
 x	y	z
 1	2	3
 
-# DOCS_SETUP: local_star_exclude_col_fixture
+# DOCS_TEST: example_004
 
 statement ok
 DROP TABLE tbl;
@@ -93,7 +97,7 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 98, 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 97, 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_004
+# DOCS_TEST_BODY
 
 query
 SELECT * EXCLUDE (col)
@@ -104,7 +108,7 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
 
-# DOCS_SETUP: local_star_base_tbl_fixture
+# DOCS_TEST: example_005
 
 statement ok
 DROP TABLE tbl;
@@ -131,7 +135,7 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_005
+# DOCS_TEST_BODY
 
 query
 SELECT * REPLACE (col1 / 1_000 AS col1, col2 / 1_000 AS col2)
@@ -144,6 +148,8 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT * RENAME (col1 AS height, col2 AS width)
 FROM tbl;
@@ -154,6 +160,8 @@ id	name	height	width	some column name	i	a	b	c	number	number1	number2
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query
 SELECT * LIKE 'col%'
@@ -166,6 +174,8 @@ col1	col2
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 query
 SELECT * GLOB 'col*'
 FROM tbl;
@@ -177,17 +187,23 @@ col1	col2
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 query error db error: ERROR: Pattern applied to a star expression must be a constant
 SELECT * SIMILAR TO 'col.'
 FROM tbl;
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query error db error: ERROR: Pattern applied to a star expression must be a constant
 SELECT * NOT SIMILAR TO 'col.'
 FROM tbl;
 
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE numbers (id INTEGER, number INTEGER);
@@ -203,6 +219,8 @@ id	number	id	number
 
 # DOCS_TEST: example_012
 
+# DOCS_TEST_BODY
+
 query
 SELECT
     min(COLUMNS(* REPLACE (number + id AS number))),
@@ -214,6 +232,8 @@ id	min	id
 
 # DOCS_TEST: example_013
 
+# DOCS_TEST_BODY
+
 query
 SELECT COLUMNS(*) + COLUMNS(*) FROM numbers;
 ----
@@ -223,6 +243,8 @@ id	number
 6	NULL
 
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 query ?? rowsort
 SELECT *
@@ -239,6 +261,8 @@ x	y
 a	a
 
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 query ?? rowsort
 SELECT *
@@ -257,6 +281,8 @@ a	b
 
 # DOCS_TEST: example_016
 
+# DOCS_TEST_BODY
+
 query ??? rowsort
 SELECT DISTINCT ON (COLUMNS('x|y')) *
 FROM (VALUES (1, 2, 'a'), (1, 2, 'b'), (3, 4, 'c')) t(x, y, z);
@@ -266,6 +292,8 @@ x	y	z
 3	4	c
 
 # DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
 
 query
 SELECT COLUMNS('(id|numbers?)') FROM numbers;
@@ -277,15 +305,21 @@ id	number
 
 # DOCS_TEST: example_018
 
+# DOCS_TEST_BODY
+
 query error substitution failed: Invalid escape sequence: \\w
 SELECT COLUMNS('(\w{3}).*') AS '\1' FROM numbers;
 
 # DOCS_TEST: example_020
 
+# DOCS_TEST_BODY
+
 query error substitution failed: Invalid escape sequence: \\0
 SELECT min(COLUMNS(*)) AS "min_\0" FROM numbers;
 
 # DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
 
 query
 SELECT COLUMNS(lambda c: c LIKE '%num%') FROM numbers;
@@ -295,7 +329,7 @@ number
 20
 NULL
 
-# DOCS_SETUP: local_numbers_id_num_fixture
+# DOCS_TEST: example_022
 
 statement ok
 DROP TABLE numbers;
@@ -306,7 +340,7 @@ CREATE TABLE numbers (id INTEGER, num INTEGER);
 statement ok
 INSERT INTO numbers VALUES (1, 10), (2, 20), (3, NULL);
 
-# DOCS_TEST: example_022
+# DOCS_TEST_BODY
 
 query
 SELECT COLUMNS(['id', 'num']) FROM numbers;
@@ -318,6 +352,8 @@ id	num
 
 # DOCS_TEST: example_023
 
+# DOCS_TEST_BODY
+
 query
 SELECT coalesce(COLUMNS(['a', 'b', 'c'])) AS result
 FROM (SELECT NULL a, 42 b, true c);
@@ -326,6 +362,8 @@ result	result	result
 NULL	42	t
 
 # DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
 
 query
 SELECT coalesce(UNPACK(COLUMNS(['a', 'b', 'c']))) AS result
@@ -336,6 +374,8 @@ result
 
 # DOCS_TEST: example_025
 
+# DOCS_TEST_BODY
+
 query
 SELECT coalesce(*COLUMNS(*)) AS result
 FROM (SELECT NULL a, 42 AS b, true AS c);
@@ -345,6 +385,8 @@ result
 
 # DOCS_TEST: example_026
 
+# DOCS_TEST_BODY
+
 query
 SELECT greatest(UNPACK(COLUMNS(*) + 1)) AS result
 FROM (SELECT 1 AS a, 2 AS b, 3 AS c);
@@ -353,6 +395,8 @@ result
 4
 
 # DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
 
 query
 SELECT st.* FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS st);

@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 -- Create a table with timestamp columns
 CREATE TABLE events (
@@ -24,6 +26,8 @@ SELECT * FROM events;
 event_name	start_time	start_time_tz
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 -- Set session time zone to US Pacific

@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 SET VARIABLE my_var = 30;
 
@@ -12,6 +14,8 @@ total
 50
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 SET VARIABLE my_var = 30;
@@ -27,6 +31,8 @@ total
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 statement ok
 SET VARIABLE my_date = DATE '2018-07-13';
 
@@ -36,11 +42,9 @@ SET VARIABLE my_string = 'Hello world';
 statement ok
 SET VARIABLE my_map = MAP {'k1': 10, 'k2': 20};
 
-# DOCS_SETUP: file_fixtures_example_004
-
-
 # DOCS_TEST: example_004
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| -- write some CSV files
 #| COPY (SELECT 42 AS a) TO 'test1.csv';
 #|
@@ -56,7 +60,8 @@ SET VARIABLE my_map = MAP {'k1': 10, 'k2': 20};
 #|
 #| -- read the CSV files
 #| SELECT * FROM read_csv(getvariable('list_of_files'), filename := True);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 -- write some CSV files
@@ -93,6 +98,8 @@ a	filename
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT getvariable('undefined_var') AS result;
 ----
@@ -100,6 +107,8 @@ result
 NULL
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 statement ok
 SET VARIABLE my_var = 30;

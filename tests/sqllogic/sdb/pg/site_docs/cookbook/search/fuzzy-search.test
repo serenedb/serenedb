@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY fuzzy_dict (
     template = 'text',
@@ -28,6 +30,8 @@ statement ok
 VACUUM (UPDATE_INDEXES) products;
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query error
 -- Exact match only (distance 0)
@@ -58,8 +62,9 @@ ORDER BY id;
 db error: ERROR: Scalar Function with name levenshtein_match does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, name FROM idx_products
@@ -69,8 +74,9 @@ ORDER BY id;
 db error: ERROR: Scalar Function with name levenshtein_match does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 -- Must start with 'ca', then fuzzy match the rest
@@ -81,8 +87,9 @@ ORDER BY id;
 db error: ERROR: Scalar Function with name levenshtein_match does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY bigram_dict (
@@ -113,6 +120,8 @@ VACUUM (UPDATE_INDEXES) articles;
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query error
 -- Default threshold (0.7) — strict matching
 SELECT id, title FROM idx_articles_ngram
@@ -142,8 +151,9 @@ ORDER BY id;
 db error: ERROR: Scalar Function with name ngram_match does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query error
 -- Fuzzy match + exact filter
@@ -163,4 +173,3 @@ ORDER BY id;
 ----
 db error: ERROR: Scalar Function with name ngram_match does not exist!
 Did you mean "<slt:ignore>"?
-

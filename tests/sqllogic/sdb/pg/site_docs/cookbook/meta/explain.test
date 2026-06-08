@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_001
 
 statement ok
 USE $__DATABASE__;
@@ -27,12 +27,14 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 statement ok
 EXPLAIN SELECT * FROM tbl;
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE students (name VARCHAR, sid INTEGER);
@@ -55,17 +57,23 @@ EXPLAIN
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 PRAGMA explain_output = 'physical_only';
 ----
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query
 PRAGMA explain_output = 'optimized_only';
 ----
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query
 PRAGMA explain_output = 'all';

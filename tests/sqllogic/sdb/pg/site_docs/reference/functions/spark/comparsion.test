@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 SELECT equalnullsafe(null, null);
 ----
@@ -20,8 +22,9 @@ SELECT equalnullsafe(ARRAY[1, null], ARRAY[1, null]);
 db error: ERROR: Scalar Function with name equalnullsafe does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query error
 SELECT equalto(null, null);
@@ -43,8 +46,9 @@ SELECT equalto(ARRAY[1, null], ARRAY[1, null]);
 db error: ERROR: Scalar Function with name equalto does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT greatest(10, 9, 2, 4, 3);
@@ -66,14 +70,17 @@ NULL
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query error
 SELECT isnotnull(1);
 ----
 db error: ERROR: Scalar Function with name isnotnull does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 SELECT isnull(1);
@@ -81,8 +88,9 @@ SELECT isnull(1);
 db error: ERROR: Scalar Function with name isnull does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query
 SELECT least(10, 9, 2, 4, 3);

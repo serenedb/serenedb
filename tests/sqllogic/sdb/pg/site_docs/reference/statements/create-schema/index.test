@@ -1,14 +1,16 @@
 # DOCS_TEST: example_001
 
-statement ok
-CREATE SCHEMA IF NOT EXISTS analytics;
-
-# DOCS_SETUP: local_analytics_schema_fixture
+# DOCS_TEST_BODY
 
 statement ok
 CREATE SCHEMA IF NOT EXISTS analytics;
 
 # DOCS_TEST: example_002
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS analytics;
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE analytics.page_views (

@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 select cast('1.1232154' as decimal(38, 7)) + cast('1' as decimal(10, 0));
 ----
@@ -10,10 +12,11 @@ query error
 select cast('9999999999999999999999999999999.2345678' as decimal(38, 7)) + cast('1' as decimal(10, 0));
 ----
 db error: ERROR: Overflow in addition of DECIMAL\(38\) \(99999999999999999999999999999992345678 \+ 10000000\);
-
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 select cast('1.1232154' as decimal(38, 7)) + cast('1' as decimal(10, 0));
 ----
@@ -25,16 +28,18 @@ select cast('9999999999999999999999999999999.2345678' as decimal(38, 7)) + cast(
 ----
 db error: ERROR: Overflow in addition of DECIMAL\(38\) \(99999999999999999999999999999992345678 \+ 10000000\);
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 select cast(0.1234567891011 as decimal(38, 18)) * cast(1234.1 as decimal(38, 18));
 ----
 db error: ERROR: Overflow in multiplication of DECIMAL\(38\) \(123456789101100000 \* 1234100000000000000000\)\. You might want to add an explicit cast to a decimal with a smaller scale\.
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SELECT CAST(1 as DECIMAL(17, 3)) div CAST(2 as DECIMAL(17, 3));
@@ -59,8 +64,9 @@ SELECT CAST(99999999999999999999999999999999999 as DECIMAL(38, 1)) div CAST(0.00
 ----
 db error: ERROR: syntax error at or near "CAST"
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query
 SELECT ceil(cast(1.23 as DECIMAL(3, 2)));
@@ -70,6 +76,8 @@ ceil
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT floor(cast(1.23 as DECIMAL(3, 2)));
 ----
@@ -78,14 +86,17 @@ floor
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query error
 SELECT unaryminus(cast(-9999999999999999999.9999999999999999999 as DECIMAL(38, 19)));
 ----
 db error: ERROR: Scalar Function with name unaryminus does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query
 SELECT (round(cast (9.9 as decimal(2, 1)), 0));
@@ -100,6 +111,8 @@ round
 100
 
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT round(cast (0.856 as DECIMAL(3, 3)), -1);
@@ -133,6 +146,8 @@ round
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query
 SELECT round(cast (85.6 as DECIMAL(3, 1)));
 ----
@@ -146,6 +161,8 @@ round
 1
 
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query
 SELECT round(cast (85.681 as DECIMAL(5, 3)), 1);

@@ -1,4 +1,4 @@
-# DOCS_SETUP: shared_search_dataset
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE movies (
@@ -53,7 +53,7 @@ statement ok
 CREATE INDEX movies_exact_idx ON movies
     USING inverted (id, title exact_dict, description exact_dict);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title, BM25() AS relevance
@@ -64,8 +64,9 @@ ORDER BY BM25() DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title, BM25(1.2, 0.75) AS relevance
@@ -76,8 +77,9 @@ ORDER BY BM25(1.2, 0.75) DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title, BM25(0.5, 0) AS relevance
@@ -88,8 +90,9 @@ ORDER BY BM25(0.5, 0) DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title, BM25(2.0, 0.75) AS relevance
@@ -100,8 +103,9 @@ ORDER BY BM25(2.0, 0.75) DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 -- BM15: ignore document length differences
@@ -124,8 +128,9 @@ ORDER BY BM25(1.2, 1) DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title, genre, BM25() AS relevance
@@ -136,8 +141,9 @@ ORDER BY BM25() DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query error
 SELECT genre, COUNT(*) AS matches, AVG(BM25()) AS avg_relevance
@@ -149,8 +155,9 @@ ORDER BY avg_relevance DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title, BM25() AS relevance
@@ -162,8 +169,9 @@ LIMIT 10 OFFSET 0;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title, TFIDF() AS relevance
@@ -174,8 +182,9 @@ ORDER BY TFIDF() DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title, TFIDF(true) AS relevance
@@ -186,8 +195,9 @@ ORDER BY TFIDF(true) DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query error
 SELECT id, title, BM25() AS relevance, runtime,
@@ -199,8 +209,9 @@ ORDER BY custom_score DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY ranking_dict (

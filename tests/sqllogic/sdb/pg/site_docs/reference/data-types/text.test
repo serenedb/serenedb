@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 -- Create a table with different string types
 CREATE TABLE users (
@@ -24,6 +26,8 @@ bob	B456 	Bob works in marketing
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT
     LENGTH('🪐') AS length,
@@ -35,6 +39,8 @@ length	char_length	octet_length
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query error
 WITH strings(a, b) AS (
     VALUES ('foo', 'FOO')
@@ -45,8 +51,9 @@ FROM strings;
 db error: ERROR: Collation with name en_us_ci does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 WITH strings(s) AS (
@@ -58,4 +65,3 @@ GROUP BY s COLLATE "en_US_ci";
 ----
 db error: ERROR: Collation with name en_us_ci does not exist!
 Did you mean "<slt:ignore>"?
-

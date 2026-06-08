@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_001
 
 statement ok
 USE $__DATABASE__;
@@ -28,7 +28,7 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 20, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 30, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 statement ok
 UPDATE tbl
@@ -37,12 +37,15 @@ WHERE i IS NULL;
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 UPDATE tbl
 SET i = 1, j = 2;
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE TABLE original AS
@@ -66,6 +69,8 @@ key	value
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 statement ok
 UPDATE original
     SET value = new.value
@@ -73,6 +78,8 @@ UPDATE original
     WHERE original.key = new.key;
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement ok
 UPDATE original
@@ -85,6 +92,8 @@ UPDATE original
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM original;
@@ -94,6 +103,8 @@ key	value
 2	new value 2
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 statement ok
 UPDATE original AS true_original
@@ -105,6 +116,8 @@ UPDATE original AS true_original
     );
 
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE city (name VARCHAR, revenue BIGINT, country_code VARCHAR);
@@ -120,6 +133,8 @@ INSERT INTO country VALUES ('FR', 'France'), ('BE', 'Belgium');
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 statement ok
 UPDATE city
 SET revenue = revenue + 100
@@ -128,6 +143,8 @@ WHERE city.country_code = country.code
   AND country.name = 'France';
 
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 query
 SELECT *

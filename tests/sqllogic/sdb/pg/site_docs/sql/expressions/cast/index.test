@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT CAST(i AS VARCHAR) AS i
 FROM generate_series(1, 3) tbl(i);
@@ -12,6 +14,8 @@ i
 3
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT i::DOUBLE AS i
@@ -24,10 +28,14 @@ i
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query error db error: ERROR: Could not convert string 'hello' to INT32
 SELECT CAST('hello' AS INTEGER);
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT TRY_CAST('hello' AS INTEGER) AS i;
@@ -36,6 +44,8 @@ i
 NULL
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query
 SELECT cast_to_type('42', NULL::INTEGER) AS result;

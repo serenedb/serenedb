@@ -1,4 +1,4 @@
-# DOCS_SETUP: file_fixtures_example_001
+# DOCS_TEST: example_001
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -26,12 +26,12 @@ COPY (SELECT * FROM (VALUES
     ('DATA', TIMESTAMP '2001-01-01 00:01:30', 18.37)
 ) AS t("ticker", "when", "shares")) TO '/tmp/${__DATABASE__}_cookbook_sql_features_asof_join_example_001_holdings.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE TABLE prices AS FROM 'https://duckdb.org/data/prices.csv';
 #|
 #| CREATE TABLE holdings AS FROM 'https://duckdb.org/data/holdings.csv';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE prices AS FROM '/tmp/${__DATABASE__}_cookbook_sql_features_asof_join_example_001_prices.csv';
@@ -39,8 +39,7 @@ CREATE TABLE prices AS FROM '/tmp/${__DATABASE__}_cookbook_sql_features_asof_joi
 statement ok
 CREATE TABLE holdings AS FROM '/tmp/${__DATABASE__}_cookbook_sql_features_asof_join_example_001_holdings.csv';
 
-
-# DOCS_SETUP: local_asof_join_fixtures
+# DOCS_TEST: example_002
 
 statement ok
 DROP TABLE IF EXISTS prices;
@@ -86,7 +85,7 @@ INSERT INTO holdings VALUES
     ('DATA', TIMESTAMP '2001-01-01 00:00:30', 17.95),
     ('DATA', TIMESTAMP '2001-01-01 00:01:30', 18.37);
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 query ??? rowsort
 SELECT h.ticker, h.when, price * shares AS value
@@ -103,13 +102,14 @@ GOOG	2001-01-01 00:01:30	21.16
 
 # DOCS_TEST: example_003
 
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT h.ticker, h.when, price * shares AS value
 #| FROM holdings h
 #| ASOF LEFT JOIN prices p
 #|             ON h.ticker = p.ticker
 #|            AND h.when >= p.when;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query ???
 SELECT h.ticker, h.when, price * shares AS value
@@ -134,6 +134,8 @@ DATA	2001-01-01 00:01:30	NULL
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 query ??? rowsort
 SELECT ticker, h.when, price * shares AS value
 FROM holdings h
@@ -147,6 +149,8 @@ GOOG	2001-01-01 00:01:30	21.16
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query ????? rowsort
 SELECT *
 FROM holdings h
@@ -159,6 +163,8 @@ GOOG	2001-01-01 00:00:30	23.45	1
 GOOG	2001-01-01 00:01:30	10.58	2
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query ????? rowsort
 SELECT h.ticker, h.when AS holdings_when, p.when AS prices_when, h.shares, p.price

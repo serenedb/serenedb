@@ -1,4 +1,4 @@
-# DOCS_SETUP: local_tbl_copy_fixture
+# DOCS_TEST: example_033
 
 statement ok
 CREATE TABLE tbl (col VARCHAR);
@@ -8,7 +8,7 @@ INSERT INTO tbl VALUES
     ('asdf'),
     ('42');
 
-# DOCS_TEST: example_033
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE tbl_copy AS FROM tbl;

@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY seg_dict (
     template = 'segmentation',
@@ -8,6 +10,8 @@ CREATE TEXT SEARCH DICTIONARY seg_dict (
 );
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY seg_all (

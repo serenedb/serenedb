@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE my_table (i INTEGER PRIMARY KEY);
 
@@ -14,8 +16,7 @@ UPDATE my_table SET i = i + 1;
 db error: ERROR: duplicate key value violates unique constraint "my_table_pkey"
 DETAIL: Key (i)=(1) already exists.
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_002
 
 statement ok
 USE $__DATABASE__;
@@ -23,7 +24,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS my_table;
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE my_table (i INTEGER PRIMARY KEY);
@@ -50,6 +51,8 @@ statement ok
 COMMIT;
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE pk_table (id INTEGER PRIMARY KEY, payload VARCHAR[]);

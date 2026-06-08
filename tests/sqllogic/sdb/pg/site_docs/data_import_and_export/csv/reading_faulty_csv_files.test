@@ -1,4 +1,4 @@
-# DOCS_SETUP: generated_wide_fixtures
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE reject_scans AS SELECT * FROM (VALUES
@@ -12,12 +12,12 @@ CREATE TABLE reject_errors AS SELECT * FROM (VALUES
     (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
 ) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE people (name VARCHAR, birth_date DATE);
 
-# DOCS_SETUP: file_fixtures_example_002
+# DOCS_TEST: example_002
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -25,10 +25,10 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_002_1_faulty_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
-# DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query error
 FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_002_1_faulty_csv.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
@@ -54,8 +54,7 @@ Possible fixes:
 * Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
 * Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
 
-
-# DOCS_SETUP: file_fixtures_example_003
+# DOCS_TEST: example_003
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -63,14 +62,14 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_003_1_faulty_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
-# DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| FROM read_csv(
 #|     'faulty.csv',
 #|     columns = {'name': 'VARCHAR', 'age': 'INTEGER'},
 #|     ignore_errors = true
 #| );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query error
 FROM read_csv(
@@ -99,9 +98,7 @@ Possible fixes:
 * Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
 * Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
 
-
-
-# DOCS_SETUP: file_fixtures_example_004
+# DOCS_TEST: example_004
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -109,11 +106,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_004_1_faulty_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
-# DOCS_TEST: example_004
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT name
 #| FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'});
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query error
 SELECT name
@@ -140,8 +137,7 @@ Possible fixes:
 * Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
 * Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
 
-
-# DOCS_SETUP: file_fixtures_example_005
+# DOCS_TEST: example_005
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -149,14 +145,14 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_reading_faulty_csv_files_example_005_1_faulty_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
-# DOCS_TEST: example_005
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| FROM read_csv(
 #|     'faulty.csv',
 #|     columns = {'name': 'VARCHAR', 'age': 'INTEGER'},
 #|     store_rejects = true
 #| );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query error
 FROM read_csv(
@@ -185,9 +181,9 @@ Possible fixes:
 * Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
 * Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
 
-
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query ???????????????????????????????????????????????????????????????????
 FROM reject_scans;
@@ -197,6 +193,8 @@ id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	produc
 2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query ???????????????????????????????????????????????????????????????????
 FROM reject_errors;

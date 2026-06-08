@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement error
 INSTALL httpfs;
 ----
@@ -8,37 +10,44 @@ Extension "httpfs" is an existing extension.
 
 For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=httpfs (ERROR Problem with the SSL CA cert (path? access rights?))
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 LOAD httpfs;
 
 # DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| CREATE SECRET (
 #|     TYPE s3,
 #|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
 #|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
 #|     REGION '⟨us-east-1⟩'
 #| );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_5893ec35_001 (i INTEGER);
 
 # DOCS_TEST: example_004
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| CREATE SECRET (
 #|     TYPE s3,
 #|     PROVIDER credential_chain
 #| );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_5893ec35_002 (i INTEGER);
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE table_name (id INTEGER);
@@ -46,20 +55,23 @@ CREATE TABLE table_name (id INTEGER);
 statement error (?i).*
 COPY table_name TO 's3://s3-bucket/filename.parquet';
 
-
 # DOCS_TEST: example_006
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| CREATE SECRET (
 #|     TYPE gcs,
 #|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
 #|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩'
 #| );
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_5893ec35_003 (i INTEGER);
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 statement error (?i).*
 COPY table_name TO 'gs://gcs_bucket/filename.parquet';

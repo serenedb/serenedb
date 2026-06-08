@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 SELECT from_json('\{"a": true\}', 'a BOOLEAN');
 ----
@@ -53,8 +55,9 @@ SELECT from_json('\{"a": \{"b": 1\}\}', 'a STRUCT<b INT>');
 ----
 (?i)Malformed JSON.*
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query error
 SELECT get_json_object('\{"a":"b"\}', '$.a');
@@ -83,8 +86,9 @@ SELECT get_json_object('\{"a":3\}'', '.a');
 ----
 db error: ERROR: syntax error at or near "\$"
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT json_array_length('[1,2,3,4]');
@@ -103,8 +107,9 @@ SELECT json_array_length('[1,2');
 ----
 (?i)Malformed JSON.*
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SELECT json_object_keys('\{\}');
@@ -147,8 +152,9 @@ SELECT json_object_keys("invalid json");
 db error: ERROR: Scalar Function with name json_object_keys does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 SELECT to_json(named_struct('c0', 1, 'c1', 'a'));
@@ -170,4 +176,3 @@ db error: ERROR: No function matches the given name and argument types 'map(STRI
 	Candidate functions:
 	map() -> MAP("NULL", "NULL")
 	map(K[], V[]) -> MAP(K, V)
-

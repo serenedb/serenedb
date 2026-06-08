@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT CAST(NULL AS JSON);
 ----
@@ -80,6 +82,8 @@ row
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 SELECT CAST(JSON 'null' AS VARCHAR);
 ----
@@ -157,8 +161,9 @@ SELECT CAST(JSON '[123,"abc",true]' AS ROW(v1 BIGINT, v2 VARCHAR, v3 BOOLEAN));
 ----
 db error: ERROR: Expected OBJECT, but got ARRAY: \[123,"abc",true\]
 
-
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query error
 SELECT is_json_scalar('1');
@@ -179,8 +184,9 @@ statement error
 ----
 db error: ERROR: syntax error at or near "\*"
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SELECT json_array_contains('[1, 2, 3]', 2);
@@ -188,8 +194,9 @@ SELECT json_array_contains('[1, 2, 3]', 2);
 db error: ERROR: Scalar Function with name json_array_contains does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 SELECT json_array_get('[1, 2, 3]', 0);
@@ -204,8 +211,9 @@ SELECT json_array_get('[1, 2, 3]', 1);
 db error: ERROR: Scalar Function with name json_array_get does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query error
 SELECT json_array_get('[1, 2, 3]', -1);
@@ -220,8 +228,9 @@ SELECT json_array_get('[1, 2, 3]', -2);
 db error: ERROR: Scalar Function with name json_array_get does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query error
 SELECT json_array_get('[1, 2, 3]', 10);
@@ -236,8 +245,9 @@ SELECT json_array_get('[1, 2, 3]', -10);
 db error: ERROR: Scalar Function with name json_array_get does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query error
 SELECT json_array_get('\{"a": 10, "b": 11\}', 1);
@@ -245,8 +255,9 @@ SELECT json_array_get('\{"a": 10, "b": 11\}', 1);
 db error: ERROR: Scalar Function with name json_array_get does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT json_array_length('[1, 2, 3]');
@@ -256,13 +267,16 @@ json_array_length
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query error
 SELECT json_extract(json, '$.store.book');
 ----
 db error: ERROR: Referenced column "json" was not found because the FROM clause is missing
 
-
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query error
 SELECT json_extract_scalar('[1, 2, 3]', '$[2]');
@@ -277,8 +291,9 @@ SELECT json_extract_scalar(json, '$.store.book[0].author');
 db error: ERROR: Scalar Function with name json_extract_scalar does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 query error
 SELECT json_format(JSON '[1, 2, 3]');
@@ -293,8 +308,9 @@ SELECT json_format(JSON '"a"');
 db error: ERROR: Scalar Function with name json_format does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
 
 query error
 SELECT json_parse('[1, 2, 3]');
@@ -309,8 +325,9 @@ SELECT json_parse('"abc"');
 db error: ERROR: Scalar Function with name json_parse does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 query error
 SELECT json_size('\{"x": \{"a": 1, "b": 2\}\}', '$.x');
@@ -331,4 +348,3 @@ SELECT json_size('\{"x": \{"a": 1, "b": 2\}\}', '$.x.a');
 ----
 db error: ERROR: Scalar Function with name json_size does not exist!
 Did you mean "<slt:ignore>"?
-

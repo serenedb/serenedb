@@ -1,4 +1,4 @@
-# DOCS_SETUP: file_fixtures_example_001
+# DOCS_TEST: example_001
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -11,11 +11,11 @@ COPY (SELECT * FROM (VALUES
     (3, 'gamma', 30)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_001_dir_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM 'dir/*.csv';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -26,8 +26,7 @@ id	name	value
 2	beta	20
 3	gamma	30
 
-
-# DOCS_SETUP: file_fixtures_example_002
+# DOCS_TEST: example_002
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -41,11 +40,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_002_1_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM '*/*/*.csv';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -57,8 +56,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_003
+# DOCS_TEST: example_003
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -72,11 +70,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_003_1_csv_2.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM 'dir/**/*.csv';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -88,8 +86,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_004
+# DOCS_TEST: example_004
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -101,11 +98,11 @@ COPY (SELECT * FROM (VALUES
     (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
 ) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_004_2_flights2_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_004
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_csv(['flights1.csv', 'flights2.csv']);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -115,8 +112,7 @@ flightdate	uniquecarrier	origincityname	destcityname	distance
 2024-02-01	DL	Boston, MA	Chicago, IL	867
 2024-02-01	DL	Boston, MA	Chicago, IL	867
 
-
-# DOCS_SETUP: file_fixtures_example_005
+# DOCS_TEST: example_005
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -128,11 +124,11 @@ COPY (SELECT * FROM (VALUES
     (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
 ) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_005
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_csv(['flights1.csv', 'flights2.csv'], union_by_name = true, filename = true);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -142,8 +138,7 @@ flightdate	uniquecarrier	origincityname	destcityname	distance	filename
 2024-02-01	DL	Boston, MA	Chicago, IL	867	/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv
 2024-02-01	DL	Boston, MA	Chicago, IL	867	/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv
 
-
-# DOCS_SETUP: file_fixtures_example_006
+# DOCS_TEST: example_006
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -157,11 +152,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_006_1_parquet_2.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_006
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM 'test/*.parquet';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -173,8 +168,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_007
+# DOCS_TEST: example_007
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -194,11 +188,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_007_3_file3_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_007
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_parquet(['file1.parquet', 'file2.parquet', 'file3.parquet']);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -212,8 +206,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_008
+# DOCS_TEST: example_008
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -239,11 +232,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_008_2_parquet_2.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_008
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_parquet(['folder1/*.parquet', 'folder2/*.parquet']);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -259,8 +252,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_009
+# DOCS_TEST: example_009
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -274,11 +266,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_009_1_parquet_2.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_009
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_parquet('dir/**/*.parquet');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -290,8 +282,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_010
+# DOCS_TEST: example_010
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -311,11 +302,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_010_3_file3_parquet.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_010
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_parquet(['file1.parquet', 'file2.parquet', 'file3.parquet']);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -329,8 +320,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_011
+# DOCS_TEST: example_011
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -344,11 +334,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_011_1_parquet_2.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_011
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_parquet('test/*.parquet');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -360,8 +350,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_012
+# DOCS_TEST: example_012
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -387,11 +376,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_012_2_parquet_2.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_012
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_parquet(['folder1/*.parquet', 'folder2/*.parquet']);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -407,8 +396,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_013
+# DOCS_TEST: example_013
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -420,11 +408,11 @@ COPY (SELECT * FROM (VALUES
     (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
 ) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_013
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_csv(['flights1.csv', 'flights2.csv'], union_by_name = true, filename = true);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -434,8 +422,7 @@ flightdate	uniquecarrier	origincityname	destcityname	distance	filename
 2024-02-01	DL	Boston, MA	Chicago, IL	867	/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv
 2024-02-01	DL	Boston, MA	Chicago, IL	867	/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv
 
-
-# DOCS_SETUP: file_fixtures_example_014
+# DOCS_TEST: example_014
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -450,11 +437,12 @@ COPY (SELECT * FROM (VALUES
 statement ok
 COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_014_notes.txt';
 
-# DOCS_TEST: example_014
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM glob('*');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
+
 query
 SELECT replace(
     file,

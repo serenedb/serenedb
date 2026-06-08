@@ -1,10 +1,12 @@
 # DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| CREATE TABLE cities AS
 #|     FROM (VALUES ('Amsterdam', 1), ('London', 2)) cities(name, id);
 #|
 #| COPY cities TO 'cities.json';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE cities AS

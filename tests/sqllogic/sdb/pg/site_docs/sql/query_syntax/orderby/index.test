@@ -1,14 +1,20 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 SET default_null_order = 'NULLS_FIRST';
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 SET default_order = 'DESC';
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE TABLE addresses AS
@@ -21,6 +27,8 @@ CREATE OR REPLACE TABLE addresses AS
     SELECT '111 Duck Duck Goose Ln', 'Duck Town', '11111-0001';
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -35,6 +43,8 @@ address	city	zip
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM addresses
@@ -47,6 +57,8 @@ address	city	zip
 111 Duck Duck Goose Ln	Duck Town	11111-0001
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -61,6 +73,8 @@ address	city	zip
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 query error
 SELECT *
 FROM addresses
@@ -70,8 +84,9 @@ db error: ERROR: Collation with name "de" is not in the catalog, but it exists i
 
 This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -85,6 +100,8 @@ address	city	zip
 111 Duck Duck Goose Ln	Duck Town	11111
 
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT *

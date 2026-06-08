@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT
     a != b, -- Space is part of physical JSON content. Despite equal logical content, values are treated as not equal.

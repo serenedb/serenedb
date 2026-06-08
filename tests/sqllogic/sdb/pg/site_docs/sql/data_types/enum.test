@@ -2,10 +2,14 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE SCHEMA my_schema;
@@ -15,12 +19,14 @@ CREATE TYPE my_schema.mood AS ENUM ('sad', 'ok', 'happy');
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 skipif serenedb
 query
 SELECT 'clubs'::ENUM ('spades', 'hearts', 'diamonds', 'clubs');
 ----
 
-# DOCS_SETUP: local_sales_data_varchar_fixture
+# DOCS_TEST: example_004
 
 statement ok
 CREATE TABLE sales_data (
@@ -34,13 +40,12 @@ INSERT INTO sales_data VALUES
     (20, 'south'),
     (30, 'north');
 
-# DOCS_TEST: example_004
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TYPE region AS ENUM (SELECT region FROM sales_data);
 
-
-# DOCS_SETUP
+# DOCS_TEST: example_005
 
 statement ok
 USE $__DATABASE__;
@@ -50,8 +55,6 @@ DROP TABLE IF EXISTS sales_data;
 
 statement ok
 DROP TYPE IF EXISTS region CASCADE;
-
-# DOCS_SETUP: file_fixtures_example_005
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -67,14 +70,14 @@ COPY (SELECT * FROM (VALUES
     (30, 'north')
 ) AS t("amount", "region")) TO '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_rows.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
 
-# DOCS_TEST: example_005
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| CREATE TYPE region AS ENUM (SELECT region FROM 'sales_data.csv');
 #|
 #| CREATE TABLE sales_data (amount INTEGER, region region);
 #|
 #| COPY sales_data FROM 'sales_data.csv';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TYPE region AS ENUM (SELECT region FROM '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_regions.csv');
@@ -86,6 +89,8 @@ statement ok
 COPY sales_data FROM '/tmp/${__DATABASE__}_sql_data_types_enum_example_005_rows.csv';
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TYPE breed AS ENUM ('maltese', 'Maltese');
@@ -103,6 +108,8 @@ SELECT 'MALTESE'::breed;
 
 # DOCS_TEST: example_007
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE person (
     name TEXT,
@@ -118,10 +125,14 @@ INSERT INTO person VALUES
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 statement error db error: ERROR: Could not convert string 'quackity\-quack' to UINT8
 INSERT INTO person VALUES ('Hannes', 'quackity-quack');
 
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT current_mood, regexp_matches(current_mood, '.*a.*') AS contains_a FROM person;
@@ -133,6 +144,8 @@ sad	t
 ok	f
 
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TYPE new_mood AS ENUM ('happy', 'anxious');
@@ -146,6 +159,8 @@ Pedro	happy
 
 # DOCS_TEST: example_011
 
+# DOCS_TEST_BODY
+
 query
 SELECT * FROM person
 WHERE current_mood = name;
@@ -154,6 +169,8 @@ name	current_mood
 
 # DOCS_TEST: example_012
 
+# DOCS_TEST_BODY
+
 query
 SELECT * FROM person
 WHERE current_mood = 'sad';
@@ -161,7 +178,7 @@ WHERE current_mood = 'sad';
 name	current_mood
 Pagliacci	sad
 
-# DOCS_SETUP: local_person_mood_bogus_fixture
+# DOCS_TEST: example_013
 
 statement ok
 DROP TABLE IF EXISTS person;
@@ -185,7 +202,7 @@ INSERT INTO person VALUES
     ('Pagliacci', 'sad'),
     ('Mr. Mackey', 'ok');
 
-# DOCS_TEST: example_013
+# DOCS_TEST_BODY
 
 query
 SELECT * FROM person
@@ -195,11 +212,15 @@ name	current_mood
 
 # DOCS_TEST: example_014
 
+# DOCS_TEST_BODY
+
 query error db error: ERROR: Could not convert string 'bogus' to UINT8
 SELECT * FROM person
 WHERE current_mood = 'bogus'::mood;
 
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TYPE priority AS ENUM ('low', 'medium', 'high');
@@ -212,6 +233,8 @@ t
 
 # DOCS_TEST: example_016
 
+# DOCS_TEST_BODY
+
 query
 SELECT unnest(['medium'::priority, 'high'::priority, 'low'::priority]) AS m
 ORDER BY m;
@@ -222,6 +245,8 @@ medium
 high
 
 # DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE tasks (name TEXT, priority_level priority);
@@ -241,6 +266,8 @@ c	high
 
 # DOCS_TEST: example_018
 
+# DOCS_TEST_BODY
+
 query
 SELECT * FROM tasks
 WHERE priority_level >= 'medium'::priority;
@@ -251,6 +278,8 @@ c	high
 
 # DOCS_TEST: example_019
 
+# DOCS_TEST_BODY
+
 query
 SELECT enum_range(NULL::mood) AS my_enum_range;
 ----
@@ -258,6 +287,8 @@ my_enum_range
 {sad,ok,happy}
 
 # DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
 
 statement error
 DROP TYPE ⟨enum_name⟩;

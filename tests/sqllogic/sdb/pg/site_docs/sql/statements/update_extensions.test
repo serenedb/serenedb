@@ -1,25 +1,31 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 UPDATE EXTENSIONS;
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement error
 UPDATE EXTENSIONS (name_a, name_b, name_c);
 ----
 db error: ERROR: Failed to update the extension 'name_a', the extension is not installed!
-
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 statement error
 UPDATE EXTENSIONS (name_a, name_b, name_c);
 ----
 db error: ERROR: Failed to update the extension 'name_a', the extension is not installed!
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement error
 FORCE INSTALL name_a;
@@ -37,4 +43,3 @@ db error: ERROR: Failed to download extension "name_c" at URL "https://extension
 
 Candidate extensions: "lance", "jemalloc", "inet", "motherduck", "azure"
 For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=name_c (ERROR Problem with the SSL CA cert (path? access rights?))
-

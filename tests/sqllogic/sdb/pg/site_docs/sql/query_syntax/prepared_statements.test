@@ -2,6 +2,8 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE person (name VARCHAR, age BIGINT);
 
@@ -9,6 +11,8 @@ statement ok
 INSERT INTO person VALUES ('Alice', 37), ('Ana', 35), ('Bob', 41), ('Bea', 25);
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 PREPARE query_person AS
@@ -19,13 +23,15 @@ PREPARE query_person AS
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 EXECUTE query_person('B', 40);
 ----
 name	age
 Bob	41
 
-# DOCS_SETUP
+# DOCS_TEST: example_004
 
 statement ok
 USE $__DATABASE__;
@@ -35,7 +41,7 @@ DEALLOCATE query_person;
 
 control substitution off
 
-# DOCS_TEST: example_004
+# DOCS_TEST_BODY
 
 statement ok
 PREPARE query_person AS
@@ -44,7 +50,7 @@ PREPARE query_person AS
     WHERE starts_with(name, $2)
       AND age >= $1;
 
-# DOCS_SETUP: local_query_person_positional_fixture
+# DOCS_TEST: example_005
 
 statement ok
 DEALLOCATE query_person;
@@ -65,7 +71,7 @@ PREPARE query_person AS
     WHERE starts_with(name, $2)
       AND age >= $1;
 
-# DOCS_TEST: example_005
+# DOCS_TEST_BODY
 
 query
 EXECUTE query_person(40, 'B');
@@ -75,7 +81,7 @@ Bob	41
 
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_006
 
 statement ok
 USE $__DATABASE__;
@@ -85,7 +91,7 @@ DEALLOCATE query_person;
 
 control substitution off
 
-# DOCS_TEST: example_006
+# DOCS_TEST_BODY
 
 statement ok
 PREPARE query_person AS
@@ -94,7 +100,7 @@ PREPARE query_person AS
     WHERE starts_with(name, $name_start_letter)
       AND age >= $minimum_age;
 
-# DOCS_SETUP: local_query_person_named_fixture
+# DOCS_TEST: example_007
 
 statement ok
 DEALLOCATE query_person;
@@ -106,7 +112,7 @@ PREPARE query_person AS
     WHERE starts_with(name, $name_start_letter)
       AND age >= $minimum_age;
 
-# DOCS_TEST: example_007
+# DOCS_TEST_BODY
 
 query
 EXECUTE query_person(name_start_letter := 'B', minimum_age := 40);
@@ -118,10 +124,12 @@ control substitution on
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 statement ok
 DEALLOCATE query_person;
 
-# DOCS_SETUP
+# DOCS_TEST: example_009
 
 statement ok
 USE $__DATABASE__;
@@ -129,7 +137,7 @@ USE $__DATABASE__;
 statement ok
 PREPARE query_person AS SELECT 1;
 
-# DOCS_TEST: example_009
+# DOCS_TEST_BODY
 
 statement ok
 DEALLOCATE PREPARE query_person;

@@ -1,4 +1,4 @@
-# DOCS_SETUP: file_fixtures_example_001
+# DOCS_TEST: example_001
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -11,11 +11,11 @@ COPY (SELECT * FROM (VALUES
     (DATE '2024-01-03', 'DL', 'Boston, MA', 'Chicago, IL', 867)
 ) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_tips_example_001_flights_2.parquet' (FORMAT parquet);
 
-# DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_parquet('flights*.parquet', union_by_name = true);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -26,17 +26,15 @@ flightdate	uniquecarrier	origincityname	destcityname	distance
 2024-01-02	UA	San Francisco, CA	Seattle, WA	679
 2024-01-03	DL	Boston, MA	Chicago, IL	867
 
-
-# DOCS_SETUP: file_fixtures_example_002
-
-
 # DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| COPY
 #|     (FROM generate_series(10_000_000))
 #|     TO 'test.parquet'
 #|     (FORMAT parquet, PER_THREAD_OUTPUT);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 COPY
@@ -44,16 +42,15 @@ COPY
     TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_tips_example_002_1_test_parquet.parquet'
     (FORMAT parquet, PER_THREAD_OUTPUT, OVERWRITE);
 
-# DOCS_SETUP: file_fixtures_example_003
-
-
 # DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| COPY
 #|     (FROM generate_series(100_000))
 #|     TO 'row-groups.parquet'
 #|     (FORMAT parquet, ROW_GROUP_SIZE 100_000);
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 COPY
@@ -62,6 +59,8 @@ COPY
     (FORMAT parquet, ROW_GROUP_SIZE 100_000);
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement error
 COPY

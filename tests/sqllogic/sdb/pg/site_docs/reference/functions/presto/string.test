@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT ltrim('test', 't');
 ----
@@ -13,6 +15,8 @@ ltrim
 ris
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT rtrim('test', 't');
@@ -28,6 +32,8 @@ test
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query error
 SELECT(split_to_map('a:1;b:2;a:3', ';', ':', (k, v1, v2) -> v1));
 ----
@@ -41,8 +47,9 @@ SELECT(split_to_map('a:1;b:2;a:3', ';', ':', (k, v1, v2) -> v2));
 db error: ERROR: Scalar Function with name split_to_map does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query error
 SELECT strpos('aaa', 'aa', 2);
@@ -51,8 +58,9 @@ db error: ERROR: No function matches the given name and argument types 'strpos(S
 	Candidate functions:
 	strpos(VARCHAR, VARCHAR) -> BIGINT
 
-
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 query error
 SELECT strrpos('aaa', 'aa', 2);
@@ -60,8 +68,9 @@ SELECT strrpos('aaa', 'aa', 2);
 db error: ERROR: Scalar Function with name strrpos does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query
 SELECT trim('test', 't');

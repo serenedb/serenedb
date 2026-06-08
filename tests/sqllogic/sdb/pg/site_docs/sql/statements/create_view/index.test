@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_001
 
 statement ok
 USE $__DATABASE__;
@@ -27,12 +27,12 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 statement ok
 CREATE VIEW view1 AS SELECT * FROM tbl;
 
-# DOCS_SETUP
+# DOCS_TEST: example_002
 
 statement ok
 USE $__DATABASE__;
@@ -40,12 +40,12 @@ USE $__DATABASE__;
 statement ok
 DROP VIEW IF EXISTS view1;
 
-# DOCS_TEST: example_002
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE VIEW view1 AS SELECT 42;
 
-# DOCS_SETUP
+# DOCS_TEST: example_003
 
 statement ok
 USE $__DATABASE__;
@@ -53,12 +53,14 @@ USE $__DATABASE__;
 statement ok
 DROP VIEW IF EXISTS view1;
 
-# DOCS_TEST: example_003
+# DOCS_TEST_BODY
 
 statement ok
 CREATE VIEW view1(a) AS SELECT 42;
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT sql FROM duckdb_views() WHERE view_name = 'view1';

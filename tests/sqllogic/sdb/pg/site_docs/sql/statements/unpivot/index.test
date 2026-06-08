@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 UNPIVOT ⟨dataset⟩
 ON ⟨column(s)⟩
@@ -11,8 +13,9 @@ LIMIT ⟨number_of_rows⟩;
 ----
 db error: ERROR: syntax error at or near "\("
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE OR REPLACE TABLE monthly_sales
@@ -26,6 +29,8 @@ INSERT INTO monthly_sales VALUES
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 FROM monthly_sales;
 ----
@@ -35,6 +40,8 @@ empid	dept	jan	feb	mar	apr	may	jun
 3	cars	100	200	300	400	500	600
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query ???? rowsort
 UNPIVOT monthly_sales
@@ -65,6 +72,8 @@ empid	dept	month	sales
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query ???? rowsort
 UNPIVOT monthly_sales
 ON COLUMNS(* EXCLUDE (empid, dept))
@@ -94,6 +103,8 @@ empid	dept	month	sales
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query ?????? rowsort
 UNPIVOT monthly_sales
     ON (jan, feb, mar) AS q1, (apr, may, jun) AS q2
@@ -110,6 +121,8 @@ empid	dept	quarter	month_1_sales	month_2_sales	month_3_sales
 3	cars	q2	400	500	600
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query
 WITH unpivot_alias AS (
@@ -143,6 +156,8 @@ empid	dept	month	sales
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM (
@@ -175,6 +190,8 @@ empid	dept	month	sales
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 query ?? rowsort
 UNPIVOT
     (SELECT 42 AS col1, 'woot' AS col2)
@@ -188,6 +205,8 @@ col2	woot
 
 # DOCS_TEST: example_010
 
+# DOCS_TEST_BODY
+
 query error
 FROM [dataset]
 UNPIVOT [INCLUDE NULLS] (
@@ -197,8 +216,9 @@ UNPIVOT [INCLUDE NULLS] (
 ----
 db error: ERROR: syntax error at or near "\["
 
-
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query ???? rowsort
 FROM monthly_sales UNPIVOT (
@@ -228,6 +248,8 @@ empid	dept	month	sales
 
 # DOCS_TEST: example_012
 
+# DOCS_TEST_BODY
+
 query ???? rowsort
 FROM monthly_sales UNPIVOT (
     sales
@@ -255,6 +277,8 @@ empid	dept	month	sales
 3	cars	may	500
 
 # DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
 
 query ?????? rowsort
 FROM monthly_sales

@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT TIMESTAMP_NS '1992-09-20 11:30:00.123456789';
 ----
@@ -7,6 +9,8 @@ timestamp_ns
 1992-09-20 11:30:00.123456
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT TIMESTAMP '1992-09-20 11:30:00.123456789';
@@ -16,6 +20,8 @@ timestamp
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT TIMESTAMP_MS '1992-09-20 11:30:00.123456789';
 ----
@@ -23,6 +29,8 @@ timestamp_ms
 1970-01-09 07:09:48.600123
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT TIMESTAMP_S '1992-09-20 11:30:00.123456789';
@@ -32,6 +40,8 @@ timestamp_s
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT TIMESTAMPTZ '1992-09-20 11:30:00.123456789';
 ----
@@ -40,6 +50,8 @@ timestamp with time zone
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query
 SELECT TIMESTAMPTZ '1992-09-20 12:30:00.123456789+01:00';
 ----
@@ -47,6 +59,8 @@ timestamp with time zone
 1992-09-20 11:30:00.123456+00
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query error
 SELECT
@@ -61,8 +75,9 @@ Extension "icu" is an existing extension.
 
 Install it first using "INSTALL icu".
 
-
 # DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
 
 query
 SELECT '-infinity'::TIMESTAMP, 'epoch'::TIMESTAMP, 'infinity'::TIMESTAMP;
@@ -71,6 +86,8 @@ timestamp	timestamp	timestamp
 -infinity	1970-01-01 00:00:00	infinity
 
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 statement error
 INSTALL icu;
@@ -89,14 +106,16 @@ Extension "icu" is an existing extension.
 
 Install it first using "INSTALL icu".
 
-
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 statement ok
 SET TimeZone = 'America/Los_Angeles';
 
 # DOCS_TEST: example_011
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| SELECT
 #|     name,
 #|     abbrev,
@@ -104,7 +123,8 @@ SET TimeZone = 'America/Los_Angeles';
 #| FROM pg_timezone_names()
 #| ORDER BY
 #|     name;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query ???
 SELECT
@@ -126,6 +146,8 @@ Europe/Berlin	CET	01:00:00
 UTC	UTC	00:00:00
 
 # DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
 
 statement error
 INSTALL icu;
@@ -152,8 +174,9 @@ db error: ERROR: Setting with name "calendar" is not in the catalog, but it exis
 
 This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
-
 # DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
 
 query error
 SELECT name
@@ -164,8 +187,9 @@ db error: ERROR: Table Function with name "icu_calendar_names" is not in the cat
 
 This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
-
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT *
@@ -173,6 +197,8 @@ FROM duckdb_settings()
 WHERE name = 'TimeZone';
 
 # DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT *

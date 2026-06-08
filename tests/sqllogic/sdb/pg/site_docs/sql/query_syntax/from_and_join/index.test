@@ -1,4 +1,4 @@
-# DOCS_SETUP: generated_wide_fixtures
+# DOCS_TEST: example_001
 
 statement ok
 CREATE TABLE other_table AS SELECT * FROM (VALUES
@@ -26,8 +26,6 @@ CREATE TABLE trades AS SELECT * FROM (VALUES
 
 control substitution on
 
-# DOCS_SETUP
-
 statement ok
 USE $__DATABASE__;
 
@@ -53,7 +51,7 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -66,6 +64,8 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 query
 FROM tbl
 SELECT *;
@@ -77,6 +77,8 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 FROM tbl;
 ----
@@ -86,6 +88,8 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT tn.*
@@ -98,6 +102,8 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT tn.*
 FROM tn: tbl;
@@ -107,7 +113,7 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
 
-# DOCS_SETUP: local_schema_name_tbl_fixture
+# DOCS_TEST: example_006
 
 statement ok
 CREATE SCHEMA IF NOT EXISTS schema_name;
@@ -117,7 +123,7 @@ CREATE TABLE schema_name.tbl AS
 SELECT *
 FROM tbl;
 
-# DOCS_TEST: example_006
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -128,8 +134,9 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query
 SELECT t.i
@@ -237,7 +244,7 @@ i
 98
 99
 
-# DOCS_SETUP: file_fixtures_example_008
+# DOCS_TEST: example_008
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -245,11 +252,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_008_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_008
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM 'test.csv';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -259,8 +266,9 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
 # DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -271,7 +279,7 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 3	bookmark	4	5	beta	2	11	21	31	20	200	2000
 7	other	9	16	gamma	3	12	22	32	NULL	300	3000
 
-# DOCS_SETUP: local_table_t_fixture
+# DOCS_TEST: example_010
 
 statement ok
 DROP TABLE IF EXISTS t;
@@ -284,7 +292,7 @@ INSERT INTO t VALUES
     (1, 1),
     (2, 2);
 
-# DOCS_TEST: example_010
+# DOCS_TEST_BODY
 
 query ?
 SELECT t
@@ -294,8 +302,9 @@ t
 1
 2
 
-
 # DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
 
 query
 SELECT t
@@ -306,7 +315,7 @@ t
 (42,hello)
 (43,hello)
 
-# DOCS_SETUP: local_join_key_fixture
+# DOCS_TEST: example_012
 
 statement ok
 DROP TABLE IF EXISTS tbl;
@@ -338,7 +347,7 @@ INSERT INTO other_table VALUES
     (2, 'right two'),
     (4, 'right only');
 
-# DOCS_TEST: example_012
+# DOCS_TEST_BODY
 
 query ???? rowsort
 SELECT *
@@ -350,7 +359,7 @@ key	value	key	description
 1	left one	1	right one
 2	left two	2	right two
 
-# DOCS_SETUP: restore_tbl_fixture
+# DOCS_TEST: example_013
 
 statement ok
 DROP TABLE IF EXISTS tbl;
@@ -377,8 +386,7 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
-
-# DOCS_TEST: example_013
+# DOCS_TEST_BODY
 
 statement ok
 SELECT *
@@ -386,6 +394,8 @@ FROM tbl
 TABLESAMPLE 10%;
 
 # DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
 
 query ???????????? rowsort
 SELECT *
@@ -399,6 +409,8 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 
 # DOCS_TEST: example_015
 
+# DOCS_TEST_BODY
+
 query
 FROM range(100) AS t(i)
 SELECT sum(t.i)
@@ -407,7 +419,7 @@ WHERE i % 2 = 0;
 sum
 2450
 
-# DOCS_SETUP: file_fixtures_example_016
+# DOCS_TEST: example_016
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -415,11 +427,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_016_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_016
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM 'test.csv';
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -429,8 +441,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_017
+# DOCS_TEST: example_017
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -438,11 +449,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_017_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_017
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_csv('test.csv');
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -452,8 +463,7 @@ id	name	value
 1	alpha	10
 2	beta	20
 
-
-# DOCS_SETUP: file_fixtures_example_018
+# DOCS_TEST: example_018
 
 statement ok
 COPY (SELECT * FROM (VALUES
@@ -461,11 +471,11 @@ COPY (SELECT * FROM (VALUES
     (2, 'beta', 20)
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_sql_query_syntax_from_and_join_index_example_018_1_test_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
-# DOCS_TEST: example_018
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_csv('test.csv') WITH ORDINALITY;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -475,8 +485,7 @@ id	name	value	ordinality
 1	alpha	10	1
 2	beta	20	2
 
-
-# DOCS_SETUP: local_table_b_fixture
+# DOCS_TEST: example_019
 
 statement ok
 DROP TABLE IF EXISTS a;
@@ -500,7 +509,7 @@ INSERT INTO b VALUES
     (1, 10),
     (2, 20);
 
-# DOCS_TEST: example_019
+# DOCS_TEST_BODY
 
 query ????
 SELECT a.*, b.*
@@ -513,8 +522,9 @@ id	x	id	x
 1	100	2	20
 2	200	2	20
 
-
 # DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
 
 query ????
 SELECT a.*, b.*
@@ -526,8 +536,9 @@ id	x	id	x
 1	100	2	20
 2	200	2	20
 
-
 # DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE l_regions (
@@ -545,7 +556,7 @@ CREATE TABLE l_nations (
     FOREIGN KEY (n_regionkey) REFERENCES l_regions(r_regionkey)
 );
 
-# DOCS_SETUP: local_l_nations_regions_rows
+# DOCS_TEST: example_022
 
 statement ok
 INSERT INTO l_regions VALUES
@@ -560,7 +571,7 @@ INSERT INTO l_nations VALUES
     (2, 'BRAZIL', 1, 'y alongside of the pending deposits. carefully special packages are about the ironic forges. slyly special '),
     (3, 'CHINA', 2, 'even packages wake furiously alongside of the regular courts. final requests haggle carefully.');
 
-# DOCS_TEST: example_022
+# DOCS_TEST_BODY
 
 query ??????? rowsort
 SELECT n.*, r.*
@@ -573,7 +584,7 @@ n_nationkey	n_name	n_regionkey	n_comment	r_regionkey	r_name	r_comment
 2	BRAZIL	1	y alongside of the pending deposits. carefully special packages are about the ironic forges. slyly special 	1	AMERICA	hs use ironic, even requests. s
 3	CHINA	2	even packages wake furiously alongside of the regular courts. final requests haggle carefully.	2	ASIA	ges. thinly even pinto beans ca
 
-# DOCS_SETUP
+# DOCS_TEST: example_023
 
 statement ok
 USE $__DATABASE__;
@@ -584,7 +595,7 @@ DROP TABLE IF EXISTS l_regions;
 statement ok
 DROP TABLE IF EXISTS l_nations;
 
-# DOCS_TEST: example_023
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE l_regions (regionkey INTEGER NOT NULL PRIMARY KEY,
@@ -598,7 +609,7 @@ CREATE TABLE l_nations (nationkey INTEGER NOT NULL PRIMARY KEY,
                         comment   VARCHAR(152),
                         FOREIGN KEY (regionkey) REFERENCES l_regions(regionkey));
 
-# DOCS_SETUP: local_l_nations_regions_using_rows
+# DOCS_TEST: example_024
 
 statement ok
 INSERT INTO l_regions VALUES
@@ -613,7 +624,7 @@ INSERT INTO l_nations VALUES
     (2, 'BRAZIL', 1, 'y alongside of the pending deposits. carefully special packages are about the ironic forges. slyly special '),
     (3, 'CHINA', 2, 'even packages wake furiously alongside of the regular courts. final requests haggle carefully.');
 
-# DOCS_TEST: example_024
+# DOCS_TEST_BODY
 
 query ??????? rowsort
 SELECT n.*, r.*
@@ -626,7 +637,7 @@ nationkey	name	regionkey	comment	regionkey	name	comment
 2	BRAZIL	1	y alongside of the pending deposits. carefully special packages are about the ironic forges. slyly special 	1	AMERICA	hs use ironic, even requests. s
 3	CHINA	2	even packages wake furiously alongside of the regular courts. final requests haggle carefully.	2	ASIA	ges. thinly even pinto beans ca
 
-# DOCS_SETUP: local_west_jobs_fixture
+# DOCS_TEST: example_025
 
 statement ok
 DROP TABLE IF EXISTS west;
@@ -645,7 +656,7 @@ INSERT INTO west VALUES
     (3, 30, 120),
     (4, 40, 70);
 
-# DOCS_TEST: example_025
+# DOCS_TEST_BODY
 
 query ?? rowsort
 SELECT s1.t_id, s2.t_id
@@ -660,6 +671,8 @@ t_id	t_id
 4	3
 
 # DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE city_airport (city_name VARCHAR, iata VARCHAR);
@@ -682,6 +695,8 @@ INSERT INTO airport_names VALUES
 
 # DOCS_TEST: example_027
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM city_airport
@@ -692,6 +707,8 @@ AMS	Amsterdam	Amsterdam Airport Schiphol
 RTM	Rotterdam	Rotterdam The Hague Airport
 
 # DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -705,6 +722,8 @@ RTM	Rotterdam	Rotterdam The Hague Airport
 
 # DOCS_TEST: example_029
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM city_airport
@@ -717,6 +736,8 @@ RTM	Rotterdam
 
 # DOCS_TEST: example_030
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM city_airport
@@ -727,6 +748,8 @@ Amsterdam	AMS
 Rotterdam	RTM
 
 # DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
 
 query
 SELECT *
@@ -740,6 +763,8 @@ GRQ	Groningen
 
 # DOCS_TEST: example_032
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM city_airport
@@ -751,6 +776,8 @@ Groningen	GRQ
 
 # DOCS_TEST: example_033
 
+# DOCS_TEST_BODY
+
 query
 SELECT *
 FROM range(3) t(i), LATERAL (SELECT i + 1) t2(j);
@@ -761,6 +788,8 @@ i	j
 2	3
 
 # DOCS_TEST: example_034
+
+# DOCS_TEST_BODY
 
 query ?? rowsort
 SELECT *
@@ -775,6 +804,8 @@ i	j
 1	11
 
 # DOCS_TEST: example_035
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 AS
@@ -791,7 +822,7 @@ i	j	k
 1	2	3
 2	3	5
 
-# DOCS_SETUP
+# DOCS_TEST: example_036
 
 statement ok
 USE $__DATABASE__;
@@ -799,7 +830,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS t1;
 
-# DOCS_TEST: example_036
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (x INTEGER);
@@ -823,7 +854,7 @@ x	s
 2	b
 3	NULL
 
-# DOCS_SETUP: local_asof_prices_fixture
+# DOCS_TEST: example_037
 
 statement ok
 DROP TABLE IF EXISTS trades;
@@ -847,7 +878,7 @@ INSERT INTO prices VALUES
     ('AAPL', TIMESTAMP '2025-01-01 09:30:00', 100.0, 'AAPL'),
     ('MSFT', TIMESTAMP '2025-01-01 09:45:00', 200.0, 'MSFT');
 
-# DOCS_TEST: example_037
+# DOCS_TEST_BODY
 
 query ???? rowsort
 SELECT t.*, p.price
@@ -859,8 +890,9 @@ symbol	when	quantity	price
 AAPL	2025-01-01 10:00:00	5	100
 MSFT	2025-01-01 10:15:00	2	200
 
-
 # DOCS_TEST: example_038
+
+# DOCS_TEST_BODY
 
 query ??????? rowsort
 SELECT *
@@ -873,8 +905,9 @@ symbol	when	quantity	symbol	when	price	ticker
 AAPL	2025-01-01 10:00:00	5	AAPL	2025-01-01 09:30:00	100	AAPL
 MSFT	2025-01-01 10:15:00	2	MSFT	2025-01-01 09:45:00	200	MSFT
 
-
 # DOCS_TEST: example_039
+
+# DOCS_TEST_BODY
 
 query ????? rowsort
 SELECT *
@@ -885,8 +918,9 @@ symbol	when	quantity	price	ticker
 AAPL	2025-01-01 10:00:00	5	100	AAPL
 MSFT	2025-01-01 10:15:00	2	200	MSFT
 
-
 # DOCS_TEST: example_040
+
+# DOCS_TEST_BODY
 
 query ???? rowsort
 SELECT t.symbol, t.when AS trade_when, p.when AS price_when, price
@@ -897,12 +931,12 @@ symbol	trade_when	price_when	price
 AAPL	2025-01-01 10:00:00	2025-01-01 09:30:00	100
 MSFT	2025-01-01 10:15:00	2025-01-01 09:45:00	200
 
-# DOCS_SETUP: drop_table_t_before_alias_example
+# DOCS_TEST: example_041
 
 statement ok
 DROP TABLE IF EXISTS t;
 
-# DOCS_TEST: example_041
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t (x INTEGER);
@@ -912,15 +946,16 @@ SELECT * FROM t JOIN t USING(x);
 ----
 (?i)Ambiguous reference to table .*duplicate alias .*explicitly alias one of the tables using "AS my_alias"
 
-
 # DOCS_TEST: example_042
+
+# DOCS_TEST_BODY
 
 query
 SELECT * FROM t AS t1 JOIN t AS t2 USING(x);
 ----
 x
 
-# DOCS_SETUP
+# DOCS_TEST: example_043
 
 statement ok
 USE $__DATABASE__;
@@ -931,7 +966,7 @@ DROP TABLE IF EXISTS t1;
 statement ok
 DROP TABLE IF EXISTS t2;
 
-# DOCS_TEST: example_043
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE t1 (x INTEGER);
@@ -953,6 +988,8 @@ x
 
 # DOCS_TEST: example_044
 
+# DOCS_TEST_BODY
+
 query
 SELECT * FROM t1 NATURAL JOIN (VALUES (2), (4)) _(x);
 ----
@@ -960,7 +997,7 @@ x
 2
 4
 
-# DOCS_SETUP
+# DOCS_TEST: example_045
 
 statement ok
 USE $__DATABASE__;
@@ -968,7 +1005,7 @@ USE $__DATABASE__;
 statement ok
 DROP TABLE IF EXISTS tbl;
 
-# DOCS_TEST: example_045
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE tbl AS
@@ -976,6 +1013,8 @@ CREATE TABLE tbl AS
     FROM (VALUES ('a'), ('b')) t1(s), range(1, 3) t2(i);
 
 # DOCS_TEST: example_046
+
+# DOCS_TEST_BODY
 
 query
 FROM tbl
@@ -989,6 +1028,8 @@ i	s
 
 # DOCS_TEST: example_047
 
+# DOCS_TEST_BODY
+
 query
 SELECT i, s
 FROM tbl;
@@ -1001,6 +1042,8 @@ i	s
 
 # DOCS_TEST: example_048
 
+# DOCS_TEST_BODY
+
 query
 FROM tbl;
 ----
@@ -1011,6 +1054,8 @@ a	2
 b	2
 
 # DOCS_TEST: example_049
+
+# DOCS_TEST_BODY
 
 query
 SELECT *

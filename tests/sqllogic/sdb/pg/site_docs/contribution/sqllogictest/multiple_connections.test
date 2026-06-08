@@ -3,7 +3,8 @@
 # that keeps this file valid for the sqllogictest runner.
 
 # DOCS_TEST: example_001
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| statement ok con1
 #| BEGIN TRANSACTION
 #|
@@ -12,13 +13,15 @@
 #|
 #| statement error con2
 #| SELECT * FROM integers;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_29d5c54d_001 (i INTEGER);
 
 # DOCS_TEST: example_002
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| concurrentloop i 0 10
 #|
 #| statement ok
@@ -31,13 +34,15 @@ CREATE TABLE __docs_noop_29d5c54d_001 (i INTEGER);
 #| DELETE FROM t2
 #|
 #| endloop
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_29d5c54d_002 (i INTEGER);
 
 # DOCS_TEST: example_003
-# DOCS_RAW_BEGIN
+
+# DOCS_TEST_RAW
 #| concurrentloop i 1 10
 #|
 #| statement maybe
@@ -46,7 +51,8 @@ CREATE TABLE __docs_noop_29d5c54d_002 (i INTEGER);
 #| write-write conflict
 #|
 #| endloop
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE __docs_noop_29d5c54d_003 (i INTEGER);

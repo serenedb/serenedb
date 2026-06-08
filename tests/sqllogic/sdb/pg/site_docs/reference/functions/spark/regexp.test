@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query error
 SELECT like('abc', '%b%');
 ----
@@ -13,8 +15,9 @@ SELECT like('a_c', '%#_%', '#');
 db error: ERROR: Scalar Function with name like does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 SELECT regexp_extract('1a 2b 14m', '\d+');
@@ -24,6 +27,8 @@ regexp_extract
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 SELECT regexp_extract('1a 2b 14m', '(\d+)([a-z]+)', 2);
 ----
@@ -31,6 +36,8 @@ regexp_extract
 a
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 query
 SELECT regexp_extract_all('1a 2b 14m', '\d+');
@@ -40,6 +47,8 @@ regexp_extract_all
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query
 SELECT regexp_extract_all('1a 2b 14m', '(\d+)([a-z]+)', 2);
 ----
@@ -48,14 +57,17 @@ regexp_extract_all
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 query error
 SELECT rlike('1a 2b 14m', '\d+b');
 ----
 db error: ERROR: Scalar Function with name rlike does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 query
 SELECT regexp_replace('Hello, World!', 'l', 'L');
@@ -83,6 +95,8 @@ regexp_replace
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 query error
 SELECT regexp_replace('Hello, World!', 'l', 'L', 6);
 ----
@@ -104,4 +118,3 @@ statement error
 SELECT regexp_replace('Hello, World!', 'l', 'L', 100);
 ----
 db error: ERROR: syntax error at or near ">"
-

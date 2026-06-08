@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement error
 CREATE TEXT SEARCH DICTIONARY nn_dict (
     template = 'nearest_neighbors',
@@ -8,4 +10,3 @@ CREATE TEXT SEARCH DICTIONARY nn_dict (
 );
 ----
 db error: ERROR: File "/models/cooking\.bin" referenced by option "modellocation" does not exist
-

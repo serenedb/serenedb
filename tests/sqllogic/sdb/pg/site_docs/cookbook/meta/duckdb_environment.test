@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 query
 SELECT version() AS version;
 ----
@@ -7,6 +9,8 @@ version
 PostgreSQL 18.3 (SereneDB 26.05.4)
 
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 query
 PRAGMA version;
@@ -16,6 +20,8 @@ v0.0.1	8c42e3b1	Unknown Version
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_BODY
+
 query
 PRAGMA platform;
 ----
@@ -23,6 +29,8 @@ platform
 linux_arm64
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement ok
 SELECT *

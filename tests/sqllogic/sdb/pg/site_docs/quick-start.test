@@ -1,5 +1,7 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_BODY
+
 statement ok
 CREATE TABLE articles (
     id INTEGER PRIMARY KEY,
@@ -12,6 +14,8 @@ CREATE TABLE articles (
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 INSERT INTO articles VALUES
 (1, 'Introduction to Vector Search', 'Vector search enables finding similar items by comparing embeddings in high-dimensional space. It powers recommendation systems and semantic search.', 'engineering', '2025-01-15', 4200),
@@ -21,6 +25,8 @@ INSERT INTO articles VALUES
 (5, 'Real-Time Data Processing at Scale', 'Real-time ingestion combined with instant query availability means dashboards and search results always reflect the latest data without refresh delays.', 'product', '2025-03-15', 6200);
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 query
 SELECT category, COUNT(*) AS articles, AVG(views) AS avg_views
@@ -33,6 +39,8 @@ product	2	5650
 engineering	3	3633.3333333333335
 
 # DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY english_dict(
@@ -51,6 +59,8 @@ CREATE INDEX articles_search_idx ON articles
 
 # DOCS_TEST: example_005
 
+# DOCS_TEST_BODY
+
 query error
 SELECT id, title, views
 FROM articles_search_idx
@@ -60,8 +70,9 @@ ORDER BY views DESC;
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
 
-
 # DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
 
 query error
 SELECT category, COUNT(*) AS matches
@@ -71,4 +82,3 @@ GROUP BY category;
 ----
 db error: ERROR: Scalar Function with name phrase does not exist!
 Did you mean "<slt:ignore>"?
-

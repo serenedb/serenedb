@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP
+# DOCS_TEST: example_001
 
 statement ok
 USE $__DATABASE__;
@@ -51,52 +51,70 @@ CREATE MACRO mt() AS TABLE SELECT 1 AS value;
 statement ok
 CREATE TYPE typ AS ENUM ('value');
 
-# DOCS_TEST: example_001
+# DOCS_TEST_BODY
 
 statement ok
 DROP TABLE tbl;
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_BODY
+
 statement ok
 DROP VIEW IF EXISTS view1;
 
 # DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
 
 statement ok
 DROP FUNCTION fn;
 
 # DOCS_TEST: example_004
 
+# DOCS_TEST_BODY
+
 statement ok
 DROP INDEX idx;
 
 # DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
 
 statement ok
 DROP SCHEMA sch;
 
 # DOCS_TEST: example_006
 
+# DOCS_TEST_BODY
+
 statement ok
 DROP SEQUENCE seq;
 
 # DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
 
 statement ok
 DROP MACRO mcr;
 
 # DOCS_TEST: example_008
 
+# DOCS_TEST_BODY
+
 statement ok
 DROP MACRO TABLE mt;
 
 # DOCS_TEST: example_009
 
+# DOCS_TEST_BODY
+
 statement ok
 DROP TYPE typ;
 
 # DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE SCHEMA myschema;
@@ -107,7 +125,7 @@ CREATE TABLE myschema.t1 (i INTEGER);
 statement error (?i)cannot drop schema myschema because other objects depend on it
 DROP SCHEMA myschema;
 
-# DOCS_SETUP
+# DOCS_TEST: example_011
 
 statement ok
 USE $__DATABASE__;
@@ -118,7 +136,7 @@ DROP SCHEMA IF EXISTS myschema CASCADE;
 statement ok
 DROP TABLE IF EXISTS myschema;
 
-# DOCS_TEST: example_011
+# DOCS_TEST_BODY
 
 statement ok
 CREATE SCHEMA myschema;
@@ -130,6 +148,8 @@ statement ok
 DROP SCHEMA myschema CASCADE;
 
 # DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
 
 statement ok
 PRAGMA database_size;

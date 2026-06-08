@@ -1,10 +1,11 @@
 # DOCS_TEST: example_001
 
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| SELECT name, abbrev
 #| FROM pg_timezone_names()
 #| ORDER BY name;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 query ??
 SELECT name, abbrev

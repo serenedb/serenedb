@@ -1,6 +1,6 @@
 control substitution on
 
-# DOCS_SETUP: local_copy_database_full_fixture
+# DOCS_TEST: example_037
 
 statement ok
 USE $__DATABASE__;
@@ -11,11 +11,7 @@ DETACH IF EXISTS db1;
 statement ok
 DETACH IF EXISTS db2;
 
-# DOCS_SETUP: file_fixtures_example_037
-
-
-# DOCS_TEST: example_037
-# DOCS_RAW_BEGIN
+# DOCS_TEST_RAW
 #| ATTACH 'db1.db' AS db1;
 #|
 #| CREATE TABLE db1.tbl AS SELECT 42 AS x, 3 AS y;
@@ -27,7 +23,8 @@ DETACH IF EXISTS db2;
 #| COPY FROM DATABASE db1 TO db2;
 #|
 #| SELECT db2.two_x_plus_y(x, y) AS z FROM db2.tbl;
-# DOCS_RAW_END
+
+# DOCS_TEST_BODY
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_copy_copy_database_full_example_037_1_db1.db' AS db1;

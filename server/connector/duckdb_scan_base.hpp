@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/overload.h>
+
 #include <algorithm>
 #include <atomic>
 #include <duckdb.hpp>
@@ -280,9 +282,9 @@ void ReadIResearchSegments(Lstate& l, Gstate& g, const View& view,
     SDB_ASSERT(slice.size() <= STANDARD_VECTOR_SIZE);
 
     std::visit(
-      [&](auto& pk) {
-        using T = std::decay_t<decltype(pk)>;
-        if constexpr (!std::is_same_v<T, std::monostate>) {
+      absl::Overload{
+        [](std::monostate) {},
+        [&](auto& pk) {
           const auto [cs_reader, pk_col] = SegmentPkColumn(*g.reader, seg_id);
           SDB_ASSERT(pk_col);
           if (!l.pk_lookup.seg_pk_vec) {
@@ -304,8 +306,7 @@ void ReadIResearchSegments(Lstate& l, Gstate& g, const View& view,
             std::string_view bytes{data[k].GetData(), data[k].GetSize()};
             AppendPrimaryKey(pk, bytes);
           }
-        }
-      },
+        }},
       l.pk_batch);
 
     if (include_cs) {
@@ -337,17 +338,14 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
       l.pk_batch = l.index_source->CreatePkBatch();
     }
     if (output_start == 0) {
-      std::visit(
-        [&](auto& pk) {
-          using T = std::decay_t<decltype(pk)>;
-          if constexpr (!std::is_same_v<T, std::monostate>) {
-            pk.Reset();
-            if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
-              pk.EnsureInit(duckdb::Allocator::Get(ctx));
-            }
-          }
-        },
-        l.pk_batch);
+      std::visit(absl::Overload{[](std::monostate) {},
+                                [&](PrimaryKeysBytes& pk) {
+                                  pk.Reset();
+                                  pk.EnsureInit(duckdb::Allocator::Get(ctx));
+                                },
+                                [](PrimaryKeyI64& pk) { pk.Reset(); },
+                                [](PrimaryKeyI64I64& pk) { pk.Reset(); }},
+                 l.pk_batch);
     }
   }
   if (g.has_external_projections || need_cs) {
@@ -373,15 +371,10 @@ void FinalizeBatch(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
     return;
   }
   SDB_ASSERT(l.index_source);
-  SDB_ASSERT(!std::holds_alternative<std::monostate>(l.pk_batch));
-  std::visit(
-    [&](auto& pk) {
-      using T = std::decay_t<decltype(pk)>;
-      if constexpr (!std::is_same_v<T, std::monostate>) {
-        SDB_ASSERT(PrimaryKeysSize(pk) == collected);
-      }
-    },
-    l.pk_batch);
+  SDB_ASSERT(std::visit(
+    absl::Overload{[](std::monostate) { return false; },
+                   [&](auto& pk) { return PrimaryKeysSize(pk) == collected; }},
+    l.pk_batch));
   l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
 }
 

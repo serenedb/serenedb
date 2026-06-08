@@ -99,3 +99,182 @@ a	b
 connection before_commit
 statement ok
 DROP TABLE s_wal;
+
+
+###############################################################################
+# 3. EXPLICIT PRIMARY KEY -- recovery reconstructs the PK differently here.
+#    Generated-PK replays the WAL-recorded pk_base; explicit-PK RE-DERIVES the
+#    key from the recorded PK column values (WriteChunkToSearchSink / §5.6), so
+#    it depends on the PK column round-tripping through the WAL and producing a
+#    byte-identical key. Re-run the durability + atomicity cycle against a
+#    PK-bearing table, and confirm a lookup BY the explicit PK finds the
+#    recovered row (which exercises the re-derived key, not just a column scan).
+###############################################################################
+
+connection before_commit
+statement ok
+CREATE TABLE s_wal_pk(id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+connection before_commit
+statement ok
+INSERT INTO s_wal_pk VALUES (1, 'one'), (2, 'two'), (3, 'three');
+
+connection before_commit
+statement ok
+VACUUM (REFRESH_TABLE) s_wal_pk;
+
+connection before_commit
+query
+SELECT id, b FROM s_wal_pk ORDER BY id;
+----
+id	b
+1	one
+2	two
+3	three
+
+
+# --- 3a. Crash AFTER the WAL commit -> survives via recovery replay. ---
+connection before_commit
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection before_commit
+statement error connection closed
+INSERT INTO s_wal_pk VALUES (4, 'four'), (5, 'five');
+
+# --- restart ---
+connection pk_after_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, b FROM s_wal_pk ORDER BY id;
+----
+id	b
+1	one
+2	two
+3	three
+4	four
+5	five
+
+# Look the recovered row up BY its explicit PK -- proves the re-derived key
+# matches the written one (a column scan alone wouldn't).
+connection pk_after_commit
+query
+SELECT b FROM s_wal_pk WHERE id = 4;
+----
+b
+four
+
+connection pk_after_commit
+statement ok
+VACUUM (REFRESH_TABLE) s_wal_pk;
+
+
+# --- 3b. Crash BEFORE the WAL commit -> lost (no record written). ---
+connection pk_after_commit
+statement ok
+SET sdb_faults = 'crash_before_search_wal_commit';
+
+connection pk_after_commit
+statement error connection closed
+INSERT INTO s_wal_pk VALUES (6, 'six'), (7, 'seven');
+
+# --- restart ---
+connection pk_before_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, b FROM s_wal_pk ORDER BY id;
+----
+id	b
+1	one
+2	two
+3	three
+4	four
+5	five
+
+# The surviving rows are still reachable by PK; the lost ones are gone.
+connection pk_before_commit
+query
+SELECT b FROM s_wal_pk WHERE id = 5;
+----
+b
+five
+
+connection pk_before_commit
+statement ok
+DROP TABLE s_wal_pk;
+
+
+###############################################################################
+# 4. PARALLEL (bulk) CTAS -- exercises the chunk-file (REFERENCE) path that the
+#    inline scenarios above never touch: the sink streams to .swchunk files, the
+#    WAL records a REFERENCE over their seg_ids, and recovery replays from the
+#    chunk files. A parquet source is the one thing that parallelizes the sink
+#    (>1 thread => bulk); range() / table scans stay single-threaded => inline.
+#    (On a single-core runner the source can't parallelize, so it falls back to
+#    inline -- the assertions still hold, just via a different path.)
+#
+#    Also pins the §12 CTAS contract: crash AFTER the WAL fsync => fully
+#    populated; crash BEFORE => the table EXISTS but is EMPTY (the tombstone is
+#    revealed at Finalize, before the commit point, and the orphaned chunk files
+#    are skipped on recovery). Never a partial/corrupt table.
+###############################################################################
+
+connection pk_before_commit
+statement ok
+COPY (SELECT i AS x, 'v' || i AS y FROM range(0, 12000) t(i))
+  TO '/tmp/${__DATABASE__}_ctas_src.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 2000);
+
+# --- 4a. Crash AFTER the WAL commit -> recovery replays from the chunk files. ---
+connection pk_before_commit
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection pk_before_commit
+statement error connection closed
+CREATE TABLE ctas_after WITH (storage = 'search') AS
+  SELECT x, y FROM read_parquet('/tmp/${__DATABASE__}_ctas_src.parquet');
+
+# --- restart ---
+connection ctas_after_conn
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(x) AS n, max(x) AS m FROM ctas_after;
+----
+n	m
+12000	11999
+
+# Spot-check a row materialised from a recovered chunk (column round-tripped).
+connection ctas_after_conn
+query
+SELECT y FROM ctas_after WHERE x = 9999;
+----
+y
+v9999
+
+connection ctas_after_conn
+statement ok
+VACUUM (REFRESH_TABLE) ctas_after;
+
+
+# --- 4b. Crash BEFORE the WAL commit -> table exists but is EMPTY (§12). ---
+connection ctas_after_conn
+statement ok
+SET sdb_faults = 'crash_before_search_wal_commit';
+
+connection ctas_after_conn
+statement error connection closed
+CREATE TABLE ctas_before WITH (storage = 'search') AS
+  SELECT x, y FROM read_parquet('/tmp/${__DATABASE__}_ctas_src.parquet');
+
+# --- restart ---
+connection ctas_before_conn
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(x) AS n FROM ctas_before;
+----
+n
+0
+
+connection ctas_before_conn
+statement ok
+DROP TABLE ctas_before;
+
+connection ctas_before_conn
+statement ok
+DROP TABLE ctas_after;

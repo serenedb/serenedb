@@ -300,6 +300,9 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   // Returns an empty view when the id is not on the relation.
   virtual std::string_view ColumnNameById(catalog::Column::Id col_id) const = 0;
 
+  virtual duckdb::LogicalType ColumnTypeById(
+    catalog::Column::Id col_id) const = 0;
+
   using ColumnVisitor =
     std::function<void(catalog::Column::Id, const duckdb::LogicalType&)>;
   virtual void IterateColumns(const ColumnVisitor& cb) const = 0;
@@ -325,6 +328,7 @@ struct TableScanBindData final : public SereneDBScanBindData {
   std::string_view RelationName() const final;
   catalog::Column::Id ColumnIdByName(std::string_view name) const final;
   std::string_view ColumnNameById(catalog::Column::Id col_id) const final;
+  duckdb::LogicalType ColumnTypeById(catalog::Column::Id col_id) const final;
   void IterateColumns(const ColumnVisitor& cb) const final;
 };
 
@@ -342,6 +346,7 @@ struct ViewScanBindData final : public SereneDBScanBindData {
   std::string_view RelationName() const final;
   catalog::Column::Id ColumnIdByName(std::string_view name) const final;
   std::string_view ColumnNameById(catalog::Column::Id col_id) const final;
+  duckdb::LogicalType ColumnTypeById(catalog::Column::Id col_id) const final;
   void IterateColumns(const ColumnVisitor& cb) const final;
 };
 

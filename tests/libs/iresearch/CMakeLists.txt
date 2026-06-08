@@ -23,6 +23,7 @@ set(iresearch-tests_sources
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
     ./formats/sparse_bitmap_test.cpp
+    ./formats/format_document_mask_tests.cpp
     ./formats/formats_tests.cpp
     ./formats/formats_test_case_base.cpp
     ./formats/skip_list_test.cpp
@@ -34,6 +35,7 @@ set(iresearch-tests_sources
     ./index/doc_generator.cpp
     ./index/assert_format.cpp
     ./index/buffered_column_test.cpp
+    ./index/document_mask_tests.cpp
     ./index/index_column_tests.cpp
     ./index/index_meta_tests.cpp
     ./index/index_profile_tests.cpp

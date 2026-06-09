@@ -92,7 +92,7 @@ class ColumnstoreMaterializer {
   }
 
   void Scan(uint64_t start_doc, duckdb::idx_t count, duckdb::DataChunk& output,
-            duckdb::idx_t output_start) const {
+            duckdb::idx_t output_start, bool may_use_entire = false) const {
     if (_bound.empty() || count == 0) {
       return;
     }
@@ -106,7 +106,7 @@ class ColumnstoreMaterializer {
       }
       irs::MaterializeNode(*b.reader, *b.state,
                            irs::IotaRange{start_doc, count}, out_vec,
-                           output_start, false);
+                           output_start, may_use_entire);
     }
   }
 

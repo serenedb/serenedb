@@ -419,7 +419,9 @@ duckdb::idx_t SearchFullScanScanLocalState::EmitChunk(
                "bulk cs scan: segment has no columnstore reader");
     const auto take =
       std::min<duckdb::idx_t>(budget, bulk_seg_doc_count - bulk_doc_in_seg);
-    mat->Scan(bulk_doc_in_seg, take, output, output_start);
+    const bool fills_entire_vector =
+      output_start == 0 && take == STANDARD_VECTOR_SIZE;
+    mat->Scan(bulk_doc_in_seg, take, output, output_start, fills_entire_vector);
     const auto row_base =
       g.produced_rows.fetch_add(take, std::memory_order_relaxed);
     WriteVirtualColumns(g, row_base, take, ScoreDocsView{}, output,

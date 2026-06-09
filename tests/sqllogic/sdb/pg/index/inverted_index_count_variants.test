@@ -1,0 +1,139 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ct_simple(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE ct(id INTEGER PRIMARY KEY, x INTEGER, y INTEGER, body VARCHAR)
+
+
+statement ok
+CREATE INDEX ct_idx ON ct USING inverted(x, y, body ct_simple)
+
+
+statement ok
+INSERT INTO ct VALUES
+  (1, 1,    10,   'red'),
+  (2, 2,    20,   'red'),
+  (3, 3,    NULL, 'red'),
+  (4, NULL, NULL, 'red'),
+  (5, NULL, 4,    'red')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ct;
+
+
+# COUNT variants — match the values PostgreSQL produces (DB Fiddle output).
+# Constant / star args count every row; column args count non-null values
+# of that column; literal NULL never counts.
+
+query IIIIIIII
+SELECT count(*), count(88), count(1), count(2),
+       count(x), count(y), count(NULL), count('ss')
+FROM ct_idx;
+----
+count	count	count	count	count	count	count	count
+5	5	5	5	3	3	0	5
+
+
+# Same shape applied to the base table (rocksdb path) -- sanity check that
+# the count semantics match between the two scan paths.
+query IIIIIIII
+SELECT count(*), count(88), count(1), count(2),
+       count(x), count(y), count(NULL), count('ss')
+FROM ct;
+----
+count	count	count	count	count	count	count	count
+5	5	5	5	3	3	0	5
+
+
+# EXPLAIN: count(*) over the inverted-index scan must engage the
+# count-only fast path. The scan reports "Output: row-count only" instead
+# of a Projections list.
+query
+EXPLAIN SELECT count(*) FROM ct_idx;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: ct_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# EXPLAIN: count(<constant>) is equivalent to count(*) -- DuckDB rewrites
+# the aggregate to count_star() upstream, so the scan-side path is the
+# same count-only optimization.
+query
+EXPLAIN SELECT count(42) FROM ct_idx;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: ct_idx       │
+│      Lookup: rocksdb      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# EXPLAIN: count(<column>) must materialise the column to skip nulls --
+# the scan can NOT use the count-only path. Projections list shows the
+# column being read.
+query
+EXPLAIN SELECT count(x) FROM ct_idx;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│   Aggregates: count(#0)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             x             │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: ct_idx       │
+│      Lookup: rocksdb      │
+│       Projections: x      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘

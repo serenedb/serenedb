@@ -1,0 +1,180 @@
+hash-threshold 100
+
+# A column listed in BOTH the inverted clause AND INCLUDE keeps its
+# posting list (for filter pushdown) AND its columnstore copy (for fast
+# projection). Filters on it should push into the IRESEARCH_SCAN filter
+# instead of sitting in a residual FILTER node above the scan.
+#
+# An INCLUDE-only column (not in the inverted clause) carries only the
+# columnstore copy; the optimizer must NOT push filters on it.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_inc(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE logs (
+    id INT PRIMARY KEY,
+    body VARCHAR,
+    service VARCHAR,
+    sev INT,
+    tag VARCHAR
+)
+
+
+statement count 1
+INSERT INTO logs VALUES (1, 'connection refused', 'frontend', 13, 'a')
+
+statement count 1
+INSERT INTO logs VALUES (2, 'connection refused', 'backend', 13, 'a')
+
+statement count 1
+INSERT INTO logs VALUES (3, 'connection refused', 'frontend', 5, 'b')
+
+statement count 1
+INSERT INTO logs VALUES (4, 'ok', 'frontend', 13, 'b')
+
+
+# `service` and `sev` appear in BOTH inverted(...) AND INCLUDE(...).
+# `tag` is INCLUDE-only.
+statement ok
+CREATE INDEX logs_idx ON logs
+    USING inverted(id, body en_inc, service, sev)
+    INCLUDE (service, sev, tag)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) logs
+
+
+# --- inverted+INCLUDE columns: equality and range filters push down ---
+
+# Compound predicate -- all three filters land inside the IRESEARCH_SCAN
+# filter; no residual FILTER node above the scan.
+query
+EXPLAIN SELECT id FROM logs_idx
+WHERE body @@ 'connection' AND service = 'frontend' AND sev >= 13;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: logs_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│   AND[Term(body(string)   │
+│      =connection) &&      │
+│  GranularRange(sev(numeric│
+│  ) >=( \\x0\\x80\\x0\\x0\\xd   │
+│   \\x10\\x80\\x0 )) && Term  │
+│(service(string)=frontend)]│
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+# Result matches the brute-force interpretation.
+query I
+SELECT id FROM logs_idx
+WHERE body @@ 'connection' AND service = 'frontend' AND sev >= 13
+ORDER BY id;
+----
+id
+1
+
+
+# --- INCLUDE-only column stays as residual FILTER ---
+
+# `tag` has no posting list (INCLUDE-only), so the optimizer cannot push
+# `tag = 'a'` into the iresearch filter -- it stays as a residual FILTER.
+query
+EXPLAIN SELECT id FROM logs_idx
+WHERE body @@ 'connection' AND tag = 'a';
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│        (tag = 'a')        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: logs_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│   AND[Term(body(string)   │
+│       =connection)]       │
+│                           │
+│        Projections:       │
+│          tag (i)          │
+│           id (l)          │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+query I
+SELECT id FROM logs_idx
+WHERE body @@ 'connection' AND tag = 'a'
+ORDER BY id;
+----
+id
+1
+2
+
+
+# --- Each inverted+INCLUDE column individually serves its own filter ---
+
+query I
+SELECT id FROM logs_idx
+WHERE service = 'frontend'
+ORDER BY id;
+----
+id
+1
+3
+4
+
+
+query I
+SELECT id FROM logs_idx
+WHERE sev >= 13
+ORDER BY id;
+----
+id
+1
+2
+4
+
+
+# Cleanup
+statement ok
+DROP INDEX logs_idx
+
+statement ok
+DROP TABLE logs
+
+statement ok
+DROP TEXT SEARCH DICTIONARY en_inc

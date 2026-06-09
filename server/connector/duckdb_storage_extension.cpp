@@ -127,7 +127,7 @@ void RegisterSereneDBStorage(duckdb::DBConfig& config) {
 
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
   optimizer::RegisterWrapUnsupportedTypesExtension(db);
-  optimizer::RegisterIresearchPlanOptimizer(db);
+  optimizer::RegisterIResearchPlanOptimizer(db);
 }
 
 }  // namespace sdb::connector

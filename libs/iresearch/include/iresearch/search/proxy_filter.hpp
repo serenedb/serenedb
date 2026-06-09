@@ -56,6 +56,8 @@ class ProxyFilter final : public Filter {
 
   void set_cache(cache_ptr cache) noexcept { _cache = std::move(cache); }
 
+  const Filter& inner() const noexcept;
+
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<ProxyFilter>::id();
   }

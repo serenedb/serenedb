@@ -82,7 +82,6 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
     data->column_types.push_back(col.type);
   }
   // Always include rowid (PK bytes) as the last column for DELETE/UPDATE
-  data->has_rowid = true;
   data->table_entry = this;
   data->entry_kind = ScanEntryKind::BaseTable;
 

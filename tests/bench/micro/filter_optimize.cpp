@@ -64,7 +64,7 @@ irs::Filter::ptr MakeNotChain(size_t depth) {
   term->mutable_options()->term = AsBytes("term_0042");
   irs::Filter::ptr root = std::move(term);
   for (size_t i = 0; i < depth; ++i) {
-    root = irs::Not(std::move(root));
+    root = std::make_unique<irs::Not>(std::move(root));
   }
   return root;
 }

@@ -177,10 +177,21 @@ class Exclusion : public FilterWithType<Exclusion> {
   Filter::ptr _exclude;
 };
 
-inline Filter::ptr Not(Filter::ptr inner) {
-  auto exclusion = std::make_unique<Exclusion>();
-  exclusion->exclude(std::move(inner));
-  return exclusion;
-}
+class Not final : public FilterWithType<Not> {
+ public:
+  Not() = default;
+  explicit Not(Filter::ptr filter) : _filter{std::move(filter)} {}
+
+  const Filter* filter() const noexcept { return _filter.get(); }
+  Filter::ptr& mutable_filter() noexcept { return _filter; }
+
+  Query::ptr prepare(const PrepareContext& ctx) const final;
+
+ protected:
+  bool equals(const irs::Filter& rhs) const noexcept final;
+
+ private:
+  Filter::ptr _filter;
+};
 
 }  // namespace irs

@@ -120,6 +120,9 @@ struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByRegexpOptions& opts) const {
     absl::StrAppend(out, "Regexp:", TermToString(opts.pattern));
   }
+  auto operator()(const AutomatonOptions& opts) const {
+    absl::StrAppend(out, "Automaton:", TermToString(opts.pattern));
+  }
   auto operator()(const ByRangeOptions& opts) const {
     absl::StrAppend(out, "Range: ");
     if (opts.range.min_type == BoundType::Unbounded) {

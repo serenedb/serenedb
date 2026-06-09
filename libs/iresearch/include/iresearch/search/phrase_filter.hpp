@@ -26,6 +26,7 @@
 #include <variant>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
@@ -45,7 +46,7 @@ class ByPhraseOptions {
   using phrase_part =
     std::variant<ByTermOptions, ByPrefixOptions, ByWildcardOptions,
                  ByEditDistanceOptions, ByTermsOptions, ByRangeOptions,
-                 ByRegexpOptions>;
+                 ByRegexpOptions, AutomatonOptions>;
 
   struct PhrasePartInfo {
     phrase_part part;
@@ -90,6 +91,8 @@ class ByPhraseOptions {
   bool operator==(const ByPhraseOptions& rhs) const noexcept {
     return _phrase == rhs._phrase;
   }
+
+  bool LowerWildcardParts();
 
   // Clear phrase contents
   void clear() noexcept {

@@ -120,6 +120,7 @@ int main(int argc, const char* argv[]) {
   sdb::DuckDBEngine::Instance().Initialize();
   int exit_code = 0;
   try {
+    irs::formats::Init();
     irs::DefaultPDP(1, false);
     irs::DefaultPDP(1, true);
     irs::DefaultPDP(2, false);

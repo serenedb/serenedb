@@ -25,8 +25,11 @@
 
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
+#include "iresearch/search/phrase_filter.hpp"
+#include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/wildcard_filter.hpp"
 
 namespace irs {
 namespace {
@@ -58,6 +61,11 @@ void EnumerateChildSlots(Filter& node, Visitor&& visit) {
     }
     if (auto& exc = node_ex.mutable_exclude(); exc) {
       visit(exc);
+    }
+  } else if (tid == Type<Not>::id()) {
+    if (auto& inner = sdb::basics::downCast<Not>(node).mutable_filter();
+        inner) {
+      visit(inner);
     }
   } else if (tid == Type<MixedBooleanFilter>::id()) {
     auto& mixed = sdb::basics::downCast<MixedBooleanFilter>(node);
@@ -112,6 +120,21 @@ bool Flatten(T& node) {
   children = std::move(flat);
   return true;
 }
+
+struct NotRule {
+  static constexpr std::string_view kName = "not_lower";
+  static constexpr std::array kTargets{Type<Not>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<Not>(*slot);
+    auto exclusion = std::make_unique<Exclusion>();
+    if (auto& inner = node.mutable_filter(); inner) {
+      exclusion->exclude(std::move(inner));
+    }
+    slot = std::move(exclusion);
+    return true;
+  }
+};
 
 struct ExclusionRule {
   static constexpr std::string_view kName = "exclusion_simplify";
@@ -244,8 +267,7 @@ struct AndAllFoldRule {
     }
     EraseAllDocs(node, *all);
     if (ctx.scorer != nullptr) {
-      node.mutable_filters().emplace_back(
-        node.MakeAllDocsFilter(all_boost));
+      node.mutable_filters().emplace_back(node.MakeAllDocsFilter(all_boost));
     }
     return true;
   }
@@ -462,8 +484,45 @@ struct MixedDegenerateRule {
   }
 };
 
-constexpr std::array<RuleDesc, 14> kDefaultRulesStorage{{
+struct WildcardLowerRule {
+  static constexpr std::string_view kName = "wildcard_lower";
+  static constexpr std::array kTargets{Type<ByWildcard>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<ByWildcard>(*slot);
+    slot = LowerWildcard(node.field_id(), node.options().term,
+                         node.options().scored_terms_limit, node.Boost());
+    return true;
+  }
+};
+
+struct RegexpLowerRule {
+  static constexpr std::string_view kName = "regexp_lower";
+  static constexpr std::array kTargets{Type<ByRegexp>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<ByRegexp>(*slot);
+    slot = LowerRegexp(node.field_id(), node.options().pattern,
+                       node.options().syntax, node.options().scored_terms_limit,
+                       node.Boost());
+    return true;
+  }
+};
+
+struct PhraseLowerRule {
+  static constexpr std::string_view kName = "phrase_lower";
+  static constexpr std::array kTargets{Type<ByPhrase>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    return sdb::basics::downCast<ByPhrase>(*slot)
+      .mutable_options()
+      ->LowerWildcardParts();
+  }
+};
+
+constexpr auto kDefaultRulesStorage = std::to_array({
   MakeRule<ExclusionRule>(),
+  MakeRule<NotRule>(),
   MakeRule<AndEmptyRule>(),
   MakeRule<OrEmptyRule>(),
   MakeRule<OrMinMatchZeroRule>(),
@@ -477,7 +536,10 @@ constexpr std::array<RuleDesc, 14> kDefaultRulesStorage{{
   MakeRule<ByTermsMinMatchZeroRule>(),
   MakeRule<SingleChildRule>(),
   MakeRule<MixedDegenerateRule>(),
-}};
+  MakeRule<WildcardLowerRule>(),
+  MakeRule<RegexpLowerRule>(),
+  MakeRule<PhraseLowerRule>(),
+});
 
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
               std::span<const RuleDesc> rules) {

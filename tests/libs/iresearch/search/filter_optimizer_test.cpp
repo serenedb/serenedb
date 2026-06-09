@@ -61,7 +61,7 @@ std::unique_ptr<irs::ByTerms> MakeByTerms(
 }
 
 irs::Filter::ptr MakeNot(irs::Filter::ptr child) {
-  return irs::Not(std::move(child));
+  return std::make_unique<irs::Not>(std::move(child));
 }
 
 template<typename... Ts>
@@ -265,8 +265,8 @@ TEST(filter_optimizer_test, flatten_and_empty_inner_gate) {
 }
 
 TEST(filter_optimizer_test, flatten_or) {
-  irs::Filter::ptr root = MakeOr(
-    MakeOr(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")), MakeTerm(kF3, "C"));
+  irs::Filter::ptr root =
+    MakeOr(MakeOr(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")), MakeTerm(kF3, "C"));
 
   irs::Optimize(root);
 
@@ -336,10 +336,9 @@ TEST(filter_optimizer_test, mixed_boolean_filter_keeps_multi_clause_slots) {
 
 TEST(filter_optimizer_test, idempotent) {
   const auto make = []() -> irs::Filter::ptr {
-    return MakeAnd(
-      MakeAnd(MakeTerm(kName, "A"), MakeNot(MakeTerm(kName, "B"))),
-      MakeOr(MakeOr(MakeTerm(kName, "C")),
-             MakeNot(MakeNot(MakeTerm(kName, "D")))));
+    return MakeAnd(MakeAnd(MakeTerm(kName, "A"), MakeNot(MakeTerm(kName, "B"))),
+                   MakeOr(MakeOr(MakeTerm(kName, "C")),
+                          MakeNot(MakeNot(MakeTerm(kName, "D")))));
   };
 
   irs::Filter::ptr once = make();
@@ -454,10 +453,9 @@ TEST(filter_optimizer_test, or_all_fold_unscored_prunes_to_all) {
 }
 
 TEST(filter_optimizer_test, or_all_fold_scored_merges_and_adjusts_min_match) {
-  irs::Filter::ptr root =
-    MakeOrV(Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B"), MakeAll(2.F),
-                    MakeAll(3.F)),
-            irs::ScoreMergeType::Sum, 3);
+  irs::Filter::ptr root = MakeOrV(
+    Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B"), MakeAll(2.F), MakeAll(3.F)),
+    irs::ScoreMergeType::Sum, 3);
 
   const irs::BM25 scorer;
   irs::Optimize(root, {.scorer = &scorer});
@@ -711,7 +709,9 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
   std::iota(all_but_first.begin(), all_but_first.end(), 2);
 
   {
-    const auto make = []() -> irs::Filter::ptr { return MakeNot(MakeTerm(kName, "A")); };
+    const auto make = []() -> irs::Filter::ptr {
+      return MakeNot(MakeTerm(kName, "A"));
+    };
     auto naive = make();
     CheckQuery(*naive, all_but_first, rdr);
     auto optimized = make();
@@ -721,7 +721,8 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
 
   {
     const auto make = []() -> irs::Filter::ptr {
-      return MakeAnd(MakeTerm(kDuplicated, "abcd"), MakeNot(MakeTerm(kName, "A")));
+      return MakeAnd(MakeTerm(kDuplicated, "abcd"),
+                     MakeNot(MakeTerm(kName, "A")));
     };
     auto naive = make();
     CheckQuery(*naive, Docs{5, 11, 21, 27, 31}, rdr);
@@ -732,7 +733,8 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
 
   {
     const auto make = []() -> irs::Filter::ptr {
-      return MakeOr(MakeTerm(kDuplicated, "abcd"), MakeNot(MakeTerm(kName, "A")));
+      return MakeOr(MakeTerm(kDuplicated, "abcd"),
+                    MakeNot(MakeTerm(kName, "A")));
     };
     auto naive = make();
     CheckQuery(*naive, all_docs, rdr);

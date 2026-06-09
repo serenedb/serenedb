@@ -131,8 +131,7 @@ class BoostQuery : public Filter::Query {
     return {};
   }
 
-  void Prepare(const PrepareContext& ctx, const Filter& req,
-               const Filter& opt);
+  void Prepare(const PrepareContext& ctx, const Filter& req, const Filter& opt);
 
  private:
   Query::ptr _req;

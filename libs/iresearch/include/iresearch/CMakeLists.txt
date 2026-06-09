@@ -126,6 +126,7 @@ set(IResearch_core_sources
     ./search/phrase_query.cpp
     ./search/column_existence_filter.cpp
     ./search/same_position_filter.cpp
+    ./search/automaton_filter.cpp
     ./search/wildcard_filter.cpp
     ./search/regexp_filter.cpp
     ./search/wildcard_ngram_filter.cpp

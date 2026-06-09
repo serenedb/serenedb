@@ -177,4 +177,19 @@ bool Exclusion::equals(const irs::Filter& rhs) const noexcept {
          same(_exclude, typed_rhs._exclude);
 }
 
+Filter::Query::ptr Not::prepare(const PrepareContext&) const {
+  SDB_UNREACHABLE();
+  return Query::empty();
+}
+
+bool Not::equals(const irs::Filter& rhs) const noexcept {
+  if (!Filter::equals(rhs)) {
+    return false;
+  }
+  const auto& typed_rhs = sdb::basics::downCast<Not>(rhs);
+  SDB_ASSERT(_filter != nullptr);
+  SDB_ASSERT(typed_rhs._filter != nullptr);
+  return *_filter == *typed_rhs._filter;
+}
+
 }  // namespace irs

@@ -84,8 +84,13 @@ struct GetVisitor {
     };
   }
 
-  field_visitor operator()(const ByWildcardOptions& part) const {
-    return ByWildcard::visitor(part.acceptor);
+  field_visitor operator()(const ByWildcardOptions&) const {
+    SDB_UNREACHABLE();
+    return {};
+  }
+
+  field_visitor operator()(const AutomatonOptions& part) const {
+    return AutomatonFilter::visitor(part.acceptor);
   }
 
   field_visitor operator()(const ByEditDistanceOptions& part) const {
@@ -111,8 +116,9 @@ struct GetVisitor {
       };
   }
 
-  field_visitor operator()(const ByRegexpOptions& part) const {
-    return ByRegexp::visitor(part.acceptor);
+  field_visitor operator()(const ByRegexpOptions&) const {
+    SDB_UNREACHABLE();
+    return {};
   }
 };
 
@@ -125,7 +131,12 @@ struct PrepareVisitor : util::Noncopyable {
     return ByPrefix::prepare(ctx, id, part.term, part.scored_terms_limit);
   }
 
-  auto operator()(const ByWildcardOptions& part) const {
+  Filter::Query::ptr operator()(const ByWildcardOptions&) const {
+    SDB_UNREACHABLE();
+    return {};
+  }
+
+  auto operator()(const AutomatonOptions& part) const {
     return PrepareAutomatonFilter(ctx, id, part.acceptor,
                                   part.scored_terms_limit);
   }
@@ -142,9 +153,9 @@ struct PrepareVisitor : util::Noncopyable {
     return ByRange::prepare(ctx, id, part.range, part.scored_terms_limit);
   }
 
-  auto operator()(const ByRegexpOptions& part) const {
-    return PrepareAutomatonFilter(ctx, id, part.acceptor,
-                                  part.scored_terms_limit);
+  Filter::Query::ptr operator()(const ByRegexpOptions&) const {
+    SDB_UNREACHABLE();
+    return {};
   }
 
   PrepareVisitor(const PrepareContext& ctx, irs::field_id id) noexcept
@@ -472,6 +483,56 @@ Filter::Query::ptr ByPhrase::Prepare(const PrepareContext& ctx,
   }
 
   return VariadicPrepareCollect(ctx, id, options);
+}
+
+bool ByPhraseOptions::LowerWildcardParts() {
+  bool changed = false;
+  for (auto& info : _phrase) {
+    if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {
+      bstring buf;
+      const auto lim = w->scored_terms_limit;
+      info.part = ExecuteWildcard(
+        buf, bytes_view{w->term},
+        [](bytes_view term) -> phrase_part {
+          ByTermOptions opts;
+          opts.term = term;
+          return opts;
+        },
+        [lim](bytes_view term) -> phrase_part {
+          ByPrefixOptions opts;
+          opts.term = term;
+          opts.scored_terms_limit = lim;
+          return opts;
+        },
+        [lim](bytes_view term) -> phrase_part {
+          return AutomatonOptions{FromWildcard(term), term, lim};
+        });
+      changed = true;
+    } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
+      bstring buf;
+      const auto lim = r->scored_terms_limit;
+      const auto syntax = r->syntax;
+      info.part = ExecuteRegexp(
+        buf, bytes_view{r->pattern},
+        [](bytes_view term) -> phrase_part {
+          ByTermOptions opts;
+          opts.term = term;
+          return opts;
+        },
+        [lim](bytes_view prefix) -> phrase_part {
+          ByPrefixOptions opts;
+          opts.term = prefix;
+          opts.scored_terms_limit = lim;
+          return opts;
+        },
+        [lim, syntax](bytes_view pattern) -> phrase_part {
+          return AutomatonOptions{
+            FromRegexp(pattern, kDefaultMaxDfaStates, syntax), pattern, lim};
+        });
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 }  // namespace irs

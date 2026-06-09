@@ -27,6 +27,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/phrase_query.hpp"
@@ -38,6 +39,13 @@ namespace {
 inline constexpr irs::field_id kName = tests::FieldIdFor("name");
 inline constexpr irs::field_id kPhraseAnl = tests::FieldIdFor("phrase_anl");
 inline constexpr irs::field_id kPhrase = tests::FieldIdFor("phrase");
+
+template<typename F>
+auto PrepareOptimized(const F& filter, const irs::PrepareContext& ctx) {
+  irs::Filter::ptr f = std::make_unique<F>(filter);
+  irs::Optimize(f);
+  return f->prepare(ctx);
+}
 
 auto StoreName() {
   return [](irs::IndexWriter::Document& doc, const tests::Document& src) {
@@ -97,7 +105,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   {
     irs::ByPhrase q;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
 
     auto docs = prepared->execute({.segment = *sub});
@@ -111,7 +119,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     irs::ByPhrase q;
     *q.mutable_field_id() = kPhraseAnl;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
 
     auto docs = prepared->execute({.segment = *sub});
@@ -127,7 +135,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -196,7 +204,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     q.mutable_options()->push_back<irs::ByPrefixOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -296,7 +304,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -396,7 +404,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("%ox"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -466,7 +474,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("_ox"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -536,7 +544,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("f_x"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -606,7 +614,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("fo_"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -676,7 +684,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
       irs::ByWildcardOptions{
         irs::ViewCast<irs::byte_type>(std::string_view("fox"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -746,7 +754,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     lt.max_distance = 0;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -816,7 +824,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fol"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -885,7 +893,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -955,7 +963,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("that")));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -1037,7 +1045,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -1074,7 +1082,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Exclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -1101,7 +1109,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Exclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -1128,7 +1136,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Exclusive;
     rt.range.max_type = irs::BoundType::Exclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -1155,7 +1163,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -1212,7 +1220,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Exclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -1264,7 +1272,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Exclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -1311,7 +1319,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Exclusive;
     rt.range.max_type = irs::BoundType::Exclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -1351,7 +1359,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
     auto sub = rdr.begin();
@@ -1383,7 +1391,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr,
               dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
@@ -1427,7 +1435,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr,
               dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
@@ -1471,7 +1479,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f_x%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr,
               dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
@@ -1516,7 +1524,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     lt.with_transpositions = true;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fxo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr,
               dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
@@ -1552,7 +1560,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr,
               dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
@@ -1591,7 +1599,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
       ->push_back<irs::ByTermOptions>(std::numeric_limits<size_t>::max())
       .term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
     auto sub = rdr.begin();
@@ -1664,7 +1672,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
       std::numeric_limits<size_t>::max());
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr,
               dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
@@ -1769,7 +1777,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr,
               dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
@@ -1874,7 +1882,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f%x"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr,
               dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
@@ -1949,7 +1957,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fkx"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr,
               dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
@@ -2026,7 +2034,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     // check single word phrase optimization
     ASSERT_NE(nullptr,
               dynamic_cast<const irs::MultiTermQuery*>(prepared.get()));
@@ -2090,7 +2098,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2134,7 +2142,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2184,7 +2192,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2234,7 +2242,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2277,7 +2285,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2322,7 +2330,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2367,7 +2375,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("x2"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2400,7 +2408,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2448,7 +2456,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2498,7 +2506,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2541,7 +2549,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2588,7 +2596,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("x2"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2621,7 +2629,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2671,7 +2679,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2721,7 +2729,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f_x"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2765,7 +2773,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     lt.with_transpositions = true;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fxo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2812,7 +2820,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     rt.range.min_type = irs::BoundType::Inclusive;
     rt.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2845,7 +2853,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2904,7 +2912,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -2965,7 +2973,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3014,7 +3022,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3069,7 +3077,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("x2"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3100,7 +3108,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3161,7 +3169,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3222,7 +3230,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f%x"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3275,7 +3283,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     rt2.range.min_type = irs::BoundType::Inclusive;
     rt2.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3311,7 +3319,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     lt2.max_distance = 1;
     lt2.term = irs::ViewCast<irs::byte_type>(std::string_view("fix"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3353,7 +3361,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3412,7 +3420,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3471,7 +3479,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("f_%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3534,7 +3542,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     rt2.range.min_type = irs::BoundType::Inclusive;
     rt2.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3565,7 +3573,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("bro"));
     pt3.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3667,10 +3675,10 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       *score = it->value();
     };
 
-    auto prepared = q.prepare({
-      .index = rdr,
-      .scorer = &sort,
-    });
+    auto prepared = PrepareOptimized(q, {
+                                          .index = rdr,
+                                          .scorer = &sort,
+                                        });
     ASSERT_EQ(6, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -3821,7 +3829,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     wt3 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("_%x"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -3868,7 +3876,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto& st3 = q.mutable_options()->push_back<irs::ByTermsOptions>();
     st3.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3934,7 +3942,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     rt3.range.min_type = irs::BoundType::Inclusive;
     rt3.range.max_type = irs::BoundType::Inclusive;
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -3986,10 +3994,10 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       *score = it->value();
     };
 
-    auto prepared = q.prepare({
-      .index = rdr,
-      .scorer = &sort,
-    });
+    auto prepared = PrepareOptimized(q, {
+                                          .index = rdr,
+                                          .scorer = &sort,
+                                        });
     ASSERT_EQ(3, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -4077,7 +4085,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4112,7 +4120,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4150,7 +4158,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4186,7 +4194,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4221,7 +4229,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>(1);
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4257,7 +4265,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%ck"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4292,7 +4300,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4329,7 +4337,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%ck"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4366,7 +4374,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     lt2.max_distance = 1;
     lt2.term = irs::ViewCast<irs::byte_type>(std::string_view("quik"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4407,7 +4415,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
+    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4473,7 +4481,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
+    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4538,7 +4546,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
+    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4642,7 +4650,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
+    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4789,7 +4797,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
+    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -4974,7 +4982,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
-    auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
+    auto prepared = PrepareOptimized(q, {.index = rdr, .scorer = scorer.get()});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5023,7 +5031,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5060,7 +5068,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(0).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5092,7 +5100,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5124,7 +5132,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5162,7 +5170,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5199,7 +5207,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>(1);
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5237,7 +5245,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%k"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5274,7 +5282,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5313,7 +5321,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt2 = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5352,7 +5360,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("quik"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5387,7 +5395,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(10).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     auto docs = prepared->execute({.segment = *sub});
@@ -5405,7 +5413,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>(10);
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     auto docs = prepared->execute({.segment = *sub});
@@ -5424,7 +5432,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("qu_ck"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     auto docs = prepared->execute({.segment = *sub});
@@ -5443,7 +5451,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     lt.max_distance = 2;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("quc"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     auto docs = prepared->execute({.segment = *sub});
@@ -5461,7 +5469,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("eye"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5503,7 +5511,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("forward"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -5550,7 +5558,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -5599,10 +5607,10 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = q.prepare({
-      .index = rdr,
-      .scorer = &sort,
-    });
+    auto prepared = PrepareOptimized(q, {
+                                          .index = rdr,
+                                          .scorer = &sort,
+                                        });
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -5674,10 +5682,10 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = q.prepare({
-      .index = rdr,
-      .scorer = &sort,
-    });
+    auto prepared = PrepareOptimized(q, {
+                                          .index = rdr,
+                                          .scorer = &sort,
+                                        });
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -5728,7 +5736,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5770,10 +5778,10 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = q.prepare({
-      .index = rdr,
-      .scorer = &sort,
-    });
+    auto prepared = PrepareOptimized(q, {
+                                          .index = rdr,
+                                          .scorer = &sort,
+                                        });
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -5817,7 +5825,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("zo\\_%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -5845,7 +5853,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("\\_oo"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -5873,7 +5881,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("z\\_o"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -5903,7 +5911,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("giraff\\_%"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -5933,7 +5941,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("\\_iraffe"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -5963,7 +5971,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     wt = irs::ByWildcardOptions{
       irs::ViewCast<irs::byte_type>(std::string_view("gira\\_fe"))};
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -6005,7 +6013,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -6057,7 +6065,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -6105,7 +6113,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     auto docs = prepared->execute({.segment = *sub});
@@ -6129,7 +6137,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
       irs::ViewCast<irs::byte_type>(std::string_view("dog"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -6179,10 +6187,10 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
       *score = it->value();
     };
     auto sub = rdr.begin();
-    auto prepared = q.prepare({
-      .index = rdr,
-      .scorer = &sort,
-    });
+    auto prepared = PrepareOptimized(q, {
+                                          .index = rdr,
+                                          .scorer = &sort,
+                                        });
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{*sub, *column};
@@ -6317,7 +6325,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("to"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -6346,7 +6354,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto& wt = q.mutable_options()->push_back<irs::ByPrefixOptions>(3, 4);
     wt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -6431,10 +6439,10 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = q.prepare({
-      .index = rdr,
-      .scorer = &sort,
-    });
+    auto prepared = PrepareOptimized(q, {
+                                          .index = rdr,
+                                          .scorer = &sort,
+                                        });
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -6555,10 +6563,10 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = q.prepare({
-      .index = rdr,
-      .scorer = &sort,
-    });
+    auto prepared = PrepareOptimized(q, {
+                                          .index = rdr,
+                                          .scorer = &sort,
+                                        });
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -6679,10 +6687,10 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
       *score = it->value();
     };
 
-    auto prepared = q.prepare({
-      .index = rdr,
-      .scorer = &sort,
-    });
+    auto prepared = PrepareOptimized(q, {
+                                          .index = rdr,
+                                          .scorer = &sort,
+                                        });
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
     ASSERT_NE(nullptr, column);
@@ -6780,7 +6788,7 @@ TEST(by_phrase_test, boost) {
     irs::ByPhrase q;
     *q.mutable_field_id() = 1;
 
-    auto prepared = q.prepare({.index = irs::SubReader::empty()});
+    auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
     ASSERT_EQ(irs::kNoBoost, prepared->Boost());
   }
 
@@ -6791,7 +6799,7 @@ TEST(by_phrase_test, boost) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
-    auto prepared = q.prepare({.index = irs::SubReader::empty()});
+    auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
     ASSERT_EQ(irs::kNoBoost, prepared->Boost());
   }
 
@@ -6804,7 +6812,7 @@ TEST(by_phrase_test, boost) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
 
-    auto prepared = q.prepare({.index = irs::SubReader::empty()});
+    auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
     ASSERT_EQ(irs::kNoBoost, prepared->Boost());
   }
 
@@ -6819,7 +6827,7 @@ TEST(by_phrase_test, boost) {
       *q.mutable_field_id() = 1;
       q.boost(boost);
 
-      auto prepared = q.prepare({.index = irs::SubReader::empty()});
+      auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
       ASSERT_EQ(irs::kNoBoost, prepared->Boost());
     }
 
@@ -6831,10 +6839,10 @@ TEST(by_phrase_test, boost) {
         irs::ViewCast<irs::byte_type>(std::string_view("quick"));
       q.boost(boost);
 
-      auto prepared = q.prepare({
-        .index = irs::SubReader::empty(),
-        .memory = counter,
-      });
+      auto prepared = PrepareOptimized(q, {
+                                            .index = irs::SubReader::empty(),
+                                            .memory = counter,
+                                          });
       ASSERT_EQ(boost, prepared->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -6851,7 +6859,7 @@ TEST(by_phrase_test, boost) {
         irs::ViewCast<irs::byte_type>(std::string_view("brown"));
       q.boost(boost);
 
-      auto prepared = q.prepare({.index = irs::SubReader::empty()});
+      auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
       ASSERT_EQ(boost, prepared->Boost());
     }
 
@@ -6877,7 +6885,7 @@ TEST(by_phrase_test, boost) {
       rt.range.min_type = irs::BoundType::Inclusive;
       rt.range.max_type = irs::BoundType::Inclusive;
 
-      auto prepared = q.prepare({.index = irs::SubReader::empty()});
+      auto prepared = PrepareOptimized(q, {.index = irs::SubReader::empty()});
       ASSERT_EQ(boost, prepared->Boost());
     }
   }
@@ -7204,7 +7212,7 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
 
   auto execute = [&](const irs::ByPhrase& q) {
     std::vector<irs::doc_id_t> out;
-    auto prepared = q.prepare({.index = rdr});
+    auto prepared = PrepareOptimized(q, {.index = rdr});
     for (auto& sub : rdr) {
       auto docs = prepared->execute({.segment = sub});
       while (docs->next()) {

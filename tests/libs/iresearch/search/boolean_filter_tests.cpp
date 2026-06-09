@@ -32,6 +32,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/exclusion.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -15988,8 +15989,8 @@ TEST_P(BooleanFilterTestCase, exclusion_sequential) {
   {
     irs::And root;
     Append<irs::ByTerm>(root, kFieldSame, "xyz");
-    root.add(irs::Not(
-      std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldName, "A"))));
+    root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(
       root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
                  18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
@@ -16000,8 +16001,8 @@ TEST_P(BooleanFilterTestCase, exclusion_sequential) {
     irs::Exclusion root;
     root.include<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-    root.exclude(irs::Not(
-      std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldName, "A"))));
+    root.exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(root, Docs{1}, rdr);
   }
 }
@@ -16298,32 +16299,34 @@ TEST(Not_helper_test, shape) {
     std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldAbc, "def"));
   const auto* inner_raw = inner.get();
 
-  auto filter = irs::Not(std::move(inner));
+  irs::Filter::ptr filter = std::make_unique<irs::Not>(std::move(inner));
   ASSERT_NE(nullptr, filter);
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), filter->type());
+  ASSERT_EQ(irs::Type<irs::Not>::id(), filter->type());
 
-  const auto* exclusion = dynamic_cast<const irs::Exclusion*>(filter.get());
-  ASSERT_NE(nullptr, exclusion);
-  ASSERT_EQ(nullptr, exclusion->include());
-  ASSERT_EQ(inner_raw, exclusion->exclude());
-  ASSERT_FALSE(exclusion->empty());
+  const auto* not_filter = dynamic_cast<const irs::Not*>(filter.get());
+  ASSERT_NE(nullptr, not_filter);
+  ASSERT_EQ(inner_raw, not_filter->filter());
 }
 
 TEST(Not_helper_test, equal) {
-  irs::Exclusion expected;
-  expected.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+  irs::Not expected{
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldAbc, "def"))};
 
-  auto filter = irs::Not(
-    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldAbc, "def")));
-  ASSERT_EQ(expected, *filter);
+  irs::Not filter{
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldAbc, "def"))};
+  ASSERT_EQ(expected, filter);
 }
 
 TEST(Not_helper_test, optimize_double_negation) {
-  irs::And root;
-  root.add(irs::Not(irs::Not(std::make_unique<irs::ByTerm>(
-    MakeFilter<irs::ByTerm>(kFieldTestField, "test_term")))));
+  auto root = std::make_unique<irs::And>();
+  root->add(std::make_unique<irs::Not>(
+    std::make_unique<irs::Not>(std::make_unique<irs::ByTerm>(
+      MakeFilter<irs::ByTerm>(kFieldTestField, "test_term")))));
 
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  auto prepared = filter->prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
 }
 

@@ -253,7 +253,7 @@ WITH
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_phrase WHERE id IN (SELECT id FROM result);
 ----
 ?column?
-f
+t
 
 
 query
@@ -262,7 +262,7 @@ WITH
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_any WHERE id IN (SELECT id FROM result);
 ----
 ?column?
-f
+t
 
 
 query
@@ -280,7 +280,7 @@ WITH
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_all WHERE id IN (SELECT id FROM result);
 ----
 ?column?
-f
+t
 
 
 query
@@ -289,7 +289,7 @@ WITH
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_hybrid WHERE id IN (SELECT id FROM result);
 ----
 ?column?
-f
+t
 
 
 query

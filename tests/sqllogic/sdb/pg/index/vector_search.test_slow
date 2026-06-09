@@ -340,7 +340,7 @@ WITH
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_phrase WHERE id IN (SELECT id FROM result);
 ----
 ?column?
-f
+t
 
 
 # Text filter (ts_any) + ANN
@@ -350,7 +350,7 @@ WITH
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_any WHERE id IN (SELECT id FROM result);
 ----
 ?column?
-f
+t
 
 
 # Text filter (ts_starts_with) + ANN
@@ -370,7 +370,7 @@ WITH
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_all WHERE id IN (SELECT id FROM result);
 ----
 ?column?
-f
+t
 
 
 # Hybrid: text filter + rocksdb (id) filter + ANN
@@ -380,7 +380,7 @@ WITH
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_hybrid WHERE id IN (SELECT id FROM result);
 ----
 ?column?
-f
+t
 
 
 query

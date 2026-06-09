@@ -1050,7 +1050,8 @@ void IResearchPushdownComplexFilter(
     return;
   }
   auto options = BuildOptions(context);
-  if (TryClaimAnnRange(filters, get, bind_data, options)) {
+  TryClaimAnnRange(filters, get, bind_data, options);
+  if (filters.empty()) {
     return;
   }
   auto index = bind_data.inverted_index;

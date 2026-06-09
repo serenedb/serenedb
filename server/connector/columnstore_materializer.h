@@ -73,10 +73,10 @@ class ColumnstoreMaterializer {
     irs::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec, output_start);
   }
 
-  void SelectByDocIds(std::span<const irs::doc_id_t> doc_ids,
-                      duckdb::DataChunk& output,
-                      duckdb::idx_t output_start = 0) const {
-    if (_bound.empty() || doc_ids.empty()) {
+  template<typename DocIds>
+  void SelectByDocIds(const DocIds& doc_ids, duckdb::DataChunk& output,
+                      duckdb::idx_t output_start) const {
+    if (_bound.empty() || doc_ids.size() == 0) {
       return;
     }
     SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
@@ -91,8 +91,8 @@ class ColumnstoreMaterializer {
     }
   }
 
-  void Scan(uint64_t start_doc, duckdb::idx_t count,
-            duckdb::DataChunk& output) const {
+  void Scan(uint64_t start_doc, duckdb::idx_t count, duckdb::DataChunk& output,
+            duckdb::idx_t output_start, bool may_use_entire = false) const {
     if (_bound.empty() || count == 0) {
       return;
     }
@@ -100,13 +100,13 @@ class ColumnstoreMaterializer {
     for (const auto& b : _bound) {
       auto& out_vec = output.data[b.output_slot];
       const auto type_id = b.reader->Type().id();
-      if (type_id == duckdb::LogicalTypeId::LIST ||
-          type_id == duckdb::LogicalTypeId::MAP) {
+      if (output_start == 0 && (type_id == duckdb::LogicalTypeId::LIST ||
+                                type_id == duckdb::LogicalTypeId::MAP)) {
         duckdb::ListVector::SetListSize(out_vec, 0);
       }
       irs::MaterializeNode(*b.reader, *b.state,
-                           irs::IotaRange{start_doc, count}, out_vec, 0,
-                           /*may_use_entire=*/true);
+                           irs::IotaRange{start_doc, count}, out_vec,
+                           output_start, may_use_entire);
     }
   }
 

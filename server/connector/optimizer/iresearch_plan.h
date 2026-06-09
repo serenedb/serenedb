@@ -33,11 +33,11 @@ class FunctionData;
 }  // namespace duckdb
 namespace sdb::optimizer {
 
-void IresearchPushdownComplexFilter(
+void IResearchPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,
   duckdb::FunctionData* bind_data,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters);
 
-void RegisterIresearchPlanOptimizer(duckdb::DatabaseInstance& db);
+void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::optimizer

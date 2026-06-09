@@ -65,14 +65,14 @@ VACUUM (REFRESH_TABLE) ni_t;
 # Indexed column unchanged for rows 1 and 2.
 connection ni_after
 query
-SELECT id FROM ni_t WHERE note @@ ts_phrase('apple');
+SELECT id FROM ni_idx WHERE note @@ ts_phrase('apple');
 ----
 id
 1
 
 connection ni_after
 query
-SELECT id FROM ni_t WHERE note @@ ts_phrase('banana');
+SELECT id FROM ni_idx WHERE note @@ ts_phrase('banana');
 ----
 id
 2
@@ -80,14 +80,14 @@ id
 # Row 3 is the new insert, both indexed and reachable.
 connection ni_after
 query
-SELECT id FROM ni_t WHERE note @@ ts_phrase('cherry');
+SELECT id FROM ni_idx WHERE note @@ ts_phrase('cherry');
 ----
 id
 3
 
 connection ni_after
 query
-SELECT COUNT(*) FROM ni_t WHERE note @@ ts_phrase('fruit');
+SELECT COUNT(*) FROM ni_idx WHERE note @@ ts_phrase('fruit');
 ----
 count
 3

@@ -5,7 +5,6 @@ add_library(
     offsets_collector.cpp
     search_sink_writer.cpp
     search_table_dispatch.cpp
-    search_pk_lookup.cpp
     search_remove_filter.cpp
     duckdb_storage_extension.cpp
     rocksdb_filter.cpp
@@ -31,7 +30,6 @@ add_library(
     duckdb_sk_point_lookup.cpp
     duckdb_sk_range_scan.cpp
     duckdb_search_full_scan.cpp
-    duckdb_search_count_scan.cpp
     duckdb_search_table_scan.cpp
     duckdb_search_ann_scan.cpp
     duckdb_rocksdb_reader.cpp

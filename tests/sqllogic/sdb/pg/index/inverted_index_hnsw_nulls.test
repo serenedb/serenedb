@@ -101,8 +101,8 @@ SELECT pk, label FROM vec_n_idx
 ----
 pk	label
 1	unit-x
-5	unit-z
 3	unit-y
+5	unit-z
 
 
 # LIMIT > non-NULL count -- faiss returns 3 results (the non-NULL
@@ -113,8 +113,8 @@ SELECT pk, label FROM vec_n_idx
 ----
 pk	label
 1	unit-x
-5	unit-z
 3	unit-y
+5	unit-z
 
 
 # ---- DELETE filters out via docs_mask, no dangling HNSW node ----

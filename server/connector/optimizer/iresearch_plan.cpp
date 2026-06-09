@@ -298,18 +298,14 @@ duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
   return get_col_idx;
 }
 
+duckdb::idx_t ScoreColumnIndexInGet(const duckdb::LogicalGet& get,
+                                    const connector::SereneDBScanBindData& bd);
+
 duckdb::idx_t AppendScoreColumn(connector::SereneDBScanBindData& bind_data,
                                 duckdb::LogicalGet& get) {
-  for (duckdb::idx_t i = 0; i < bind_data.column_ids.size(); ++i) {
-    if (bind_data.column_ids[i] != catalog::Column::kInvertedIndexScoreId) {
-      continue;
-    }
-    const auto& col_ids = get.GetColumnIds();
-    for (duckdb::idx_t j = 0; j < col_ids.size(); ++j) {
-      if (col_ids[j].HasPrimaryIndex() && col_ids[j].GetPrimaryIndex() == i) {
-        return j;
-      }
-    }
+  const auto existing = ScoreColumnIndexInGet(get, bind_data);
+  if (existing != duckdb::DConstants::INVALID_INDEX) {
+    return existing;
   }
   return AppendVirtualGetColumn(
     bind_data, get, catalog::Column::kInvertedIndexScoreId,
@@ -683,11 +679,8 @@ duckdb::unique_ptr<duckdb::Expression> RewriteCallInExpr(
              duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     const auto& alias = expr->GetAlias();
     const auto paren = alias.find('(');
-    std::string_view func_name = alias;
-    if (paren != std::string::npos) {
-      func_name = std::string_view{alias}.substr(0, paren);
-    }
-    if (IsScorerFunctionName(func_name)) {
+    if (paren != std::string::npos &&
+        IsScorerFunctionName(std::string_view{alias}.substr(0, paren))) {
       expr->SetAlias({});
       changed = true;
     }

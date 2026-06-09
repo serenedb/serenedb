@@ -49,7 +49,7 @@
 #include "connector/duckdb_schema_entry.h"
 #include "connector/key_utils.hpp"
 #include "connector/search_table_dispatch.h"
-#include "connector/search_table_sink_writer.h"
+#include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
 #include "search/local_table_changes.h"
@@ -75,8 +75,8 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   search::SearchTableShard* search_shard = nullptr;
 
   // Catalog column ids in input-chunk order (skips the synthetic
-  // generated-PK column). Used both as the SearchTableSinkWriter
-  // SwitchColumn key and as the WAL marker's column_ids payload.
+  // generated-PK column). Passed to the search-table sink (the SwitchColumn
+  // field-id key per column) and used to build the WAL record.
   std::vector<catalog::Column::Id> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
 
@@ -145,7 +145,9 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
   // Null on the inline path -- there `sink` wraps the shard's reused serial
   // trx.
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
-  std::unique_ptr<SearchTableSinkWriter> sink;
+  // Shared iresearch sink (the inverted-index insert base, in search-table mode:
+  // PK term only, no PK blob). Driven by WriteChunkToSearchSink.
+  std::unique_ptr<SearchSinkInsertBaseImpl> sink;
   // Bulk gate (WAL_DESIGN.md §6): true when the engine chose >1 sink thread.
   // Bulk threads stream to a chunk file (REFERENCE commit); a single-thread
   // (inline) insert buffers in `collection` for an INLINE commit. Applies to
@@ -167,8 +169,6 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
   // chunk frame instead).
   std::vector<search::SearchDbWal::InlinePk>* pk_segments = nullptr;
   duckdb::idx_t insert_count = 0;
-  // Reused per-row PK scratch buffer.
-  std::string pk_buffer;
 };
 
 // CTAS-mode helper: creates the target table (tombstoned) from the bound
@@ -367,7 +367,7 @@ SereneDBSearchInsert::GetLocalSinkState(
     // lazily on the first Sink chunk so a no-rows thread leaves no empty file.
     lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
       gstate->search_shard->GetTransaction());
-    lstate->sink = std::make_unique<SearchTableSinkWriter>(*lstate->search_trx);
+    lstate->sink = MakeSearchTableInsertSink(*lstate->search_trx, gstate->column_ids);
   } else {
     // Inline (small INSERT): buffer this thread's rows on query::Transaction
     // so they outlive the local state -- the INLINE WAL record serialises the
@@ -419,7 +419,7 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     SDB_ASSERT(!lstate->bulk);
     auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
       gstate.table_id, [&] { return gstate.search_shard->GetTransaction(); });
-    lstate->sink = std::make_unique<SearchTableSinkWriter>(trx);
+    lstate->sink = MakeSearchTableInsertSink(trx, gstate.column_ids);
   }
 
   // Write this chunk straight into the thread's own iresearch segment: one
@@ -436,12 +436,9 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   const uint64_t pk_base =
     uses_generated_pk ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
                       : 0;
-  WriteChunkToSearchSink(
-    *lstate->sink, chunk, gstate.column_ids,
-    std::span<const duckdb::LogicalType>{gstate.chunk_types.data(),
-                                         gstate.chunk_types.size()},
-    gstate.pk_columns, gstate.table_key, uses_generated_pk, pk_base,
-    lstate->pk_buffer);
+  WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids,
+                         gstate.pk_columns, gstate.table_key, uses_generated_pk,
+                         pk_base);
   // Stream the chunk to this transaction's WAL (WAL_DESIGN.md §7). Bulk:
   // serialise straight into this thread's chunk file (opened lazily here so a
   // no-rows thread leaves no file), bounded heap. Inline: retain in this

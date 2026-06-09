@@ -42,7 +42,7 @@
 #include "catalog/table_options.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/key_utils.hpp"
-#include "connector/search_table_sink_writer.h"
+#include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table_shard.h"
 #include "storage_engine/search_engine.h"
@@ -68,7 +68,6 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     SearchTableShard* search = nullptr;
     uint64_t schema_id = 0;
     std::vector<catalog::Column::Id> column_ids;
-    std::vector<duckdb::LogicalType> column_types;
     std::vector<connector::duckdb_primary_key::PKColumn> pk_columns;
     std::string table_key;
     bool uses_generated_pk = false;
@@ -78,9 +77,8 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   // stable across inserts.
   struct ReplayCtx {
     irs::IndexWriter::Transaction trx;
-    std::unique_ptr<connector::SearchTableSinkWriter> sink;
+    std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
     uint64_t max_tick = 0;
-    std::string pk_scratch;
   };
 
   size_t recovered_shards = 0;
@@ -102,7 +100,6 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
             continue;
           }
           info.column_ids.push_back(col.GetId());
-          info.column_types.push_back(col.type);
         }
         info.pk_columns = connector::duckdb_primary_key::BuildPKColumns(*table);
         info.table_key = connector::key_utils::PrepareTableKey(table->GetId());
@@ -134,11 +131,12 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       auto& ctx = cit->second;
       if (inserted) {
         ctx.trx = info.search->GetTransaction();
-        ctx.sink = std::make_unique<connector::SearchTableSinkWriter>(ctx.trx);
+        ctx.sink =
+          connector::MakeSearchTableInsertSink(ctx.trx, info.column_ids);
       }
-      connector::WriteChunkToSearchSink(
-        *ctx.sink, chunk, info.column_ids, info.column_types, info.pk_columns,
-        info.table_key, info.uses_generated_pk, pk_base, ctx.pk_scratch);
+      connector::WriteChunkToSearchSink(*ctx.sink, chunk, info.column_ids,
+                                        info.pk_columns, info.table_key,
+                                        info.uses_generated_pk, pk_base);
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
 

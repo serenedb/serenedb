@@ -37,8 +37,8 @@ namespace sdb::connector {
 // plan time by SereneDBCatalog::PlanInsert / PlanCreateTableAs when the
 // target reports kSearch -- the rocksdb-bound operators are bypassed
 // entirely (different write contract: no DuckDBColumnSerializer, no
-// secondary RocksDB indexes, all rows land in iresearch via
-// SearchTableSinkWriter).
+// secondary RocksDB indexes, all rows land in iresearch via the shared
+// search-table iresearch sink, SearchSinkInsertBaseImpl in search-table mode).
 //
 // Two construction modes:
 //   * Insert mode  -- target table already exists; ctor takes the Table.
@@ -50,13 +50,14 @@ namespace sdb::connector {
 //                     insert mode.
 //
 // Lifecycle (per design D15):
-//   Sink(chunk):     append the input chunk to the per-txn LocalTableChanges
-//                    buffer for this table_id. No iresearch write yet.
-//   Finalize():      drain the buffer -- one SwitchColumn per column, one
-//                    per-row PK Write -- through SearchTableSinkWriter, then
-//                    emit WAL markers via EmitInsertsForBuffer. The iresearch
-//                    transaction is committed by query::Transaction::Commit
-//                    later (same path InvertedIndexShard already uses).
+//   Sink(chunk):     write the chunk into iresearch via WriteChunkToSearchSink
+//                    (the shared search-table sink) AND, on the inline path,
+//                    buffer it in the per-txn LocalTableChanges for the INLINE
+//                    WAL record; bulk threads stream a chunk file instead.
+//   Finalize():      register this statement's writes on the txn (seg_ids /
+//                    column ids). The iresearch transaction + the WAL record
+//                    are committed by query::Transaction::Commit later (same
+//                    path InvertedIndexShard already uses).
 //
 // Scope: no PK conflict detection yet (duplicate INSERTs silently
 // double-write). Reads land in M4; conflict resolution in M6.

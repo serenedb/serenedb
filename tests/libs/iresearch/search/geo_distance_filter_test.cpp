@@ -387,12 +387,14 @@ TEST(GeoDistanceFilterTest, query) {
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
           ASSERT_TRUE(doc.Insert(name_field));
           ASSERT_TRUE(doc.Insert(geo_field));
-          irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(),
+          irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
                                    name_field);
-          irs::tests::StoreFieldAt(*doc.Columnstore(), kGeo, doc.DocId(),
+          irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),
                                    geo_field);
         }
       }
+      segment1.Commit();
+      segment0.Commit();
     }
     writer->RefreshCommit();
     reader = writer->GetSnapshot();
@@ -900,12 +902,14 @@ TEST(GeoDistanceFilterTest, checkScorer) {
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
           ASSERT_TRUE(doc.Insert(name_field));
           ASSERT_TRUE(doc.Insert(geo_field));
-          irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(),
+          irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
                                    name_field);
-          irs::tests::StoreFieldAt(*doc.Columnstore(), kGeo, doc.DocId(),
+          irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),
                                    geo_field);
         }
       }
+      segment1.Commit();
+      segment0.Commit();
     }
     writer->RefreshCommit();
     reader = writer->GetSnapshot();

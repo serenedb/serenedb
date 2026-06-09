@@ -98,8 +98,7 @@ TEST_F(IRSColumnstoreTest, RoundTripInt64Dense) {
       cw.Append(produced, batch, take);
       produced += take;
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read
@@ -214,8 +213,7 @@ TEST_F(IRSColumnstoreTest, NormColumnRoundTripPerRowGroupEncoding) {
       }
       nw.Append(i, v);
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read + verify each row group's encoding + per-row values.
@@ -334,8 +332,7 @@ TEST_F(IRSColumnstoreTest, NormColumnRoundTripWithStats) {
     expected_non_zero += static_cast<uint64_t>(v != 0);
   }
 
-  auto filename = w.Commit(kRowCount);
-  ASSERT_FALSE(filename.empty());
+  w.Commit(kRowCount);
 
   irs::ColReader r{dir, kSegmentName, Db()};
   const auto* col = r.NormColumn(3);
@@ -407,8 +404,7 @@ TEST_F(IRSColumnstoreTest, RoundTripArrayFloatDense) {
       cw.Append(produced, batch, take);
       produced += take;
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read: parent ARRAY column exposes child ColumnReader; element data is
@@ -506,8 +502,7 @@ TEST_F(IRSColumnstoreTest, RoundTripVarcharOverflow) {
       cw.Append(produced, batch, take);
       produced += take;
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read
@@ -594,8 +589,7 @@ TEST_F(IRSColumnstoreTest, PointReadCursorAcrossRowGroups) {
       cw.Append(produced, batch, take);
       produced += take;
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read
@@ -765,8 +759,7 @@ TEST_F(IRSColumnstoreTest, RoundTripListBlob) {
       cw.Append(produced, batch, take);
       produced += take;
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read: verify the LIST node has the right shape (UBIGINT lengths self
@@ -859,8 +852,7 @@ TEST_F(IRSColumnstoreTest, EmptyTypedColumnRoundTrip) {
   {
     irs::ColWriter w{dir, kSegmentName, Db()};
     w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
-    auto filename = w.Commit(/*target_row=*/0);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(/*target_row=*/0);
   }
   irs::ColReader r{dir, std::string{kSegmentName}, Db()};
   ASSERT_TRUE(r.HasColumn(1));
@@ -1031,8 +1023,7 @@ TEST_F(IRSColumnstoreTest, FreshWriterAfterRollback) {
       data[k] = static_cast<int64_t>(k * 100);
     }
     cw.Append(0, batch, kRowCount);
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
   irs::ColReader r{dir, std::string{kSegmentName}, Db()};
   const auto* col = r.Column(1);
@@ -1090,11 +1081,11 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsNoDeletes) {
     irs::ColWriter w{dir, "merged", Db()};
     irs::MergeSource sources[2] = {
       {.reader = nullptr,
-       .cs_reader = &ra,
+       .col_reader = &ra,
        .mask = nullptr,
        .alive_count = kRowsA},
       {.reader = nullptr,
-       .cs_reader = &rb,
+       .col_reader = &rb,
        .mask = nullptr,
        .alive_count = kRowsB},
     };
@@ -1172,11 +1163,11 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsWithDeletes) {
     irs::ColWriter w{dir, "merged", Db()};
     irs::MergeSource sources[2] = {
       {.reader = nullptr,
-       .cs_reader = &ra,
+       .col_reader = &ra,
        .mask = &mask_a,
        .alive_count = alive_a},
       {.reader = nullptr,
-       .cs_reader = &rb,
+       .col_reader = &rb,
        .mask = &mask_b,
        .alive_count = alive_b},
     };
@@ -1258,11 +1249,11 @@ TEST_F(IRSColumnstoreTest, MergeIntoUsesCallbackRowGroupSize) {
     irs::ColWriter w{dir, "merged", Db(), &column_options};
     irs::MergeSource sources[2] = {
       {.reader = nullptr,
-       .cs_reader = &ra,
+       .col_reader = &ra,
        .mask = nullptr,
        .alive_count = kRowsA},
       {.reader = nullptr,
-       .cs_reader = &rb,
+       .col_reader = &rb,
        .mask = nullptr,
        .alive_count = kRowsB},
     };
@@ -1396,8 +1387,7 @@ TEST_F(IRSColumnstoreTest, LazyNormOpenSparseSchema) {
     EXPECT_EQ(w.NormWriters().size(), kIndexedFields)
       << "norm_writers must be linear in indexed-fields count, not "
          "declared-fields count";
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // After commit: every Allocated-but-never-Opened id must be absent

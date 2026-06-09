@@ -206,6 +206,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
         doc.Insert(kw_field);
         doc.Insert(body_field);
       }
+      trx.Commit();
     }
     writer->RefreshCommit();
   }

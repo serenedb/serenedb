@@ -530,26 +530,30 @@ for engine in "${engines_list[@]}"; do
 	fi
 done
 
-echo "Database: $database"
-echo "Host: $host"
-echo "Single Port: $single_port"
-echo "Single Port SSL: $single_port_ssl"
-echo "Cluster Port: $cluster_port"
-echo "Engines: $engines"
-echo "Test Paths: ${tests[*]}"
-echo "JUnit Path: $junit"
-echo "Runner: $runner"
-echo "Jobs: $jobs"
-echo "Debug: $debug"
-echo "Override: $override"
-echo "Force override: $force_override"
-echo "Format: $format"
-echo "Show all errors: $show_all_errors"
-echo "Fast: $fast"
-echo "Skip failed: $skip_failed"
-echo "Skip: $skip"
-echo "Iterations: $iterations"
-echo "Cancellation: $cancellation"
+# The recovery harness invokes run.sh once per test; the identical config
+# banner on every call drowns the logs. SDB_SQLLOGIC_QUIET=1 suppresses it.
+if [[ "${SDB_SQLLOGIC_QUIET:-0}" != "1" ]]; then
+	echo "Database: $database"
+	echo "Host: $host"
+	echo "Single Port: $single_port"
+	echo "Single Port SSL: $single_port_ssl"
+	echo "Cluster Port: $cluster_port"
+	echo "Engines: $engines"
+	echo "Test Paths: ${tests[*]}"
+	echo "JUnit Path: $junit"
+	echo "Runner: $runner"
+	echo "Jobs: $jobs"
+	echo "Debug: $debug"
+	echo "Override: $override"
+	echo "Force override: $force_override"
+	echo "Format: $format"
+	echo "Show all errors: $show_all_errors"
+	echo "Fast: $fast"
+	echo "Skip failed: $skip_failed"
+	echo "Skip: $skip"
+	echo "Iterations: $iterations"
+	echo "Cancellation: $cancellation"
+fi
 
 if [[ "$fast" == "true" ]]; then
 	# Strip trailing * to exclude .test_slow files (*.test* -> *.test)

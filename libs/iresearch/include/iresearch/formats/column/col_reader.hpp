@@ -60,7 +60,7 @@ struct BuiltHnsw {
 // One file per segment.
 inline constexpr std::string_view kColFormatExt = "col";
 
-inline constexpr std::string_view kColFormatName = "iresearch_columnstore";
+inline constexpr std::string_view kColFormatName = "iresearch_col";
 inline constexpr int32_t kColFormatVersion = 0;
 
 // Opens `<segment>.col` and exposes per-column access.

@@ -52,7 +52,7 @@ class FieldData : util::Noncopyable {
  public:
   FieldData(field_id id, byte_block_pool::inserter& byte_writer,
             int_block_pool::inserter& int_writer, IndexFeatures index_features,
-            ColWriter* columnstore = nullptr,
+            ColWriter* col_writer = nullptr,
             NormColumnOptions norm_options = {});
 
   doc_id_t doc() const noexcept { return _last_doc; }
@@ -74,7 +74,7 @@ class FieldData : util::Noncopyable {
 
   void compute_features() const;
 
-  bool has_features() const noexcept { return _columnstore; }
+  bool has_features() const noexcept { return _col_writer; }
 
  private:
   friend class TermIteratorImpl;
@@ -82,8 +82,7 @@ class FieldData : util::Noncopyable {
   friend class SortingDocIteratorImpl;
   friend class FieldsData;
 
-  using process_term_f = void (FieldData::*)(Posting&, doc_id_t,
-                                             const OffsAttr*);
+  using ProcessTerm = void (FieldData::*)(Posting&, doc_id_t, const OffsAttr*);
 
   void reset(doc_id_t doc_id);
 
@@ -93,7 +92,7 @@ class FieldData : util::Noncopyable {
   void new_term_random_access(Posting& p, doc_id_t did, const OffsAttr* offs);
   void add_term_random_access(Posting& p, doc_id_t did, const OffsAttr* offs);
 
-  static constexpr process_term_f kTermProcessingTables[2][2] = {
+  static constexpr ProcessTerm kTermProcessingTables[2][2] = {
     {&FieldData::add_term, &FieldData::new_term},
     {&FieldData::add_term_random_access, &FieldData::new_term_random_access}};
 
@@ -101,14 +100,14 @@ class FieldData : util::Noncopyable {
     return kTermProcessingTables[1] == _proc_table;
   }
 
-  ColWriter* _columnstore = nullptr;
+  ColWriter* _col_writer = nullptr;
   uint32_t _norm_row_group_size = 0;
   mutable NormColumnWriter* _norm_writer = nullptr;
   mutable FieldMeta _meta;
   Postings _terms;
   byte_block_pool::inserter* _byte_writer;
   int_block_pool::inserter* _int_writer;
-  const process_term_f* _proc_table;
+  const ProcessTerm* _proc_table;
   FieldStats _stats;
   IndexFeatures _requested_features{};
   doc_id_t _last_doc{doc_limits::invalid()};
@@ -129,10 +128,10 @@ class FieldsData : util::Noncopyable {
 
   FieldsData(IResourceManager& rm, IndexFeatures scorers_features);
 
-  void SetColumnstore(
+  void SetColWriter(
     ColWriter* w,
     const NormColumnOptionsProvider* norm_column_options) noexcept {
-    _columnstore = w;
+    _col_writer = w;
     _norm_column_options = norm_column_options;
   }
 
@@ -155,7 +154,7 @@ class FieldsData : util::Noncopyable {
   int_block_pool _int_pool;  // FIXME why don't to use std::vector<size_t>?
   int_block_pool::inserter _int_writer;
   IndexFeatures _scorers_features;
-  ColWriter* _columnstore = nullptr;
+  ColWriter* _col_writer = nullptr;
   const NormColumnOptionsProvider* _norm_column_options = nullptr;
 };
 

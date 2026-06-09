@@ -182,7 +182,7 @@ void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
     ptr.block_pointer.offset = 0;
   } else {
     SDB_ASSERT(segment_size <= std::numeric_limits<uint32_t>::max(),
-               "columnstore segment > 4GB; offset field too narrow");
+               ".col writer segment > 4GB; offset field too narrow");
     const uint64_t file_offset = out.Position();
     out.WriteBytes(bytes, segment_size);
     ptr.block_pointer.block_id = static_cast<duckdb::block_id_t>(file_offset);
@@ -218,7 +218,7 @@ PickedCodec PickCodec(WriteContext& write_ctx,
     auto fn =
       config.TryGetCompressionFunction(forced, codec_type.InternalType());
     if (!fn || !fn->init_analyze) {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "columnstore: compression '",
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER, ".col writer: compression '",
                 duckdb::CompressionTypeToString(forced),
                 "' is not supported for type ", codec_type.ToString());
     }
@@ -267,10 +267,10 @@ PickedCodec PickCodec(WriteContext& write_ctx,
   if (!best.function) {
     if (forced == duckdb::CompressionType::COMPRESSION_AUTO) {
       SDB_THROW(sdb::ERROR_INTERNAL,
-                "columnstore: no codec accepted the row group for type ",
+                ".col writer: no codec accepted the row group for type ",
                 codec_type.ToString());
     }
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "columnstore: forced compression '",
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, ".col writer: forced compression '",
               duckdb::CompressionTypeToString(forced),
               "' could not produce a plan for type ", codec_type.ToString());
   }

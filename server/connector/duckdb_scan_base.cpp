@@ -52,7 +52,6 @@
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 
@@ -221,12 +220,12 @@ ColumnstoreMaterializer* GetOrOpenSegmentMaterializer(
   }
   auto& slot = lstate.cs_materializers[seg_idx];
   if (!slot) {
-    const auto* cs_reader = reader[seg_idx].CsReader();
-    if (!cs_reader) {
+    const auto* col_reader = reader[seg_idx].GetColReader();
+    if (!col_reader) {
       return nullptr;
     }
     slot = std::make_unique<ColumnstoreMaterializer>(
-      *cs_reader, gstate.cs_field_ids, gstate.cs_output_slots);
+      *col_reader, gstate.cs_field_ids, gstate.cs_output_slots);
   }
   return slot.get();
 }

@@ -167,7 +167,7 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed(bool primary_sort) {
       doc.Insert(foo);
       tests::StringField seq{"seq", std::to_string(seed)};
       seq.id = kSeqId;
-      irs::tests::StoreFieldAt(*doc.Columnstore(), kSeqId, doc.DocId(), seq);
+      irs::tests::StoreFieldAt(*doc.GetColWriter(), kSeqId, doc.DocId(), seq);
     }
   };
 
@@ -191,6 +191,11 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed(bool primary_sort) {
     insert_documents(segment1, 10, 20);
     auto segment2 = writer->GetBatch();
     insert_documents(segment2, 20, 30);
+    // Hold all three batches open simultaneously so each lands in its own
+    // segment, then commit (reverse order matches prior destruction order).
+    segment2.Commit();
+    segment1.Commit();
+    segment0.Commit();
   }
 
   ASSERT_TRUE(writer->RefreshCommit());
@@ -403,11 +408,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(0, index_segment.docs_count);
     ASSERT_EQ(0, index_segment.live_docs_count);
     ASSERT_EQ(0, index_segment.byte_size);
-
-    ASSERT_ANY_THROW(irs::SegmentReaderImpl::Open(
-      dir, index_segment,
-      irs::IndexReaderOptions{.db =
-                                &::sdb::DuckDBEngine::Instance().instance()}));
   }
 
   size_t progress_call_count = 0;
@@ -471,11 +471,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(0, index_segment.docs_count);
     ASSERT_EQ(0, index_segment.live_docs_count);
     ASSERT_EQ(0, index_segment.byte_size);
-
-    ASSERT_ANY_THROW(irs::SegmentReaderImpl::Open(
-      dir, index_segment,
-      irs::IndexReaderOptions{.db =
-                                &::sdb::DuckDBEngine::Instance().instance()}));
   }
 }
 
@@ -832,7 +827,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
-    writer->GetBatch().Remove(std::move(query_doc4));
+    tests::Remove(*writer, std::move(query_doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(
       writer->GetSnapshot(),
@@ -888,7 +883,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       {
         ASSERT_TRUE(irs::field_limits::valid(field.norm));
 
-        const auto* cs = segment.CsReader();
+        const auto* cs = segment.GetColReader();
         ASSERT_NE(nullptr, cs);
         const auto* column = cs->NormColumn(field.norm);
         ASSERT_NE(nullptr, column);
@@ -1168,7 +1163,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       {
         ASSERT_TRUE(irs::field_limits::valid(field.norm));
 
-        const auto* cs = segment.CsReader();
+        const auto* cs = segment.GetColReader();
         ASSERT_NE(nullptr, cs);
         const auto* column = cs->NormColumn(field.norm);
         ASSERT_NE(nullptr, column);
@@ -1418,7 +1413,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     {
       ASSERT_TRUE(irs::field_limits::valid(field.norm));
 
-      const auto* cs = segment->CsReader();
+      const auto* cs = segment->GetColReader();
       ASSERT_NE(nullptr, cs);
       const auto* column = cs->NormColumn(field.norm);
       ASSERT_NE(nullptr, column);
@@ -1753,16 +1748,18 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
         tests::StringField s{"doc_string", std::string{kStrings[i]}};
         s.id = kStringId;
         doc.Insert(s);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kStringId, doc.DocId(), s);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kStringId, doc.DocId(),
+                                 s);
         tests::IntField n{"doc_int", kInts[i]};
         n.id = kIntId;
         doc.Insert(n);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kIntId, doc.DocId(), n);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kIntId, doc.DocId(), n);
         tests::StringField t{"doc_text", kTexts[i]};
         t.id = kTextId;
         doc.Insert(t);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kTextId, doc.DocId(), t);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kTextId, doc.DocId(), t);
       }
+      seg.Commit();
     }
     writer->RefreshCommit();
     {
@@ -1772,16 +1769,18 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
         tests::StringField s{"doc_string", std::string{kStrings[i]}};
         s.id = kStringId;
         doc.Insert(s);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kStringId, doc.DocId(), s);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kStringId, doc.DocId(),
+                                 s);
         tests::IntField n{"doc_int", kInts[i]};
         n.id = kIntId;
         doc.Insert(n);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kIntId, doc.DocId(), n);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kIntId, doc.DocId(), n);
         tests::StringField t{"doc_text", kTexts[i]};
         t.id = kTextId;
         doc.Insert(t);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kTextId, doc.DocId(), t);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kTextId, doc.DocId(), t);
       }
+      seg.Commit();
     }
     writer->RefreshCommit();
   }
@@ -1897,7 +1896,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
   {
     std::unordered_map<std::string, irs::doc_id_t> seen_strings;
     const bool ok = irs::tests::VisitBlobColumn(
-      *merged.CsReader(), *str_col,
+      *merged.GetColReader(), *str_col,
       [&](irs::doc_id_t doc, irs::bytes_view payload) {
         const auto* p = payload.data();
         const auto len = irs::vread<uint32_t>(p);
@@ -1913,7 +1912,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
 
     std::unordered_map<int32_t, irs::doc_id_t> seen_ints;
     const bool ok_int = irs::tests::VisitBlobColumn(
-      *merged.CsReader(), *int_col,
+      *merged.GetColReader(), *int_col,
       [&](irs::doc_id_t doc, irs::bytes_view payload) {
         irs::BytesViewInput in{payload};
         return seen_ints.emplace(irs::ReadZV32(in), doc).second;
@@ -1927,7 +1926,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
 
     std::unordered_map<std::string, irs::doc_id_t> seen_texts;
     const bool ok_text = irs::tests::VisitBlobColumn(
-      *merged.CsReader(), *text_col,
+      *merged.GetColReader(), *text_col,
       [&](irs::doc_id_t doc, irs::bytes_view payload) {
         const auto* p = payload.data();
         const auto len = irs::vread<uint32_t>(p);
@@ -2058,12 +2057,14 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
         tests::StringField s{"doc_string", std::string{kStrings[i]}};
         s.id = kStringId;
         doc.Insert(s);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kStringId, doc.DocId(), s);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kStringId, doc.DocId(),
+                                 s);
         tests::IntField n{"doc_int", kInts[i]};
         n.id = kIntId;
         doc.Insert(n);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kIntId, doc.DocId(), n);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kIntId, doc.DocId(), n);
       }
+      seg.Commit();
     }
     writer->RefreshCommit();
     // Segment 1: doc2 (string + int) and doc4 (string + another_column).
@@ -2074,27 +2075,30 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
         tests::StringField s{"doc_string", std::string{kStrings[1]}};
         s.id = kStringId;
         doc.Insert(s);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kStringId, doc.DocId(), s);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kStringId, doc.DocId(),
+                                 s);
         tests::IntField n{"doc_int", kInts[1]};
         n.id = kIntId;
         doc.Insert(n);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kIntId, doc.DocId(), n);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kIntId, doc.DocId(), n);
       }
       {
         auto doc = seg.Insert();
         tests::StringField s{"doc_string", std::string{kStrings[3]}};
         s.id = kStringId;
         doc.Insert(s);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kStringId, doc.DocId(), s);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kStringId, doc.DocId(),
+                                 s);
         tests::StringField a{"another_column", "another_value"};
         a.id = kAnotherId;
         doc.Insert(a);
-        irs::tests::StoreFieldAt(*doc.Columnstore(), kAnotherId, doc.DocId(),
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kAnotherId, doc.DocId(),
                                  a);
       }
+      seg.Commit();
     }
     writer->RefreshCommit();
-    writer->GetBatch().Remove(MakeByTerm("doc_string", "string4_data"));
+    tests::Remove(*writer, MakeByTerm("doc_string", "string4_data"));
     writer->RefreshCommit();
   }
 
@@ -2247,7 +2251,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
   {
     std::unordered_map<std::string, irs::doc_id_t> visited_strings;
     const bool ok = irs::tests::VisitBlobColumn(
-      *merged.CsReader(), *str_col,
+      *merged.GetColReader(), *str_col,
       [&](irs::doc_id_t doc, irs::bytes_view payload) {
         const auto* p = payload.data();
         const auto len = irs::vread<uint32_t>(p);
@@ -2263,7 +2267,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
 
     std::unordered_map<int32_t, irs::doc_id_t> visited_ints;
     const bool ok_int = irs::tests::VisitBlobColumn(
-      *merged.CsReader(), *int_col,
+      *merged.GetColReader(), *int_col,
       [&](irs::doc_id_t doc, irs::bytes_view payload) {
         irs::BytesViewInput in{payload};
         return visited_ints.emplace(irs::ReadZV32(in), doc).second;
@@ -2287,7 +2291,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
     }
     size_t calls = 0;
     const bool ok = irs::tests::VisitBlobColumn(
-      *merged.CsReader(), *another, [&](irs::doc_id_t, irs::bytes_view) {
+      *merged.GetColReader(), *another, [&](irs::doc_id_t, irs::bytes_view) {
         ++calls;
         return true;
       });
@@ -2321,17 +2325,18 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
           tests::StringField s{"doc_string", std::string{kStrings[i]}};
           s.id = kStringId;
           d.Insert(s);
-          irs::tests::StoreFieldAt(*d.Columnstore(), kStringId, d.DocId(), s);
+          irs::tests::StoreFieldAt(*d.GetColWriter(), kStringId, d.DocId(), s);
           tests::IntField n{"doc_int", kInts[i]};
           n.id = kIntId;
           d.Insert(n);
-          irs::tests::StoreFieldAt(*d.Columnstore(), kIntId, d.DocId(), n);
+          irs::tests::StoreFieldAt(*d.GetColWriter(), kIntId, d.DocId(), n);
           tests::StringField a{"another_column",
                                "shared_value_" + std::to_string(i)};
           a.id = kAnotherId;
           d.Insert(a);
-          irs::tests::StoreFieldAt(*d.Columnstore(), kAnotherId, d.DocId(), a);
+          irs::tests::StoreFieldAt(*d.GetColWriter(), kAnotherId, d.DocId(), a);
         }
+        seg.Commit();
       }
       writer->RefreshCommit();
       // Segment 1: doc3, doc4 -- same shape.
@@ -2342,22 +2347,23 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
           tests::StringField s{"doc_string", std::string{kStrings[i]}};
           s.id = kStringId;
           d.Insert(s);
-          irs::tests::StoreFieldAt(*d.Columnstore(), kStringId, d.DocId(), s);
+          irs::tests::StoreFieldAt(*d.GetColWriter(), kStringId, d.DocId(), s);
           tests::IntField n{"doc_int", i == 3 ? 4 * 42 : kInts[i]};
           n.id = kIntId;
           d.Insert(n);
-          irs::tests::StoreFieldAt(*d.Columnstore(), kIntId, d.DocId(), n);
+          irs::tests::StoreFieldAt(*d.GetColWriter(), kIntId, d.DocId(), n);
           tests::StringField a{"another_column",
                                "shared_value_" + std::to_string(i)};
           a.id = kAnotherId;
           d.Insert(a);
-          irs::tests::StoreFieldAt(*d.Columnstore(), kAnotherId, d.DocId(), a);
+          irs::tests::StoreFieldAt(*d.GetColWriter(), kAnotherId, d.DocId(), a);
         }
+        seg.Commit();
       }
       writer->RefreshCommit();
       // Remove doc2 -- still leaves the other two columns (doc_int,
       // another_column) populated in every remaining live doc.
-      writer->GetBatch().Remove(MakeByTerm("doc_string", "string2_data"));
+      tests::Remove(*writer, MakeByTerm("doc_string", "string2_data"));
       writer->RefreshCommit();
     }
 

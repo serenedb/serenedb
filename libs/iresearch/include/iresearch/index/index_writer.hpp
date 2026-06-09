@@ -165,7 +165,7 @@ struct IndexWriterOptions : public SegmentOptions {
   // corruption from multiple index_writers
   bool lock_repository{true};
 
-  // Enables the typed columnstore on segments allocated by this writer.
+  // Enables the typed .col on segments allocated by this writer.
   // Lifetime of `*db` must extend until IndexWriter shutdown.
   duckdb::DatabaseInstance* db = nullptr;
 
@@ -182,7 +182,7 @@ struct IndexWriterOptions : public SegmentOptions {
 struct CommitInfo {
   uint64_t tick = writer_limits::kMaxTick;
   ProgressReportCallback progress;
-  bool reopen_columnstore = false;
+  bool reopen_reader = false;
 };
 
 // The object is using for indexing data. Only one writer can write to
@@ -353,10 +353,8 @@ class IndexWriter : private util::Noncopyable {
     SegmentWriter& Writer() noexcept { return _writer; }
 #endif
 
-    // Per-segment columnstore writer; nullptr when the index was opened
-    // without a DatabaseInstance. Callers open a typed column at switch
-    // time and append duckdb::Vectors via ColumnWriter::Append.
-    ColWriter* Columnstore() noexcept { return _writer.Columnstore(); }
+    ColWriter* GetColWriter() noexcept { return _writer.GetColWriter(); }
+
     doc_id_t DocId() const noexcept { return _doc_id; }
 
    private:
@@ -376,11 +374,7 @@ class IndexWriter : private util::Noncopyable {
     Transaction(Transaction&& other) = default;
     Transaction& operator=(Transaction&& other) = default;
 
-    ~Transaction() {
-      // FIXME(gnusi): consider calling Abort in future
-      // Commit can throw in such case -> better error handling
-      Commit();
-    }
+    ~Transaction() { Abort(); }
 
     // Create a document to filled by the caller
     // for insertion into the index index

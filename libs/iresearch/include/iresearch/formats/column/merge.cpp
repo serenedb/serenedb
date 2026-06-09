@@ -42,10 +42,10 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
   absl::flat_hash_map<field_id, const ColumnReader*> first_seen_col;
   std::vector<field_id> ordered_ids;
   for (const auto& s : sources) {
-    if (!s.cs_reader) {
+    if (!s.col_reader) {
       continue;
     }
-    for (const auto& col : s.cs_reader->Columns()) {
+    for (const auto& col : s.col_reader->Columns()) {
       auto [it, inserted] = first_seen_col.try_emplace(col->Id(), col.get());
       if (inserted) {
         ordered_ids.push_back(col->Id());
@@ -71,7 +71,7 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
 
     uint64_t out_doc = 0;
     for (const auto& s : sources) {
-      const auto* src = s.cs_reader;
+      const auto* src = s.col_reader;
       const uint64_t source_target = out_doc + s.alive_count;
       if (!src) {
         out_doc = source_target;

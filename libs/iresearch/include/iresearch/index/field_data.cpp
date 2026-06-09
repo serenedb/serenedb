@@ -615,7 +615,7 @@ class TermReaderImpl final : public irs::BasicTermReader,
 
 FieldData::FieldData(field_id id, byte_block_pool::inserter& byte_writer,
                      int_block_pool::inserter& int_writer,
-                     IndexFeatures index_features, ColWriter* columnstore,
+                     IndexFeatures index_features, ColWriter* col_writer,
                      NormColumnOptions norm_options)
   // Unset optional features
   : _meta{id, index_features & (~IndexFeatures::Offs)},
@@ -625,9 +625,9 @@ FieldData::FieldData(field_id id, byte_block_pool::inserter& byte_writer,
     _proc_table{kTermProcessingTables[0]},
     _requested_features{index_features},
     _last_doc{doc_limits::invalid()} {
-  if (IsSubsetOf(IndexFeatures::Norm, index_features) && columnstore &&
+  if (IsSubsetOf(IndexFeatures::Norm, index_features) && col_writer &&
       field_limits::valid(norm_options.id)) {
-    _columnstore = columnstore;
+    _col_writer = col_writer;
     _norm_row_group_size = norm_options.row_group_size;
     _meta.norm = norm_options.id;
   }
@@ -637,10 +637,10 @@ FieldData::FieldData(field_id id, byte_block_pool::inserter& byte_writer,
 }
 
 void FieldData::compute_features() const {
-  SDB_ASSERT(_columnstore);
+  SDB_ASSERT(_col_writer);
   if (!_norm_writer) {
     _norm_writer =
-      &_columnstore->OpenNormColumn(_meta.norm, _norm_row_group_size);
+      &_col_writer->OpenNormColumn(_meta.norm, _norm_row_group_size);
   }
   const auto target_row = static_cast<uint64_t>(_last_doc) - doc_limits::min();
   _norm_writer->Append(target_row, _stats.len);
@@ -1003,7 +1003,7 @@ FieldData* FieldsData::emplace(field_id id, IndexFeatures index_features) {
   }
 
   NormColumnOptions norm_options{};
-  if (_columnstore && IsSubsetOf(IndexFeatures::Norm, index_features)) {
+  if (_col_writer && IsSubsetOf(IndexFeatures::Norm, index_features)) {
     SDB_ASSERT(_norm_column_options && *_norm_column_options,
                "Norm-featured field requires a norm_column_options callback");
     norm_options = (*_norm_column_options)(id);
@@ -1011,9 +1011,8 @@ FieldData* FieldsData::emplace(field_id id, IndexFeatures index_features) {
                "norm_column_options must return a valid id for field ", id);
   }
   try {
-    it->second =
-      &_fields.emplace_back(id, _byte_writer, _int_writer, index_features,
-                            _columnstore, norm_options);
+    it->second = &_fields.emplace_back(
+      id, _byte_writer, _int_writer, index_features, _col_writer, norm_options);
   } catch (...) {
     _fields_map.erase(it);
     throw;

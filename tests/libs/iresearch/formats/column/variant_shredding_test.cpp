@@ -476,4 +476,35 @@ TEST_F(IRSVariantShreddingTest, ExtractFallbackNotFullyShredded) {
                                                  duckdb::LogicalType::DOUBLE));
 }
 
+TEST_F(IRSVariantShreddingTest, ExtractStructValuedFieldFallsBack) {
+  irs::MemoryDirectory dir{};
+  constexpr std::string_view kSegment = "ex_struct";
+  SetShreddingSize(0);
+
+  const std::string obj =
+    "{'a': {'x': (i * 0.5)::DOUBLE, 'y': i::INTEGER}, 'b': 'z'}::VARIANT";
+  std::vector<duckdb::Value> ignored;
+  WriteVariantColumn(Db(), dir, kSegment, /*id=*/20,
+                     "SELECT " + obj + " FROM range(400) t(i)", 256, ignored);
+
+  Reader r{dir, std::string{kSegment}, Db()};
+  const auto* col = r.Column(20);
+  ASSERT_NE(col, nullptr);
+  bool any_full = false;
+  for (size_t rg = 0; rg < col->VariantRgCount(); ++rg) {
+    any_full |= col->VariantRg(rg).shred_state == VariantShredState::Full;
+  }
+  ASSERT_TRUE(any_full);
+
+  duckdb::Connection con{Db()};
+  const auto a_type = duckdb::LogicalType::STRUCT(
+    {{"x", duckdb::LogicalType::DOUBLE}, {"y", duckdb::LogicalType::INTEGER}});
+  const auto expected = QueryScalarColumn(
+    Db(),
+    "SELECT (" + obj + ").a::STRUCT(x DOUBLE, y INTEGER) FROM range(400) t(i)");
+  const std::vector<std::string> path{"a"};
+  ExpectValuesEqual(expected,
+                    ReadVariantExtract(r, *col, *con.context, path, a_type));
+}
+
 }  // namespace

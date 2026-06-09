@@ -20,7 +20,8 @@
 
 #pragma once
 
-#include <duckdb/common/string_util.hpp>
+#include <absl/strings/match.h>
+
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/variant.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -179,7 +180,7 @@ inline constexpr size_t kShreddedTypedValueIndex = 0;
     const auto& children = duckdb::StructType::GetChildTypes(typed.Type());
     size_t idx = children.size();
     for (size_t c = 0; c < children.size(); ++c) {
-      if (duckdb::StringUtil::CIEquals(field, children[c].first)) {
+      if (absl::EqualsIgnoreCase(field, children[c].first)) {
         idx = c;
         break;
       }
@@ -189,11 +190,10 @@ inline constexpr size_t kShreddedTypedValueIndex = 0;
     }
     node = &typed.StructField(idx);
   }
-  if (node->Type().id() == duckdb::LogicalTypeId::STRUCT) {
-    const ColumnReader& leaf = node->StructField(kShreddedTypedValueIndex);
-    return leaf.Type().IsNested() ? nullptr : &leaf;
-  }
-  return node->Type().IsNested() ? nullptr : node;
+  const ColumnReader* leaf = node->Type().id() == duckdb::LogicalTypeId::STRUCT
+                               ? &node->StructField(kShreddedTypedValueIndex)
+                               : node;
+  return leaf->Type().IsNested() ? nullptr : leaf;
 }
 
 inline MaterializeState& EnsureExtractLeafState(MaterializeState& state,
@@ -210,31 +210,31 @@ inline MaterializeState& EnsureExtractLeafState(MaterializeState& state,
   return *slot;
 }
 
-struct VariantRun {
-  const ColumnReader::VariantRgReader& rgr;
-  size_t rg;
-  uint64_t local_start;
-  size_t out_index;
-  size_t run;
-  uint64_t doc0;
+struct VariantRgSlice {
+  const ColumnReader::VariantRgReader& rg_reader;
+  size_t rg_index;
+  uint64_t rg_offset;
+  size_t out_offset;
+  size_t count;
+  uint64_t first_doc;
 };
 
 template<typename DocIds, typename Fn>
-inline void ForEachVariantRun(const ColumnReader& reader,
-                              MaterializeState& state, const DocIds& doc_ids,
-                              Fn&& fn) {
+inline void ForEachVariantRgSlice(const ColumnReader& reader,
+                                  MaterializeState& state,
+                                  const DocIds& doc_ids, Fn&& fn) {
   size_t i = 0;
   while (i < doc_ids.size()) {
     const uint64_t doc0 = static_cast<uint64_t>(doc_ids[i]);
     state.variant_rg_hint = reader.LocateVariantRg(doc0, state.variant_rg_hint);
     const RgWindow& w = state.variant_rg_hint;
     const size_t run = ConsecutiveRunLength(doc_ids, i, w.end);
-    fn(VariantRun{.rgr = reader.VariantRg(w.rg),
-                  .rg = w.rg,
-                  .local_start = doc0 - w.begin,
-                  .out_index = i,
-                  .run = run,
-                  .doc0 = doc0});
+    fn(VariantRgSlice{.rg_reader = reader.VariantRg(w.rg),
+                      .rg_index = w.rg,
+                      .rg_offset = doc0 - w.begin,
+                      .out_offset = i,
+                      .count = run,
+                      .first_doc = doc0});
     i += run;
   }
 }
@@ -328,15 +328,17 @@ void MaterializeNode(const ColumnReader& reader, MaterializeState& state,
       return;
     }
     case duckdb::LogicalTypeId::VARIANT: {
-      ForEachVariantRun(reader, state, doc_ids, [&](const VariantRun& r) {
-        auto& rgstate = EnsureVariantRgState(reader, state, r.rg);
-        const auto& vmask = duckdb::FlatVector::Validity(out_vec);
-        duckdb::Vector tmp_variant{duckdb::LogicalType::VARIANT(), r.run};
-        ReconstructVariantRun(rgstate, r.rgr, r.local_start, r.run, &vmask,
-                              output_start + r.out_index, tmp_variant);
-        duckdb::VectorOperations::Copy(tmp_variant, out_vec, r.run, 0,
-                                       output_start + r.out_index);
-      });
+      ForEachVariantRgSlice(
+        reader, state, doc_ids, [&](const VariantRgSlice& s) {
+          auto& rgstate = EnsureVariantRgState(reader, state, s.rg_index);
+          const auto& vmask = duckdb::FlatVector::Validity(out_vec);
+          duckdb::Vector tmp_variant{duckdb::LogicalType::VARIANT(), s.count};
+          ReconstructVariantRun(rgstate, s.rg_reader, s.rg_offset, s.count,
+                                &vmask, output_start + s.out_offset,
+                                tmp_variant);
+          duckdb::VectorOperations::Copy(tmp_variant, out_vec, s.count, 0,
+                                         output_start + s.out_offset);
+        });
       return;
     }
     default: {
@@ -376,41 +378,43 @@ void MaterializeExtractNode(const ColumnReader& reader, MaterializeState& state,
     return;
   }
   const size_t rg_count = reader.VariantRgCount();
-  ForEachVariantRun(reader, state, doc_ids, [&](const VariantRun& r) {
+  ForEachVariantRgSlice(reader, state, doc_ids, [&](const VariantRgSlice& s) {
     const ColumnReader* leaf = nullptr;
-    if (r.rgr.shred_state == VariantShredState::Full) {
-      leaf = ResolveShreddedLeaf(*r.rgr.shredded_node, path);
+    if (s.rg_reader.shred_state == VariantShredState::Full) {
+      leaf = ResolveShreddedLeaf(*s.rg_reader.shredded_node, path);
     }
     if (leaf != nullptr) {
-      auto& leaf_state = EnsureExtractLeafState(state, r.rg, *leaf, rg_count);
+      auto& leaf_state =
+        EnsureExtractLeafState(state, s.rg_index, *leaf, rg_count);
       if (leaf->Type() == scan_type) {
-        MaterializeNode(*leaf, leaf_state, IotaRange{r.local_start, r.run},
-                        out_vec, output_start + r.out_index,
+        MaterializeNode(*leaf, leaf_state, IotaRange{s.rg_offset, s.count},
+                        out_vec, output_start + s.out_offset,
                         /*may_use_entire=*/true);
       } else {
-        duckdb::Vector scratch{leaf->Type(), static_cast<duckdb::idx_t>(r.run)};
-        MaterializeNode(*leaf, leaf_state, IotaRange{r.local_start, r.run},
+        duckdb::Vector scratch{leaf->Type(),
+                               static_cast<duckdb::idx_t>(s.count)};
+        MaterializeNode(*leaf, leaf_state, IotaRange{s.rg_offset, s.count},
                         scratch, /*output_start=*/0, /*may_use_entire=*/true);
-        CastExtractInto(context, scratch, out_vec, r.run,
-                        output_start + r.out_index);
+        CastExtractInto(context, scratch, out_vec, s.count,
+                        output_start + s.out_offset);
       }
       return;
     }
 
-    auto& rgstate = EnsureVariantRgState(reader, state, r.rg);
+    auto& rgstate = EnsureVariantRgState(reader, state, s.rg_index);
     duckdb::Vector tmp_variant{duckdb::LogicalType::VARIANT(),
-                               static_cast<duckdb::idx_t>(r.run)};
+                               static_cast<duckdb::idx_t>(s.count)};
     if (reader.HasValidity()) {
       duckdb::Vector vmask_holder{duckdb::LogicalType::BOOLEAN,
-                                  static_cast<duckdb::idx_t>(r.run)};
-      state.validity_scan.Scan(r.doc0, static_cast<duckdb::idx_t>(r.run),
+                                  static_cast<duckdb::idx_t>(s.count)};
+      state.validity_scan.Scan(s.first_doc, static_cast<duckdb::idx_t>(s.count),
                                vmask_holder, 0);
       const auto& vmask = duckdb::FlatVector::Validity(vmask_holder);
-      ReconstructVariantRun(rgstate, r.rgr, r.local_start, r.run, &vmask, 0,
-                            tmp_variant);
+      ReconstructVariantRun(rgstate, s.rg_reader, s.rg_offset, s.count, &vmask,
+                            0, tmp_variant);
     } else {
-      ReconstructVariantRun(rgstate, r.rgr, r.local_start, r.run, nullptr, 0,
-                            tmp_variant);
+      ReconstructVariantRun(rgstate, s.rg_reader, s.rg_offset, s.count, nullptr,
+                            0, tmp_variant);
     }
     duckdb::vector<duckdb::VariantPathComponent> components;
     components.reserve(path.size());
@@ -418,11 +422,11 @@ void MaterializeExtractNode(const ColumnReader& reader, MaterializeState& state,
       components.emplace_back(f);
     }
     duckdb::Vector extracted{duckdb::LogicalType::VARIANT(),
-                             static_cast<duckdb::idx_t>(r.run)};
+                             static_cast<duckdb::idx_t>(s.count)};
     duckdb::VariantUtils::VariantExtract(tmp_variant, components, extracted,
-                                         static_cast<duckdb::idx_t>(r.run));
-    CastExtractInto(context, extracted, out_vec, r.run,
-                    output_start + r.out_index);
+                                         static_cast<duckdb::idx_t>(s.count));
+    CastExtractInto(context, extracted, out_vec, s.count,
+                    output_start + s.out_offset);
   });
 }
 

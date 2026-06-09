@@ -112,6 +112,32 @@ bool AnyNonEmptyValidity(std::span<const duckdb::DataPointer> pointers) {
   });
 }
 
+RgWindow LocateInOffsets(uint64_t row_pos, std::span<const uint64_t> offsets,
+                         RgWindow hint) noexcept {
+  if (row_pos >= hint.end) {
+    // Forward jump: hint.rg + 1 is the common sequential-forward step.
+    const size_t next = hint.rg + 1;
+    SDB_ASSERT(next + 1 < offsets.size());
+    if (row_pos < offsets[next + 1]) {
+      return {next, hint.end, offsets[next + 1]};
+    }
+    SDB_ASSERT(next + 2 < offsets.size());
+    auto it =
+      std::upper_bound(offsets.begin() + next + 2, offsets.end(), row_pos);
+    const size_t rg = static_cast<size_t>(it - offsets.begin() - 1);
+    return {rg, offsets[rg], offsets[rg + 1]};
+  }
+  if (row_pos < hint.begin) {
+    // Backward jump: answer is strictly before hint.rg.
+    SDB_ASSERT(hint.rg < offsets.size());
+    auto it =
+      std::upper_bound(offsets.begin(), offsets.begin() + hint.rg, row_pos);
+    const size_t rg = static_cast<size_t>(it - offsets.begin() - 1);
+    return {rg, offsets[rg], offsets[rg + 1]};
+  }
+  return hint;
+}
+
 }  // namespace
 
 ColumnReader::ColumnReader(
@@ -230,36 +256,6 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
   _row_count = total;
   _data_offsets.push_back(0);
 }
-
-namespace {
-
-RgWindow LocateInOffsets(uint64_t row_pos, std::span<const uint64_t> offsets,
-                         RgWindow hint) noexcept {
-  if (row_pos >= hint.end) {
-    // Forward jump: hint.rg + 1 is the common sequential-forward step.
-    const size_t next = hint.rg + 1;
-    SDB_ASSERT(next + 1 < offsets.size());
-    if (row_pos < offsets[next + 1]) {
-      return {next, hint.end, offsets[next + 1]};
-    }
-    SDB_ASSERT(next + 2 < offsets.size());
-    auto it =
-      std::upper_bound(offsets.begin() + next + 2, offsets.end(), row_pos);
-    const size_t rg = static_cast<size_t>(it - offsets.begin() - 1);
-    return {rg, offsets[rg], offsets[rg + 1]};
-  }
-  if (row_pos < hint.begin) {
-    // Backward jump: answer is strictly before hint.rg.
-    SDB_ASSERT(hint.rg < offsets.size());
-    auto it =
-      std::upper_bound(offsets.begin(), offsets.begin() + hint.rg, row_pos);
-    const size_t rg = static_cast<size_t>(it - offsets.begin() - 1);
-    return {rg, offsets[rg], offsets[rg + 1]};
-  }
-  return hint;
-}
-
-}  // namespace
 
 RgWindow ColumnReader::Locate(uint64_t row_pos, RgWindow hint) const noexcept {
   SDB_ASSERT(_type.id() != duckdb::LogicalTypeId::ARRAY &&

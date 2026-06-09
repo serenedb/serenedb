@@ -1,0 +1,73 @@
+hash-threshold 100
+
+# An HNSW ANN index built over an embedding stored INSIDE a VARIANT
+# column: there is no separate vector field -- the index is over the
+# extracted expression (meta.emb)::FLOAT[3], and the whole variant is
+# INCLUDE'd. One segment commit shreds the variant (array + scalar
+# fields) and builds the vector graph together; ANN search then pulls
+# the variant back from the columnstore overlay.
+
+# Force variant shredding so the shredded write/read path is exercised
+# even for this tiny dataset (default gate is 1/4 of a row group).
+statement ok
+SET variant_minimum_shredding_size = 0;
+
+
+statement ok
+CREATE TABLE variant_ann (
+  pk INTEGER PRIMARY KEY,
+  meta VARIANT
+)
+
+
+statement ok
+CREATE INDEX variant_ann_idx ON variant_ann
+  USING inverted(pk, ((meta.emb)::FLOAT[3]) hnsw (metric = 'l2'))
+  INCLUDE (meta)
+
+
+statement ok
+INSERT INTO variant_ann VALUES
+  (1, {'emb': [1, 0, 0], 'label': 'one'}::variant),
+  (2, {'emb': [0, 1, 0], 'label': 'two'}::variant),
+  (3, {'emb': [0, 0, 1], 'label': 'three'}::variant),
+  (4, {'emb': [10, 10, 10], 'label': 'four'}::variant)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) variant_ann
+
+
+# Nearest to [1,0,0] is pk=1; the whole variant (embedding + label)
+# comes back from the columnstore overlay.
+query
+SELECT meta FROM variant_ann_idx
+  ORDER BY (meta.emb)::FLOAT[3] <-> [1, 0, 0]::FLOAT[3] LIMIT 1;
+----
+meta
+{"emb":[1,0,0],"label":"one"}
+
+
+# Top-3 nearest to [0.5,0.5,0.5] are pk 1,2,3; re-sort by pk for stability.
+query
+SELECT pk, meta FROM (
+  SELECT pk, meta FROM variant_ann_idx
+    ORDER BY (meta.emb)::FLOAT[3] <-> [0.5, 0.5, 0.5]::FLOAT[3] LIMIT 3
+) ORDER BY pk;
+----
+pk	meta
+1	{"emb":[1,0,0],"label":"one"}
+2	{"emb":[0,1,0],"label":"two"}
+3	{"emb":[0,0,1],"label":"three"}
+
+
+# Far cluster: nearest to [10,10,10] is pk=4.
+query
+SELECT pk, meta FROM variant_ann_idx
+  ORDER BY (meta.emb)::FLOAT[3] <-> [10, 10, 10]::FLOAT[3] LIMIT 1;
+----
+pk	meta
+4	{"emb":[10,10,10],"label":"four"}
+
+statement ok
+SET variant_minimum_shredding_size TO DEFAULT;

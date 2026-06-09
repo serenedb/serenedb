@@ -359,10 +359,13 @@ Corpus BuildIndex() {
   size_t inserted = 0;
   while (auto* doc = reader.Next()) {
     auto trx = writer->GetBatch();
-    auto inserter = trx.Insert();
-    if (!inserter.Insert(doc->indexed.begin(), doc->indexed.end())) {
-      Die("Insert returned false");
+    {
+      auto inserter = trx.Insert();
+      if (!inserter.Insert(doc->indexed.begin(), doc->indexed.end())) {
+        Die("Insert returned false");
+      }
     }
+    trx.Commit();
     ++inserted;
   }
   writer->RefreshCommit();

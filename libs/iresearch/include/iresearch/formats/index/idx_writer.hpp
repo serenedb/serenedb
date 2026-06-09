@@ -57,12 +57,13 @@ class IdxWriter final {
 
   void AddTermDictEntry(field_id id, TermDictMeta meta);
 
-  bool Empty() const noexcept;
-
-  std::string Commit();
+  void Commit();
   void Rollback() noexcept;
 
  private:
+  void EnsureOut();
+  bool Empty() const noexcept;
+
   struct Impl;
   std::unique_ptr<Impl> _impl;
 };

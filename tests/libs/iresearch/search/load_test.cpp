@@ -431,7 +431,7 @@ struct StoredIdBatchHandler : bench::IBatchHandler {
       doc.Fill(line);
       auto trx = ctx.Insert();
       trx.Insert(doc.fields[0]);
-      irs::tests::StoreFieldAt(*trx.Columnstore(), kIdId, trx.DocId(),
+      irs::tests::StoreFieldAt(*trx.GetColWriter(), kIdId, trx.DocId(),
                                doc.fields[0]);
       trx.Insert(doc.fields[1]);
     }
@@ -472,7 +472,7 @@ std::vector<std::string> BuildDocIdMap(const irs::DirectoryReader& reader) {
     }
 
     irs::tests::VisitBlobColumn(
-      *segment.CsReader(), *column,
+      *segment.GetColReader(), *column,
       [&](irs::doc_id_t doc, irs::bytes_view payload) {
         auto idx = base + doc - irs::doc_limits::min();
         EXPECT_LT(idx, id_map.size()) << "doc_id out of range";

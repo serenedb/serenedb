@@ -72,7 +72,7 @@ struct SegmentWriterOptions {
   const Comparer* const comparator{};
   // TODO(mbkkt) Remove it from here? We could use directory
   IResourceManager& resource_manager{IResourceManager::gNoop};
-  // Enables the typed columnstore on the segment. Lifetime of `*db` must
+  // Enables the typed .col on the segment. Lifetime of `*db` must
   // extend at least until SegmentWriter::flush() returns.
   duckdb::DatabaseInstance* db = nullptr;
   const ColumnOptionsProvider* column_options = nullptr;

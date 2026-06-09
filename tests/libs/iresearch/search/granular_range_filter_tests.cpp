@@ -2030,7 +2030,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     const auto* key =
       dynamic_cast<const tests::StringField*>(src.indexed.get_by_id(kKey));
     ASSERT_NE(nullptr, key);
-    auto* cs = doc.Columnstore();
+    auto* cs = doc.GetColWriter();
     ASSERT_NE(nullptr, cs);
     irs::tests::StoreFieldAt(*cs, kKey, doc.DocId(), *key);
   };

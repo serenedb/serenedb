@@ -150,6 +150,7 @@ class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
         auto field = std::make_shared<::tests::StringField>("foo", "bar");
         doc.Insert(*field);
       }
+      ctx.Commit();
     }
     writer->RefreshCommit();
     _index =

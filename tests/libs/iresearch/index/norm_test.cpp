@@ -150,7 +150,7 @@ void NormTestCase::AssertNormColumn(
   ASSERT_EQ(id, meta.id);
   ASSERT_TRUE(irs::field_limits::valid(meta.norm));
 
-  const auto* cs = segment.CsReader();
+  const auto* cs = segment.GetColReader();
   ASSERT_NE(nullptr, cs);
   const auto* column = cs->NormColumn(meta.norm);
   ASSERT_NE(nullptr, column);
@@ -796,7 +796,7 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
   // Remove document
   {
     auto query_doc3 = MakeByTerm(kNameId, "D");
-    writer->GetBatch().Remove(*query_doc3);
+    tests::Remove(*writer, *query_doc3);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }

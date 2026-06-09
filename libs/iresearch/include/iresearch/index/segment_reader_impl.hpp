@@ -57,7 +57,7 @@ class SegmentReaderImpl final : public SubReader {
     const Directory& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options);
 
-  std::shared_ptr<const SegmentReaderImpl> ReopenColumnStore(
+  std::shared_ptr<const SegmentReaderImpl> ReopenReader(
     const Directory& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options) const;
   std::shared_ptr<const SegmentReaderImpl> UpdateMeta(
@@ -85,13 +85,13 @@ class SegmentReaderImpl final : public SubReader {
 
   const ColumnReader* Column(field_id field) const final;
   const HnswReader* HNSW(field_id field) const final;
-  const ColReader* CsReader() const final {
-    return _data ? _data->cs_reader.get() : nullptr;
+  const ColReader* GetColReader() const final {
+    return _data ? _data->col_reader.get() : nullptr;
   }
 
  private:
   struct ColumnData {
-    std::unique_ptr<ColReader> cs_reader;
+    std::unique_ptr<ColReader> col_reader;
     std::unique_ptr<IdxReader> idx_reader;
     std::vector<std::unique_ptr<HnswReader>> hnsw_readers;
     sdb::containers::FlatHashMap<field_id, const HnswReader*> hnsw_by_id;

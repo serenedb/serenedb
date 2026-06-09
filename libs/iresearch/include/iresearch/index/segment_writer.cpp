@@ -159,10 +159,10 @@ void SegmentWriter::FlushFields(FlushState& state) {
 
   IdxWriter idx{_dir, _seg_name, _db};
 
-  if (_columnstore) {
-    _columnstore->Commit(buffered_docs());
-    auto built = _columnstore->TakeBuiltHnsw();
-    _columnstore.reset();
+  if (_col_writer) {
+    _col_writer->Commit(buffered_docs());
+    auto built = _col_writer->TakeBuiltHnsw();
+    _col_writer.reset();
     if (!built.empty()) {
       _built_hnsw_graphs.reserve(built.size());
       for (auto& b : built) {
@@ -173,7 +173,7 @@ void SegmentWriter::FlushFields(FlushState& state) {
   }
 
   if (state.doc_count != 0) {
-    _cs_reader = std::make_unique<ColReader>(_dir, _seg_name, _db);
+    _col_reader = std::make_unique<ColReader>(_dir, _seg_name, _db);
   }
 
   if (state.doc_count != 0) {
@@ -181,7 +181,7 @@ void SegmentWriter::FlushFields(FlushState& state) {
     FlushFields(state);
   }
 
-  _cs_reader.reset();
+  _col_reader.reset();
 
   idx.Commit();
 
@@ -205,10 +205,10 @@ void SegmentWriter::reset() noexcept {
   _docs_mask.count = 0;
   _batch_first_doc_id = doc_limits::eof();
   _fields.reset();
-  _cs_reader.reset();
-  if (_columnstore) {
-    _columnstore->Rollback();
-    _columnstore.reset();
+  _col_reader.reset();
+  if (_col_writer) {
+    _col_writer->Rollback();
+    _col_writer.reset();
   }
   _built_hnsw_graphs.clear();
 }
@@ -225,9 +225,9 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
       /*compaction=*/false, rm);
   }
 
-  _columnstore = std::make_unique<ColWriter>(
+  _col_writer = std::make_unique<ColWriter>(
     _dir, meta.name, _db, _column_options, _norm_column_options);
-  _fields.SetColumnstore(_columnstore.get(), _norm_column_options);
+  _fields.SetColWriter(_col_writer.get(), _norm_column_options);
 
   _initialized = true;
 }

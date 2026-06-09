@@ -484,17 +484,16 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
 const MergeWriter::FlushProgress kProgressNoop = [] { return true; };
 
 field_id MergeNormColumnFromSources(
-  ColWriter& cs_writer, field_id id, std::span<const MergeSource> sources,
+  ColWriter& col_writer, field_id id, std::span<const MergeSource> sources,
   const NormColumnOptionsProvider* norm_column_options) {
   bool any_source_has_norm = false;
   for (const auto& src : sources) {
-    if (src.cs_reader == nullptr) {
+    if (!src.col_reader) {
       continue;
     }
     const auto* source_terms = src.reader->field(id);
-    if (source_terms != nullptr &&
-        field_limits::valid(source_terms->meta().norm) &&
-        src.cs_reader->NormColumn(source_terms->meta().norm) != nullptr) {
+    if (source_terms && field_limits::valid(source_terms->meta().norm) &&
+        src.col_reader->NormColumn(source_terms->meta().norm) != nullptr) {
       any_source_has_norm = true;
       break;
     }
@@ -507,16 +506,15 @@ field_id MergeNormColumnFromSources(
   NormColumnWriter* norm_writer = nullptr;
   uint64_t merged_row = 0;
   for (const auto& src : sources) {
-    const NormColumnReader* nc = nullptr;
-    if (src.cs_reader != nullptr) {
+    const NormColumnReader* norm_reader = nullptr;
+    if (src.col_reader) {
       if (const auto* source_terms = src.reader->field(id);
-          source_terms != nullptr &&
-          field_limits::valid(source_terms->meta().norm)) {
-        nc = src.cs_reader->NormColumn(source_terms->meta().norm);
+          source_terms && field_limits::valid(source_terms->meta().norm)) {
+        norm_reader = src.col_reader->NormColumn(source_terms->meta().norm);
       }
     }
 
-    if (nc == nullptr) {
+    if (!norm_reader) {
       merged_row += src.alive_count;
       if (norm_writer) {
         norm_writer->PadTo(merged_row);
@@ -530,17 +528,18 @@ field_id MergeNormColumnFromSources(
                  "mint a valid id for field ",
                  id);
       out_id = opts.id;
-      norm_writer = &cs_writer.OpenNormColumn(out_id, opts.row_group_size);
+      norm_writer = &col_writer.OpenNormColumn(out_id, opts.row_group_size);
       norm_writer->PadTo(merged_row);
     }
 
-    SDB_ASSERT(nc->RowCount() == src.reader->docs_count());
+    SDB_ASSERT(norm_reader->RowCount() == src.reader->docs_count());
     const bool has_mask = src.mask && !src.mask->empty();
-    for (size_t rg = 0, rg_count = nc->RowGroupCount(); rg < rg_count; ++rg) {
-      const auto bytes = nc->RowGroupBytes(rg);
-      const auto byte_size = nc->ByteSize(rg);
-      const auto rg_first_row = nc->RowGroupFirstRow(rg);
-      const auto n = nc->RowGroupRowCount(rg);
+    for (size_t rg = 0, rg_count = norm_reader->RowGroupCount(); rg < rg_count;
+         ++rg) {
+      const auto bytes = norm_reader->RowGroupBytes(rg);
+      const auto byte_size = norm_reader->ByteSize(rg);
+      const auto rg_first_row = norm_reader->RowGroupFirstRow(rg);
+      const auto n = norm_reader->RowGroupRowCount(rg);
       if (!has_mask) {
         norm_writer->AppendBytes(merged_row, bytes.data(), n, byte_size);
         merged_row += n;
@@ -572,7 +571,7 @@ field_id MergeNormColumnFromSources(
 using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
 
 MergedNormIdMap MergeNorms(
-  ColWriter& cs_writer, std::span<const MergeSource> sources,
+  ColWriter& col_writer, std::span<const MergeSource> sources,
   const FieldMetaMapT& field_meta_map,
   const NormColumnOptionsProvider* norm_column_options) {
   MergedNormIdMap out;
@@ -581,7 +580,7 @@ MergedNormIdMap MergeNorms(
       continue;
     }
     const auto new_norm_id =
-      MergeNormColumnFromSources(cs_writer, id, sources, norm_column_options);
+      MergeNormColumnFromSources(col_writer, id, sources, norm_column_options);
     if (field_limits::valid(new_norm_id)) {
       out.emplace(id, new_norm_id);
     }
@@ -667,23 +666,24 @@ bool ComputeDocMappingsAndFieldMeta(
   return true;
 }
 
-void OpenColumnstoreContexts(
-  duckdb::DatabaseInstance& db, TrackingDirectory& dir,
-  std::string_view segment_name, ManagedVector<MergeWriter::ReaderCtx>& readers,
-  std::vector<MergeSource>& sources, std::unique_ptr<ColWriter>& cs_writer,
-  const ColumnOptionsProvider* column_options,
-  const NormColumnOptionsProvider* norm_column_options) {
+void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
+                   std::string_view segment_name,
+                   ManagedVector<MergeWriter::ReaderCtx>& readers,
+                   std::vector<MergeSource>& sources,
+                   std::unique_ptr<ColWriter>& col_writer,
+                   const ColumnOptionsProvider* column_options,
+                   const NormColumnOptionsProvider* norm_column_options) {
   sources.reserve(readers.size());
   for (auto& ctx : readers) {
     sources.push_back(MergeSource{
       .reader = ctx.reader,
-      .cs_reader = ctx.reader->CsReader(),
+      .col_reader = ctx.reader->GetColReader(),
       .mask = ctx.reader->docs_mask(),
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
-  cs_writer = std::make_unique<ColWriter>(dir, segment_name, db, column_options,
-                                          norm_column_options);
+  col_writer = std::make_unique<ColWriter>(dir, segment_name, db,
+                                           column_options, norm_column_options);
 }
 
 }  // namespace
@@ -722,13 +722,13 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   }
 
   std::vector<MergeSource> sources;
-  std::unique_ptr<ColWriter> cs_writer;
-  OpenColumnstoreContexts(_db, track_dir, segment.name, _readers, sources,
-                          cs_writer, _column_options, _norm_column_options);
-  SDB_ASSERT(cs_writer);
+  std::unique_ptr<ColWriter> col_writer;
+  OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
+                _column_options, _norm_column_options);
+  SDB_ASSERT(col_writer);
 
   const auto merged_norm_ids =
-    MergeNorms(*cs_writer, sources, field_meta_map, _norm_column_options);
+    MergeNorms(*col_writer, sources, field_meta_map, _norm_column_options);
 
   if (!progress_callback()) {
     return false;
@@ -736,18 +736,18 @@ bool MergeWriter::Flush(SegmentMeta& segment,
 
   if (!sources.empty()) {
     // TODO(mbkkt) Use progress_callback?
-    MergeInto(sources, *cs_writer, _column_options);
+    MergeInto(sources, *col_writer, _column_options);
   }
 
   if (!progress_callback()) {
     return false;
   }
 
-  std::unique_ptr<ColReader> cs_reader;
+  std::unique_ptr<ColReader> col_reader;
   MergedNormProvider norm_provider;
   IdxWriter idx{track_dir, segment.name, _db};
-  cs_writer->Commit(segment.docs_count);
-  auto built = cs_writer->TakeBuiltHnsw();
+  col_writer->Commit(segment.docs_count);
+  auto built = col_writer->TakeBuiltHnsw();
   if (!built.empty()) {
     _built_hnsw_graphs.reserve(built.size());
     for (auto& b : built) {
@@ -756,8 +756,8 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     }
   }
   if (segment.docs_count != 0) {
-    cs_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
-    norm_provider.reader = cs_reader.get();
+    col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
+    norm_provider.reader = col_reader.get();
   }
 
   if (!progress_callback()) {
@@ -786,6 +786,10 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   }
 
   segment.files = track_dir.FlushTracked(segment.byte_size);
+  if (segment.live_docs_count == 0) {
+    return false;
+  }
+  SDB_ASSERT(!segment.files.empty());
   result = true;
   return true;
 }

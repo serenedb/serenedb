@@ -1067,8 +1067,8 @@ QUERY PLAN
 │          Dims: 3          │
 │                           │
 │        TextFilter:        │
-│ AND[PHRASE[body(string) = │
-│    <Term:red(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:red(0, 0); >]    │
 │                           │
 │      Projections: id      │
 │                           │
@@ -1202,9 +1202,8 @@ QUERY PLAN
 │          Dims: 3          │
 │                           │
 │        TextFilter:        │
-│  AND[OR[Term(body(string) │
-│ =red) || Term(body(string)│
-│          =blue)]]         │
+│   TERMS[body(string), {[  │
+│'blue', 1],['red', 1],}, 1]│
 │                           │
 │      Filter: (#0 > 2)     │
 │      Projections: id      │

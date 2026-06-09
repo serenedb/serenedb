@@ -18,14 +18,22 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <optional>
+#include <variant>
+
 #include "filter_test_case_base.hpp"
 #include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
+#include "iresearch/search/phrase_filter.hpp"
+#include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/wildcard_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -40,10 +48,12 @@ inline constexpr irs::field_id kDuplicated = tests::FieldIdFor("duplicated");
 inline constexpr irs::field_id kSame = tests::FieldIdFor("same");
 
 std::unique_ptr<irs::ByTerm> MakeTerm(irs::field_id field,
-                                      std::string_view term) {
+                                      std::string_view term,
+                                      irs::score_t boost = irs::kNoBoost) {
   auto f = std::make_unique<irs::ByTerm>();
   *f->mutable_field_id() = field;
   f->mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  f->boost(boost);
   return f;
 }
 
@@ -72,6 +82,31 @@ irs::Filter::ptr MakeExclude(irs::Filter::ptr include,
   }
   ex->exclude(std::move(exclude));
   return ex;
+}
+
+std::unique_ptr<irs::ByWildcard> MakeWildcard(irs::field_id field,
+                                              std::string_view term) {
+  auto f = std::make_unique<irs::ByWildcard>();
+  *f->mutable_field_id() = field;
+  f->mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  return f;
+}
+
+std::unique_ptr<irs::ByRegexp> MakeRegexp(irs::field_id field,
+                                          std::string_view pattern) {
+  auto f = std::make_unique<irs::ByRegexp>();
+  *f->mutable_field_id() = field;
+  f->mutable_options()->pattern = irs::ViewCast<irs::byte_type>(pattern);
+  return f;
+}
+
+std::unique_ptr<irs::ByPhrase> MakePhraseWildcard(irs::field_id field,
+                                                  std::string_view term) {
+  auto f = std::make_unique<irs::ByPhrase>();
+  *f->mutable_field_id() = field;
+  auto& part = f->mutable_options()->push_back<irs::ByWildcardOptions>();
+  part.term = irs::ViewCast<irs::byte_type>(term);
+  return f;
 }
 
 template<typename... Ts>
@@ -134,618 +169,761 @@ std::unique_ptr<irs::All> MakeAll(irs::score_t boost = irs::kNoBoost) {
   return all;
 }
 
+irs::TypeInfo::type_id TypeOf(const irs::Filter& f) { return f.type(); }
+
+template<typename T>
+const T& As(const irs::Filter& f) {
+  return sdb::basics::downCast<T>(f);
+}
+
 }  // namespace
+
 namespace tests {
 
-TEST(filter_optimizer_test, exclusion_is_preserved) {
-  irs::Filter::ptr root = MakeNot(MakeTerm(kName, "A"));
+// Fixture providing the optimizer helpers and a lazily-built index over
+// simple_sequential.json so the score-relevant rules can be checked against
+// real document scores.
+class FilterOptimizerTest : public FilterTestCaseBase {
+ protected:
+  static constexpr irs::doc_id_t kDocCount = 32;
 
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
-  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
-  ASSERT_EQ(nullptr, node.include());
-  ASSERT_NE(nullptr, node.exclude());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
-}
-
-TEST(filter_optimizer_test, empty_exclusion_becomes_all) {
-  irs::Filter::ptr root = std::make_unique<irs::Exclusion>();
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::All>::id(), root->type());
-}
-
-TEST(filter_optimizer_test, not_all_becomes_empty) {
-  irs::Filter::ptr root = MakeNot(MakeAll());
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Empty>::id(), root->type());
-}
-
-TEST(filter_optimizer_test, double_negation_unwraps) {
-  auto term = MakeTerm(kName, "A");
-  const auto* term_ptr = term.get();
-  irs::Filter::ptr root = MakeNot(MakeNot(std::move(term)));
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), root->type());
-  ASSERT_EQ(term_ptr, root.get());
-}
-
-TEST(filter_optimizer_test, triple_negation_keeps_one) {
-  irs::Filter::ptr root = MakeNot(MakeNot(MakeNot(MakeTerm(kName, "A"))));
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
-  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
-  ASSERT_NE(nullptr, node.exclude());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
-}
-
-TEST(filter_optimizer_test, deep_negation_chain) {
-  irs::Filter::ptr root = MakeTerm(kName, "A");
-  for (size_t i = 0; i < 50; ++i) {
-    root = MakeNot(std::move(root));
+  static void Optimize(irs::Filter::ptr& filter,
+                       const irs::Scorer* scorer = nullptr) {
+    irs::Optimize(filter, {.scorer = scorer});
   }
 
-  irs::Optimize(root);
+  const irs::IndexReader& Reader() {
+    if (!_reader) {
+      tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+      add_segment(gen);
+      _reader = open_reader();
+    }
+    return *_reader;
+  }
 
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), root->type());
+  // Executes `filter` with the boost-as-score scorer (tests::sort::Boost) and
+  // asserts the matched documents and their scores.
+  void CheckBoostScores(const irs::Filter& filter, const ScoredDocs& expected) {
+    std::array<irs::Scorer::ptr, 1> order{std::make_unique<sort::Boost>()};
+    CheckQuery(filter, order, expected, Reader());
+  }
+
+  // Builds an expectation where every document scores `score`.
+  static ScoredDocs AllScored(irs::score_t score,
+                              irs::doc_id_t count = kDocCount) {
+    ScoredDocs expected;
+    expected.reserve(count);
+    for (irs::doc_id_t doc = 1; doc <= count; ++doc) {
+      expected.emplace_back(doc, std::vector<irs::score_t>{score});
+    }
+    return expected;
+  }
+
+ private:
+  std::optional<irs::DirectoryReader> _reader;
+};
+
+// ExclusionRule: an exclusion with no exclude side collapses to its include
+// (or all-docs), but must keep its boost when scoring.
+TEST_P(FilterOptimizerTest, ExclusionRule) {
+  // empty exclusion -> all-docs
+  {
+    irs::Filter::ptr root = std::make_unique<irs::Exclusion>();
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::All>::id(), TypeOf(*root));
+  }
+
+  // include-only, no boost -> the include itself
+  {
+    auto ex = std::make_unique<irs::Exclusion>();
+    ex->include(MakeTerm(kName, "A"));
+    irs::Filter::ptr root = std::move(ex);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+  }
+
+  // include-only, boosted, unscored -> still collapses (boost is irrelevant)
+  {
+    auto ex = std::make_unique<irs::Exclusion>();
+    ex->include(MakeTerm(kName, "A"));
+    ex->boost(2.F);
+    irs::Filter::ptr root = std::move(ex);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+  }
+
+  // include-only, boosted, scored -> preserved so the boost survives (#2).
+  {
+    auto ex = std::make_unique<irs::Exclusion>();
+    ex->include(MakeTerm(kName, "A"));
+    ex->boost(2.F);
+    irs::Filter::ptr root = std::move(ex);
+
+    const sort::Boost scorer;
+    Optimize(root, &scorer);
+
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    // doc "A" is document 1; its score must carry the exclusion boost of 2.
+    CheckBoostScores(*root, ScoredDocs{{1, {2.F}}});
+  }
 }
 
-TEST(filter_optimizer_test, not_inside_and) {
-  irs::Filter::ptr root =
-    MakeAnd(MakeTerm(kName, "A"), MakeNot(MakeTerm(kName, "B")));
+// NotSimplifyRule: collapses double negations and folds Not(all)/Not(empty).
+TEST_P(FilterOptimizerTest, NotSimplifyRule) {
+  // Not(all) -> empty
+  {
+    irs::Filter::ptr root = MakeNot(MakeAll());
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
 
-  irs::Optimize(root);
+  // Not(Not(term)) -> term, preserving pointer identity
+  {
+    auto term = MakeTerm(kName, "A");
+    const auto* term_ptr = term.get();
+    irs::Filter::ptr root = MakeNot(MakeNot(std::move(term)));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+    ASSERT_EQ(term_ptr, root.get());
+  }
 
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
-  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
-  ASSERT_NE(nullptr, node.include());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.include()->type());
-  ASSERT_NE(nullptr, node.exclude());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
+  // odd negation count keeps a single negation (lowered to exclusion)
+  {
+    irs::Filter::ptr root = MakeNot(MakeNot(MakeNot(MakeTerm(kName, "A"))));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), As<irs::Exclusion>(*root).exclude()->type());
+  }
+
+  // deep, even chain fully cancels
+  {
+    irs::Filter::ptr root = MakeTerm(kName, "A");
+    for (size_t i = 0; i < 50; ++i) {
+      root = MakeNot(std::move(root));
+    }
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+  }
 }
 
-TEST(filter_optimizer_test, and_coalesces_multiple_nots) {
-  irs::Filter::ptr root =
-    MakeAnd(MakeTerm(kName, "A"), MakeTerm(kName, "B"),
-            MakeNot(MakeTerm(kName, "X")), MakeNot(MakeTerm(kName, "Y")));
+// NotLowerRule: any surviving Not becomes an exclusion with an empty include.
+TEST_P(FilterOptimizerTest, NotLowerRule) {
+  irs::Filter::ptr root = MakeNot(MakeTerm(kName, "A"));
+  Optimize(root);
 
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
-  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
-  ASSERT_NE(nullptr, node.include());
-  ASSERT_EQ(irs::Type<irs::And>::id(), node.include()->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::And>(*node.include()).size());
-  ASSERT_NE(nullptr, node.exclude());
-  ASSERT_EQ(irs::Type<irs::Or>::id(), node.exclude()->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::Or>(*node.exclude()).size());
-}
-
-TEST(filter_optimizer_test, and_only_nots_coalesce) {
-  irs::Filter::ptr root =
-    MakeAnd(MakeNot(MakeTerm(kName, "X")), MakeNot(MakeTerm(kName, "Y")));
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
-  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+  auto& node = As<irs::Exclusion>(*root);
   ASSERT_EQ(nullptr, node.include());
   ASSERT_NE(nullptr, node.exclude());
-  ASSERT_EQ(irs::Type<irs::Or>::id(), node.exclude()->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::Or>(*node.exclude()).size());
-}
-
-TEST(filter_optimizer_test, and_single_bare_not) {
-  irs::Filter::ptr root = MakeAnd(MakeNot(MakeTerm(kName, "X")));
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
-  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
-  ASSERT_EQ(nullptr, node.include());
-  ASSERT_NE(nullptr, node.exclude());
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
+
+  // matches every document except "A" (document 1).
+  Docs all_but_first(kDocCount - 1);
+  std::iota(all_but_first.begin(), all_but_first.end(), 2);
+  CheckQuery(*root, all_but_first, Reader());
 }
 
-TEST(filter_optimizer_test, flatten_and) {
-  irs::Filter::ptr root = MakeAnd(
-    MakeAnd(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")), MakeTerm(kF3, "C"));
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  ASSERT_EQ(3, and_root.size());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[1].type());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[2].type());
-}
-
-TEST(filter_optimizer_test, flatten_and_deep) {
-  irs::Filter::ptr root =
-    MakeAnd(MakeAnd(MakeAnd(MakeTerm(kF1, "A")), MakeTerm(kF2, "B")),
-            MakeTerm(kF3, "C"));
-
-  irs::Optimize(root);
-
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  ASSERT_EQ(3, and_root.size());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[1].type());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[2].type());
-}
-
-TEST(filter_optimizer_test, flatten_and_boost_gate) {
-  auto inner = MakeAnd(MakeTerm(kF1, "A"), MakeTerm(kF2, "B"));
-  inner->boost(2.F);
-  irs::Filter::ptr root = MakeAnd(std::move(inner), MakeTerm(kF3, "C"));
-
-  irs::Optimize(root);
-
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  ASSERT_EQ(2, and_root.size());
-  ASSERT_EQ(irs::Type<irs::And>::id(), and_root[0].type());
-}
-
-TEST(filter_optimizer_test, flatten_and_merge_type_gate) {
-  auto inner = MakeAndV(Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")),
-                        irs::ScoreMergeType::Max);
-  irs::Filter::ptr root = MakeAnd(std::move(inner), MakeTerm(kF3, "C"));
-
-  irs::Optimize(root);
-
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  ASSERT_EQ(2, and_root.size());
-  ASSERT_EQ(irs::Type<irs::And>::id(), and_root[0].type());
-}
-
-TEST(filter_optimizer_test, flatten_and_empty_inner_gate) {
-  irs::Filter::ptr root = MakeAnd(MakeAnd(), MakeTerm(kName, "C"));
-
-  irs::Optimize(root);
-
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  ASSERT_EQ(2, and_root.size());
-  ASSERT_EQ(irs::Type<irs::And>::id(), and_root[0].type());
-  ASSERT_EQ(0, sdb::basics::downCast<irs::And>(and_root[0]).size());
-}
-
-TEST(filter_optimizer_test, flatten_or) {
-  irs::Filter::ptr root =
-    MakeOr(MakeOr(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")), MakeTerm(kF3, "C"));
-
-  irs::Optimize(root);
-
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  ASSERT_EQ(3, or_root.size());
-}
-
-TEST(filter_optimizer_test, flatten_or_parent_min_match_gate) {
-  irs::Filter::ptr root =
-    MakeOrV(Filters(MakeOr(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")),
-                    MakeTerm(kF3, "C"), MakeTerm(kF4, "D")),
-            irs::ScoreMergeType::Sum, 2);
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  ASSERT_EQ(3, or_root.size());
-}
-
-TEST(filter_optimizer_test, flatten_or_inner_min_match_gate) {
-  auto inner = MakeOrV(Filters(MakeTerm(kName, "A"), MakeTerm(kName, "B")),
-                       irs::ScoreMergeType::Sum, 2);
-  irs::Filter::ptr root = MakeOr(std::move(inner), MakeTerm(kName, "C"));
-
-  irs::Optimize(root);
-
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  ASSERT_EQ(2, or_root.size());
-}
-
-TEST(filter_optimizer_test, flatten_or_zero_min_match_gate) {
-  auto inner =
-    MakeOrV(Filters(MakeTerm(kName, "A")), irs::ScoreMergeType::Sum, 0);
-  irs::Filter::ptr root = MakeOr(std::move(inner), MakeTerm(kName, "C"));
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::All>::id(), root->type());
-}
-
-TEST(filter_optimizer_test, mixed_boolean_filter_subtrees) {
-  irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>(
-    Filters(MakeNot(MakeTerm(kName, "A"))),
-    Filters(MakeNot(MakeTerm(kName, "B"))));
-  auto& mixed = sdb::basics::downCast<irs::MixedBooleanFilter>(*root);
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::MixedBooleanFilter>::id(), root->type());
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), mixed.RequiredSlot()->type());
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), mixed.OptionalSlot()->type());
-  ASSERT_FALSE(mixed.empty());
-}
-
-TEST(filter_optimizer_test, mixed_boolean_filter_keeps_multi_clause_slots) {
-  irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>(
-    Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")),
-    Filters(MakeTerm(kF1, "C"), MakeTerm(kF2, "D")));
-  auto& mixed = sdb::basics::downCast<irs::MixedBooleanFilter>(*root);
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::And>::id(), mixed.RequiredSlot()->type());
-  ASSERT_EQ(irs::Type<irs::Or>::id(), mixed.OptionalSlot()->type());
-}
-
-TEST(filter_optimizer_test, idempotent) {
-  const auto make = []() -> irs::Filter::ptr {
-    return MakeAnd(MakeAnd(MakeTerm(kName, "A"), MakeNot(MakeTerm(kName, "B"))),
-                   MakeOr(MakeOr(MakeTerm(kName, "C")),
-                          MakeNot(MakeNot(MakeTerm(kName, "D")))));
-  };
-
-  irs::Filter::ptr once = make();
-  irs::Filter::ptr twice = make();
-  irs::Optimize(once);
-  irs::Optimize(twice);
-  irs::Optimize(twice);
-
-  ASSERT_TRUE(*once == *twice);
-}
-
-TEST(filter_optimizer_test, leaf_root_pointer_identity) {
-  irs::Filter::ptr root = MakeTerm(kName, "A");
-  const auto* raw = root.get();
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(raw, root.get());
-}
-
-TEST(filter_optimizer_test, custom_rule_subset) {
-  irs::Filter::ptr root =
-    MakeAnd(MakeAnd(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")),
-            MakeNot(MakeTerm(kName, "C")));
-
-  irs::Optimize(root, {}, irs::kDefaultRules.subspan(1));
-
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
-  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
-  ASSERT_NE(nullptr, node.include());
-  ASSERT_EQ(irs::Type<irs::And>::id(), node.include()->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::And>(*node.include()).size());
-  ASSERT_NE(nullptr, node.exclude());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
-}
-
-TEST(filter_optimizer_test, and_with_empty_child_collapses) {
+// AndEmptyRule: a conjunction with an empty clause is unsatisfiable.
+TEST_P(FilterOptimizerTest, AndEmptyRule) {
   irs::Filter::ptr root = MakeAnd(MakeTerm(kName, "A"), Make<irs::Empty>());
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Empty>::id(), root->type());
+  Optimize(root);
+  ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
 }
 
-TEST(filter_optimizer_test, or_empty_children_removed) {
-  irs::Filter::ptr root =
-    MakeOr(MakeTerm(kF1, "A"), Make<irs::Empty>(), MakeTerm(kF2, "B"));
+// OrEmptyRule: empty clauses are dropped from a disjunction; an all-empty
+// disjunction is empty -- unless min_match is 0, where it is all-docs (#1).
+TEST_P(FilterOptimizerTest, OrEmptyRule) {
+  // empties removed (distinct fields -> stays a disjunction)
+  {
+    irs::Filter::ptr root =
+      MakeOr(MakeTerm(kF1, "A"), Make<irs::Empty>(), MakeTerm(kF2, "B"));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Or>::id(), TypeOf(*root));
+    ASSERT_EQ(2, As<irs::Or>(*root).size());
+  }
 
-  irs::Optimize(root);
+  // all empties (default min_match=1) -> empty
+  {
+    irs::Filter::ptr root = MakeOr(Make<irs::Empty>(), Make<irs::Empty>());
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
 
-  ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::Or>(*root).size());
+  // all empties with min_match=0 -> all-docs, not empty (#1 regression)
+  {
+    irs::Filter::ptr root = MakeOrV(
+      Filters(Make<irs::Empty>(), Make<irs::Empty>()), irs::ScoreMergeType::Sum,
+      0);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::All>::id(), TypeOf(*root));
+  }
 }
 
-TEST(filter_optimizer_test, or_all_empty_children_become_empty) {
-  irs::Filter::ptr root = MakeOr(Make<irs::Empty>(), Make<irs::Empty>());
+// OrMinMatchZeroRule: min_match==0 matches everything, keeping the boost.
+TEST_P(FilterOptimizerTest, OrMinMatchZeroRule) {
+  // with children
+  {
+    auto or_node =
+      MakeOrV(Filters(MakeTerm(kName, "A")), irs::ScoreMergeType::Sum, 0);
+    or_node->boost(2.F);
+    irs::Filter::ptr root = std::move(or_node);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::All>::id(), TypeOf(*root));
+    ASSERT_EQ(2.F, As<irs::All>(*root).Boost());
+    CheckBoostScores(*root, AllScored(2.F));
+  }
 
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Empty>::id(), root->type());
+  // no children
+  {
+    irs::Filter::ptr root = MakeOrV(Filters(), irs::ScoreMergeType::Sum, 0);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::All>::id(), TypeOf(*root));
+  }
 }
 
-TEST(filter_optimizer_test, and_all_fold_unscored_drops_alls) {
-  irs::Filter::ptr root =
-    MakeAnd(MakeTerm(kName, "A"), MakeAll(2.F), MakeAll(3.F));
+// OrUnsatRule: an unsatisfiable disjunction (min_match > clauses) is empty.
+TEST_P(FilterOptimizerTest, OrUnsatRule) {
+  // min_match greater than clause count
+  {
+    irs::Filter::ptr root =
+      MakeOrV(Filters(MakeTerm(kName, "A")), irs::ScoreMergeType::Sum, 3);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
 
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), root->type());
+  // no clauses, default min_match=1
+  {
+    irs::Filter::ptr root = MakeOr();
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
 }
 
-TEST(filter_optimizer_test, and_all_fold_scored_merges) {
-  irs::Filter::ptr root =
-    MakeAnd(MakeTerm(kName, "A"), MakeAll(2.F), MakeAll(3.F));
+// AndAllFoldRule: all-docs clauses are redundant in a conjunction; dropped when
+// unscored, merged into a single boosted all-docs when scored.
+TEST_P(FilterOptimizerTest, AndAllFoldRule) {
+  // unscored -> all-docs clauses removed entirely
+  {
+    irs::Filter::ptr root =
+      MakeAnd(MakeTerm(kName, "A"), MakeAll(2.F), MakeAll(3.F));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+  }
 
-  const irs::BM25 scorer;
-  irs::Optimize(root, {.scorer = &scorer});
+  // scored -> all-docs merged (2 + 3) into one, term kept
+  {
+    irs::Filter::ptr root =
+      MakeAnd(MakeTerm(kName, "A"), MakeAll(2.F), MakeAll(3.F));
+    const sort::Boost scorer;
+    Optimize(root, &scorer);
 
-  ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  ASSERT_EQ(2, and_root.size());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
-  ASSERT_EQ(irs::Type<irs::All>::id(), and_root[1].type());
-  ASSERT_EQ(5.F, sdb::basics::downCast<irs::All>(and_root[1]).Boost());
+    ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*root));
+    auto& and_root = As<irs::And>(*root);
+    ASSERT_EQ(2, and_root.size());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
+    ASSERT_EQ(irs::Type<irs::All>::id(), and_root[1].type());
+    ASSERT_EQ(5.F, As<irs::All>(and_root[1]).Boost());
+    // doc "A" (1) scores term(1) + merged all-docs(5) == 6.
+    CheckBoostScores(*root, ScoredDocs{{1, {6.F}}});
+  }
+
+  // scored, only all-docs clauses -> single all-docs with summed boost
+  {
+    irs::Filter::ptr root = MakeAnd(MakeAll(2.F), MakeAll(3.F));
+    const sort::Boost scorer;
+    Optimize(root, &scorer);
+    ASSERT_EQ(irs::Type<irs::All>::id(), TypeOf(*root));
+    ASSERT_EQ(5.F, As<irs::All>(*root).Boost());
+    CheckBoostScores(*root, AllScored(5.F));
+  }
+
+  // scored, single all-docs clause -> nothing to merge, left as-is
+  {
+    irs::Filter::ptr root = MakeAnd(MakeTerm(kName, "A"), MakeAll(2.F));
+    const sort::Boost scorer;
+    Optimize(root, &scorer);
+    ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*root));
+    ASSERT_EQ(2, As<irs::And>(*root).size());
+  }
 }
 
-TEST(filter_optimizer_test, and_only_alls_becomes_all) {
-  irs::Filter::ptr root = MakeAnd(MakeAll(2.F), MakeAll(3.F));
+// OrAllFoldRule: an all-docs clause satisfies a disjunction when unscored;
+// when scored the all-docs clauses merge and min_match is reduced.
+TEST_P(FilterOptimizerTest, OrAllFoldRule) {
+  // unscored -> any all-docs makes the whole disjunction all-docs
+  {
+    irs::Filter::ptr root = MakeOr(MakeTerm(kName, "A"), MakeAll());
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::All>::id(), TypeOf(*root));
+  }
 
-  const irs::BM25 scorer;
-  irs::Optimize(root, {.scorer = &scorer});
+  // scored -> merge the two all-docs and drop min_match by (count - 1)
+  {
+    irs::Filter::ptr root =
+      MakeOrV(Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B"), MakeAll(2.F),
+                      MakeAll(3.F)),
+              irs::ScoreMergeType::Sum, 3);
+    const sort::Boost scorer;
+    Optimize(root, &scorer);
 
-  ASSERT_EQ(irs::Type<irs::All>::id(), root->type());
-  ASSERT_EQ(5.F, sdb::basics::downCast<irs::All>(*root).Boost());
+    ASSERT_EQ(irs::Type<irs::Or>::id(), TypeOf(*root));
+    auto& or_root = As<irs::Or>(*root);
+    ASSERT_EQ(3, or_root.size());
+    ASSERT_EQ(2, or_root.min_match_count());
+    ASSERT_EQ(irs::Type<irs::All>::id(), or_root[2].type());
+    ASSERT_EQ(5.F, As<irs::All>(or_root[2]).Boost());
+  }
+
+  // scored, single all-docs -> nothing to merge
+  {
+    irs::Filter::ptr root = MakeOr(MakeTerm(kName, "A"), MakeAll(2.F));
+    const sort::Boost scorer;
+    Optimize(root, &scorer);
+    ASSERT_EQ(irs::Type<irs::Or>::id(), TypeOf(*root));
+    ASSERT_EQ(2, As<irs::Or>(*root).size());
+  }
 }
 
-TEST(filter_optimizer_test, and_single_all_scored_unchanged) {
-  irs::Filter::ptr root = MakeAnd(MakeTerm(kName, "A"), MakeAll(2.F));
+// FlattenAnd: nested conjunctions are spliced into the parent, gated by boost,
+// merge_type and non-emptiness.
+TEST_P(FilterOptimizerTest, FlattenAnd) {
+  // simple splice
+  {
+    irs::Filter::ptr root = MakeAnd(
+      MakeAnd(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")), MakeTerm(kF3, "C"));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*root));
+    ASSERT_EQ(3, As<irs::And>(*root).size());
+  }
 
-  const irs::BM25 scorer;
-  irs::Optimize(root, {.scorer = &scorer});
+  // recursively flattens
+  {
+    irs::Filter::ptr root =
+      MakeAnd(MakeAnd(MakeAnd(MakeTerm(kF1, "A")), MakeTerm(kF2, "B")),
+              MakeTerm(kF3, "C"));
+    Optimize(root);
+    ASSERT_EQ(3, As<irs::And>(*root).size());
+  }
 
-  ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::And>(*root).size());
+  // boosted inner is NOT spliced
+  {
+    auto inner = MakeAnd(MakeTerm(kF1, "A"), MakeTerm(kF2, "B"));
+    inner->boost(2.F);
+    irs::Filter::ptr root = MakeAnd(std::move(inner), MakeTerm(kF3, "C"));
+    Optimize(root);
+    auto& and_root = As<irs::And>(*root);
+    ASSERT_EQ(2, and_root.size());
+    ASSERT_EQ(irs::Type<irs::And>::id(), and_root[0].type());
+  }
+
+  // differing merge_type is NOT spliced
+  {
+    auto inner = MakeAndV(Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")),
+                          irs::ScoreMergeType::Max);
+    irs::Filter::ptr root = MakeAnd(std::move(inner), MakeTerm(kF3, "C"));
+    Optimize(root);
+    auto& and_root = As<irs::And>(*root);
+    ASSERT_EQ(2, and_root.size());
+    ASSERT_EQ(irs::Type<irs::And>::id(), and_root[0].type());
+  }
+
+  // empty inner is NOT spliced
+  {
+    irs::Filter::ptr root = MakeAnd(MakeAnd(), MakeTerm(kName, "C"));
+    Optimize(root);
+    auto& and_root = As<irs::And>(*root);
+    ASSERT_EQ(2, and_root.size());
+    ASSERT_EQ(irs::Type<irs::And>::id(), and_root[0].type());
+    ASSERT_EQ(0, As<irs::And>(and_root[0]).size());
+  }
 }
 
-TEST(filter_optimizer_test, or_all_fold_unscored_prunes_to_all) {
-  irs::Filter::ptr root = MakeOr(MakeTerm(kName, "A"), MakeAll());
+// FlattenOr: nested plain disjunctions are spliced, gated by min_match on both
+// the parent and the inner node.
+TEST_P(FilterOptimizerTest, FlattenOr) {
+  // simple splice
+  {
+    irs::Filter::ptr root = MakeOr(
+      MakeOr(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")), MakeTerm(kF3, "C"));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Or>::id(), TypeOf(*root));
+    ASSERT_EQ(3, As<irs::Or>(*root).size());
+  }
 
-  irs::Optimize(root);
+  // parent min_match > 1 blocks the splice
+  {
+    irs::Filter::ptr root =
+      MakeOrV(Filters(MakeOr(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")),
+                      MakeTerm(kF3, "C"), MakeTerm(kF4, "D")),
+              irs::ScoreMergeType::Sum, 2);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Or>::id(), TypeOf(*root));
+    ASSERT_EQ(3, As<irs::Or>(*root).size());
+  }
 
-  ASSERT_EQ(irs::Type<irs::All>::id(), root->type());
+  // inner min_match > 1 blocks the splice
+  {
+    auto inner = MakeOrV(Filters(MakeTerm(kName, "A"), MakeTerm(kName, "B")),
+                         irs::ScoreMergeType::Sum, 2);
+    irs::Filter::ptr root = MakeOr(std::move(inner), MakeTerm(kName, "C"));
+    Optimize(root);
+    ASSERT_EQ(2, As<irs::Or>(*root).size());
+  }
 }
 
-TEST(filter_optimizer_test, or_all_fold_scored_merges_and_adjusts_min_match) {
-  irs::Filter::ptr root = MakeOrV(
-    Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B"), MakeAll(2.F), MakeAll(3.F)),
-    irs::ScoreMergeType::Sum, 3);
+// AndExclusionCoalesceRule: And mixing positive and negated clauses becomes an
+// exclusion (or a bare negation when there are no positive clauses).
+TEST_P(FilterOptimizerTest, AndExclusionCoalesceRule) {
+  // one positive + one negative -> include/exclude
+  {
+    irs::Filter::ptr root =
+      MakeAnd(MakeTerm(kName, "A"), MakeNot(MakeTerm(kName, "B")));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    auto& node = As<irs::Exclusion>(*root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.include()->type());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
+  }
 
-  const irs::BM25 scorer;
-  irs::Optimize(root, {.scorer = &scorer});
+  // multiple of each -> And include, Or exclude
+  {
+    irs::Filter::ptr root =
+      MakeAnd(MakeTerm(kName, "A"), MakeTerm(kName, "B"),
+              MakeNot(MakeTerm(kName, "X")), MakeNot(MakeTerm(kName, "Y")));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    auto& node = As<irs::Exclusion>(*root);
+    ASSERT_EQ(irs::Type<irs::And>::id(), node.include()->type());
+    ASSERT_EQ(2, As<irs::And>(*node.include()).size());
+    ASSERT_EQ(irs::Type<irs::Or>::id(), node.exclude()->type());
+    ASSERT_EQ(2, As<irs::Or>(*node.exclude()).size());
+  }
 
-  ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  ASSERT_EQ(3, or_root.size());
-  ASSERT_EQ(2, or_root.min_match_count());
-  ASSERT_EQ(irs::Type<irs::All>::id(), or_root[2].type());
-  ASSERT_EQ(5.F, sdb::basics::downCast<irs::All>(or_root[2]).Boost());
+  // only negatives -> exclusion with empty include
+  {
+    irs::Filter::ptr root =
+      MakeAnd(MakeNot(MakeTerm(kName, "X")), MakeNot(MakeTerm(kName, "Y")));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    auto& node = As<irs::Exclusion>(*root);
+    ASSERT_EQ(nullptr, node.include());
+    ASSERT_EQ(irs::Type<irs::Or>::id(), node.exclude()->type());
+    ASSERT_EQ(2, As<irs::Or>(*node.exclude()).size());
+  }
 }
 
-TEST(filter_optimizer_test, or_single_all_scored_unchanged) {
-  irs::Filter::ptr root = MakeOr(MakeTerm(kName, "A"), MakeAll(2.F));
+// OrAllRequiredRule: a disjunction where every clause is required is a
+// conjunction; merge_type and boost are preserved.
+TEST_P(FilterOptimizerTest, OrAllRequiredRule) {
+  // min_match == size -> And
+  {
+    auto or_node = MakeOrV(Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")),
+                           irs::ScoreMergeType::Max, 2);
+    or_node->boost(2.F);
+    irs::Filter::ptr root = std::move(or_node);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*root));
+    auto& and_root = As<irs::And>(*root);
+    ASSERT_EQ(irs::ScoreMergeType::Max, and_root.merge_type());
+    ASSERT_EQ(2.F, and_root.Boost());
+  }
 
-  const irs::BM25 scorer;
-  irs::Optimize(root, {.scorer = &scorer});
-
-  ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::Or>(*root).size());
+  // becomes And then coalesces the negated clause into an exclusion
+  {
+    irs::Filter::ptr root =
+      MakeOrV(Filters(MakeTerm(kF1, "A"), MakeNot(MakeTerm(kF2, "B"))),
+              irs::ScoreMergeType::Sum, 2);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    auto& node = As<irs::Exclusion>(*root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.include()->type());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
+  }
 }
 
-TEST(filter_optimizer_test, single_child_and_unwraps) {
-  auto term = MakeTerm(kName, "A");
-  const auto* term_ptr = term.get();
-  irs::Filter::ptr root = MakeAnd(std::move(term));
+// ByTermsRule: same-field term clauses collapse into a single ByTerms; the
+// boost of duplicate terms is summed, not multiplied (#3).
+TEST_P(FilterOptimizerTest, ByTermsRule) {
+  // And -> min_match == term count, boost preserved
+  {
+    auto and_root = MakeAnd(MakeTerm(kName, "A"), MakeTerm(kName, "B"));
+    and_root->boost(2.F);
+    irs::Filter::ptr root = std::move(and_root);
+    const irs::BM25 scorer;
+    Optimize(root, &scorer);
+    ASSERT_EQ(irs::Type<irs::ByTerms>::id(), TypeOf(*root));
+    auto& by_terms = As<irs::ByTerms>(*root);
+    ASSERT_EQ(kName, by_terms.field_id());
+    ASSERT_EQ(2, by_terms.options().terms.size());
+    ASSERT_EQ(2, by_terms.options().min_match);
+    ASSERT_EQ(2.F, by_terms.Boost());
+  }
 
-  irs::Optimize(root);
+  // Or -> min_match == 1
+  {
+    irs::Filter::ptr root = MakeOr(MakeTerm(kName, "A"), MakeTerm(kName, "B"));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerms>::id(), TypeOf(*root));
+    auto& by_terms = As<irs::ByTerms>(*root);
+    ASSERT_EQ(2, by_terms.options().terms.size());
+    ASSERT_EQ(1, by_terms.options().min_match);
+  }
 
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), root->type());
-  ASSERT_EQ(term_ptr, root.get());
+  // different fields are not merged
+  {
+    irs::Filter::ptr root = MakeAnd(MakeTerm(kName, "A"), MakeTerm(kOther, "B"));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*root));
+    ASSERT_EQ(2, As<irs::And>(*root).size());
+  }
+
+  // duplicate term in a min_match>1 disjunction is not merged
+  {
+    irs::Filter::ptr root = MakeOrV(
+      Filters(MakeTerm(kName, "A"), MakeTerm(kName, "A"), MakeTerm(kName, "B")),
+      irs::ScoreMergeType::Sum, 2);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Or>::id(), TypeOf(*root));
+    ASSERT_EQ(3, As<irs::Or>(*root).size());
+  }
+
+  // duplicate term boosts are summed: 2 + 3 == 5 (not multiplied to 6) (#3)
+  {
+    irs::Filter::ptr root =
+      MakeOr(MakeTerm(kName, "A", 2.F), MakeTerm(kName, "A", 3.F));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerms>::id(), TypeOf(*root));
+    auto& by_terms = As<irs::ByTerms>(*root);
+    ASSERT_EQ(1, by_terms.options().terms.size());
+    ASSERT_EQ(5.F, by_terms.options().terms.begin()->boost);
+  }
 }
 
-TEST(filter_optimizer_test, single_child_or_min_match_gate) {
-  irs::Filter::ptr root =
-    MakeOrV(Filters(MakeTerm(kName, "A")), irs::ScoreMergeType::Sum, 2);
+// ByTermsMinMatchZeroRule: ByTerms with min_match==0 matches everything;
+// unscored folds to all-docs, scored expands to an all-docs OR terms.
+TEST_P(FilterOptimizerTest, ByTermsMinMatchZeroRule) {
+  // unscored -> all-docs
+  {
+    irs::Filter::ptr root = MakeByTerms(kName, {"A", "B"}, 0);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::All>::id(), TypeOf(*root));
+  }
 
-  irs::Optimize(root);
+  // scored -> Or(all-docs[0], ByTerms[min_match=1])
+  {
+    auto by_terms = MakeByTerms(kName, {"A", "B"}, 0);
+    by_terms->boost(2.F);
+    irs::Filter::ptr root = std::move(by_terms);
+    const irs::BM25 scorer;
+    Optimize(root, &scorer);
 
-  ASSERT_EQ(irs::Type<irs::Empty>::id(), root->type());
+    ASSERT_EQ(irs::Type<irs::Or>::id(), TypeOf(*root));
+    auto& or_root = As<irs::Or>(*root);
+    ASSERT_EQ(2, or_root.size());
+    ASSERT_EQ(irs::Type<irs::All>::id(), or_root[0].type());
+    ASSERT_EQ(0.F, As<irs::All>(or_root[0]).Boost());
+    ASSERT_EQ(irs::Type<irs::ByTerms>::id(), or_root[1].type());
+    auto& terms = As<irs::ByTerms>(or_root[1]);
+    ASSERT_EQ(1, terms.options().min_match);
+    ASSERT_EQ(2.F, terms.Boost());
+  }
+
+  // empty term set with min_match==0 is left untouched
+  {
+    irs::Filter::ptr root = MakeByTerms(kName, {}, 0);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerms>::id(), TypeOf(*root));
+  }
 }
 
-TEST(filter_optimizer_test, single_child_boost_gate) {
-  const auto make = []() -> irs::Filter::ptr {
-    auto root = MakeAnd(MakeTerm(kName, "A"));
-    root->boost(2.F);
-    return root;
-  };
+// SingleChildRule: a one-clause And/Or is replaced by its child, gated by
+// boost when scoring and by min_match for disjunctions.
+TEST_P(FilterOptimizerTest, SingleChildRule) {
+  // And with one child -> the child (pointer preserved)
+  {
+    auto term = MakeTerm(kName, "A");
+    const auto* term_ptr = term.get();
+    irs::Filter::ptr root = MakeAnd(std::move(term));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+    ASSERT_EQ(term_ptr, root.get());
+  }
 
-  auto scored = make();
-  const irs::BM25 scorer;
-  irs::Optimize(scored, {.scorer = &scorer});
-  ASSERT_EQ(irs::Type<irs::And>::id(), scored->type());
+  // Or with min_match != 1 is not unwrapped (here it is unsatisfiable)
+  {
+    irs::Filter::ptr root =
+      MakeOrV(Filters(MakeTerm(kName, "A")), irs::ScoreMergeType::Sum, 2);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
 
-  auto unscored = make();
-  irs::Optimize(unscored);
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), unscored->type());
+  // boost gate: kept when scoring, unwrapped otherwise
+  {
+    const auto make = []() -> irs::Filter::ptr {
+      auto root = MakeAnd(MakeTerm(kName, "A"));
+      root->boost(2.F);
+      return root;
+    };
+
+    auto scored = make();
+    const irs::BM25 scorer;
+    Optimize(scored, &scorer);
+    ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*scored));
+
+    auto unscored = make();
+    Optimize(unscored);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*unscored));
+  }
 }
 
-TEST(filter_optimizer_test, by_terms_and) {
-  auto and_root = MakeAnd(MakeTerm(kName, "A"), MakeTerm(kName, "B"));
-  and_root->boost(2.F);
-  irs::Filter::ptr root = std::move(and_root);
+// MixedDegenerateRule: a mixed boolean with one empty slot collapses to the
+// other; recursion still optimizes both slots when both are populated.
+TEST_P(FilterOptimizerTest, MixedDegenerateRule) {
+  // empty required -> optional (Or)
+  {
+    irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>(
+      Filters(), Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Or>::id(), TypeOf(*root));
+    ASSERT_EQ(2, As<irs::Or>(*root).size());
+  }
 
-  const irs::BM25 scorer;
-  irs::Optimize(root, {.scorer = &scorer});
+  // empty optional -> required (And)
+  {
+    irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>(
+      Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")), Filters());
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*root));
+    ASSERT_EQ(2, As<irs::And>(*root).size());
+  }
 
-  ASSERT_EQ(irs::Type<irs::ByTerms>::id(), root->type());
-  auto& by_terms = sdb::basics::downCast<irs::ByTerms>(*root);
-  ASSERT_EQ(kName, by_terms.field_id());
-  ASSERT_EQ(2, by_terms.options().terms.size());
-  ASSERT_EQ(2, by_terms.options().min_match);
-  ASSERT_EQ(2.F, by_terms.Boost());
+  // both slots populated -> kept, and each slot is optimized recursively
+  {
+    irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>(
+      Filters(MakeNot(MakeTerm(kName, "A"))),
+      Filters(MakeNot(MakeTerm(kName, "B"))));
+    auto& mixed = sdb::basics::downCast<irs::MixedBooleanFilter>(*root);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::MixedBooleanFilter>::id(), TypeOf(*root));
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), mixed.RequiredSlot()->type());
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), mixed.OptionalSlot()->type());
+  }
 }
 
-TEST(filter_optimizer_test, by_terms_or) {
-  irs::Filter::ptr root = MakeOr(MakeTerm(kName, "A"), MakeTerm(kName, "B"));
+// WildcardLowerRule: a wildcard term lowers to a term, prefix or automaton.
+TEST_P(FilterOptimizerTest, WildcardLowerRule) {
+  // no wildcard -> exact term
+  {
+    irs::Filter::ptr root = MakeWildcard(kName, "foo");
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+  }
 
-  irs::Optimize(root);
+  // trailing % -> prefix
+  {
+    irs::Filter::ptr root = MakeWildcard(kName, "foo%");
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), TypeOf(*root));
+  }
 
-  ASSERT_EQ(irs::Type<irs::ByTerms>::id(), root->type());
-  auto& by_terms = sdb::basics::downCast<irs::ByTerms>(*root);
-  ASSERT_EQ(2, by_terms.options().terms.size());
-  ASSERT_EQ(1, by_terms.options().min_match);
+  // single-character wildcard -> automaton
+  {
+    irs::Filter::ptr root = MakeWildcard(kName, "f_o");
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::AutomatonFilter>::id(), TypeOf(*root));
+  }
 }
 
-TEST(filter_optimizer_test, by_terms_field_gate) {
-  irs::Filter::ptr root = MakeAnd(MakeTerm(kName, "A"), MakeTerm(kOther, "B"));
+// RegexpLowerRule: a regexp lowers to a term for a literal, automaton for a
+// genuinely complex pattern.
+TEST_P(FilterOptimizerTest, RegexpLowerRule) {
+  // literal pattern -> exact term
+  {
+    irs::Filter::ptr root = MakeRegexp(kName, "foo");
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+  }
 
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::And>(*root).size());
+  // complex pattern -> automaton
+  {
+    irs::Filter::ptr root = MakeRegexp(kName, "f.o");
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::AutomatonFilter>::id(), TypeOf(*root));
+  }
 }
 
-TEST(filter_optimizer_test, by_terms_or_duplicate_gate) {
-  irs::Filter::ptr root = MakeOrV(
-    Filters(MakeTerm(kName, "A"), MakeTerm(kName, "A"), MakeTerm(kName, "B")),
-    irs::ScoreMergeType::Sum, 2);
+// PhraseLowerRule: wildcard phrase parts are lowered in place; the phrase node
+// itself is preserved.
+TEST_P(FilterOptimizerTest, PhraseLowerRule) {
+  // wildcard part with no wildcard -> term part
+  {
+    irs::Filter::ptr root = MakePhraseWildcard(kName, "foo");
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), TypeOf(*root));
+    const auto& opts = As<irs::ByPhrase>(*root).options();
+    ASSERT_EQ(1, opts.size());
+    ASSERT_TRUE(std::holds_alternative<irs::ByTermOptions>(opts.begin()->part));
+  }
 
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
-  ASSERT_EQ(3, sdb::basics::downCast<irs::Or>(*root).size());
+  // wildcard part with trailing % -> prefix part
+  {
+    irs::Filter::ptr root = MakePhraseWildcard(kName, "foo%");
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), TypeOf(*root));
+    const auto& opts = As<irs::ByPhrase>(*root).options();
+    ASSERT_EQ(1, opts.size());
+    ASSERT_TRUE(
+      std::holds_alternative<irs::ByPrefixOptions>(opts.begin()->part));
+  }
 }
 
-TEST(filter_optimizer_test, or_min_match_zero_becomes_all) {
-  auto or_node =
-    MakeOrV(Filters(MakeTerm(kName, "A")), irs::ScoreMergeType::Sum, 0);
-  or_node->boost(2.F);
-  irs::Filter::ptr root = std::move(or_node);
+// General optimizer properties that span multiple rules.
+TEST_P(FilterOptimizerTest, General) {
+  // optimization is idempotent
+  {
+    const auto make = []() -> irs::Filter::ptr {
+      return MakeAnd(
+        MakeAnd(MakeTerm(kName, "A"), MakeNot(MakeTerm(kName, "B"))),
+        MakeOr(MakeOr(MakeTerm(kName, "C")),
+               MakeNot(MakeNot(MakeTerm(kName, "D")))));
+    };
+    irs::Filter::ptr once = make();
+    irs::Filter::ptr twice = make();
+    Optimize(once);
+    Optimize(twice);
+    Optimize(twice);
+    ASSERT_TRUE(*once == *twice);
+  }
 
-  irs::Optimize(root);
+  // a leaf root keeps its identity
+  {
+    irs::Filter::ptr root = MakeTerm(kName, "A");
+    const auto* raw = root.get();
+    Optimize(root);
+    ASSERT_EQ(raw, root.get());
+  }
 
-  ASSERT_EQ(irs::Type<irs::All>::id(), root->type());
-  ASSERT_EQ(2.F, sdb::basics::downCast<irs::All>(*root).Boost());
+  // a custom rule subset (here without ExclusionRule) is honored
+  {
+    irs::Filter::ptr root =
+      MakeAnd(MakeAnd(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")),
+              MakeNot(MakeTerm(kName, "C")));
+    irs::Optimize(root, {}, irs::kDefaultRules.subspan(1));
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    auto& node = As<irs::Exclusion>(*root);
+    ASSERT_EQ(irs::Type<irs::And>::id(), node.include()->type());
+    ASSERT_EQ(2, As<irs::And>(*node.include()).size());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
+  }
 }
 
-TEST(filter_optimizer_test, or_min_match_zero_no_children_becomes_all) {
-  irs::Filter::ptr root = MakeOrV(Filters(), irs::ScoreMergeType::Sum, 0);
+static constexpr auto kOptimizerDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::All>::id(), root->type());
-}
-
-TEST(filter_optimizer_test, or_unsat_min_match_becomes_empty) {
-  irs::Filter::ptr root =
-    MakeOrV(Filters(MakeTerm(kName, "A")), irs::ScoreMergeType::Sum, 3);
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Empty>::id(), root->type());
-}
-
-TEST(filter_optimizer_test, or_no_clauses_becomes_empty) {
-  irs::Filter::ptr root = MakeOr();
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Empty>::id(), root->type());
-}
-
-TEST(filter_optimizer_test, or_all_required_becomes_and) {
-  auto or_node = MakeOrV(Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")),
-                         irs::ScoreMergeType::Max, 2);
-  or_node->boost(2.F);
-  irs::Filter::ptr root = std::move(or_node);
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  ASSERT_EQ(2, and_root.size());
-  ASSERT_EQ(irs::ScoreMergeType::Max, and_root.merge_type());
-  ASSERT_EQ(2.F, and_root.Boost());
-}
-
-TEST(filter_optimizer_test, or_all_required_unwraps_not_child) {
-  irs::Filter::ptr root =
-    MakeOrV(Filters(MakeTerm(kF1, "A"), MakeNot(MakeTerm(kF2, "B"))),
-            irs::ScoreMergeType::Sum, 2);
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
-  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
-  ASSERT_NE(nullptr, node.include());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.include()->type());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
-}
-
-TEST(filter_optimizer_test, or_all_required_single_child_unaffected) {
-  irs::Filter::ptr root =
-    MakeOrV(Filters(MakeTerm(kName, "A")), irs::ScoreMergeType::Sum, 1);
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), root->type());
-}
-
-TEST(filter_optimizer_test, mixed_empty_required_becomes_optional) {
-  irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>(
-    Filters(), Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")));
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::Or>(*root).size());
-}
-
-TEST(filter_optimizer_test, mixed_empty_optional_becomes_required) {
-  irs::Filter::ptr root = std::make_unique<irs::MixedBooleanFilter>(
-    Filters(MakeTerm(kF1, "A"), MakeTerm(kF2, "B")), Filters());
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
-  ASSERT_EQ(2, sdb::basics::downCast<irs::And>(*root).size());
-}
-
-TEST(filter_optimizer_test, by_terms_min_match_zero_unscored_becomes_all) {
-  irs::Filter::ptr root = MakeByTerms(kName, {"A", "B"}, 0);
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::All>::id(), root->type());
-}
-
-TEST(filter_optimizer_test, by_terms_min_match_zero_scored_becomes_or) {
-  auto by_terms = MakeByTerms(kName, {"A", "B"}, 0);
-  by_terms->boost(2.F);
-  irs::Filter::ptr root = std::move(by_terms);
-
-  const irs::BM25 scorer;
-  irs::Optimize(root, {.scorer = &scorer});
-
-  ASSERT_EQ(irs::Type<irs::Or>::id(), root->type());
-  auto& or_root = sdb::basics::downCast<irs::Or>(*root);
-  ASSERT_EQ(2, or_root.size());
-  ASSERT_EQ(irs::Type<irs::All>::id(), or_root[0].type());
-  ASSERT_EQ(0.F, sdb::basics::downCast<irs::All>(or_root[0]).Boost());
-  ASSERT_EQ(irs::Type<irs::ByTerms>::id(), or_root[1].type());
-  auto& terms = sdb::basics::downCast<irs::ByTerms>(or_root[1]);
-  ASSERT_EQ(1, terms.options().min_match);
-  ASSERT_EQ(2.F, terms.Boost());
-}
-
-TEST(filter_optimizer_test, by_terms_min_match_zero_empty_terms_unchanged) {
-  irs::Filter::ptr root = MakeByTerms(kName, {}, 0);
-
-  irs::Optimize(root);
-
-  ASSERT_EQ(irs::Type<irs::ByTerms>::id(), root->type());
-}
+INSTANTIATE_TEST_SUITE_P(filter_optimizer_test, FilterOptimizerTest,
+                         ::testing::Combine(::testing::ValuesIn(kOptimizerDirs),
+                                            ::testing::Values("1_5simd")),
+                         FilterOptimizerTest::to_string);
 
 class FilterOptimizerTestCase : public FilterTestCaseBase {};
 

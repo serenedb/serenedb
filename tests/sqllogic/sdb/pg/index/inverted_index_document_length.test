@@ -121,8 +121,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │      Score: raw_dl()      │
 │                           │

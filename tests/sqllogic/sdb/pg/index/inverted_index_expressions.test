@@ -329,8 +329,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[Term((a || b)(string) │
-│         =foobar)]         │
+│   Term((a || b)(string)   │
+│          =foobar)         │
 │                           │
 │      Projections: id      │
 │                           │
@@ -990,8 +990,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[Term((a + b)(numeric)=│
-│    \\x0\\x80\\x0\\x0\\x1e)]    │
+│ Term((a + b)(numeric)=\\x0 │
+│      \\x80\\x0\\x0\\x1e)      │
 │                           │
 │      Projections: id      │
 │                           │
@@ -1009,8 +1009,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[Term((s1 || s2)(string│
-│         )=foobar)]        │
+│  Term((s1 || s2)(string)  │
+│          =foobar)         │
 │                           │
 │      Projections: id      │
 │                           │
@@ -1028,8 +1028,7 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[Term((a > b)(bool)=  │
-│           \\xff)]          │
+│  Term((a > b)(bool)=\\xff) │
 │                           │
 │      Projections: id      │
 │                           │

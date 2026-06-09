@@ -450,9 +450,9 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[Term(("content" ->   │
-│ 'val')(numeric)=\\xa0\\xc0E │
-│    \\x0\\x0\\x0\\x0\\x0\\x0)]   │
+│ Term(("content" -> 'val') │
+│ (numeric)=\\xa0\\xc0E\\x0\\x0 │
+│       \\x0\\x0\\x0\\x0)       │
 │                           │
 │      Projections: id      │
 │                           │
@@ -480,8 +480,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[Term(("content" ->   │
-│   'val')(bool)=\\xff)]   │
+│ Term(("content" -> 'val') │
+│        (bool)=\\xff)       │
 │                           │
 │      Projections: id      │
 │                           │

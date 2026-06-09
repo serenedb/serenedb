@@ -1170,10 +1170,10 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[OR[Term(body(string) │
-│ =blue) || Term(body(string│
-│  )=red)] && GEO_DISTANCE  │
-│  [geo(string), *, <500]]  │
+│ AND[TERMS[body(string), {[│
+│ 'blue', 1000],['red', 1],}│
+│  , 1] && GEO_DISTANCE[geo │
+│    (string), *, <500]]    │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │

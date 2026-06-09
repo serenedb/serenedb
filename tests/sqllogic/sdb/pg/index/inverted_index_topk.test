@@ -71,8 +71,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -106,8 +106,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -149,8 +149,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -181,8 +181,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -211,8 +211,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -260,8 +260,8 @@ QUERY PLAN
 │      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
-│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   │
+│   PHRASE[body(string) =   ││   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    ││    <Term:lazy(0, 0); >]   │
 │                           ││                           │
 │           Score:          ││           Score:          │
 │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
@@ -300,8 +300,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │

@@ -677,8 +677,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │       Offsets: body       │
 │                           │
@@ -724,8 +724,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │       Offsets: body       │
 │                           │

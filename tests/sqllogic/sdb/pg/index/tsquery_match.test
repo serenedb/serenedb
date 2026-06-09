@@ -894,12 +894,12 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[b(string) =   │
-│  <Term:quick(0, 0); Term  │
-│ :fox(2, 2); Term:jumps(1, │
-│  1); Term:over(1, 1); Term│
+│  PHRASE[b(string) = <Term │
+│ :quick(0, 0); Term:fox(2, │
+│    2); Term:jumps(1, 1);  │
+│    Term:over(1, 1); Term  │
 │ :lazy(1, 1); Term:dog(1, 1│
-│           ); >]]          │
+│           ); >]           │
 │                           │
 │       Projections: a      │
 │                           │

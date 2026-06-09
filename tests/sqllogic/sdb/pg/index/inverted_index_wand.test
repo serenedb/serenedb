@@ -81,8 +81,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -107,9 +107,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[OR[Term(body(string) │
-│ =fox) || Term(body(string)│
-│         =rabbit)]]        │
+│ TERMS[body(string), {['fox│
+│ ', 1],['rabbit', 1],}, 1] │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -142,8 +141,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -184,8 +183,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -213,8 +212,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:fox(0, 0); >]    │
 │                           │
 │           Score:          │
 │  tfidf(with_norms=false)  │

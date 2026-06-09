@@ -126,30 +126,45 @@ struct NotSimplifyRule {
   static constexpr std::array kTargets{Type<Not>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
-    auto& node = sdb::basics::downCast<Not>(*slot);
-    auto& inner = node.mutable_filter();
-    if (!inner) {
-      return false;
-    }
-    const auto tid = inner->type();
-    if (tid == Type<Not>::id()) {
-      if (auto grand =
-            std::move(sdb::basics::downCast<Not>(*inner).mutable_filter());
-          grand) {
-        slot = std::move(grand);
-        return true;
+    size_t negations = 0;
+    Filter::ptr* inner = &slot;
+    while ((*inner)->type() == Type<Not>::id()) {
+      auto& node = sdb::basics::downCast<Not>(**inner);
+      if (!node.mutable_filter()) {
+        return false;
       }
+      ++negations;
+      inner = &node.mutable_filter();
+    }
+
+    auto& base = *inner;
+    const bool odd = (negations % 2) != 0;
+
+    if (base->type() == Type<Empty>::id()) {
+      if (odd) {
+        slot = AllDocsProvider::Default(kNoBoost);
+      } else {
+        slot = std::move(base);
+      }
+      return true;
+    }
+    if (*AllDocsProvider::Default(kNoBoost) == *base) {
+      if (odd) {
+        slot = std::make_unique<Empty>();
+      } else {
+        slot = std::move(base);
+      }
+      return true;
+    }
+    if (negations < 2) {
       return false;
     }
-    if (tid == Type<Empty>::id()) {
-      slot = AllDocsProvider::Default(kNoBoost);
-      return true;
+    if (odd) {
+      slot = std::make_unique<Not>(std::move(base));
+    } else {
+      slot = std::move(base);
     }
-    if (const auto all = AllDocsProvider::Default(kNoBoost); *all == *inner) {
-      slot = std::make_unique<Empty>();
-      return true;
-    }
-    return false;
+    return true;
   }
 };
 
@@ -173,8 +188,11 @@ struct ExclusionRule {
   static constexpr std::string_view kName = "exclusion_simplify";
   static constexpr std::array kTargets{Type<Exclusion>::id()};
 
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     auto& node = sdb::basics::downCast<Exclusion>(*slot);
+    if (node.Boost() != kNoBoost && ctx.scorer != nullptr) {
+      return false;
+    }
     auto& incl = node.mutable_include();
     auto& excl = node.mutable_exclude();
     if (!excl) {
@@ -285,6 +303,9 @@ struct OrEmptyRule {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
     auto& node = sdb::basics::downCast<Or>(*slot);
+    if (node.min_match_count() == 0) {
+      return false;
+    }
     auto& children = node.mutable_filters();
     const auto it = std::remove_if(
       children.begin(), children.end(),
@@ -439,7 +460,7 @@ struct ByTermsRule {
       auto it =
         options.terms.emplace(term_filter.options().term, term_filter.Boost());
       if (!it.second) {
-        const_cast<score_t&>(it.first->boost) *= term_filter.Boost();
+        const_cast<score_t&>(it.first->boost) += term_filter.Boost();
         has_duplicates = true;
       }
     }

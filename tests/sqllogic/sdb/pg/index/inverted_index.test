@@ -683,8 +683,8 @@ QUERY PLAN
 │      Lookup: parquet      │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[b(string) =   │
-│    <Term:fox(0, 0); >]]   │
+│  PHRASE[b(string) = <Term │
+│       :fox(0, 0); >]      │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -998,9 +998,9 @@ QUERY PLAN
 │        Lookup: csv        │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[b(string) =   │
-│  <Term:shared(0, 0); Term │
-│      :term(1, 1); >]]     │
+│  PHRASE[b(string) = <Term │
+│ :shared(0, 0); Term:term(1│
+│          , 1); >]         │
 │                           │
 │        Projections:       │
 │             b             │

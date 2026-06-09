@@ -72,9 +72,9 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[text_for_search│
+│   PHRASE[text_for_search  │
 │ (string) = <Term:first(0, │
-│           0); >]]         │
+│           0); >]          │
 │                           │
 │        Projections:       │
 │           pk (l)          │

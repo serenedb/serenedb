@@ -46,8 +46,8 @@ QUERY PLAN
 │      src_inc_only_idx     │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[notes(string) =│
-│    <Term:one(0, 0); >]]   │
+│  PHRASE[notes(string) =   │
+│    <Term:one(0, 0); >]    │
 │                           │
 │        Projections:       │
 │             pk            │
@@ -74,8 +74,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[notes(string) =│
-│    <Term:one(0, 0); >]]   │
+│  PHRASE[notes(string) =   │
+│    <Term:one(0, 0); >]    │
 │                           │
 │     Projections: notes    │
 │                           │
@@ -107,8 +107,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[notes(string) =│
-│    <Term:one(0, 0); >]]   │
+│  PHRASE[notes(string) =   │
+│    <Term:one(0, 0); >]    │
 │                           │
 │        Projections:       │
 │         notes (l)         │

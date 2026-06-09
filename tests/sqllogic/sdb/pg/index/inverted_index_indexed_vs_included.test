@@ -91,8 +91,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│   <Term:alpha(0, 0); >]]  │
+│   PHRASE[body(string) =   │
+│   <Term:alpha(0, 0); >]   │
 │                           │
 │        Projections:       │
 │            body           │
@@ -129,8 +129,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[Term(tag(numeric)=\\x0 │
-│       \\x80\\x0\\x0d)]       │
+│ Term(tag(numeric)=\\x0\\x80 │
+│          \\x0\\x0d)         │
 │                           │
 │        Projections:       │
 │            tag            │
@@ -158,8 +158,8 @@ QUERY PLAN
 │        Index: m_idx       │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│   <Term:alpha(0, 0); >]]  │
+│   PHRASE[body(string) =   │
+│   <Term:alpha(0, 0); >]   │
 │                           │
 │        Projections:       │
 │            note           │
@@ -206,8 +206,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:cat(0, 0); >]]   │
+│   PHRASE[body(string) =   │
+│    <Term:cat(0, 0); >]    │
 │                           │
 │        Projections:       │
 │          note (i)         │
@@ -254,8 +254,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│   <Term:alpha(0, 0); >]]  │
+│   PHRASE[body(string) =   │
+│   <Term:alpha(0, 0); >]   │
 │                           │
 │        Projections:       │
 │          body (l)         │
@@ -300,8 +300,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[dual(string) = │
-│    <Term:red(0, 0); >]]   │
+│   PHRASE[dual(string) =   │
+│    <Term:red(0, 0); >]    │
 │                           │
 │        Projections:       │
 │          dual (i)         │
@@ -342,7 +342,7 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│   AND[Term(dual(null)=)]  │
+│     Term(dual(null)=)     │
 │                           │
 │        Projections:       │
 │          dual (i)         │

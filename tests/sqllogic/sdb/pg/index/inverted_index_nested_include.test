@@ -66,8 +66,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[t(string) =   │
-│    <Term:one(0, 0); >]]   │
+│  PHRASE[t(string) = <Term │
+│       :one(0, 0); >]      │
 │                           │
 │        Projections:       │
 │           pk (l)          │
@@ -134,8 +134,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[t(string) =   │
-│    <Term:one(0, 0); >]]   │
+│  PHRASE[t(string) = <Term │
+│       :one(0, 0); >]      │
 │                           │
 │        Projections:       │
 │           pk (l)          │
@@ -210,8 +210,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[t(string) =   │
-│    <Term:one(0, 0); >]]   │
+│  PHRASE[t(string) = <Term │
+│       :one(0, 0); >]      │
 │                           │
 │        Projections:       │
 │           pk (l)          │
@@ -288,8 +288,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[t(string) =   │
-│    <Term:one(0, 0); >]]   │
+│  PHRASE[t(string) = <Term │
+│       :one(0, 0); >]      │
 │                           │
 │        Projections:       │
 │           pk (l)          │
@@ -374,8 +374,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[t(string) =   │
-│    <Term:one(0, 0); >]]   │
+│  PHRASE[t(string) = <Term │
+│       :one(0, 0); >]      │
 │                           │
 │        Projections:       │
 │           pk (l)          │
@@ -465,8 +465,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[t(string) =   │
-│    <Term:one(0, 0); >]]   │
+│  PHRASE[t(string) = <Term │
+│       :one(0, 0); >]      │
 │                           │
 │        Projections:       │
 │           pk (l)          │

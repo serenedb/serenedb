@@ -51,6 +51,8 @@ class IndexReader;
 
 namespace sdb::connector {
 
+struct OffsetsBindData;
+
 struct SereneDBScanBindData;
 
 enum class ScanSourceKind : uint8_t {
@@ -165,6 +167,7 @@ struct SearchScan : ScanSource {
     catalog::Column::Id column_id;
     size_t limit = std::numeric_limits<size_t>::max();
     duckdb::idx_t get_col_idx = 0;
+    OffsetsBindData* bind = nullptr;
   };
   std::vector<OffsetsRequest> offsets;
 

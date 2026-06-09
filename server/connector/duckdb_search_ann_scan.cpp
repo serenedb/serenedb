@@ -40,6 +40,8 @@
 #include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/index_source.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -244,6 +246,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   ClassifyColumnstoreProjections(*gstate, bind_data);
   gstate->scan = &bind_data.scan_source->Cast<SearchScan>();
   gstate->ef_search = ReadEfSearch(context);
+
+  if (!gstate->scan->offsets.empty() && !gstate->scan->stored_filter) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_offsets() requires an inverted index scan in the same "
+              "sub-query"));
+  }
 
   auto& snapshot = *gstate->scan->snapshot;
   gstate->reader = &snapshot.reader;

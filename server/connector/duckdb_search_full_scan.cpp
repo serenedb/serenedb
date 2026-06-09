@@ -48,6 +48,8 @@
 #include "connector/duckdb_table_function.h"
 #include "connector/index_source.h"
 #include "connector/offsets_collector.hpp"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "connector/offsets_writer.hpp"
 #include "connector/search_pk_lookup.h"
 #include "pg/connection_context.h"
@@ -75,6 +77,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   InitCommonState(*state, context, bind_data, input);
 
   const auto& ss = bind_data.scan_source->Cast<SearchScan>();
+  if (!ss.offsets.empty() && !ss.stored_filter) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_offsets() requires an inverted index scan in the same "
+              "sub-query"));
+  }
   state->scan = &ss;
   state->reader = &ss.snapshot->reader;
   state->total_segments = ss.snapshot->reader.size();

@@ -60,10 +60,6 @@ struct SearchAnnTopKLocalState : public SegDocBufferedScanLocalState {
   irs::Filter::Query::ptr text_filter_query;
   std::optional<TextScanFilter> text_filter;
 
-  // Per-call scratch lives in `buffer` (overwritten by every seg.Search). The
-  // running top-K survives across segments here, mirroring BM25's persistent
-  // NthPartitionScoreCollector. Default std::less on pair<float, int64_t>
-  // gives a max-heap by distance: front() is the kth-worst we've kept.
   size_t top_k_cap = 0;
   std::priority_queue<std::pair<float, int64_t>> top_hits;
   std::vector<irs::ScoreDoc> hits;

@@ -59,10 +59,17 @@ struct SearchAnnTopKLocalState : public SegDocBufferedScanLocalState {
   irs::Filter::Query::ptr text_filter_query;
   std::optional<TextScanFilter> text_filter;
 
-  explicit SearchAnnTopKLocalState(size_t k)
-    : dis_buf(k), ids_buf(k), buffer{dis_buf.data(), ids_buf.data(), k} {}
-
+  size_t top_k_cap = 0;
+  std::vector<std::pair<float, int64_t>> top_hits;
   std::vector<irs::ScoreDoc> hits;
+
+  explicit SearchAnnTopKLocalState(size_t k)
+    : dis_buf(k),
+      ids_buf(k),
+      buffer{dis_buf.data(), ids_buf.data(), k},
+      top_k_cap{k} {
+    top_hits.reserve(k);
+  }
 
   void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                  uint32_t seg_idx, SearchAnnScanGlobalState& g);

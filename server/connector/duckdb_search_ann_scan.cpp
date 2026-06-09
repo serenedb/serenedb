@@ -129,18 +129,52 @@ void SearchAnnTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
   info.params.efSearch = std::max<int>(requested_ef, top_k);
   info.params.sel = text_filter ? &*text_filter : nullptr;
 
+  buffer.ResetValues();
   seg.Search(vs.field_id, info, buffer, seg_idx, read_ctx);
 
-  const float local_kth = buffer.dis[0];
-  float cur = g.global_kth_dis.load(std::memory_order_relaxed);
-  while (local_kth < cur && !g.global_kth_dis.compare_exchange_weak(
-                              cur, local_kth, std::memory_order_relaxed)) {
+  constexpr auto cmp = [](const std::pair<float, int64_t>& a,
+                          const std::pair<float, int64_t>& b) {
+    return a.first < b.first;
+  };
+  for (size_t i = 0; i < top_k_cap; ++i) {
+    const int64_t id = buffer.ids[i];
+    if (id == -1) {
+      continue;
+    }
+    const float d = buffer.dis[i];
+    if (top_hits.size() < top_k_cap) {
+      top_hits.emplace_back(d, id);
+      std::push_heap(top_hits.begin(), top_hits.end(), cmp);
+    } else if (d < top_hits.front().first) {
+      std::pop_heap(top_hits.begin(), top_hits.end(), cmp);
+      top_hits.back() = {d, id};
+      std::push_heap(top_hits.begin(), top_hits.end(), cmp);
+    }
+  }
+
+  if (top_hits.size() == top_k_cap) {
+    const float local_kth = top_hits.front().first;
+    float cur = g.global_kth_dis.load(std::memory_order_relaxed);
+    while (local_kth < cur && !g.global_kth_dis.compare_exchange_weak(
+                                cur, local_kth, std::memory_order_relaxed)) {
+    }
   }
 }
 
 void SearchAnnTopKLocalState::PrepEmitBuffer(duckdb::ClientContext& /*ctx*/,
                                              SearchAnnScanGlobalState& g) {
-  BuildSortedHits(buffer, buffer.dis.size(), *g.scan->vector_scorer, hits);
+  const auto& vs = *g.scan->vector_scorer;
+  hits.clear();
+  hits.reserve(top_hits.size());
+  for (auto& [d, id] : top_hits) {
+    auto [seg, doc] = irs::UnpackSegmentWithDoc(id);
+    hits.push_back(
+      {.score = vs.TransformDistance(d), .doc = doc, .segment_idx = seg});
+  }
+  // Forward-only ScanCursor invariant requires (segment, doc) order.
+  absl::c_sort(hits, [](const irs::ScoreDoc& l, const irs::ScoreDoc& r) {
+    return std::pair{l.segment_idx, l.doc} < std::pair{r.segment_idx, r.doc};
+  });
   prepped = true;
 }
 

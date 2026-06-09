@@ -65,13 +65,20 @@ namespace sdb::search {
 //                                                 record).
 //
 // A commit appends ONE central record carrying a monotonic `tick` and a list of
-// per-shard sections -- one for each search table the transaction wrote:
-//   record = [u64 tick][u32 shard_count][ section x shard_count ]
-//   section = [u64 schema_id][u64 table_id][u8 kind][body]
-//     INLINE    -- small inserts: the rows are serialised into the section.
-//     REFERENCE -- bulk inserts: the section lists `seg_id`s of chunk files
-//     that
-//                  hold the rows (streamed in parallel during Sink).
+// per-shard sections -- one for each search table the transaction wrote. Each
+// section is a shared header plus an ordered op manifest (WAL_DESIGN.md §5.4):
+//   record  = [u64 tick][u32 shard_count][ section x shard_count ]
+//   section = [u64 schema_id][u64 table_id][u32 col_count][u64 col x col_count]
+//             [u32 op_count][ op x op_count ]
+//   op      = [u8 kind][kind body]
+//     INLINE    -- small inserts: the rows are serialised into the op.
+//     REFERENCE -- bulk inserts: the op lists `seg_id`s of chunk files that hold
+//                  the rows (streamed in parallel during Sink).
+// `column_ids` is written once in the section header (every op shares the
+// table's column set). Insert-only today: each op is one INLINE or REFERENCE
+// batch -- several small INSERTs in a txn become several INLINE ops, a
+// bulk+inline mix is an INLINE op plus a REFERENCE op. DELETE ops (and real
+// op ordering) arrive at M6 -- purely a new `kind` + body.
 // Frame (reused from DuckDB's WAL): [u64 size][u64 checksum][payload], where
 // payload begins with [u64 tick] at a fixed offset (readable without
 // deserialising the rest -- recovery skip + future PITR bound).
@@ -126,20 +133,29 @@ class SearchDbWal {
     uint64_t count;
   };
 
-  // One transaction's contribution for a single search shard. Exactly one of
-  // `inline_data` (small INSERT, rows serialised into the section) or `seg_ids`
-  // (bulk INSERT, references already-fsynced chunk files) is populated.
+  // One op in a shard section's ordered manifest (WAL_DESIGN.md §5.4).
+  // Insert-only today: exactly one of `inline_data` (small INSERT, rows
+  // serialised into the op) or `seg_ids` (bulk INSERT, references
+  // already-fsynced chunk files) is populated.
+  struct Op {
+    const duckdb::ColumnDataCollection* inline_data = nullptr;  // INLINE
+    // INLINE only: one entry per inserted Sink chunk (the unit a generated-PK
+    // base is keyed to), in append order. Recorded for replay PK
+    // reconstruction (§5.6).
+    std::span<const InlinePk> inline_pks;
+    std::span<const uint64_t> seg_ids;  // REFERENCE
+  };
+
+  // One transaction's contribution for a single search shard: the shard's
+  // identifying header (shared by all its ops) plus an ordered op manifest
+  // (WAL_DESIGN.md §5.4). `column_ids` is written once here -- every insert op
+  // shares the table's column set.
   struct ShardSection {
     uint64_t
       schema_id;  // locates chunks/<schema_id>/<table_id>/ + recovery dispatch
     uint64_t table_id;
     ColumnIds column_ids;
-    const duckdb::ColumnDataCollection* inline_data = nullptr;  // INLINE
-    std::span<const uint64_t> seg_ids;                          // REFERENCE
-    // INLINE only: one entry per inserted Sink chunk (the unit a generated-PK
-    // base is keyed to), in append order. Recorded for replay PK
-    // reconstruction (§5.6).
-    std::span<const InlinePk> inline_pks;
+    std::span<const Op> ops;  // this shard's ops, in order
   };
 
   // Per replayed chunk during Recover(): the record's tick, the section's
@@ -242,6 +258,12 @@ class SearchDbWal {
   std::unique_ptr<duckdb::BufferedFileWriter> _active;
   uint64_t _active_first_tick =
     0;  // 0 when no active segment (GC reads under _append_mu)
+  // Bytes of chunk files referenced by records in the ACTIVE segment only
+  // (reset when it rolls). Counted toward the seal threshold so a bulk insert
+  // (tiny central record, huge chunks) rolls promptly -- WITHOUT letting chunks
+  // owned by older sealed-but-not-yet-GC'd segments force constant rolling
+  // (WAL_DESIGN.md §10.2).
+  uint64_t _active_chunk_bytes = 0;
 
   // Per-(table) chunk seg-id counter; lazily seeded by scanning the table's
   // chunk dir on first use. Guarded by _seg_mu.

@@ -45,6 +45,7 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
+#include "basics/log.h"
 
 namespace sdb::search {
 namespace {
@@ -126,32 +127,6 @@ std::vector<std::pair<uint64_t, std::filesystem::path>> EnumerateSegments(
   return out;
 }
 
-// Total bytes of all chunk files under the per-db chunks/ tree (nested
-// <schema>/<table>/). Counted toward the seal threshold so bulk rolls promptly
-// (WAL_DESIGN.md §10.2). Cheap when chunks/ is absent (single existence check).
-uint64_t OutstandingChunkBytes(const std::filesystem::path& chunks_root) {
-  uint64_t total = 0;
-  std::error_code ec;
-  if (!std::filesystem::exists(chunks_root, ec)) {
-    return 0;
-  }
-  for (const auto& entry :
-       std::filesystem::recursive_directory_iterator(chunks_root, ec)) {
-    if (ec) {
-      break;
-    }
-    if (!entry.is_regular_file(ec)) {
-      continue;
-    }
-    uint64_t sid = 0;
-    if (ParseName(entry.path().filename().string(), kChunkSuffix, sid)) {
-      std::error_code se;
-      total += entry.file_size(se);
-    }
-  }
-  return total;
-}
-
 // Max seg_id among one shard's chunk dir (non-recursive).
 uint64_t MaxChunkSegId(const std::filesystem::path& chunk_dir) {
   uint64_t mx = 0;
@@ -212,18 +187,17 @@ struct Cursor {
   bool AtEnd() const { return p >= end; }
 };
 
-// One parsed shard section (header + a position for its body).
+// One parsed shard-section header (ids + column-id list, shared by the
+// section's ops). The op manifest (`[u32 op_count][op x]`) follows it (§5.4).
 struct SectionHeader {
   uint64_t schema_id;
   uint64_t table_id;
-  uint8_t kind;
   std::vector<uint64_t> column_ids;
 };
 SectionHeader ReadSectionHeader(Cursor& c) {
   SectionHeader h;
   h.schema_id = c.Read<uint64_t>();
   h.table_id = c.Read<uint64_t>();
-  h.kind = c.Read<uint8_t>();
   auto col_count = c.Read<uint32_t>();
   h.column_ids.resize(col_count);
   for (uint32_t i = 0; i < col_count; ++i) {
@@ -388,6 +362,7 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
   _active = std::make_unique<duckdb::BufferedFileWriter>(
     _fs, (_wal_dir / SegmentName(first_tick)).string(), kAppendFlags);
   _active_first_tick = first_tick;
+  _active_chunk_bytes = 0;  // fresh segment owns no chunks yet
 }
 
 void SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
@@ -399,10 +374,11 @@ void SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
   _active->Sync();  // commit point
 
   // Size-based rotation (WAL_DESIGN.md §10.2): seal once the active segment
-  // plus the outstanding chunk files exceed the threshold. The next
-  // AppendCommit opens a fresh segment named by its tick.
-  if (_active->GetTotalWritten() + OutstandingChunkBytes(_chunks_root) >
-      _seal_threshold) {
+  // plus the chunk files IT references exceed the threshold. Only the active
+  // segment's own chunk bytes count -- chunks of older sealed segments are GC's
+  // problem, not a reason to keep rolling. The next AppendCommit opens a fresh
+  // segment named by its tick.
+  if (_active->GetTotalWritten() + _active_chunk_bytes > _seal_threshold) {
     _active->Close();
     _active.reset();
     _active_first_tick = 0;
@@ -420,40 +396,64 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
   duckdb::MemoryStream payload;
   payload.Write<uint64_t>(tick);
   payload.Write<uint32_t>(static_cast<uint32_t>(sections.size()));
+  // Reused inline-CDC scratch across every INLINE op (Rewind keeps the buffer).
+  duckdb::MemoryStream tmp;
   for (const auto& s : sections) {
-    SDB_ASSERT((s.inline_data != nullptr) != !s.seg_ids.empty(),
-               "shard section must be exactly one of INLINE / REFERENCE");
+    // Shard header: ids + the column-id list shared by all the shard's ops.
     payload.Write<uint64_t>(s.schema_id);
     payload.Write<uint64_t>(s.table_id);
-    payload.Write<uint8_t>(s.inline_data ? kKindInline : kKindReference);
     payload.Write<uint32_t>(static_cast<uint32_t>(s.column_ids.size()));
     for (uint64_t cid : s.column_ids) {
       payload.Write<uint64_t>(cid);
     }
-    if (s.inline_data) {
-      // [u32 seg_count][(u64 base, u64 count) x seg_count][u64
-      // inline_len][CDC]. One (base, count) per inserted Sink chunk (§5.6);
-      // replay re-slices the CDC's rows by `count` so each chunk's rows get
-      // their own base regardless of how ColumnDataCollection coalesced them.
-      // The inline_len prefix lets recovery/GC step to the next section without
-      // deserialising.
-      payload.Write<uint32_t>(static_cast<uint32_t>(s.inline_pks.size()));
-      for (const auto& pk : s.inline_pks) {
-        payload.Write<uint64_t>(pk.base);
-        payload.Write<uint64_t>(pk.count);
-      }
-      duckdb::MemoryStream tmp;
-      duckdb::BinarySerializer serializer{tmp};
-      serializer.Begin();
-      s.inline_data->Serialize(serializer);
-      serializer.End();
-      auto len = static_cast<uint64_t>(tmp.GetPosition());
-      payload.Write<uint64_t>(len);
-      payload.WriteData(tmp.GetData(), len);
-    } else {
-      payload.Write<uint32_t>(static_cast<uint32_t>(s.seg_ids.size()));
-      for (uint64_t sid : s.seg_ids) {
-        payload.Write<uint64_t>(sid);
+    // Ordered op manifest (WAL_DESIGN.md §5.4). Insert-only today: each op is
+    // exactly one INLINE or REFERENCE batch.
+    SDB_ASSERT(!s.ops.empty(), "shard section with no ops");
+    payload.Write<uint32_t>(static_cast<uint32_t>(s.ops.size()));
+    for (const auto& op : s.ops) {
+      SDB_ASSERT((op.inline_data != nullptr) != !op.seg_ids.empty(),
+                 "op must be exactly one of INLINE / REFERENCE");
+      payload.Write<uint8_t>(op.inline_data ? kKindInline : kKindReference);
+      if (op.inline_data) {
+        // [u32 seg_count][(u64 base, u64 count) x seg_count][u64
+        // inline_len][CDC]. One (base, count) per inserted Sink chunk (§5.6);
+        // replay re-slices the CDC's rows by `count` so each chunk's rows get
+        // their own base regardless of how ColumnDataCollection coalesced them.
+        // The inline_len prefix lets recovery/GC step to the next op without
+        // deserialising.
+        payload.Write<uint32_t>(static_cast<uint32_t>(op.inline_pks.size()));
+        for (const auto& pk : op.inline_pks) {
+          payload.Write<uint64_t>(pk.base);
+          payload.Write<uint64_t>(pk.count);
+        }
+        tmp.Rewind();
+        duckdb::BinarySerializer serializer{tmp};
+        serializer.Begin();
+        op.inline_data->Serialize(serializer);
+        serializer.End();
+        auto len = static_cast<uint64_t>(tmp.GetPosition());
+        payload.Write<uint64_t>(len);
+        payload.WriteData(tmp.GetData(), len);
+      } else {
+        payload.Write<uint32_t>(static_cast<uint32_t>(op.seg_ids.size()));
+        for (uint64_t sid : op.seg_ids) {
+          payload.Write<uint64_t>(sid);
+          // Attribute the chunk file's bytes to the active segment for the seal
+          // decision (WAL_DESIGN.md §10.2); fsynced at Combine, so its size is
+          // final here. A stat failure only mis-times rotation (not a
+          // correctness issue), but it shouldn't happen for a just-fsynced file
+          // -- warn and skip it.
+          auto chunk_path = ChunkDir(s.schema_id, s.table_id) / ChunkName(sid);
+          std::error_code se;
+          auto sz = std::filesystem::file_size(chunk_path, se);
+          if (se) {
+            SDB_WARN(SEARCH, "search WAL: file_size('", chunk_path.string(),
+                     "') failed: ", se.message(),
+                     " -- chunk excluded from seal accounting");
+          } else {
+            _active_chunk_bytes += sz;
+          }
+        }
       }
     }
   }
@@ -575,17 +575,21 @@ void SearchDbWal::RunGc() {
         auto shard_count = c.Read<uint32_t>();
         for (uint32_t s = 0; s < shard_count; ++s) {
           auto h = ReadSectionHeader(c);
-          if (h.kind == kKindInline) {
-            auto pk_count = c.Read<uint32_t>();
-            c.ReadBlob(pk_count * sizeof(uint64_t));
-            auto inline_len = c.Read<uint64_t>();
-            c.ReadBlob(inline_len);
-          } else {
-            auto seg_count = c.Read<uint32_t>();
-            for (uint32_t k = 0; k < seg_count; ++k) {
-              uint64_t sid = c.Read<uint64_t>();
-              chunk_paths.push_back(ChunkDir(h.schema_id, h.table_id) /
-                                    ChunkName(sid));
+          auto op_count = c.Read<uint32_t>();
+          for (uint32_t o = 0; o < op_count; ++o) {
+            auto kind = c.Read<uint8_t>();
+            if (kind == kKindInline) {
+              auto seg_count = c.Read<uint32_t>();
+              c.ReadBlob(seg_count * 2 * sizeof(uint64_t));  // (base, count) x
+              auto inline_len = c.Read<uint64_t>();
+              c.ReadBlob(inline_len);
+            } else {
+              auto seg_count = c.Read<uint32_t>();
+              for (uint32_t k = 0; k < seg_count; ++k) {
+                uint64_t sid = c.Read<uint64_t>();
+                chunk_paths.push_back(ChunkDir(h.schema_id, h.table_id) /
+                                      ChunkName(sid));
+              }
             }
           }
         }
@@ -623,48 +627,57 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
         ColumnIds column_ids{h.column_ids};
         const bool live =
           exists_of(h.schema_id, h.table_id) && tick > committed_of(h.table_id);
-        if (h.kind == kKindInline) {
-          auto seg_count = c.Read<uint32_t>();
-          const uint8_t* pk_blob = c.ReadBlob(seg_count * 2 * sizeof(uint64_t));
-          auto inline_len = c.Read<uint64_t>();
-          const uint8_t* blob = c.ReadBlob(inline_len);
-          if (!live) {
-            continue;
-          }
-          std::vector<InlinePk> segments(seg_count);
-          for (uint32_t i = 0; i < seg_count; ++i) {
-            std::memcpy(&segments[i].base, pk_blob + (2 * i) * sizeof(uint64_t),
-                        sizeof(uint64_t));
-            std::memcpy(&segments[i].count,
-                        pk_blob + (2 * i + 1) * sizeof(uint64_t),
-                        sizeof(uint64_t));
-          }
-          duckdb::MemoryStream ms(const_cast<uint8_t*>(blob), inline_len);
-          duckdb::BinaryDeserializer deser{ms};
-          deser.Begin();
-          auto cdc = duckdb::ColumnDataCollection::Deserialize(deser);
-          deser.End();
-          // Re-slice by the recorded per-Sink-chunk segments (§5.6) -- the
-          // CDC's own Chunks() coalesce partial appends, so we can't index by
-          // chunk.
-          VisitInlineSegments(
-            *cdc, segments, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-              cb(tick, h.schema_id, h.table_id, pk_base, column_ids, chunk);
-            });
-        } else {
-          auto seg_count = c.Read<uint32_t>();
-          for (uint32_t k = 0; k < seg_count; ++k) {
-            uint64_t sid = c.Read<uint64_t>();
-            auto chunk_path =
-              (ChunkDir(h.schema_id, h.table_id) / ChunkName(sid)).string();
-            referenced.insert(chunk_path);  // survives the orphan sweep
+        // Walk the shard's ordered op manifest (§5.4). All ops share the header
+        // above and the per-shard `live` skip decision (one tick, one shard).
+        auto op_count = c.Read<uint32_t>();
+        for (uint32_t o = 0; o < op_count; ++o) {
+          auto kind = c.Read<uint8_t>();
+          if (kind == kKindInline) {
+            auto seg_count = c.Read<uint32_t>();
+            const uint8_t* pk_blob =
+              c.ReadBlob(seg_count * 2 * sizeof(uint64_t));
+            auto inline_len = c.Read<uint64_t>();
+            const uint8_t* blob = c.ReadBlob(inline_len);
             if (!live) {
               continue;
             }
-            ReplayChunkFile(
-              _fs, chunk_path, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
+            std::vector<InlinePk> segments(seg_count);
+            for (uint32_t i = 0; i < seg_count; ++i) {
+              std::memcpy(&segments[i].base,
+                          pk_blob + (2 * i) * sizeof(uint64_t),
+                          sizeof(uint64_t));
+              std::memcpy(&segments[i].count,
+                          pk_blob + (2 * i + 1) * sizeof(uint64_t),
+                          sizeof(uint64_t));
+            }
+            duckdb::MemoryStream ms(const_cast<uint8_t*>(blob), inline_len);
+            duckdb::BinaryDeserializer deser{ms};
+            deser.Begin();
+            auto cdc = duckdb::ColumnDataCollection::Deserialize(deser);
+            deser.End();
+            // Re-slice by the recorded per-Sink-chunk segments (§5.6) -- the
+            // CDC's own Chunks() coalesce partial appends, so we can't index by
+            // chunk.
+            VisitInlineSegments(
+              *cdc, segments, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
                 cb(tick, h.schema_id, h.table_id, pk_base, column_ids, chunk);
               });
+          } else {
+            auto seg_count = c.Read<uint32_t>();
+            for (uint32_t k = 0; k < seg_count; ++k) {
+              uint64_t sid = c.Read<uint64_t>();
+              auto chunk_path =
+                (ChunkDir(h.schema_id, h.table_id) / ChunkName(sid)).string();
+              referenced.insert(chunk_path);  // survives the orphan sweep
+              if (!live) {
+                continue;
+              }
+              ReplayChunkFile(_fs, chunk_path,
+                              [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
+                                cb(tick, h.schema_id, h.table_id, pk_base,
+                                   column_ids, chunk);
+                              });
+            }
           }
         }
       }

@@ -84,15 +84,16 @@ class SearchTableTransaction {
     _writes[table_id].transactions.push_back(std::move(trx));
   }
 
-  // Register (or extend) a plain search-table WAL commit (WAL_DESIGN.md §7).
-  // Called once per plain INSERT/COPY statement at Finalize: the first call
-  // sets the descriptor; a later statement on the same shard appends its bulk
-  // chunk-file `seg_ids` (inline buffers accumulate in `changes`). Single-shard
-  // contract -- `table_id` must match across calls.
-  void RegisterSearchTableCommit(std::shared_ptr<TableShard> shard,
-                                 ObjectId table_id, uint64_t schema_id,
-                                 std::vector<uint64_t> column_ids,
-                                 std::vector<uint64_t> seg_ids) {
+  // Record (or extend) a plain search-table statement's writes for this txn
+  // (WAL_DESIGN.md §7). Called once per plain INSERT/COPY statement at Finalize
+  // -- this is statement end, NOT the commit: the txn's single WAL record is
+  // appended later, in Commit(). The first call sets the descriptor; a later
+  // statement on the same shard appends its bulk chunk-file `seg_ids` (inline
+  // buffers accumulate in `changes`). `table_id` routes to that shard's entry.
+  void AddSearchTableStatement(std::shared_ptr<TableShard> shard,
+                               ObjectId table_id, uint64_t schema_id,
+                               std::vector<uint64_t> column_ids,
+                               std::vector<uint64_t> seg_ids) {
     auto& w = _writes[table_id];
     w.shard = std::move(shard);
     w.schema_id = schema_id;

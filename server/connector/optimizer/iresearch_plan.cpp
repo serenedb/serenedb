@@ -679,6 +679,18 @@ duckdb::unique_ptr<duckdb::Expression> RewriteCallInExpr(
         return repl;
       }
     }
+  } else if (expr->GetExpressionClass() ==
+             duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    const auto& alias = expr->GetAlias();
+    const auto paren = alias.find('(');
+    std::string_view func_name = alias;
+    if (paren != std::string::npos) {
+      func_name = std::string_view{alias}.substr(0, paren);
+    }
+    if (IsScorerFunctionName(func_name)) {
+      expr->SetAlias({});
+      changed = true;
+    }
   }
   duckdb::ExpressionIterator::EnumerateChildren(
     *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {

@@ -84,9 +84,9 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
     }
     case duckdb::LogicalTypeId::STRUCT: {
       struct_children.reserve(node.child_columns.size());
-      for (auto& cn : node.child_columns) {
+      for (auto& child : node.child_columns) {
         struct_children.push_back(
-          MakeColumnReader(field_limits::invalid(), std::move(cn)));
+          MakeColumnReader(field_limits::invalid(), std::move(child)));
       }
       node.pointers.clear();
       break;
@@ -95,10 +95,11 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
       break;  // primitive leaf: keep pointers, no children.
   }
 
+  const bool fully_shredded = node.fully_shredded;
   return std::make_unique<ColumnReader>(
     id, std::move(node.type), std::move(node.pointers),
     std::move(node.validity_pointers), std::move(element_child),
-    std::move(struct_children), array_size);
+    std::move(struct_children), array_size, fully_shredded);
 }
 
 namespace {
@@ -146,12 +147,13 @@ ColumnReader::ColumnReader(
   std::vector<duckdb::DataPointer> validity_pointers,
   std::unique_ptr<ColumnReader> element_child,
   std::vector<std::unique_ptr<ColumnReader>> struct_children,
-  uint64_t array_size)
+  uint64_t array_size, bool fully_shredded)
   : _id{id},
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
     _validity_pointers{std::move(validity_pointers)},
     _has_validity{AnyNonEmptyValidity(_validity_pointers)},
+    _fully_shredded{fully_shredded},
     _child{std::move(element_child)},
     _array_size{array_size},
     _struct_fields{std::move(struct_children)} {

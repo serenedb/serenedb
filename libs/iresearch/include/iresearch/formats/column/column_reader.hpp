@@ -85,7 +85,7 @@ class ColumnReader final {
                std::vector<duckdb::DataPointer> validity_pointers,
                std::unique_ptr<ColumnReader> element_child,
                std::vector<std::unique_ptr<ColumnReader>> struct_children,
-               uint64_t array_size);
+               uint64_t array_size, bool fully_shredded = true);
 
   ColumnReader(field_id id, duckdb::LogicalType type,
                std::vector<duckdb::DataPointer> validity_pointers,
@@ -99,6 +99,7 @@ class ColumnReader final {
 
   uint64_t RowCount() const noexcept { return _row_count; }
   bool HasValidity() const noexcept { return _has_validity; }
+  bool FullyShredded() const noexcept { return _fully_shredded; }
 
   size_t DataRgCount() const noexcept { return _data_pointers.size(); }
   size_t ValidityRgCount() const noexcept { return _validity_pointers.size(); }
@@ -336,6 +337,7 @@ class ColumnReader final {
   std::vector<uint64_t> _validity_offsets;  // size = validity_pointers + 1
   uint64_t _row_count = 0;
   bool _has_validity = false;  // any RG with non-EMPTY validity codec
+  bool _fully_shredded = true;
   std::unique_ptr<ColumnReader> _child;
   uint64_t _array_size = 0;  // 0 for non-ARRAY
   std::vector<std::unique_ptr<ColumnReader>>

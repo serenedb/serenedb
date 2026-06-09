@@ -241,7 +241,21 @@ COPY (
               ROW('k2', i * 2)::STRUCT(k VARCHAR, v INTEGER)])
            ::STRUCT(name VARCHAR, vals STRUCT(k VARCHAR, v INTEGER)[]) AS deep,
          {'a': (i * 0.5)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
-           AS variant_obj
+           AS variant_obj,
+         CASE
+           WHEN i < 1000 AND i % 100 = 0
+             THEN {'a': (i * 0.5)::DOUBLE,
+                   'b': 'b-' || (i % 100)::VARCHAR, 'rare': i}::VARIANT
+           WHEN i % 1000 = 0
+             THEN {'a': (i * 0.5)::DOUBLE, 'b': i}::VARIANT
+           WHEN i % 9999 = 3
+             THEN {'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+           ELSE {'a': (i * 0.5)::DOUBLE,
+                 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+         END AS variant_messy,
+         {'outer': {'mid': {'a': (i * 0.5)::DOUBLE,
+                            'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
+           AS variant_nested
   FROM range(${N}) t(i)
 ) TO '${PQ_SQL_PATH}' (FORMAT parquet);
 "
@@ -311,7 +325,7 @@ CREATE INDEX bench_idx ON bench_view USING inverted(bool_col)
 INCLUDE (
   i8, i16, i32, i64, f32, f64, s, bool_col,
   arr_i32, arr_f64, lst_i32, struct_basic, struct_f64,
-  map_i32, lst_struct, deep, variant_obj
+  map_i32, lst_struct, deep, variant_obj, variant_messy, variant_nested
 );
 "
 fi
@@ -353,6 +367,8 @@ QUERIES=(
 	"lstStr|SUM(list_sum(list_transform(lst_struct, p -> p.v)))"
 	"deep|SUM(length(deep.name)) + SUM(list_sum(list_transform(deep.vals, p -> p.v)))"
 	"variant|SUM(variant_obj.a::DOUBLE) + SUM(1.0 / length(variant_obj.b::VARCHAR))"
+	"variantMsg|SUM(variant_messy.a::DOUBLE)"
+	"variantNest|SUM(variant_nested.outer.mid.a::DOUBLE) + SUM(length(variant_nested.outer.mid.b::VARCHAR))"
 )
 
 # Three timing modes, picked by env:
@@ -547,7 +563,7 @@ ratio() {
 			"----------" "------------" "------------" "--------" \
 			"------------" "------------" "--------"
 		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-			array arrayF list struct structF map lstStr deep; do
+			array arrayF list struct structF map lstStr deep variant variantMsg variantNest; do
 			ci="${TIMINGS[cold_${q}_indexed]:-}"
 			cn="${TIMINGS[cold_${q}_native]:-}"
 			hi="${TIMINGS[hot_${q}_indexed]:-}"
@@ -566,7 +582,7 @@ ratio() {
 		printf "%-10s %12s %12s %8s\n" \
 			"----------" "------------" "------------" "--------"
 		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-			array arrayF list struct structF map lstStr deep; do
+			array arrayF list struct structF map lstStr deep variant variantMsg variantNest; do
 			hi="${TIMINGS[hot_${q}_indexed]:-}"
 			hn="${TIMINGS[hot_${q}_native]:-}"
 			printf "%-10s %12s %12s %8s\n" "${q}" \

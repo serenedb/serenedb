@@ -83,6 +83,7 @@ struct PersistentColumnData {
   // child element count across all row groups written so far for this
   // node, used to bias per-RG offsets into the column-global space.
   uint64_t list_global_running = 0;
+  bool fully_shredded = true;
 };
 
 // Top-level entry for one column: id + recursive metadata root.
@@ -106,6 +107,7 @@ inline duckdb::DataPointer CloneDataPointer(const duckdb::DataPointer& p) {
 inline PersistentColumnData Clone(const PersistentColumnData& src) {
   PersistentColumnData out;
   out.type = src.type;
+  out.fully_shredded = src.fully_shredded;
   out.pointers.reserve(src.pointers.size());
   for (const auto& p : src.pointers) {
     out.pointers.emplace_back(CloneDataPointer(p));

@@ -215,17 +215,17 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
       ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id};
       if (info && info->store_values &&
           proj < state.projected_column_indexes.size()) {
-        const auto& ci = state.projected_column_indexes[proj];
-        if (ci.IsPushdownExtract() && ci.HasChildren()) {
+        const auto& column_index = state.projected_column_indexes[proj];
+        if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
           std::vector<std::string> path;
-          const duckdb::ColumnIndex* node = &ci.GetChildIndex(0);
+          const duckdb::ColumnIndex* node = &column_index.GetChildIndex(0);
           bool by_key_only = true;
           while (true) {
             if (node->HasPrimaryIndex()) {
               by_key_only = false;
               break;
             }
-            path.push_back(node->GetFieldName());
+            path.emplace_back(node->GetFieldName());
             if (!node->HasChildren()) {
               break;
             }
@@ -233,11 +233,11 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
           }
           if (by_key_only && !path.empty()) {
             cp.extract_path = std::move(path);
-            cp.extract_scan_type = ci.GetScanType();
+            cp.extract_scan_type = column_index.GetScanType();
           }
         }
       }
-      state.cs_projections.push_back(std::move(cp));
+      state.cs_projections.emplace_back(std::move(cp));
       state.external_projected_columns[proj] =
         duckdb::DConstants::INVALID_INDEX;
       continue;

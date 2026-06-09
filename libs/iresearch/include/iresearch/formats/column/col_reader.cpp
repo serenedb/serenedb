@@ -91,27 +91,28 @@ PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
     4, "variant_layouts",
     [&](duckdb::Deserializer::List& vlist, duckdb::idx_t /*j*/) {
       vlist.ReadObject([&](duckdb::Deserializer& vo) {
-        VariantRowGroupLayout l;
-        l.row_start = vo.ReadProperty<uint64_t>(0, "row_start");
-        l.row_count = vo.ReadProperty<uint64_t>(1, "row_count");
+        auto& layout = node.variant_layouts.emplace_back();
+        layout.row_start = vo.ReadProperty<uint64_t>(0, "row_start");
+        layout.row_count = vo.ReadProperty<uint64_t>(1, "row_count");
         const auto shred_state = magic_enum::enum_cast<VariantShredState>(
           vo.ReadProperty<uint8_t>(2, "shred_state"));
         SDB_ENSURE(shred_state, sdb::ERROR_INTERNAL,
                    "corrupt columnstore footer: invalid variant shred_state");
-        l.shred_state = *shred_state;
+        layout.shred_state = *shred_state;
         vo.ReadObject(3, "unshredded", [&](duckdb::Deserializer& u) {
-          l.unshredded =
+          layout.unshredded =
             std::make_unique<PersistentColumnData>(DeserializeColumnData(u));
         });
-        if (l.shred_state != VariantShredState::Unshredded) {
+        if (layout.shred_state != VariantShredState::Unshredded) {
           vo.ReadObject(4, "shredded_node", [&](duckdb::Deserializer& s) {
-            l.shredded_node =
+            layout.shredded_node =
               std::make_unique<PersistentColumnData>(DeserializeColumnData(s));
           });
         }
-        node.variant_layouts.push_back(std::move(l));
       });
     });
+  node.fully_shredded =
+    obj.ReadPropertyWithExplicitDefault<bool>(5, "fully_shredded", true);
   return node;
 }
 

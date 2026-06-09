@@ -28,18 +28,15 @@ ColumnstoreMaterializer::ColumnstoreMaterializer(
   duckdb::ClientContext* context)
   : _ctx{reader}, _context{context} {
   _bound.reserve(projections.size());
-  for (const auto& cp : projections) {
-    const auto* r = reader.Column(static_cast<irs::field_id>(cp.column_id));
-    if (!r) {
+  for (const auto& projection : projections) {
+    const auto* column_reader =
+      reader.Column(static_cast<irs::field_id>(projection.column_id));
+    if (!column_reader) {
       continue;
     }
-    _bound.push_back(Binding{
-      .reader = r,
-      .output_slot = cp.output_slot,
-      .state = irs::MakeMaterializeState(*r, _ctx),
-      .extract_path = cp.extract_path,
-      .extract_scan_type = cp.extract_scan_type,
-    });
+    _bound.emplace_back(column_reader, projection.output_slot,
+                        irs::MakeMaterializeState(*column_reader, _ctx),
+                        projection.extract_path, projection.extract_scan_type);
   }
 }
 

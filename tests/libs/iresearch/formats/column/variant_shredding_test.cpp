@@ -84,7 +84,7 @@ void WriteVariantColumn(duckdb::DatabaseInstance& db, irs::Directory& dir,
     ASSERT_EQ(chunk->data[0].GetType().id(), duckdb::LogicalTypeId::VARIANT);
     cw.Append(produced, chunk->data[0], chunk->size());
     for (duckdb::idx_t k = 0; k < chunk->size(); ++k) {
-      expected.push_back(chunk->GetValue(0, k));
+      expected.emplace_back(chunk->GetValue(0, k));
     }
     produced += chunk->size();
   }
@@ -106,7 +106,7 @@ std::vector<duckdb::Value> ReadVariantColumn(Reader& r,
     duckdb::Vector batch{duckdb::LogicalType::VARIANT(), STANDARD_VECTOR_SIZE};
     irs::MaterializeNode(col, *state, irs::IotaRange{pos, take}, batch, 0);
     for (duckdb::idx_t k = 0; k < take; ++k) {
-      out.push_back(batch.GetValue(k));
+      out.emplace_back(batch.GetValue(k));
     }
     pos += take;
   }
@@ -140,7 +140,7 @@ std::vector<duckdb::Value> QueryScalarColumn(duckdb::DatabaseInstance& db,
   std::vector<duckdb::Value> out;
   while (auto chunk = result->Fetch()) {
     for (duckdb::idx_t k = 0; k < chunk->size(); ++k) {
-      out.push_back(chunk->GetValue(0, k));
+      out.emplace_back(chunk->GetValue(0, k));
     }
   }
   return out;
@@ -162,7 +162,7 @@ std::vector<duckdb::Value> ReadVariantExtract(
     irs::MaterializeExtractNode(col, *state, irs::IotaRange{pos, take}, path,
                                 scan_type, batch, 0, context);
     for (duckdb::idx_t k = 0; k < take; ++k) {
-      out.push_back(batch.GetValue(k));
+      out.emplace_back(batch.GetValue(k));
     }
     pos += take;
   }
@@ -505,6 +505,54 @@ TEST_F(IRSVariantShreddingTest, ExtractStructValuedFieldFallsBack) {
   const std::vector<std::string> path{"a"};
   ExpectValuesEqual(expected,
                     ReadVariantExtract(r, *col, *con.context, path, a_type));
+}
+
+TEST_F(IRSVariantShreddingTest, ExtractCleanFieldFastPathInPartialRowGroup) {
+  irs::MemoryDirectory dir{};
+  constexpr std::string_view kSegment = "ex_partial_clean";
+  SetShreddingSize(0);
+
+  const std::string obj =
+    "CASE WHEN i % 5 = 0 THEN {'a': i, 'b': ('v' || i)}::VARIANT "
+    "ELSE {'a': (i * 0.5)::DOUBLE, 'b': ('v' || i)}::VARIANT END";
+  std::vector<duckdb::Value> ignored;
+  WriteVariantColumn(Db(), dir, kSegment, /*id=*/21,
+                     "SELECT " + obj + " FROM range(400) t(i)", 256, ignored);
+
+  Reader r{dir, std::string{kSegment}, Db()};
+  const auto* col = r.Column(21);
+  ASSERT_NE(col, nullptr);
+
+  const std::vector<std::string> path_a{"a"};
+  const std::vector<std::string> path_b{"b"};
+  bool checked_partial = false;
+  for (size_t rg = 0; rg < col->VariantRgCount(); ++rg) {
+    const auto& rg_reader = col->VariantRg(rg);
+    if (rg_reader.shred_state != VariantShredState::Partial) {
+      continue;
+    }
+    checked_partial = true;
+    EXPECT_NE(irs::ResolveShreddedLeaf(*rg_reader.shredded_node, path_b),
+              nullptr)
+      << "clean sibling 'b' should fast-path in a Partial row group, rg=" << rg;
+    EXPECT_EQ(irs::ResolveShreddedLeaf(*rg_reader.shredded_node, path_a),
+              nullptr)
+      << "spilled field 'a' must fall back, rg=" << rg;
+  }
+  ASSERT_TRUE(checked_partial) << "expected at least one Partial row group";
+
+  duckdb::Connection con{Db()};
+  const auto expected_b = QueryScalarColumn(
+    Db(), "SELECT (" + obj + ").b::VARCHAR FROM range(400) t(i)");
+  ExpectValuesEqual(expected_b,
+                    ReadVariantExtract(r, *col, *con.context, path_b,
+                                       duckdb::LogicalType::VARCHAR));
+
+  const auto expected_a = QueryScalarColumn(
+    Db(), "SELECT (" + obj + ").a::DOUBLE FROM range(400) t(i)");
+  ExpectValuesEqual(expected_a,
+                    ReadVariantExtract(r, *col, *con.context, path_a,
+                                       duckdb::LogicalType::DOUBLE));
 }
 
 }  // namespace

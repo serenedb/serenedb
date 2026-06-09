@@ -94,6 +94,8 @@ void SerializeColumnData(duckdb::Serializer& obj,
                     }
                   });
                 });
+  obj.WritePropertyWithDefault<bool>(5, "fully_shredded", node.fully_shredded,
+                                     true);
 }
 
 }  // namespace

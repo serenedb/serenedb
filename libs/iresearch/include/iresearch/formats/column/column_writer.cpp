@@ -391,6 +391,51 @@ bool VariantShreddingEnabled(int64_t minimum_size, uint64_t row_count) {
   return row_count >= static_cast<uint64_t>(minimum_size);
 }
 
+bool NoSpilledRows(duckdb::Vector& untyped_value_index, uint64_t row_count) {
+  duckdb::UnifiedVectorFormat fmt;
+  untyped_value_index.ToUnifiedFormat(row_count, fmt);
+  const auto* indices = duckdb::UnifiedVectorFormat::GetData<uint32_t>(fmt);
+  for (uint64_t row = 0; row < row_count; ++row) {
+    const auto idx = fmt.sel->get_index(row);
+    if (fmt.validity.RowIsValid(idx) && indices[idx] > 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void MarkFullyShredded(duckdb::Vector& vec, PersistentColumnData& node,
+                       uint64_t row_count) {
+  if (vec.GetType().id() != duckdb::LogicalTypeId::STRUCT) {
+    return;
+  }
+  auto& entries = duckdb::StructVector::GetEntries(vec);
+  const auto& child_types = duckdb::StructType::GetChildTypes(vec.GetType());
+  size_t typed_value_index = child_types.size();
+  size_t untyped_value_index = child_types.size();
+  for (size_t child = 0; child < child_types.size(); ++child) {
+    if (child_types[child].first == "typed_value") {
+      typed_value_index = child;
+    } else if (child_types[child].first == "untyped_value_index") {
+      untyped_value_index = child;
+    }
+  }
+
+  if (typed_value_index == child_types.size()) {
+    for (size_t child = 0; child < entries.size(); ++child) {
+      MarkFullyShredded(entries[child], node.child_columns[child], row_count);
+    }
+    return;
+  }
+
+  if (untyped_value_index != child_types.size()) {
+    node.fully_shredded =
+      NoSpilledRows(entries[untyped_value_index], row_count);
+  }
+  MarkFullyShredded(entries[typed_value_index],
+                    node.child_columns[typed_value_index], row_count);
+}
+
 void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
                duckdb::Vector& vec, duckdb::idx_t row_count, uint64_t row_start,
                PersistentColumnData& node, bool skip_validity,
@@ -528,6 +573,7 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
       FlushNode(write_ctx, layout.shredded_node->type, shred_entries[1],
                 row_count, /*row_start=*/0, *layout.shredded_node,
                 /*skip_validity=*/false, forced);
+      MarkFullyShredded(shred_entries[1], *layout.shredded_node, row_count);
       return;
     }
     case duckdb::LogicalTypeId::STRUCT: {

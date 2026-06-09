@@ -32,13 +32,26 @@ EXPLAIN SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] L
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 1          │
+│      Order By: #1 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│    Index: wal_hnsw_idx    │
+│           Index:          │
+│     wal_hnsw_idx (ANN)    │
+│                           │
 │      Lookup: rocksdb      │
 │          TopK: 1          │
 │          Dims: 3          │
-│      Projections: pk      │
+│                           │
+│        Projections:       │
+│             pk            │
+│  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

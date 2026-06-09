@@ -132,14 +132,18 @@ struct SearchInsertSourceState : duckdb::GlobalSourceState {
   bool finished = false;
 };
 
-// Per-sink-thread state. Each thread owns one iresearch segment (its own
-// IndexWriter::Transaction) and writes its chunks directly into it during
-// Sink. The transaction is handed to query::Transaction at Combine and
-// committed on the shared tick at txn commit -- NOT here, so it must survive
-// Combine (we must not let its destructor auto-commit, which would assign an
-// unrelated _tick-derived tick).
+// Per-sink-thread state. The thread writes its chunks into an iresearch
+// transaction during Sink: a BULK thread owns a fresh trx (one segment per
+// thread, `search_trx`) handed to query::Transaction at Combine; a
+// single-threaded (inline) statement instead reuses the shard's serial trx
+// (owned by SearchTableTransaction, acquired lazily in Sink -- WAL_DESIGN.md
+// §5.5) so consecutive statements coalesce into one segment. Either way the trx
+// commits on the shared tick at txn commit -- NOT here (a destructor
+// auto-commit would assign an unrelated _tick-derived tick).
 struct SearchInsertLocalState : duckdb::LocalSinkState {
-  // search_trx must outlive `sink` (the writer holds a reference to it).
+  // BULK path only: this thread's owned trx (one segment); must outlive `sink`.
+  // Null on the inline path -- there `sink` wraps the shard's reused serial
+  // trx.
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<SearchTableSinkWriter> sink;
   // Bulk gate (WAL_DESIGN.md §6): true when the engine chose >1 sink thread.
@@ -352,20 +356,26 @@ SereneDBSearchInsert::GetLocalSinkState(
   }
 
   auto lstate = duckdb::make_uniq<SearchInsertLocalState>();
-  lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-    gstate->search_shard->GetTransaction());
-  lstate->sink = std::make_unique<SearchTableSinkWriter>(*lstate->search_trx);
-
   // Bulk gate (WAL_DESIGN.md §6): the engine's chosen parallel degree decides
   // the WAL record shape. >1 sink thread => each streams its own chunk file
   // (REFERENCE); ==1 => the lone thread buffers and the record is INLINE.
   lstate->bulk = context.pipeline && context.pipeline->GetMaxThreads() > 1;
 
-  if (!lstate->bulk) {
+  if (lstate->bulk) {
+    // Bulk: this thread owns a fresh iresearch trx (one segment), written
+    // during Sink and handed off at Combine. The chunk-file writer opens
+    // lazily on the first Sink chunk so a no-rows thread leaves no empty file.
+    lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
+      gstate->search_shard->GetTransaction());
+    lstate->sink = std::make_unique<SearchTableSinkWriter>(*lstate->search_trx);
+  } else {
     // Inline (small INSERT): buffer this thread's rows on query::Transaction
     // so they outlive the local state -- the INLINE WAL record serialises the
     // buffer at commit (and a future RYOW overlay reads it). unique_ptr keeps
-    // the pointer stable across vector growth.
+    // the pointer stable across vector growth. The iresearch trx is the
+    // shard's serial trx, REUSED across single-threaded statements (§5.5),
+    // acquired lazily on the first row in Sink -- so consecutive INSERTs
+    // coalesce into one segment and a zero-row statement parks nothing.
     auto collection = std::make_unique<duckdb::ColumnDataCollection>(
       duckdb::BufferManager::GetBufferManager(context.client),
       gstate->chunk_types);
@@ -381,8 +391,6 @@ SereneDBSearchInsert::GetLocalSinkState(
     lstate->collection = buf.collection.get();
     lstate->pk_segments = buf.pk_segments.get();
   }
-  // Bulk: no collection; the chunk-file writer opens lazily on the first Sink
-  // chunk so a sink thread that receives no rows leaves no empty chunk file.
   return lstate;
 }
 
@@ -393,8 +401,19 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   auto* lstate = dynamic_cast<SearchInsertLocalState*>(&input.local_state);
 
   const auto num_rows = chunk.size();
-  if (num_rows == 0 || lstate == nullptr || !lstate->sink) {
+  if (num_rows == 0 || lstate == nullptr) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
+  if (!lstate->sink) {
+    // Inline path, first row: acquire the shard's serial iresearch trx (created
+    // on the first single-threaded statement, reused thereafter -- §5.5) and
+    // wrap it in a sink. Lazy (like the bulk chunk_writer below) so a zero-row
+    // statement parks nothing. Bulk created its sink eagerly in
+    // GetLocalSinkState.
+    SDB_ASSERT(!lstate->bulk);
+    auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
+      gstate.table_id, [&] { return gstate.search_shard->GetTransaction(); });
+    lstate->sink = std::make_unique<SearchTableSinkWriter>(trx);
   }
 
   // Write this chunk straight into the thread's own iresearch segment: one
@@ -440,19 +459,18 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
   auto* lstate = dynamic_cast<SearchInsertLocalState*>(&input.local_state);
-  if (lstate == nullptr || !lstate->search_trx) {
-    return duckdb::SinkCombineResultType::FINISHED;
+  if (lstate == nullptr) {
+    return duckdb::SinkCombineResultType::FINISHED;  // CTAS IF-NOT-EXISTS no-op
   }
 
-  // The writer holds a reference to search_trx -- destroy it first (its
-  // Document was already released by the last Sink's Finish).
+  // The writer holds a reference to its trx -- destroy it first (its Document
+  // was already released by the last Sink's Finish).
   lstate->sink.reset();
 
-  // A thread that received no rows has an empty transaction (no segment was
-  // ever acquired) and -- on the bulk path -- never opened a chunk file
-  // (lazy in Sink). Discard the trx instead of handing it off: destructing it
-  // is a no-op (mirrors CREATE INDEX's unconditional reset of per-thread
-  // trxs). Only segments that hold rows are committed on tick.
+  // No rows: nothing to hand off. A bulk thread's eagerly-created owned trx
+  // never acquired a segment -> discard it; the inline path never lazily
+  // acquired the shard's serial trx at all. (Destructing an empty trx is a
+  // no-op; mirrors CREATE INDEX's unconditional reset of per-thread trxs.)
   if (lstate->insert_count == 0) {
     lstate->search_trx.reset();
     return duckdb::SinkCombineResultType::FINISHED;
@@ -470,18 +488,20 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
     seg_id = lstate->chunk_writer->SegId();
   }
 
-  // Hand the populated segment to query::Transaction. We do NOT commit it
-  // here: the commit-on-tick (Commit(tick)) happens in Transaction::Commit.
-  // Letting the destructor auto-commit would advance the writer's internal
-  // _tick and assign an unrelated tick, breaking the
-  // single-RefreshCommit-publishes-all-segments invariant.
   std::lock_guard<std::mutex> lock(gstate.combine_mu);
   gstate.insert_count += lstate->insert_count;
   if (lstate->bulk) {
     gstate.seg_ids.push_back(seg_id);
+    // Hand this thread's populated segment to query::Transaction. We do NOT
+    // commit it here: the commit-on-tick (Commit(tick)) happens in
+    // Transaction::Commit. Letting the destructor auto-commit would advance the
+    // writer's internal _tick and assign an unrelated tick, breaking the
+    // single-RefreshCommit-publishes-all-segments invariant.
+    gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
+      gstate.table_id, std::move(lstate->search_trx));
   }
-  gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
-    gstate.table_id, std::move(lstate->search_trx));
+  // Inline: the shard's serial trx is already owned by SearchTableTransaction
+  // (acquired in Sink) and reused across statements -- nothing to hand off.
   return duckdb::SinkCombineResultType::FINISHED;
 }
 

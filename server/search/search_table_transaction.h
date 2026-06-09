@@ -53,9 +53,10 @@ struct SearchShardWrites {
   // Combine/Finalize. Empty => this shard's data is in its inline buffers
   // (the per-table entry in `changes`).
   std::vector<uint64_t> seg_ids;
-  // Per-thread iresearch transactions for this shard (one per parallel sink
-  // thread; one for the single-threaded inline case). Handed off at Combine,
-  // committed on the shared WAL tick at Commit().
+  // Per-shard iresearch transactions, committed on the shared WAL tick at
+  // Commit(). A parallel (bulk) INSERT appends one per sink thread; consecutive
+  // single-threaded INSERTs reuse the LAST one so they coalesce into a single
+  // segment (WAL_DESIGN.md §5.5).
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
 };
 
@@ -80,6 +81,24 @@ class SearchTableTransaction {
   void AddParallelSearchTransaction(
     ObjectId table_id, std::unique_ptr<irs::IndexWriter::Transaction> trx) {
     _writes[table_id].transactions.push_back(std::move(trx));
+  }
+
+  // Single-threaded INSERT: reuse the LAST iresearch trx on this shard (create
+  // one via `make_trx` if the shard has none yet), so consecutive non-bulk
+  // statements in this txn coalesce into ONE segment instead of one-per-
+  // statement (WAL_DESIGN.md §5.5). The operator calls this lazily on the first
+  // row -- a zero-row statement parks nothing -- and the single-threaded path
+  // is serialised, so no locking is needed. Bulk statements keep appending
+  // fresh per-thread trxs via AddParallelSearchTransaction.
+  template<typename Factory>
+  irs::IndexWriter::Transaction& EnsureSerialSearchTransaction(
+    ObjectId table_id, Factory&& make_trx) {
+    auto& trxs = _writes[table_id].transactions;
+    if (trxs.empty()) {
+      trxs.push_back(
+        std::make_unique<irs::IndexWriter::Transaction>(make_trx()));
+    }
+    return *trxs.back();
   }
 
   // Record (or extend) a plain search-table statement's writes for this txn

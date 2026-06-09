@@ -132,28 +132,23 @@ void SearchAnnTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
   buffer.ResetValues();
   seg.Search(vs.field_id, info, buffer, seg_idx, read_ctx);
 
-  constexpr auto cmp = [](const std::pair<float, int64_t>& a,
-                          const std::pair<float, int64_t>& b) {
-    return a.first < b.first;
-  };
   for (size_t i = 0; i < top_k_cap; ++i) {
     const int64_t id = buffer.ids[i];
     if (id == -1) {
       continue;
     }
     const float d = buffer.dis[i];
-    if (top_hits.size() < top_k_cap) {
-      top_hits.emplace_back(d, id);
-      std::push_heap(top_hits.begin(), top_hits.end(), cmp);
-    } else if (d < top_hits.front().first) {
-      std::pop_heap(top_hits.begin(), top_hits.end(), cmp);
-      top_hits.back() = {d, id};
-      std::push_heap(top_hits.begin(), top_hits.end(), cmp);
+    if (top_hits.size() == top_k_cap && d >= top_hits.top().first) {
+      continue;
+    }
+    top_hits.emplace(d, id);
+    if (top_hits.size() > top_k_cap) {
+      top_hits.pop();
     }
   }
 
   if (top_hits.size() == top_k_cap) {
-    const float local_kth = top_hits.front().first;
+    const float local_kth = top_hits.top().first;
     float cur = g.global_kth_dis.load(std::memory_order_relaxed);
     while (local_kth < cur && !g.global_kth_dis.compare_exchange_weak(
                                 cur, local_kth, std::memory_order_relaxed)) {
@@ -166,7 +161,9 @@ void SearchAnnTopKLocalState::PrepEmitBuffer(duckdb::ClientContext& /*ctx*/,
   const auto& vs = *g.scan->vector_scorer;
   hits.clear();
   hits.reserve(top_hits.size());
-  for (auto& [d, id] : top_hits) {
+  while (!top_hits.empty()) {
+    auto [d, id] = top_hits.top();
+    top_hits.pop();
     auto [seg, doc] = irs::UnpackSegmentWithDoc(id);
     hits.push_back(
       {.score = vs.TransformDistance(d), .doc = doc, .segment_idx = seg});

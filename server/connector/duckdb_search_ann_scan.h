@@ -29,6 +29,7 @@
 #include <iresearch/search/filter.hpp>
 #include <memory>
 #include <optional>
+#include <queue>
 #include <string>
 #include <vector>
 
@@ -59,17 +60,19 @@ struct SearchAnnTopKLocalState : public SegDocBufferedScanLocalState {
   irs::Filter::Query::ptr text_filter_query;
   std::optional<TextScanFilter> text_filter;
 
+  // Per-call scratch lives in `buffer` (overwritten by every seg.Search). The
+  // running top-K survives across segments here, mirroring BM25's persistent
+  // NthPartitionScoreCollector. Default std::less on pair<float, int64_t>
+  // gives a max-heap by distance: front() is the kth-worst we've kept.
   size_t top_k_cap = 0;
-  std::vector<std::pair<float, int64_t>> top_hits;
+  std::priority_queue<std::pair<float, int64_t>> top_hits;
   std::vector<irs::ScoreDoc> hits;
 
   explicit SearchAnnTopKLocalState(size_t k)
     : dis_buf(k),
       ids_buf(k),
       buffer{dis_buf.data(), ids_buf.data(), k},
-      top_k_cap{k} {
-    top_hits.reserve(k);
-  }
+      top_k_cap{k} {}
 
   void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                  uint32_t seg_idx, SearchAnnScanGlobalState& g);

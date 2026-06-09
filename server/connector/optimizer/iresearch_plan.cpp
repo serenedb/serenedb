@@ -1023,8 +1023,7 @@ bool TryClaimSearchFilter(
   irs::And* root_ptr;
   if (scan.vector_scorer) {
     auto proxy = std::make_shared<irs::ProxyFilter>();
-    root_ptr =
-      &proxy->set_filter<irs::And>(irs::IResourceManager::gNoop).first;
+    root_ptr = &proxy->set_filter<irs::And>(irs::IResourceManager::gNoop).first;
     stored = std::move(proxy);
   } else {
     auto and_filter = std::make_shared<irs::And>();

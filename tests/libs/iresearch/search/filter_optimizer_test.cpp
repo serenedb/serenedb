@@ -64,6 +64,16 @@ irs::Filter::ptr MakeNot(irs::Filter::ptr child) {
   return std::make_unique<irs::Not>(std::move(child));
 }
 
+irs::Filter::ptr MakeExclude(irs::Filter::ptr include,
+                             irs::Filter::ptr exclude) {
+  auto ex = std::make_unique<irs::Exclusion>();
+  if (include) {
+    ex->include(std::move(include));
+  }
+  ex->exclude(std::move(exclude));
+  return ex;
+}
+
 template<typename... Ts>
 std::vector<irs::Filter::ptr> Filters(Ts&&... children) {
   std::vector<irs::Filter::ptr> result;
@@ -194,11 +204,55 @@ TEST(filter_optimizer_test, not_inside_and) {
 
   irs::Optimize(root);
 
-  ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  ASSERT_EQ(2, and_root.size());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), and_root[1].type());
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
+  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
+  ASSERT_NE(nullptr, node.include());
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.include()->type());
+  ASSERT_NE(nullptr, node.exclude());
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
+}
+
+TEST(filter_optimizer_test, and_coalesces_multiple_nots) {
+  irs::Filter::ptr root =
+    MakeAnd(MakeTerm(kName, "A"), MakeTerm(kName, "B"),
+            MakeNot(MakeTerm(kName, "X")), MakeNot(MakeTerm(kName, "Y")));
+
+  irs::Optimize(root);
+
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
+  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
+  ASSERT_NE(nullptr, node.include());
+  ASSERT_EQ(irs::Type<irs::And>::id(), node.include()->type());
+  ASSERT_EQ(2, sdb::basics::downCast<irs::And>(*node.include()).size());
+  ASSERT_NE(nullptr, node.exclude());
+  ASSERT_EQ(irs::Type<irs::Or>::id(), node.exclude()->type());
+  ASSERT_EQ(2, sdb::basics::downCast<irs::Or>(*node.exclude()).size());
+}
+
+TEST(filter_optimizer_test, and_only_nots_coalesce) {
+  irs::Filter::ptr root =
+    MakeAnd(MakeNot(MakeTerm(kName, "X")), MakeNot(MakeTerm(kName, "Y")));
+
+  irs::Optimize(root);
+
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
+  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
+  ASSERT_EQ(nullptr, node.include());
+  ASSERT_NE(nullptr, node.exclude());
+  ASSERT_EQ(irs::Type<irs::Or>::id(), node.exclude()->type());
+  ASSERT_EQ(2, sdb::basics::downCast<irs::Or>(*node.exclude()).size());
+}
+
+TEST(filter_optimizer_test, and_single_bare_not) {
+  irs::Filter::ptr root = MakeAnd(MakeNot(MakeTerm(kName, "X")));
+
+  irs::Optimize(root);
+
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
+  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
+  ASSERT_EQ(nullptr, node.include());
+  ASSERT_NE(nullptr, node.exclude());
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
 }
 
 TEST(filter_optimizer_test, flatten_and) {
@@ -366,12 +420,13 @@ TEST(filter_optimizer_test, custom_rule_subset) {
 
   irs::Optimize(root, {}, irs::kDefaultRules.subspan(1));
 
-  ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  ASSERT_EQ(3, and_root.size());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
-  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[1].type());
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), and_root[2].type());
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
+  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
+  ASSERT_NE(nullptr, node.include());
+  ASSERT_EQ(irs::Type<irs::And>::id(), node.include()->type());
+  ASSERT_EQ(2, sdb::basics::downCast<irs::And>(*node.include()).size());
+  ASSERT_NE(nullptr, node.exclude());
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
 }
 
 TEST(filter_optimizer_test, and_with_empty_child_collapses) {
@@ -621,10 +676,11 @@ TEST(filter_optimizer_test, or_all_required_unwraps_not_child) {
 
   irs::Optimize(root);
 
-  ASSERT_EQ(irs::Type<irs::And>::id(), root->type());
-  auto& and_root = sdb::basics::downCast<irs::And>(*root);
-  ASSERT_EQ(2, and_root.size());
-  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), and_root[1].type());
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), root->type());
+  auto& node = sdb::basics::downCast<irs::Exclusion>(*root);
+  ASSERT_NE(nullptr, node.include());
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.include()->type());
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
 }
 
 TEST(filter_optimizer_test, or_all_required_single_child_unaffected) {
@@ -709,84 +765,73 @@ TEST_P(FilterOptimizerTestCase, optimized_equals_naive) {
   std::iota(all_but_first.begin(), all_but_first.end(), 2);
 
   {
-    const auto make = []() -> irs::Filter::ptr {
-      return MakeNot(MakeTerm(kName, "A"));
-    };
-    auto naive = make();
+    auto naive = MakeExclude(nullptr, MakeTerm(kName, "A"));
     CheckQuery(*naive, all_but_first, rdr);
-    auto optimized = make();
+    irs::Filter::ptr optimized = MakeNot(MakeTerm(kName, "A"));
     irs::Optimize(optimized);
     CheckQuery(*optimized, all_but_first, rdr);
   }
 
   {
-    const auto make = []() -> irs::Filter::ptr {
-      return MakeAnd(MakeTerm(kDuplicated, "abcd"),
-                     MakeNot(MakeTerm(kName, "A")));
-    };
-    auto naive = make();
+    auto naive = MakeAnd(MakeTerm(kDuplicated, "abcd"),
+                         MakeExclude(nullptr, MakeTerm(kName, "A")));
     CheckQuery(*naive, Docs{5, 11, 21, 27, 31}, rdr);
-    auto optimized = make();
+    irs::Filter::ptr optimized =
+      MakeAnd(MakeTerm(kDuplicated, "abcd"), MakeNot(MakeTerm(kName, "A")));
     irs::Optimize(optimized);
     CheckQuery(*optimized, Docs{5, 11, 21, 27, 31}, rdr);
   }
 
   {
-    const auto make = []() -> irs::Filter::ptr {
-      return MakeOr(MakeTerm(kDuplicated, "abcd"),
-                    MakeNot(MakeTerm(kName, "A")));
-    };
-    auto naive = make();
+    auto naive = MakeOr(MakeTerm(kDuplicated, "abcd"),
+                        MakeExclude(nullptr, MakeTerm(kName, "A")));
     CheckQuery(*naive, all_docs, rdr);
-    auto optimized = make();
+    irs::Filter::ptr optimized =
+      MakeOr(MakeTerm(kDuplicated, "abcd"), MakeNot(MakeTerm(kName, "A")));
     irs::Optimize(optimized);
     CheckQuery(*optimized, all_docs, rdr);
   }
 
   {
-    const auto make = []() -> irs::Filter::ptr {
-      return MakeNot(MakeNot(MakeTerm(kName, "A")));
-    };
-    auto naive = make();
+    auto naive =
+      MakeExclude(nullptr, MakeExclude(nullptr, MakeTerm(kName, "A")));
     CheckQuery(*naive, Docs{1}, rdr);
-    auto optimized = make();
+    irs::Filter::ptr optimized = MakeNot(MakeNot(MakeTerm(kName, "A")));
     irs::Optimize(optimized);
     CheckQuery(*optimized, Docs{1}, rdr);
   }
 
   {
-    const auto make = []() -> irs::Filter::ptr {
-      return MakeOr(MakeTerm(kName, "V"), MakeNot(MakeAll()));
-    };
-    auto naive = make();
+    auto naive = MakeOr(MakeTerm(kName, "V"), MakeExclude(nullptr, MakeAll()));
     CheckQuery(*naive, Docs{22}, rdr);
-    auto optimized = make();
+    irs::Filter::ptr optimized =
+      MakeOr(MakeTerm(kName, "V"), MakeNot(MakeAll()));
     irs::Optimize(optimized);
     CheckQuery(*optimized, Docs{22}, rdr);
   }
 
   {
-    const auto make = []() -> irs::Filter::ptr {
-      return MakeAnd(MakeTerm(kName, "V"), MakeNot(MakeAll()));
-    };
-    auto naive = make();
+    auto naive = MakeAnd(MakeTerm(kName, "V"), MakeExclude(nullptr, MakeAll()));
     CheckQuery(*naive, Docs{}, rdr);
-    auto optimized = make();
+    irs::Filter::ptr optimized =
+      MakeAnd(MakeTerm(kName, "V"), MakeNot(MakeAll()));
     irs::Optimize(optimized);
     CheckQuery(*optimized, Docs{}, rdr);
   }
 
   {
-    const auto make = []() -> irs::Filter::ptr {
-      return MakeAnd(
-        MakeAnd(MakeTerm(kDuplicated, "abcd"), MakeTerm(kSame, "xyz")),
-        MakeNot(MakeTerm(kName, "A")));
-    };
-    auto naive = make();
+    auto naive =
+      MakeAnd(MakeAnd(MakeTerm(kDuplicated, "abcd"), MakeTerm(kSame, "xyz")),
+              MakeExclude(nullptr, MakeTerm(kName, "A")));
     CheckQuery(*naive, Docs{5, 11, 21, 27, 31}, rdr);
-    auto optimized = make();
+    irs::Filter::ptr optimized =
+      MakeAnd(MakeAnd(MakeTerm(kDuplicated, "abcd"), MakeTerm(kSame, "xyz")),
+              MakeNot(MakeTerm(kName, "A")));
     irs::Optimize(optimized);
-    ASSERT_EQ(3, sdb::basics::downCast<irs::And>(*optimized).size());
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), optimized->type());
+    auto& ex = sdb::basics::downCast<irs::Exclusion>(*optimized);
+    ASSERT_EQ(irs::Type<irs::And>::id(), ex.include()->type());
+    ASSERT_EQ(2, sdb::basics::downCast<irs::And>(*ex.include()).size());
     CheckQuery(*optimized, Docs{5, 11, 21, 27, 31}, rdr);
   }
 }

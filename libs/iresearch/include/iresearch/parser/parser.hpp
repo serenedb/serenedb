@@ -78,7 +78,7 @@ struct ParserContext {
     }
 
     if (last_mod == Modifier::Not) {
-      req.add<irs::Exclusion>().exclude<irs::Or>().add(std::move(current));
+      req.add<irs::Not>().filter<irs::Or>().add(std::move(current));
     } else {
       req.add(std::move(current));
     }

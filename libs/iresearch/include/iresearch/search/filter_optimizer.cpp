@@ -121,7 +121,39 @@ bool Flatten(T& node) {
   return true;
 }
 
-struct NotRule {
+struct NotSimplifyRule {
+  static constexpr std::string_view kName = "not_simplify";
+  static constexpr std::array kTargets{Type<Not>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<Not>(*slot);
+    auto& inner = node.mutable_filter();
+    if (!inner) {
+      return false;
+    }
+    const auto tid = inner->type();
+    if (tid == Type<Not>::id()) {
+      if (auto grand =
+            std::move(sdb::basics::downCast<Not>(*inner).mutable_filter());
+          grand) {
+        slot = std::move(grand);
+        return true;
+      }
+      return false;
+    }
+    if (tid == Type<Empty>::id()) {
+      slot = AllDocsProvider::Default(kNoBoost);
+      return true;
+    }
+    if (const auto all = AllDocsProvider::Default(kNoBoost); *all == *inner) {
+      slot = std::make_unique<Empty>();
+      return true;
+    }
+    return false;
+  }
+};
+
+struct NotLowerRule {
   static constexpr std::string_view kName = "not_lower";
   static constexpr std::array kTargets{Type<Not>::id()};
 
@@ -131,6 +163,7 @@ struct NotRule {
     if (auto& inner = node.mutable_filter(); inner) {
       exclusion->exclude(std::move(inner));
     }
+    exclusion->boost(node.Boost());
     slot = std::move(exclusion);
     return true;
   }
@@ -145,25 +178,8 @@ struct ExclusionRule {
     auto& incl = node.mutable_include();
     auto& excl = node.mutable_exclude();
     if (!excl) {
-      if (incl) {
-        slot = std::move(incl);
-      } else {
-        slot = AllDocsProvider::Default(kNoBoost);
-      }
+      slot = incl ? std::move(incl) : AllDocsProvider::Default(kNoBoost);
       return true;
-    }
-    if (incl == nullptr) {
-      if (excl->type() == Type<Exclusion>::id()) {
-        auto& inner = sdb::basics::downCast<Exclusion>(*excl);
-        if (inner.include() == nullptr && inner.mutable_exclude()) {
-          slot = std::move(inner.mutable_exclude());
-          return true;
-        }
-      }
-      if (const auto all = AllDocsProvider::Default(kNoBoost); *all == *excl) {
-        slot = std::make_unique<Empty>();
-        return true;
-      }
     }
     return false;
   }
@@ -184,6 +200,65 @@ struct FlattenOr {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
     return Flatten(sdb::basics::downCast<Or>(*slot));
+  }
+};
+
+struct AndExclusionCoalesceRule {
+  static constexpr std::string_view kName = "and_exclusion_coalesce";
+  static constexpr std::array kTargets{Type<And>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<And>(*slot);
+    auto& children = node.mutable_filters();
+
+    const auto is_not = [](const Filter::ptr& child) {
+      return child->type() == Type<Not>::id() &&
+             sdb::basics::downCast<Not>(*child).filter() != nullptr;
+    };
+
+    const size_t not_count = absl::c_count_if(children, is_not);
+    if (not_count == 0) {
+      return false;
+    }
+    const size_t rest_count = children.size() - not_count;
+    if (not_count == 1 && rest_count == 0) {
+      return false;
+    }
+
+    std::vector<Filter::ptr> includes;
+    std::vector<Filter::ptr> excludes;
+    includes.reserve(rest_count);
+    excludes.reserve(not_count);
+    for (auto& child : children) {
+      if (is_not(child)) {
+        excludes.emplace_back(
+          std::move(sdb::basics::downCast<Not>(*child).mutable_filter()));
+      } else {
+        includes.emplace_back(std::move(child));
+      }
+    }
+
+    auto exclude = excludes.size() == 1 ? std::move(excludes.front())
+                                        : MakeBoolean<Or>(std::move(excludes),
+                                                          ScoreMergeType::Sum);
+
+    if (includes.empty()) {
+      auto not_node = std::make_unique<Not>(std::move(exclude));
+      not_node->boost(node.Boost());
+      slot = std::move(not_node);
+      return true;
+    }
+
+    auto include = includes.size() == 1
+                     ? std::move(includes.front())
+                     : MakeBoolean<And>(std::move(includes), node.merge_type());
+
+    auto exclusion = std::make_unique<Exclusion>();
+    exclusion->include(std::move(include));
+    exclusion->exclude(std::move(exclude));
+    exclusion->boost(node.Boost());
+    slot = std::move(exclusion);
+    return true;
   }
 };
 
@@ -522,7 +597,7 @@ struct PhraseLowerRule {
 
 constexpr auto kDefaultRulesStorage = std::to_array({
   MakeRule<ExclusionRule>(),
-  MakeRule<NotRule>(),
+  MakeRule<NotSimplifyRule>(),
   MakeRule<AndEmptyRule>(),
   MakeRule<OrEmptyRule>(),
   MakeRule<OrMinMatchZeroRule>(),
@@ -531,6 +606,7 @@ constexpr auto kDefaultRulesStorage = std::to_array({
   MakeRule<OrAllFoldRule>(),
   MakeRule<FlattenAnd>(),
   MakeRule<FlattenOr>(),
+  MakeRule<AndExclusionCoalesceRule>(),
   MakeRule<OrAllRequiredRule>(),
   MakeRule<ByTermsRule>(),
   MakeRule<ByTermsMinMatchZeroRule>(),
@@ -539,6 +615,10 @@ constexpr auto kDefaultRulesStorage = std::to_array({
   MakeRule<WildcardLowerRule>(),
   MakeRule<RegexpLowerRule>(),
   MakeRule<PhraseLowerRule>(),
+});
+
+constexpr auto kLoweringRulesStorage = std::to_array({
+  MakeRule<NotLowerRule>(),
 });
 
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
@@ -578,12 +658,10 @@ void RegisterRule(const RuleDesc& rule) { RuleRegistry().push_back(rule); }
 
 std::span<const RuleDesc> ActiveRules() { return RuleRegistry(); }
 
-void Optimize(Filter::ptr& root, const OptimizeContext& ctx,
-              std::span<const RuleDesc> rules) {
-  if (!root) {
-    return;
-  }
+namespace {
 
+void RunPass(Filter::ptr& root, const OptimizeContext& ctx,
+             std::span<const RuleDesc> rules) {
   struct Frame {
     Filter::ptr* slot;
     bool children_visited;
@@ -603,6 +681,18 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx,
       stack.push_back({&child, false});
     });
   }
+}
+
+}  // namespace
+
+void Optimize(Filter::ptr& root, const OptimizeContext& ctx,
+              std::span<const RuleDesc> rules) {
+  if (!root) {
+    return;
+  }
+
+  RunPass(root, ctx, rules);
+  RunPass(root, ctx, kLoweringRulesStorage);
 }
 
 }  // namespace irs

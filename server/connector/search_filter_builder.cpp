@@ -947,7 +947,7 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
 
 // TSQUERY `!!` -- prefix NOT. Flips ctx.negated and recurses; no new
 // filter node is added at this level (the inner expression's emitter
-// will wrap itself in irs::Exclusion when ctx.negated is true).
+// will wrap itself in irs::Not when ctx.negated is true).
 void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     const duckdb::BoundFunctionExpression& func) {

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "basics/assert.h"
 #include "iresearch/search/boolean_filter.hpp"
 
 namespace irs {
@@ -46,9 +47,11 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
   MixedBooleanFilter& operator=(MixedBooleanFilter&&) = default;
 
   auto& GetRequired(this auto& self) noexcept {
+    SDB_VERIFY(self._and->type() == irs::Type<And>::id());
     return sdb::basics::downCast<And>(*self._and);
   }
   auto& GetOptional(this auto& self) noexcept {
+    SDB_VERIFY(self._or->type() == irs::Type<Or>::id());
     return sdb::basics::downCast<Or>(*self._or);
   }
 

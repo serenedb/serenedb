@@ -26,6 +26,7 @@
 #include <absl/strings/str_join.h>
 
 #include <iresearch/search/all_filter.hpp>
+#include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/column_existence_filter.hpp>
 #include <iresearch/search/geo_filter.hpp>
@@ -218,6 +219,14 @@ void StringifyExclusion(std::string* out, const Exclusion& filter, FT&& ft) {
 }
 
 template<typename FT>
+void StringifyNot(std::string* out, const Not& filter, FT&& ft) {
+  const auto* inner = filter.filter();
+  absl::StrAppend(
+    out, "NOT[", inner == nullptr ? std::string{} : StringifyFilter(*inner, ft),
+    "]");
+}
+
+template<typename FT>
 void StringifyNGram(std::string* out, const ByNGramSimilarity& filter,
                     FT&& ft) {
   absl::StrAppend(out, "NGRAM_SIMILARITY[", ft(filter.field_id()), ", ",
@@ -272,6 +281,13 @@ void StringifyWildcard(std::string* out, const ByWildcard& filter, FT&& ft) {
 template<typename FT>
 void StringifyRegexp(std::string* out, const ByRegexp& filter, FT&& ft) {
   absl::StrAppend(out, "REGEXP[", ft(filter.field_id()), ", ",
+                  TermToString(filter.options().pattern), "]");
+}
+
+template<typename FT>
+void StringifyAutomaton(std::string* out, const AutomatonFilter& filter,
+                        FT&& ft) {
+  absl::StrAppend(out, "AUTOMATON[", ft(filter.field_id()), ", ",
                   TermToString(filter.options().pattern), "]");
 }
 
@@ -378,6 +394,8 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
     StringifyOr(&out, static_cast<const Or&>(filter), ft);
   } else if (type == Type<Exclusion>::id()) {
     StringifyExclusion(&out, static_cast<const Exclusion&>(filter), ft);
+  } else if (type == Type<Not>::id()) {
+    StringifyNot(&out, static_cast<const Not&>(filter), ft);
   } else if (type == Type<ByTerm>::id()) {
     StringifyTerm(&out, static_cast<const ByTerm&>(filter), ft);
   } else if (type == Type<ByTerms>::id()) {
@@ -398,6 +416,8 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
   } else if (type == Type<ByColumnExistence>::id()) {
     StringifyColumnExistence(&out,
                              static_cast<const ByColumnExistence&>(filter), ft);
+  } else if (type == Type<AutomatonFilter>::id()) {
+    StringifyAutomaton(&out, static_cast<const AutomatonFilter&>(filter), ft);
   } else if (type == Type<ByWildcard>::id()) {
     StringifyWildcard(&out, static_cast<const ByWildcard&>(filter), ft);
   } else if (type == Type<ByWildcardNgram>::id()) {

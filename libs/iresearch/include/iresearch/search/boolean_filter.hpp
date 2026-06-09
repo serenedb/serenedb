@@ -185,6 +185,13 @@ class Not final : public FilterWithType<Not> {
   const Filter* filter() const noexcept { return _filter.get(); }
   Filter::ptr& mutable_filter() noexcept { return _filter; }
 
+  template<typename T, typename... Args>
+  T& filter(Args&&... args) {
+    static_assert(std::is_base_of_v<irs::Filter, T>);
+    _filter = std::make_unique<T>(std::forward<Args>(args)...);
+    return sdb::basics::downCast<T>(*_filter);
+  }
+
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
  protected:

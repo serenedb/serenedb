@@ -66,24 +66,24 @@ namespace sdb::search {
 //
 // A commit appends ONE central record carrying a monotonic `tick` and a list of
 // per-shard sections -- one for each search table the transaction wrote. Each
-// section is a shared header plus an ordered op manifest (WAL_DESIGN.md §5.4):
+// section is a shard header plus an ordered op manifest (WAL_DESIGN.md §5.4):
 //   record  = [u64 tick][u32 shard_count][ section x shard_count ]
-//   section = [u64 schema_id][u64 table_id][u32 col_count][u64 col x col_count]
-//             [u32 op_count][ op x op_count ]
+//   section = [u64 schema_id][u64 table_id][u32 op_count][ op x op_count ]
 //   op      = [u8 kind][kind body]
 //     INLINE    -- small inserts: the rows are serialised into the op.
-//     REFERENCE -- bulk inserts: the op lists `seg_id`s of chunk files that hold
+//     REFERENCE -- bulk inserts: the op lists `seg_id`s of chunk files that
+//     hold
 //                  the rows (streamed in parallel during Sink).
-// `column_ids` is written once in the section header (every op shares the
-// table's column set). Insert-only today: each op is one INLINE or REFERENCE
-// batch -- several small INSERTs in a txn become several INLINE ops, a
-// bulk+inline mix is an INLINE op plus a REFERENCE op. DELETE ops (and real
-// op ordering) arrive at M6 -- purely a new `kind` + body.
+// The column layout is NOT recorded -- replay rebuilds it from the catalog
+// (recovery runs after the catalog loads). Insert-only today: each op is one
+// INLINE or REFERENCE batch -- several small INSERTs in a txn become several
+// INLINE ops, a bulk+inline mix is an INLINE op plus a REFERENCE op. DELETE ops
+// (and real op ordering) arrive at M6 -- purely a new `kind` + body.
 // Frame (reused from DuckDB's WAL): [u64 size][u64 checksum][payload], where
 // payload begins with [u64 tick] at a fixed offset (readable without
 // deserialising the rest -- recovery skip + future PITR bound).
 //
-// Identifiers (schema_id, table_id, column ids) are opaque uint64_t here (the
+// Identifiers (schema_id, table_id) are opaque uint64_t here (the
 // operator/recovery maps catalog ObjectIds <-> uint64_t via `.id()`).
 class SearchDbWal {
  public:
@@ -120,9 +120,6 @@ class SearchDbWal {
     std::vector<uint8_t> _comp;
   };
 
-  // Opaque column-id list carried in a section (catalog::Column::Id::id()).
-  using ColumnIds = std::span<const uint64_t>;
-
   // One inserted Sink chunk's generated-PK run: `count` rows keyed
   // [base, base+count). Recorded per Sink chunk -- NOT per inline_data Chunk:
   // ColumnDataCollection coalesces partial appends, so its Chunks() boundaries
@@ -148,23 +145,23 @@ class SearchDbWal {
 
   // One transaction's contribution for a single search shard: the shard's
   // identifying header (shared by all its ops) plus an ordered op manifest
-  // (WAL_DESIGN.md §5.4). `column_ids` is written once here -- every insert op
-  // shares the table's column set.
+  // (WAL_DESIGN.md §5.4). The column layout is NOT recorded -- replay rebuilds
+  // it from the catalog (recovery runs after the catalog loads), so the WAL
+  // need not carry it.
   struct ShardSection {
     uint64_t
       schema_id;  // locates chunks/<schema_id>/<table_id>/ + recovery dispatch
     uint64_t table_id;
-    ColumnIds column_ids;
     std::span<const Op> ops;  // this shard's ops, in order
   };
 
   // Per replayed chunk during Recover(): the record's tick, the section's
   // (schema_id, table_id), the chunk's generated-PK base (0 for explicit-PK,
-  // §5.6), the column ids, and one DataChunk to re-feed into that shard's
-  // iresearch writer.
-  using ReplayCallback = std::function<void(
-    uint64_t tick, uint64_t schema_id, uint64_t table_id, uint64_t pk_base,
-    ColumnIds column_ids, duckdb::DataChunk& chunk)>;
+  // §5.6), and one DataChunk to re-feed into that shard's iresearch writer. The
+  // column layout comes from the catalog at replay, not the record.
+  using ReplayCallback =
+    std::function<void(uint64_t tick, uint64_t schema_id, uint64_t table_id,
+                       uint64_t pk_base, duckdb::DataChunk& chunk)>;
 
   // Recovery skip hooks: a section is replayed only if its destination shard
   // still exists in the catalog AND has not already published this tick.

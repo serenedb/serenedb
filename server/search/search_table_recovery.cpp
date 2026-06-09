@@ -128,8 +128,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
                                 : std::numeric_limits<uint64_t>::max();
     };
     auto replay = [&](uint64_t tick, uint64_t /*schema_id*/, uint64_t table_id,
-                      uint64_t pk_base, SearchDbWal::ColumnIds /*column_ids*/,
-                      duckdb::DataChunk& chunk) {
+                      uint64_t pk_base, duckdb::DataChunk& chunk) {
       auto& info = shards.at(table_id);
       auto [cit, inserted] = ctxs.try_emplace(table_id);
       auto& ctx = cit->second;

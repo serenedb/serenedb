@@ -49,8 +49,6 @@ struct SearchShardWrites {
   std::shared_ptr<TableShard> shard;
   // For the WAL section's chunk path + recovery dispatch (= shard's schema id).
   uint64_t schema_id = 0;
-  // Catalog column ids (catalog::Column::Id::id()) in input-chunk order.
-  std::vector<uint64_t> column_ids;
   // Bulk chunk-file ids (one per sink thread that wrote rows), collected at
   // Combine/Finalize. Empty => this shard's data is in its inline buffers
   // (the per-table entry in `changes`).
@@ -92,12 +90,10 @@ class SearchTableTransaction {
   // buffers accumulate in `changes`). `table_id` routes to that shard's entry.
   void AddSearchTableStatement(std::shared_ptr<TableShard> shard,
                                ObjectId table_id, uint64_t schema_id,
-                               std::vector<uint64_t> column_ids,
                                std::vector<uint64_t> seg_ids) {
     auto& w = _writes[table_id];
     w.shard = std::move(shard);
     w.schema_id = schema_id;
-    w.column_ids = std::move(column_ids);
     auto& acc = w.seg_ids;
     acc.insert(acc.end(), seg_ids.begin(), seg_ids.end());
   }

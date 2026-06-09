@@ -509,16 +509,11 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   // a small insert, or REFERENCE over the chunk files for a bulk insert -- and
   // stamps the segments with the tick it returns. The inline buffers stay in
   // LocalTableChanges (read at commit, then cleared by Destroy); the bulk
-  // seg_ids were gathered at Combine.
-  std::vector<uint64_t> column_ids;
-  column_ids.reserve(gstate.column_ids.size());
-  for (auto id : gstate.column_ids) {
-    column_ids.push_back(id.id());
-  }
+  // seg_ids were gathered at Combine. The column layout isn't recorded --
+  // replay rebuilds it from the catalog.
   gstate.sdb_txn->SearchTxn().AddSearchTableStatement(
     gstate.table_shard, gstate.table_id,
-    gstate.search_shard->GetSchemaId().id(), std::move(column_ids),
-    std::move(gstate.seg_ids));
+    gstate.search_shard->GetSchemaId().id(), std::move(gstate.seg_ids));
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.UpdateNumRows(gstate.table_id, gstate.insert_count);

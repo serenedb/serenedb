@@ -87,7 +87,8 @@ uint64_t SearchTableTransaction::AppendCommit() {
   // outlive wal->AppendCommit; reserved so growth never reallocates the spans.
   std::vector<std::vector<SearchDbWal::Op>> op_lists;
   op_lists.reserve(_writes.size());
-  SearchDbWal* wal = &basics::downCast<SearchTableShard>(*_writes.begin()->second.shard).Wal();
+  SearchDbWal* wal =
+    &basics::downCast<SearchTableShard>(*_writes.begin()->second.shard).Wal();
   for (auto& [table_id, w] : _writes) {
     SDB_ASSERT(wal == &basics::downCast<SearchTableShard>(*w.shard).Wal(),
                "all search shards in a txn must share one database WAL");
@@ -121,7 +122,6 @@ uint64_t SearchTableTransaction::AppendCommit() {
     SearchDbWal::ShardSection section;
     section.schema_id = w.schema_id;
     section.table_id = table_id.id();
-    section.column_ids = SearchDbWal::ColumnIds{w.column_ids};
     section.ops = std::span<const SearchDbWal::Op>{ops};
     sections.push_back(section);
   }

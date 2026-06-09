@@ -187,22 +187,17 @@ struct Cursor {
   bool AtEnd() const { return p >= end; }
 };
 
-// One parsed shard-section header (ids + column-id list, shared by the
-// section's ops). The op manifest (`[u32 op_count][op x]`) follows it (§5.4).
+// One parsed shard-section header (just the ids). The op manifest
+// (`[u32 op_count][op x]`) follows it (§5.4). The column layout isn't recorded
+// -- replay rebuilds it from the catalog.
 struct SectionHeader {
   uint64_t schema_id;
   uint64_t table_id;
-  std::vector<uint64_t> column_ids;
 };
 SectionHeader ReadSectionHeader(Cursor& c) {
   SectionHeader h;
   h.schema_id = c.Read<uint64_t>();
   h.table_id = c.Read<uint64_t>();
-  auto col_count = c.Read<uint32_t>();
-  h.column_ids.resize(col_count);
-  for (uint32_t i = 0; i < col_count; ++i) {
-    h.column_ids[i] = c.Read<uint64_t>();
-  }
   return h;
 }
 
@@ -399,13 +394,10 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
   // Reused inline-CDC scratch across every INLINE op (Rewind keeps the buffer).
   duckdb::MemoryStream tmp;
   for (const auto& s : sections) {
-    // Shard header: ids + the column-id list shared by all the shard's ops.
+    // Shard header: just the ids. The column layout is rebuilt from the catalog
+    // on replay, so it isn't recorded.
     payload.Write<uint64_t>(s.schema_id);
     payload.Write<uint64_t>(s.table_id);
-    payload.Write<uint32_t>(static_cast<uint32_t>(s.column_ids.size()));
-    for (uint64_t cid : s.column_ids) {
-      payload.Write<uint64_t>(cid);
-    }
     // Ordered op manifest (WAL_DESIGN.md §5.4). Insert-only today: each op is
     // exactly one INLINE or REFERENCE batch.
     SDB_ASSERT(!s.ops.empty(), "shard section with no ops");
@@ -624,7 +616,6 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
       auto shard_count = c.Read<uint32_t>();
       for (uint32_t s = 0; s < shard_count; ++s) {
         auto h = ReadSectionHeader(c);
-        ColumnIds column_ids{h.column_ids};
         const bool live =
           exists_of(h.schema_id, h.table_id) && tick > committed_of(h.table_id);
         // Walk the shard's ordered op manifest (§5.4). All ops share the header
@@ -660,7 +651,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
             // chunk.
             VisitInlineSegments(
               *cdc, segments, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                cb(tick, h.schema_id, h.table_id, pk_base, column_ids, chunk);
+                cb(tick, h.schema_id, h.table_id, pk_base, chunk);
               });
           } else {
             auto seg_count = c.Read<uint32_t>();
@@ -675,7 +666,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
               ReplayChunkFile(_fs, chunk_path,
                               [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
                                 cb(tick, h.schema_id, h.table_id, pk_base,
-                                   column_ids, chunk);
+                                   chunk);
                               });
             }
           }

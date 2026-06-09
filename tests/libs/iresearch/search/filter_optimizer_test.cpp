@@ -252,7 +252,7 @@ TEST_P(FilterOptimizerTest, ExclusionRule) {
     ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
   }
 
-  // include-only, boosted, scored -> preserved so the boost survives (#2).
+  // include-only, boosted, scored -> folds into the include, boost preserved.
   {
     auto ex = std::make_unique<irs::Exclusion>();
     ex->include(MakeTerm(kName, "A"));
@@ -262,9 +262,23 @@ TEST_P(FilterOptimizerTest, ExclusionRule) {
     const sort::Boost scorer;
     Optimize(root, &scorer);
 
-    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+    ASSERT_EQ(2.F, As<irs::ByTerm>(*root).Boost());
     // doc "A" is document 1; its score must carry the exclusion boost of 2.
     CheckBoostScores(*root, ScoredDocs{{1, {2.F}}});
+  }
+
+  {
+    auto ex = std::make_unique<irs::Exclusion>();
+    ex->boost(2.F);
+    irs::Filter::ptr root = std::move(ex);
+
+    const sort::Boost scorer;
+    Optimize(root, &scorer);
+
+    ASSERT_EQ(irs::Type<irs::All>::id(), TypeOf(*root));
+    ASSERT_EQ(2.F, As<irs::All>(*root).Boost());
+    CheckBoostScores(*root, AllScored(2.F));
   }
 }
 
@@ -611,6 +625,52 @@ TEST_P(FilterOptimizerTest, AndExclusionCoalesceRule) {
     ASSERT_EQ(irs::Type<irs::Or>::id(), node.exclude()->type());
     ASSERT_EQ(2, As<irs::Or>(*node.exclude()).size());
   }
+
+  // two exclusion children -> And of includes, Or of excludes
+  {
+    irs::Filter::ptr root = MakeAnd(
+      MakeExclude(MakeTerm(kName, "A"), MakeTerm(kName, "B")),
+      MakeExclude(MakeTerm(kName, "C"), MakeTerm(kName, "D")));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    auto& node = As<irs::Exclusion>(*root);
+    ASSERT_EQ(irs::Type<irs::And>::id(), node.include()->type());
+    ASSERT_EQ(2, As<irs::And>(*node.include()).size());
+    ASSERT_EQ(irs::Type<irs::Or>::id(), node.exclude()->type());
+    ASSERT_EQ(2, As<irs::Or>(*node.exclude()).size());
+  }
+
+  // exclusion child mixed with a Not -> excludes merge together
+  {
+    irs::Filter::ptr root =
+      MakeAnd(MakeExclude(MakeTerm(kName, "A"), MakeTerm(kName, "B")),
+              MakeNot(MakeTerm(kName, "X")));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    auto& node = As<irs::Exclusion>(*root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.include()->type());
+    ASSERT_EQ(irs::Type<irs::Or>::id(), node.exclude()->type());
+    ASSERT_EQ(2, As<irs::Or>(*node.exclude()).size());
+  }
+
+  // a boosted exclusion child is left intact under a scorer (boost preserved)
+  {
+    auto boosted = std::make_unique<irs::Exclusion>();
+    boosted->include(MakeTerm(kName, "A"));
+    boosted->exclude(MakeTerm(kName, "B"));
+    boosted->boost(2.F);
+    irs::Filter::ptr root =
+      MakeAnd(std::move(boosted), MakeNot(MakeTerm(kName, "X")));
+
+    const sort::Boost scorer;
+    Optimize(root, &scorer);
+
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    auto& node = As<irs::Exclusion>(*root);
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), node.include()->type());
+    ASSERT_EQ(2.F, As<irs::Exclusion>(*node.include()).Boost());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), node.exclude()->type());
+  }
 }
 
 // OrAllRequiredRule: a disjunction where every clause is required is a
@@ -759,7 +819,7 @@ TEST_P(FilterOptimizerTest, SingleChildRule) {
     ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
   }
 
-  // boost gate: kept when scoring, unwrapped otherwise
+  // boost folds into the child whether scoring or not
   {
     const auto make = []() -> irs::Filter::ptr {
       auto root = MakeAnd(MakeTerm(kName, "A"));
@@ -770,11 +830,23 @@ TEST_P(FilterOptimizerTest, SingleChildRule) {
     auto scored = make();
     const irs::BM25 scorer;
     Optimize(scored, &scorer);
-    ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*scored));
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*scored));
+    ASSERT_EQ(2.F, As<irs::ByTerm>(*scored).Boost());
 
     auto unscored = make();
     Optimize(unscored);
     ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*unscored));
+  }
+
+  {
+    auto root = MakeAnd(MakeTerm(kName, "A"));
+    root->boost(3.F);
+    irs::Filter::ptr filter = std::move(root);
+
+    const sort::Boost scorer;
+    Optimize(filter, &scorer);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*filter));
+    CheckBoostScores(*filter, ScoredDocs{{1, {3.F}}});
   }
 }
 

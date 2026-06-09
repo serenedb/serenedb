@@ -184,22 +184,38 @@ struct NotLowerRule {
   }
 };
 
+bool TryFoldBoost(Filter& survivor, score_t boost, const Scorer* scorer) {
+  if (boost == kNoBoost || scorer == nullptr) {
+    return true;
+  }
+  auto* boostable = dynamic_cast<FilterWithBoost*>(&survivor);
+  if (boostable == nullptr) {
+    return false;
+  }
+  boostable->boost(boostable->Boost() * boost);
+  return true;
+}
+
 struct ExclusionRule {
   static constexpr std::string_view kName = "exclusion_simplify";
   static constexpr std::array kTargets{Type<Exclusion>::id()};
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     auto& node = sdb::basics::downCast<Exclusion>(*slot);
-    if (node.Boost() != kNoBoost && ctx.scorer != nullptr) {
-      return false;
-    }
     auto& incl = node.mutable_include();
     auto& excl = node.mutable_exclude();
-    if (!excl) {
-      slot = incl ? std::move(incl) : AllDocsProvider::Default(kNoBoost);
+    if (excl) {
+      return false;
+    }
+    if (!incl) {
+      slot = AllDocsProvider::Default(node.Boost());
       return true;
     }
-    return false;
+    if (!TryFoldBoost(*incl, node.Boost(), ctx.scorer)) {
+      return false;
+    }
+    slot = std::move(incl);
+    return true;
   }
 };
 
@@ -225,7 +241,7 @@ struct AndExclusionCoalesceRule {
   static constexpr std::string_view kName = "and_exclusion_coalesce";
   static constexpr std::array kTargets{Type<And>::id()};
 
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     auto& node = sdb::basics::downCast<And>(*slot);
     auto& children = node.mutable_filters();
 
@@ -233,24 +249,45 @@ struct AndExclusionCoalesceRule {
       return child->type() == Type<Not>::id() &&
              sdb::basics::downCast<Not>(*child).filter() != nullptr;
     };
+    const auto is_coalescable_exclusion = [&](const Filter::ptr& child) {
+      return child->type() == Type<Exclusion>::id() &&
+             !(child->BoostImpl() != kNoBoost && ctx.scorer != nullptr);
+    };
 
-    const size_t not_count = absl::c_count_if(children, is_not);
-    if (not_count == 0) {
+    const size_t coalescable = absl::c_count_if(children, [&](const auto& child) {
+      return is_not(child) || is_coalescable_exclusion(child);
+    });
+    if (coalescable == 0 || children.size() == 1) {
       return false;
     }
-    const size_t rest_count = children.size() - not_count;
-    if (not_count == 1 && rest_count == 0) {
+    const bool produces_exclude =
+      absl::c_any_of(children, [&](const Filter::ptr& child) {
+        if (is_not(child)) {
+          return true;
+        }
+        return is_coalescable_exclusion(child) &&
+               sdb::basics::downCast<Exclusion>(*child).exclude() != nullptr;
+      });
+    if (!produces_exclude) {
       return false;
     }
 
     std::vector<Filter::ptr> includes;
     std::vector<Filter::ptr> excludes;
-    includes.reserve(rest_count);
-    excludes.reserve(not_count);
+    includes.reserve(children.size());
+    excludes.reserve(children.size());
     for (auto& child : children) {
       if (is_not(child)) {
         excludes.emplace_back(
           std::move(sdb::basics::downCast<Not>(*child).mutable_filter()));
+      } else if (is_coalescable_exclusion(child)) {
+        auto& ex = sdb::basics::downCast<Exclusion>(*child);
+        if (auto& incl = ex.mutable_include(); incl) {
+          includes.emplace_back(std::move(incl));
+        }
+        if (auto& excl = ex.mutable_exclude(); excl) {
+          excludes.emplace_back(std::move(excl));
+        }
       } else {
         includes.emplace_back(std::move(child));
       }
@@ -417,10 +454,11 @@ struct SingleChildRule {
         sdb::basics::downCast<Or>(node).min_match_count() != 1) {
       return false;
     }
-    if (node.Boost() != kNoBoost && ctx.scorer != nullptr) {
+    auto& front = node.mutable_filters().front();
+    if (!TryFoldBoost(*front, node.Boost(), ctx.scorer)) {
       return false;
     }
-    auto child = std::move(node.mutable_filters().front());
+    auto child = std::move(front);
     slot = std::move(child);
     return true;
   }

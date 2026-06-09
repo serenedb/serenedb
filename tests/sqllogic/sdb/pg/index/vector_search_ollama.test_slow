@@ -99,13 +99,24 @@ LIMIT 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│   Index: docs_ann (ANN)   │
+│      Lookup: rocksdb      │
+│          TopK: 3          │
+│         Dims: 384         │
 │                           │
 │        Projections:       │
 │             id            │
-│            emb            │
+│  sdb_inverted_index_score │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘

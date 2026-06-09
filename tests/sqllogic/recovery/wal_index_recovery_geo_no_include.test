@@ -50,8 +50,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│    AND[GEO_DISTANCE[geo   │
-│    (string), *, <1000]]   │
+│ GEO_DISTANCE[geo(string), │
+│         *, <1000]         │
 │                           │
 │        Projections:       │
 │            geo            │

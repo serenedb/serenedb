@@ -81,8 +81,8 @@ QUERY PLAN
 │     Index: wal_inc_idx    │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[txt(string) =  │
-│   <Term:alpha(0, 0); >]]  │
+│ PHRASE[txt(string) = <Term│
+│      :alpha(0, 0); >]     │
 │                           │
 │        Projections:       │
 │             pk            │

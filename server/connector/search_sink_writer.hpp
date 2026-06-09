@@ -27,12 +27,12 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <functional>
-#include <memory>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -50,9 +50,10 @@
 #include "storage_engine/engine_feature.h"
 
 namespace duckdb {
-class DataChunk;
-}  // namespace duckdb
 
+class DataChunk;
+
+}  // namespace duckdb
 namespace sdb::connector {
 
 class SearchRemoveFilterBase;
@@ -107,8 +108,8 @@ inline EntryInfoProvider NoEntryInfoProvider() {
 
 // Every column is a plain stored columnstore column -- no term dictionary, no
 // HNSW, no JSON leaves. Routes each column through SwitchFieldImpl's
-// `is_stored && !is_term_dict` path (AppendToColumn + EmitPkOnlyBatch), i.e. the
-// search-table model: store the row, index only the PK term. Interim until
+// `is_stored && !is_term_dict` path (AppendToColumn + EmitPkOnlyBatch), i.e.
+// the search-table model: store the row, index only the PK term. Interim until
 // CREATE INDEX on search tables lands, when a real provider supplies term-dict
 // entries for the indexed columns.
 inline EntryInfoProvider AllStoredEntryInfoProvider() {

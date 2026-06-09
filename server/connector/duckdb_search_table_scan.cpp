@@ -128,7 +128,8 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
 
     const auto take =
       std::min<duckdb::idx_t>(batch_size, seg_docs - gstate.doc_in_seg);
-    gstate.materializer->Scan(gstate.doc_in_seg, take, output);
+    gstate.materializer->Scan(gstate.doc_in_seg, take, output,
+                              /*output_start=*/0);
     gstate.doc_in_seg += take;
     produced = take;
   }

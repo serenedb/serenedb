@@ -198,6 +198,26 @@ void BmWriteDocumentMaskPayload(benchmark::State& state) {
   }
 }
 
+void BmVirtualDispatchInsideLoop(benchmark::State& state) {
+  constexpr size_t kSeed = 43;
+
+  const auto doc_count = static_cast<size_t>(state.range(0));
+  const auto delete_permille = static_cast<size_t>(state.range(1));
+
+  auto mask_src = BuildMask<DocumentBitMask>(
+    doc_count, doc_count * delete_permille / 1000, kSeed);
+  auto mask =
+    irs::MakeDocumentMask(irs::IResourceManager::gNoop,
+                          DocumentMaskKind::DenseBitset, std::move(mask_src));
+  benchmark::DoNotOptimize(mask);
+  const irs::DocumentMask* raw = mask.get();
+  for (auto _ : state) {
+    for (doc_id_t doc_id = irs::doc_limits::min();
+         doc_id < irs::doc_limits::min() + doc_count; ++doc_id) {
+      benchmark::DoNotOptimize(raw->IsDeleted(doc_id));
+    }
+  }
+}
 void BmDispatchInsideLoop(benchmark::State& state) {
   constexpr size_t kSeed = 43;
 
@@ -209,22 +229,25 @@ void BmDispatchInsideLoop(benchmark::State& state) {
   auto mask =
     irs::MakeDocumentMask(irs::IResourceManager::gNoop,
                           DocumentMaskKind::DenseBitset, std::move(mask_src));
-  const auto doc_mask_view = irs::DocumentMaskView(mask.get());
+  const irs::DocumentMaskView view(mask.get());
+  benchmark::DoNotOptimize(view);
+  const irs::DocumentMask* raw = view.Mask();
+  const irs::DocumentMaskKind kind = view.Kind();
+  irs::DocumentMaskView local_view(raw, kind);
   for (auto _ : state) {
     for (doc_id_t doc_id = irs::doc_limits::min();
          doc_id < irs::doc_limits::min() + doc_count; ++doc_id) {
-      benchmark::DoNotOptimize(doc_mask_view.IsDeleted(doc_id));
+      benchmark::DoNotOptimize(local_view.IsDeleted(doc_id));
     }
   }
 }
 
 template<typename MaskType>
-void RunLoopIsDeleted(const irs::DocumentMaskView& doc_mask_view,
-                      size_t doc_count) {
+void RunLoopIsDeleted(const irs::DocumentMask* raw, size_t doc_count) {
   for (doc_id_t doc_id = irs::doc_limits::min();
        doc_id < irs::doc_limits::min() + doc_count; ++doc_id) {
     benchmark::DoNotOptimize(
-      static_cast<const MaskType*>(doc_mask_view.Mask())->IsDeleted(doc_id));
+      static_cast<const MaskType*>(raw)->IsDeleted(doc_id));
   }
 }
 void BmDispatchOutsideLoop(benchmark::State& state) {
@@ -238,19 +261,22 @@ void BmDispatchOutsideLoop(benchmark::State& state) {
   auto mask =
     irs::MakeDocumentMask(irs::IResourceManager::gNoop,
                           DocumentMaskKind::DenseBitset, std::move(bit_mask));
-  const irs::DocumentMaskView doc_mask_view(mask.get());
+  const irs::DocumentMaskView view(mask.get());
+  benchmark::DoNotOptimize(view);
+  const irs::DocumentMaskKind kind = view.Kind();
+  const irs::DocumentMask* raw = view.Mask();
   for (auto _ : state) {
-    switch (doc_mask_view.Kind()) {
+    switch (kind) {
       case DocumentMaskKind::None:
         break;
       case DocumentMaskKind::DenseBitset:
-        RunLoopIsDeleted<DocumentBitMask>(doc_mask_view, doc_count);
+        RunLoopIsDeleted<DocumentBitMask>(raw, doc_count);
         break;
       case DocumentMaskKind::DeletedHashSet:
-        RunLoopIsDeleted<DocumentDeletedHashMask>(doc_mask_view, doc_count);
+        RunLoopIsDeleted<DocumentDeletedHashMask>(raw, doc_count);
         break;
       case DocumentMaskKind::AliveHashSet:
-        RunLoopIsDeleted<DocumentAliveHashMask>(doc_mask_view, doc_count);
+        RunLoopIsDeleted<DocumentAliveHashMask>(raw, doc_count);
         break;
     }
   }
@@ -300,7 +326,7 @@ void BmMaskMemory(benchmark::State& state) {
 #endif
 
 void MaskArgs(benchmark::internal::Benchmark* b) {
-  for (auto doc_cnt : {4000000}) {
+  for (auto doc_cnt : {400'000, 4'000'000, 40'000'000}) {
     for (auto pmle : {1, 10, 30, 50, 100, 300, 500, 700, 900, 950, 970, 990, 999}) {
       b->Args({doc_cnt, pmle});
     }
@@ -476,8 +502,9 @@ BENCHMARK_TEMPLATE(BmScanIsDeleted, DocumentAliveHashMask)->Apply(MaskArgs);
 BENCHMARK_TEMPLATE(BmIsDeleted, DocumentDeletedHashMask)->Apply(MaskArgs);
 BENCHMARK_TEMPLATE(BmIsDeleted, DocumentBitMask)->Apply(MaskArgs);
 BENCHMARK_TEMPLATE(BmIsDeleted, DocumentAliveHashMask)->Apply(MaskArgs);
-BENCHMARK(BmDispatchInsideLoop)->Args({1000000, 30});
-BENCHMARK(BmDispatchOutsideLoop)->Args({1000000, 30});
+BENCHMARK(BmDispatchInsideLoop)->Args({10000000, 30});
+BENCHMARK(BmDispatchOutsideLoop)->Args({10000000, 30});
+BENCHMARK(BmVirtualDispatchInsideLoop)->Args({10000000, 30});
 
 }  // namespace
 

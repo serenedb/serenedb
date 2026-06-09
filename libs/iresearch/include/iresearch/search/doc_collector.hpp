@@ -72,9 +72,8 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
     it->Collect(score_func, fetcher, collector);
   }
 
-  const size_t accepted = collector.AcceptedCount();
   std::sort(
-    hits.data(), hits.data() + accepted,
+    hits.data(), hits.data() + hits.size(),
     [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
   return collector.TotalMatches();
 }
@@ -119,11 +118,8 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     collector.SetScoreThreshold(score_threshold);
   }
 
-  // See ExecuteTopKWithCount above -- sort the accepted range so callers
-  // see top-K in descending score order.
-  const size_t accepted = collector.AcceptedCount();
   std::sort(
-    hits.data(), hits.data() + accepted,
+    hits.data(), hits.data() + hits.size(),
     [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
   return collector.TotalMatches();
 }

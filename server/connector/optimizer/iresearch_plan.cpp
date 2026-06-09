@@ -37,6 +37,7 @@
 #include <duckdb/planner/operator/logical_top_n.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/proxy_filter.hpp>
 
 #include "basics/containers/trivial_map.h"
 #include "basics/down_cast.h"
@@ -1017,10 +1018,23 @@ bool TryClaimSearchFilter(
     };
   };
 
-  auto root = std::make_shared<irs::And>();
+  auto& scan = bind_data.scan_source->Cast<connector::SearchScan>();
+  std::shared_ptr<irs::Filter> stored;
+  irs::And* root_ptr;
+  if (scan.vector_scorer) {
+    auto proxy = std::make_shared<irs::ProxyFilter>();
+    root_ptr =
+      &proxy->set_filter<irs::And>(irs::IResourceManager::gNoop).first;
+    stored = std::move(proxy);
+  } else {
+    auto and_filter = std::make_shared<irs::And>();
+    root_ptr = and_filter.get();
+    stored = std::move(and_filter);
+  }
+
   bool any_claimed = false;
   for (size_t i = 0; i < filters.size();) {
-    if (TryClaimIResearchConjunct(*root, filters[i], getter, expr_getter,
+    if (TryClaimIResearchConjunct(*root_ptr, filters[i], getter, expr_getter,
                                   options)) {
       any_claimed = true;
       std::swap(filters[i], filters.back());
@@ -1033,7 +1047,7 @@ bool TryClaimSearchFilter(
     return false;
   }
 
-  bind_data.scan_source->Cast<connector::SearchScan>().stored_filter = root;
+  scan.stored_filter = std::move(stored);
   return true;
 }
 
@@ -1061,7 +1075,7 @@ void IResearchPushdownComplexFilter(
     return;
   }
   const auto& ss = bind_data.scan_source->Cast<connector::SearchScan>();
-  if (ss.stored_filter || ss.text_scorer || ss.vector_scorer) {
+  if (ss.stored_filter || ss.text_scorer) {
     return;
   }
   auto index = bind_data.inverted_index;

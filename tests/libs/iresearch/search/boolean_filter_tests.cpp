@@ -16439,12 +16439,14 @@ TEST(And_test, optimize_all_filters) {
 
   // multiple `all` filters
   {
-    irs::And root;
-    root.add<irs::All>().boost(5.f);
-    root.add<irs::All>().boost(2.f);
-    root.add<irs::All>().boost(3.f);
+    auto root = std::make_unique<irs::And>();
+    root->add<irs::All>().boost(5.f);
+    root->add<irs::All>().boost(2.f);
+    root->add<irs::All>().boost(3.f);
+    irs::Filter::ptr f = std::move(root);
+    irs::Optimize(f);
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = f->prepare({.index = irs::SubReader::empty()});
     ASSERT_EQ(
       typeid(irs::All().prepare({.index = irs::SubReader::empty()}).get()),
       typeid(prepared.get()));
@@ -16453,14 +16455,16 @@ TEST(And_test, optimize_all_filters) {
 
   // multiple `all` filters + term filter
   {
-    irs::And root;
-    root.add<irs::All>().boost(5.f);
-    root.add<irs::All>().boost(2.f);
-    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
+    auto root = std::make_unique<irs::And>();
+    root->add<irs::All>().boost(5.f);
+    root->add<irs::All>().boost(2.f);
+    Append<irs::ByTerm>(*root, kFieldTestField, "test_term");
+    irs::Filter::ptr f = std::move(root);
 
     tests::sort::Boost sort{};
+    irs::Optimize(f, {.scorer = &sort});
     auto prepared =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+      f->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
     ASSERT_EQ(8.f, prepared->Boost());
   }
@@ -16468,11 +16472,13 @@ TEST(And_test, optimize_all_filters) {
   // `all` filter + term filter
   {
     tests::sort::Boost sort{};
-    irs::And root;
-    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
-    root.add<irs::All>().boost(5.f);
+    auto root = std::make_unique<irs::And>();
+    Append<irs::ByTerm>(*root, kFieldTestField, "test_term");
+    root->add<irs::All>().boost(5.f);
+    irs::Filter::ptr f = std::move(root);
+    irs::Optimize(f, {.scorer = &sort});
     auto prepared =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+      f->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
     ASSERT_EQ(6.f, prepared->Boost());
   }
@@ -16601,26 +16607,28 @@ TEST(Or_test, optimize_single_node) {
 }
 
 TEST(Or_test, optimize_all_unscored) {
-  irs::Or root;
+  auto root = std::make_unique<irs::Or>();
   detail::Boosted::gExecuteCount = 0;
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {1};
   }
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {2};
   }
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {3};
   }
-  root.add<irs::All>();
-  root.add<irs::Empty>();
-  root.add<irs::All>();
-  root.add<irs::Empty>();
+  root->add<irs::All>();
+  root->add<irs::Empty>();
+  root->add<irs::All>();
+  root->add<irs::Empty>();
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
 
-  auto prep = root.prepare({.index = irs::SubReader::empty()});
+  auto prep = filter->prepare({.index = irs::SubReader::empty()});
 
   prep->execute({.segment = irs::SubReader::empty()});
   ASSERT_EQ(
@@ -16628,26 +16636,29 @@ TEST(Or_test, optimize_all_unscored) {
 }
 
 TEST(Or_test, optimize_all_scored) {
-  irs::Or root;
+  auto root = std::make_unique<irs::Or>();
   detail::Boosted::gExecuteCount = 0;
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {1};
   }
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {2};
   }
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {3};
   }
-  root.add<irs::All>();
-  root.add<irs::Empty>();
-  root.add<irs::All>();
-  root.add<irs::Empty>();
+  root->add<irs::All>();
+  root->add<irs::Empty>();
+  root->add<irs::All>();
+  root->add<irs::Empty>();
   tests::sort::Boost sort{};
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scorer = &sort});
+  auto prep =
+    filter->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
   prep->execute({.segment = irs::SubReader::empty()});
   ASSERT_EQ(3,
@@ -16657,12 +16668,15 @@ TEST(Or_test, optimize_all_scored) {
 
 TEST(Or_test, optimize_only_all_boosted) {
   tests::sort::Boost sort{};
-  irs::Or root;
-  root.boost(2);
-  root.add<irs::All>().boost(3);
-  root.add<irs::All>().boost(5);
+  auto root = std::make_unique<irs::Or>();
+  root->boost(2);
+  root->add<irs::All>().boost(3);
+  root->add<irs::All>().boost(5);
 
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scorer = &sort});
+  auto prep =
+    filter->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
   prep->execute({.segment = irs::SubReader::empty()});
   ASSERT_EQ(16, prep->Boost());
@@ -16670,19 +16684,22 @@ TEST(Or_test, optimize_only_all_boosted) {
 
 TEST(Or_test, boosted_not) {
   tests::sort::Boost sort{};
-  irs::Or root;
+  auto root = std::make_unique<irs::Or>();
   {
-    auto& neg = root.add<irs::Exclusion>();
+    auto& neg = root->add<irs::Exclusion>();
     auto& node = neg.exclude<detail::Boosted>();
     node.docs = {5, 6};
     node.boost(4);
   }
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {1};
     node.boost(5);
   }
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scorer = &sort});
+  auto prep =
+    filter->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
   auto docs =
     prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
   const auto& scr = docs->PrepareScore({

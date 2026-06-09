@@ -177,7 +177,6 @@ const T& As(const irs::Filter& f) {
 }
 
 }  // namespace
-
 namespace tests {
 
 // Fixture providing the optimizer helpers and a lazily-built index over
@@ -293,7 +292,8 @@ TEST_P(FilterOptimizerTest, NotSimplifyRule) {
     irs::Filter::ptr root = MakeNot(MakeNot(MakeNot(MakeTerm(kName, "A"))));
     Optimize(root);
     ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
-    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), As<irs::Exclusion>(*root).exclude()->type());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(),
+              As<irs::Exclusion>(*root).exclude()->type());
   }
 
   // deep, even chain fully cancels
@@ -352,9 +352,9 @@ TEST_P(FilterOptimizerTest, OrEmptyRule) {
 
   // all empties with min_match=0 -> all-docs, not empty (#1 regression)
   {
-    irs::Filter::ptr root = MakeOrV(
-      Filters(Make<irs::Empty>(), Make<irs::Empty>()), irs::ScoreMergeType::Sum,
-      0);
+    irs::Filter::ptr root =
+      MakeOrV(Filters(Make<irs::Empty>(), Make<irs::Empty>()),
+              irs::ScoreMergeType::Sum, 0);
     Optimize(root);
     ASSERT_EQ(irs::Type<irs::All>::id(), TypeOf(*root));
   }
@@ -672,7 +672,8 @@ TEST_P(FilterOptimizerTest, ByTermsRule) {
 
   // different fields are not merged
   {
-    irs::Filter::ptr root = MakeAnd(MakeTerm(kName, "A"), MakeTerm(kOther, "B"));
+    irs::Filter::ptr root =
+      MakeAnd(MakeTerm(kName, "A"), MakeTerm(kOther, "B"));
     Optimize(root);
     ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*root));
     ASSERT_EQ(2, As<irs::And>(*root).size());
@@ -918,7 +919,8 @@ TEST_P(FilterOptimizerTest, General) {
   }
 }
 
-static constexpr auto kOptimizerDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kOptimizerDirs =
+  tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(filter_optimizer_test, FilterOptimizerTest,
                          ::testing::Combine(::testing::ValuesIn(kOptimizerDirs),

@@ -22,6 +22,8 @@
 
 #include <cstdio>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/types/variant.hpp>
+#include <duckdb/function/scalar/variant_utils.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
@@ -30,6 +32,8 @@
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "connector/key_utils.hpp"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "search_remove_filter.hpp"
 
 namespace sdb::connector {
@@ -414,7 +418,7 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(
   auto& fmt = _vec_fmt.unified;
   vec.ToUnifiedFormat(count, fmt);
 
-  auto& jpf = _json_fields;
+  auto& jpf = _per_kind_fields;
   const bool has_store = irs::field_limits::valid(jpf.tokenizer_column);
 
   for (duckdb::idx_t i = 0; i < count; ++i) {
@@ -506,6 +510,108 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(
   _pk_blob_writer = nullptr;
 }
 
+void SearchSinkInsertBaseImpl::WriteVariantBatch(
+  const duckdb::Vector& vec, std::span<const std::string_view> row_keys,
+  duckdb::idx_t count) {
+  SDB_ASSERT(_document);
+  _document->NextFieldBatch();
+
+  _vec_fmt.children.clear();
+  duckdb::Vector::RecursiveToUnifiedFormat(vec, count, _vec_fmt);
+  const duckdb::UnifiedVariantVectorData variant{_vec_fmt};
+
+  using duckdb::VariantLogicalType;
+  auto& pkf = _per_kind_fields;
+  const bool has_store = irs::field_limits::valid(pkf.tokenizer_column);
+
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    if (i < row_keys.size() && row_keys[i].empty()) {
+      continue;
+    }
+
+    auto insert_field = [this](Field& field) {
+      if (!_document->Insert(&field)) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to insert variant expression field into IResearch "
+                  "document");
+      }
+    };
+
+    bool wrote_string_blob = false;
+    bool null_leaf = !variant.RowIsValid(i);
+    if (!null_leaf) {
+      const auto type_id = variant.GetTypeId(i, 0);
+      switch (type_id) {
+        case VariantLogicalType::VARIANT_NULL:
+          null_leaf = true;
+          break;
+        case VariantLogicalType::BOOL_TRUE:
+        case VariantLogicalType::BOOL_FALSE:
+          pkf.bool_field.SetBooleanValue(type_id ==
+                                         VariantLogicalType::BOOL_TRUE);
+          insert_field(pkf.bool_field);
+          break;
+        case VariantLogicalType::VARCHAR:
+        case VariantLogicalType::BLOB: {
+          const auto s = duckdb::VariantUtils::DecodeStringData(variant, i, 0);
+          pkf.string_field.SetStringValue({s.GetData(), s.GetSize()});
+          insert_field(pkf.string_field);
+          if (has_store && pkf.string_field.store_attr) {
+            AppendPerRowBlob(pkf.tokenizer_column,
+                             pkf.string_field.store_attr->value);
+            wrote_string_blob = true;
+          }
+        } break;
+        case VariantLogicalType::INT8:
+        case VariantLogicalType::INT16:
+        case VariantLogicalType::INT32:
+        case VariantLogicalType::INT64:
+        case VariantLogicalType::INT128:
+        case VariantLogicalType::UINT8:
+        case VariantLogicalType::UINT16:
+        case VariantLogicalType::UINT32:
+        case VariantLogicalType::UINT64:
+        case VariantLogicalType::UINT128:
+        case VariantLogicalType::FLOAT:
+        case VariantLogicalType::DOUBLE:
+        case VariantLogicalType::DECIMAL: {
+          const auto value =
+            duckdb::VariantUtils::ConvertVariantToValue(variant, i, 0);
+          pkf.numeric_field.SetNumericValue(value.GetValue<double>());
+          insert_field(pkf.numeric_field);
+        } break;
+        case VariantLogicalType::OBJECT:
+        case VariantLogicalType::ARRAY:
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("Variant expression indexed by an inverted index must "
+                    "resolve to a primitive (string/number/boolean/null) "
+                    "scalar; got an object or array"));
+        default:
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("Variant expression indexed by an inverted index resolves "
+                    "to an unsupported scalar type '",
+                    duckdb::EnumUtil::ToString(type_id),
+                    "'; only string/number/boolean/null are supported"));
+      }
+    }
+    if (null_leaf) {
+      pkf.null_field.SetNullValue();
+      insert_field(pkf.null_field);
+    }
+    if (has_store && !wrote_string_blob) {
+      AppendPerRowBlob(pkf.tokenizer_column, irs::bytes_view{});
+    }
+
+    const auto full_row_key =
+      i < row_keys.size() ? row_keys[i] : std::string_view{};
+    MaybeEmitPk(full_row_key);
+    _document->NextDocument();
+  }
+  _pk_blob_writer = nullptr;
+}
+
 void SearchSinkInsertBaseImpl::SwitchFieldImpl(
   irs::field_id field_id, const duckdb::LogicalType& type,
   const duckdb::Vector& vec, std::span<const std::string_view> row_keys,
@@ -524,15 +630,27 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(
     EmitPkOnlyBatch(row_keys, count);
     return;
   }
-  if (type.IsJSONType() && entry && entry->HasJsonLeafFields()) {
-    _json_fields.InitForExpression(field_id, entry, resolve_tokenizer());
-    if (irs::field_limits::valid(_json_fields.tokenizer_column)) {
-      EnsurePerRowBlobWriter(_json_fields.tokenizer_column);
+  if (type.IsJSONType() && entry && entry->HasPerKindFields()) {
+    _per_kind_fields.InitForExpression(field_id, entry, resolve_tokenizer());
+    if (irs::field_limits::valid(_per_kind_fields.tokenizer_column)) {
+      EnsurePerRowBlobWriter(_per_kind_fields.tokenizer_column);
     }
     if (is_stored) {
       AppendToColumn(field_id, type, vec, count);
     }
     WriteJsonBatch(vec, row_keys, count);
+    return;
+  }
+  if (kind == duckdb::LogicalTypeId::VARIANT && entry &&
+      entry->HasPerKindFields()) {
+    _per_kind_fields.InitForExpression(field_id, entry, resolve_tokenizer());
+    if (irs::field_limits::valid(_per_kind_fields.tokenizer_column)) {
+      EnsurePerRowBlobWriter(_per_kind_fields.tokenizer_column);
+    }
+    if (is_stored) {
+      AppendToColumn(field_id, type, vec, count);
+    }
+    WriteVariantBatch(vec, row_keys, count);
     return;
   }
 
@@ -632,7 +750,7 @@ void SearchSinkInsertBaseImpl::InsertNullValue() {
   }
 }
 
-void SearchSinkInsertBaseImpl::JsonExpressionFields::InitForExpression(
+void SearchSinkInsertBaseImpl::PerKindFields::InitForExpression(
   irs::field_id entry_field_id, const catalog::InvertedIndexEntryInfo* entry,
   catalog::ColumnTokenizer string_analyzer) {
   SDB_ASSERT(entry);

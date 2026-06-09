@@ -201,6 +201,10 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
                       std::span<const std::string_view> row_keys,
                       duckdb::idx_t count);
 
+  void WriteVariantBatch(const duckdb::Vector& vec,
+                         std::span<const std::string_view> row_keys,
+                         duckdb::idx_t count);
+
   void EmitPkOnlyBatch(std::span<const std::string_view> row_keys,
                        duckdb::idx_t count);
 
@@ -214,7 +218,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   void AppendToColumn(irs::field_id field_id, const duckdb::LogicalType& type,
                       const duckdb::Vector& vec, duckdb::idx_t count);
 
-  struct JsonExpressionFields {
+  struct PerKindFields {
     Field string_field;
     Field numeric_field;
     Field bool_field;
@@ -241,7 +245,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     _per_row_blob_writers;
   irs::ColumnWriter* _pk_blob_writer = nullptr;
 
-  JsonExpressionFields _json_fields;
+  PerKindFields _per_kind_fields;
   simdjson::ondemand::parser _json_parser;
   std::string _json_buffer;
 

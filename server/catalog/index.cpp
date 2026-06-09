@@ -444,6 +444,10 @@ Result ValidateTokenizerVsColumn(std::string_view column_name,
     return {};
   }
 
+  if (col_id == duckdb::LogicalTypeId::VARIANT) {
+    return {};
+  }
+
   const auto is_string_leaf = [](duckdb::LogicalTypeId id) {
     return id == duckdb::LogicalTypeId::VARCHAR ||
            id == duckdb::LogicalTypeId::BLOB;
@@ -638,6 +642,10 @@ bool IsGeoAnalyzer(const irs::analysis::Analyzer& analyzer) {
          type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
 }
 
+bool WantsPerKindFields(const duckdb::LogicalType& type) {
+  return type.IsJSONType() || type.id() == duckdb::LogicalTypeId::VARIANT;
+}
+
 void FillEntryFromTokenizer(const Tokenizer& dict,
                             const irs::analysis::Analyzer& analyzer,
                             const duckdb::LogicalType& value_type,
@@ -655,7 +663,7 @@ void FillEntryFromTokenizer(const Tokenizer& dict,
   if (wants_norm) {
     entry.norm_row_group_size = dict.GetNormRowGroupSize();
   }
-  if (value_type.IsJSONType() && !IsGeoAnalyzer(analyzer)) {
+  if (WantsPerKindFields(value_type) && !IsGeoAnalyzer(analyzer)) {
     if (!irs::field_limits::valid(entry.bool_field_id)) {
       entry.bool_field_id = static_cast<irs::field_id>(NextId());
     }

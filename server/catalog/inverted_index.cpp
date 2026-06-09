@@ -267,6 +267,10 @@ Result Validate(std::string_view label, const duckdb::LogicalType& type,
     return {};
   }
 
+  if (kind == duckdb::LogicalTypeId::VARIANT) {
+    return {};
+  }
+
   if (!IsSupported(Classify(kind))) {
     return unsupported();
   }

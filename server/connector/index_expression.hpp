@@ -74,6 +74,9 @@ void RejectUserDefinedFunctions(const duckdb::ParsedExpression& expr,
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                                  duckdb::idx_t num_rows);
 
+void RejectVariantObjectArrayLeaves(const duckdb::Vector& result,
+                                    duckdb::idx_t num_rows);
+
 duckdb::Vector EvaluateExprOverChunk(
   const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,

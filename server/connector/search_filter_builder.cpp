@@ -1352,7 +1352,15 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   const auto unwrapped = UnwrapFieldCast(expr);
   std::optional<SearchColumnInfo> info;
   bool matched_unwrapped = false;
-  if (ctx.expr_getter) {
+  if (const auto* inner_ref = TryGetColumnRef(*unwrapped.expr)) {
+    auto col_info = ctx.column_getter(*inner_ref);
+    if (col_info &&
+        col_info->logical_type.id() == duckdb::LogicalTypeId::VARIANT) {
+      info = std::move(col_info);
+      matched_unwrapped = true;
+    }
+  }
+  if (!info && ctx.expr_getter) {
     info = (*ctx.expr_getter)(*unwrapped.expr);
     if (info) {
       matched_unwrapped = true;

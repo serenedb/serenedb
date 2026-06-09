@@ -32,8 +32,10 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/types/variant.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/function/scalar/variant_utils.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
@@ -364,6 +366,28 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
   }
 }
 
+void RejectVariantObjectArrayLeaves(const duckdb::Vector& result,
+                                    duckdb::idx_t num_rows) {
+  if (result.GetType().id() != duckdb::LogicalTypeId::VARIANT) {
+    return;
+  }
+  duckdb::RecursiveUnifiedVectorFormat fmt;
+  duckdb::Vector::RecursiveToUnifiedFormat(result, num_rows, fmt);
+  const duckdb::UnifiedVariantVectorData variant{fmt};
+  for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+    if (!variant.RowIsValid(i)) {
+      continue;
+    }
+    if (duckdb::VariantUtils::IsNestedType(variant, i, 0)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Variant expression indexed by an inverted index must resolve "
+                "to a primitive (string/number/boolean/null) scalar; got an "
+                "object or array"));
+    }
+  }
+}
+
 duckdb::Vector EvaluateExprOverChunk(
   const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,
@@ -376,6 +400,7 @@ duckdb::Vector EvaluateExprOverChunk(
   executor.ExecuteExpression(chunk, result);
   if (!is_geojson) {
     RejectJsonObjectArrayLeaves(result, num_rows);
+    RejectVariantObjectArrayLeaves(result, num_rows);
   }
   return result;
 }

@@ -151,7 +151,7 @@ struct InvertedIndexEntryInfo {
 
   bool IsHNSW() const noexcept { return hnsw_config.has_value(); }
   bool HasTextDictionary() const noexcept { return text_dictionary.isSet(); }
-  bool HasJsonLeafFields() const noexcept {
+  bool HasPerKindFields() const noexcept {
     return irs::field_limits::valid(numeric_field_id) &&
            irs::field_limits::valid(bool_field_id);
   }

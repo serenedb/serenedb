@@ -1,0 +1,74 @@
+# A bare VARIANT column can be indexed directly: each row's variant scalar is
+# indexed like a JSON leaf (string/number/boolean/null), object/array leaves
+# are rejected per row, and leaves are queried by casting the column to the
+# target type. See inverted_index_variant_json.test for the indexed-expression
+# (path-extraction) variant.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY variant_path_dict(template = 'keyword');
+
+statement ok
+CREATE TABLE variant_col(id INTEGER PRIMARY KEY, v VARIANT);
+
+statement ok
+CREATE INDEX variant_col_idx ON variant_col
+  USING inverted(id, v variant_path_dict);
+
+statement ok
+INSERT INTO variant_col VALUES (1, 'alpha'::variant);
+
+statement ok
+INSERT INTO variant_col VALUES (2, 'beta'::variant);
+
+statement ok
+INSERT INTO variant_col VALUES (3, 42::variant);
+
+statement ok
+INSERT INTO variant_col VALUES (4, true::variant);
+
+statement ok
+INSERT INTO variant_col VALUES (5, 'null'::json::variant);
+
+# Object/array variants are rejected per row.
+statement error
+INSERT INTO variant_col VALUES (6, '{"x":1}'::json::variant);
+----
+db error: ERROR: Variant expression indexed by an inverted index must resolve to a primitive (string/number/boolean/null) scalar; got an object or array
+
+
+statement error
+INSERT INTO variant_col VALUES (7, '[1,2,3]'::json::variant);
+----
+db error: ERROR: Variant expression indexed by an inverted index must resolve to a primitive (string/number/boolean/null) scalar; got an object or array
+
+
+statement ok
+VACUUM (REFRESH_TABLE) variant_col;
+
+# String leaf via ::text.
+query
+SELECT id FROM variant_col_idx WHERE v::text = 'alpha';
+----
+id
+1
+
+# Numeric leaf via ::int.
+query
+SELECT id FROM variant_col_idx WHERE v::int = 42;
+----
+id
+3
+
+# Boolean leaf via ::bool.
+query
+SELECT id FROM variant_col_idx WHERE v::bool = true;
+----
+id
+4
+
+# Null leaf via ::text IS NULL.
+query
+SELECT id FROM variant_col_idx WHERE v::text IS NULL;
+----
+id
+5

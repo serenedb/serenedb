@@ -927,8 +927,8 @@ pk
 1
 
 # Lock in that both column and expression HNSW reach the ANN scan operator
-# (not a brute-force fallback). top-K ⇒ IRESEARCH_ANN_SCAN,
-# distance < radius ⇒ IRESEARCH_ANN_RANGE_SCAN.
+# (not a brute-force fallback). top-K ⇒ IRESEARCH_SCAN (ANN),
+# distance < radius ⇒ IRESEARCH_SCAN (ANN range).
 query
 EXPLAIN SELECT pk FROM m_vec_hnsw_st
   ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] LIMIT 1;

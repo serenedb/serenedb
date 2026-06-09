@@ -32,7 +32,7 @@ EXPLAIN SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] L
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: wal_hnsw_idx    │
 │      Lookup: rocksdb      │

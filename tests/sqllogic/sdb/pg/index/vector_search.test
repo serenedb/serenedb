@@ -151,7 +151,7 @@ id
 
 
 # Same ANN query against the base table -- optimizer autodetects the
-# inverted index, rewrites to IRESEARCH_ANN_SCAN, and reads the
+# inverted index, rewrites to IRESEARCH_SCAN, and reads the
 # InvertedIndexSnapshot stashed on the scan source at rewrite time.
 query
 SELECT id FROM t ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;

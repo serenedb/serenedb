@@ -243,6 +243,23 @@ duckdb::LogicalProjection* FindProjectionByTableIndex(
   return nullptr;
 }
 
+duckdb::ColumnBinding ResolveBindingThroughProjections(
+  duckdb::LogicalOperator& root, duckdb::ColumnBinding binding) {
+  while (auto* proj = FindProjectionByTableIndex(root, binding.table_index)) {
+    const auto idx = binding.column_index.GetIndex();
+    if (idx >= proj->expressions.size()) {
+      break;
+    }
+    auto& forwarded = *proj->expressions[idx];
+    if (forwarded.GetExpressionType() !=
+        duckdb::ExpressionType::BOUND_COLUMN_REF) {
+      break;
+    }
+    binding = forwarded.Cast<duckdb::BoundColumnRefExpression>().binding;
+  }
+  return binding;
+}
+
 duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
                                         duckdb::TableIndex anchor_ti,
                                         const duckdb::LogicalGet& target_get,
@@ -310,6 +327,22 @@ duckdb::idx_t AppendScoreColumn(connector::SereneDBScanBindData& bind_data,
     duckdb::LogicalType::FLOAT, catalog::Column::kScoreName);
 }
 
+duckdb::unique_ptr<duckdb::Expression> MakeScoreRefExpression(
+  duckdb::LogicalOperator& root, const FoundScan& found,
+  duckdb::TableIndex anchor_ti, const duckdb::BoundFunctionExpression& func) {
+  const auto idx = AppendScoreColumn(*found.bind_data, *found.get);
+  const auto binding =
+    ExposeGetColumnAt(root, anchor_ti, *found.get, idx,
+                      catalog::Column::kScoreName, duckdb::LogicalType::FLOAT);
+  auto ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+    std::string{catalog::Column::kScoreName}, duckdb::LogicalType::FLOAT,
+    binding);
+  if (!func.GetAlias().empty()) {
+    ref->SetAlias(func.GetAlias());
+  }
+  return ref;
+}
+
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
   static constexpr containers::TrivialSet kScorerNames = [](auto selector) {
@@ -332,22 +365,9 @@ bool BindingResolvesToScoreColumn(const duckdb::BoundColumnRefExpression& ref,
   if (ref.GetAlias().empty()) {
     return false;
   }
-  auto binding = ref.binding;
-  while (auto* proj = FindProjectionByTableIndex(root, binding.table_index)) {
-    const auto idx = binding.column_index.GetIndex();
-    if (idx >= proj->expressions.size()) {
-      return false;
-    }
-    auto& forwarded = *proj->expressions[idx];
-    if (forwarded.GetExpressionType() !=
-        duckdb::ExpressionType::BOUND_COLUMN_REF) {
-      return false;
-    }
-    binding = forwarded.Cast<duckdb::BoundColumnRefExpression>().binding;
-  }
-  auto found =
-    FindIResearchScan(root, binding.table_index);
-  if (!found) {
+  const auto binding = ResolveBindingThroughProjections(root, ref.binding);
+  auto found = FindIResearchScan(root, binding.table_index);
+  if (!found || found->get->table_index != binding.table_index) {
     return false;
   }
   const auto col_idx = binding.column_index.GetIndex();
@@ -402,17 +422,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
   if (!TrySetScorer(ss.text_scorer, func, func.function.GetName())) {
     return nullptr;
   }
-  const auto idx = AppendScoreColumn(*found->bind_data, *found->get);
-  const auto binding =
-    ExposeGetColumnAt(root, anchor.binding.table_index, *found->get, idx,
-                      catalog::Column::kScoreName, duckdb::LogicalType::FLOAT);
-  auto out = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    std::string{catalog::Column::kScoreName}, duckdb::LogicalType::FLOAT,
-    binding);
-  if (!func.GetAlias().empty()) {
-    out->SetAlias(func.GetAlias());
-  }
-  return out;
+  return MakeScoreRefExpression(root, *found, anchor.binding.table_index, func);
 }
 
 duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
@@ -458,13 +468,9 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
   if (!found) {
     return nullptr;
   }
-
-  {
-    const auto& ss =
-      found->bind_data->scan_source->Cast<connector::SearchScan>();
-    if (ss.text_scorer || ss.EmitOffsets()) {
-      return nullptr;
-    }
+  auto& ss = found->bind_data->scan_source->Cast<connector::SearchScan>();
+  if (ss.text_scorer || ss.EmitOffsets()) {
+    return nullptr;
   }
 
   auto index = found->bind_data->inverted_index;
@@ -486,8 +492,6 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
     return nullptr;
   }
 
-  auto& ss = found->bind_data->scan_source->Cast<connector::SearchScan>();
-
   if (!ss.vector_scorer) {
     ss.vector_scorer = connector::VectorScorerOptions{
       .field_id = call_field_id,
@@ -507,21 +511,14 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
     }
   }
 
-  const auto col_idx = AppendScoreColumn(*found->bind_data, *found->get);
-  const auto binding =
-    ExposeGetColumnAt(root, *anchor_ti, *found->get, col_idx,
-                      catalog::Column::kScoreName, duckdb::LogicalType::FLOAT);
-  duckdb::unique_ptr<duckdb::Expression> ref =
-    duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-      std::string{catalog::Column::kScoreName}, duckdb::LogicalType::FLOAT,
-      binding);
+  auto ref = MakeScoreRefExpression(root, *found, *anchor_ti, func);
   const auto& want_type = func.GetReturnType();
   if (want_type.id() != duckdb::LogicalTypeId::FLOAT) {
     ref = duckdb::BoundCastExpression::AddCastToType(context, std::move(ref),
                                                      want_type);
-  }
-  if (!func.GetAlias().empty()) {
-    ref->SetAlias(func.GetAlias());
+    if (!func.GetAlias().empty()) {
+      ref->SetAlias(func.GetAlias());
+    }
   }
   return ref;
 }
@@ -539,19 +536,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   }
   const auto& col_ref =
     func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
-  duckdb::ColumnBinding resolved = col_ref.binding;
-  while (auto* proj = FindProjectionByTableIndex(root, resolved.table_index)) {
-    const auto idx = resolved.column_index.GetIndex();
-    if (idx >= proj->expressions.size()) {
-      break;
-    }
-    auto& forwarded = *proj->expressions[idx];
-    if (forwarded.GetExpressionType() !=
-        duckdb::ExpressionType::BOUND_COLUMN_REF) {
-      break;
-    }
-    resolved = forwarded.Cast<duckdb::BoundColumnRefExpression>().binding;
-  }
+  const auto resolved = ResolveBindingThroughProjections(root, col_ref.binding);
 
   constexpr size_t kDefaultOffsetsLimit = 1 << 12;
   size_t limit = kDefaultOffsetsLimit;

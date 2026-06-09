@@ -46,7 +46,8 @@ struct AutomatonOptions {
       scored_terms_limit{scored_terms_limit} {}
 
   bool operator==(const AutomatonOptions& rhs) const noexcept {
-    return pattern == rhs.pattern && scored_terms_limit == rhs.scored_terms_limit;
+    return pattern == rhs.pattern &&
+           scored_terms_limit == rhs.scored_terms_limit;
   }
 };
 

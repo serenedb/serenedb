@@ -49,7 +49,8 @@ field_visitor AutomatonFilter::visitor(const automaton& acceptor) {
 
 Filter::Query::ptr AutomatonFilter::prepare(const PrepareContext& ctx) const {
   return PrepareAutomatonFilter(ctx.Boost(Boost()), field_id(),
-                                options().acceptor, options().scored_terms_limit);
+                                options().acceptor,
+                                options().scored_terms_limit);
 }
 
 }  // namespace irs

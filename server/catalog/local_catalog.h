@@ -62,6 +62,8 @@ class LocalCatalog final : public LogicalCatalog,
                         std::shared_ptr<Schema> schema) final;
   Result RegisterView(ObjectId schema_id,
                       std::shared_ptr<PgSqlView> view) final;
+  Result RegisterSubscription(ObjectId database_id,
+                              std::shared_ptr<Subscription> sub) final;
   Result RegisterSequence(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<Sequence> sequence) final;
   Result RegisterFunction(ObjectId database_id, ObjectId schema_id,

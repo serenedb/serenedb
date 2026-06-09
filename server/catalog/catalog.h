@@ -251,6 +251,8 @@ struct LogicalCatalog {
                                 std::shared_ptr<catalog::Schema> schema) = 0;
   virtual Result RegisterView(ObjectId schema_id,
                               std::shared_ptr<catalog::PgSqlView> view) = 0;
+  virtual Result RegisterSubscription(
+    ObjectId database_id, std::shared_ptr<catalog::Subscription> sub) = 0;
   virtual Result RegisterSequence(
     ObjectId database_id, ObjectId schema_id,
     std::shared_ptr<catalog::Sequence> sequence) = 0;

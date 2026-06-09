@@ -33,7 +33,12 @@ Subscription::Subscription(ObjectId schema_id, ObjectId id,
 
 std::shared_ptr<Subscription> Subscription::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {
-  THROW_SQL_ERROR(ERR_MSG("Deserialize not implemented for Subscription"));
+  Config config;
+  basics::ReadTuple(src, config);
+
+  // @todo schema_id, ids...
+  return std::make_shared<Subscription>(ctx.schema_id, ctx.id, config.slot_name,
+                                        std::move(config));
 }
 void Subscription::Serialize(duckdb::Serializer& sink) const {
   basics::WriteTuple(sink, _config);

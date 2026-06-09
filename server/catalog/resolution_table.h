@@ -218,6 +218,8 @@ class ResolutionTable {
         CloneData(_functions).erase(id);
         CloneData(_tokenizers).erase(id);
         CloneData(_types).erase(id);
+
+        // @todo what id is?
         CloneData(_subscriptions).erase(id);
       }
       return {id};

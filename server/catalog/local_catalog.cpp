@@ -1603,6 +1603,14 @@ Result LocalCatalog::RegisterView(ObjectId schema_id,
   });
 }
 
+Result LocalCatalog::RegisterSubscription(ObjectId database_id,
+                                          std::shared_ptr<Subscription> sub) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, _snapshot_mutex, [&](auto& clone) {
+    return clone->RegisterObject(std::move(sub), database_id, false);
+  });
+}
+
 Result LocalCatalog::RegisterSequence(ObjectId database_id, ObjectId schema_id,
                                       std::shared_ptr<Sequence> sequence) {
   absl::MutexLock lock{&_mutex};

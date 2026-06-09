@@ -48,11 +48,11 @@
 #include "connector/duckdb_table_function.h"
 #include "connector/index_source.h"
 #include "connector/offsets_collector.hpp"
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
 #include "connector/offsets_writer.hpp"
 #include "connector/search_pk_lookup.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_shard.h"
 
 namespace sdb::connector {

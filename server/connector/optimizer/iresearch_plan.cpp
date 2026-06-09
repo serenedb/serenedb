@@ -191,17 +191,15 @@ struct FoundScan {
   connector::SereneDBScanBindData* bind_data;
 };
 
-template<typename AcceptFn>
 std::optional<FoundScan> FindIResearchScan(duckdb::LogicalOperator& op,
-                                           duckdb::TableIndex target,
-                                           AcceptFn&& accept) {
+                                           duckdb::TableIndex target) {
   if (op.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
     auto& get = op.Cast<duckdb::LogicalGet>();
     if (get.table_index != target || !connector::IsSereneDBScan(get)) {
       return std::nullopt;
     }
     auto& bd = get.bind_data->Cast<connector::SereneDBScanBindData>();
-    if (!accept(*bd.scan_source)) {
+    if (bd.scan_source->Kind() != connector::ScanSourceKind::Search) {
       return std::nullopt;
     }
     return FoundScan{&get, &bd};
@@ -214,7 +212,7 @@ std::optional<FoundScan> FindIResearchScan(duckdb::LogicalOperator& op,
         auto& get = child.Cast<duckdb::LogicalGet>();
         if (connector::IsSereneDBScan(get)) {
           auto& bd = get.bind_data->Cast<connector::SereneDBScanBindData>();
-          if (accept(*bd.scan_source)) {
+          if (bd.scan_source->Kind() == connector::ScanSourceKind::Search) {
             return FoundScan{&get, &bd};
           }
         }
@@ -222,7 +220,7 @@ std::optional<FoundScan> FindIResearchScan(duckdb::LogicalOperator& op,
     }
   }
   for (auto& child : op.children) {
-    if (auto result = FindIResearchScan(*child, target, accept)) {
+    if (auto result = FindIResearchScan(*child, target)) {
       return result;
     }
   }
@@ -348,9 +346,7 @@ bool BindingResolvesToScoreColumn(const duckdb::BoundColumnRefExpression& ref,
     binding = forwarded.Cast<duckdb::BoundColumnRefExpression>().binding;
   }
   auto found =
-    FindIResearchScan(root, binding.table_index, [](connector::ScanSource& s) {
-      return s.Kind() == connector::ScanSourceKind::Search;
-    });
+    FindIResearchScan(root, binding.table_index);
   if (!found) {
     return false;
   }
@@ -395,10 +391,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownScorerCall(
     return nullptr;
   }
   auto& anchor = func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
-  auto found = FindIResearchScan(
-    root, anchor.binding.table_index, [](connector::ScanSource& s) {
-      return s.Kind() == connector::ScanSourceKind::Search;
-    });
+  auto found = FindIResearchScan(root, anchor.binding.table_index);
   if (!found) {
     return nullptr;
   }
@@ -461,10 +454,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
     return nullptr;
   }
 
-  auto found =
-    FindIResearchScan(root, *anchor_ti, [](connector::ScanSource& s) {
-      return s.Kind() == connector::ScanSourceKind::Search;
-    });
+  auto found = FindIResearchScan(root, *anchor_ti);
   if (!found) {
     return nullptr;
   }
@@ -594,10 +584,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
     return std::string{col_ref.GetAlias()};
   };
 
-  auto found =
-    FindIResearchScan(root, resolved.table_index, [](connector::ScanSource& s) {
-      return s.Kind() == connector::ScanSourceKind::Search;
-    });
+  auto found = FindIResearchScan(root, resolved.table_index);
   if (!found) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

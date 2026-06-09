@@ -381,15 +381,21 @@ SereneDBSearchInsert::GetLocalSinkState(
       gstate->chunk_types);
     std::lock_guard<std::mutex> lock(gstate->combine_mu);
     auto& entry = gstate->sdb_txn->SearchTxn().Changes()[gstate->table_id];
-    // One buffer for this sink thread: its rows + the per-Sink-chunk (base,
-    // count) list (§5.6). Cache the pointees in lstate -- stable across this
-    // vector growing as other threads register.
+    // One buffer for this sink thread: its rows + (generated-PK only) the
+    // per-Sink-chunk (base, count) list (§5.6). Cache the pointees in lstate --
+    // stable across this vector growing as other threads register.
     auto& buf = entry.inserts.emplace_back();
     buf.collection = std::move(collection);
-    buf.pk_segments =
-      std::make_unique<std::vector<search::SearchDbWal::InlinePk>>();
     lstate->collection = buf.collection.get();
-    lstate->pk_segments = buf.pk_segments.get();
+    // pk_segments records the synthetic generated-PK base per Sink chunk. An
+    // explicit-PK table re-derives its key from the columns on replay (base 0),
+    // so it needs no segments -- leave them unallocated (the empty-segments
+    // case is handled by VisitInlineSegments' fallback).
+    if (gstate->generated_pk_seq != nullptr) {
+      buf.pk_segments =
+        std::make_unique<std::vector<search::SearchDbWal::InlinePk>>();
+      lstate->pk_segments = buf.pk_segments.get();
+    }
   }
   return lstate;
 }
@@ -448,7 +454,11 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     lstate->chunk_writer->Append(chunk, pk_base);
   } else {
     lstate->collection->Append(chunk);
-    lstate->pk_segments->push_back({pk_base, num_rows});
+    // Record this Sink chunk's generated-PK base; explicit-PK tables don't
+    // allocate pk_segments (key re-derived from columns on replay).
+    if (lstate->pk_segments != nullptr) {
+      lstate->pk_segments->push_back({pk_base, num_rows});
+    }
   }
   lstate->insert_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;

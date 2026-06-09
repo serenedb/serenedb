@@ -105,9 +105,13 @@ uint64_t SearchTableTransaction::AppendCommit() {
     if (it != _changes.end()) {
       for (auto& buf : it->second.inserts) {
         if (buf.collection && buf.collection->Count() > 0) {
+          // pk_segments is null for explicit-PK tables (no generated-PK bases
+          // to record) -> empty span; replay re-derives the key from columns.
           ops.push_back(SearchDbWal::Op{
             buf.collection.get(),
-            std::span<const SearchDbWal::InlinePk>{*buf.pk_segments},
+            buf.pk_segments
+              ? std::span<const SearchDbWal::InlinePk>{*buf.pk_segments}
+              : std::span<const SearchDbWal::InlinePk>{},
             {}});
         }
       }

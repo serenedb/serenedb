@@ -72,8 +72,10 @@ struct LocalTableChangesEntry {
     // append order -- the generated-PK base and that chunk's row count.
     // Recorded per Sink chunk (NOT per collection Chunk: ColumnDataCollection
     // coalesces partial appends) so replay re-slices by count and reproduces
-    // each chunk's synthetic PKs (WAL_DESIGN.md §5.6). base is 0 for
-    // explicit-PK.
+    // each chunk's synthetic PKs (WAL_DESIGN.md §5.6). **Null for explicit-PK
+    // tables** -- their key is re-derived from the columns on replay, so no
+    // bases are recorded (replay takes VisitInlineSegments' empty-segments
+    // fallback, base 0).
     std::unique_ptr<std::vector<SearchDbWal::InlinePk>> pk_segments;
   };
 

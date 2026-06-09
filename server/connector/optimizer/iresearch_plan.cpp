@@ -329,6 +329,44 @@ bool IsScorerFunctionName(std::string_view name) {
   return kScorerNames.Contains(name);
 }
 
+bool BindingResolvesToScoreColumn(const duckdb::BoundColumnRefExpression& ref,
+                                  duckdb::LogicalOperator& root) {
+  if (ref.GetAlias().empty()) {
+    return false;
+  }
+  auto binding = ref.binding;
+  while (auto* proj = FindProjectionByTableIndex(root, binding.table_index)) {
+    const auto idx = binding.column_index.GetIndex();
+    if (idx >= proj->expressions.size()) {
+      return false;
+    }
+    auto& forwarded = *proj->expressions[idx];
+    if (forwarded.GetExpressionType() !=
+        duckdb::ExpressionType::BOUND_COLUMN_REF) {
+      return false;
+    }
+    binding = forwarded.Cast<duckdb::BoundColumnRefExpression>().binding;
+  }
+  auto found =
+    FindIResearchScan(root, binding.table_index, [](connector::ScanSource& s) {
+      return s.Kind() == connector::ScanSourceKind::Search;
+    });
+  if (!found) {
+    return false;
+  }
+  const auto col_idx = binding.column_index.GetIndex();
+  const auto& col_ids = found->get->GetColumnIds();
+  if (col_idx >= col_ids.size() || !col_ids[col_idx].HasPrimaryIndex()) {
+    return false;
+  }
+  const auto phys = col_ids[col_idx].GetPrimaryIndex();
+  if (phys >= found->bind_data->column_ids.size()) {
+    return false;
+  }
+  return found->bind_data->column_ids[phys] ==
+         catalog::Column::kInvertedIndexScoreId;
+}
+
 bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name) {
@@ -677,11 +715,9 @@ duckdb::unique_ptr<duckdb::Expression> RewriteCallInExpr(
     }
   } else if (expr->GetExpressionClass() ==
              duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    const auto& alias = expr->GetAlias();
-    const auto paren = alias.find('(');
-    if (paren != std::string::npos &&
-        IsScorerFunctionName(std::string_view{alias}.substr(0, paren))) {
-      expr->SetAlias({});
+    auto& ref = expr->Cast<duckdb::BoundColumnRefExpression>();
+    if (BindingResolvesToScoreColumn(ref, root)) {
+      ref.SetAlias({});
       changed = true;
     }
   }

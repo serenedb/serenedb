@@ -191,12 +191,10 @@ struct Cursor {
 // (`[u32 op_count][op x]`) follows it (§5.4). The column layout isn't recorded
 // -- replay rebuilds it from the catalog.
 struct SectionHeader {
-  uint64_t schema_id;
   uint64_t table_id;
 };
 SectionHeader ReadSectionHeader(Cursor& c) {
   SectionHeader h;
-  h.schema_id = c.Read<uint64_t>();
   h.table_id = c.Read<uint64_t>();
   return h;
 }
@@ -342,9 +340,8 @@ SearchDbWal::SearchDbWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir,
 
 SearchDbWal::~SearchDbWal() = default;
 
-std::filesystem::path SearchDbWal::ChunkDir(uint64_t schema_id,
-                                            uint64_t table_id) const {
-  return _chunks_root / std::to_string(schema_id) / std::to_string(table_id);
+std::filesystem::path SearchDbWal::ChunkDir(uint64_t table_id) const {
+  return _chunks_root / std::to_string(table_id);
 }
 
 void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
@@ -394,9 +391,8 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
   // Reused inline-CDC scratch across every INLINE op (Rewind keeps the buffer).
   duckdb::MemoryStream tmp;
   for (const auto& s : sections) {
-    // Shard header: just the ids. The column layout is rebuilt from the catalog
-    // on replay, so it isn't recorded.
-    payload.Write<uint64_t>(s.schema_id);
+    // Shard header: just the table_id. The column layout is rebuilt from the
+    // catalog on replay, so it isn't recorded.
     payload.Write<uint64_t>(s.table_id);
     // Ordered op manifest (WAL_DESIGN.md §5.4). Insert-only today: each op is
     // exactly one INLINE or REFERENCE batch.
@@ -435,7 +431,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
           // final here. A stat failure only mis-times rotation (not a
           // correctness issue), but it shouldn't happen for a just-fsynced file
           // -- warn and skip it.
-          auto chunk_path = ChunkDir(s.schema_id, s.table_id) / ChunkName(sid);
+          auto chunk_path = ChunkDir(s.table_id) / ChunkName(sid);
           std::error_code se;
           auto sz = std::filesystem::file_size(chunk_path, se);
           if (se) {
@@ -453,9 +449,8 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
   return tick;
 }
 
-SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(uint64_t schema_id,
-                                                     uint64_t table_id) {
-  auto dir = ChunkDir(schema_id, table_id);
+SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(uint64_t table_id) {
+  auto dir = ChunkDir(table_id);
   std::error_code ec;
   std::filesystem::create_directories(dir, ec);
   SDB_ASSERT(!ec, "create chunk dir '", dir.string(), "': ", ec.message());
@@ -579,8 +574,7 @@ void SearchDbWal::RunGc() {
               auto seg_count = c.Read<uint32_t>();
               for (uint32_t k = 0; k < seg_count; ++k) {
                 uint64_t sid = c.Read<uint64_t>();
-                chunk_paths.push_back(ChunkDir(h.schema_id, h.table_id) /
-                                      ChunkName(sid));
+                chunk_paths.push_back(ChunkDir(h.table_id) / ChunkName(sid));
               }
             }
           }
@@ -617,7 +611,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
       for (uint32_t s = 0; s < shard_count; ++s) {
         auto h = ReadSectionHeader(c);
         const bool live =
-          exists_of(h.schema_id, h.table_id) && tick > committed_of(h.table_id);
+          exists_of(h.table_id) && tick > committed_of(h.table_id);
         // Walk the shard's ordered op manifest (§5.4). All ops share the header
         // above and the per-shard `live` skip decision (one tick, one shard).
         auto op_count = c.Read<uint32_t>();
@@ -651,22 +645,21 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
             // chunk.
             VisitInlineSegments(
               *cdc, segments, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                cb(tick, h.schema_id, h.table_id, pk_base, chunk);
+                cb(tick, h.table_id, pk_base, chunk);
               });
           } else {
             auto seg_count = c.Read<uint32_t>();
             for (uint32_t k = 0; k < seg_count; ++k) {
               uint64_t sid = c.Read<uint64_t>();
               auto chunk_path =
-                (ChunkDir(h.schema_id, h.table_id) / ChunkName(sid)).string();
+                (ChunkDir(h.table_id) / ChunkName(sid)).string();
               referenced.insert(chunk_path);  // survives the orphan sweep
               if (!live) {
                 continue;
               }
               ReplayChunkFile(_fs, chunk_path,
                               [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                                cb(tick, h.schema_id, h.table_id, pk_base,
-                                   chunk);
+                                cb(tick, h.table_id, pk_base, chunk);
                               });
             }
           }

@@ -60,15 +60,14 @@ namespace sdb::search {
 //                                                 the tick of the segment's
 //                                                 FIRST record (the PG-LSN
 //                                                 analog).
-//   chunks/<schema_id>/<table_id>/<016x seg_id>.swchunk   per-shard bulk chunk
-//                                                 files (referenced by a
-//                                                 record).
+//   chunks/<table_id>/<016x seg_id>.swchunk      per-shard bulk chunk files
+//                                                 (referenced by a record).
 //
 // A commit appends ONE central record carrying a monotonic `tick` and a list of
 // per-shard sections -- one for each search table the transaction wrote. Each
 // section is a shard header plus an ordered op manifest (WAL_DESIGN.md §5.4):
 //   record  = [u64 tick][u32 shard_count][ section x shard_count ]
-//   section = [u64 schema_id][u64 table_id][u32 op_count][ op x op_count ]
+//   section = [u64 table_id][u32 op_count][ op x op_count ]
 //   op      = [u8 kind][kind body]
 //     INLINE    -- small inserts: the rows are serialised into the op.
 //     REFERENCE -- bulk inserts: the op lists `seg_id`s of chunk files that
@@ -83,8 +82,8 @@ namespace sdb::search {
 // payload begins with [u64 tick] at a fixed offset (readable without
 // deserialising the rest -- recovery skip + future PITR bound).
 //
-// Identifiers (schema_id, table_id) are opaque uint64_t here (the
-// operator/recovery maps catalog ObjectIds <-> uint64_t via `.id()`).
+// The table_id identifier is an opaque uint64_t here (the operator/recovery
+// maps catalog ObjectIds <-> uint64_t via `.id()`).
 class SearchDbWal {
  public:
   // One streamed chunk file for a single bulk sink thread. The thread Append()s
@@ -149,24 +148,21 @@ class SearchDbWal {
   // it from the catalog (recovery runs after the catalog loads), so the WAL
   // need not carry it.
   struct ShardSection {
-    uint64_t
-      schema_id;  // locates chunks/<schema_id>/<table_id>/ + recovery dispatch
-    uint64_t table_id;
+    uint64_t table_id;        // locates chunks/<table_id>/ + recovery dispatch
     std::span<const Op> ops;  // this shard's ops, in order
   };
 
   // Per replayed chunk during Recover(): the record's tick, the section's
-  // (schema_id, table_id), the chunk's generated-PK base (0 for explicit-PK,
-  // §5.6), and one DataChunk to re-feed into that shard's iresearch writer. The
-  // column layout comes from the catalog at replay, not the record.
+  // table_id, the chunk's generated-PK base (0 for explicit-PK, §5.6), and one
+  // DataChunk to re-feed into that shard's iresearch writer. The column layout
+  // comes from the catalog at replay, not the record.
   using ReplayCallback =
-    std::function<void(uint64_t tick, uint64_t schema_id, uint64_t table_id,
-                       uint64_t pk_base, duckdb::DataChunk& chunk)>;
+    std::function<void(uint64_t tick, uint64_t table_id, uint64_t pk_base,
+                       duckdb::DataChunk& chunk)>;
 
   // Recovery skip hooks: a section is replayed only if its destination shard
   // still exists in the catalog AND has not already published this tick.
-  using ShardExistsFn =
-    std::function<bool(uint64_t schema_id, uint64_t table_id)>;
+  using ShardExistsFn = std::function<bool(uint64_t table_id)>;
   using ShardCommittedFn = std::function<uint64_t(uint64_t table_id)>;
 
   // Default central-segment seal threshold (PostgreSQL's WAL segment size, ==
@@ -217,9 +213,9 @@ class SearchDbWal {
 
   // --- commit -------------------------------------------------------------
 
-  // Allocate a unique seg_id for (schema_id, table_id) and open its chunk-file
-  // writer at chunks/<schema_id>/<table_id>/<016x seg_id>.swchunk.
-  ChunkWriter NewChunkWriter(uint64_t schema_id, uint64_t table_id);
+  // Allocate a unique seg_id for table_id and open its chunk-file writer at
+  // chunks/<table_id>/<016x seg_id>.swchunk.
+  ChunkWriter NewChunkWriter(uint64_t table_id);
 
   // Commit (under the central append mutex): assign the next tick, append ONE
   // record covering all `sections`, and fsync. Returns the assigned tick (pass
@@ -274,7 +270,7 @@ class SearchDbWal {
 
   void EnsureActiveSegmentLocked(uint64_t first_tick);
   void WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);
-  std::filesystem::path ChunkDir(uint64_t schema_id, uint64_t table_id) const;
+  std::filesystem::path ChunkDir(uint64_t table_id) const;
   uint64_t MinCommittedTick();  // min over _committed (0 if empty)
   void RunGc();                 // delete sealed segments whose range <= min
 };

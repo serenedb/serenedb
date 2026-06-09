@@ -85,8 +85,8 @@ catalog::StorageKind TableShard::DeserializeStorageKind(
 }
 
 Result TableShard::DropArtifacts(catalog::StorageKind kind, ObjectId db_id,
-                                 ObjectId schema_id, ObjectId table_id,
-                                 ObjectId shard_id, uint64_t size) {
+                                 ObjectId table_id, ObjectId shard_id,
+                                 uint64_t size) {
   switch (kind) {
     case catalog::StorageKind::kRocksDB: {
       auto& server = GetServerEngine();
@@ -100,23 +100,21 @@ Result TableShard::DropArtifacts(catalog::StorageKind kind, ObjectId db_id,
     }
     case catalog::StorageKind::kSearch:
       // shard_id is unused for search (single-shard-per-table, path keyed on
-      // db/schema/table); the cleanup lives on the search shard.
+      // db/table); the cleanup lives on the search shard.
       (void)shard_id;
-      return search::SearchTableShard::DropArtifacts(db_id, schema_id,
-                                                     table_id);
+      return search::SearchTableShard::DropArtifacts(db_id, table_id);
   }
   SDB_UNREACHABLE();
 }
 
 ResultOr<std::shared_ptr<TableShard>> MakeTableShard(
-  catalog::StorageKind kind, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, const catalog::TableStats& stats) {
+  catalog::StorageKind kind, ObjectId db_id, ObjectId table_id,
+  const catalog::TableStats& stats) {
   switch (kind) {
     case catalog::StorageKind::kRocksDB:
       return std::make_shared<TableShard>(table_id, stats);
     case catalog::StorageKind::kSearch:
-      return std::make_shared<search::SearchTableShard>(db_id, schema_id,
-                                                        table_id, stats);
+      return std::make_shared<search::SearchTableShard>(db_id, table_id, stats);
   }
   SDB_UNREACHABLE();
 }

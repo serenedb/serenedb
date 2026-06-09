@@ -249,8 +249,7 @@ class OpenDatabase {
   Result RegisterSequences(ObjectId database_id, ObjectId schema_id,
                            bool owned);
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
-  Result RegisterTableShard(ObjectId db_id, ObjectId schema_id,
-                            ObjectId table_id);
+  Result RegisterTableShard(ObjectId db_id, ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
   Result RegisterIndexShard(const std::shared_ptr<Index>& index);
   Result RegisterIndexes(ObjectId database_id, ObjectId schema_id,
@@ -468,8 +467,7 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
   return {};
 }
 
-Result OpenDatabase::RegisterTableShard(ObjectId db_id, ObjectId schema_id,
-                                        ObjectId table_id) {
+Result OpenDatabase::RegisterTableShard(ObjectId db_id, ObjectId table_id) {
   return GetServerEngine().VisitDefinitions(
     table_id, ObjectType::TableShard,
     [&](DefinitionKey key, std::string_view bytes) -> Result {
@@ -483,8 +481,8 @@ Result OpenDatabase::RegisterTableShard(ObjectId db_id, ObjectId schema_id,
           shard = std::make_shared<TableShard>(shard_id, table_id, stats);
           break;
         case StorageKind::kSearch:
-          shard = std::make_shared<search::SearchTableShard>(
-            db_id, schema_id, table_id, shard_id, stats);
+          shard = std::make_shared<search::SearchTableShard>(db_id, table_id,
+                                                             shard_id, stats);
           break;
       }
       SDB_ASSERT(shard);
@@ -564,7 +562,7 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
   irs::Finally cleanup = [&] noexcept {
     ClearDeletedDefinitions(DeletedScope::Relation);
   };
-  r = RegisterTableShard(db_id, schema_id, table_id);
+  r = RegisterTableShard(db_id, table_id);
   if (!r.ok()) {
     return r;
   }

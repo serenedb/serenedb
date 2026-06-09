@@ -52,7 +52,7 @@
 #include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
-#include "search/local_table_changes.h"
+#include "search/search_table_changes.h"
 #include "search/search_table_shard.h"
 #include "storage_engine/table_shard.h"
 
@@ -540,8 +540,7 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   // seg_ids were gathered at Combine. The column layout isn't recorded --
   // replay rebuilds it from the catalog.
   gstate.sdb_txn->SearchTxn().AddSearchTableStatement(
-    gstate.table_shard, gstate.table_id,
-    gstate.search_shard->GetSchemaId().id(), std::move(gstate.seg_ids));
+    gstate.table_shard, gstate.table_id, std::move(gstate.seg_ids));
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.UpdateNumRows(gstate.table_id, gstate.insert_count);

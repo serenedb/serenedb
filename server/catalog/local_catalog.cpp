@@ -2139,8 +2139,8 @@ Result LocalCatalog::CreateTable(
   if (operation_options.create_with_tombstone) {
     table->SetTombstoned(true);
   }
-  auto shard_or = MakeTableShard(options.storage, database_id, *schema_id,
-                                 table->GetId(), TableStats{});
+  auto shard_or =
+    MakeTableShard(options.storage, database_id, table->GetId(), TableStats{});
   if (!shard_or) {
     return std::move(shard_or.error());
   }
@@ -2192,8 +2192,8 @@ Result LocalCatalog::CreateTable(
       // row data was ever written, the catalog WriteBatch above is atomic.
       if (shard->GetStorage() != StorageKind::kRocksDB) {
         auto r = TableShard::DropArtifacts(shard->GetStorage(), database_id,
-                                           *schema_id, table->GetId(),
-                                           shard->GetId(), /*size=*/0);
+                                           table->GetId(), shard->GetId(),
+                                           /*size=*/0);
         if (!r.ok()) {
           SDB_ERROR(SEARCH,
                     "Failed to drop artifacts on CREATE TABLE rollback for "

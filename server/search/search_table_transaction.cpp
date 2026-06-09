@@ -124,7 +124,6 @@ uint64_t SearchTableTransaction::AppendCommit() {
                "search-table commit with neither chunk files nor inline rows");
 
     SearchDbWal::ShardSection section;
-    section.schema_id = w.schema_id;
     section.table_id = table_id.id();
     section.ops = std::span<const SearchDbWal::Op>{ops};
     sections.push_back(section);

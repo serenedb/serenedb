@@ -92,12 +92,12 @@ class TableShard : public catalog::Object {
   //      only option.
   //
   // For kRocksDB: rocksdb range delete on the table's key range; ignores
-  // db_id/schema_id.
+  // db_id.
   // For kSearch: removes the iresearch directory + per-shard chunk subtree
-  // derived from (db_id, schema_id, table_id).
+  // derived from (db_id, table_id).
   static Result DropArtifacts(catalog::StorageKind kind, ObjectId db_id,
-                              ObjectId schema_id, ObjectId table_id,
-                              ObjectId shard_id, uint64_t size);
+                              ObjectId table_id, ObjectId shard_id,
+                              uint64_t size);
 
   // New table shard ctor
   explicit TableShard(ObjectId table_id, const catalog::TableStats& stats);
@@ -121,11 +121,10 @@ class TableShard : public catalog::Object {
 };
 
 // Factory for CREATE TABLE / recovery. Returns the right TableShard subclass
-// for the requested storage kind. db_id and schema_id are only consumed by
-// kSearch (they determine the iresearch directory path); kRocksDB ignores
-// them.
+// for the requested storage kind. db_id is only consumed by kSearch (it
+// determines the iresearch directory path); kRocksDB ignores it.
 ResultOr<std::shared_ptr<TableShard>> MakeTableShard(
-  catalog::StorageKind kind, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, const catalog::TableStats& stats);
+  catalog::StorageKind kind, ObjectId db_id, ObjectId table_id,
+  const catalog::TableStats& stats);
 
 }  // namespace sdb

@@ -34,7 +34,7 @@ namespace sdb::search {
 // Table shard backed by an iresearch columnstore (StorageKind::kSearch).
 // Created by MakeTableShard(kSearch, ...) and torn down via the static
 // TableShard::DropArtifacts(kSearch, ...) helper. The directory layout is
-// derived from (db_id, schema_id, table_id, shard_id); see GetPath.
+// derived from (db_id, table_id); see GetPath.
 //
 // PR 2.2 scope: lifecycle only -- the iresearch writer is created (and an
 // empty commit is forced on first-create) but no rows are ever written
@@ -43,12 +43,12 @@ namespace sdb::search {
 class SearchTableShard final : public TableShard {
  public:
   // CREATE TABLE path: creates the iresearch directory and an empty writer.
-  SearchTableShard(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
+  SearchTableShard(ObjectId db_id, ObjectId table_id,
                    const catalog::TableStats& stats);
 
   // Recovery / restore path: opens an existing iresearch directory.
-  SearchTableShard(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-                   ObjectId shard_id, const catalog::TableStats& stats);
+  SearchTableShard(ObjectId db_id, ObjectId table_id, ObjectId shard_id,
+                   const catalog::TableStats& stats);
 
   // Lets the iresearch writer flush/close cleanly. The shared_ptr's normal
   // destruction order would do this anyway, but binding it to the dtor here
@@ -56,26 +56,23 @@ class SearchTableShard final : public TableShard {
   // the on-disk state is consistent before it wipes the directory.
   ~SearchTableShard() override;
 
-  // Directory layout: <search persisted_path for db>/<schema_id>/<table_id>/.
-  // No shard_id component: the current arch is single-shard-per-table, and
-  // putting shard_id in the path would split create-time and recovery-time
-  // paths (the new-shard ctor runs before RegisterObject has stamped an id,
-  // so GetId() == 0 then but non-zero on recovery -- a divergence the drop
-  // path can't detect after the shard is gone).
-  static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
-                                       ObjectId table_id);
+  // Directory layout: <search persisted_path for db>/<table_id>/. No schema_id
+  // or shard_id component: table_id is a globally-unique, never-reused catalog
+  // id, so it alone identifies the shard. (shard_id is also excluded because
+  // the new-shard ctor runs before RegisterObject has stamped an id, so
+  // GetId() == 0 then but non-zero on recovery -- a divergence the drop path
+  // can't detect after the shard is gone.)
+  static std::filesystem::path GetPath(ObjectId db_id, ObjectId table_id);
 
   // The DATABASE's search WAL directory (WAL_DESIGN.md §4.0): one `wal/` tree
   // under the per-db engine root, shared by all the db's search shards (the
-  // central commit log lives here; chunks under chunks/<schema>/<table>/).
+  // central commit log lives here; chunks under chunks/<table>/).
   // iresearch never opens it as a Directory.
   static std::filesystem::path GetWalPath(ObjectId db_id);
 
-  // This shard's bulk chunk subtree:
-  // GetWalPath(db)/chunks/<schema_id>/<table_id>/. Wiped on drop (the shared
-  // central log is NOT); see DropArtifacts.
-  static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId schema_id,
-                                           ObjectId table_id);
+  // This shard's bulk chunk subtree: GetWalPath(db)/chunks/<table_id>/. Wiped
+  // on drop (the shared central log is NOT); see DropArtifacts.
+  static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId table_id);
 
   // Removes a dropped kSearch shard's on-disk artifacts (iresearch directory +
   // bulk chunk subtree) and deregisters it from the db WAL flush-subscription
@@ -83,8 +80,7 @@ class SearchTableShard final : public TableShard {
   // is gone (drop path). Idempotent: a missing directory is success. The shared
   // per-database central commit log is NOT removed here. Dispatched to from
   // TableShard::DropArtifacts for the kSearch case.
-  static Result DropArtifacts(ObjectId db_id, ObjectId schema_id,
-                              ObjectId table_id);
+  static Result DropArtifacts(ObjectId db_id, ObjectId table_id);
 
   // Returns a fresh iresearch IndexWriter::Transaction tied to this shard's
   // writer. Used by SereneDBSearchInsert (M3) to stash one trx per shard
@@ -137,13 +133,11 @@ class SearchTableShard final : public TableShard {
   }
 
   // Open a bulk chunk-file writer for this shard (delegates to the db WAL with
-  // this shard's schema/table). Used by the parallel INSERT sink.
+  // this shard's table id). Used by the parallel INSERT sink.
   SearchDbWal::ChunkWriter NewChunkWriter() {
     SDB_ASSERT(_wal);
-    return _wal->NewChunkWriter(_schema_id.id(), GetTableId().id());
+    return _wal->NewChunkWriter(GetTableId().id());
   }
-
-  ObjectId GetSchemaId() const noexcept { return _schema_id; }
 
   // The shard's last durable iresearch commit tick (the recovery skip / WAL GC
   // watermark). Recovery (WAL_DESIGN.md §11) replays only records with
@@ -164,7 +158,6 @@ class SearchTableShard final : public TableShard {
   void OpenWriter();
 
   ObjectId _db_id;
-  ObjectId _schema_id;
   bool _is_new;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;

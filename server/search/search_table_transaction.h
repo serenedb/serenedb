@@ -30,7 +30,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
 #include "catalog/identifiers/object_id.h"
-#include "search/local_table_changes.h"
+#include "search/search_table_changes.h"
 
 namespace sdb {
 
@@ -47,8 +47,6 @@ struct SearchShardWrites {
   // Keeps the shard alive past the catalog snapshot; downcast to
   // SearchTableShard at commit to reach the database's shared WAL.
   std::shared_ptr<TableShard> shard;
-  // For the WAL section's chunk path + recovery dispatch (= shard's schema id).
-  uint64_t schema_id = 0;
   // Bulk chunk-file ids (one per sink thread that wrote rows), collected at
   // Combine/Finalize. Empty => this shard's data is in its inline buffers
   // (the per-table entry in `changes`).
@@ -108,11 +106,10 @@ class SearchTableTransaction {
   // statement on the same shard appends its bulk chunk-file `seg_ids` (inline
   // buffers accumulate in `changes`). `table_id` routes to that shard's entry.
   void AddSearchTableStatement(std::shared_ptr<TableShard> shard,
-                               ObjectId table_id, uint64_t schema_id,
+                               ObjectId table_id,
                                std::vector<uint64_t> seg_ids) {
     auto& w = _writes[table_id];
     w.shard = std::move(shard);
-    w.schema_id = schema_id;
     auto& acc = w.seg_ids;
     acc.insert(acc.end(), seg_ids.begin(), seg_ids.end());
   }
@@ -135,7 +132,7 @@ class SearchTableTransaction {
   }
 
   // Per-search-table in-flight INSERT buffer (see
-  // search/local_table_changes.h). Lazily populated by SereneDBSearchInsert;
+  // search/search_table_changes.h). Lazily populated by SereneDBSearchInsert;
   // read back at commit for the INLINE WAL record (and future RYOW overlay).
   LocalTableChanges& Changes() noexcept { return _changes; }
 

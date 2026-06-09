@@ -121,8 +121,7 @@ AsyncResult TableShardDrop::Execute() {
   // is the shard dtor's job; here we only wipe on-disk artifacts. Static
   // dispatch on the storage kind captured at construction time, no live
   // instance needed.
-  auto r = TableShard::DropArtifacts(_storage, _db_id, _schema_id, _parent_id,
-                                     _id, _size);
+  auto r = TableShard::DropArtifacts(_storage, _db_id, _parent_id, _id, _size);
   if (!r.ok()) {
     return yaclib::MakeFuture<Result>(ERROR_LOCKED);
   }

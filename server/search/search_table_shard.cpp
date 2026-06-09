@@ -38,13 +38,10 @@
 namespace sdb::search {
 
 std::filesystem::path SearchTableShard::GetPath(ObjectId db_id,
-                                                ObjectId schema_id,
                                                 ObjectId table_id) {
   SDB_ASSERT(db_id.isSet());
-  SDB_ASSERT(schema_id.isSet());
   SDB_ASSERT(table_id.isSet());
   auto path = GetSearchEngine().GetPersistedPath(db_id);
-  path /= absl::StrCat(schema_id);
   path /= absl::StrCat(table_id);
   return path;
 }
@@ -59,25 +56,21 @@ std::filesystem::path SearchTableShard::GetWalPath(ObjectId db_id) {
 }
 
 std::filesystem::path SearchTableShard::GetChunkDir(ObjectId db_id,
-                                                    ObjectId schema_id,
                                                     ObjectId table_id) {
-  SDB_ASSERT(schema_id.isSet());
   SDB_ASSERT(table_id.isSet());
-  // Must match SearchDbWal's internal chunk path (keyed by the uint64_t ids):
-  // chunks/<schema_id>/<table_id>/. Use the numeric id form on both sides.
+  // Must match SearchDbWal's internal chunk path (keyed by the uint64_t id):
+  // chunks/<table_id>/. Use the numeric id form on both sides.
   auto path = GetWalPath(db_id);
   path /= "chunks";
-  path /= std::to_string(schema_id.id());
   path /= std::to_string(table_id.id());
   return path;
 }
 
-Result SearchTableShard::DropArtifacts(ObjectId db_id, ObjectId schema_id,
-                                       ObjectId table_id) {
+Result SearchTableShard::DropArtifacts(ObjectId db_id, ObjectId table_id) {
   // remove_all returns 0 and leaves ec clear when the path doesn't exist --
   // treat that as success (idempotent drop, also covers the create-then-
   // rollback path where the dir may never have been made).
-  auto path = GetPath(db_id, schema_id, table_id);
+  auto path = GetPath(db_id, table_id);
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {
@@ -89,7 +82,7 @@ Result SearchTableShard::DropArtifacts(ObjectId db_id, ObjectId schema_id,
   // commit log is per-DATABASE (shared), so it is NOT removed here -- the
   // dropped shard's central sections become orphans (skipped on recovery via
   // the catalog, GC'd with their segment).
-  auto chunk_dir = GetChunkDir(db_id, schema_id, table_id);
+  auto chunk_dir = GetChunkDir(db_id, table_id);
   std::filesystem::remove_all(chunk_dir, ec);
   if (ec) {
     return Result{ERROR_INTERNAL,
@@ -102,24 +95,17 @@ Result SearchTableShard::DropArtifacts(ObjectId db_id, ObjectId schema_id,
   return {};
 }
 
-SearchTableShard::SearchTableShard(ObjectId db_id, ObjectId schema_id,
-                                   ObjectId table_id,
+SearchTableShard::SearchTableShard(ObjectId db_id, ObjectId table_id,
                                    const catalog::TableStats& stats)
-  : TableShard{table_id, stats},
-    _db_id{db_id},
-    _schema_id{schema_id},
-    _is_new{true} {
+  : TableShard{table_id, stats}, _db_id{db_id}, _is_new{true} {
   _storage = catalog::StorageKind::kSearch;
   OpenWriter();
 }
 
-SearchTableShard::SearchTableShard(ObjectId db_id, ObjectId schema_id,
-                                   ObjectId table_id, ObjectId shard_id,
+SearchTableShard::SearchTableShard(ObjectId db_id, ObjectId table_id,
+                                   ObjectId shard_id,
                                    const catalog::TableStats& stats)
-  : TableShard{shard_id, table_id, stats},
-    _db_id{db_id},
-    _schema_id{schema_id},
-    _is_new{false} {
+  : TableShard{shard_id, table_id, stats}, _db_id{db_id}, _is_new{false} {
   _storage = catalog::StorageKind::kSearch;
   OpenWriter();
 }
@@ -134,7 +120,7 @@ SearchTableShard::~SearchTableShard() {
 }
 
 void SearchTableShard::OpenWriter() {
-  auto path = GetPath(_db_id, _schema_id, GetTableId());
+  auto path = GetPath(_db_id, GetTableId());
 
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);

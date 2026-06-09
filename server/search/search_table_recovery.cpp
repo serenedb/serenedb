@@ -66,7 +66,6 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   struct ShardInfo {
     std::shared_ptr<TableShard> shard;  // keeps the shard alive
     SearchTableShard* search = nullptr;
-    uint64_t schema_id = 0;
     std::vector<catalog::Column::Id> column_ids;
     std::vector<connector::duckdb_primary_key::PKColumn> pk_columns;
     std::string table_key;
@@ -94,7 +93,6 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
         ShardInfo info;
         info.search = &basics::downCast<SearchTableShard>(*ts);
         info.shard = std::move(ts);
-        info.schema_id = schema->GetId().id();
         for (const auto& col : table->Columns()) {
           if (col.GetId() == catalog::Column::kGeneratedPKId) {
             continue;
@@ -115,17 +113,16 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     containers::NodeHashMap<uint64_t, ReplayCtx>
       ctxs;  // table_id -> ctx (stable)
 
-    auto exists_of = [&](uint64_t schema_id, uint64_t table_id) {
-      auto it = shards.find(table_id);
-      return it != shards.end() && it->second.schema_id == schema_id;
+    auto exists_of = [&](uint64_t table_id) {
+      return shards.find(table_id) != shards.end();
     };
     auto committed_of = [&](uint64_t table_id) -> uint64_t {
       auto it = shards.find(table_id);
       return it != shards.end() ? it->second.search->CommittedTick()
                                 : std::numeric_limits<uint64_t>::max();
     };
-    auto replay = [&](uint64_t tick, uint64_t /*schema_id*/, uint64_t table_id,
-                      uint64_t pk_base, duckdb::DataChunk& chunk) {
+    auto replay = [&](uint64_t tick, uint64_t table_id, uint64_t pk_base,
+                      duckdb::DataChunk& chunk) {
       auto& info = shards.at(table_id);
       auto [cit, inserted] = ctxs.try_emplace(table_id);
       auto& ctx = cit->second;

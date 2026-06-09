@@ -240,11 +240,19 @@ duckdb::idx_t SearchAnnRangeLocalState::EmitChunk(duckdb::ClientContext& ctx,
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
-  const auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
+  auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   auto gstate = duckdb::make_uniq<SearchAnnScanGlobalState>();
   InitCommonState(*gstate, context, bind_data, input);
   ClassifyColumnstoreProjections(*gstate, bind_data);
-  gstate->scan = &bind_data.scan_source->Cast<SearchScan>();
+  auto& ss = bind_data.scan_source->Cast<SearchScan>();
+  // TODO: put into set_scan_order
+  duckdb::Value v;
+  if (ss.score_top_k &&
+      context.TryGetCurrentSetting("sdb_disable_top_k_optimization", v) &&
+      !v.IsNull() && v.GetValue<bool>()) {
+    ss.score_top_k.reset();
+  }
+  gstate->scan = &ss;
   gstate->ef_search = ReadEfSearch(context);
 
   if (!gstate->scan->offsets.empty() && !gstate->scan->stored_filter) {

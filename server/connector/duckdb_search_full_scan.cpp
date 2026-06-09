@@ -71,12 +71,19 @@ const irs::Filter& MatchAllFilter() {
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
-  const auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
+  auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   auto state = duckdb::make_uniq<SearchFullScanGlobalState>();
 
   InitCommonState(*state, context, bind_data, input);
 
-  const auto& ss = bind_data.scan_source->Cast<SearchScan>();
+  auto& ss = bind_data.scan_source->Cast<SearchScan>();
+  // TODO: put into set_scan_order
+  duckdb::Value v;
+  if (ss.score_top_k &&
+      context.TryGetCurrentSetting("sdb_disable_top_k_optimization", v) &&
+      !v.IsNull() && v.GetValue<bool>()) {
+    ss.score_top_k.reset();
+  }
   if (!ss.offsets.empty() && !ss.stored_filter) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

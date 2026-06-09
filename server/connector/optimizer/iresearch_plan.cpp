@@ -67,10 +67,6 @@ connector::SearchFilterOptions BuildOptions(duckdb::ClientContext& context) {
       !v.IsNull()) {
     options.scored_terms_limit = v.GetValue<int32_t>();
   }
-  if (context.TryGetCurrentSetting("sdb_disable_top_k_optimization", v) &&
-      !v.IsNull()) {
-    options.disable_top_k_optimization = v.GetValue<bool>();
-  }
   return options;
 }
 

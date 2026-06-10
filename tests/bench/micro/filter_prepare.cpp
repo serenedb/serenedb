@@ -37,6 +37,7 @@
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
@@ -166,15 +167,17 @@ class FilterPrepareFixtureT : public FilterPrepareFixture {
  public:
   void SetUp(const ::benchmark::State& state) override {
     FilterPrepareFixture::SetUp(state);
-    _filter = Filter{};
-    Configure(_filter);
+    auto filter = std::make_unique<Filter>();
+    Configure(*filter);
     if constexpr (Boosted) {
-      _filter.boost(kBoostValue);
+      filter->boost(kBoostValue);
     }
+    _filter = std::move(filter);
+    irs::Optimize(_filter);
   }
 
  protected:
-  Filter _filter;
+  irs::Filter::ptr _filter;
 };
 
 void FilterPrepareFixture::BuildIndex(size_t num_segments) {
@@ -328,7 +331,7 @@ void SetUpNot(irs::Exclusion& n) {
                               Setup)                                           \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter.prepare({.index = _reader});                            \
+      auto q = _filter->prepare({.index = _reader});                           \
       benchmark::DoNotOptimize(q);                                             \
     }                                                                          \
   }                                                                            \
@@ -339,7 +342,7 @@ void SetUpNot(irs::Exclusion& n) {
                               Setup)                                           \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter.prepare({.index = _reader, .scorer = &_bm25});          \
+      auto q = _filter->prepare({.index = _reader, .scorer = &_bm25});         \
       benchmark::DoNotOptimize(q);                                             \
     }                                                                          \
   }                                                                            \
@@ -350,7 +353,7 @@ void SetUpNot(irs::Exclusion& n) {
                               Setup)                                           \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter.prepare({.index = _reader, .scorer = &_tfidf});         \
+      auto q = _filter->prepare({.index = _reader, .scorer = &_tfidf});        \
       benchmark::DoNotOptimize(q);                                             \
     }                                                                          \
   }                                                                            \
@@ -361,7 +364,7 @@ void SetUpNot(irs::Exclusion& n) {
                               Setup, true)                                     \
   (benchmark::State & s) {                                                     \
     for (auto _ : s) {                                                         \
-      auto q = _filter.prepare({.index = _reader, .scorer = &_bm25});          \
+      auto q = _filter->prepare({.index = _reader, .scorer = &_bm25});         \
       benchmark::DoNotOptimize(q);                                             \
     }                                                                          \
   }                                                                            \

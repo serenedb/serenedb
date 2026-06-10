@@ -24,6 +24,7 @@
 #include <absl/container/inlined_vector.h>
 
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
@@ -654,6 +655,17 @@ struct RegexpLowerRule {
   }
 };
 
+struct EditDistanceLowerRule {
+  static constexpr std::string_view kName = "edit_distance_lower";
+  static constexpr std::array kTargets{Type<ByEditDistance>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<ByEditDistance>(*slot);
+    slot = LowerLevenshtein(node.field_id(), node.options(), node.Boost());
+    return true;
+  }
+};
+
 struct PhraseLowerRule {
   static constexpr std::string_view kName = "phrase_lower";
   static constexpr std::array kTargets{Type<ByPhrase>::id()};
@@ -684,6 +696,7 @@ constexpr auto kDefaultRulesStorage = std::to_array({
   MakeRule<MixedDegenerateRule>(),
   MakeRule<WildcardLowerRule>(),
   MakeRule<RegexpLowerRule>(),
+  MakeRule<EditDistanceLowerRule>(),
   MakeRule<PhraseLowerRule>(),
 });
 

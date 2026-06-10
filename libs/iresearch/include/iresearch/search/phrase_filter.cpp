@@ -93,11 +93,16 @@ struct GetVisitor {
     return AutomatonFilter::visitor(part.acceptor);
   }
 
-  field_visitor operator()(const ByEditDistanceOptions& part) const {
+  field_visitor operator()(const ByEditDistanceOptions&) const {
+    SDB_UNREACHABLE();
+    return {};
+  }
+
+  field_visitor operator()(const LevenshteinAutomatonOptions& part) const {
     if (part.max_terms != 0) {
       return {};
     }
-    return ByEditDistance::visitor(part);
+    return LevenshteinAutomatonFilter::visitor(part);
   }
 
   field_visitor operator()(const ByTermsOptions& part) const {
@@ -141,10 +146,13 @@ struct PrepareVisitor : util::Noncopyable {
                                   part.scored_terms_limit);
   }
 
-  auto operator()(const ByEditDistanceOptions& part) const {
-    return ByEditDistance::prepare(ctx, id, part.term, part.max_terms,
-                                   part.max_distance, part.provider,
-                                   part.with_transpositions, part.prefix);
+  Filter::Query::ptr operator()(const ByEditDistanceOptions&) const {
+    SDB_UNREACHABLE();
+    return {};
+  }
+
+  auto operator()(const LevenshteinAutomatonOptions& part) const {
+    return LevenshteinAutomatonFilter::prepare(ctx, id, part);
   }
 
   Filter::Query::ptr operator()(const ByTermsOptions&) const { return {}; }
@@ -343,8 +351,8 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     auto& visitor =
       phrase_part_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
     if (!visitor) {
-      auto& opts = std::get<ByEditDistanceOptions>(word.part);
-      visitor = ByEditDistance::visitor(opts);
+      auto& opts = std::get<LevenshteinAutomatonOptions>(word.part);
+      visitor = LevenshteinAutomatonFilter::visitor(opts);
       all_terms_visitors.push_back(&visitor);
       top_terms_collectors.emplace_back(opts.max_terms);
     }
@@ -528,6 +536,24 @@ bool ByPhraseOptions::LowerWildcardParts() {
         [lim, syntax](bytes_view pattern) -> phrase_part {
           return AutomatonOptions{
             FromRegexp(pattern, kDefaultMaxDfaStates, syntax), pattern, lim};
+        });
+      changed = true;
+    } else if (const auto* e = std::get_if<ByEditDistanceOptions>(&info.part);
+               e) {
+      const auto max_terms = e->max_terms;
+      info.part = ExecuteLevenshtein(
+        e->max_distance, e->provider, e->with_transpositions, e->prefix,
+        e->term, [] -> phrase_part { return ByTermsOptions{}; },
+        [&] -> phrase_part {
+          ByTermOptions opts;
+          opts.term.reserve(e->prefix.size() + e->term.size());
+          opts.term += e->prefix;
+          opts.term += e->term;
+          return opts;
+        },
+        [max_terms](const ParametricDescription& d, bytes_view prefix,
+                    bytes_view term) -> phrase_part {
+          return LevenshteinAutomatonOptions{d, prefix, term, max_terms};
         });
       changed = true;
     }

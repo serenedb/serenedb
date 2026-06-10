@@ -27,6 +27,7 @@
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
+#include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
@@ -97,6 +98,18 @@ std::unique_ptr<irs::ByRegexp> MakeRegexp(irs::field_id field,
   auto f = std::make_unique<irs::ByRegexp>();
   *f->mutable_field_id() = field;
   f->mutable_options()->pattern = irs::ViewCast<irs::byte_type>(pattern);
+  return f;
+}
+
+std::unique_ptr<irs::ByEditDistance> MakeEditDistance(
+  irs::field_id field, std::string_view term, irs::byte_type max_distance,
+  std::string_view prefix = "", size_t max_terms = 0) {
+  auto f = std::make_unique<irs::ByEditDistance>();
+  *f->mutable_field_id() = field;
+  f->mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  f->mutable_options()->prefix = irs::ViewCast<irs::byte_type>(prefix);
+  f->mutable_options()->max_distance = max_distance;
+  f->mutable_options()->max_terms = max_terms;
   return f;
 }
 
@@ -923,6 +936,36 @@ TEST_P(FilterOptimizerTest, RegexpLowerRule) {
     irs::Filter::ptr root = MakeRegexp(kName, "f.o");
     Optimize(root);
     ASSERT_EQ(irs::Type<irs::AutomatonFilter>::id(), TypeOf(*root));
+  }
+}
+
+TEST_P(FilterOptimizerTest, EditDistanceLowerRule) {
+  {
+    irs::Filter::ptr root = MakeEditDistance(kName, "bar", 0, "foo");
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+    ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"foobar"}),
+              As<irs::ByTerm>(*root).options().term);
+  }
+
+  {
+    auto filter = MakeEditDistance(kName, "foo", 1);
+    filter->boost(1.5F);
+    irs::Filter::ptr root = std::move(filter);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), TypeOf(*root));
+    const auto& lowered = As<irs::LevenshteinAutomatonFilter>(*root);
+    ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}),
+              lowered.options().target);
+    ASSERT_EQ(3, lowered.options().utf8_target_size);
+    ASSERT_EQ(2, lowered.options().no_distance);
+    ASSERT_EQ(1.5F, lowered.Boost());
+  }
+
+  {
+    irs::Filter::ptr root = MakeEditDistance(kName, "foo", 5);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
   }
 }
 

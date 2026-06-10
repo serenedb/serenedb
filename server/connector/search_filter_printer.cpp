@@ -123,6 +123,9 @@ struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByEditDistanceOptions& opts) const {
     absl::StrAppend(out, "Levenshtein:", TermToString(opts.term));
   }
+  auto operator()(const LevenshteinAutomatonOptions& opts) const {
+    absl::StrAppend(out, "LevenshteinAutomaton:", TermToString(opts.target));
+  }
   auto operator()(const ByRegexpOptions& opts) const {
     absl::StrAppend(out, "Regexp:", TermToString(opts.pattern));
   }
@@ -297,6 +300,16 @@ void StringifyAutomaton(std::string* out, const AutomatonFilter& filter,
 }
 
 template<typename FT>
+void StringifyLevenshteinAutomaton(std::string* out,
+                                   const LevenshteinAutomatonFilter& filter,
+                                   FT&& ft) {
+  absl::StrAppend(out, "LEVENSHTEIN_AUTOMATON[", ft(filter.field_id()), ", '",
+                  TermToString(filter.options().target), "', ",
+                  static_cast<int>(filter.options().no_distance) - 1, ", ",
+                  filter.options().max_terms, "]");
+}
+
+template<typename FT>
 void StringifyPhrase(std::string* out, const ByPhrase& filter, FT&& ft) {
   std::string parts_str;
   for (const auto& part : filter.options()) {
@@ -422,6 +435,9 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
                              ft);
   } else if (type == Type<AutomatonFilter>::id()) {
     StringifyAutomaton(&out, downCast<const AutomatonFilter>(filter), ft);
+  } else if (type == Type<LevenshteinAutomatonFilter>::id()) {
+    StringifyLevenshteinAutomaton(
+      &out, downCast<const LevenshteinAutomatonFilter>(filter), ft);
   } else if (type == Type<ByWildcard>::id()) {
     StringifyWildcard(&out, downCast<const ByWildcard>(filter), ft);
   } else if (type == Type<ByWildcardNgram>::id()) {

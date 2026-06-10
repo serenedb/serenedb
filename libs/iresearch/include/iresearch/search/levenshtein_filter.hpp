@@ -23,12 +23,15 @@
 #pragma once
 
 #include "filter.hpp"
+#include "iresearch/utils/automaton.hpp"
+#include "iresearch/utils/levenshtein_default_pdp.hpp"
+#include "iresearch/utils/levenshtein_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
 class ByEditDistance;
-class ParametricDescription;
+class LevenshteinAutomatonFilter;
 struct FilterVisitor;
 
 struct ByEditDistanceAllOptions {
@@ -86,26 +89,72 @@ struct ByEditDistanceOptions : ByEditDistanceAllOptions {
   }
 };
 
+template<typename Invalid, typename Term, typename Levenshtein>
+auto ExecuteLevenshtein(uint8_t max_distance,
+                        ByEditDistanceAllOptions::pdp_f provider,
+                        bool with_transpositions, const bytes_view prefix,
+                        const bytes_view target, Invalid&& inv, Term&& t,
+                        Levenshtein&& lev) {
+  if (!provider) {
+    provider = &DefaultPDP;
+  }
+
+  if (0 == max_distance) {
+    return t();
+  }
+
+  SDB_ASSERT(provider);
+  const auto& d = (*provider)(max_distance, with_transpositions);
+
+  if (!d) {
+    return inv();
+  }
+
+  return lev(d, prefix, target);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 /// @class by_edit_distance
 /// @brief user-side levenstein filter
 ////////////////////////////////////////////////////////////////////////////////
 class ByEditDistance final : public FilterWithField<ByEditDistanceOptions> {
  public:
-  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
-                            bytes_view term, size_t terms_limit,
-                            uint8_t max_distance, options_type::pdp_f provider,
-                            bool with_transpositions, bytes_view prefix);
-
   static field_visitor visitor(const ByEditDistanceAllOptions& options);
 
-  Query::ptr prepare(const PrepareContext& ctx) const final {
-    auto sub_ctx = ctx;
-    sub_ctx.boost *= Boost();
-    return prepare(sub_ctx, field_id(), options().term, options().max_terms,
-                   options().max_distance, options().provider,
-                   options().with_transpositions, options().prefix);
+  Query::ptr prepare(const PrepareContext& ctx) const final;
+};
+
+struct LevenshteinAutomatonOptions {
+  using FilterType = LevenshteinAutomatonFilter;
+
+  bstring target;
+  automaton acceptor;
+  uint32_t utf8_target_size{1};
+  byte_type no_distance{1};
+  size_t max_terms{};
+
+  LevenshteinAutomatonOptions() = default;
+  LevenshteinAutomatonOptions(const ParametricDescription& d, bytes_view prefix,
+                              bytes_view term, size_t max_terms);
+
+  bool operator==(const LevenshteinAutomatonOptions& rhs) const noexcept {
+    return target == rhs.target && utf8_target_size == rhs.utf8_target_size &&
+           no_distance == rhs.no_distance && max_terms == rhs.max_terms;
   }
 };
+
+class LevenshteinAutomatonFilter final
+  : public FilterWithField<LevenshteinAutomatonOptions> {
+ public:
+  static Query::ptr prepare(const PrepareContext& ctx, irs::field_id id,
+                            const LevenshteinAutomatonOptions& options);
+
+  static field_visitor visitor(const LevenshteinAutomatonOptions& options);
+
+  Query::ptr prepare(const PrepareContext& ctx) const final;
+};
+
+Filter::ptr LowerLevenshtein(irs::field_id id,
+                             const ByEditDistanceOptions& opts, score_t boost);
 
 }  // namespace irs

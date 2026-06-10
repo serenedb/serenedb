@@ -189,9 +189,9 @@ VACUUM (REFRESH_TABLE) parens_inc_expr;
 query
 SELECT id, a + b AS s FROM parens_inc_expr_idx ORDER BY id;
 ----
-id    s
-1     30
-2     10
+id	s
+1	30
+2	10
 
 
 # --- ARRAY: bare 'hnsw' resolves to the user text dict, which requires

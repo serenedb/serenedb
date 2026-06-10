@@ -161,7 +161,7 @@ void AssertBlobColumn(const ColReader& cs_reader, const ColumnReader& column,
 class BlobPointReader {
  public:
   BlobPointReader(const SubReader& segment, const ColumnReader& column)
-    : _impl(*segment.CsReader(), column) {}
+    : _impl(*segment.GetColReader(), column) {}
 
   BlobPointReader(const BlobPointReader&) = delete;
   BlobPointReader& operator=(const BlobPointReader&) = delete;

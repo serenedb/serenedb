@@ -68,7 +68,7 @@ auto StoreSeq() {
     const auto* seq =
       dynamic_cast<const tests::StringField*>(src.stored.get_by_id(kSeq));
     if (seq) {
-      irs::tests::StoreFieldAt(*doc.Columnstore(), kSeq, doc.DocId(), *seq);
+      irs::tests::StoreFieldAt(*doc.GetColWriter(), kSeq, doc.DocId(), *seq);
     }
   };
 }
@@ -78,7 +78,7 @@ auto StoreName() {
     const auto* name =
       dynamic_cast<const tests::StringField*>(src.stored.get_by_id(kName));
     if (name) {
-      irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(), *name);
+      irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(), *name);
     }
   };
 }
@@ -628,9 +628,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.reset();
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -643,9 +646,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.next();  // skip 1 doc
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -740,9 +746,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.reset();
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -755,9 +764,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.next();  // skip 1 doc
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -865,9 +877,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.reset();
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -880,9 +895,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.next();  // skip 1 doc
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();

@@ -32,9 +32,10 @@ statement ok
 CREATE INDEX clickclack_facts_2 ON clickclack USING inverted(fact test_english);
 
 query
-SELECT * FROM clickclack_facts_2 WHERE fact @@ ts_phrase('team member');
+SELECT * FROM clickclack_facts_2 WHERE fact @@ ts_phrase('team member')
+ORDER BY fact;
 ----
-100000 values hashing to bb6ff2754819408ef9bd04dec00816a6
+100000 values hashing to 51603a4b63a2f41ba5f7eb9ea86a7bc0
 
 statement ok
 SET sdb_faults = '-segment_1000_docs_max';

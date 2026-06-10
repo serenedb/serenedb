@@ -226,16 +226,6 @@ class ImmutableFst : public ImplToExpandedFst<ImmutableFstImpl<A>> {
     return impl ? new ImmutableFst<A>(std::move(impl)) : nullptr;
   }
 
-  // OpenFST API compliance broken. But as only we use it here it is ok.
-  static ImmutableFst<A>* Read(std::istream& strm,
-                               const FstReadOptions& /*opts*/,
-                               irs::IResourceManager& rm) {
-    auto* rdbuf = sdb::basics::downCast<irs::InputBuf>(strm.rdbuf());
-    SDB_ASSERT(rdbuf && rdbuf->Internal());
-
-    return Read(*rdbuf->Internal(), rm);
-  }
-
   template<typename FST, typename Stats>
   static bool Write(const FST& fst, irs::BufferedOutput& strm,
                     const Stats& stats);

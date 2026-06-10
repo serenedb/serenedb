@@ -52,7 +52,7 @@ auto StoreName() {
     const auto* name =
       dynamic_cast<const tests::StringField*>(src.stored.get_by_id(kName));
     if (name) {
-      irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(), *name);
+      irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(), *name);
     }
   };
 }

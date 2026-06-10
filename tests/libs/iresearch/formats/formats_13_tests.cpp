@@ -38,17 +38,20 @@ using tests::FormatTestCaseWithEncryption;
 
 bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   auto ctx = writer.GetBatch();
-  auto d = ctx.Insert();
-  if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
-    return false;
-  }
-  const auto* name =
-    dynamic_cast<const tests::StringField*>(doc.indexed.get_by_id(kNameId));
-  if (name != nullptr) {
-    if (auto* cs = d.Columnstore(); cs != nullptr) {
-      irs::tests::StoreFieldAt(*cs, kNameId, d.DocId(), *name);
+  {
+    auto d = ctx.Insert();
+    if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
+      return false;
+    }
+    const auto* name =
+      dynamic_cast<const tests::StringField*>(doc.indexed.get_by_id(kNameId));
+    if (name != nullptr) {
+      if (auto* cs = d.GetColWriter(); cs != nullptr) {
+        irs::tests::StoreFieldAt(*cs, kNameId, d.DocId(), *name);
+      }
     }
   }
+  ctx.Commit();
   return true;
 }
 

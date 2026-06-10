@@ -359,7 +359,7 @@ class CatalogFeature final {
   ~CatalogFeature();
 
   void start();
-  void stop() {}
+  void stop();
 
   Result Open();
 

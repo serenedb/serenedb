@@ -73,7 +73,7 @@ irs::field_id ColumnIdFor(std::string_view name) {
 
 void StoreScoringFields(irs::IndexWriter::Document& doc,
                         const tests::Document& src) {
-  auto* cs = doc.Columnstore();
+  auto* cs = doc.GetColWriter();
   if (cs == nullptr) {
     return;
   }

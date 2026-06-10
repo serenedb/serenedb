@@ -84,18 +84,12 @@ std::shared_ptr<RE2> BuildLikeMatcher(std::string_view pattern) {
 
 class WildcardIterator : public DocIterator {
  public:
-  // Takes shared ownership of the RE2 matcher to guarantee it outlives the
-  // iterator. RE2 is immutable and thread-safe for concurrent matching, so
-  // no per-iterator clone is needed (unlike icu::RegexMatcher).
-  //
-  // Stored term list lives in the columnstore as a BLOB column; the
-  // BlobPointReader owns its own scratch + ReadContext and returns a
-  // bytes_view per doc that the varint-parsing loop below walks.
   WildcardIterator(std::shared_ptr<RE2> matcher, DocIterator::ptr&& approx,
-                   const ColumnReader& stored_field, const ColReader& cs_reader)
+                   const ColumnReader& stored_field,
+                   const ColReader& col_reader)
     : _matcher{std::move(matcher)},
       _approx{std::move(approx)},
-      _cursor{cs_reader, stored_field} {
+      _cursor{col_reader, stored_field} {
     SDB_ASSERT(_approx);
     SDB_ASSERT(_matcher);
   }
@@ -119,6 +113,10 @@ class WildcardIterator : public DocIterator {
       return _doc = target;
     }
     return advance();
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& /*ctx*/) final {
+    return ScoreFunction::Constant(kNoBoost);
   }
 
  private:
@@ -169,16 +167,16 @@ class WildcardQuery : public Filter::Query {
       return approx;
     }
     SDB_ASSERT(irs::field_limits::valid(_store_field_id));
-    const auto* cs_reader = ctx.segment.CsReader();
-    if (!cs_reader) {
+    const auto* col_reader = ctx.segment.GetColReader();
+    if (!col_reader) {
       return DocIterator::empty();
     }
-    const auto* column = cs_reader->Column(_store_field_id);
-    if (column == nullptr) {
+    const auto* column = col_reader->Column(_store_field_id);
+    if (!column) {
       return DocIterator::empty();
     }
     return memory::make_managed<WildcardIterator>(_matcher, std::move(approx),
-                                                  *column, *cs_reader);
+                                                  *column, *col_reader);
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}

@@ -251,7 +251,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│      IRESEARCH_COUNT      │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
 │      vedernikoff_idx      │
@@ -263,9 +263,6 @@ QUERY PLAN
 │  <Term:pudge(0, 0); >] && │
 │  PHRASE[b(string) = <Term │
 │      :game(0, 0); >]]     │
-│                           │
-│          Output:          │
-│       row-count only      │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

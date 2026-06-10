@@ -47,8 +47,8 @@ const HnswReader* SegmentReader::HNSW(field_id field) const {
   return _impl->HNSW(field);
 }
 
-const ColReader* SegmentReader::CsReader() const {
-  return _impl ? _impl->CsReader() : nullptr;
+const ColReader* SegmentReader::GetColReader() const {
+  return _impl ? _impl->GetColReader() : nullptr;
 }
 
 // FIXME find a better way to mask documents

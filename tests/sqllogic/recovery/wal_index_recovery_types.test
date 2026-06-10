@@ -83,7 +83,7 @@ count
 # Text column.
 connection ty_after
 query
-SELECT id FROM ty_t WHERE txt @@ ts_phrase('delta');
+SELECT id FROM ty_idx WHERE txt @@ ts_phrase('delta');
 ----
 id
 4

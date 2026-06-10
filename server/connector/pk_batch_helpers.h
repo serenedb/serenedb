@@ -27,8 +27,18 @@
 #include "basics/assert.h"
 #include "connector/index_source.h"
 #include "connector/primary_key.hpp"
+#include "connector/search_pk_lookup.h"
 
 namespace sdb::connector {
+
+inline std::pair<int64_t, int64_t> DecodeI64I64(std::string_view pk_bytes) {
+  SDB_ASSERT(pk_bytes.size() >= 2 * sizeof(int64_t));
+  auto fi = primary_key::ReadSigned<int64_t>(
+    std::string_view{pk_bytes.data(), sizeof(int64_t)});
+  auto rn = primary_key::ReadSigned<int64_t>(
+    std::string_view{pk_bytes.data() + sizeof(int64_t), sizeof(int64_t)});
+  return {fi, rn};
+}
 
 template<typename T>
 inline void AppendPrimaryKey(T& pk, std::string_view pk_bytes) {
@@ -38,11 +48,7 @@ inline void AppendPrimaryKey(T& pk, std::string_view pk_bytes) {
     pk.Append(primary_key::ReadSigned<int64_t>(pk_bytes));
   } else {
     static_assert(std::is_same_v<T, PrimaryKeyI64I64>);
-    SDB_ASSERT(pk_bytes.size() >= 2 * sizeof(int64_t));
-    auto fi = primary_key::ReadSigned<int64_t>(
-      std::string_view{pk_bytes.data(), sizeof(int64_t)});
-    auto rn = primary_key::ReadSigned<int64_t>(
-      std::string_view{pk_bytes.data() + sizeof(int64_t), sizeof(int64_t)});
+    auto [fi, rn] = DecodeI64I64(pk_bytes);
     pk.Append(fi, rn);
   }
 }
@@ -55,11 +61,7 @@ inline void SetPrimaryKey(T& pk, size_t pos, std::string_view pk_bytes) {
     pk.Set(pos, primary_key::ReadSigned<int64_t>(pk_bytes));
   } else {
     static_assert(std::is_same_v<T, PrimaryKeyI64I64>);
-    SDB_ASSERT(pk_bytes.size() >= 2 * sizeof(int64_t));
-    auto fi = primary_key::ReadSigned<int64_t>(
-      std::string_view{pk_bytes.data(), sizeof(int64_t)});
-    auto rn = primary_key::ReadSigned<int64_t>(
-      std::string_view{pk_bytes.data() + sizeof(int64_t), sizeof(int64_t)});
+    auto [fi, rn] = DecodeI64I64(pk_bytes);
     pk.Set(pos, fi, rn);
   }
 }
@@ -74,31 +76,6 @@ inline size_t PrimaryKeysSize(const T& pk) {
 }
 
 template<typename T>
-inline bool PkSlotResolved(const T& pk, size_t i) {
-  if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
-    return !pk.views[i].empty();
-  } else if constexpr (std::is_same_v<T, PrimaryKeyI64>) {
-    return pk.rows[i] != PrimaryKeyI64::kUnresolved;
-  } else {
-    static_assert(std::is_same_v<T, PrimaryKeyI64I64>);
-    return pk.rows[i] != PrimaryKeyI64I64::kUnresolved;
-  }
-}
-
-template<typename T>
-inline void PkMoveSlot(T& pk, size_t dst, size_t src) {
-  if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
-    pk.views[dst] = pk.views[src];
-  } else if constexpr (std::is_same_v<T, PrimaryKeyI64>) {
-    pk.rows[dst] = pk.rows[src];
-  } else {
-    static_assert(std::is_same_v<T, PrimaryKeyI64I64>);
-    pk.files[dst] = pk.files[src];
-    pk.rows[dst] = pk.rows[src];
-  }
-}
-
-template<typename T>
 inline void PkResize(T& pk, size_t n) {
   if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
     pk.views.resize(n);
@@ -109,29 +86,6 @@ inline void PkResize(T& pk, size_t n) {
     pk.files.resize(n);
     pk.rows.resize(n);
   }
-}
-
-// Compact in place, optionally taking any number of aligned vectors along.
-// Each aligned vector is reordered / resized in lockstep with the resolved-PK
-// slots -- e.g. top-K passes its hits vector so score and (segment_idx, doc)
-// stay aligned with the PK batch through compaction.
-template<typename T, typename... AlignedVectors>
-inline size_t PkCompactResolved(T& pk, size_t valid,
-                                AlignedVectors&... aligned) {
-  size_t w = 0;
-  for (size_t r = 0; r < valid; ++r) {
-    if (!PkSlotResolved(pk, r)) {
-      continue;
-    }
-    if (w != r) {
-      PkMoveSlot(pk, w, r);
-      (((aligned)[w] = (aligned)[r]), ...);
-    }
-    ++w;
-  }
-  PkResize(pk, w);
-  ((aligned.resize(w)), ...);
-  return w;
 }
 
 }  // namespace sdb::connector

@@ -341,55 +341,26 @@ irs::ColumnWriter& OpenBlobColumnSmallRg(irs::ColWriter& w, irs::field_id id,
 
 }  // namespace
 
-// Empty index: no columns written, no rows. The cs file is still produced
-// (Commit always emits a footer for `target_row`) but Column(id) is null.
-// Reopen the reader to verify the empty-column property persists on disk.
+// Empty index: no columns written, no rows. The `.col` file is created
+// lazily, so a writer that opens no column and no norm writes no file, and
+// `MakeCsReader` finds nothing on disk -> nullptr. Repeated reads stay stable
+// (still nullptr each time).
 TEST_P(IndexColumnTestCase, read_empty_doc_attributes) {
   irs::MemoryDirectory dir;
   constexpr std::string_view kSegment = "empty";
-  constexpr irs::field_id kId = 0;
 
   {
     auto writer = irs::tests::MakeCsWriter(dir, kSegment);
-    // No OpenColumn, no Append. Commit at row 0 still writes the file.
-    auto filename = writer->Commit(/*target_row=*/0);
-    ASSERT_FALSE(filename.empty());
+    // No OpenColumn, no Append. With nothing opened, Commit at row 0 writes
+    // no file (verified by the nullptr reads below).
+    writer->Commit(/*target_row=*/0);
   }
 
-  auto verify_empty = [&](const irs::ColReader& reader) {
-    EXPECT_FALSE(reader.HasColumn(kId));
-    EXPECT_EQ(nullptr, reader.Column(kId));
-    // Other ids -- including ones the legacy iterator-based tests would
-    // have tried to seek with (1, 42, max field_id) -- must also be
-    // absent.
-    EXPECT_FALSE(reader.HasColumn(/*id=*/1));
-    EXPECT_EQ(nullptr, reader.Column(/*id=*/1));
-    EXPECT_FALSE(reader.HasColumn(/*id=*/42));
-    EXPECT_EQ(nullptr, reader.Column(/*id=*/42));
-    EXPECT_FALSE(reader.HasColumn(irs::field_limits::invalid()));
-    EXPECT_EQ(nullptr, reader.Column(irs::field_limits::invalid()));
-    // Norm side must be empty too: empty index means no per-field norms.
-    EXPECT_FALSE(reader.HasNormColumn(kId));
-    EXPECT_EQ(nullptr, reader.NormColumn(kId));
-    // HNSW graphs no longer live in `.col` (they moved to `.idx`), so the cs
-    // Reader no longer exposes them.
-    // The columns() span exposed by the cs Reader is empty.
-    EXPECT_TRUE(reader.Columns().empty());
-  };
+  // First read: no file was written, so no reader.
+  EXPECT_EQ(nullptr, irs::tests::MakeCsReader(dir, kSegment));
 
-  // First read.
-  {
-    auto reader = irs::tests::MakeCsReader(dir, kSegment);
-    ASSERT_NE(nullptr, reader);
-    verify_empty(*reader);
-  }
-
-  // Reopen to confirm the on-disk file reports the same empty shape.
-  {
-    auto reader = irs::tests::MakeCsReader(dir, kSegment);
-    ASSERT_NE(nullptr, reader);
-    verify_empty(*reader);
-  }
+  // Re-read to confirm the missing-file shape is stable.
+  EXPECT_EQ(nullptr, irs::tests::MakeCsReader(dir, kSegment));
 }
 
 // Basic write-then-read: 4 docs in a "name" column (A..D), 2 of them
@@ -434,8 +405,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
       }
     }
 
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto check_round_trip = [&](const irs::ColReader& reader) {
@@ -588,8 +558,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_big) {
       irs::tests::AppendBlob(id_cw, doc, AsBytes(id_enc));
       irs::tests::AppendBlob(label_cw, doc, AsBytes(label_enc));
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto verify_one_column =
@@ -728,8 +697,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_dense_column_dense_mask) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       irs::tests::AppendBlob(cw, doc, irs::bytes_view{});
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto always_present = [](irs::doc_id_t) { return true; };
@@ -836,8 +804,7 @@ TEST_P(IndexColumnTestCase,
       const auto payload = MakePayload(doc);
       irs::tests::AppendBlob(cw, doc, AsBytes(payload));
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto verify = [&](const irs::ColReader& reader) {
@@ -960,8 +927,7 @@ TEST_P(IndexColumnTestCase,
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       irs::tests::AppendBlob(cw, doc, AsBytes(kPayload));
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto always_present = [](irs::doc_id_t) { return true; };
@@ -1071,8 +1037,7 @@ TEST_P(IndexColumnTestCase,
       const auto enc = MakePayload(doc);
       irs::tests::AppendBlob(cw, doc, AsBytes(enc));
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto verify = [&](const irs::ColReader& reader) {
@@ -1175,8 +1140,7 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto verify = [&](const irs::ColReader& reader) {
@@ -1292,8 +1256,7 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto verify = [&](const irs::ColReader& reader) {
@@ -1405,8 +1368,7 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto verify = [&](const irs::ColReader& reader) {
@@ -1506,8 +1468,7 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto verify = [&](const irs::ColReader& reader) {
@@ -1615,8 +1576,7 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto verify = [&](const irs::ColReader& reader) {
@@ -1733,8 +1693,7 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto verify = [&](const irs::ColReader& reader) {

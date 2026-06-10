@@ -87,20 +87,15 @@ class GeoIterator : public DocIterator {
   static constexpr CostAttr::Type kExtraCost = 2;
 
  public:
-  // Stored geo bytes now live in the columnstore as a typed BLOB column. The
-  // iterator owns a BlobPointReader (per-doc fetch with row-group caching)
-  // plus a one-row Vector<BLOB> that FetchRow lands the value into. The
-  // existing parser API still expects bytes_view, so Accept() reads the
-  // resulting string_t and forwards its bytes unchanged.
   GeoIterator(DocIterator::ptr&& approx, const ColumnReader& stored_field,
-              const ColReader& cs_reader, Parser& parser, Acceptor& acceptor,
+              const ColReader& col_reader, Parser& parser, Acceptor& acceptor,
               FieldProperties field, const byte_type* query_stats,
               score_t boost)
     : _stats{query_stats},
       _boost{boost},
       _field{field},
       _approx{std::move(approx)},
-      _cursor{cs_reader, stored_field},
+      _cursor{col_reader, stored_field},
       _acceptor{acceptor},
       _parser{parser} {
     std::get<CostAttr>(_attrs).reset(
@@ -207,7 +202,7 @@ class GeoIterator : public DocIterator {
 template<typename Parser, typename Acceptor>
 DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
                               const ColumnReader& stored_field,
-                              const ColReader& cs_reader,
+                              const ColReader& col_reader,
                               const SubReader& reader, const TermReader& field,
                               const byte_type* query_stats, score_t boost,
                               Parser& parser, Acceptor& acceptor) {
@@ -219,23 +214,15 @@ DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
     // TODO(mbkkt) by_terms? LazyBitsetIterator faster than disjunction
     MakeDisjunction<Disjunction>(
       {}, static_cast<irs::doc_id_t>(reader.docs_count()), std::move(itrs)),
-    stored_field, cs_reader, parser, acceptor, field.meta(), query_stats,
+    stored_field, col_reader, parser, acceptor, field.meta(), query_stats,
     boost);
 }
 
-// Cached per reader query state
 struct GeoState {
   explicit GeoState(IResourceManager& memory) noexcept : states{{memory}} {}
 
-  // Columnstore reader for the BLOB column carrying the analyzer's per-doc
-  // StoreAttr bytes. Resolved per-segment in PrepareStates via
-  // SubReader::Column.
   const ColumnReader* stored_field{};
-
-  // Reader using for iterate over the terms
   const TermReader* reader{};
-
-  // Geo term states
   ManagedVector<SeekCookie::ptr> states;
 };
 
@@ -264,8 +251,8 @@ class GeoQuery : public Filter::Query {
     auto* field = state->reader;
     SDB_ASSERT(field);
 
-    const auto* cs_reader = segment.CsReader();
-    if (!cs_reader) {
+    const auto* col_reader = segment.GetColReader();
+    if (!col_reader) {
       return DocIterator::empty();
     }
 
@@ -281,7 +268,7 @@ class GeoQuery : public Filter::Query {
       itrs.emplace_back(std::move(it));
     }
 
-    return MakeIterator(std::move(itrs), *state->stored_field, *cs_reader,
+    return MakeIterator(std::move(itrs), *state->stored_field, *col_reader,
                         segment, *state->reader, _stats.c_str(), Boost(),
                         _parser, _acceptor);
   }

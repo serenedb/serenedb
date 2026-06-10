@@ -198,6 +198,7 @@ void IndexBuilder::IndexFromStream(std::istream& input,
       while (batch_provider.Swap(buf)) {
         auto ctx = _writer->GetBatch();
         (*handler)(buf, ctx);
+        ctx.Commit();
         std::cout << "." << std::flush;
       }
     });

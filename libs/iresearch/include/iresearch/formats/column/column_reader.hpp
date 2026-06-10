@@ -246,13 +246,13 @@ class ColumnReader final {
    public:
     explicit PointReader(duckdb::DatabaseInstance& db) noexcept : _ctx{db} {}
 
-    PointReader(const ColReader& cs_reader, const ColumnReader& reader)
-      : _ctx{cs_reader}, _reader{&reader} {}
+    PointReader(const ColReader& col_reader, const ColumnReader& reader)
+      : _ctx{col_reader}, _reader{&reader} {}
 
     PointReader(const PointReader&) = delete;
     PointReader& operator=(const PointReader&) = delete;
 
-    void Reset(const ColReader& cs_reader, const ColumnReader& reader);
+    void Reset(const ColReader& col_reader, const ColumnReader& reader);
 
     bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
 

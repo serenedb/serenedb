@@ -73,7 +73,7 @@ irs::ByColumnExistence MakeFilter(irs::field_id id) {
 std::vector<irs::doc_id_t> ExpectedDocs(const irs::SubReader& segment,
                                         const irs::ColumnReader& column) {
   std::vector<irs::doc_id_t> docs;
-  irs::tests::VisitBlobColumn(*segment.CsReader(), column,
+  irs::tests::VisitBlobColumn(*segment.GetColReader(), column,
                               [&](irs::doc_id_t doc, irs::bytes_view) {
                                 docs.push_back(doc);
                                 return true;
@@ -128,7 +128,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
     if (field == nullptr) {
       return;
     }
-    auto* cs = doc.Columnstore();
+    auto* cs = doc.GetColWriter();
     if (cs == nullptr) {
       return;
     }
@@ -763,7 +763,7 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
     add_segment(
       gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
       [&](irs::IndexWriter::Document& d, const tests::Document& src) {
-        auto* cs = d.Columnstore();
+        auto* cs = d.GetColWriter();
         if (cs == nullptr) {
           return;
         }

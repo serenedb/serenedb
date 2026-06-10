@@ -24,7 +24,6 @@
 #include "app/app_server.h"
 #include "basics/log.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 
 using namespace sdb::app;
 using namespace sdb::basics;
@@ -50,7 +49,7 @@ void FlushFeature::registerFlushSubscription(
 }
 
 std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
-  auto& engine = EngineFeature::instance().engine();
+  auto& engine = GetServerEngine();
   const auto initial_tick = engine.currentTick();
 
   size_t stale = 0;

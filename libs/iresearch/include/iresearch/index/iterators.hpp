@@ -126,12 +126,11 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
   void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
 
-  IRS_FORCE_INLINE uint64_t Finalize() {
-    std::sort(_hits_begin, _hits_end, [](const ScoreDoc& l, const ScoreDoc& r) {
-      return l.score > r.score;
-    });
-    return _count;
+  IRS_FORCE_INLINE size_t AcceptedCount() const noexcept {
+    return _hits_it - _hits_begin;
   }
+
+  IRS_FORCE_INLINE uint64_t TotalMatches() const noexcept { return _count; }
 
   IRS_FORCE_INLINE void AddWindow(const score_t* scores, const uint64_t* mask,
                                   doc_id_t min, size_t num_blocks,

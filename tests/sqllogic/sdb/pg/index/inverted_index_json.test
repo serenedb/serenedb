@@ -481,7 +481,7 @@ QUERY PLAN
 │                           │
 │          Filter:          │
 │ Term(("content" -> 'val') │
-│        (bool)=\\xff)       │
+│        (bool)=\\xff)      │
 │                           │
 │      Projections: id      │
 │                           │

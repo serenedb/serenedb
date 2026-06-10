@@ -40,6 +40,14 @@ EXPLAIN SELECT id, val, label FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #3 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: docs_idx      │
@@ -57,6 +65,7 @@ QUERY PLAN
 │             id            │
 │            val            │
 │           label           │
+│  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -109,7 +118,7 @@ VACUUM (REFRESH_TABLE) docs;
 # Sanity: INCLUDE columns coming from later segments must still
 # resolve to the right rows for each score-ordered hit.
 query
-SELECT id, val, label FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 5;
+SELECT id, val, label FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid) DESC, id LIMIT 5;
 ----
 id	val	label
 1	11	one

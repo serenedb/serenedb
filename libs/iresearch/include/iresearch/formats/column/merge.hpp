@@ -33,14 +33,9 @@ class SubReader;
 class ColReader;
 class ColWriter;
 
-// Per-source handle the merge passes to both `irs::MergeInto` and
-// the iresearch-side norm/posting walk. `reader` is the iresearch view used
-// to look up a field's norm id by name; MergeInto itself does not read
-// it. `cs_reader` is the cached columnstore view owned by the same
-// SegmentReaderImpl, so no extra footer parse per source.
 struct MergeSource {
   const SubReader* reader;
-  const ColReader* cs_reader;
+  const ColReader* col_reader;
   const DocumentMask* mask;
   uint64_t alive_count;
 };

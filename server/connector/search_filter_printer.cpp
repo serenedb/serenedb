@@ -36,6 +36,7 @@
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
+#include <iresearch/search/proxy_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/search/search_range.hpp>
@@ -44,8 +45,12 @@
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 
+#include "basics/down_cast.h"
+
 namespace irs {
 namespace {
+
+using sdb::basics::downCast;
 
 // Prints a binary term byte-by-byte, escaping non-printable chars.
 template<typename Term>
@@ -387,51 +392,50 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
   std::string out;
   const auto& type = filter.type();
   if (type == Type<All>::id()) {
-    absl::StrAppend(&out, "ALL[", static_cast<const All&>(filter).Boost(), "]");
+    absl::StrAppend(&out, "ALL[", downCast<const All>(filter).Boost(), "]");
   } else if (type == Type<And>::id()) {
-    StringifyAnd(&out, static_cast<const And&>(filter), ft);
+    StringifyAnd(&out, downCast<const And>(filter), ft);
   } else if (type == Type<Or>::id()) {
-    StringifyOr(&out, static_cast<const Or&>(filter), ft);
+    StringifyOr(&out, downCast<const Or>(filter), ft);
   } else if (type == Type<Exclusion>::id()) {
-    StringifyExclusion(&out, static_cast<const Exclusion&>(filter), ft);
+    StringifyExclusion(&out, downCast<const Exclusion>(filter), ft);
   } else if (type == Type<Not>::id()) {
-    StringifyNot(&out, static_cast<const Not&>(filter), ft);
+    StringifyNot(&out, downCast<const Not>(filter), ft);
   } else if (type == Type<ByTerm>::id()) {
-    StringifyTerm(&out, static_cast<const ByTerm&>(filter), ft);
+    StringifyTerm(&out, downCast<const ByTerm>(filter), ft);
   } else if (type == Type<ByTerms>::id()) {
-    StringifyTerms(&out, static_cast<const ByTerms&>(filter), ft);
+    StringifyTerms(&out, downCast<const ByTerms>(filter), ft);
   } else if (type == Type<ByRange>::id()) {
-    StringifyRange(&out, static_cast<const ByRange&>(filter), ft);
+    StringifyRange(&out, downCast<const ByRange>(filter), ft);
   } else if (type == Type<ByGranularRange>::id()) {
-    StringifyGranularRange(&out, static_cast<const ByGranularRange&>(filter),
-                           ft);
+    StringifyGranularRange(&out, downCast<const ByGranularRange>(filter), ft);
   } else if (type == Type<ByNGramSimilarity>::id()) {
-    StringifyNGram(&out, static_cast<const ByNGramSimilarity&>(filter), ft);
+    StringifyNGram(&out, downCast<const ByNGramSimilarity>(filter), ft);
   } else if (type == Type<ByEditDistance>::id()) {
-    StringifyEditDistance(&out, static_cast<const ByEditDistance&>(filter), ft);
+    StringifyEditDistance(&out, downCast<const ByEditDistance>(filter), ft);
   } else if (type == Type<ByPrefix>::id()) {
-    StringifyPrefix(&out, static_cast<const ByPrefix&>(filter), ft);
+    StringifyPrefix(&out, downCast<const ByPrefix>(filter), ft);
   } else if (type == Type<ByNestedFilter>::id()) {
-    StringifyNested(&out, static_cast<const ByNestedFilter&>(filter), ft);
+    StringifyNested(&out, downCast<const ByNestedFilter>(filter), ft);
   } else if (type == Type<ByColumnExistence>::id()) {
     StringifyColumnExistence(&out,
-                             static_cast<const ByColumnExistence&>(filter), ft);
+                             downCast<const ByColumnExistence>(filter), ft);
   } else if (type == Type<AutomatonFilter>::id()) {
-    StringifyAutomaton(&out, static_cast<const AutomatonFilter&>(filter), ft);
+    StringifyAutomaton(&out, downCast<const AutomatonFilter>(filter), ft);
   } else if (type == Type<ByWildcard>::id()) {
-    StringifyWildcard(&out, static_cast<const ByWildcard&>(filter), ft);
+    StringifyWildcard(&out, downCast<const ByWildcard>(filter), ft);
   } else if (type == Type<ByWildcardNgram>::id()) {
-    StringifyWildcardNgram(&out, static_cast<const ByWildcardNgram&>(filter),
-                           ft);
+    StringifyWildcardNgram(&out, downCast<const ByWildcardNgram>(filter), ft);
   } else if (type == Type<Empty>::id()) {
     out = "EMPTY[]";
   } else if (type == Type<ByPhrase>::id()) {
-    StringifyPhrase(&out, static_cast<const ByPhrase&>(filter), ft);
+    StringifyPhrase(&out, downCast<const ByPhrase>(filter), ft);
   } else if (type == Type<GeoFilter>::id()) {
-    StringifyGeo(&out, static_cast<const GeoFilter&>(filter), ft);
+    StringifyGeo(&out, downCast<const GeoFilter>(filter), ft);
   } else if (type == Type<GeoDistanceFilter>::id()) {
-    StringifyGeoDistance(&out, static_cast<const GeoDistanceFilter&>(filter),
-                         ft);
+    StringifyGeoDistance(&out, downCast<const GeoDistanceFilter>(filter), ft);
+  } else if (type == Type<ProxyFilter>::id()) {
+    out = StringifyFilter(downCast<const ProxyFilter>(filter).inner(), ft);
   } else {
     out = absl::StrCat("[Unknown filter ", type().name(), " ]");
   }

@@ -21,6 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "basics/duckdb_engine.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
@@ -55,7 +56,7 @@ auto StoreName() {
     const auto* name =
       dynamic_cast<const tests::StringField*>(src.stored.get_by_id(kName));
     if (name) {
-      irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(), *name);
+      irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(), *name);
     }
   };
 }
@@ -234,21 +235,30 @@ TEST(directory_reader_test, open) {
     // add first segment
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc1->indexed.begin(), doc1->indexed.end()));
-      StoreName()(d, *doc1);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        StoreName()(d, *doc1);
+      }
+      ctx.Commit();
     }
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc2->indexed.begin(), doc2->indexed.end()));
-      StoreName()(d, *doc2);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        StoreName()(d, *doc2);
+      }
+      ctx.Commit();
     }
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc3->indexed.begin(), doc3->indexed.end()));
-      StoreName()(d, *doc3);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc3->indexed.begin(), doc3->indexed.end()));
+        StoreName()(d, *doc3);
+      }
+      ctx.Commit();
     }
     writer->RefreshCommit();
     tests::AssertSnapshotEquality(
@@ -258,27 +268,39 @@ TEST(directory_reader_test, open) {
     // add second segment
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc4->indexed.begin(), doc4->indexed.end()));
-      StoreName()(d, *doc4);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc4->indexed.begin(), doc4->indexed.end()));
+        StoreName()(d, *doc4);
+      }
+      ctx.Commit();
     }
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc5->indexed.begin(), doc5->indexed.end()));
-      StoreName()(d, *doc5);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc5->indexed.begin(), doc5->indexed.end()));
+        StoreName()(d, *doc5);
+      }
+      ctx.Commit();
     }
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc6->indexed.begin(), doc6->indexed.end()));
-      StoreName()(d, *doc6);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc6->indexed.begin(), doc6->indexed.end()));
+        StoreName()(d, *doc6);
+      }
+      ctx.Commit();
     }
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc7->indexed.begin(), doc7->indexed.end()));
-      StoreName()(d, *doc7);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc7->indexed.begin(), doc7->indexed.end()));
+        StoreName()(d, *doc7);
+      }
+      ctx.Commit();
     }
     writer->RefreshCommit();
     tests::AssertSnapshotEquality(
@@ -288,15 +310,21 @@ TEST(directory_reader_test, open) {
     // add third segment
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc8->indexed.begin(), doc8->indexed.end()));
-      StoreName()(d, *doc8);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc8->indexed.begin(), doc8->indexed.end()));
+        StoreName()(d, *doc8);
+      }
+      ctx.Commit();
     }
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc9->indexed.begin(), doc9->indexed.end()));
-      StoreName()(d, *doc9);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc9->indexed.begin(), doc9->indexed.end()));
+        StoreName()(d, *doc9);
+      }
+      ctx.Commit();
     }
     writer->RefreshCommit();
     tests::AssertSnapshotEquality(
@@ -486,9 +514,12 @@ TEST(segment_reader_test, open_invalid_segment) {
     meta.codec = codec_ptr;
     meta.name = "invalid_segment_name";
 
-    ASSERT_THROW(irs::SegmentReaderImpl::Open(
-                   dir, meta, irs::tests::DefaultReaderOptions()),
-                 irs::IoError);
+    auto rdr = irs::SegmentReaderImpl::Open(
+      dir, meta,
+      irs::IndexReaderOptions{.db =
+                                &::sdb::DuckDBEngine::Instance().instance()});
+    ASSERT_NE(nullptr, rdr);
+    ASSERT_EQ(0, rdr->docs_count());
   }
 }
 
@@ -513,33 +544,48 @@ TEST(segment_reader_test, open) {
     // add first segment
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc1->indexed.begin(), doc1->indexed.end()));
-      StoreName()(d, *doc1);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        StoreName()(d, *doc1);
+      }
+      ctx.Commit();
     }
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc2->indexed.begin(), doc2->indexed.end()));
-      StoreName()(d, *doc2);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        StoreName()(d, *doc2);
+      }
+      ctx.Commit();
     }
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc3->indexed.begin(), doc3->indexed.end()));
-      StoreName()(d, *doc3);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc3->indexed.begin(), doc3->indexed.end()));
+        StoreName()(d, *doc3);
+      }
+      ctx.Commit();
     }
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc4->indexed.begin(), doc4->indexed.end()));
-      StoreName()(d, *doc4);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc4->indexed.begin(), doc4->indexed.end()));
+        StoreName()(d, *doc4);
+      }
+      ctx.Commit();
     }
     {
       auto ctx = writer->GetBatch();
-      auto d = ctx.Insert();
-      ASSERT_TRUE(d.Insert(doc5->indexed.begin(), doc5->indexed.end()));
-      StoreName()(d, *doc5);
+      {
+        auto d = ctx.Insert();
+        ASSERT_TRUE(d.Insert(doc5->indexed.begin(), doc5->indexed.end()));
+        StoreName()(d, *doc5);
+      }
+      ctx.Commit();
     }
     writer->RefreshCommit();
     writer_snapshot = writer->GetSnapshot();

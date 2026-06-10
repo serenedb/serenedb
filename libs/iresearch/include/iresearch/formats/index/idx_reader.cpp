@@ -148,16 +148,9 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
         meta.doc_count = obj.ReadProperty<uint64_t>(3, "doc_count");
         meta.total_doc_freq = obj.ReadProperty<uint64_t>(4, "total_doc_freq");
         meta.total_term_freq = obj.ReadProperty<uint64_t>(5, "total_term_freq");
-        const auto min_s = obj.ReadProperty<std::string>(6, "min_term");
-        meta.min_term.assign(reinterpret_cast<const byte_type*>(min_s.data()),
-                             min_s.size());
-        const auto max_s = obj.ReadProperty<std::string>(7, "max_term");
-        meta.max_term.assign(reinterpret_cast<const byte_type*>(max_s.data()),
-                             max_s.size());
-        meta.has_wand = obj.ReadProperty<bool>(8, "has_wand");
-        meta.fst_offset = obj.ReadProperty<uint64_t>(9, "fst_offset");
-        meta.fst_size = obj.ReadProperty<uint64_t>(10, "fst_size");
-        meta.norm = obj.ReadProperty<uint64_t>(11, "norm");
+        meta.has_wand = obj.ReadProperty<bool>(6, "has_wand");
+        meta.body_offset = obj.ReadProperty<uint64_t>(7, "body_offset");
+        meta.norm = obj.ReadProperty<uint64_t>(8, "norm");
         const size_t idx = _impl->term_dicts.size();
         _impl->term_dicts.emplace_back(id, std::move(meta));
         _impl->term_dict_by_id.emplace(id, idx);

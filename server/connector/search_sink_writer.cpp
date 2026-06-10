@@ -665,13 +665,13 @@ void SearchSinkInsertBaseImpl::AppendToColumn(irs::field_id field_id,
   if (!_document) {
     return;
   }
-  auto* doc_columnstore = _document->Columnstore();
-  if (!doc_columnstore) {
+  auto* col_writer = _document->GetColWriter();
+  if (!col_writer) {
     return;
   }
   auto [it, inserted] = _column_writers.try_emplace(field_id, nullptr);
   if (inserted) {
-    it->second = &doc_columnstore->OpenColumn(field_id, type);
+    it->second = &col_writer->OpenColumn(field_id, type);
   }
   _document->NextFieldBatch();
   const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
@@ -680,14 +680,13 @@ void SearchSinkInsertBaseImpl::AppendToColumn(irs::field_id field_id,
 
 irs::ColumnWriter* SearchSinkInsertBaseImpl::EnsurePerRowBlobWriter(
   irs::field_id field_id) {
-  auto* doc_columnstore = _document ? _document->Columnstore() : nullptr;
-  if (!doc_columnstore) {
+  auto* col_writer = _document ? _document->GetColWriter() : nullptr;
+  if (!col_writer) {
     return nullptr;
   }
   auto [it, inserted] = _per_row_blob_writers.try_emplace(field_id, nullptr);
   if (!it->second) {
-    it->second =
-      &doc_columnstore->OpenColumn(field_id, duckdb::LogicalType::BLOB);
+    it->second = &col_writer->OpenColumn(field_id, duckdb::LogicalType::BLOB);
   }
   return it->second;
 }

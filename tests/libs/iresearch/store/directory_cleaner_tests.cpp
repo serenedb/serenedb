@@ -281,7 +281,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
     ASSERT_FALSE(files.empty());
     file_set.insert(files.begin(), files.end());
 
-    writer->GetBatch().Remove(std::move(query_doc1));
+    ::tests::Remove(*writer, std::move(query_doc1));
     ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
     writer->RefreshCommit();
     ::tests::AssertSnapshotEquality(

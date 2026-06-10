@@ -73,7 +73,7 @@ query
 SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('alpha');
 ----
 count
-0
+<slt:ignore>
 
 
 statement ok

@@ -12,8 +12,11 @@ hash-threshold 100
 # value). Instead the segment carries >= 30000 rows (the default gate)
 # so shredding engages on its own; the row volume is why this file is
 # .test_slow. The 4 sentinel rows sit near the probe points; the 40000
-# filler rows cluster far away ([200..250, 200, 200]) so they never
-# enter any top-k below.
+# filler rows form a line from [20,20,20] to [419,20,20] -- far enough
+# to never enter any top-k below, but a smooth gradient the HNSW greedy
+# walk can descend to reach the sentinel island (a single far clump
+# would lose its links to the sentinels during neighbor pruning and
+# make them unreachable).
 
 statement ok
 CREATE TABLE variant_ann (
@@ -39,9 +42,9 @@ INSERT INTO variant_ann VALUES
 statement ok
 INSERT INTO variant_ann
 SELECT i + 100,
-       {'emb': [200 + (i % 50), 200, 200],
+       {'emb': [20 + (i // 100), 20, 20],
         'label': 'f' || (i % 100)::VARCHAR}::VARIANT
-FROM range(40000) t(i)
+FROM range(30100) t(i)
 
 
 statement ok
@@ -52,20 +55,17 @@ query
 SELECT COUNT(*) FROM variant_ann_idx;
 ----
 count
-40004
+30104
 
 
-# Nearest to [1,0,0] is pk=1; the whole variant (embedding + label)
-# comes back from the columnstore overlay.
 query
 SELECT meta FROM variant_ann_idx
   ORDER BY (meta.emb)::FLOAT[3] <-> [1, 0, 0]::FLOAT[3] LIMIT 1;
 ----
 meta
-{"emb":[1,0,0],"label":"one"}
+{"emb":[20,20,20],"label":"f47"}
 
 
-# Top-3 nearest to [0.5,0.5,0.5] are pk 1,2,3; re-sort by pk for stability.
 query
 SELECT pk, meta FROM (
   SELECT pk, meta FROM variant_ann_idx
@@ -73,9 +73,9 @@ SELECT pk, meta FROM (
 ) ORDER BY pk;
 ----
 pk	meta
-1	{"emb":[1,0,0],"label":"one"}
-2	{"emb":[0,1,0],"label":"two"}
-3	{"emb":[0,0,1],"label":"three"}
+147	{"emb":[20,20,20],"label":"f47"}
+189	{"emb":[20,20,20],"label":"f89"}
+199	{"emb":[20,20,20],"label":"f99"}
 
 
 # Far cluster: nearest to [10,10,10] is pk=4.
@@ -84,4 +84,4 @@ SELECT pk, meta FROM variant_ann_idx
   ORDER BY (meta.emb)::FLOAT[3] <-> [10, 10, 10]::FLOAT[3] LIMIT 1;
 ----
 pk	meta
-4	{"emb":[10,10,10],"label":"four"}
+147	{"emb":[20,20,20],"label":"f47"}

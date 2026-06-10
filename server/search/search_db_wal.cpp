@@ -197,7 +197,8 @@ SectionHeader ReadSectionHeader(Cursor& c) {
 
 void ReplayChunkFile(
   duckdb::FileSystem& fs, const std::string& chunk_path,
-  const std::function<void(duckdb::DataChunk&, uint64_t pk_base)>& emit) {
+  const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t pk_base) const>&
+    emit) {
   duckdb::BufferedFileReader reader(fs, chunk_path.c_str());
   std::vector<uint8_t> comp_buf;
   std::vector<uint8_t> raw_buf;
@@ -643,7 +644,8 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
 void VisitInlineSegments(
   const duckdb::ColumnDataCollection& cdc,
   std::span<const SearchDbWal::InlinePk> segments,
-  const std::function<void(duckdb::DataChunk&, uint64_t base)>& emit) {
+  const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t base) const>&
+    emit) {
   if (segments.empty()) {
     for (auto& chunk : cdc.Chunks()) {
       emit(chunk, 0);

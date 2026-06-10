@@ -80,19 +80,8 @@ class TableShard : public catalog::Object {
   static catalog::TableStats DeserializeStats(std::string_view bytes);
   static catalog::StorageKind DeserializeStorageKind(std::string_view bytes);
 
-  // Remove a shard's on-disk artifacts. Static and kind-dispatched: callable
-  // *without* a live shard instance (the drop task runs after the shard's
-  // shared_ptr count has hit zero -- see DropTask::ExecuteTask). Used in two
-  // situations:
-  //   1. Normal drop -- the shard's destructor handles live-state cleanup
-  //      (e.g. SearchTableShard closes its iresearch writer in its dtor),
-  //      then this static helper removes the on-disk files.
-  //   2. Cleanup-after-error / recovery -- caller may not even be able to
-  //      construct a live shard from this state; static cleanup is the
-  //      only option.
-  //
-  // For kRocksDB: rocksdb range delete on the table's key range; ignores
-  // db_id.
+  // Remove a shard's artifacts.
+  // For kRocksDB: rocksdb range delete on the table's key range;
   // For kSearch: removes the iresearch directory + per-shard chunk subtree
   // derived from (db_id, table_id).
   static Result DropArtifacts(catalog::StorageKind kind, ObjectId db_id,

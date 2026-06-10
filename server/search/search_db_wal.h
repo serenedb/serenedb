@@ -20,10 +20,11 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -136,11 +137,12 @@ class SearchDbWal {
   };
 
   using ReplayCallback =
-    std::function<void(uint64_t tick, ObjectId table_id, uint64_t pk_base,
-                       duckdb::DataChunk& chunk)>;
+    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id, uint64_t pk_base,
+                            duckdb::DataChunk& chunk) const>;
 
-  using ShardExistsFn = std::function<bool(ObjectId table_id)>;
-  using ShardCommittedFn = std::function<uint64_t(ObjectId table_id)>;
+  using ShardExistsFn = absl::AnyInvocable<bool(ObjectId table_id) const>;
+  using ShardCommittedFn =
+    absl::AnyInvocable<uint64_t(ObjectId table_id) const>;
 
   // Default central-segment seal threshold (16MB as common standart like
   // postgres or duckdb)
@@ -198,6 +200,7 @@ class SearchDbWal {
 void VisitInlineSegments(
   const duckdb::ColumnDataCollection& cdc,
   std::span<const SearchDbWal::InlinePk> segments,
-  const std::function<void(duckdb::DataChunk&, uint64_t base)>& emit);
+  const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t base) const>&
+    emit);
 
 }  // namespace sdb::search

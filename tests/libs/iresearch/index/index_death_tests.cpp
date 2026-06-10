@@ -60,17 +60,20 @@ auto MakeByTerm(irs::field_id field_id, std::string_view value) {
 // then read it back with `segment.Column(kNameId)` + `BlobPointReader`.
 bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   auto ctx = writer.GetBatch();
-  auto d = ctx.Insert();
-  if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
-    return false;
-  }
-  const auto* name =
-    dynamic_cast<const tests::StringField*>(doc.indexed.get_by_id(kNameId));
-  if (name != nullptr) {
-    if (auto* cs = d.Columnstore(); cs != nullptr) {
-      irs::tests::StoreFieldAt(*cs, kNameId, d.DocId(), *name);
+  {
+    auto d = ctx.Insert();
+    if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
+      return false;
+    }
+    const auto* name =
+      dynamic_cast<const tests::StringField*>(doc.indexed.get_by_id(kNameId));
+    if (name != nullptr) {
+      if (auto* cs = d.GetColWriter(); cs != nullptr) {
+        irs::tests::StoreFieldAt(*cs, kNameId, d.DocId(), *name);
+      }
     }
   }
+  ctx.Commit();
   return true;
 }
 
@@ -306,7 +309,7 @@ void OpenReader(std::string_view format,
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
-    writer->GetBatch().Remove(*query_doc2);
+    tests::Remove(*writer, *query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
@@ -1223,7 +1226,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
-    writer->GetBatch().Remove(*query_doc2);
+    tests::Remove(*writer, *query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
@@ -1574,7 +1577,7 @@ TEST(index_death_test_formats_15,
         continue;
       }
       if (inserts_ok) {
-        writer.GetBatch().Remove(*query_doc2);
+        tests::Remove(writer, *query_doc2);
         ASSERT_THROW(writer.RefreshBegin(), irs::IoError);
         ASSERT_LT(dir.NumFailures(), failures_before);
       }
@@ -2890,7 +2893,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(*query_doc2);
+    tests::Remove(*writer, *query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(

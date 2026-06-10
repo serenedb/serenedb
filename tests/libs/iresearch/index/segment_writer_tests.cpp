@@ -251,7 +251,7 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
       irs::SegmentWriter::DocContext ctx;
       writer->begin(ctx);
       ASSERT_TRUE(writer->valid());
-      irs::tests::StoreFieldAt(*writer->Columnstore(), /*id=*/0,
+      irs::tests::StoreFieldAt(*writer->GetColWriter(), /*id=*/0,
                                writer->LastDocId(), field);
       ASSERT_TRUE(writer->valid());
       writer->commit();
@@ -278,7 +278,7 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
     ASSERT_EQ(100u, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
       const auto doc = i + irs::doc_limits::min();
-      irs::tests::StoreFieldAt(*writer->Columnstore(), /*id=*/0, doc, field);
+      irs::tests::StoreFieldAt(*writer->GetColWriter(), /*id=*/0, doc, field);
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -331,7 +331,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
       writer->begin(ctx);
       ASSERT_TRUE(writer->valid());
       ASSERT_TRUE(writer->insert(field));
-      irs::tests::StoreFieldAt(*writer->Columnstore(), /*id=*/0,
+      irs::tests::StoreFieldAt(*writer->GetColWriter(), /*id=*/0,
                                writer->LastDocId(), field);
       ASSERT_TRUE(writer->valid());
       writer->commit();
@@ -359,7 +359,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
       stream.reset(true);  // refresh tokenizer state for each doc.
       const auto doc = i + irs::doc_limits::min();
       ASSERT_TRUE(writer->insert(field, doc));
-      irs::tests::StoreFieldAt(*writer->Columnstore(), /*id=*/0, doc, field);
+      irs::tests::StoreFieldAt(*writer->GetColWriter(), /*id=*/0, doc, field);
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }

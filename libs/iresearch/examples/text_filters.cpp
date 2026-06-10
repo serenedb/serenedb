@@ -52,7 +52,7 @@
 
 namespace {
 
-// Per-segment columnstore needs a duckdb::DatabaseInstance for codec lookup
+// Per-segment .col writer needs a duckdb::DatabaseInstance for codec lookup
 // and the buffer manager. main() brackets Initialize / Shutdown on the
 // process-wide sdb::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
@@ -130,6 +130,7 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
       doc.Insert(body);
       names_out.emplace_back(name);
     }
+    trx.Commit();
   }
   writer->RefreshCommit();
   return writer->GetSnapshot();

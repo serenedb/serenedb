@@ -48,11 +48,11 @@
 //
 // The geo analyzer tokenizes a shape into S2 cell ids; the filter narrows to
 // candidate cells, then re-checks each candidate's stored geometry to drop
-// false positives. The "store" side is wired through the columnstore.
+// false positives. The "store" side is wired through the .col writer.
 
 namespace {
 
-// Per-segment columnstore needs a duckdb::DatabaseInstance for codec lookup
+// Per-segment .col writer needs a duckdb::DatabaseInstance for codec lookup
 // and the buffer manager. main() brackets Initialize / Shutdown on the
 // process-wide sdb::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
@@ -189,11 +189,12 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
       doc.Insert(geo);
 
       if (geo_cw == nullptr) {
-        geo_cw = &doc.Columnstore()->OpenColumn(kGeoColumnId,
-                                                duckdb::LogicalType::BLOB);
+        geo_cw = &doc.GetColWriter()->OpenColumn(kGeoColumnId,
+                                                 duckdb::LogicalType::BLOB);
       }
       AppendStoredShape(*geo_cw, doc.DocId(), geo.shape_text);
     }
+    trx.Commit();
   }
   writer->RefreshCommit();
   return writer->GetSnapshot();

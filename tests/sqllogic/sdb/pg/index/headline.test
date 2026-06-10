@@ -837,8 +837,6 @@ QUERY PLAN
 │        Projections:       │
 │           title           │
 │            body           │
-│             id            │
-│ sdb_inverted_index_offsets│
 <slt:ignore>
 │ sdb_inverted_index_offsets│
 <slt:ignore>

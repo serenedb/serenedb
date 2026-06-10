@@ -315,7 +315,7 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   auto codec =
     cfg.TryGetCompressionFunction(p.compression_type, type.InternalType());
   SDB_ENSURE(codec, sdb::ERROR_INTERNAL,
-             "columnstore: missing compression function for codec type ",
+             ".col reader: missing compression function for codec type ",
              static_cast<uint8_t>(p.compression_type));
   auto stats = p.statistics.Copy();
   const auto byte_size = static_cast<duckdb::idx_t>(p.block_pointer.offset);
@@ -419,10 +419,10 @@ uint64_t ColumnReader::ListOffsetState::Read(size_t rg, uint64_t first_in_rg,
   return first_start;
 }
 
-void ColumnReader::PointReader::Reset(const ColReader& cs_reader,
+void ColumnReader::PointReader::Reset(const ColReader& col_reader,
                                       const ColumnReader& reader) {
   _reader = &reader;
-  _ctx.Reset(cs_reader);
+  _ctx.Reset(col_reader);
   _segment.reset();
   _validity_segment.reset();
   _fetch_state = duckdb::ColumnFetchState{};

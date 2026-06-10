@@ -154,9 +154,11 @@ class RocksDBEngineCatalog {
   explicit RocksDBEngineCatalog(const RocksDBOptionFeature& options_provider);
   ~RocksDBEngineCatalog();
 
+  inline static RocksDBEngineCatalog* gInstance = nullptr;
+  static RocksDBEngineCatalog& instance() noexcept { return *gInstance; }
+
   void prepare();
   void start();
-  void beginShutdown();
   void stop();
   void unprepare();
 
@@ -167,8 +169,6 @@ class RocksDBEngineCatalog {
   std::string databasePath() const { return _base_path; }
   std::string path() const { return _path; }
   std::string idxPath() const { return _idx_path; }
-
-  void cleanupReplicationContexts();
 
   // database, collection and index management
 
@@ -440,5 +440,7 @@ class RocksDBEngineCatalog {
 
   std::shared_ptr<RocksDBDumpManager> _dump_manager;
 };
+
+RocksDBEngineCatalog& GetServerEngine();
 
 }  // namespace sdb

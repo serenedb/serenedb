@@ -35,7 +35,6 @@
 #include "catalog/inverted_index.h"
 #include "rest_server/flush_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 
@@ -217,11 +216,6 @@ class InvertedIndexShard final
     InvertedIndexSnapshotPtr inverted_index_snapshot) {
     std::unique_lock guard{_snapshot_mutex};
     _snapshot = std::move(inverted_index_snapshot);
-  }
-
-  void ResetInvertedIndexSnapshot() {
-    std::unique_lock guard{_snapshot_mutex};
-    _snapshot.reset();
   }
 
   auto& GetTasksSettings() { return _tasks_settings; }

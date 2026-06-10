@@ -54,7 +54,6 @@
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -517,7 +516,7 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     const bool were_changes = _writer->RefreshCommit({
       .tick = commit_tick,
       .progress = progress,
-      .reopen_columnstore = /* TODO(codeworse) */ false,
+      .reopen_reader = /* TODO(codeworse) */ false,
     });
     // get new reader
     auto reader = _writer->GetSnapshot();

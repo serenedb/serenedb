@@ -40,7 +40,7 @@ NormColumnReader::NormColumnReader(field_id id,
     const auto& p = _pointers[rg];
     _total_row_count += p.row_count;
     SDB_ASSERT(_total_sum + p.sum >= _total_sum,
-               "columnstore norm running sum overflow on column id ", _id);
+               ".col reader norm running sum overflow on column id ", _id);
     _total_sum += p.sum;
     _total_non_zero += p.non_zero_count;
     _row_offsets.push_back(_total_row_count);

@@ -120,8 +120,7 @@ IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
                                    std::string_view filename) {
   auto in = dir.open(filename, IOAdvice::SEQUENTIAL);
   if (!in) {
-    throw IoError{
-      absl::StrCat("Failed to open columnstore file, path: ", filename)};
+    throw IoError{absl::StrCat("Failed to open .col file, path: ", filename)};
   }
   format_utils::CheckHeader(*in, kColFormatName, kColFormatVersion,
                             kColFormatVersion);
@@ -136,7 +135,7 @@ std::span<const byte_type> ReadFooterBytes(
     static_cast<uint64_t>(format_utils::HeaderLength(kColFormatName));
   SDB_ENSURE(
     file_len > header_len + sizeof(uint64_t) + format_utils::kFooterLen,
-    sdb::ERROR_SERVER_CORRUPTED_DATAFILE, "columnstore: truncated `.col` file ",
+    sdb::ERROR_SERVER_CORRUPTED_DATAFILE, ".col reader: truncated `.col` file ",
     filename, " (length ", file_len,
     " is not large enough to contain header + footer offset + "
     "iresearch footer)");
@@ -146,7 +145,7 @@ std::span<const byte_type> ReadFooterBytes(
   const uint64_t footer_offset = in.ReadI64();
   SDB_ENSURE(footer_offset >= header_len && footer_offset < footer_offset_pos,
              sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-             "columnstore: corrupted `.col` file ", filename,
+             ".col reader: corrupted `.col` file ", filename,
              ": footer offset ", footer_offset, " is out of range [",
              header_len, ", ", footer_offset_pos, ")");
   const uint64_t footer_size = footer_offset_pos - footer_offset;
@@ -210,7 +209,7 @@ void ColReader::BuildNormReaders(duckdb::BinaryDeserializer& deserializer) {
               SDB_ASSERT(
                 (p.byte_size == 1 || p.byte_size == 2 || p.byte_size == 4) &&
                   p.row_count != 0,
-                "columnstore: corrupt norm row-group (byte_size=", p.byte_size,
+                ".col reader: corrupt norm row-group (byte_size=", p.byte_size,
                 ", row_count=", p.row_count, ") on column id ", id);
               pointers.push_back(p);
             });

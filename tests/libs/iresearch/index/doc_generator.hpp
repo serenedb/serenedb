@@ -928,8 +928,11 @@ void NormStringJsonFieldFactory(tests::Document& doc, const std::string& name,
 template<typename Indexed>
 bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend) {
   auto ctx = writer.GetBatch();
-  auto doc = ctx.Insert();
-  return doc.Insert(ibegin, iend);
+  if (!ctx.Insert().Insert(ibegin, iend)) {
+    return false;
+  }
+  ctx.Commit();
+  return true;
 }
 
 template<typename Doc>
@@ -967,6 +970,7 @@ bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
       doc.Writer().remove(current_last_doc_id - batch_size + inserted_docs++);
     }
   } while (src != nullptr);
+  ctx.Commit();
   return true;
 }
 
@@ -974,16 +978,22 @@ template<typename Indexed>
 bool Update(irs::IndexWriter& writer, const irs::Filter& filter, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  auto doc = ctx.Replace(filter);
-  return doc.Insert(ibegin, iend);
+  if (!ctx.Replace(filter).Insert(ibegin, iend)) {
+    return false;
+  }
+  ctx.Commit();
+  return true;
 }
 
 template<typename Indexed>
 bool Update(irs::IndexWriter& writer, irs::Filter::ptr&& filter, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  auto doc = ctx.Replace(std::move(filter));
-  return doc.Insert(ibegin, iend);
+  if (!ctx.Replace(std::move(filter)).Insert(ibegin, iend)) {
+    return false;
+  }
+  ctx.Commit();
+  return true;
 }
 
 template<typename Indexed>
@@ -991,8 +1001,20 @@ bool Update(irs::IndexWriter& writer,
             const std::shared_ptr<irs::Filter>& filter, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  auto doc = ctx.Replace(filter);
-  return doc.Insert(ibegin, iend);
+  if (!ctx.Replace(filter).Insert(ibegin, iend)) {
+    return false;
+  }
+  ctx.Commit();
+  return true;
+}
+
+// One-shot removal: opens a batch, queues the filter and commits it.
+// Equivalent to `auto b = writer.GetBatch(); b.Remove(filter); b.Commit();`.
+template<bool TickBound = true, typename Filter>
+void Remove(irs::IndexWriter& writer, Filter&& filter) {
+  auto trx = writer.GetBatch();
+  trx.template Remove<TickBound>(std::forward<Filter>(filter));
+  trx.Commit();
 }
 
 }  // namespace tests

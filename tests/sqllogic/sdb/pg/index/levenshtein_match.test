@@ -108,7 +108,7 @@ a
 3
 
 # 1-arg form -- distance is picked from term length: 0 for <=2 chars,
-# 1 for 3-5 chars, 2 for >=6 chars. 
+# 1 for 3-5 chars, 2 for >=6 chars.
 # Keeps short queries from drifting into unrelated
 # tokens in stemmed indexes (e.g. `rocks` reaching `lock` via 2 edits).
 

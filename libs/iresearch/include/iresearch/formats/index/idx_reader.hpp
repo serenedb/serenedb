@@ -47,11 +47,8 @@ struct TermDictMeta {
   uint64_t doc_count{};
   uint64_t total_doc_freq{};
   uint64_t total_term_freq{};
-  bstring min_term;
-  bstring max_term;
   bool has_wand{false};
-  uint64_t fst_offset{};
-  uint64_t fst_size{};
+  uint64_t body_offset{};
   field_id norm{field_limits::invalid()};
 };
 
@@ -60,8 +57,8 @@ inline constexpr std::string_view kIdxFormatName = "iresearch_index";
 inline constexpr int32_t kIdxFormatVersion = 0;
 
 enum class IdxSlotKind : uint8_t {
-  kTermDict = 0,
-  kHNSW = 1,
+  TermDict = 0,
+  HNSW = 1,
 };
 
 struct HNSWEntry {

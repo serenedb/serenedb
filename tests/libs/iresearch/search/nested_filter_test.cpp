@@ -218,7 +218,7 @@ auto MakeParentProvider(irs::field_id id) {
       return nullptr;
     }
     std::vector<irs::doc_id_t> parents;
-    irs::tests::VisitBlobColumn(*segment.CsReader(), *col,
+    irs::tests::VisitBlobColumn(*segment.GetColReader(), *col,
                                 [&](irs::doc_id_t doc, irs::bytes_view) {
                                   parents.push_back(doc);
                                   return true;
@@ -398,7 +398,7 @@ class NestedFilterTestCase : public tests::FilterTestCaseBase {
       tests::StringField customer_field{"customer", customer};
       customer_field.id = kCustomer;
       ASSERT_TRUE(doc.Insert(customer_field));
-      auto* cs = doc.Columnstore();
+      auto* cs = doc.GetColWriter();
       ASSERT_NE(nullptr, cs);
       irs::tests::StoreFieldAt(*cs, kParent, doc.DocId(), customer_field);
     }
@@ -414,6 +414,7 @@ class NestedFilterTestCase : public tests::FilterTestCaseBase {
       InsertItemDocument(trx, item, price, count);
     }
     InsertOrderDocument(trx, order.customer, order.date);
+    trx.Commit();
   }
 
   void InitDataSet();

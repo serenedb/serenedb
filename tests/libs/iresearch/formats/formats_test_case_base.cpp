@@ -235,7 +235,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete record from first segment (creating new index_meta file + doc_mask
     // file, remove old)
     {
-      writer->GetBatch().Remove(*query_doc1);
+      tests::Remove(*writer, *query_doc1);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -248,7 +248,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all record from first segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      writer->GetBatch().Remove(*query_doc2);
+      tests::Remove(*writer, *query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -261,7 +261,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all records from second segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      writer->GetBatch().Remove(*query_doc2);
+      tests::Remove(*writer, *query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -317,7 +317,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
 
     // delete record from first segment (creating new doc_mask file)
     {
-      writer->GetBatch().Remove(*query_doc1);
+      tests::Remove(*writer, *query_doc1);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -363,7 +363,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete record from first segment (creating new doc_mask file, not-remove
     // old)
     {
-      writer->GetBatch().Remove(*(query_doc2));
+      tests::Remove(*writer, *(query_doc2));
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -376,7 +376,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all record from first segment (creating new index_meta file,
     // remove old meta but leave first segment)
     {
-      writer->GetBatch().Remove(*(query_doc3));
+      tests::Remove(*writer, *(query_doc3));
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -389,7 +389,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all records from second segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      writer->GetBatch().Remove(*(query_doc4));
+      tests::Remove(*writer, *(query_doc4));
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -444,7 +444,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, nullptr,
                              irs::tests::DefaultReaderOptions()));
-      writer->GetBatch().Remove(*(query_doc1));
+      tests::Remove(*writer, *(query_doc1));
       writer->RefreshCommit();  // remove first segment
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -1570,8 +1570,7 @@ void RoundTrip(std::string_view segment_name, uint64_t row_count,
   {
     irs::ColWriter w{dir, segment_name, db};
     populate(w);
-    auto filename = w.Commit(row_count);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(row_count);
   }
   irs::ColReader r{dir, segment_name, db};
   verify(r);
@@ -1581,9 +1580,10 @@ void RoundTrip(std::string_view segment_name, uint64_t row_count,
 namespace tests {
 
 TEST_P(FormatTestCase, columns_rw_empty) {
-  // Sub-scenario 1: writer commit with no columns at all -- still
-  // produces a footer file. Reader sees an empty Columns() span and
-  // reports no column ids.
+  // Sub-scenario 1: writer commit with no columns at all -- the lazy
+  // columnstore writes no `.col` file, so Commit() returns an empty
+  // filename. The reader opens the missing file as an empty store: an
+  // empty Columns() span and no column ids.
   RoundTrip(
     "columns_rw_empty_no_cols", /*row_count=*/0,
     [](irs::ColWriter&) { /* no columns */ },
@@ -1752,8 +1752,7 @@ TEST_P(FormatTestCase, columns_rw) {
     append_str_blob(f4, /*doc=*/1, "field4_doc_min");
     f4.PadNullsTo(kSeg1Rows);
 
-    auto filename = w.Commit(kSeg1Rows);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kSeg1Rows);
   }
 
   // Build segment _2 -----------------------------------------------------
@@ -1777,8 +1776,7 @@ TEST_P(FormatTestCase, columns_rw) {
     append_str_blob(f2, /*doc=*/1, "segment_2_field3_doc0");
     f2.PadNullsTo(kSeg2Rows);
 
-    auto filename = w.Commit(kSeg2Rows);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kSeg2Rows);
   }
 
   // Read segment _1 ------------------------------------------------------
@@ -2942,8 +2940,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
       irs::tests::AppendBlob(id_w, doc, {id_buf.data(), id_buf.size()});
       irs::tests::AppendBlob(name_w, doc, {name_buf.data(), name_buf.size()});
     }
-    auto filename = w.Commit(seg.row_count);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(seg.row_count);
   };
 
   write_seg(segs[0], /*prefix=*/0);

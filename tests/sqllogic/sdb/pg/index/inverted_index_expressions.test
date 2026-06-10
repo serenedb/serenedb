@@ -1358,13 +1358,26 @@ EXPLAIN SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLO
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
 │    ────────────────────   │
-│     Index: hnsw_e_idx     │
+│           Top: 2          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      hnsw_e_idx (ANN)     │
+│                           │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
-│      Projections: id      │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -1386,8 +1399,7 @@ INSERT INTO hnsw_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
 statement ok
 VACUUM (REFRESH_TABLE) hnsw_e2;
 
-# Bare `hnsw` is a built-in opclass name with no dictionary by that name --
-# the options form is required.
+# `hnsw` requires options.
 
 statement error
 CREATE INDEX hnsw_e_no_opts ON hnsw_e USING inverted(

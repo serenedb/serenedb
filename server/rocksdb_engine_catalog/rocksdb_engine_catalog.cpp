@@ -90,6 +90,7 @@
 #include "rocksdb_engine_catalog/rocksdb_background_thread.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_format.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
@@ -99,7 +100,6 @@
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 #include "storage_engine/table_shard.h"
 
@@ -288,11 +288,18 @@ RocksDBEngineCatalog::RocksDBEngineCatalog()
 
 RocksDBEngineCatalog::RocksDBEngineCatalog(
   const RocksDBOptionFeature& options_provider)
-  : _options_provider(options_provider) {}
+  : _options_provider(options_provider) {
+  gInstance = this;
+}
 
 RocksDBEngineCatalog::~RocksDBEngineCatalog() {
+  gInstance = nullptr;
   gRecoveryHelpers.clear();
   shutdownRocksDBInstance();
+}
+
+RocksDBEngineCatalog& GetServerEngine() {
+  return RocksDBEngineCatalog::instance();
 }
 
 /// shuts down the RocksDB instance. this is called from unprepare
@@ -588,14 +595,11 @@ void RocksDBEngineCatalog::start() {
   determineWalFilesInitial();
 }
 
-void RocksDBEngineCatalog::beginShutdown() {
+void RocksDBEngineCatalog::stop() {
   // from now on, all started compactions can be canceled.
   // note that this is only a best-effort hint to RocksDB and
   // may not be followed immediately.
   gCancelCompactions.store(true, std::memory_order_release);
-}
-
-void RocksDBEngineCatalog::stop() {
   if (_background_thread) {
     // stop the press
     _background_thread->beginShutdown();
@@ -661,8 +665,6 @@ Result RocksDBEngineCatalog::VisitDefinitions(
 std::string RocksDBEngineCatalog::versionFilename(ObjectId id) const {
   return absl::StrCat(_base_path, SERENEDB_DIR_SEPARATOR_STR, "VERSION-", id);
 }
-
-void RocksDBEngineCatalog::cleanupReplicationContexts() {}
 
 RecoveryState RocksDBEngineCatalog::recoveryState() noexcept {
   return RocksDBRecoveryManager::instance().recoveryState();

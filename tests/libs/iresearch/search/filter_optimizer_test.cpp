@@ -27,10 +27,13 @@
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
+#include "iresearch/search/granular_range_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
+#include "iresearch/search/ngram_similarity_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
@@ -555,14 +558,12 @@ TEST_P(FilterOptimizerTest, FlattenAnd) {
     ASSERT_EQ(irs::Type<irs::And>::id(), and_root[0].type());
   }
 
-  // empty inner is NOT spliced
+  // empty inner conjunction folds to empty (EmptyAndRule), collapsing the
+  // enclosing conjunction via AndEmptyRule
   {
     irs::Filter::ptr root = MakeAnd(MakeAnd(), MakeTerm(kName, "C"));
     Optimize(root);
-    auto& and_root = As<irs::And>(*root);
-    ASSERT_EQ(2, and_root.size());
-    ASSERT_EQ(irs::Type<irs::And>::id(), and_root[0].type());
-    ASSERT_EQ(0, As<irs::And>(and_root[0]).size());
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
   }
 }
 
@@ -762,15 +763,19 @@ TEST_P(FilterOptimizerTest, ByTermsRule) {
     ASSERT_EQ(3, As<irs::Or>(*root).size());
   }
 
-  // duplicate term boosts are summed: 2 + 3 == 5 (not multiplied to 6) (#3)
+  // duplicate term boosts are summed: 2 + 3 == 5 (not multiplied to 6) (#3);
+  // the single coalesced term then lowers to a ByTerm (ByTermsDegenerateRule)
+  // carrying the summed boost
   {
     irs::Filter::ptr root =
       MakeOr(MakeTerm(kName, "A", 2.F), MakeTerm(kName, "A", 3.F));
     Optimize(root);
-    ASSERT_EQ(irs::Type<irs::ByTerms>::id(), TypeOf(*root));
-    auto& by_terms = As<irs::ByTerms>(*root);
-    ASSERT_EQ(1, by_terms.options().terms.size());
-    ASSERT_EQ(5.F, by_terms.options().terms.begin()->boost);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+    auto& by_term = As<irs::ByTerm>(*root);
+    ASSERT_EQ(kName, by_term.field_id());
+    ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"A"}),
+              irs::bytes_view{by_term.options().term});
+    ASSERT_EQ(5.F, by_term.Boost());
   }
 }
 
@@ -803,11 +808,12 @@ TEST_P(FilterOptimizerTest, ByTermsMinMatchZeroRule) {
     ASSERT_EQ(2.F, terms.Boost());
   }
 
-  // empty term set with min_match==0 is left untouched
+  // empty term set folds to empty (ByTermsDegenerateRule): no terms is
+  // unsatisfiable, matching ByTerms::Prepare's empty short-circuit
   {
     irs::Filter::ptr root = MakeByTerms(kName, {}, 0);
     Optimize(root);
-    ASSERT_EQ(irs::Type<irs::ByTerms>::id(), TypeOf(*root));
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
   }
 }
 
@@ -991,6 +997,192 @@ TEST_P(FilterOptimizerTest, PhraseLowerRule) {
     ASSERT_EQ(1, opts.size());
     ASSERT_TRUE(
       std::holds_alternative<irs::ByPrefixOptions>(opts.begin()->part));
+  }
+}
+
+// EmptyAndRule: a childless conjunction is unsatisfiable and folds to empty,
+// matching BooleanFilter::PrepareImpl's empty short-circuit.
+TEST_P(FilterOptimizerTest, EmptyAndRule) {
+  // childless And -> empty
+  {
+    irs::Filter::ptr root = MakeAnd();
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
+
+  // nested childless And collapses the enclosing conjunction too
+  {
+    irs::Filter::ptr root = MakeAnd(MakeAnd(), MakeTerm(kName, "A"));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
+}
+
+// ByTermsDegenerateRule: a single-term ByTerms lowers to a ByTerm; an empty or
+// unsatisfiable term set folds to empty (mirrors ByTerms::Prepare).
+TEST_P(FilterOptimizerTest, ByTermsDegenerateRule) {
+  // single term -> ByTerm, folding the filter boost
+  {
+    auto by_terms = MakeByTerms(kName, {"A"}, 1);
+    by_terms->boost(2.F);
+    irs::Filter::ptr root = std::move(by_terms);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+    auto& by_term = As<irs::ByTerm>(*root);
+    ASSERT_EQ(kName, by_term.field_id());
+    ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"A"}),
+              irs::bytes_view{by_term.options().term});
+    ASSERT_EQ(2.F, by_term.Boost());
+  }
+
+  // min_match greater than term count -> empty
+  {
+    irs::Filter::ptr root = MakeByTerms(kName, {"A", "B"}, 3);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
+
+  // multi-term, satisfiable -> left as ByTerms
+  {
+    irs::Filter::ptr root = MakeByTerms(kName, {"A", "B"}, 2);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerms>::id(), TypeOf(*root));
+    ASSERT_EQ(2, As<irs::ByTerms>(*root).options().terms.size());
+  }
+}
+
+// RangeDegenerateRule: a single-point range lowers to a ByTerm when both bounds
+// are inclusive, otherwise it is unsatisfiable and folds to empty.
+TEST_P(FilterOptimizerTest, RangeDegenerateRule) {
+  const auto make_range = [](irs::BoundType min_type, irs::BoundType max_type) {
+    auto range = std::make_unique<irs::ByRange>();
+    *range->mutable_field_id() = kName;
+    auto& rng = range->mutable_options()->range;
+    rng.min = irs::ViewCast<irs::byte_type>(std::string_view{"A"});
+    rng.max = irs::ViewCast<irs::byte_type>(std::string_view{"A"});
+    rng.min_type = min_type;
+    rng.max_type = max_type;
+    return range;
+  };
+
+  // [A, A] both inclusive -> ByTerm
+  {
+    auto range =
+      make_range(irs::BoundType::Inclusive, irs::BoundType::Inclusive);
+    range->boost(2.F);
+    irs::Filter::ptr root = std::move(range);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+    auto& by_term = As<irs::ByTerm>(*root);
+    ASSERT_EQ(kName, by_term.field_id());
+    ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"A"}),
+              irs::bytes_view{by_term.options().term});
+    ASSERT_EQ(2.F, by_term.Boost());
+  }
+
+  // [A, A) with an exclusive bound -> empty
+  {
+    irs::Filter::ptr root =
+      make_range(irs::BoundType::Inclusive, irs::BoundType::Exclusive);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
+}
+
+// GranularRangeDegenerateRule: the granular analogue of RangeDegenerateRule,
+// comparing the most precise boundary terms.
+TEST_P(FilterOptimizerTest, GranularRangeDegenerateRule) {
+  const auto make_range = [](irs::BoundType min_type, irs::BoundType max_type) {
+    auto range = std::make_unique<irs::ByGranularRange>();
+    *range->mutable_field_id() = kName;
+    auto& rng = range->mutable_options()->range;
+    rng.min.emplace_back(irs::ViewCast<irs::byte_type>(std::string_view{"A"}));
+    rng.max.emplace_back(irs::ViewCast<irs::byte_type>(std::string_view{"A"}));
+    rng.min_type = min_type;
+    rng.max_type = max_type;
+    return range;
+  };
+
+  // most precise terms equal, both inclusive -> ByTerm
+  {
+    irs::Filter::ptr root =
+      make_range(irs::BoundType::Inclusive, irs::BoundType::Inclusive);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+    ASSERT_EQ(kName, As<irs::ByTerm>(*root).field_id());
+  }
+
+  // exclusive bound -> empty
+  {
+    irs::Filter::ptr root =
+      make_range(irs::BoundType::Inclusive, irs::BoundType::Exclusive);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
+}
+
+// NGramSimilarityLowerRule: ngram similarity reduces to a plain ByTerms when
+// unscored with min_match 1, and to a phrase when every ngram must match.
+TEST_P(FilterOptimizerTest, NGramSimilarityLowerRule) {
+  const auto make_ngram = [](float_t threshold) {
+    auto ngram = std::make_unique<irs::ByNGramSimilarity>();
+    *ngram->mutable_field_id() = kName;
+    auto& opts = *ngram->mutable_options();
+    opts.ngrams.emplace_back(
+      irs::ViewCast<irs::byte_type>(std::string_view{"ab"}));
+    opts.ngrams.emplace_back(
+      irs::ViewCast<irs::byte_type>(std::string_view{"bc"}));
+    opts.threshold = threshold;
+    return ngram;
+  };
+
+  // empty ngrams -> empty
+  {
+    irs::Filter::ptr root = std::make_unique<irs::ByNGramSimilarity>();
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Empty>::id(), TypeOf(*root));
+  }
+
+  // unscored, low threshold (min_match == 1) -> ByTerms
+  {
+    irs::Filter::ptr root = make_ngram(0.1F);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerms>::id(), TypeOf(*root));
+    auto& by_terms = As<irs::ByTerms>(*root);
+    ASSERT_EQ(2, by_terms.options().terms.size());
+    ASSERT_EQ(1, by_terms.options().min_match);
+  }
+
+  // threshold 1.0 (min_match == term count) -> phrase
+  {
+    irs::Filter::ptr root = make_ngram(1.F);
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), TypeOf(*root));
+    ASSERT_EQ(2, As<irs::ByPhrase>(*root).options().size());
+  }
+}
+
+// ExclusionDoubleNegationRule: nested exclude-only exclusions collapse by
+// negation parity (even -> inner, odd -> single exclusion).
+TEST_P(FilterOptimizerTest, ExclusionDoubleNegationRule) {
+  // even negations -> inner filter
+  {
+    irs::Filter::ptr root =
+      MakeExclude(nullptr, MakeExclude(nullptr, MakeTerm(kName, "A")));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+  }
+
+  // odd negations -> a single exclude-only exclusion
+  {
+    irs::Filter::ptr root = MakeExclude(
+      nullptr,
+      MakeExclude(nullptr, MakeExclude(nullptr, MakeTerm(kName, "A"))));
+    Optimize(root);
+    ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
+    auto& ex = As<irs::Exclusion>(*root);
+    ASSERT_EQ(nullptr, ex.include());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), ex.exclude()->type());
   }
 }
 

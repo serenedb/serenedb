@@ -152,10 +152,10 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
     {
       irs::ByNGramSimilarity q;
 
-      auto prepared = q.prepare({
-        .index = segment,
-        .memory = counter,
-      });
+      auto prepared = tests::OptimizedPrepare(q, {
+                                                   .index = segment,
+                                                   .memory = counter,
+                                                 });
       ASSERT_EQ(irs::kNoBoost, prepared->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -166,10 +166,10 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
     {
       irs::ByNGramSimilarity q = MakeFilter(kFieldFieldId, {"1", "2"}, 0.5f);
 
-      auto prepared = q.prepare({
-        .index = segment,
-        .memory = counter,
-      });
+      auto prepared = tests::OptimizedPrepare(q, {
+                                                   .index = segment,
+                                                   .memory = counter,
+                                                 });
       ASSERT_EQ(irs::kNoBoost, prepared->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -181,10 +181,10 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
       irs::ByNGramSimilarity q =
         MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
-      auto prepared = q.prepare({
-        .index = segment,
-        .memory = counter,
-      });
+      auto prepared = tests::OptimizedPrepare(q, {
+                                                   .index = segment,
+                                                   .memory = counter,
+                                                 });
       ASSERT_EQ(irs::kNoBoost, prepared->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -203,10 +203,10 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
       irs::ByNGramSimilarity q;
       q.boost(boost);
 
-      auto prepared = q.prepare({
-        .index = segment,
-        .memory = counter,
-      });
+      auto prepared = tests::OptimizedPrepare(q, {
+                                                   .index = segment,
+                                                   .memory = counter,
+                                                 });
       ASSERT_EQ(irs::kNoBoost, prepared->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -218,10 +218,10 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
       irs::ByNGramSimilarity q = MakeFilter(kFieldFieldId, {"1", "2"}, 0.5f);
       q.boost(boost);
 
-      auto prepared = q.prepare({
-        .index = segment,
-        .memory = counter,
-      });
+      auto prepared = tests::OptimizedPrepare(q, {
+                                                   .index = segment,
+                                                   .memory = counter,
+                                                 });
       ASSERT_EQ(boost, prepared->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -234,10 +234,10 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
         MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
       q.boost(boost);
 
-      auto prepared = q.prepare({
-        .index = segment,
-        .memory = counter,
-      });
+      auto prepared = tests::OptimizedPrepare(q, {
+                                                   .index = segment,
+                                                   .memory = counter,
+                                                 });
       ASSERT_EQ(boost, prepared->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -265,11 +265,11 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-    .scorer = &sort,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                    .scorer = &sort,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
@@ -318,11 +318,11 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-    .scorer = &sort,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                    .scorer = &sort,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
@@ -371,11 +371,11 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-    .scorer = &sort,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                    .scorer = &sort,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
@@ -423,11 +423,11 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_4) {
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {"1", "1"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-    .scorer = &sort,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                    .scorer = &sort,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
@@ -478,11 +478,11 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
     MakeFilter(kFieldFieldId, {"1", "2", "1"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-    .scorer = &sort,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                    .scorer = &sort,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
@@ -529,11 +529,11 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_6) {
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {"1", "1"}, 1.0f);
 
   CustomNGramScorer sort;
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-    .scorer = &sort,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                    .scorer = &sort,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
@@ -583,11 +583,11 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-    .scorer = &sort,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                    .scorer = &sort,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
@@ -636,11 +636,11 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
     MakeFilter(kFieldFieldId, {"1", "5", "6", "2"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-    .scorer = &sort,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                    .scorer = &sort,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
@@ -691,11 +691,11 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4", "5", "1"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-    .scorer = &sort,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                    .scorer = &sort,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
@@ -742,11 +742,11 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {""}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-    .scorer = &sort,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                    .scorer = &sort,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
@@ -791,10 +791,10 @@ TEST_P(NGramSimilarityFilterTestCase, no_match_case) {
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId, {"ee", "we", "qq", "rr", "ff", "never_match"}, 0.1f);
 
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
 
@@ -821,10 +821,10 @@ TEST_P(NGramSimilarityFilterTestCase, no_serial_match_case) {
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId, {"ee", "ss", "pa", "rr"}, 0.5f);
 
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                  });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
     ASSERT_FALSE(docs->next());
@@ -852,10 +852,10 @@ TEST_P(NGramSimilarityFilterTestCase, one_match_case) {
 
   Docs expected{1, 3, 5, 6, 7, 8, 9, 10, 12};
   const size_t expected_size = expected.size();
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                  });
   size_t count = 0;
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
@@ -891,10 +891,10 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_test) {
 
   Docs expected{1, 2, 5, 8, 11, 12, 13};
   const size_t expected_size = expected.size();
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                  });
   size_t count = 0;
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
@@ -930,10 +930,10 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_test) {
 
   Docs expected{1, 2, 5, 8, 11, 12, 13};
   const size_t expected_size = expected.size();
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                  });
   size_t count = 0;
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
@@ -969,10 +969,10 @@ TEST_P(NGramSimilarityFilterTestCase, not_miss_match_for_tail) {
 
   Docs expected{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
   const size_t expected_size = expected.size();
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                  });
   size_t count = 0;
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
@@ -1009,10 +1009,10 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle_test) {
   Docs expected{1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14};
   const size_t expected_size = expected.size();
 
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                  });
   size_t count = 0;
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
@@ -1050,10 +1050,10 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle2_test) {
   Docs expected{1, 2, 5, 8, 11, 12, 13};
   const size_t expected_size = expected.size();
 
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                  });
   size_t count = 0;
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
@@ -1091,10 +1091,10 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
   Docs expected{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
   const size_t expected_size = expected.size();
 
-  auto prepared = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared = tests::OptimizedPrepare(filter, {
+                                                    .index = rdr,
+                                                    .memory = counter,
+                                                  });
   size_t count = 0;
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
@@ -1394,10 +1394,10 @@ TEST_P(NGramSimilarityFilterTestCase, seek_next) {
     kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
   Docs expected{1, 2, 5, 8, 11, 12, 13};
   auto expected_it = std::begin(expected);
-  auto prepared_filter = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared_filter = tests::OptimizedPrepare(filter, {
+                                                           .index = rdr,
+                                                           .memory = counter,
+                                                         });
   for (const auto& sub : rdr) {
     auto docs = prepared_filter->execute({.segment = sub});
     ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
@@ -1440,10 +1440,10 @@ TEST_P(NGramSimilarityFilterTestCase, seek) {
     kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
   Docs seek_tagrets{2, 5, 8, 13};
   auto seek_it = std::begin(seek_tagrets);
-  auto prepared_filter = filter.prepare({
-    .index = rdr,
-    .memory = counter,
-  });
+  auto prepared_filter = tests::OptimizedPrepare(filter, {
+                                                           .index = rdr,
+                                                           .memory = counter,
+                                                         });
   for (const auto& sub : rdr) {
     while (std::end(seek_tagrets) != seek_it) {
       auto docs = prepared_filter->execute({

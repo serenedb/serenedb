@@ -41,31 +41,18 @@ bool BooleanFilter::equals(const Filter& rhs) const noexcept {
 }
 
 Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx) const {
-  const auto size = _filters.size();
-
-  if (size == 0) [[unlikely]] {
-    return Query::empty();
-  }
-
-  if (size == 1) {
-    auto* filter = _filters.front().get();
-    SDB_ASSERT(filter);
-    return filter->prepare(ctx.Boost(Boost()));
-  }
+  SDB_ASSERT(!_filters.empty());
 
   return PrepareBoolean(_filters, ctx);
 }
 
 Filter::Query::ptr And::PrepareBoolean(std::span<const Filter::ptr> filters,
                                        const PrepareContext& ctx) const {
-  if (filters.empty()) {
-    return Query::empty();
-  }
+  SDB_ASSERT(!filters.empty());
 
   PrepareContext sub_ctx = ctx;
   sub_ctx.boost *= Boost();
 
-  // single node case
   if (1 == filters.size()) {
     return filters.front()->prepare(sub_ctx);
   }
@@ -85,32 +72,18 @@ Filter::Query::ptr And::prepare(const PrepareContext& ctx) const {
 }
 
 Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
-  if (0 == _min_match_count) {  // only explicit 0 min match counts!
-    // all conditions are satisfied
-    return MakeAllDocsFilter(kNoBoost)->prepare(ctx.Boost(Boost()));
-  }
-
+  SDB_ASSERT(_min_match_count != 0);
   return BooleanFilter::PrepareImpl(ctx);
 }
 
 Filter::Query::ptr Or::PrepareBoolean(std::span<const Filter::ptr> filters,
                                       const PrepareContext& ctx) const {
+  SDB_ASSERT(!filters.empty());
+  SDB_ASSERT(_min_match_count != 0);
+  SDB_ASSERT(_min_match_count <= filters.size());
+
   const PrepareContext sub_ctx = ctx.Boost(Boost());
 
-  if (0 == _min_match_count) {  // only explicit 0 min match counts!
-    // all conditions are satisfied
-    return MakeAllDocsFilter(kNoBoost)->prepare(sub_ctx);
-  }
-
-  if (filters.empty()) {
-    return Query::empty();
-  }
-
-  if (_min_match_count > filters.size()) {
-    return Query::empty();
-  }
-
-  // single node case
   if (filters.size() == 1) {
     return filters.front()->prepare(sub_ctx);
   }
@@ -122,11 +95,10 @@ Filter::Query::ptr Or::PrepareBoolean(std::span<const Filter::ptr> filters,
   }
 
   memory::managed_ptr<BooleanQuery> q;
-  if (_min_match_count == filters.size()) {
-    q = memory::make_tracked<AndQuery>(sub_ctx.memory);
-  } else if (1 == _min_match_count) {
+  if (1 == _min_match_count) {
     q = memory::make_tracked<OrQuery>(sub_ctx.memory);
-  } else {  // 1 < _min_match_count < filters.size()
+  } else {
+    SDB_ASSERT(_min_match_count < filters.size());
     q = memory::make_tracked<MinMatchQuery>(sub_ctx.memory, _min_match_count);
   }
 
@@ -138,9 +110,7 @@ Filter::Query::ptr Exclusion::prepare(const PrepareContext& ctx) const {
   const PrepareContext sub_ctx = ctx.Boost(Boost());
 
   if (_exclude == nullptr) {
-    if (_include == nullptr) {
-      return AllDocsProvider::Default(kNoBoost)->prepare(sub_ctx);
-    }
+    SDB_ASSERT(_include != nullptr);
     return _include->prepare(sub_ctx);
   }
 

@@ -542,7 +542,8 @@ TEST(boolean_query_boost, and_filter) {
   {
     irs::And root;
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     ASSERT_EQ(irs::kNoBoost, prep->Boost());
   }
@@ -554,7 +555,8 @@ TEST(boolean_query_boost, and_filter) {
     irs::And root;
     root.boost(value);
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     ASSERT_EQ(irs::kNoBoost, prep->Boost());
   }
@@ -804,7 +806,8 @@ TEST(boolean_query_boost, or_filter) {
   {
     irs::Or root;
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     ASSERT_EQ(irs::kNoBoost, prep->Boost());
   }
@@ -816,7 +819,8 @@ TEST(boolean_query_boost, or_filter) {
     irs::Or root;
     root.boost(value);
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     ASSERT_EQ(irs::kNoBoost, prep->Boost());
   }
@@ -1359,7 +1363,8 @@ TEST(boolean_query_estimation, or_filter) {
   {
     irs::Or root;
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     auto docs = prep->execute({.segment = irs::SubReader::empty()});
     ASSERT_EQ(0, irs::CostAttr::extract(*docs));
@@ -1475,7 +1480,8 @@ TEST(boolean_query_estimation, and_filter) {
   // empty case
   {
     irs::And root;
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     auto docs = prep->execute({.segment = irs::SubReader::empty()});
     ASSERT_EQ(0, irs::CostAttr::extract(*docs));
@@ -15179,14 +15185,14 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
 
   // empty query
   {
-    CheckQuery(irs::Or(), Docs{}, rdr);
+    CheckQuery(*tests::Optimized(irs::Or()), Docs{}, rdr);
   }
 
   {
     irs::Or root;
     Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
-    CheckQuery(root, Docs{22}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{22}, rdr);
   }
 
   // name=W OR name=Z
@@ -15195,7 +15201,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldName, "W");  // 23
     Append<irs::ByTerm>(root, kFieldName, "C");  // 3
 
-    CheckQuery(root, Docs{3, 23}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{3, 23}, rdr);
   }
 
   // name=A OR name=Q OR name=Z
@@ -15205,7 +15211,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
     Append<irs::ByTerm>(root, kFieldName, "Z");  // 26
 
-    CheckQuery(root, Docs{1, 17, 26}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 17, 26}, rdr);
   }
 
   // name=A OR name=Q OR same!=xyz
@@ -15218,7 +15224,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
                               "xyz");  // none (not within an OR must be
                                        // wrapped inside a single-branch OR)
 
-    CheckQuery(root, Docs{1, 17}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 17}, rdr);
   }
 
   // (name=A OR name=Q) OR same!=xyz
@@ -15231,7 +15237,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
                               "xyz");  // none (not within an OR must be
                                        // wrapped inside a single-branch OR)
 
-    CheckQuery(root, Docs{1, 17}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 17}, rdr);
   }
 
   // name=A OR name=Q OR name=Z OR same=invalid_term OR invalid_field=V
@@ -15243,7 +15249,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
     Append<irs::ByTerm>(root, kFieldInvalid, "V");
 
-    CheckQuery(root, Docs{1, 17, 26}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 17, 26}, rdr);
   }
 
   // search : all terms
@@ -15255,10 +15261,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldSame, "xyz");  // 1..32
     Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
 
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      *tests::Optimized(std::move(root)),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // min match count == 0
@@ -15267,10 +15274,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     root.min_match_count(0);
     Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      *tests::Optimized(std::move(root)),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // min match count == 0
@@ -15278,10 +15286,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     irs::Or root;
     root.min_match_count(0);
 
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      *tests::Optimized(std::move(root)),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // min match count is geater than a number of conditions
@@ -15294,7 +15303,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
     root.min_match_count(root.size() + 1);
 
-    CheckQuery(root, Docs{}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{}, rdr);
   }
 
   // name=A OR false
@@ -15303,7 +15312,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldName, "A");  // 1
     root.add<irs::Empty>();
 
-    CheckQuery(root, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 
   // name!=A OR false
@@ -15340,7 +15349,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     root.add<irs::All>();
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(5);
-    CheckQuery(root, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 
   // optimization should adjust min_match same but with score to check scored
@@ -15354,7 +15363,8 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(5);
     irs::Scorer::ptr sort{std::make_unique<sort::CustomSort>()};
-    CheckQuery(root, std::span{&sort, 1}, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), std::span{&sort, 1}, Docs{1},
+               rdr);
   }
 
   // optimization should adjust min_match
@@ -15374,10 +15384,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     root.add<irs::All>();
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(3);
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      *tests::Optimized(std::move(root)),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // scored
@@ -15401,7 +15412,8 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
                   12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
                   23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
 
-    CheckQuery(root, std::span{&sort, 1}, expected, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), std::span{&sort, 1},
+               expected, rdr);
   }
 }
 
@@ -15432,7 +15444,7 @@ TEST_P(BooleanFilterTestCase, and_schemas) {
     irs::And root;
     Append<irs::ByTerm>(root, kFieldNameUpper, "Product");
     Append<irs::ByTerm>(root, kFieldSource, "AdventureWor3ks2014");
-    CheckQuery(root, Docs{}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{}, rdr);
   }
 }
 
@@ -15448,7 +15460,7 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
 
   // empty query
   {
-    CheckQuery(irs::And(), Docs{}, rdr);
+    CheckQuery(*tests::Optimized(irs::And()), Docs{}, rdr);
   }
 
   // name=V
@@ -15456,7 +15468,7 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
     irs::And root;
     Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
-    CheckQuery(root, Docs{22}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{22}, rdr);
   }
 
   // duplicated=abcd AND same=xyz
@@ -15464,7 +15476,8 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
     irs::And root;
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
     Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
-    CheckQuery(root, Docs{1, 5, 11, 21, 27, 31}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 5, 11, 21, 27, 31},
+               rdr);
   }
 
   // duplicated=abcd AND same=xyz AND name=A
@@ -15473,7 +15486,7 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
     Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
     Append<irs::ByTerm>(root, kFieldName, "A");           // 1
-    CheckQuery(root, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 
   // duplicated=abcd AND same=xyz AND name=B
@@ -15482,7 +15495,7 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
     Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
     Append<irs::ByTerm>(root, kFieldName, "B");           // 2
-    CheckQuery(root, Docs{}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{}, rdr);
   }
 }
 
@@ -15669,7 +15682,7 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   // empty query
   {
     CheckQuery(
-      irs::Exclusion(),
+      *tests::Optimized(irs::Exclusion()),
       Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
            17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
       rdr);
@@ -15680,7 +15693,7 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
     irs::Exclusion root;
     root.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
 
-    CheckQuery(root, Docs{}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{}, rdr);
   }
 
   // duplicated=abcd AND (NOT ( NOT name=A ))
@@ -15690,7 +15703,7 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
     root.add<irs::Exclusion>()
       .exclude<irs::Exclusion>()
       .exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
-    CheckQuery(root, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 
   // duplicated=abcd AND (NOT ( NOT (NOT (NOT ( NOT name=A )))))
@@ -15703,7 +15716,8 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       .exclude<irs::Exclusion>()
       .exclude<irs::Exclusion>()
       .exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
-    CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{5, 11, 21, 27, 31},
+               rdr);
   }
 
   // * AND NOT *
@@ -15712,17 +15726,18 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::And root;
       root.add<irs::All>();
       root.add<irs::Exclusion>().exclude<irs::All>();
-      CheckQuery(root, Docs{}, rdr);
+      CheckQuery(*tests::Optimized(std::move(root)), Docs{}, rdr);
     }
 
     {
       irs::Or root;
       root.add<irs::All>();
       root.add<irs::Exclusion>().exclude<irs::All>();
-      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-                 rdr);
+      CheckQuery(
+        *tests::Optimized(std::move(root)),
+        Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+        rdr);
     }
 
   }  // namespace tests
@@ -15735,7 +15750,8 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
+      CheckQuery(*tests::Optimized(std::move(root)), Docs{5, 11, 21, 27, 31},
+                 rdr);
     }
 
     {
@@ -15744,10 +15760,11 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-                 rdr);
+      CheckQuery(
+        *tests::Optimized(std::move(root)),
+        Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+        rdr);
     }
   }
 
@@ -15761,7 +15778,8 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
         MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
+      CheckQuery(*tests::Optimized(std::move(root)), Docs{5, 11, 21, 27, 31},
+                 rdr);
     }
 
     {
@@ -15772,10 +15790,11 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
         MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-                 rdr);
+      CheckQuery(
+        *tests::Optimized(std::move(root)),
+        Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+        rdr);
     }
   }
 
@@ -15789,7 +15808,7 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
         MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "E");
-      CheckQuery(root, Docs{11, 21, 27, 31}, rdr);
+      CheckQuery(*tests::Optimized(std::move(root)), Docs{11, 21, 27, 31}, rdr);
     }
 
     {
@@ -15800,10 +15819,11 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
         MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldPrefix, "abcd");
-      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-                 rdr);
+      CheckQuery(
+        *tests::Optimized(std::move(root)),
+        Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+        rdr);
     }
   }
 }
@@ -15833,14 +15853,16 @@ TEST_P(BooleanFilterTestCase, not_and_conjunction_regression) {
 
   // duplicated=abcd matches {1, 5, 11, 21, 27, 31}; same=xyz matches
   // all 32 docs; the And matches the abcd set; Not is the complement.
-  CheckQuery(root, Docs{2,  3,  4,  6,  7,  8,  9,  10, 12, 13, 14, 15, 16,
-                        17, 18, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 32},
+  irs::Filter::ptr optimized = tests::Optimized(std::move(root));
+  CheckQuery(*optimized,
+             Docs{2,  3,  4,  6,  7,  8,  9,  10, 12, 13, 14, 15, 16,
+                  17, 18, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 32},
              rdr);
 
   // Also exercise seek() across the result set -- this is the path
   // that drove the SQL-side crash, since the table scan repeatedly
   // re-enters Exclusion::converge with the next incl doc.
-  auto prepared = root.prepare({.index = rdr});
+  auto prepared = optimized->prepare({.index = rdr});
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
     for (irs::doc_id_t target : {2, 5, 6, 11, 12, 21, 22, 27, 28, 31, 32}) {
@@ -15866,7 +15888,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
   // empty query
   {
     CheckQuery(
-      irs::Exclusion(),
+      *tests::Optimized(irs::Exclusion()),
       Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
            17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
       rdr);
@@ -15928,10 +15950,11 @@ TEST_P(BooleanFilterTestCase, exclusion_sequential) {
 
   {
     irs::Exclusion root;
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      *tests::Optimized(std::move(root)),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   {
@@ -15947,7 +15970,8 @@ TEST_P(BooleanFilterTestCase, exclusion_sequential) {
     irs::Exclusion root;
     root.include<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-    CheckQuery(root, Docs{1, 5, 11, 21, 27, 31}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 5, 11, 21, 27, 31},
+               rdr);
   }
 
   {
@@ -15955,7 +15979,8 @@ TEST_P(BooleanFilterTestCase, exclusion_sequential) {
     root.include<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
     root.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
-    CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{5, 11, 21, 27, 31},
+               rdr);
   }
 
   {
@@ -15965,14 +15990,14 @@ TEST_P(BooleanFilterTestCase, exclusion_sequential) {
     auto& any = root.exclude<irs::Or>();
     any.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
     any.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "E");
-    CheckQuery(root, Docs{11, 21, 27, 31}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{11, 21, 27, 31}, rdr);
   }
 
   {
     irs::Exclusion root;
     root.exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldName, "A");
-    CheckQuery(root, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 
   {
@@ -16003,7 +16028,7 @@ TEST_P(BooleanFilterTestCase, exclusion_sequential) {
       MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
     root.exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldName, "A");
-    CheckQuery(root, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 }
 
@@ -16036,8 +16061,8 @@ TEST_P(BooleanFilterTestCase, mixed) {
         Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
-      CheckQuery(root, Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31},
-                 rdr);
+      CheckQuery(*tests::Optimized(std::move(root)),
+                 Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31}, rdr);
     }
 
     // ((same=xyz AND duplicated=abcd) OR (same=xyz AND duplicated=vczc)) AND
@@ -16066,7 +16091,7 @@ TEST_P(BooleanFilterTestCase, mixed) {
         }
       }
 
-      CheckQuery(root, Docs{24}, rdr);
+      CheckQuery(*tests::Optimized(std::move(root)), Docs{24}, rdr);
     }
 
     // ((same=xyz AND duplicated=abcd) OR (name=A or name=C or NAME=P or
@@ -16117,8 +16142,8 @@ TEST_P(BooleanFilterTestCase, mixed) {
         }
       }
 
-      CheckQuery(root, Docs{1, 2, 3, 5, 8, 11, 14, 16, 17, 19, 21, 24, 27, 31},
-                 rdr);
+      CheckQuery(*tests::Optimized(std::move(root)),
+                 Docs{1, 2, 3, 5, 8, 11, 14, 16, 17, 19, 21, 24, 27, 31}, rdr);
     }
 
     // (same=xyz AND duplicated=abcd) OR (same=xyz AND duplicated=vczc) AND *
@@ -16142,10 +16167,11 @@ TEST_P(BooleanFilterTestCase, mixed) {
         Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
-      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-                 rdr);
+      CheckQuery(
+        *tests::Optimized(std::move(root)),
+        Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+        rdr);
     }
 
     // (same=xyz AND duplicated=abcd) OR (same=xyz AND duplicated=vczc) OR NOT
@@ -16170,8 +16196,8 @@ TEST_P(BooleanFilterTestCase, mixed) {
         Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
-      CheckQuery(root, Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31},
-                 rdr);
+      CheckQuery(*tests::Optimized(std::move(root)),
+                 Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31}, rdr);
     }
   }
 }
@@ -16397,8 +16423,9 @@ TEST(And_test, optimize_double_negation) {
 }
 
 TEST(And_test, prepare_empty_filter) {
-  irs::And root;
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
+  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Optimize(root);
+  auto prepared = root->prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, prepared);
   ASSERT_EQ(typeid(irs::Filter::Query::empty().get()), typeid(prepared.get()));
 }

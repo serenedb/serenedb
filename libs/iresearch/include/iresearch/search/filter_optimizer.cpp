@@ -23,10 +23,15 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
 
+#include <cmath>
+
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/granular_range_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
+#include "iresearch/search/ngram_similarity_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
+#include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
@@ -677,6 +682,187 @@ struct PhraseLowerRule {
   }
 };
 
+struct EmptyAndRule {
+  static constexpr std::string_view kName = "empty_and";
+  static constexpr std::array kTargets{Type<And>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    if (!sdb::basics::downCast<And>(*slot).empty()) {
+      return false;
+    }
+    slot = std::make_unique<Empty>();
+    return true;
+  }
+};
+
+struct ByTermsDegenerateRule {
+  static constexpr std::string_view kName = "by_terms_degenerate";
+  static constexpr std::array kTargets{Type<ByTerms>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<ByTerms>(*slot);
+    const auto& terms = node.options().terms;
+    const auto min_match = node.options().min_match;
+    if (terms.empty()) {
+      slot = std::make_unique<Empty>();
+      return true;
+    }
+    if (min_match == 0) {
+      return false;
+    }
+    if (min_match > terms.size()) {
+      slot = std::make_unique<Empty>();
+      return true;
+    }
+    if (terms.size() != 1) {
+      return false;
+    }
+    const auto& term = *terms.begin();
+    auto by_term = std::make_unique<ByTerm>();
+    *by_term->mutable_field_id() = node.field_id();
+    by_term->mutable_options()->term = term.term;
+    by_term->boost(node.Boost() * term.boost);
+    slot = std::move(by_term);
+    return true;
+  }
+};
+
+struct RangeDegenerateRule {
+  static constexpr std::string_view kName = "range_degenerate";
+  static constexpr std::array kTargets{Type<ByRange>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<ByRange>(*slot);
+    const auto& rng = node.options().range;
+    if (rng.min_type == BoundType::Unbounded ||
+        rng.max_type == BoundType::Unbounded || rng.min != rng.max) {
+      return false;
+    }
+    if (rng.min_type == BoundType::Inclusive &&
+        rng.max_type == BoundType::Inclusive) {
+      auto by_term = std::make_unique<ByTerm>();
+      *by_term->mutable_field_id() = node.field_id();
+      by_term->mutable_options()->term = rng.min;
+      by_term->boost(node.Boost());
+      slot = std::move(by_term);
+      return true;
+    }
+    slot = std::make_unique<Empty>();
+    return true;
+  }
+};
+
+struct GranularRangeDegenerateRule {
+  static constexpr std::string_view kName = "granular_range_degenerate";
+  static constexpr std::array kTargets{Type<ByGranularRange>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+    auto& node = sdb::basics::downCast<ByGranularRange>(*slot);
+    const auto& rng = node.options().range;
+    if (rng.min.empty() || rng.max.empty() ||
+        rng.min.front() != rng.max.front()) {
+      return false;
+    }
+    if (rng.min_type == BoundType::Inclusive &&
+        rng.max_type == BoundType::Inclusive) {
+      auto by_term = std::make_unique<ByTerm>();
+      *by_term->mutable_field_id() = node.field_id();
+      by_term->mutable_options()->term = rng.min.front();
+      by_term->boost(node.Boost());
+      slot = std::move(by_term);
+      return true;
+    }
+    slot = std::make_unique<Empty>();
+    return true;
+  }
+};
+
+struct NGramSimilarityLowerRule {
+  static constexpr std::string_view kName = "ngram_similarity_lower";
+  static constexpr std::array kTargets{Type<ByNGramSimilarity>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
+    auto& node = sdb::basics::downCast<ByNGramSimilarity>(*slot);
+    const auto& ngrams = node.options().ngrams;
+    if (ngrams.empty()) {
+      slot = std::make_unique<Empty>();
+      return true;
+    }
+    const auto terms_count = ngrams.size();
+    const auto threshold = std::clamp(node.options().threshold, 0.F, 1.F);
+    const auto min_match =
+      std::clamp(static_cast<size_t>(
+                   std::ceil(static_cast<float_t>(terms_count) * threshold)),
+                 size_t{1}, terms_count);
+    if (ctx.scorer == nullptr && min_match == 1) {
+      auto by_terms = std::make_unique<ByTerms>();
+      *by_terms->mutable_field_id() = node.field_id();
+      auto* options = by_terms->mutable_options();
+      for (const auto& ngram : ngrams) {
+        options->terms.emplace(ngram, kNoBoost);
+      }
+      by_terms->boost(node.Boost());
+      slot = std::move(by_terms);
+      return true;
+    }
+    if (node.options().allow_phrase && min_match == terms_count &&
+        terms_count >= 2) {
+      auto by_phrase = std::make_unique<ByPhrase>();
+      *by_phrase->mutable_field_id() = node.field_id();
+      auto* options = by_phrase->mutable_options();
+      for (const auto& ngram : ngrams) {
+        options->push_back(ByTermOptions{ngram});
+      }
+      by_phrase->boost(node.Boost());
+      slot = std::move(by_phrase);
+      return true;
+    }
+    return false;
+  }
+};
+
+struct ExclusionDoubleNegationRule {
+  static constexpr std::string_view kName = "exclusion_double_negation";
+  static constexpr std::array kTargets{Type<Exclusion>::id()};
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
+    auto& node = sdb::basics::downCast<Exclusion>(*slot);
+    if (node.mutable_include()) {
+      return false;
+    }
+    Filter::ptr* inner = &node.mutable_exclude();
+    if (!*inner) {
+      return false;
+    }
+    bool negated = true;
+    size_t depth = 0;
+    while ((*inner)->type() == Type<Exclusion>::id()) {
+      auto& ex = sdb::basics::downCast<Exclusion>(**inner);
+      if (ex.mutable_include() || !ex.mutable_exclude()) {
+        break;
+      }
+      inner = &ex.mutable_exclude();
+      negated = !negated;
+      ++depth;
+    }
+    if (depth == 0) {
+      return false;
+    }
+    if (!negated) {
+      if (!TryFoldBoost(**inner, node.Boost(), ctx.scorer)) {
+        return false;
+      }
+      slot = std::move(*inner);
+      return true;
+    }
+    auto exclusion = std::make_unique<Exclusion>();
+    exclusion->exclude(std::move(*inner));
+    exclusion->boost(node.Boost());
+    slot = std::move(exclusion);
+    return true;
+  }
+};
+
 constexpr auto kDefaultRulesStorage = std::to_array({
   MakeRule<ExclusionRule>(),
   MakeRule<NotSimplifyRule>(),
@@ -692,8 +878,13 @@ constexpr auto kDefaultRulesStorage = std::to_array({
   MakeRule<OrAllRequiredRule>(),
   MakeRule<ByTermsRule>(),
   MakeRule<ByTermsMinMatchZeroRule>(),
+  MakeRule<ByTermsDegenerateRule>(),
   MakeRule<SingleChildRule>(),
+  MakeRule<EmptyAndRule>(),
   MakeRule<MixedDegenerateRule>(),
+  MakeRule<RangeDegenerateRule>(),
+  MakeRule<GranularRangeDegenerateRule>(),
+  MakeRule<NGramSimilarityLowerRule>(),
   MakeRule<WildcardLowerRule>(),
   MakeRule<RegexpLowerRule>(),
   MakeRule<EditDistanceLowerRule>(),
@@ -702,6 +893,7 @@ constexpr auto kDefaultRulesStorage = std::to_array({
 
 constexpr auto kLoweringRulesStorage = std::to_array({
   MakeRule<NotLowerRule>(),
+  MakeRule<ExclusionDoubleNegationRule>(),
 });
 
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,

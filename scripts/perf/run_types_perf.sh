@@ -240,22 +240,27 @@ COPY (
              [ROW('k1', i)::STRUCT(k VARCHAR, v INTEGER),
               ROW('k2', i * 2)::STRUCT(k VARCHAR, v INTEGER)])
            ::STRUCT(name VARCHAR, vals STRUCT(k VARCHAR, v INTEGER)[]) AS deep,
-         {'a': (i * 0.5)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+         {'a': i * 2, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
            AS variant_obj,
+         {'a': (i * 0.5)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+           AS variant_f64,
          CASE
            WHEN i < 1000 AND i % 100 = 0
              THEN {'a': (i * 0.5)::DOUBLE,
                    'b': 'b-' || (i % 100)::VARCHAR, 'rare': i}::VARIANT
            WHEN i % 1000 = 0
-             THEN {'a': (i * 0.5)::DOUBLE, 'b': i}::VARIANT
+             THEN {'a': (i * 1.5)::DOUBLE, 'b': i}::VARIANT
            WHEN i % 9999 = 3
              THEN {'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
-           ELSE {'a': (i * 0.5)::DOUBLE,
+           ELSE {'a': (i * 3.1415)::DOUBLE,
                  'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
          END AS variant_messy,
+         {'outer': {'mid': {'a': i * 2,
+                            'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
+           AS variant_nested,
          {'outer': {'mid': {'a': (i * 0.5)::DOUBLE,
                             'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
-           AS variant_nested
+           AS variant_nested_f64
   FROM range(${N}) t(i)
 ) TO '${PQ_SQL_PATH}' (FORMAT parquet);
 "
@@ -325,7 +330,8 @@ CREATE INDEX bench_idx ON bench_view USING inverted(bool_col)
 INCLUDE (
   i8, i16, i32, i64, f32, f64, s, bool_col,
   arr_i32, arr_f64, lst_i32, struct_basic, struct_f64,
-  map_i32, lst_struct, deep, variant_obj, variant_messy, variant_nested
+  map_i32, lst_struct, deep, variant_obj, variant_f64, variant_messy,
+  variant_nested, variant_nested_f64
 );
 "
 fi
@@ -347,28 +353,14 @@ bench_pair_idx() {
 }
 
 QUERIES=(
-	"count|COUNT(*)"
-	"i8|SUM(i8::BIGINT)"
-	"i16|SUM(i16::BIGINT)"
-	"i32|SUM(i32::BIGINT)"
-	"i64|SUM(i64)"
-	"f32|SUM(f32::DOUBLE)"
-	"f64|SUM(f64)"
-	"varchar|SUM(length(s))"
-	"bool|SUM(CASE WHEN bool_col THEN 1 ELSE 0 END)"
-	"boolCast|SUM(bool_col::INTEGER)"
-	"boolFilt|COUNT(*) FILTER (WHERE bool_col)"
-	"array|SUM(arr_i32[1] + arr_i32[2] + arr_i32[3])"
-	"arrayF|SUM(arr_f64[1] + arr_f64[2] + arr_f64[3])"
-	"list|SUM(list_sum(lst_i32))"
+	"variant|SUM(variant_obj.a::INTEGER) + SUM(length(variant_obj.b::VARCHAR))"
+	"variantF|SUM(variant_f64.a::DOUBLE) + SUM(length(variant_f64.b::VARCHAR))"
+	"variantMsg|SUM(variant_messy.a::DOUBLE)"
+	"variantNest|SUM(variant_nested.outer.mid.a::INTEGER) + SUM(length(variant_nested.outer.mid.b::VARCHAR))"
+	"variantNestF|SUM(variant_nested_f64.outer.mid.a::DOUBLE) + SUM(length(variant_nested_f64.outer.mid.b::VARCHAR))"
 	"struct|SUM(struct_basic.a) + SUM(length(struct_basic.b))"
 	"structF|SUM(struct_f64.a) + SUM(length(struct_f64.b))"
-	"map|SUM(list_sum(map_values(map_i32)))"
-	"lstStr|SUM(list_sum(list_transform(lst_struct, p -> p.v)))"
-	"deep|SUM(length(deep.name)) + SUM(list_sum(list_transform(deep.vals, p -> p.v)))"
-	"variant|SUM(variant_obj.a::DOUBLE) + SUM(1.0 / length(variant_obj.b::VARCHAR))"
-	"variantMsg|SUM(variant_messy.a::DOUBLE)"
-	"variantNest|SUM(variant_nested.outer.mid.a::DOUBLE) + SUM(length(variant_nested.outer.mid.b::VARCHAR))"
+	"f64|SUM(f64)"
 )
 
 # Three timing modes, picked by env:
@@ -446,9 +438,10 @@ run_pass_same_session() {
 }
 
 # PERF_DROP_CACHES=1: restart-and-drop-OS-cache before each query, then
-# cold + hot.  Each cycle: kill serened -> drop_caches -> restart ->
-# reattach native.  Clears DuckDB BufferManager too so native isn't
-# unfairly warm.
+# cold + warmup + hot.  Each cycle: kill serened -> drop_caches -> restart
+# -> reattach native.  Clears DuckDB BufferManager too so native isn't
+# unfairly warm.  cold = 1st-touch from disk; the 2nd touch is an ignored
+# warmup so hot = 3rd-touch steady-state (no first-touch segment-open cost).
 run_pass_drop_caches() {
 	for q in "${QUERIES[@]}"; do
 		local label="${q%%|*}" expr="${q#*|}"
@@ -456,8 +449,9 @@ run_pass_drop_caches() {
 			echo "ERROR: drop_caches cycle failed" >&2
 			return 1
 		}
-		bench_pair_idx "cold" "${label}" "${expr}"
-		bench_pair_idx "hot" "${label}" "${expr}"
+		bench_pair_idx "cold" "${label}" "${expr}" # 1st touch, timed
+		bench_pair_idx "warm" "${label}" "${expr}" # 2nd touch, ignored
+		bench_pair_idx "hot" "${label}" "${expr}"  # 3rd touch, timed
 	done
 }
 
@@ -553,39 +547,37 @@ ratio() {
 	echo "build threads: ${BUILD_THREADS}    scan threads: ${SCAN_THREADS}"
 	echo
 	if [[ "${HAS_COLD}" == "1" ]]; then
-		printf "%-10s | %s\n" "phase" \
+		printf "%-12s | %s\n" "phase" \
 			"cold = 1st-touch same-session; hot = 3rd-touch steady-state"
 		echo
-		printf "%-10s %12s %12s %8s | %12s %12s %8s\n" \
+		printf "%-12s %12s %12s %8s | %12s %12s %8s\n" \
 			"query" "cs cold" "native cold" "cold x" \
 			"cs hot" "native hot" "hot x"
-		printf "%-10s %12s %12s %8s | %12s %12s %8s\n" \
-			"----------" "------------" "------------" "--------" \
+		printf "%-12s %12s %12s %8s | %12s %12s %8s\n" \
+			"------------" "------------" "------------" "--------" \
 			"------------" "------------" "--------"
-		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-			array arrayF list struct structF map lstStr deep variant variantMsg variantNest; do
+		for q in f64 struct structF variant variantF variantMsg variantNest variantNestF; do
 			ci="${TIMINGS[cold_${q}_indexed]:-}"
 			cn="${TIMINGS[cold_${q}_native]:-}"
 			hi="${TIMINGS[hot_${q}_indexed]:-}"
 			hn="${TIMINGS[hot_${q}_native]:-}"
-			printf "%-10s %12s %12s %8s | %12s %12s %8s\n" "${q}" \
+			printf "%-12s %12s %12s %8s | %12s %12s %8s\n" "${q}" \
 				"$(fmt_ms "${ci}")" "$(fmt_ms "${cn}")" \
 				"$(ratio "${cn}" "${ci}")" \
 				"$(fmt_ms "${hi}")" "$(fmt_ms "${hn}")" \
 				"$(ratio "${hn}" "${hi}")"
 		done
 	else
-		printf "%-10s | %s\n" "phase" "hot = warmup + timed hit"
+		printf "%-12s | %s\n" "phase" "hot = warmup + timed hit"
 		echo
-		printf "%-10s %12s %12s %8s\n" \
+		printf "%-12s %12s %12s %8s\n" \
 			"query" "cs hot" "native hot" "hot x"
-		printf "%-10s %12s %12s %8s\n" \
-			"----------" "------------" "------------" "--------"
-		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-			array arrayF list struct structF map lstStr deep variant variantMsg variantNest; do
+		printf "%-12s %12s %12s %8s\n" \
+			"------------" "------------" "------------" "--------"
+		for q in f64 struct structF variant variantF variantMsg variantNest variantNestF; do
 			hi="${TIMINGS[hot_${q}_indexed]:-}"
 			hn="${TIMINGS[hot_${q}_native]:-}"
-			printf "%-10s %12s %12s %8s\n" "${q}" \
+			printf "%-12s %12s %12s %8s\n" "${q}" \
 				"$(fmt_ms "${hi}")" "$(fmt_ms "${hn}")" \
 				"$(ratio "${hn}" "${hi}")"
 		done

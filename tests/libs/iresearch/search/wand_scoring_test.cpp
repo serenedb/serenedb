@@ -38,6 +38,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/types.hpp"
@@ -229,7 +230,9 @@ class WandScoringTestCase : public IndexTestBase {
       }
     }
 
-    return root;
+    irs::Filter::ptr f = std::move(root);
+    irs::Optimize(f);
+    return f;
   }
 
   // Compare WAND vs non-WAND results for a single-term query.

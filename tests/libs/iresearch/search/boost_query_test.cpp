@@ -27,6 +27,7 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
@@ -83,7 +84,9 @@ class BoostQueryTestCase : public tests::IndexTestBase {
     auto root = std::make_unique<irs::MixedBooleanFilter>();
     sdb::ParserContext ctx{*root, kContentFieldId, tokenizer};
     EXPECT_TRUE(sdb::ParseQuery(ctx, query).ok());
-    return root;
+    irs::Filter::ptr f = std::move(root);
+    irs::Optimize(f);
+    return f;
   }
 
   // Create a single-segment index with 4 documents:

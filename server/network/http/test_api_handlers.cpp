@@ -48,10 +48,10 @@ class EchoHandler final : public HttpHandler {
   yaclib::Future<HttpResponse> Handle(const HttpRequest& request) override {
     HttpResponse response;
     response.reason = "OK";
-    const std::string_view content_type = request.Header(HttpHeader::ContentType);
-    response.content_type =
-      content_type.empty() ? "application/octet-stream"
-                           : std::string{content_type};
+    const std::string_view content_type =
+      request.Header(HttpHeader::ContentType);
+    response.content_type = content_type.empty() ? "application/octet-stream"
+                                                 : std::string{content_type};
     for (const auto buffer : request.body) {
       response.body.append(static_cast<const char*>(buffer.data()),
                            buffer.size());

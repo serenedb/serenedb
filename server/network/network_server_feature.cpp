@@ -184,9 +184,9 @@ void NetworkServerFeature::start() {
   }
 
   _pg_context.cancel = &_cancel;
-  _pg_context.max_message_bytes = static_cast<std::uint32_t>(
-    std::min<std::uint64_t>(absl::GetFlag(FLAGS_network_pg_max_message_bytes),
-                            0xFFFFFFFFull));
+  _pg_context.max_message_bytes =
+    static_cast<std::uint32_t>(std::min<std::uint64_t>(
+      absl::GetFlag(FLAGS_network_pg_max_message_bytes), 0xFFFFFFFFull));
 
   _pool = std::make_unique<network::IoThreadPool>(_io_threads);
   _pool->Start();

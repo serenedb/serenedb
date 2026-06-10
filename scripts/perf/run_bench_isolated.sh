@@ -49,7 +49,7 @@ for v in $(compgen -e | grep -E '^PERF_'); do fwd+=("$v=${!v}"); done
 # the same cores and cache it; the isolated run below reuses the cache. Only runs
 # when PG is requested and the cache is missing or a refresh is asked for.
 PG_CACHE="${ROOT}/scripts/perf/results/baselines/pg.tsv"
-if [[ "${PERF_PG:-0}" == 1 && ( ! -s "${PG_CACHE}" || "${PERF_REMEASURE_PG:-0}" == 1 ) ]]; then
+if [[ "${PERF_PG:-0}" == 1 && (! -s "${PG_CACHE}" || "${PERF_REMEASURE_PG:-0}" == 1) ]]; then
 	echo "seeding postgres baseline (docker, outside the partition, pinned to ${CORES})"
 	# -H sets HOME to the run user's home so the docker client reads the user's
 	# ~/.docker/config.json, not root's (which it can't, hence the prior warning).

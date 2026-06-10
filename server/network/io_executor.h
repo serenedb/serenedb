@@ -47,12 +47,12 @@ class IoExecutor : public yaclib::IExecutor {
   asio_ns::io_context& Context() noexcept { return _ctx; }
 
   // The one producer used to enqueue onto DuckDB's scheduler for every session
-  // bound to this io worker. DuckDB's ProducerToken is internally mutex-guarded,
-  // so it's safe to enqueue through from this io thread (the hop) and from a
-  // duck-worker thread (a reschedule). Lazily created on this io thread's first
-  // hop (which always precedes any reschedule of a task it enqueued), so the
-  // creation is single-threaded and visible to workers via the queue's own
-  // happens-before.
+  // bound to this io worker. DuckDB's ProducerToken is internally
+  // mutex-guarded, so it's safe to enqueue through from this io thread (the
+  // hop) and from a duck-worker thread (a reschedule). Lazily created on this
+  // io thread's first hop (which always precedes any reschedule of a task it
+  // enqueued), so the creation is single-threaded and visible to workers via
+  // the queue's own happens-before.
   duckdb::ProducerToken& DuckProducer(duckdb::TaskScheduler& scheduler) {
     if (!_duck_producer) {
       _duck_producer = scheduler.CreateProducer();

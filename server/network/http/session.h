@@ -234,7 +234,8 @@ yaclib::Future<> HttpSession<Kind>::Run() {
               more = co_await producer(_sink);
             } catch (const std::exception&) {
               // Head is already on the wire, so a clean HTTP error is no longer
-              // possible: abandon the unterminated body and drop the connection.
+              // possible: abandon the unterminated body and drop the
+              // connection.
               _socket.Close();
               co_return {};
             }

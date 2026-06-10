@@ -62,9 +62,9 @@ class DuckExecutor final : public yaclib::IExecutor {
     // so enqueueing through it is thread-safe: the common io->duck hop runs on
     // this session's io thread, and the rare reschedule that fires on a
     // duck-worker thread can use the same producer -- no per-duck producer.
-    _scheduler.ScheduleTask(
-      _io_worker.DuckProducer(_scheduler),
-      duckdb::shared_ptr<duckdb::Task>{duckdb::shared_ptr<duckdb::Task>{}, &_task});
+    _scheduler.ScheduleTask(_io_worker.DuckProducer(_scheduler),
+                            duckdb::shared_ptr<duckdb::Task>{
+                              duckdb::shared_ptr<duckdb::Task>{}, &_task});
   }
 
  private:

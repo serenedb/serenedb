@@ -20,11 +20,11 @@
 
 #pragma once
 
+#include <absl/strings/match.h>
+
 #include <cstdint>
 #include <iterator>
 #include <string_view>
-
-#include <absl/strings/match.h>
 
 namespace sdb::network {
 
@@ -49,26 +49,26 @@ enum class HttpHeader : uint8_t {
 };
 
 // Indexed by HttpHeader value (Unknown -> ""); single source of truth for both
-// directions -- HeaderName() indexes it, InternHeader() scans it. Order MUST match
-// the enum above.
+// directions -- HeaderName() indexes it, InternHeader() scans it. Order MUST
+// match the enum above.
 inline constexpr std::string_view kHttpHeaderName[] = {
-  "",                  // Unknown
-  "host",              // Host
-  "content-type",      // ContentType
-  "content-length",    // ContentLength
-  "connection",        // Connection
-  "transfer-encoding", // TransferEncoding
-  "content-encoding",  // ContentEncoding
-  "accept-encoding",   // AcceptEncoding
-  "accept",            // Accept
-  "expect",            // Expect
-  "user-agent",        // UserAgent
-  "authorization",     // Authorization
-  "location",          // Location
-  "date",              // Date
-  "server",            // Server
-  "cache-control",     // CacheControl
-  "etag",              // ETag
+  "",                   // Unknown
+  "host",               // Host
+  "content-type",       // ContentType
+  "content-length",     // ContentLength
+  "connection",         // Connection
+  "transfer-encoding",  // TransferEncoding
+  "content-encoding",   // ContentEncoding
+  "accept-encoding",    // AcceptEncoding
+  "accept",             // Accept
+  "expect",             // Expect
+  "user-agent",         // UserAgent
+  "authorization",      // Authorization
+  "location",           // Location
+  "date",               // Date
+  "server",             // Server
+  "cache-control",      // CacheControl
+  "etag",               // ETag
 };
 
 inline HttpHeader InternHeader(std::string_view name) noexcept {

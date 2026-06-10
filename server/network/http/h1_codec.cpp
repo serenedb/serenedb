@@ -237,8 +237,8 @@ void H1Codec::EncodeHead(const HttpResponse& response, bool keep_alive,
   } else {
     absl::StrAppend(&head, "\r\nContent-Length: ", response.body.size());
   }
-  absl::StrAppend(&head, "\r\nConnection: ", keep_alive ? "keep-alive" : "close",
-                  "\r\n");
+  absl::StrAppend(
+    &head, "\r\nConnection: ", keep_alive ? "keep-alive" : "close", "\r\n");
   for (const auto& [name, value] : response.headers) {
     absl::StrAppend(&head, name, ": ", value, "\r\n");
   }

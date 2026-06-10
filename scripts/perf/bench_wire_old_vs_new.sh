@@ -286,13 +286,13 @@ bench_postgres() {
 		docker rm -f "${PG_CONTAINER}" >/dev/null 2>&1 || true
 		return 1
 	fi
-	run_one pg_select1_simple      "${PG_PORT}" "-" "${OUT_DIR}/wl_select1.sql" simple
-	run_one pg_select1_extended    "${PG_PORT}" "-" "${OUT_DIR}/wl_select1.sql" extended
-	run_one pg_select1_prepared    "${PG_PORT}" "-" "${OUT_DIR}/wl_select1.sql" prepared
-	run_one pg_wide_simple         "${PG_PORT}" "-" "${OUT_DIR}/wl_wide.sql" simple
-	run_one pg_wide_extended       "${PG_PORT}" "-" "${OUT_DIR}/wl_wide.sql" extended
-	run_one pg_wide_prepared       "${PG_PORT}" "-" "${OUT_DIR}/wl_wide.sql" prepared
-	run_one pg_rows_prepared       "${PG_PORT}" "-" "${OUT_DIR}/wl_rows.sql" prepared
+	run_one pg_select1_simple "${PG_PORT}" "-" "${OUT_DIR}/wl_select1.sql" simple
+	run_one pg_select1_extended "${PG_PORT}" "-" "${OUT_DIR}/wl_select1.sql" extended
+	run_one pg_select1_prepared "${PG_PORT}" "-" "${OUT_DIR}/wl_select1.sql" prepared
+	run_one pg_wide_simple "${PG_PORT}" "-" "${OUT_DIR}/wl_wide.sql" simple
+	run_one pg_wide_extended "${PG_PORT}" "-" "${OUT_DIR}/wl_wide.sql" extended
+	run_one pg_wide_prepared "${PG_PORT}" "-" "${OUT_DIR}/wl_wide.sql" prepared
+	run_one pg_rows_prepared "${PG_PORT}" "-" "${OUT_DIR}/wl_rows.sql" prepared
 	run_one pg_analytical_prepared "${PG_PORT}" "-" "${OUT_DIR}/wl_analytical.sql" prepared
 	docker rm -f "${PG_CONTAINER}" >/dev/null 2>&1 || true
 }
@@ -325,7 +325,7 @@ fi
 # POSTGRES -- optional external reference, cached. reuse-only forces using the
 # cache (it was seeded outside the cgroup partition), ignoring REMEASURE_PG.
 if [[ "${PG_ENABLE}" == 1 ]]; then
-	if [[ -s "${PG_CACHE}" && ( "${REMEASURE_PG}" != 1 || "${PG_REUSE_ONLY}" == 1 ) ]]; then
+	if [[ -s "${PG_CACHE}" && ("${REMEASURE_PG}" != 1 || "${PG_REUSE_ONLY}" == 1) ]]; then
 		echo "-- postgres: reusing cached baseline (${PG_CACHE}); PERF_REMEASURE_PG=1 to refresh"
 		cat "${PG_CACHE}" >>"${OUT_DIR}/results.tsv"
 	elif [[ "${PG_REUSE_ONLY}" == 1 ]]; then

@@ -27,7 +27,10 @@ if [[ ! -x "${SERENED_BIN}" ]]; then
 	exit 1
 fi
 for tool in pgbench perf; do
-	command -v "${tool}" >/dev/null 2>&1 || { echo "${tool} not found" >&2; exit 1; }
+	command -v "${tool}" >/dev/null 2>&1 || {
+		echo "${tool} not found" >&2
+		exit 1
+	}
 done
 
 mkdir -p "${OUT_DIR}"
@@ -93,7 +96,8 @@ profile() {
 }
 
 for spec in "select1:simple" "select1:prepared" "rows:prepared"; do
-	wl="${spec%%:*}"; mode="${spec##*:}"
+	wl="${spec%%:*}"
+	mode="${spec##*:}"
 	profile new "${PORT_NEW}" "${PID_NEW}" "${OUT_DIR}/wl_${wl}.sql" "${mode}"
 	profile old "${PORT_OLD}" "${PID_OLD}" "${OUT_DIR}/wl_${wl}.sql" "${mode}"
 done

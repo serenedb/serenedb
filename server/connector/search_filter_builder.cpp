@@ -21,6 +21,7 @@
 #include "search_filter_builder.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -57,7 +58,6 @@
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
-#include <absl/container/flat_hash_map.h>
 
 #include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
@@ -759,12 +759,13 @@ duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
 using PredicateInnerBuilder = duckdb::unique_ptr<duckdb::Expression> (*)(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args);
 
-const absl::flat_hash_map<std::string_view, PredicateInnerBuilder> kSugarBuilders = {
-  {kPhraseMatches, BuildPassthrough<kTSQPhrase>},
-  {kNgramMatches, BuildPassthrough<kTSQNgram>},
-  {kLevenshteinMatches, BuildPassthrough<kTSQLevenshtein>},
-  {kHasAllTokens, BuildAllTokens},
-  {kHasAnyTokens, BuildAnyToken},
+const absl::flat_hash_map<std::string_view, PredicateInnerBuilder>
+  kSugarBuilders = {
+    {kPhraseMatches, BuildPassthrough<kTSQPhrase>},
+    {kNgramMatches, BuildPassthrough<kTSQNgram>},
+    {kLevenshteinMatches, BuildPassthrough<kTSQLevenshtein>},
+    {kHasAllTokens, BuildAllTokens},
+    {kHasAnyTokens, BuildAnyToken},
 };
 
 Result FromPredicate(irs::BooleanFilter& filter, const FilterContext& ctx,
@@ -848,16 +849,17 @@ bool IsLikeCompatibleAnalyzer(irs::TypeInfo::type_id t) {
          t == irs::Type<irs::analysis::WildcardAnalyzer>::id();
 }
 
-const absl::flat_hash_map<std::string_view, StringBuiltinBuilder> kBuiltinBuilder = {
-  {"contains", &BuildTSContainsLike},
-  {"^@", &BuildTSStartsWith},
-  {"starts_with", &BuildTSStartsWith},
-  {"prefix", &BuildTSStartsWith},
-  {"suffix", &BuildTSEndsWithLike},
-  {"ends_with", &BuildTSEndsWithLike},
-  {"regexp_matches", &BuildTSRegexp},
-  {"regexp_like", &BuildTSRegexp},
-  {"~~", &BuildTSLike},
+const absl::flat_hash_map<std::string_view, StringBuiltinBuilder>
+  kBuiltinBuilder = {
+    {"contains", &BuildTSContainsLike},
+    {"^@", &BuildTSStartsWith},
+    {"starts_with", &BuildTSStartsWith},
+    {"prefix", &BuildTSStartsWith},
+    {"suffix", &BuildTSEndsWithLike},
+    {"ends_with", &BuildTSEndsWithLike},
+    {"regexp_matches", &BuildTSRegexp},
+    {"regexp_like", &BuildTSRegexp},
+    {"~~", &BuildTSLike},
 };
 
 Result FromFunctionExpression(irs::BooleanFilter& filter,
@@ -896,7 +898,8 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
 
   if (args.size() == 2) {
     auto builtin = kBuiltinBuilder.find(name);
-    if (auto builder = builtin != kBuiltinBuilder.end() ? builtin->second : nullptr) {
+    if (auto builder =
+          builtin != kBuiltinBuilder.end() ? builtin->second : nullptr) {
       SDB_ASSERT(args.size() == 2);
       if (args[0]->GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
         return {ERROR_NOT_IMPLEMENTED, func.function.GetName(),

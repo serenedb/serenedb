@@ -20,13 +20,12 @@
 
 #pragma once
 
-#include <cstdint>
-#include <memory>
-#include <utility>
-
 #include <absl/synchronization/mutex.h>
 
+#include <cstdint>
 #include <duckdb/main/client_context.hpp>
+#include <memory>
+#include <utility>
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/random/random_generator.h"

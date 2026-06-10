@@ -25,10 +25,6 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
-#include <memory>
-#include <string>
-#include <vector>
-
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -37,6 +33,9 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <memory>
+#include <string>
+#include <vector>
 
 #include "basics/message_buffer.h"
 #include "connector/duckdb_client_state.h"
@@ -50,10 +49,11 @@
 namespace sdb::connector {
 namespace {
 
-// PGCOPY header: 11-byte signature, int32 flags (0), int32 header-extension (0).
+// PGCOPY header: 11-byte signature, int32 flags (0), int32 header-extension
+// (0).
 constexpr std::array<uint8_t, 19> kPgCopyHeader{
-  'P', 'G', 'C', 'O', 'P', 'Y', '\n', 0xFF, '\r', '\n', 0x00,
-  0,   0,   0,   0,   0,   0,   0,    0};
+  'P',  'G', 'C', 'O', 'P', 'Y', '\n', 0xFF, '\r', '\n',
+  0x00, 0,   0,   0,   0,   0,   0,    0,    0};
 
 // Frame `payload_size` bytes already appended after a 5-byte prefix as a
 // CopyData ('d') message: backpatch type + length (length excludes the type
@@ -101,9 +101,9 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   duckdb::ClientContext& context, duckdb::FunctionData& bind_data,
   const std::string&) {
   auto& bdata = bind_data.Cast<PgBinaryCopyBindData>();
-  auto* state = context.registered_state
-                  ->Get<SereneDBClientState>(kSereneDBClientStateKey)
-                  .get();
+  auto* state =
+    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
+      .get();
   if (!state) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("COPY ... TO STDOUT (FORMAT binary) is only valid "
@@ -218,9 +218,9 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput&) {
-  auto* state = context.registered_state
-                  ->Get<SereneDBClientState>(kSereneDBClientStateKey)
-                  .get();
+  auto* state =
+    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
+      .get();
   if (!state) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("COPY ... FROM STDIN (FORMAT binary) is only valid "
@@ -269,7 +269,8 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
                       ERR_MSG("COPY FROM STDIN: invalid PGCOPY signature"));
     }
-    const auto ext = static_cast<int32_t>(absl::big_endian::Load32(header + 15));
+    const auto ext =
+      static_cast<int32_t>(absl::big_endian::Load32(header + 15));
     for (int32_t left = ext; left > 0;) {
       char scratch[256];
       const auto take = std::min<int32_t>(left, sizeof(scratch));
@@ -300,9 +301,9 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
       static_cast<int16_t>(absl::big_endian::Load16(count_bytes));
     if (fields == -1) {  // PGCOPY trailer
       // Drain to EOF (the feeder's CopyDone) before finishing. The COPY bridge
-      // is strict lock-step: this final blocking Read parks the worker until the
-      // feeder reaches Finish, so the worker does not race ahead of the feeder
-      // (which would corrupt the shared want-more event).
+      // is strict lock-step: this final blocking Read parks the worker until
+      // the feeder reaches Finish, so the worker does not race ahead of the
+      // feeder (which would corrupt the shared want-more event).
       char drain[64];
       while (ReadFull(*g.handle, drain, sizeof(drain)) > 0) {
       }
@@ -320,7 +321,8 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
                         ERR_MSG("COPY FROM STDIN: truncated field length"));
       }
-      const auto len = static_cast<int32_t>(absl::big_endian::Load32(len_bytes));
+      const auto len =
+        static_cast<int32_t>(absl::big_endian::Load32(len_bytes));
       if (len == -1) {
         output.SetValue(column, row, duckdb::Value{bind.sql_types[column]});
         continue;

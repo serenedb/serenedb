@@ -541,18 +541,21 @@ std::optional<std::pair<std::string_view, VariableDescription>> GetDefault(
     }
     return m;
   }();
-  static const duckdb::case_insensitive_map_view_t<std::size_t> var_canonical_index = [] {
-    duckdb::case_insensitive_map_view_t<std::size_t> m;
-    m.reserve(std::size(kVariableDescriptionCanonical));
-    for (std::size_t i = 0; i < std::size(kVariableDescriptionCanonical); ++i) {
-      m.emplace(kVariableDescriptionCanonical[i].first, i);
-    }
-    return m;
-  }();
+  static const duckdb::case_insensitive_map_view_t<std::size_t>
+    var_canonical_index = [] {
+      duckdb::case_insensitive_map_view_t<std::size_t> m;
+      m.reserve(std::size(kVariableDescriptionCanonical));
+      for (std::size_t i = 0; i < std::size(kVariableDescriptionCanonical);
+           ++i) {
+        m.emplace(kVariableDescriptionCanonical[i].first, i);
+      }
+      return m;
+    }();
   if (auto it = var_index.find(name); it != var_index.end()) {
     return kVariableDescription[it->second];
   }
-  if (auto it = var_canonical_index.find(name); it != var_canonical_index.end()) {
+  if (auto it = var_canonical_index.find(name);
+      it != var_canonical_index.end()) {
     return kVariableDescriptionCanonical[it->second].second;
   }
   return std::nullopt;

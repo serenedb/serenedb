@@ -36,7 +36,9 @@ add_bench(ci_fold128)
 add_bench(ci_compare)
 target_include_directories(
     serenedb-bench-micro-ci_hash
-    SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/lz4/lib)
+    SYSTEM
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
+)
 
 target_include_directories(
     serenedb-bench-micro-regexp_vs_wildcard
@@ -46,10 +48,15 @@ target_include_directories(
 
 target_include_directories(
     serenedb-bench-micro-literal_lookup
-    SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/frozen/include)
+    SYSTEM
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/frozen/include
+)
 # frozen's compile-time perfect-hash construction at N=1000 exceeds the default
 # constexpr step budget.
-target_compile_options(serenedb-bench-micro-literal_lookup PRIVATE -fconstexpr-steps=200000000)
+target_compile_options(
+    serenedb-bench-micro-literal_lookup
+    PRIVATE -fconstexpr-steps=200000000
+)
 
 # vector distances
 add_executable(vector-distances-bench vector_distances.cpp)

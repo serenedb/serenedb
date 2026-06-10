@@ -20,6 +20,8 @@
 
 #include "catalog/search_analyzer_impl.h"
 
+#include <absl/container/flat_hash_set.h>
+
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
@@ -31,8 +33,6 @@
 
 #include "basics/serializer.h"
 #include "catalog/object.h"
-
-#include <absl/container/flat_hash_set.h>
 
 namespace sdb::search {
 

@@ -20,26 +20,29 @@
 
 // Microbenchmark: isolate the per-query SQL parse + bind cost.
 //
-// The wire bench showed simple/extended SELECT 1 at ~597k cyc/query vs ~197k for
-// prepared -- a ~400k cyc/query gap that is entirely parse + bind (prepared pays
-// it once, simple/extended every time). Postgres has no such gap. Before deciding
-// the fix (parse cache vs grammar/matcher fix vs arena alloc) we must know:
+// The wire bench showed simple/extended SELECT 1 at ~597k cyc/query vs ~197k
+// for prepared -- a ~400k cyc/query gap that is entirely parse + bind (prepared
+// pays it once, simple/extended every time). Postgres has no such gap. Before
+// deciding the fix (parse cache vs grammar/matcher fix vs arena alloc) we must
+// know:
 //
 //   1. ABSOLUTE cost of parsing "SELECT 1" (~8 tokens). At ~3 GHz, 400k cyc is
 //      ~130us; if a bare parse already costs that, the parser has huge per-call
-//      fixed overhead (setup/keyword tables) -- reuse/cache territory. If it is a
-//      few us, most of the 400k is bind/plan, not the PEG parse.
+//      fixed overhead (setup/keyword tables) -- reuse/cache territory. If it is
+//      a few us, most of the 400k is bind/plan, not the PEG parse.
 //   2. PARSE vs BIND split: ExtractStatements (parse only) vs Prepare
-//      (parse+bind+plan), the two calls the simple-query path makes per statement.
-//   3. SCALING with query length: parse "SELECT 1, 1, ... (N copies)". Linear in N
+//      (parse+bind+plan), the two calls the simple-query path makes per
+//      statement.
+//   3. SCALING with query length: parse "SELECT 1, 1, ... (N copies)". Linear
+//   in N
 //      => per-token cost, no pathology. Super-linear (N^2) => PEG backtracking
 //      blowup (memoize/packrat or fix the offending rule). This is the decisive
 //      grammar-blowup-vs-fixed-cost test.
 //
 // Mirrors the server's parse path: Connection::ExtractStatements then Prepare
-// (pg_wire_session RunSimpleQuery / pg_comm_task). Uses a plain in-memory DuckDB
-// connection -- parsing SELECT-style literals needs no SereneDB catalog state, and
-// the patched grammar is compiled into the linked duckdb.
+// (pg_wire_session RunSimpleQuery / pg_comm_task). Uses a plain in-memory
+// DuckDB connection -- parsing SELECT-style literals needs no SereneDB catalog
+// state, and the patched grammar is compiled into the linked duckdb.
 //
 // Flat profile of a single case, e.g.:
 //   perf record -g --call-graph fp -- \
@@ -48,8 +51,8 @@
 //   perf report --no-children --stdio | head -40
 
 #include <benchmark/benchmark.h>
-#include <duckdb.hpp>
 
+#include <duckdb.hpp>
 #include <string>
 
 namespace {
@@ -59,9 +62,9 @@ duckdb::DuckDB& Db() {
   return db;
 }
 
-// "SELECT 1, 1, ... " with n projection items -- a token count that grows linearly
-// in n while keeping the grammar shape trivial, so parse-time growth isolates the
-// per-token vs super-linear question.
+// "SELECT 1, 1, ... " with n projection items -- a token count that grows
+// linearly in n while keeping the grammar shape trivial, so parse-time growth
+// isolates the per-token vs super-linear question.
 std::string SelectN(int n) {
   std::string sql = "SELECT 1";
   for (int i = 1; i < n; ++i) {
@@ -82,8 +85,8 @@ void Parse(benchmark::State& state, std::string sql) {
   }
 }
 
-// Parse + bind + plan (ExtractStatements + Prepare) -- the full per-statement cost
-// the simple/extended path pays before execution.
+// Parse + bind + plan (ExtractStatements + Prepare) -- the full per-statement
+// cost the simple/extended path pays before execution.
 void Prepare(benchmark::State& state, std::string sql) {
   duckdb::Connection con{Db()};
   for (auto _ : state) {
@@ -94,7 +97,8 @@ void Prepare(benchmark::State& state, std::string sql) {
 
 }  // namespace
 
-// Length sweep: linear vs super-linear growth decides grammar blowup vs fixed cost.
+// Length sweep: linear vs super-linear growth decides grammar blowup vs fixed
+// cost.
 BENCHMARK_CAPTURE(Parse, parse_select1, std::string{"SELECT 1"});
 BENCHMARK_CAPTURE(Parse, parse_select_n4, SelectN(4));
 BENCHMARK_CAPTURE(Parse, parse_select_n16, SelectN(16));

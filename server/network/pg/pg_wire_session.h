@@ -1728,8 +1728,10 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
       }
     }};
 
-    _duck.emplace(duckdb::TaskScheduler::GetScheduler(*_conn->context), *_ioexec);
-    _pump.emplace(duckdb::TaskScheduler::GetScheduler(*_conn->context), *_ioexec, *_duck);
+    _duck.emplace(duckdb::TaskScheduler::GetScheduler(*_conn->context),
+                  *_ioexec);
+    _pump.emplace(duckdb::TaskScheduler::GetScheduler(*_conn->context),
+                  *_ioexec, *_duck);
 
     SendStartupBurst();
     co_await Flush();

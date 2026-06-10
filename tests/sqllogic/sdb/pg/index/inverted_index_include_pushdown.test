@@ -124,8 +124,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│   AND[Term(body(string)   │
-│       =connection)]       │
+│     Term(body(string)     │
+│        =connection)       │
 │                           │
 │        Projections:       │
 │          tag (i)          │

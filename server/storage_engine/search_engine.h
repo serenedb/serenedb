@@ -39,8 +39,8 @@
 #include "catalog/identifiers/index_id.h"
 #include "catalog/types.h"
 #include "rest_server/database_path_feature.h"
-#include "search/search_db_wal.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "search/search_db_wal.h"
 
 namespace sdb {
 
@@ -77,9 +77,9 @@ class SearchEngine final {
 
   std::filesystem::path GetPersistedPath(ObjectId database_id) const;
 
-  // The database's self-contained search WAL (WAL_DESIGN.md), lazily created on
-  // first use. ONE per database, shared by all of its search shards, so a
-  // transaction touching several search tables commits atomically (§9).
+  // The database's self-contained search WAL, lazily created on first use. ONE
+  // per database, shared by all of its search shards, so a transaction touching
+  // several search tables commits atomically.
   SearchDbWal& GetDbWal(ObjectId database_id);
 
  private:

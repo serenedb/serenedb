@@ -1,22 +1,5 @@
 control substitution on
 
-###############################################################################
-# Search-table WAL crash recovery (WAL_DESIGN.md §9)
-#
-# The commit point for a search-table write is the single fsync inside
-# SearchDbWal::AppendCommit. This test brackets that fsync with two fault
-# points and asserts the durability/atomicity invariant across a real process
-# crash + restart:
-#
-#   crash_after_search_wal_commit  -> the record is durable; recovery replays it
-#                                     and rebuilds iresearch. The write was never
-#                                     refresh-published, so it lives ONLY in the
-#                                     WAL -- this is the durability proof.
-#   crash_before_search_wal_commit -> no record is written; the whole txn is lost
-#                                     and any streamed chunks are skipped as
-#                                     orphans -- the atomicity proof.
-###############################################################################
-
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE s_wal(a INTEGER, b TEXT) WITH (storage = 'search');
 
@@ -63,8 +46,6 @@ a	b
 4	four
 5	five
 
-# Persist the recovered rows into the iresearch index (and GC the WAL) so the
-# next scenario's crash cannot reach them via a lingering WAL record.
 connection after_commit
 statement ok
 VACUUM (REFRESH_TABLE) s_wal;
@@ -99,17 +80,6 @@ a	b
 connection before_commit
 statement ok
 DROP TABLE s_wal;
-
-
-###############################################################################
-# 3. EXPLICIT PRIMARY KEY -- recovery reconstructs the PK differently here.
-#    Generated-PK replays the WAL-recorded pk_base; explicit-PK RE-DERIVES the
-#    key from the recorded PK column values (WriteChunkToSearchSink / §5.6), so
-#    it depends on the PK column round-tripping through the WAL and producing a
-#    byte-identical key. Re-run the durability + atomicity cycle against a
-#    PK-bearing table, and confirm a lookup BY the explicit PK finds the
-#    recovered row (which exercises the re-derived key, not just a column scan).
-###############################################################################
 
 connection before_commit
 statement ok
@@ -203,18 +173,7 @@ DROP TABLE s_wal_pk;
 
 
 ###############################################################################
-# 4. PARALLEL (bulk) CTAS -- exercises the chunk-file (REFERENCE) path that the
-#    inline scenarios above never touch: the sink streams to .swchunk files, the
-#    WAL records a REFERENCE over their seg_ids, and recovery replays from the
-#    chunk files. A parquet source is the one thing that parallelizes the sink
-#    (>1 thread => bulk); range() / table scans stay single-threaded => inline.
-#    (On a single-core runner the source can't parallelize, so it falls back to
-#    inline -- the assertions still hold, just via a different path.)
-#
-#    Also pins the §12 CTAS contract: crash AFTER the WAL fsync => fully
-#    populated; crash BEFORE => the table EXISTS but is EMPTY (the tombstone is
-#    revealed at Finalize, before the commit point, and the orphaned chunk files
-#    are skipped on recovery). Never a partial/corrupt table.
+# 4. PARALLEL (bulk) CTAS -- exercises the chunk-file (REFERENCE) path
 ###############################################################################
 
 connection pk_before_commit
@@ -282,16 +241,6 @@ DROP TABLE ctas_after;
 
 ###############################################################################
 # 5. MIXED bulk + inline in ONE transaction -> a single FOLDED REFERENCE.
-#    A bulk (parquet) INSERT produces chunk-file seg_ids; an inline VALUES
-#    INSERT into the same shard in the same txn produces an in-memory buffer.
-#    At the commit point AppendCommit flushes the inline buffer to its own chunk
-#    and emits ONE REFERENCE over all of them (bulk + flushed-inline), each
-#    chunk carrying its own pk_base. Recovery must replay that combined
-#    REFERENCE and restore rows from BOTH sources -- the most complex WAL path,
-#    and the only one that folds two write shapes into a single record. (Reuses
-#    the parquet written in section 4; on a single-core runner the bulk INSERT
-#    falls back to inline, so it becomes a multi-inline fold -- still one
-#    folded REFERENCE, assertions unchanged.)
 ###############################################################################
 
 connection ctas_before_conn
@@ -314,8 +263,6 @@ connection ctas_before_conn
 statement ok
 INSERT INTO mix_t VALUES (5, 'i5'), (7, 'i7');
 
-# COMMIT is the commit point -> AppendCommit folds the bulk seg_ids + the
-# flushed inline buffer into one REFERENCE, fsyncs, then crash_after aborts.
 connection ctas_before_conn
 statement error connection closed
 COMMIT;

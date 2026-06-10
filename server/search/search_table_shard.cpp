@@ -48,8 +48,6 @@ std::filesystem::path SearchTableShard::GetPath(ObjectId db_id,
 
 std::filesystem::path SearchTableShard::GetWalPath(ObjectId db_id) {
   SDB_ASSERT(db_id.isSet());
-  // One `wal/` tree per database under the per-db engine root (WAL_DESIGN.md
-  // §4.0): the central commit log + a per-shard chunks/ subtree.
   auto path = GetSearchEngine().GetPersistedPath(db_id);
   path /= "wal";
   return path;
@@ -58,8 +56,6 @@ std::filesystem::path SearchTableShard::GetWalPath(ObjectId db_id) {
 std::filesystem::path SearchTableShard::GetChunkDir(ObjectId db_id,
                                                     ObjectId table_id) {
   SDB_ASSERT(table_id.isSet());
-  // Must match SearchDbWal's internal chunk path (keyed by the uint64_t id):
-  // chunks/<table_id>/. Use the numeric id form on both sides.
   auto path = GetWalPath(db_id);
   path /= "chunks";
   path /= std::to_string(table_id.id());
@@ -67,9 +63,6 @@ std::filesystem::path SearchTableShard::GetChunkDir(ObjectId db_id,
 }
 
 Result SearchTableShard::DropArtifacts(ObjectId db_id, ObjectId table_id) {
-  // remove_all returns 0 and leaves ec clear when the path doesn't exist --
-  // treat that as success (idempotent drop, also covers the create-then-
-  // rollback path where the dir may never have been made).
   auto path = GetPath(db_id, table_id);
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
@@ -78,10 +71,6 @@ Result SearchTableShard::DropArtifacts(ObjectId db_id, ObjectId table_id) {
                   "Failed to remove search table shard directory '" +
                     path.string() + "': " + ec.message()};
   }
-  // Wipe THIS shard's bulk chunk subtree (WAL_DESIGN.md §4.0). The central
-  // commit log is per-DATABASE (shared), so it is NOT removed here -- the
-  // dropped shard's central sections become orphans (skipped on recovery via
-  // the catalog, GC'd with their segment).
   auto chunk_dir = GetChunkDir(db_id, table_id);
   std::filesystem::remove_all(chunk_dir, ec);
   if (ec) {
@@ -89,8 +78,6 @@ Result SearchTableShard::DropArtifacts(ObjectId db_id, ObjectId table_id) {
                   "Failed to remove search table chunk directory '" +
                     chunk_dir.string() + "': " + ec.message()};
   }
-  // Deregister from the db WAL's flush-subscription so the dropped shard's
-  // frozen committed tick can't pin GC (WAL_DESIGN.md §10.3).
   GetSearchEngine().GetDbWal(db_id).DeregisterShard(table_id);
   return {};
 }
@@ -111,10 +98,6 @@ SearchTableShard::SearchTableShard(ObjectId db_id, ObjectId table_id,
 }
 
 SearchTableShard::~SearchTableShard() {
-  // Drop the writer first so iresearch can flush in-flight state and
-  // release fds before the directory unique_ptr unwinds. This matches the
-  // contract DropArtifacts relies on: by the time it wipes the directory
-  // the writer must already have closed.
   _writer.reset();
   _dir.reset();
 }
@@ -149,16 +132,13 @@ void SearchTableShard::OpenWriter() {
                                               resource_manager);
 
   irs::IndexWriterOptions writer_options;
-  writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
-  writer_options.lock_repository = false;  // RocksDB has its own lock
+  writer_options.segment_memory_max = 256 * (size_t{1} << 20);
+  // TODO(Dronplane): for now we rely on rocksdb (still present) lock
+  // But in future we need own server wide data dir lock.
+  writer_options.lock_repository = false;
   writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
 
-  // Persist this shard's last-committed iresearch tick in the commit meta
-  // payload so it survives restart (mirrors InvertedIndexShard). iresearch
-  // invokes this at each RefreshCommit with the max committed tick -- for us
-  // the WAL tick passed to trx.Commit(tick). The WAL GC (Commit) and the
-  // recovery skip read it back from the snapshot's index_meta payload (§8).
   writer_options.meta_payload_provider = [this](uint64_t tick,
                                                 irs::bstring& out) {
     _last_committed_tick = std::max(_last_committed_tick, tick);
@@ -179,19 +159,10 @@ void SearchTableShard::OpenWriter() {
     }
   }
 
-  // The database's shared search WAL (WAL_DESIGN.md), owned by the search
-  // engine (one per db, lazily created). Register this shard in the WAL's
-  // flush-subscription with its durable iresearch tick; that also continues the
-  // engine-global tick line past it so the next commit's tick is strictly
-  // greater (iresearch monotonicity). Replay of records not yet published into
-  // iresearch is wired in the recovery pass (later phase).
   _wal = &GetSearchEngine().GetDbWal(_db_id);
   _wal->RegisterShard(GetTableId(), _last_committed_tick);
 
   if (_is_new) {
-    // Force a commit so the directory contains a valid empty index --
-    // otherwise a crash between CREATE TABLE and the first INSERT would
-    // leave a half-initialised iresearch dir.
     _writer->RefreshCommit();
   }
 }

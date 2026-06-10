@@ -44,30 +44,23 @@ class MemoryStream;
 namespace sdb::search {
 
 // Self-contained, rocksdb-free write-ahead log for a database's search-backed
-// tables (`StorageKind::kSearch`). See WAL_DESIGN.md for the full design; this
-// is the standalone primitive, decoupled from the catalog Snapshot and from any
-// DuckDB DatabaseInstance -- it needs only a duckdb::FileSystem and the
-// lightweight ObjectId type for table identity.
+// tables (`StorageKind::kSearch`). One instance per database (owned by the
+// search engine, keyed by db_id): a single central commit log shared by all of
+// the database's search shards, so a transaction touching several search tables
+// commits all-or-nothing behind one fsync. Chunk files stay per-shard.
 //
-// **One instance per database** (owned by the search engine, keyed by db_id): a
-// single central commit log shared by all of the database's search shards, so a
-// transaction touching several search tables commits all-or-nothing behind one
-// fsync (multi-shard atomicity, WAL_DESIGN.md §2/§9). Chunk files stay
-// per-shard.
-//
-// Layout under `<wal_dir>` (= GetWalPath(db_id)). Names are PostgreSQL-style
-// fixed-width 16-hex, so lexicographic order == numeric order:
+// Layout under `<wal_dir>`. Names are fixed-width 16-hex, so lexicographic
+// order == numeric order:
 //   <016x first_tick>.swal                       central commit segments
 //                                                 (append-only); the name is
 //                                                 the tick of the segment's
-//                                                 FIRST record (the PG-LSN
-//                                                 analog).
+//                                                 FIRST record.
 //   chunks/<table_id>/<016x seg_id>.swchunk      per-shard bulk chunk files
 //                                                 (referenced by a record).
 //
 // A commit appends ONE central record carrying a monotonic `tick` and a list of
 // per-shard sections -- one for each search table the transaction wrote. Each
-// section is a shard header plus an ordered op manifest (WAL_DESIGN.md §5.4):
+// section is a shard header plus an ordered op manifest:
 //   record  = [u64 tick][u32 shard_count][ section x shard_count ]
 //   section = [u64 table_id][u32 op_count][ op x op_count ]
 //   op      = [u8 kind][kind body]
@@ -76,21 +69,17 @@ namespace sdb::search {
 //     hold
 //                  the rows (streamed in parallel during Sink).
 // The column layout is NOT recorded -- replay rebuilds it from the catalog
-// (recovery runs after the catalog loads). Insert-only today: each op is one
-// INLINE or REFERENCE batch -- several small INSERTs in a txn become several
-// INLINE ops, a bulk+inline mix is an INLINE op plus a REFERENCE op. DELETE ops
-// (and real op ordering) arrive at M6 -- purely a new `kind` + body.
-// Frame (reused from DuckDB's WAL): [u64 size][u64 checksum][payload], where
-// payload begins with [u64 tick] at a fixed offset (readable without
-// deserialising the rest -- recovery skip + future PITR bound).
+// (recovery runs after the catalog loads). Insert-only today.
+// Frame: [u64 size][u64 checksum][payload], where payload begins with
+// [u64 tick] at a fixed offset (readable without deserialising the rest).
 //
 // The public API identifies tables by catalog `ObjectId`; only the on-disk
 // record + chunk path store the raw `.id()` (the wire format is a plain u64).
 class SearchDbWal {
  public:
-  // One streamed chunk file for a single bulk sink thread. The thread Append()s
-  // DataChunks during Sink and Finish()es (flush + fsync) at Combine; the
-  // resulting seg_id goes into the transaction's REFERENCE section.
+  // One streamed chunk file for a single bulk sink thread. Append()s DataChunks
+  // during Sink and Finish()es (flush + fsync); the resulting seg_id goes into
+  // the transaction's REFERENCE section.
   class ChunkWriter {
    public:
     ChunkWriter(uint64_t seg_id,
@@ -104,12 +93,12 @@ class SearchDbWal {
     uint64_t SegId() const noexcept { return _seg_id; }
 
     // Serialise + append one chunk with its generated-PK base `pk_base` (0 for
-    // explicit-PK shards) for replay PK reconstruction (WAL_DESIGN.md §5.6);
-    // buffered, no fsync. zstd-1 with raw fallback.
+    // explicit-PK shards) for replay PK reconstruction; buffered, no fsync.
+    // zstd-1 with raw fallback.
     void Append(duckdb::DataChunk& chunk, uint64_t pk_base);
 
-    // Flush the buffer to the OS and fsync. Call once, at Combine, before the
-    // transaction's central record is committed (WAL_DESIGN.md §9).
+    // Flush the buffer to the OS and fsync. Call once, before the transaction's
+    // central record is committed.
     void Finish();
 
    private:
@@ -124,60 +113,39 @@ class SearchDbWal {
   // One inserted Sink chunk's generated-PK run: `count` rows keyed
   // [base, base+count). Recorded per Sink chunk -- NOT per inline_data Chunk:
   // ColumnDataCollection coalesces partial appends, so its Chunks() boundaries
-  // don't line up with the Sink chunks the bases are keyed to. Replay re-slices
-  // inline_data's rows by these counts (§5.6). base is 0 for explicit-PK.
+  // don't line up with the Sink chunks the bases are keyed to. base is 0 for
+  // explicit-PK.
   struct InlinePk {
     uint64_t base;
     uint64_t count;
   };
 
-  // One op in a shard section's ordered manifest (WAL_DESIGN.md §5.4).
-  // Insert-only today: exactly one of `inline_data` (small INSERT, rows
-  // serialised into the op) or `seg_ids` (bulk INSERT, references
-  // already-fsynced chunk files) is populated.
+  // One op in a shard section's ordered manifest.
   struct Op {
-    const duckdb::ColumnDataCollection* inline_data = nullptr;  // INLINE
-    // INLINE only: one entry per inserted Sink chunk (the unit a generated-PK
-    // base is keyed to), in append order. Recorded for replay PK
-    // reconstruction (§5.6).
+    // INLINE only: one entry per inserted Sink chunk, in append order.
+    const duckdb::ColumnDataCollection* inline_data = nullptr;
     std::span<const InlinePk> inline_pks;
-    std::span<const uint64_t> seg_ids;  // REFERENCE
+    // REFERENCE
+    std::span<const uint64_t> seg_ids;
   };
 
-  // One transaction's contribution for a single search shard: the shard's
-  // identifying header (shared by all its ops) plus an ordered op manifest
-  // (WAL_DESIGN.md §5.4). The column layout is NOT recorded -- replay rebuilds
-  // it from the catalog (recovery runs after the catalog loads), so the WAL
-  // need not carry it.
+  // One transaction's contribution for a single search shard
   struct ShardSection {
-    ObjectId table_id;        // locates chunks/<table_id>/ + recovery dispatch
-    std::span<const Op> ops;  // this shard's ops, in order
+    ObjectId table_id;
+    std::span<const Op> ops;
   };
 
-  // Per replayed chunk during Recover(): the record's tick, the section's
-  // table_id, the chunk's generated-PK base (0 for explicit-PK, §5.6), and one
-  // DataChunk to re-feed into that shard's iresearch writer. The column layout
-  // comes from the catalog at replay, not the record.
   using ReplayCallback =
     std::function<void(uint64_t tick, ObjectId table_id, uint64_t pk_base,
                        duckdb::DataChunk& chunk)>;
 
-  // Recovery skip hooks: a section is replayed only if its destination shard
-  // still exists in the catalog AND has not already published this tick.
   using ShardExistsFn = std::function<bool(ObjectId table_id)>;
   using ShardCommittedFn = std::function<uint64_t(ObjectId table_id)>;
 
-  // Default central-segment seal threshold (PostgreSQL's WAL segment size, ==
-  // DuckDB's checkpoint_wal_size): roll the active segment once
-  // `active_segment_bytes + outstanding_chunk_bytes` exceeds it. Chunk bytes
-  // are counted so a bulk insert (tiny central record, GB of chunks) rolls
-  // promptly (WAL_DESIGN.md §10.2).
+  // Default central-segment seal threshold (16MB as common standart like
+  // postgres or duckdb)
   static constexpr uint64_t kDefaultSealThreshold = 16 * 1024 * 1024;
 
-  // `fs` must outlive this object. `wal_dir` is the database's GetWalPath; it
-  // (and the per-shard chunks/ subtrees) is created on demand. `seal_threshold`
-  // is the size cap above; tests pass a small value to force rolls. The
-  // constructor seeds the engine-global tick from the max on-disk record tick.
   SearchDbWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir,
               uint64_t seal_threshold = kDefaultSealThreshold);
   ~SearchDbWal();
@@ -185,54 +153,16 @@ class SearchDbWal {
   SearchDbWal(const SearchDbWal&) = delete;
   SearchDbWal& operator=(const SearchDbWal&) = delete;
 
-  // --- tick ---------------------------------------------------------------
-
-  // Lock-free read of the current engine-global tick. A shard captures this
-  // BEFORE its RefreshCommit, then OnShardCommit(table_id, captured) afterwards
-  // (WAL_DESIGN.md §10.3). The next AppendCommit assigns strictly greater
-  // ticks.
   uint64_t CurrentTick() const noexcept {
     return _tick.load(std::memory_order_relaxed);
   }
 
-  // --- min-tick flush-subscription (GC) -----------------------------------
-
-  // Register a shard on open with its last durable iresearch tick, and bump the
-  // engine tick to at least it (so the tick line continues past every shard's
-  // committed tick -- iresearch monotonicity). Idempotent.
   void RegisterShard(ObjectId table_id, uint64_t committed_tick);
-
-  // A shard published up to `committed_tick` (its RefreshCommit, e.g. at
-  // VACUUM): advance its subscription entry and run a GC sweep. Bumps the
-  // engine tick too.
   void OnShardCommit(ObjectId table_id, uint64_t committed_tick);
-
-  // A shard is being dropped: remove its subscription entry so its frozen tick
-  // can't pin GC (WAL_DESIGN.md §10.3). Its still-unconsumed central sections
-  // become orphans (skipped on recovery via the catalog, GC'd with their
-  // segment). Triggers a GC sweep.
   void DeregisterShard(ObjectId table_id);
 
-  // --- commit -------------------------------------------------------------
-
-  // Allocate a unique seg_id for table_id and open its chunk-file writer at
-  // chunks/<table_id>/<016x seg_id>.swchunk.
   ChunkWriter NewChunkWriter(ObjectId table_id);
-
-  // Commit (under the central append mutex): assign the next tick, append ONE
-  // record covering all `sections`, and fsync. Returns the assigned tick (pass
-  // it to each section's iresearch_trx.Commit(tick)). tick assignment + append
-  // + fsync are one critical section so file order == tick order.
   uint64_t AppendCommit(std::span<const ShardSection> sections);
-
-  // --- recovery (WAL_DESIGN.md §11) ---------------------------------------
-
-  // Single engine-wide pass over the central log in tick order. For each record
-  // and each of its shard sections: skip if the shard no longer exists
-  // (`exists_of`) or has already published the tick (`tick <= committed_of`),
-  // else replay its rows through `cb`. Orphan chunk files (unreferenced by any
-  // surviving section) are swept. Seeds the engine tick + per-shard seg-id
-  // counters from durable state. Returns the highest record tick seen.
   uint64_t Recover(const ShardExistsFn& exists_of,
                    const ShardCommittedFn& committed_of,
                    const ReplayCallback& cb);
@@ -240,50 +170,31 @@ class SearchDbWal {
  private:
   duckdb::FileSystem& _fs;
   std::filesystem::path _wal_dir;
-  std::filesystem::path _chunks_root;  // _wal_dir / "chunks"
+  std::filesystem::path _chunks_root;
 
   const uint64_t _seal_threshold;
 
-  std::mutex
-    _append_mu;  // serialises tick assignment + the active-segment append
-  std::atomic<uint64_t> _tick{
-    0};  // engine-global; assigned under _append_mu, read lock-free
-  // Active central segment writer; null until the first commit after open/roll.
-  // Named by the tick of its first record.
+  std::mutex _append_mu;
+  std::atomic<uint64_t> _tick{0};
   std::unique_ptr<duckdb::BufferedFileWriter> _active;
-  uint64_t _active_first_tick =
-    0;  // 0 when no active segment (GC reads under _append_mu)
-  // Bytes of chunk files referenced by records in the ACTIVE segment only
-  // (reset when it rolls). Counted toward the seal threshold so a bulk insert
-  // (tiny central record, huge chunks) rolls promptly -- WITHOUT letting chunks
-  // owned by older sealed-but-not-yet-GC'd segments force constant rolling
-  // (WAL_DESIGN.md §10.2).
+  uint64_t _active_first_tick = 0;
   uint64_t _active_chunk_bytes = 0;
 
-  // Per-(table) chunk seg-id counter; lazily seeded by scanning the table's
-  // chunk dir on first use. Guarded by _seg_mu.
   std::mutex _seg_mu;
-  containers::FlatHashMap<uint64_t /*table_id*/, uint64_t> _seg_ids;
+  containers::FlatHashMap<uint64_t, uint64_t> _seg_ids;
 
-  // min-tick flush-subscription: each shard's last durable tick. GC reclaims
-  // sealed segments whose whole range <= min over this map. Guarded by _sub_mu.
   std::mutex _sub_mu;
-  containers::FlatHashMap<uint64_t /*table_id*/, uint64_t> _committed;
+  containers::FlatHashMap<uint64_t, uint64_t> _committed;
 
   void EnsureActiveSegmentLocked(uint64_t first_tick);
   void WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);
   std::filesystem::path ChunkDir(uint64_t table_id) const;
-  uint64_t MinCommittedTick();  // min over _committed (0 if empty)
-  void RunGc();                 // delete sealed segments whose range <= min
+  uint64_t MinCommittedTick();
+  void RunGc();
 };
 
 // Re-slice an inline collection by its recorded per-Sink-chunk `segments`,
 // invoking `emit(slice, base)` once per segment with that chunk's rows + base.
-// `cdc` preserves append ORDER, so walking its (possibly coalesced) Chunks()
-// and splitting at the segment row boundaries reproduces each original Sink
-// chunk with its own base -- the alignment ColumnDataCollection's own chunking
-// loses (§5.6). Shared by INLINE replay (Recover) and the commit-time inline
-// flush.
 void VisitInlineSegments(
   const duckdb::ColumnDataCollection& cdc,
   std::span<const SearchDbWal::InlinePk> segments,

@@ -34,14 +34,10 @@ class TableShard;
 namespace sdb::connector {
 
 // Shared search-table integration helpers used across the connector catalog,
-// planner, and physical-operator files. Kept here (rather than bolted onto an
-// unrelated catalog-entry header) so every dispatch site has one obvious place
-// to include.
+// planner, and physical-operator files.
 
 // Throws ERRCODE_FEATURE_NOT_SUPPORTED when `shard` is a search-backed table.
-// The single guard the planner + physical operators use to reject the DML/DDL
-// paths not yet wired for kSearch shards (INSERT / UPDATE / DELETE / TRUNCATE /
-// CREATE INDEX, each until its milestone lands).
+// Guards the DML/DDL paths not yet wired for kSearch shards.
 void RejectIfSearchTable(const TableShard& shard, std::string_view operation);
 
 // Reads `storage = 'rocksdb' | 'search'` from a CREATE TABLE WITH clause and

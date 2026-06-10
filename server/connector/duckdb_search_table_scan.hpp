@@ -30,32 +30,14 @@
 
 namespace sdb::connector {
 
-// Scan state for SereneDBSearchScan (M4 Stage 1 -- committed reads only,
-// no R-y-o-w overlay). Inherits CommonScanGlobalState to reuse the
-// shared `produced_rows`, `finished`, and metrics callback wiring; the
-// rocksdb-specific base fields (snapshot, txn, projected_columns, etc.)
-// are left at their defaults -- this scan never touches RocksDB.
-//
-// One materializer per segment, lazy-built on segment entry; iresearch
-// doc indices are scanned as [0, docs_count()) per segment with no
-// live-docs mask filtering (deletes land in M6).
 struct SearchTableScanGlobalState : public CommonScanGlobalState {
-  // Pinned per-sdb-txn so all scans in one transaction share the same
-  // view -- acquired via query::Transaction::EnsureSearchTableReader,
-  // refreshed at every READ_COMMITTED statement boundary.
   std::shared_ptr<irs::DirectoryReader> reader;
 
-  // Projection: parallel arrays. field_ids[i] is the iresearch field id
-  // (cast from catalog::Column::Id) that materialises into
-  // output.data[output_slots[i]]. Built once at init time from
-  // input.column_ids.
   std::vector<irs::field_id> field_ids;
   std::vector<duckdb::idx_t> output_slots;
 
-  // Current scan position: segment_idx into reader, doc_in_seg is the
-  // 0-based row index within that segment's columnstore (NOT an iresearch
-  // doc_id -- the ColumnstoreMaterializer interprets these as row
-  // offsets via IotaRange).
+  // doc_in_seg is a 0-based row offset within the segment's columnstore,
+  // not an iresearch doc_id.
   size_t segment_idx = 0;
   uint64_t doc_in_seg = 0;
   std::unique_ptr<ColumnstoreMaterializer> materializer;

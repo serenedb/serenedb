@@ -65,8 +65,8 @@ std::unique_ptr<duckdb::ColumnDataCollection> MakeIntCdc(
   return cdc;
 }
 
-// Materialised chunk (via CDC FetchChunk) -- the shape the real pipeline
-// produces, where per-vector size() matches the cardinality.
+// Materialised chunk (via CDC FetchChunk) where per-vector size() matches
+// cardinality, as the real pipeline produces.
 void FetchMaterialized(duckdb::DataChunk& out, duckdb::Allocator& alloc,
                        duckdb::ColumnDataCollection& cdc) {
   out.Initialize(alloc, IntType());
@@ -125,8 +125,8 @@ class SearchDbWalTest : public ::testing::Test {
   }
 
   // One section with a single INLINE op over `cdc` for `table_id` and optional
-  // per-Sink-chunk (base, count) segments. The op list is owned by `_op_pools`
-  // so the section's `ops` span stays valid across AppendCommit.
+  // (base, count) segments. The op list is owned by `_op_pools` so the
+  // section's `ops` span stays valid across AppendCommit.
   SearchDbWal::ShardSection InlineSection(
     uint64_t table_id, const duckdb::ColumnDataCollection& cdc,
     std::span<const SearchDbWal::InlinePk> pks = {}) {
@@ -222,8 +222,8 @@ TEST_F(SearchDbWalTest, ReferenceRoundTripCompressed) {
 }
 
 TEST_F(SearchDbWalTest, MultiShardOneRecordIsAtomic) {
-  // Two shards in ONE AppendCommit -> ONE central record at tick 1 (one fsync,
-  // all-or-nothing). Recovery replays both sections.
+  // Two shards in ONE AppendCommit -> ONE record at tick 1; recovery replays
+  // both sections.
   {
     SearchDbWal wal(Fs(), _dir);
     auto a = MakeIntCdc(Alloc(), {10});
@@ -232,7 +232,6 @@ TEST_F(SearchDbWalTest, MultiShardOneRecordIsAtomic) {
       InlineSection(/*table=*/100, *a), InlineSection(/*table=*/200, *b)};
     EXPECT_EQ(wal.AppendCommit(secs), 1u);
   }
-  // Exactly one segment (one record).
   EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
   EXPECT_FALSE(std::filesystem::exists(SegPath(2)));
 
@@ -249,7 +248,7 @@ TEST_F(SearchDbWalTest, MultiShardOneRecordIsAtomic) {
 TEST_F(SearchDbWalTest, RecoverySkipsConsumedPerShard) {
   // table 100 published up to tick 1; table 200 published nothing. One record
   // at tick 1 touches both -> table 100's section is skipped, table 200's
-  // replays. (Per-shard skip, WAL_DESIGN.md §11.)
+  // replays.
   {
     SearchDbWal wal(Fs(), _dir);
     auto a = MakeIntCdc(Alloc(), {10});
@@ -289,9 +288,9 @@ TEST_F(SearchDbWalTest, TornTailIgnored) {
     auto a = MakeIntCdc(Alloc(), {10});
     auto b = MakeIntCdc(Alloc(), {20});
     auto sa = InlineSection(1, *a);
-    wal.AppendCommit(std::span{&sa, 1});  // tick 1
+    wal.AppendCommit(std::span{&sa, 1});
     auto sb = InlineSection(1, *b);
-    wal.AppendCommit(std::span{&sb, 1});  // tick 2 (accumulates in seg 1)
+    wal.AppendCommit(std::span{&sb, 1});  // accumulates in seg 1
   }
   {
     std::ofstream f(SegPath(1), std::ios::binary | std::ios::app);
@@ -323,7 +322,7 @@ TEST_F(SearchDbWalTest, TickAndSegIdContinueOnReopen) {
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
   EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got)), 1u);
-  // tick continues past the recovered max; per-table seg_id too.
+  // tick and per-table seg_id both continue past the recovered max.
   auto cdc = MakeIntCdc(Alloc(), {6});
   auto sec = InlineSection(2, *cdc);
   EXPECT_EQ(wal2.AppendCommit(std::span{&sec, 1}), 2u);
@@ -358,7 +357,7 @@ TEST_F(SearchDbWalTest, OrphanChunkSweptOnRecover) {
 
 TEST_F(SearchDbWalTest, MinTickGcDeletesConsumedSealedSegments) {
   // seal_threshold = 1 -> every commit rolls, so each record lands in its own
-  // SEALED segment. After three commits: segments 1,2,3 (no active).
+  // sealed segment. After three commits: segments 1,2,3 (no active).
   SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/1);
   for (int i = 1; i <= 3; ++i) {
     auto c = MakeIntCdc(Alloc(), {i});
@@ -381,7 +380,7 @@ TEST_F(SearchDbWalTest, MinTickGcDeletesConsumedSealedSegments) {
 
 TEST_F(SearchDbWalTest, MinTickGcReferenceChunksReclaimed) {
   SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/1);
-  auto cw = wal.NewChunkWriter(ObjectId{7});  // seg_id 1
+  auto cw = wal.NewChunkWriter(ObjectId{7});
   duckdb::DataChunk c;
   FillIntChunk(c, Alloc(), {1});
   cw.Append(c, 0);
@@ -397,16 +396,15 @@ TEST_F(SearchDbWalTest, MinTickGcReferenceChunksReclaimed) {
   EXPECT_TRUE(std::filesystem::exists(ChunkPath(7, 1)));
   wal.RegisterShard(ObjectId{7}, 0);
   wal.OnShardCommit(ObjectId{7},
-                    1);  // min=1 -> seg 1 (next.first=2 <= 2) deleted + chunk
+                    1);  // min=1 -> seg 1 deleted with its chunk
   EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
   EXPECT_FALSE(std::filesystem::exists(ChunkPath(7, 1)));
 }
 
 TEST_F(SearchDbWalTest, IdleShardPinsLogUntilDeregister) {
-  // Two shards: 7 advances, 8 stays at committed 0 (idle, never VACUUM'd).
-  // min = 0 -> nothing reclaimed, even segments shard 8 never wrote. Deregister
-  // 8 -> min becomes shard 7's tick -> reclamation proceeds (WAL_DESIGN.md
-  // §10.3).
+  // Two shards: 7 advances, 8 stays at committed 0 (idle). min = 0 -> nothing
+  // reclaimed, even segments shard 8 never wrote. Deregister 8 -> min becomes
+  // shard 7's tick -> reclamation proceeds.
   SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/1);
   for (int i = 1; i <= 3; ++i) {
     auto c = MakeIntCdc(Alloc(), {i});
@@ -418,18 +416,16 @@ TEST_F(SearchDbWalTest, IdleShardPinsLogUntilDeregister) {
   wal.OnShardCommit(ObjectId{7}, 3);  // min still 0 (shard 8 at 0) -> no GC
   EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
 
-  wal.DeregisterShard(
-    ObjectId{8});  // min now 3 -> all 3 segments (ticks 1,2,3 <= 3) gone
+  wal.DeregisterShard(ObjectId{8});  // min now 3 -> all 3 segments gone
   EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
   EXPECT_FALSE(std::filesystem::exists(SegPath(2)));
   EXPECT_FALSE(std::filesystem::exists(SegPath(3)));
 }
 
 TEST_F(SearchDbWalTest, MinTickGcReclaimsLoneSealedSegment) {
-  // A single bulk commit -> ONE sealed segment with NO successor (the case a
-  // bulk CTAS hits). It must still be reclaimed once consumed -- regression
-  // guard: an earlier filename-only rule never deleted the last segment, so a
-  // load-then-query workload leaked the full chunk set on disk.
+  // A single bulk commit -> ONE sealed segment with NO successor. It must still
+  // be reclaimed once consumed -- regression guard: an earlier filename-only
+  // rule never deleted the last segment, leaking the chunk set on disk.
   SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/1);
   auto cw = wal.NewChunkWriter(ObjectId{7});
   duckdb::DataChunk c;
@@ -444,17 +440,16 @@ TEST_F(SearchDbWalTest, MinTickGcReclaimsLoneSealedSegment) {
   EXPECT_TRUE(std::filesystem::exists(ChunkPath(7, 1)));
 
   wal.RegisterShard(ObjectId{7}, 0);
-  wal.OnShardCommit(
-    ObjectId{7}, 1);  // min=1: seg 1 (tick 1 <= 1) reclaimed despite being last
+  wal.OnShardCommit(ObjectId{7},
+                    1);  // min=1: seg 1 reclaimed despite being last
   EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
   EXPECT_FALSE(std::filesystem::exists(ChunkPath(7, 1)));
 }
 
 TEST_F(SearchDbWalTest, TickRestoredFromShardWhenWalEmpty) {
   // After GC empties the WAL, a fresh SearchDbWal scans no segments (tick 0);
-  // RegisterShard with the shard's durable iresearch committed_tick must
-  // restore the tick line so the next commit is strictly greater (iresearch
-  // monotonicity).
+  // RegisterShard with the shard's durable committed_tick must restore the tick
+  // line so the next commit is strictly greater (iresearch monotonicity).
   SearchDbWal wal(Fs(), _dir);  // empty dir -> no segments
   EXPECT_EQ(wal.CurrentTick(), 0u);
   wal.RegisterShard(ObjectId{7}, /*committed=*/42);
@@ -483,11 +478,10 @@ TEST_F(SearchDbWalTest, InlineInsertsAccumulateInOneSegment) {
 // segment's own chunk bytes may count; a sealed segment's chunks are GC's
 // problem. With a threshold the bulk chunk alone exceeds, the bulk commit seals
 // its segment, and the small inserts after it must still accumulate in ONE
-// fresh segment (WAL_DESIGN.md §10.2).
+// fresh segment.
 TEST_F(SearchDbWalTest, SealedSegmentChunksDoNotForceActiveRoll) {
   SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/4096);
-  // High-entropy values (xorshift) so the chunk can't compress below the
-  // threshold -- the seal must trip on the chunk's real size.
+  // High-entropy values so the chunk can't compress below the threshold.
   std::vector<int32_t> big(2048);
   uint32_t x = 0x9e3779b9u;
   for (int i = 0; i < 2048; ++i) {
@@ -506,28 +500,27 @@ TEST_F(SearchDbWalTest, SealedSegmentChunksDoNotForceActiveRoll) {
     std::vector<uint64_t> segs{cw.SegId()};
     auto sec = ReferenceSection(7, segs);
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}),
-              1u);  // tick 1 -> seals seg 1
+              1u);  // seals seg 1
   }
   // Precondition: the bulk chunk alone exceeds the seal threshold.
   ASSERT_GT(std::filesystem::file_size(ChunkPath(7, 1)), 4096u);
 
-  // Three tiny INLINE inserts. With the bug each rolls (the un-GC'd ~8 KB chunk
-  // keeps the global sum over 4096); with the fix they share ONE fresh segment.
+  // Three tiny INLINE inserts. With the bug each rolls (the un-GC'd chunk keeps
+  // the global sum over threshold); with the fix they share ONE fresh segment.
   for (int i = 0; i < 3; ++i) {
     auto c = MakeIntCdc(Alloc(), {i});
     auto sec = InlineSection(7, *c);
-    wal.AppendCommit(std::span{&sec, 1});  // ticks 2, 3, 4
+    wal.AppendCommit(std::span{&sec, 1});
   }
   EXPECT_TRUE(std::filesystem::exists(SegPath(1)));  // bulk (sealed)
   EXPECT_TRUE(std::filesystem::exists(SegPath(2)));  // inserts accumulate here
-  EXPECT_FALSE(
-    std::filesystem::exists(SegPath(3)));  // NOT a segment-per-record
+  EXPECT_FALSE(std::filesystem::exists(SegPath(3)));
   EXPECT_FALSE(std::filesystem::exists(SegPath(4)));
 }
 
 TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
   // INLINE: the per-chunk pk_base list is recorded in the body and recovered
-  // per chunk (§5.6).
+  // per chunk.
   {
     SearchDbWal wal(Fs(), _dir);
     auto cdc = MakeIntCdc(Alloc(), {7, 8, 9});
@@ -574,12 +567,11 @@ TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
 // Two PARTIAL inline appends, each with its own (disjoint, non-contiguous)
 // generated-PK base. ColumnDataCollection packs rows toward
 // STANDARD_VECTOR_SIZE, so the two appends COALESCE into a single Chunks()
-// entry. But pk_base is recorded per append-chunk (§5.6), so recovery must
-// reproduce each append's rows with ITS base -- replaying by Chunks()-index
-// tags the 2nd append's rows with the 1st base, minting wrong generated PKs (M6
-// delete/dedup then breaks). The fix records per-append (base, count) segments
-// and re-slices the CDC's rows by count on replay (§5.6); this pins that
-// invariant.
+// entry. But pk_base is recorded per append-chunk, so recovery must reproduce
+// each append's rows with ITS base -- replaying by Chunks()-index tags the 2nd
+// append's rows with the 1st base, minting wrong generated PKs. The fix records
+// per-append (base, count) segments and re-slices the CDC's rows by count on
+// replay; this pins that invariant.
 TEST_F(SearchDbWalTest, InlinePkBaseAlignedToAppendsNotChunks) {
   auto cdc = std::make_unique<duckdb::ColumnDataCollection>(Alloc(), IntType());
   {
@@ -619,7 +611,7 @@ TEST_F(SearchDbWalTest, InlinePkBaseAlignedToAppendsNotChunks) {
 
 // Two small INSERTs in one txn -> ONE shard section carrying TWO INLINE ops
 // (no fold to a chunk file, no merge). Recovery walks the manifest in order,
-// replaying each op's rows with its own generated-PK base (WAL_DESIGN.md §5.4).
+// replaying each op's rows with its own generated-PK base.
 TEST_F(SearchDbWalTest, MultipleInlineOpsOneSection) {
   auto a = MakeIntCdc(Alloc(), {10, 11});
   auto b = MakeIntCdc(Alloc(), {20});
@@ -648,8 +640,7 @@ TEST_F(SearchDbWalTest, MultipleInlineOpsOneSection) {
 
 // A bulk+inline mix in one txn -> ONE shard section carrying an INLINE op AND a
 // REFERENCE op (no fold: the inline rows ride the record, the bulk rows stay in
-// their chunk file). Recovery replays both ops, in manifest order
-// (WAL_DESIGN.md §5.4).
+// their chunk file). Recovery replays both ops, in manifest order.
 TEST_F(SearchDbWalTest, MixedInlineAndReferenceOps) {
   {
     SearchDbWal wal(Fs(), _dir);

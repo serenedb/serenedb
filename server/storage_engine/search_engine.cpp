@@ -144,7 +144,7 @@ void SearchEngine::start() {
   const bool skip_wal_recovery =
     absl::GetFlag(FLAGS_server_skip_search_recovery);
   InitInvertedIndexes(skip_wal_recovery);
-  // Replay each database's search-table WAL into iresearch (WAL_DESIGN.md §11).
+  // Replay each database's search-table WAL into iresearch.
   RunSearchTableRecovery(skip_wal_recovery);
 
   SDB_INFO(SEARCH, "Search maintenance: ", _refresh_threads,

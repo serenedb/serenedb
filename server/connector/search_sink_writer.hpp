@@ -106,12 +106,9 @@ inline EntryInfoProvider NoEntryInfoProvider() {
   };
 }
 
-// Every column is a plain stored columnstore column -- no term dictionary, no
-// HNSW, no JSON leaves. Routes each column through SwitchFieldImpl's
-// `is_stored && !is_term_dict` path (AppendToColumn + EmitPkOnlyBatch), i.e.
-// the search-table model: store the row, index only the PK term. Interim until
-// CREATE INDEX on search tables lands, when a real provider supplies term-dict
-// entries for the indexed columns.
+// Entry-info for the search-table model: every column is a plain stored
+// columnstore column (no term dict / HNSW / JSON), only the PK is indexed as a
+// term. Until CREATE INDEX on search tables lands and supplies a real provider.
 inline EntryInfoProvider AllStoredEntryInfoProvider() {
   static const catalog::InvertedIndexEntryInfo kStored = [] {
     catalog::InvertedIndexEntryInfo e;
@@ -263,14 +260,11 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   containers::FlatHashMap<irs::field_id, irs::ColumnWriter*>
     _per_row_blob_writers;
   irs::ColumnWriter* _pk_blob_writer = nullptr;
-  // PK-emission latch: armed per batch in InitImpl, cleared after the first
-  // column's batch so the PK is emitted exactly once per document (not once per
-  // column). Decoupled from `_pk_blob_writer` so a search table can emit the PK
-  // term without opening/writing a PK blob column.
+  // Latch so the PK is emitted once per document (cleared after the first
+  // column's batch), independent of whether a PK blob column exists.
   bool _emit_pk = false;
-  // false for search tables: the PK is indexed as a term only -- no PK blob
-  // column (rows live in the columnstore, the PK is reconstructable from the
-  // term). true for inverted indexes (the blob maps a hit back to the row).
+  // false for search tables (PK indexed as a term only); true for inverted
+  // indexes (PK blob maps a hit back to the row).
   bool _store_pk_blob = true;
 
   JsonExpressionFields _json_fields;
@@ -307,10 +301,8 @@ class SearchSinkBackfillTrxHolder {
 };
 
 // A search-table iresearch insert sink: the inverted-index insert base in
-// search-table mode -- every column is a plain stored columnstore column
-// (AllStoredEntryInfoProvider) and the PK is a term only (store_pk_blob=false,
-// no PK blob). Shared by the INSERT operator and WAL recovery. CREATE INDEX on
-// search tables will later supply a real provider for the indexed columns.
+// search-table mode (all columns stored, PK as a term only, no PK blob). Shared
+// by the INSERT operator and WAL recovery.
 inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx,
   std::span<const catalog::Column::Id> columns) {
@@ -319,14 +311,11 @@ inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
     std::vector<IndexedExpression>{}, /*store_pk_blob=*/false);
 }
 
-// Write one materialised DataChunk into `sink` -- the shared core of the
-// search-table INSERT operator's Sink AND WAL recovery replay, so a recovered
-// row's PK/encoding is byte-identical to the written one (WAL_DESIGN.md §5.6).
-// Builds the full row keys up front and feeds each column through
-// SwitchFieldImpl with the key span; the sink emits the PK term internally (on
-// the first column). Column types come from the chunk's own vectors. `pk_base`
-// is the generated-PK base for this chunk (0/ignored for explicit-PK, where the
-// key is built from `pk_columns`).
+// Write one materialised DataChunk into `sink` -- the shared core of both the
+// search-table INSERT Sink and WAL recovery replay, so a recovered row's
+// PK/encoding is byte-identical to the written one. `pk_base` is the
+// generated-PK base for this chunk (0/ignored for explicit-PK, where the key is
+// built from `pk_columns`).
 void WriteChunkToSearchSink(
   SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   std::span<const catalog::Column::Id> column_ids,

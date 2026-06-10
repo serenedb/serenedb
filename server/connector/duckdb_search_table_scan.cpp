@@ -61,11 +61,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
   state->reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
     shard->GetId(), [&] { return search_shard.GetDirectoryReader(); });
 
-  // Resolve projection. input.column_ids holds DuckDB-side indices; for
-  // real columns each index is a position into bind_data.column_ids (the
-  // catalog column id). Virtual columns (rowid / tableoid / IndexFeatures-
-  // backed virtuals) are not supported in this stage and either return
-  // NOT_IMPLEMENTED or silently produce nothing -- pure column scans only.
   const auto num_bind_columns = bind_data.column_ids.size();
   state->field_ids.reserve(input.column_ids.size());
   state->output_slots.reserve(input.column_ids.size());
@@ -100,9 +95,8 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
   const auto batch_size = static_cast<duckdb::idx_t>(STANDARD_VECTOR_SIZE);
 
   duckdb::idx_t produced = 0;
-  // Loop until we materialise at least one row or run out of segments.
-  // Stop at segment boundary -- ColumnstoreMaterializer::Scan writes to
-  // output starting at slot 0, so two segments cannot share one batch.
+  // Stop at segment boundary: ColumnstoreMaterializer::Scan writes from slot
+  // 0, so two segments cannot share one batch.
   while (produced == 0 && gstate.segment_idx < reader.size()) {
     auto& segment = reader[gstate.segment_idx];
     const auto seg_docs = segment.docs_count();
@@ -116,8 +110,7 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
     if (!gstate.materializer) {
       const auto* cs_reader = segment.GetColReader();
       if (!cs_reader) {
-        // Segment has no columnstore -- e.g. an empty pre-INSERT commit.
-        // Skip it; nothing to materialise.
+        // Segment has no columnstore (e.g. an empty pre-INSERT commit).
         ++gstate.segment_idx;
         gstate.doc_in_seg = 0;
         continue;

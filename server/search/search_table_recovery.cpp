@@ -60,9 +60,8 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   SDB_ASSERT(snapshot);
   auto& engine = GetSearchEngine();
 
-  // Per-shard replay metadata, built once from the catalog table (mirrors the
-  // operator's GetGlobalSinkState so the recovered key matches the written
-  // one).
+  // Per-shard replay metadata, built once from the catalog table so the
+  // recovered key matches the written one.
   struct ShardInfo {
     std::shared_ptr<TableShard> shard;  // keeps the shard alive
     SearchTableShard* search = nullptr;
@@ -72,8 +71,8 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     bool uses_generated_pk = false;
   };
   // Per-shard replay context: one open iresearch trx + sink, accumulated across
-  // all of the shard's records. In a node map so the sink's trx reference is
-  // stable across inserts.
+  // all of the shard's records. Kept in a node map so the sink's trx reference
+  // stays stable across inserts.
   struct ReplayCtx {
     irs::IndexWriter::Transaction trx;
     std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
@@ -83,7 +82,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   size_t recovered_shards = 0;
   for (const auto& database : snapshot->GetDatabases()) {
     const ObjectId db_id = database->GetId();
-    containers::NodeHashMap<ObjectId, ShardInfo> shards;  // table_id -> info
+    containers::NodeHashMap<ObjectId, ShardInfo> shards;
     for (const auto& schema : snapshot->GetSchemas(db_id)) {
       for (const auto& table : snapshot->GetTables(db_id, schema->GetName())) {
         auto ts = snapshot->GetTableShard(table->GetId());
@@ -110,9 +109,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     }
 
     auto& wal = engine.GetDbWal(db_id);
-    containers::NodeHashMap<ObjectId, ReplayCtx>
-      ctxs;  // table_id -> ctx (stable)
-
+    containers::NodeHashMap<ObjectId, ReplayCtx> ctxs;
     auto exists_of = [&](ObjectId table_id) {
       return shards.find(table_id) != shards.end();
     };
@@ -139,13 +136,13 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
 
     wal.Recover(exists_of, committed_of, replay);
 
-    // Finalize each replayed shard. Outside Recover() (its _append_mu is
-    // released), so Commit()->OnShardCommit's locking + GC are safe.
+    // Finalize each replayed shard outside Recover() so Commit()'s locking + GC
+    // are safe.
     for (auto& [table_id, ctx] : ctxs) {
-      ctx.sink.reset();              // release the Document before committing
-      ctx.trx.Commit(ctx.max_tick);  // stage the replayed docs at the max tick
+      ctx.sink.reset();  // release the Document before committing
+      ctx.trx.Commit(ctx.max_tick);
       auto& info = shards.at(table_id);
-      info.search->Commit();  // RefreshCommit + OnShardCommit (publish + GC)
+      info.search->Commit();
       info.search->SyncNumRowsFromIndex();
       ++recovered_shards;
     }

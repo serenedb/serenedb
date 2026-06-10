@@ -22,11 +22,8 @@
 
 namespace sdb::search {
 
-// Search-table (StorageKind::kSearch) WAL recovery (WAL_DESIGN.md §11). Called
-// once from SearchEngine::start after InitInvertedIndexes. For each database,
-// replays the per-db central WAL's committed-but-unpublished records into their
-// shards' iresearch writers (reconstructing PKs via the shared
-// WriteChunkToSearchSink), then RefreshCommit + sets num_rows from the index.
+// Replays each database's search WAL into its shards' iresearch writers, then
+// commits and resyncs num_rows.
 void RunSearchTableRecovery(bool skip_wal_recovery);
 
 }  // namespace sdb::search

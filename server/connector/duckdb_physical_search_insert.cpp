@@ -38,6 +38,7 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
+#include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/column_expr.h"
 #include "catalog/identifiers/object_id.h"
@@ -61,56 +62,23 @@
 namespace sdb::connector {
 namespace {
 
-// All operator state for the parallel INSERT pipeline. One instance per
-// query::Transaction-bound INSERT; rebuilt per query, not reused across
-// transactions.
 struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<TableShard> table_shard;
-  // Borrowed -- lives on the connection's query::Transaction, which outlives
-  // this state (the sdb-side commit happens after Finalize and owns the
-  // per-thread iresearch trxs via _parallel_search_transactions).
   query::Transaction* sdb_txn = nullptr;
-  // The kSearch shard, downcast once here. Each sink thread opens its own
-  // IndexWriter::Transaction from it in GetLocalSinkState (one segment per
-  // thread); table_shard's shared_ptr keeps it alive.
   search::SearchTableShard* search_shard = nullptr;
-
-  // Catalog column ids in input-chunk order (skips the synthetic
-  // generated-PK column). Passed to the search-table sink (the SwitchColumn
-  // field-id key per column) and used to build the WAL record.
   std::vector<catalog::Column::Id> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
-
-  // PK encoding scaffolding (matches duckdb_physical_insert's setup,
-  // but without conflict-resolver / index-writer fanout).
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
   std::string table_key;
-
-  // Set for tables without an explicit PRIMARY KEY -- Sink reserves a
-  // contiguous range from this sequence per chunk; Finalize walks the
-  // reservations via a cursor when assigning per-row PKs. Null for
-  // explicit-PK tables.
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
-
   std::shared_lock<std::shared_mutex> table_lock;
 
-  // Serialises the two cross-thread mutations on query::Transaction:
-  // registering a per-thread collection (GetLocalSinkState) and handing off
-  // the per-thread trx + summing insert_count (Combine). Both are
-  // once-per-thread, so contention is negligible.
   std::mutex combine_mu;
   duckdb::idx_t insert_count = 0;
-  // Bulk path only: chunk-file ids fsynced at Combine, one per sink thread
-  // that wrote rows. Collected under combine_mu; handed to the txn's WAL
-  // commit at Finalize (becomes the REFERENCE record's seg_ids). Empty for the
-  // inline (small-INSERT) path, which buffers in per-thread collections.
   std::vector<uint64_t> seg_ids;
 
-  // CTAS bookkeeping. ctas_mode=false for plain INSERT/COPY. On the
-  // failure path (txn abort before Finalize clears the tombstone) the
-  // dtor drops the half-created table -- DropTable -> DropArtifacts
-  // (kSearch) wipes its iresearch directory.
+  // CTAS bookkeeping.
   bool ctas_mode = false;
   bool ctas_finalized = false;
   ObjectId ctas_database_id;
@@ -122,9 +90,18 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
     if (ctas_mode && !ctas_finalized && !ctas_table_name.empty()) {
       try {
         auto& catalog = catalog::CatalogFeature::instance().Global();
-        std::ignore = catalog.DropTable(ctas_database_name, ctas_schema_name,
-                                        ctas_table_name, true);
+        auto r = catalog.DropTable(ctas_database_name, ctas_schema_name,
+                                   ctas_table_name, true);
+        if (!r.ok()) {
+          SDB_WARN(SEARCH, "CTAS rollback: failed to drop half-created table '",
+                   ctas_table_name, "': ", r.errorMessage());
+        }
+      } catch (const std::exception& e) {
+        SDB_WARN(SEARCH, "CTAS rollback: failed to drop half-created table '",
+                 ctas_table_name, "': ", e.what());
       } catch (...) {
+        SDB_WARN(SEARCH, "CTAS rollback: failed to drop half-created table '",
+                 ctas_table_name, "' (unknown exception)");
       }
     }
   }
@@ -134,51 +111,20 @@ struct SearchInsertSourceState : duckdb::GlobalSourceState {
   bool finished = false;
 };
 
-// Per-sink-thread state. The thread writes its chunks into an iresearch
-// transaction during Sink: a BULK thread owns a fresh trx (one segment per
-// thread, `search_trx`) handed to query::Transaction at Combine; a
-// single-threaded (inline) statement instead reuses the shard's serial trx
-// (owned by SearchTableTransaction, acquired lazily in Sink -- WAL_DESIGN.md
-// §5.5) so consecutive statements coalesce into one segment. Either way the trx
-// commits on the shared tick at txn commit -- NOT here (a destructor
-// auto-commit would assign an unrelated _tick-derived tick).
+// Per-sink-thread state. A bulk thread owns a fresh trx (one segment per
+// thread); an inline (single-threaded) statement reuses the shard's serial trx
+// so consecutive statements coalesce into one segment. Either way the trx
+// commits on the shared tick at txn commit, not here.
 struct SearchInsertLocalState : duckdb::LocalSinkState {
-  // BULK path only: this thread's owned trx (one segment); must outlive `sink`.
-  // Null on the inline path -- there `sink` wraps the shard's reused serial
-  // trx.
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
-  // Shared iresearch sink (the inverted-index insert base, in search-table
-  // mode: PK term only, no PK blob). Driven by WriteChunkToSearchSink.
   std::unique_ptr<SearchSinkInsertBaseImpl> sink;
-  // Bulk gate (WAL_DESIGN.md §6): true when the engine chose >1 sink thread.
-  // Bulk threads stream to a chunk file (REFERENCE commit); a single-thread
-  // (inline) insert buffers in `collection` for an INLINE commit. Applies to
-  // plain INSERT/COPY and CTAS alike.
   bool bulk = false;
-  // Bulk path: this thread's chunk file, opened lazily on the first Sink chunk
-  // (so a sink thread that gets no rows leaves no empty file) and fsynced at
-  // Combine. Null on the inline path.
   std::optional<search::SearchDbWal::ChunkWriter> chunk_writer;
-  // Inline path: this thread's in-flight buffer. Owned by
-  // SearchTableTransaction (LocalTableChangesEntry::InsertBuffer::collection);
-  // referenced here. Read at commit for the INLINE WAL record (and future RYOW
-  // overlay). Null on the bulk path.
   duckdb::ColumnDataCollection* collection = nullptr;
-  // Inline path: per-Sink-chunk (base, count) for `collection`, in append
-  // order. Points into LocalTableChangesEntry::InsertBuffer::pk_segments
-  // (stable). Drained into the INLINE WAL record at commit for replay PK
-  // reconstruction (§5.6). Null on the bulk path (there pk_base rides each
-  // chunk frame instead).
   std::vector<search::SearchDbWal::InlinePk>* pk_segments = nullptr;
   duckdb::idx_t insert_count = 0;
 };
 
-// CTAS-mode helper: creates the target table (tombstoned) from the bound
-// CREATE TABLE info and fills the CTAS bookkeeping on `state`. Returns the
-// freshly-created catalog Table, or nullptr when IF NOT EXISTS hit an
-// existing relation (caller returns a null sink state). Mirrors
-// SereneDBPhysicalCTAS::GetGlobalSinkState's creation block -- the only
-// part of CTAS that differs from a plain search insert.
 std::shared_ptr<catalog::Table> CreateCtasTable(
   SearchInsertGlobalState& state, duckdb::BoundCreateTableInfo& info,
   duckdb::SchemaCatalogEntry& schema) {
@@ -200,9 +146,8 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
     }
     options.columns.push_back(std::move(sdb_col));
   }
-  // CTAS has no PK/UNIQUE constraints -- pk_columns stays empty, so the
-  // Table ctor wires up a generated PK sequence (handled by the
-  // generated-PK reservation path in Sink/Finalize).
+  // CTAS has no PK/UNIQUE constraints, so the Table ctor wires up a generated
+  // PK sequence.
   ApplyColumnModes(options.columns, table_info.options);
   ApplyStorageKind(options, table_info.options);
   SDB_ASSERT(options.storage == catalog::StorageKind::kSearch,
@@ -287,11 +232,6 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchInsertGlobalState>();
   auto& conn_ctx = GetSereneDBContext(context);
 
-  // Resolve the target table: pre-existing (insert mode) or created here
-  // (CTAS mode). In CTAS mode the connection snapshot predates the new
-  // table, so we both look up via a fresh global snapshot (inside
-  // CreateCtasTable) and drop the connection snapshot afterwards so this
-  // statement -- and later ones -- re-fetch a snapshot that sees it.
   std::shared_ptr<catalog::Table> table;
   std::shared_ptr<const catalog::Snapshot> snapshot;
   if (_ctas_info) {
@@ -316,17 +256,12 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
              "SereneDBSearchInsert dispatched against a non-search shard");
   state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
 
-  // No explicit PK -> resolve the generated-PK sequence object once here;
-  // Sink reserves per-chunk ranges from it. Mirrors duckdb_physical_insert.
-  // CTAS tables always take this path (CTAS never declares a PK).
   if (table->PKColumns().empty()) {
     state->generated_pk_seq =
       snapshot->GetObject<catalog::Sequence>(table->GetGeneratedPkSeqId());
     SDB_ASSERT(state->generated_pk_seq);
   }
 
-  // Build column metadata in chunk order. The DuckDB plan binds the
-  // chunk to non-generated columns of the table in declaration order.
   state->column_ids.reserve(table->Columns().size());
   state->chunk_types.reserve(table->Columns().size());
   for (const auto& col : table->Columns()) {
@@ -358,42 +293,22 @@ SereneDBSearchInsert::GetLocalSinkState(
   }
 
   auto lstate = duckdb::make_uniq<SearchInsertLocalState>();
-  // Bulk gate (WAL_DESIGN.md §6): the engine's chosen parallel degree decides
-  // the WAL record shape. >1 sink thread => each streams its own chunk file
-  // (REFERENCE); ==1 => the lone thread buffers and the record is INLINE.
   lstate->bulk = context.pipeline && context.pipeline->GetMaxThreads() > 1;
 
   if (lstate->bulk) {
-    // Bulk: this thread owns a fresh iresearch trx (one segment), written
-    // during Sink and handed off at Combine. The chunk-file writer opens
-    // lazily on the first Sink chunk so a no-rows thread leaves no empty file.
     lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
       gstate->search_shard->GetTransaction());
     lstate->sink =
       MakeSearchTableInsertSink(*lstate->search_trx, gstate->column_ids);
   } else {
-    // Inline (small INSERT): buffer this thread's rows on query::Transaction
-    // so they outlive the local state -- the INLINE WAL record serialises the
-    // buffer at commit (and a future RYOW overlay reads it). unique_ptr keeps
-    // the pointer stable across vector growth. The iresearch trx is the
-    // shard's serial trx, REUSED across single-threaded statements (§5.5),
-    // acquired lazily on the first row in Sink -- so consecutive INSERTs
-    // coalesce into one segment and a zero-row statement parks nothing.
     auto collection = std::make_unique<duckdb::ColumnDataCollection>(
       duckdb::BufferManager::GetBufferManager(context.client),
       gstate->chunk_types);
     std::lock_guard<std::mutex> lock(gstate->combine_mu);
     auto& entry = gstate->sdb_txn->SearchTxn().Changes()[gstate->table_id];
-    // One buffer for this sink thread: its rows + (generated-PK only) the
-    // per-Sink-chunk (base, count) list (§5.6). Cache the pointees in lstate --
-    // stable across this vector growing as other threads register.
     auto& buf = entry.inserts.emplace_back();
     buf.collection = std::move(collection);
     lstate->collection = buf.collection.get();
-    // pk_segments records the synthetic generated-PK base per Sink chunk. An
-    // explicit-PK table re-derives its key from the columns on replay (base 0),
-    // so it needs no segments -- leave them unallocated (the empty-segments
-    // case is handled by VisitInlineSegments' fallback).
     if (gstate->generated_pk_seq != nullptr) {
       buf.pk_segments =
         std::make_unique<std::vector<search::SearchDbWal::InlinePk>>();
@@ -414,27 +329,12 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   if (!lstate->sink) {
-    // Inline path, first row: acquire the shard's serial iresearch trx (created
-    // on the first single-threaded statement, reused thereafter -- §5.5) and
-    // wrap it in a sink. Lazy (like the bulk chunk_writer below) so a zero-row
-    // statement parks nothing. Bulk created its sink eagerly in
-    // GetLocalSinkState.
     SDB_ASSERT(!lstate->bulk);
     auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
       gstate.table_id, [&] { return gstate.search_shard->GetTransaction(); });
     lstate->sink = MakeSearchTableInsertSink(trx, gstate.column_ids);
   }
 
-  // Write this chunk straight into the thread's own iresearch segment: one
-  // Init/SwitchColumn/Write/Finish cycle per chunk. Init's batch_size must
-  // be the exact row count -- iresearch pre-allocates that many DocContext
-  // slots per Insert(false, batch_size), and the segment's docs_count
-  // reflects the allocation, not the NextDocument calls.
-  // Reserve this chunk's generated-PK base (disjoint per thread:
-  // ReserveWriteUnsafe is atomic); explicit-PK tables ignore it (the key comes
-  // from the columns). The chunk -> sink + per-row PK write is the shared core
-  // reused verbatim by WAL recovery, so a recovered key is byte-identical to
-  // the written one (WriteChunkToSearchSink, WAL_DESIGN.md §5.6).
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
   const uint64_t pk_base =
     uses_generated_pk ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
@@ -442,11 +342,7 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids,
                          gstate.pk_columns, gstate.table_key, uses_generated_pk,
                          pk_base);
-  // Stream the chunk to this transaction's WAL (WAL_DESIGN.md §7). Bulk:
-  // serialise straight into this thread's chunk file (opened lazily here so a
-  // no-rows thread leaves no file), bounded heap. Inline: retain in this
-  // thread's collection for the INLINE record at commit. Both lock-free --
-  // the chunk file / collection is this thread's alone.
+
   if (lstate->bulk) {
     if (!lstate->chunk_writer) {
       lstate->chunk_writer.emplace(gstate.search_shard->NewChunkWriter());
@@ -454,8 +350,6 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     lstate->chunk_writer->Append(chunk, pk_base);
   } else {
     lstate->collection->Append(chunk);
-    // Record this Sink chunk's generated-PK base; explicit-PK tables don't
-    // allocate pk_segments (key re-derived from columns on replay).
     if (lstate->pk_segments != nullptr) {
       lstate->pk_segments->push_back({pk_base, num_rows});
     }
@@ -472,24 +366,14 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   if (lstate == nullptr) {
     return duckdb::SinkCombineResultType::FINISHED;  // CTAS IF-NOT-EXISTS no-op
   }
-
-  // The writer holds a reference to its trx -- destroy it first (its Document
-  // was already released by the last Sink's Finish).
   lstate->sink.reset();
 
-  // No rows: nothing to hand off. A bulk thread's eagerly-created owned trx
-  // never acquired a segment -> discard it; the inline path never lazily
-  // acquired the shard's serial trx at all. (Destructing an empty trx is a
-  // no-op; mirrors CREATE INDEX's unconditional reset of per-thread trxs.)
+  // No rows: nothing to hand off. Discard a bulk thread's empty owned trx;
   if (lstate->insert_count == 0) {
     lstate->search_trx.reset();
     return duckdb::SinkCombineResultType::FINISHED;
   }
 
-  // Bulk: flush + fsync this thread's chunk file BEFORE the central commit
-  // record (WAL_DESIGN.md §9 step 0) -- the N data fsyncs run concurrently
-  // across sink threads, outside the combine lock. Its seg_id goes into the
-  // txn's REFERENCE record (collected under combine_mu below).
   uint64_t seg_id = 0;
   if (lstate->bulk) {
     SDB_ASSERT(lstate->chunk_writer,
@@ -502,16 +386,9 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   gstate.insert_count += lstate->insert_count;
   if (lstate->bulk) {
     gstate.seg_ids.push_back(seg_id);
-    // Hand this thread's populated segment to query::Transaction. We do NOT
-    // commit it here: the commit-on-tick (Commit(tick)) happens in
-    // Transaction::Commit. Letting the destructor auto-commit would advance the
-    // writer's internal _tick and assign an unrelated tick, breaking the
-    // single-RefreshCommit-publishes-all-segments invariant.
     gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
       gstate.table_id, std::move(lstate->search_trx));
   }
-  // Inline: the shard's serial trx is already owned by SearchTableTransaction
-  // (acquired in Sink) and reused across statements -- nothing to hand off.
   return duckdb::SinkCombineResultType::FINISHED;
 }
 
@@ -526,38 +403,11 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
     return duckdb::SinkFinalizeType::READY;
   }
 
-  // The iresearch writes already happened in the parallel Sink phase; the
-  // per-thread trxs were handed to query::Transaction at Combine and commit on
-  // the shared WAL tick in query::Transaction::Commit. All Combines have run
-  // (event-DAG barrier), so every chunk file is fsynced (its seg_id collected
-  // in gstate.seg_ids) and every inline collection is registered + fully
-  // populated.
-  //
-  // Record this statement's search-table writes on the txn (WAL_DESIGN.md
-  // §7/§9), single-threaded. This is statement end, not the commit: the txn's
-  // Commit() later appends ONE central record -- INLINE from the collection for
-  // a small insert, or REFERENCE over the chunk files for a bulk insert -- and
-  // stamps the segments with the tick it returns. The inline buffers stay in
-  // LocalTableChanges (read at commit, then cleared by Destroy); the bulk
-  // seg_ids were gathered at Combine. The column layout isn't recorded --
-  // replay rebuilds it from the catalog.
-  gstate.sdb_txn->SearchTxn().AddSearchTableStatement(
+  gstate.sdb_txn->SearchTxn().FinishSearchTableStatement(
     gstate.table_shard, gstate.table_id, std::move(gstate.seg_ids));
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.UpdateNumRows(gstate.table_id, gstate.insert_count);
-
-  // CTAS: reveal the now-populated table at statement end, BEFORE the WAL
-  // commit point in Transaction::Commit -- deliberately, not deferred (see
-  // WAL_DESIGN.md §12). This preserves table-name read-your-own-writes within
-  // an explicit transaction (matching PostgreSQL transactional DDL): the name
-  // resolves for the rest of the txn. The cost is CTAS atomicity -- a crash
-  // after this reveal but before the WAL fsync can leave the table existing but
-  // empty. Accepted because serenedb's catalog DDL is already non-transactional
-  // (CreateTable/RemoveTombstone are independent, immediately-committed catalog
-  // writes) and search-table data is unreadable until RefreshCommit/VACUUM, so
-  // the lost guarantee is narrow. The data itself stays all-or-nothing (one
-  // atomic WAL record); only table existence is decoupled from its rows.
   RemoveCtasTombstoneIfNeeded(gstate);
   return duckdb::SinkFinalizeType::READY;
 }

@@ -1,14 +1,3 @@
-## storage WITH-option for CREATE TABLE: selects the table's physical backend.
-## PR 2.2 scope: lifecycle only -- CREATE / DROP must work; DML on a kSearch
-## table is gated to a later milestone and isn't exercised here.
-
-# Default (no WITH clause) is the rocksdb row store.
-statement ok
-CREATE TABLE storage_default (a INTEGER PRIMARY KEY, b TEXT);
-
-statement ok
-DROP TABLE storage_default;
-
 
 # Explicit rocksdb -- equivalent to default.
 statement ok
@@ -29,7 +18,6 @@ statement ok
 DROP TABLE storage_search;
 
 
-# Value is case-insensitive (the parser lowercases before matching).
 statement ok
 CREATE TABLE storage_search_upper (a INTEGER PRIMARY KEY, b TEXT)
   WITH (storage = 'SEARCH');
@@ -54,7 +42,6 @@ statement ok
 DROP TABLE storage_search_b;
 
 
-# Error: unknown storage kind.
 statement error
 CREATE TABLE storage_err1 (a INTEGER PRIMARY KEY)
   WITH (storage = 'invalid_storage_type');
@@ -62,20 +49,12 @@ CREATE TABLE storage_err1 (a INTEGER PRIMARY KEY)
 db error: ERROR: WITH option "storage" must be 'rocksdb' or 'search', got "invalid_storage_type"
 
 
-# Error: non-constant expression -- a list literal trips ExtractString's
-# expression-type check (it's a FunctionExpression(list_value), not a
-# VALUE_CONSTANT). Scalar numeric/boolean values cast cleanly to VARCHAR
-# and reach the "rocksdb|search" check above instead.
 statement error
 CREATE TABLE storage_err2 (a INTEGER PRIMARY KEY)
   WITH (storage = ['search']);
 ----
 db error: ERROR: WITH option "storage" expects a string literal
 
-
-## DML reachability matrix. M3 lifted INSERT (PR 3.4); M4 lifts SELECT
-## (PR 4.1, committed-reads only -- R-y-o-w overlay deferred). UPDATE /
-## DELETE / TRUNCATE land in M6. CREATE INDEX has no scheduled milestone.
 
 statement ok
 CREATE TABLE search_dml (a INTEGER PRIMARY KEY, b TEXT)
@@ -89,8 +68,6 @@ statement ok
 VACUUM (REFRESH_TABLE) search_dml;
 
 
-# SELECT round-trips via the search scan: iresearch DirectoryReader pinned
-# in the txn, ColumnstoreMaterializer materialises each segment's slice.
 query
 SELECT * FROM search_dml ORDER BY a;
 ----
@@ -100,26 +77,22 @@ a	b
 3	z
 
 
-# UPDATE / DELETE / TRUNCATE / CREATE INDEX have their own operator-side
-# guards re-added now that the SCAN guard no longer catches them. The
-# user sees the operation-specific message (not "SELECT") at the
-# operator-construction site.
 statement error
 UPDATE search_dml SET b = 'y' WHERE a = 1;
 ----
-db error: ERROR: UPDATE on a search-backed table is not yet supported (M3-M6)
+db error: ERROR: UPDATE on a search-backed table is not yet supported
 
 
 statement error
 DELETE FROM search_dml WHERE a = 1;
 ----
-db error: ERROR: DELETE on a search-backed table is not yet supported (M3-M6)
+db error: ERROR: DELETE on a search-backed table is not yet supported
 
 
 statement error
 TRUNCATE search_dml;
 ----
-db error: ERROR: TRUNCATE on a search-backed table is not yet supported (M3-M6)
+db error: ERROR: TRUNCATE on a search-backed table is not yet supported
 
 
 # All access methods rejected (including USING inverted -- iresearch on
@@ -127,13 +100,13 @@ db error: ERROR: TRUNCATE on a search-backed table is not yet supported (M3-M6)
 statement error
 CREATE INDEX search_dml_idx ON search_dml (b);
 ----
-db error: ERROR: CREATE INDEX on a search-backed table is not yet supported (M3-M6)
+db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
 
 
 statement error
 CREATE INDEX search_dml_inv_idx ON search_dml USING inverted (b);
 ----
-db error: ERROR: CREATE INDEX on a search-backed table is not yet supported (M3-M6)
+db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
 
 
 statement ok
@@ -141,11 +114,6 @@ DROP TABLE search_dml;
 
 
 ## Generated-PK search table -- INSERT path reserves the sequence range
-## at Sink time and recovers per-row PKs via a cursor walk at Finalize
-## (LocalTableChangesEntry::reserved_pk_ranges). Memory: O(num_sink_calls),
-## not O(num_rows). The user-visible row identity comes from the row
-## contents -- we just observe that INSERT round-trips through the search
-## scan.
 statement ok
 CREATE TABLE search_genpk (a INTEGER, b TEXT) WITH (storage = 'search');
 
@@ -167,10 +135,6 @@ statement ok
 DROP TABLE search_genpk;
 
 
-# CREATE TABLE AS SELECT into a search-backed table routes through the same
-# SereneDBSearchInsert operator (CTAS mode): create the tombstoned table,
-# drain the SELECT through the search sink, drop the tombstone on commit.
-# CTAS tables have a generated PK -- exercises the reserved_pk_ranges path.
 statement ok
 CREATE TABLE search_ctas WITH (storage = 'search') AS
   SELECT * FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS t(x, y);
@@ -190,12 +154,6 @@ statement ok
 DROP TABLE search_ctas;
 
 
-# Multiple writes to one search table in a SINGLE transaction: CTAS creates and
-# populates the table, then bare INSERTs add more rows. The CTAS reveal happens
-# at the operator's Finalize (mid-txn, before the commit point), so the table
-# name resolves for the following INSERTs, and all of it commits as ONE central
-# WAL record -- the per-statement inline buffers for the shard are folded
-# together into a single section (WAL_DESIGN.md §7/§9).
 statement ok
 BEGIN;
 
@@ -216,8 +174,7 @@ COMMIT;
 statement ok
 VACUUM (REFRESH_TABLE) search_multi;
 
-# Everything written in the txn is present, regardless of which statement
-# (CTAS vs either INSERT) produced it.
+
 query
 SELECT id, grp FROM search_multi ORDER BY id;
 ----
@@ -231,8 +188,7 @@ id	grp
 12	even
 20	even
 
-# A WHERE on the non-PK `grp` column matches rows from BOTH the CTAS (1, 3)
-# and the VALUES inserts (10, 12, 20) -- ORDER BY for determinism.
+
 query
 SELECT id FROM search_multi WHERE grp = 'even' ORDER BY id;
 ----

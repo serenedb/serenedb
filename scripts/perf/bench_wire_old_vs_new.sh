@@ -94,6 +94,12 @@ echo
 declare -A WL=()
 WL[select1]="SELECT 1;"
 WL[rows]="SELECT i, i::text AS s, i::float8 AS f FROM generate_series(1,1000) g(i);"
+# Analytical: a parallel hash-aggregate over 3M rows returning 997 groups. Unlike
+# the transport workloads, this fans out across the DuckDB worker pool, so the
+# query pump rides the reschedule path (NO_TASKS_AVAILABLE while workers run the
+# aggregate) -- the case the new stack's per-hop scheduler churn is measured on.
+# Small result (997 rows) keeps execution+reschedule, not encoding, the cost.
+WL[analytical]="SELECT k, count(*) c, sum(i) s FROM (SELECT i, i % 997 AS k FROM generate_series(1,3000000) g(i)) t GROUP BY k ORDER BY k;"
 for name in "${!WL[@]}"; do
 	printf '%s\n' "${WL[$name]}" >"${OUT_DIR}/wl_${name}.sql"
 done
@@ -184,12 +190,14 @@ bench_server() {
 	run_one "${srv}_select1_extended" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_select1.sql" extended
 	run_one "${srv}_select1_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_select1.sql" prepared
 	run_one "${srv}_rows_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_rows.sql" prepared
+	run_one "${srv}_analytical_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_analytical.sql" prepared
 	if [[ "${PROFILE}" != "0" ]]; then
 		echo "  -- profiling ${srv} (perf record ${PROFILE_SECS}s/workload, still isolated)"
 		profile_one "${srv}_select1_simple" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_select1.sql" simple
 		profile_one "${srv}_select1_extended" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_select1.sql" extended
 		profile_one "${srv}_select1_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_select1.sql" prepared
 		profile_one "${srv}_rows_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_rows.sql" prepared
+		profile_one "${srv}_analytical_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_analytical.sql" prepared
 	fi
 	kill -9 "${CUR_PID}" 2>/dev/null || true
 	wait "${CUR_PID}" 2>/dev/null || true

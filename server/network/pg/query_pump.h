@@ -79,7 +79,7 @@ inline yaclib::Future<duckdb::PendingExecutionResult> DrivePending(
       case duckdb::PendingExecutionResult::EXECUTION_ERROR:
         co_return status;
       case duckdb::PendingExecutionResult::NO_TASKS_AVAILABLE:
-        co_await yaclib::On(executрьor);
+        co_await yaclib::On(executor);
         break;
       case duckdb::PendingExecutionResult::RESULT_NOT_READY:
       case duckdb::PendingExecutionResult::BLOCKED:

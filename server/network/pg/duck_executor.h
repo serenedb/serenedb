@@ -57,26 +57,17 @@ class DuckExecutor final : public yaclib::IExecutor {
 
   void Submit(yaclib::Job& job) noexcept override {
     _task.job = &job;
-    // Hot path: the io->duck hop runs on this session's io thread, so use that
-    // worker's shared producer (one per io worker, not per connection). The
-    // re-enqueues that come from a duck-worker thread (BLOCKED/NO_TASKS, and the
-    // simple-query re-hop) can't touch the io worker's single-producer token, so
-    // they fall back to a per-thread producer.
-    auto& producer = _io_worker.RunsInThisThread() ? _io_worker.DuckProducer(_scheduler)
-                                                   : WorkerProducer();
+    // One producer per io worker, shared by all its sessions. DuckDB's
+    // ProducerToken is guarded by its own mutex (ProducerToken::producer_lock),
+    // so enqueueing through it is thread-safe: the common io->duck hop runs on
+    // this session's io thread, and the rare reschedule that fires on a
+    // duck-worker thread can use the same producer -- no per-duck producer.
     _scheduler.ScheduleTask(
-      producer,
+      _io_worker.DuckProducer(_scheduler),
       duckdb::shared_ptr<duckdb::Task>{duckdb::shared_ptr<duckdb::Task>{}, &_task});
   }
 
  private:
-  // Fallback producer for Submits that arrive on a duck-worker thread (rare:
-  // only when a task re-schedules itself). One per such thread.
-  duckdb::ProducerToken& WorkerProducer() {
-    thread_local duckdb::unique_ptr<duckdb::ProducerToken> producer = _scheduler.CreateProducer();
-    return *producer;
-  }
-
   struct JobTask final : duckdb::Task {
     duckdb::TaskExecutionResult Execute(duckdb::TaskExecutionMode) override {
       job->Call();

@@ -125,6 +125,10 @@ void SereneDBClientState::Register(
       return;
     }
     auto& sdb_ctx = GetSereneDBContext(ctx);
+    // A reported GUC may have changed -- flag it so the wire layer re-emits
+    // ParameterStatus at the next ReadyForQuery (a cheap version bump; the GUC
+    // poll itself is skipped entirely when nothing changed).
+    sdb_ctx.MarkSettingsChanged();
     // Outside an explicit transaction there's nothing to roll back --
     // the map stays empty.
     if (!sdb_ctx.IsExplicitTransaction()) {

@@ -34,6 +34,7 @@
 #include "network/connection.h"
 #include "network/http/h1_codec.h"
 #include "network/http/router.h"
+#include "network/io_executor.h"
 #include "network/socket.h"
 
 namespace sdb::network {
@@ -49,13 +50,15 @@ class HttpSession final
  public:
   using Deps = HttpServerContext;
 
-  HttpSession(HttpServerContext& ctx, asio_ns::io_context& io)
+  HttpSession(HttpServerContext& ctx, IoExecutor& exec)
     requires(Kind != SocketKind::Ssl)
-    : _socket{io}, _deadline{io}, _router{ctx.router} {}
+    : _socket{exec.Context()}, _deadline{exec.Context()}, _router{ctx.router} {}
 
-  HttpSession(HttpServerContext& ctx, asio_ns::io_context& io)
+  HttpSession(HttpServerContext& ctx, IoExecutor& exec)
     requires(Kind == SocketKind::Ssl)
-    : _socket{io, *ctx.ssl}, _deadline{io}, _router{ctx.router} {}
+    : _socket{exec.Context(), *ctx.ssl},
+      _deadline{exec.Context()},
+      _router{ctx.router} {}
 
   void Start() { Run().Detach(); }
 

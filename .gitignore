@@ -60,3 +60,5 @@ tests/drivers/c/harness
 
 # Local act secrets (fakes for local CI runs)
 .secrets
+
+/scripts/perf/results/

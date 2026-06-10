@@ -248,10 +248,16 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
 }
 
 void Config::RollbackVariables() noexcept {
+  if (_transaction.empty()) {
+    return;
+  }
   for (auto&& [key, var] : _transaction) {
     RestoreValue(key, std::move(var.rollback_restore));
   }
   _transaction.clear();
+  // RestoreValue sets directly, bypassing setting_change_handler -- flag so the
+  // wire layer re-emits ParameterStatus for any reported GUC reverted here.
+  MarkSettingsChanged();
 }
 
 void Config::CommitVariables() noexcept {
@@ -259,12 +265,19 @@ void Config::CommitVariables() noexcept {
   // Any entry with a commit_restore was overlaid by a SET LOCAL whose
   // effects should not survive past the transaction; restore it. Plain SET
   // entries (no commit_restore) stay as-is.
+  bool restored = false;
   for (auto&& [key, var] : _transaction) {
     if (var.commit_restore) {
       RestoreValue(key, std::move(*var.commit_restore));
+      restored = true;
     }
   }
   _transaction.clear();
+  if (restored) {
+    // SET LOCAL overlays undone here bypass setting_change_handler -- flag for
+    // ParameterStatus re-emit.
+    MarkSettingsChanged();
+  }
 }
 
 }  // namespace sdb

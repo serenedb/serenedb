@@ -67,7 +67,10 @@ class ExecuteTaskAwaiter final {
 
 inline yaclib::Future<duckdb::PendingExecutionResult> DrivePending(
   yaclib::IExecutor& executor, duckdb::PendingQueryResult& pending) {
-  co_await yaclib::On(executor);
+  // Caller already runs on `executor` (the dispatch hops to *_duck before
+  // invoking us, and RunSimpleQuery re-hops per statement), so the first task
+  // slice runs inline -- we only re-hop on NO_TASKS_AVAILABLE below. Saves one
+  // scheduler enqueue + worker wake per Execute.
   for (;;) {
     const auto status = co_await ExecuteTaskAwaiter{executor, pending};
     switch (status) {
@@ -76,7 +79,7 @@ inline yaclib::Future<duckdb::PendingExecutionResult> DrivePending(
       case duckdb::PendingExecutionResult::EXECUTION_ERROR:
         co_return status;
       case duckdb::PendingExecutionResult::NO_TASKS_AVAILABLE:
-        co_await yaclib::On(executor);
+        co_await yaclib::On(executрьor);
         break;
       case duckdb::PendingExecutionResult::RESULT_NOT_READY:
       case duckdb::PendingExecutionResult::BLOCKED:

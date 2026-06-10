@@ -221,11 +221,15 @@ inline sdb::pg::VarFormat FormatFor(std::span<const sdb::pg::VarFormat> formats,
 // (SendStartupBurst) and again whenever a command changes one
 // (ReportChangedParameters), matching postgres's GUC_REPORT set.
 inline constexpr auto kReportParams = std::to_array<std::string_view>({
+  "application_name",
   "client_encoding",
   "DateStyle",
+  "default_transaction_read_only",
+  "in_hot_standby",
   "integer_datetimes",
   "IntervalStyle",
   "is_superuser",
+  "scram_iterations",
   "search_path",
   "server_encoding",
   "server_version",
@@ -239,23 +243,27 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
  public:
   using Deps = PgServerContext;
 
-  PgWireSession(PgServerContext& ctx, asio_ns::io_context& io)
+  PgWireSession(PgServerContext& ctx, IoExecutor& exec)
     requires(Kind == SocketKind::Tcp)
-    : _socket{io},
-      _io{io},
+    : _socket{exec.Context()},
+      _io{exec.Context()},
       _credentials{ctx.credentials},
       _allow_cleartext{ctx.allow_cleartext_without_tls},
       _cancel{ctx.cancel},
-      _max_message{ctx.max_message_bytes} {}
+      _max_message{ctx.max_message_bytes} {
+    _ioexec = &exec;
+  }
 
-  PgWireSession(PgServerContext& ctx, asio_ns::io_context& io)
+  PgWireSession(PgServerContext& ctx, IoExecutor& exec)
     requires(Kind == SocketKind::MaybeTls)
-    : _socket{io, *ctx.ssl},
-      _io{io},
+    : _socket{exec.Context(), *ctx.ssl},
+      _io{exec.Context()},
       _credentials{ctx.credentials},
       _allow_cleartext{ctx.allow_cleartext_without_tls},
       _cancel{ctx.cancel},
-      _max_message{ctx.max_message_bytes} {}
+      _max_message{ctx.max_message_bytes} {
+    _ioexec = &exec;
+  }
 
   void Start() { Run().Detach(); }
 
@@ -340,10 +348,16 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   size_t _dispatch_consume = 0;
   containers::FlatHashMap<std::string, std::string> _params;
   containers::FlatHashMap<std::string, std::string> _reported_params;
+  // Connection settings version last reflected into _reported_params; gates the
+  // per-command ParameterStatus poll in ReportChangedParameters.
+  uint64_t _reported_settings_version = 0;
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _connection_ctx;
-  yaclib::IExecutorPtr _duck;
-  yaclib::IExecutorPtr _ioexec;
+  // By value, not IExecutorPtr: no per-connection heap alloc, and because the
+  // type is concrete + final, `co_await yaclib::On(*_duck)` devirtualizes.
+  std::optional<DuckExecutor> _duck;
+  // Non-owning: points to this session's io worker, which IS the IoExecutor.
+  IoExecutor* _ioexec = nullptr;
   containers::NodeHashMap<std::string, sdb::pg::DuckDBStatement> _statements;
   containers::NodeHashMap<std::string, Portal> _portals;
   sdb::pg::DuckDBStatement _anon_statement;
@@ -526,6 +540,9 @@ void PgWireSession<Kind>::SendStartupBurst() {
       WriteParameterStatus(_send, name, *value);
     }
   }
+  // We just reported everything; subsequent polls only fire if a SET advances
+  // the version past this point.
+  _reported_settings_version = _connection_ctx->SettingsVersion();
 
   // BackendKeyData carries this session's cancel key (pid = high 32 bits,
   // secret = low 32; both 4 bytes for the 3.0 protocol). A CancelRequest echoes
@@ -574,6 +591,14 @@ void PgWireSession<Kind>::DrainNotices() {
 // differs from what the client was last told.
 template<SocketKind Kind>
 void PgWireSession<Kind>::ReportChangedParameters() {
+  // Postgres reports a GUC only when it actually changed. A SET bumps the
+  // connection's settings version; if nothing changed since our last report,
+  // skip the (locked, per-GUC) poll entirely -- the common SELECT/DML path.
+  const auto version = _connection_ctx->SettingsVersion();
+  if (version == _reported_settings_version) {
+    return;
+  }
+  _reported_settings_version = version;
   for (const auto name : kReportParams) {
     const auto value = _connection_ctx->Get(name);
     if (!value) {
@@ -621,7 +646,7 @@ void PgWireSession<Kind>::SerializeResult(
         result.types[column], FormatFor(formats, column), context));
     }
     for (;;) {
-      auto chunk = result.Fetch();
+      auto chunk = result.FetchRaw();
       if (!chunk || chunk->size() == 0) {
         break;
       }
@@ -629,7 +654,7 @@ void PgWireSession<Kind>::SerializeResult(
       WriteDataChunk(_send, *chunk, serializers, context);
     }
   } else if (return_type == duckdb::StatementReturnType::CHANGED_ROWS) {
-    auto chunk = result.Fetch();
+    auto chunk = result.FetchRaw();
     if (chunk && chunk->size() > 0) {
       rows = static_cast<uint64_t>(chunk->GetValue(0, 0).GetValue<int64_t>());
     }
@@ -657,7 +682,7 @@ bool PgWireSession<Kind>::SerializePage(Portal& portal,
   uint64_t sent = 0;
   while (sent < max_rows) {
     if (!portal.carry || portal.carry_offset >= portal.carry->size()) {
-      portal.carry = result.Fetch();
+      portal.carry = result.FetchRaw();
       portal.carry_offset = 0;
       if (!portal.carry || portal.carry->size() == 0) {
         portal.carry.reset();
@@ -1700,9 +1725,7 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
       }
     }};
 
-    _duck = yaclib::MakeShared<DuckExecutor>(
-      1, duckdb::TaskScheduler::GetScheduler(*_conn->context));
-    _ioexec = yaclib::MakeShared<IoExecutor>(1, _io);
+    _duck.emplace(duckdb::TaskScheduler::GetScheduler(*_conn->context), *_ioexec);
 
     SendStartupBurst();
     co_await Flush();

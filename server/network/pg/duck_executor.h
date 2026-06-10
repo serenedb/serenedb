@@ -26,35 +26,69 @@
 #include <yaclib/exe/executor.hpp>
 #include <yaclib/exe/job.hpp>
 
+#include "network/io_executor.h"
+
 namespace sdb::network::pg {
 
-class DuckExecutor : public yaclib::IExecutor {
+// Runs yaclib coroutine continuations on DuckDB's scheduler worker threads, so
+// query work stays on threads DuckDB manages (per-thread allocator caches).
+//
+// The task object is a plain member: every yaclib hop submits the SAME Job (the
+// coroutine's promise), and a session has at most one hop in flight at a time,
+// so we just retarget the reused JobTask and re-enqueue it. We hand the queue a
+// non-owning shared_ptr built with the aliasing constructor over an empty
+// control block, so the copy into the queue and the worker's drop do no atomic
+// refcounting and the queue never deletes _task -- this executor owns it for
+// the session's lifetime, which outlives every in-flight hop. Safe because the
+// task always finishes in one Execute (never reschedules / calls
+// shared_from_this).
+//
+// `final` so that `co_await yaclib::On(duck)` (templated On over the concrete
+// type) devirtualizes the Submit call. Held by value (std::optional) on the
+// session -- no per-connection heap allocation.
+class DuckExecutor final : public yaclib::IExecutor {
  public:
-  explicit DuckExecutor(duckdb::TaskScheduler& scheduler)
-    : _scheduler{scheduler}, _producer{scheduler.CreateProducer()} {}
+  DuckExecutor(duckdb::TaskScheduler& scheduler, IoExecutor& io_worker)
+    : _scheduler{scheduler}, _io_worker{io_worker} {}
 
   Type Tag() const noexcept override { return Type::Custom; }
 
   bool Alive() const noexcept override { return true; }
 
   void Submit(yaclib::Job& job) noexcept override {
-    _scheduler.ScheduleTask(*_producer, duckdb::make_shared_ptr<JobTask>(job));
+    _task.job = &job;
+    // Hot path: the io->duck hop runs on this session's io thread, so use that
+    // worker's shared producer (one per io worker, not per connection). The
+    // re-enqueues that come from a duck-worker thread (BLOCKED/NO_TASKS, and the
+    // simple-query re-hop) can't touch the io worker's single-producer token, so
+    // they fall back to a per-thread producer.
+    auto& producer = _io_worker.RunsInThisThread() ? _io_worker.DuckProducer(_scheduler)
+                                                   : WorkerProducer();
+    _scheduler.ScheduleTask(
+      producer,
+      duckdb::shared_ptr<duckdb::Task>{duckdb::shared_ptr<duckdb::Task>{}, &_task});
   }
 
  private:
-  struct JobTask final : duckdb::Task {
-    explicit JobTask(yaclib::Job& job) noexcept : job{job} {}
+  // Fallback producer for Submits that arrive on a duck-worker thread (rare:
+  // only when a task re-schedules itself). One per such thread.
+  duckdb::ProducerToken& WorkerProducer() {
+    thread_local duckdb::unique_ptr<duckdb::ProducerToken> producer = _scheduler.CreateProducer();
+    return *producer;
+  }
 
+  struct JobTask final : duckdb::Task {
     duckdb::TaskExecutionResult Execute(duckdb::TaskExecutionMode) override {
-      job.Call();
+      job->Call();
       return duckdb::TaskExecutionResult::TASK_FINISHED;
     }
 
-    yaclib::Job& job;
+    yaclib::Job* job = nullptr;
   };
 
   duckdb::TaskScheduler& _scheduler;
-  duckdb::unique_ptr<duckdb::ProducerToken> _producer;
+  IoExecutor& _io_worker;
+  JobTask _task;
 };
 
 }  // namespace sdb::network::pg

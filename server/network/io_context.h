@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "basics/asio_ns.h"
+#include "network/io_executor.h"
 
 namespace sdb::network {
 
@@ -38,7 +39,9 @@ class IoThreadPool final {
   IoThreadPool(const IoThreadPool&) = delete;
   IoThreadPool& operator=(const IoThreadPool&) = delete;
 
-  asio_ns::io_context& Next() noexcept;
+  // The worker IS its io thread's executor; a session assigned to it holds a
+  // non-owning IoExecutor* and posts back via On(*_ioexec).
+  IoExecutor& Next() noexcept;
 
   std::uint32_t Size() const noexcept {
     return static_cast<std::uint32_t>(_workers.size());
@@ -48,10 +51,9 @@ class IoThreadPool final {
   void Stop() noexcept;
 
  private:
-  struct Worker {
-    asio_ns::io_context ctx{1};
+  struct Worker final : IoExecutor {
     asio_ns::executor_work_guard<asio_ns::io_context::executor_type> guard{
-      ctx.get_executor()};
+      Context().get_executor()};
     std::jthread thread;
   };
 

@@ -34,22 +34,22 @@ IoThreadPool::IoThreadPool(std::uint32_t threads) {
 
 IoThreadPool::~IoThreadPool() { Stop(); }
 
-asio_ns::io_context& IoThreadPool::Next() noexcept {
+IoExecutor& IoThreadPool::Next() noexcept {
   const auto index =
     _next.fetch_add(1, std::memory_order_relaxed) % _workers.size();
-  return _workers[index]->ctx;
+  return *_workers[index];
 }
 
 void IoThreadPool::Start() {
   for (auto& worker : _workers) {
-    worker->thread = std::jthread{[w = worker.get()] { w->ctx.run(); }};
+    worker->thread = std::jthread{[w = worker.get()] { w->Context().run(); }};
   }
 }
 
 void IoThreadPool::Stop() noexcept {
   for (auto& worker : _workers) {
     worker->guard.reset();
-    worker->ctx.stop();
+    worker->Context().stop();
   }
   for (auto& worker : _workers) {
     if (worker->thread.joinable()) {

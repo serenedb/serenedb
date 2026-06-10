@@ -44,7 +44,7 @@ class Acceptor final : public AcceptorBase,
  public:
   Acceptor(IoThreadPool& pool, const asio_ns::ip::tcp::endpoint& bind,
            typename Session::Deps& deps)
-    : _pool{pool}, _acceptor{pool.Next()}, _deps{deps} {
+    : _pool{pool}, _acceptor{pool.Next().Context()}, _deps{deps} {
     _acceptor.open(bind.protocol());
     _acceptor.set_option(asio_ns::socket_base::reuse_address{true});
     _acceptor.bind(bind);

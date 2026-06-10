@@ -120,6 +120,12 @@ class Config {
   void SetSettingChecked(std::string_view key, std::string value,
                          bool is_local);
 
+  // Monotonic counter bumped whenever a session/local setting changes (via the
+  // setting_change_handler) or is reverted at txn end. Lets the wire layer skip
+  // the per-command ParameterStatus GUC poll unless something actually changed.
+  uint64_t SettingsVersion() const noexcept { return _settings_version; }
+  void MarkSettingsChanged() noexcept { ++_settings_version; }
+
  protected:
   // Pre-rollback hook: restore every tracked variable to its pre-SET value.
   void RollbackVariables() noexcept;
@@ -130,6 +136,9 @@ class Config {
  private:
   void SetInternal(std::string_view key, std::string value);
   void RestoreValue(std::string_view key, duckdb::Value value) noexcept;
+
+  // Bumped on every tracked setting change; see SettingsVersion().
+  uint64_t _settings_version = 0;
 
   // Transaction variables (commit-apply / revert semantics).
 

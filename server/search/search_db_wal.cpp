@@ -350,7 +350,8 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
   }
   std::error_code ec;
   std::filesystem::create_directories(_wal_dir, ec);
-  SDB_ASSERT(!ec, "create wal dir '", _wal_dir.string(), "': ", ec.message());
+  SDB_ENSURE(!ec, ERROR_INTERNAL, "create wal dir '", _wal_dir.string(),
+             "': ", ec.message());
   _active = std::make_unique<duckdb::BufferedFileWriter>(
     _fs, (_wal_dir / SegmentName(first_tick)).string(), kAppendFlags);
   _active_first_tick = first_tick;
@@ -453,7 +454,8 @@ SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(ObjectId table_id) {
   auto dir = ChunkDir(table_id.id());
   std::error_code ec;
   std::filesystem::create_directories(dir, ec);
-  SDB_ASSERT(!ec, "create chunk dir '", dir.string(), "': ", ec.message());
+  SDB_ENSURE(!ec, ERROR_INTERNAL, "create chunk dir '", dir.string(),
+             "': ", ec.message());
 
   uint64_t seg_id;
   {

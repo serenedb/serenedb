@@ -51,6 +51,8 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "search/search_table_changes.h"
 #include "search/search_table_shard.h"
@@ -218,8 +220,9 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
     if (if_not_exists) {
       return nullptr;
     }
-    throw duckdb::CatalogException("relation \"%s\" already exists",
-                                   table_info.table);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", table_info.table, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
@@ -254,8 +257,7 @@ void RemoveCtasTombstoneIfNeeded(SearchInsertGlobalState& state) {
   auto r = catalog.RemoveTombstone(
     state.ctas_database_id, state.ctas_schema_name, state.ctas_table_name);
   if (!r.ok()) {
-    throw duckdb::InternalException("Failed to remove tombstone: %s",
-                                    std::string{r.errorMessage()});
+    SDB_THROW(std::move(r));
   }
   state.ctas_finalized = true;
 }

@@ -301,6 +301,10 @@ Result OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
   CollectDeletedDefinitions(database_id, DeletedScope::Database);
   auto r = RegisterSchemas(database_id);
   ClearDeletedDefinitions(DeletedScope::Database);
+
+  if (r.fail()) {
+    return r;
+  }
   r = RegisterSubscriptions(database_id);
   return r;
 }

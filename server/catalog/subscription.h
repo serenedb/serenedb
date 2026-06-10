@@ -47,7 +47,7 @@ class Subscription final : public Object {
   const Config& GetConfig() const noexcept { return _config; }
 
  private:
-  Config _config;
+  const Config _config;
 };
 
 }  // namespace sdb::catalog

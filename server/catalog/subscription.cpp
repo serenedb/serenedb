@@ -21,6 +21,7 @@
 #include "catalog/subscription.h"
 
 #include "basics/serializer.h"
+#include "catalog/persistence/subscription.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
@@ -33,17 +34,31 @@ Subscription::Subscription(ObjectId schema_id, ObjectId id,
 
 std::shared_ptr<Subscription> Subscription::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {
-  Config config;
-  basics::ReadTuple(src, config);
+  persistence::SubscriptionData data{};
+  basics::ReadTuple(src, data);
 
-  std::string name = config.slot_name;
-  // @todo schema_id, ids...
-  return std::make_shared<Subscription>(ctx.database_id, ctx.id, name,
-                                        std::move(config));
+  return std::make_shared<Subscription>(
+    ctx.database_id, ctx.id, data.slot_name,
+    Config{
+      .conninfo = std::move(data.conninfo),
+      .publications = std::move(data.publications),
+      .slot_name = data.slot_name,
+      .enabled = data.enabled,
+      .binary = data.binary,
+      .origin_name = data.origin_name,
+    });
 }
 
 void Subscription::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, _config);
+  persistence::SubscriptionData data{
+    .conninfo = _config.conninfo,
+    .publications = _config.publications,
+    .slot_name = _config.slot_name,
+    .enabled = _config.enabled,
+    .binary = _config.binary,
+    .origin_name = _config.origin_name,
+  };
+  basics::WriteTuple(sink, std::move(data));
 }
 
 std::shared_ptr<Object> Subscription::Clone() const {

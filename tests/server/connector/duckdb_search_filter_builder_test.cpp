@@ -644,10 +644,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
         // filter builder's named-analyzer resolver runs with a real
         // context (the resolver returns nullptr for unknown names,
         // surfacing the "tokenizer not found in catalog" error).
-        sdb::connector::SearchFilterOptions opts{.client_context =
-                                                   *_conn.context};
-        auto result =
-          sdb::connector::MakeSearchFilter(root, single, getter, opts);
+        auto result = sdb::connector::MakeSearchFilter(root, single, getter,
+                                                       *_conn.context);
         if (result.ok() && root.size() > before) {
           ++claimed;
         } else {

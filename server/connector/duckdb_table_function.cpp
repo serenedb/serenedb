@@ -609,9 +609,11 @@ std::vector<ProjectionEntry> BuildProjectionEntries(
     if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY) {
       continue;
     }
-    entries.push_back({.name = ProjectionDisplayName(bind, column_index, names),
-                       .from_index = ProjectionIsFromIndex(bind, column_index),
-                       .is_virtual = ProjectionIsVirtual(bind, column_index)});
+    entries.push_back({
+      .name = ProjectionDisplayName(bind, column_index, names),
+      .from_index = ProjectionIsFromIndex(bind, column_index),
+      .is_virtual = ProjectionIsVirtual(bind, column_index),
+    });
   }
   return entries;
 }

@@ -39,6 +39,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/types.hpp"
@@ -379,8 +380,9 @@ class BlockScoringTestCase : public IndexTestBase {
         by_term.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
       }
     }
-
-    return root;
+    irs::Filter::ptr f = std::move(root);
+    irs::Optimize(f);
+    return f;
   }
 };
 

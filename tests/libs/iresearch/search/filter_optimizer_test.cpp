@@ -441,19 +441,16 @@ TEST_P(FilterOptimizerTest, AndAllFoldRule) {
     ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
   }
 
-  // scored -> all-docs merged (2 + 3) into one, term kept
+  // scored -> all merged
   {
     irs::Filter::ptr root =
       MakeAnd(MakeTerm(kName, "A"), MakeAll(2.F), MakeAll(3.F));
     const sort::Boost scorer;
     Optimize(root, &scorer);
 
-    ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*root));
-    auto& and_root = As<irs::And>(*root);
-    ASSERT_EQ(2, and_root.size());
-    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), and_root[0].type());
-    ASSERT_EQ(irs::Type<irs::All>::id(), and_root[1].type());
-    ASSERT_EQ(5.F, As<irs::All>(and_root[1]).Boost());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+    auto& f = As<irs::ByTerm>(*root);
+    ASSERT_EQ(6.F, f.Boost());
     // doc "A" (1) scores term(1) + merged all-docs(5) == 6.
     CheckBoostScores(*root, ScoredDocs{{1, {6.F}}});
   }
@@ -473,8 +470,8 @@ TEST_P(FilterOptimizerTest, AndAllFoldRule) {
     irs::Filter::ptr root = MakeAnd(MakeTerm(kName, "A"), MakeAll(2.F));
     const sort::Boost scorer;
     Optimize(root, &scorer);
-    ASSERT_EQ(irs::Type<irs::And>::id(), TypeOf(*root));
-    ASSERT_EQ(2, As<irs::And>(*root).size());
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), TypeOf(*root));
+    ASSERT_EQ(3.F, As<irs::ByTerm>(*root).Boost());
   }
 }
 

@@ -21,6 +21,7 @@
 #include "pg/pg_types.h"
 
 #include <absl/base/internal/endian.h>
+#include <absl/container/flat_hash_map.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/numbers.h>
 #include <absl/time/civil_time.h>
@@ -29,7 +30,6 @@
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 
-#include "basics/containers/trivial_map.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/user_type.h"
@@ -385,10 +385,16 @@ std::string RegtypeOut(uint64_t oid) {
 }
 
 uint64_t RegtypeIn(std::string_view name) {
-  static constexpr containers::TrivialBiMap kTypeNameToOid = [](auto selector) {
+  static const absl::flat_hash_map<std::string_view, PgTypeOID> kTypeNameToOid = [] {
+    struct Builder {
+      absl::flat_hash_map<std::string_view, PgTypeOID> map;
+      Builder &Case(std::string_view name, PgTypeOID oid) {
+        map.emplace(name, oid);
+        return *this;
+      }
+    } builder;
     using enum PgTypeOID;
-    return selector()
-      .SDB_REGTYPE_WITH_ARRAY_IN("bool", kBool)
+    builder.SDB_REGTYPE_WITH_ARRAY_IN("bool", kBool)
       .SDB_REGTYPE_WITH_ARRAY_IN("boolean", kBool)
       .SDB_REGTYPE_WITH_ARRAY_IN("bytea", kBytea)
       .SDB_REGTYPE_WITH_ARRAY_IN("char", kChar)
@@ -512,9 +518,10 @@ uint64_t RegtypeIn(std::string_view name) {
       .SDB_REGTYPE_IN("pg_brin_bloom_summary", kPgBrinBloomSummary)
       .SDB_REGTYPE_IN("pg_brin_minmax_multi_summary", kPgBrinMinmaxMultiSummary)
       .SDB_REGTYPE_WITH_ARRAY_IN("variant", kVariant);
-  };
-  if (auto it = kTypeNameToOid.TryFind(name)) {
-    return static_cast<uint64_t>(*it);
+    return std::move(builder.map);
+  }();
+  if (auto it = kTypeNameToOid.find(name); it != kTypeNameToOid.end()) {
+    return static_cast<uint64_t>(it->second);
   }
   return kInvalidOid;
 }

@@ -32,7 +32,6 @@
 #include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/containers/trivial_map.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "catalog/function.h"

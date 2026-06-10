@@ -21,9 +21,10 @@
 #pragma once
 
 #include <cstdint>
+#include <iterator>
 #include <string_view>
 
-#include "basics/containers/trivial_map.h"
+#include <absl/strings/match.h>
 
 namespace sdb::network {
 
@@ -47,38 +48,40 @@ enum class HttpHeader : uint8_t {
   ETag,
 };
 
-inline constexpr containers::TrivialBiMap kHttpHeaderNames = [](auto selector) {
-  return selector()
-    .Case("host", HttpHeader::Host)
-    .Case("content-type", HttpHeader::ContentType)
-    .Case("content-length", HttpHeader::ContentLength)
-    .Case("connection", HttpHeader::Connection)
-    .Case("transfer-encoding", HttpHeader::TransferEncoding)
-    .Case("content-encoding", HttpHeader::ContentEncoding)
-    .Case("accept-encoding", HttpHeader::AcceptEncoding)
-    .Case("accept", HttpHeader::Accept)
-    .Case("expect", HttpHeader::Expect)
-    .Case("user-agent", HttpHeader::UserAgent)
-    .Case("authorization", HttpHeader::Authorization)
-    .Case("location", HttpHeader::Location)
-    .Case("date", HttpHeader::Date)
-    .Case("server", HttpHeader::Server)
-    .Case("cache-control", HttpHeader::CacheControl)
-    .Case("etag", HttpHeader::ETag);
+// Indexed by HttpHeader value (Unknown -> ""); single source of truth for both
+// directions -- HeaderName() indexes it, InternHeader() scans it. Order MUST match
+// the enum above.
+inline constexpr std::string_view kHttpHeaderName[] = {
+  "",                  // Unknown
+  "host",              // Host
+  "content-type",      // ContentType
+  "content-length",    // ContentLength
+  "connection",        // Connection
+  "transfer-encoding", // TransferEncoding
+  "content-encoding",  // ContentEncoding
+  "accept-encoding",   // AcceptEncoding
+  "accept",            // Accept
+  "expect",            // Expect
+  "user-agent",        // UserAgent
+  "authorization",     // Authorization
+  "location",          // Location
+  "date",              // Date
+  "server",            // Server
+  "cache-control",     // CacheControl
+  "etag",              // ETag
 };
 
 inline HttpHeader InternHeader(std::string_view name) noexcept {
-  if (const auto found = kHttpHeaderNames.TryFindICaseByFirst(name)) {
-    return *found;
+  for (std::size_t i = 1; i < std::size(kHttpHeaderName); ++i) {
+    if (absl::EqualsIgnoreCase(name, kHttpHeaderName[i])) {
+      return static_cast<HttpHeader>(i);
+    }
   }
   return HttpHeader::Unknown;
 }
 
 inline std::string_view HeaderName(HttpHeader header) noexcept {
-  if (const auto found = kHttpHeaderNames.TryFindBySecond(header)) {
-    return *found;
-  }
-  return {};
+  return kHttpHeaderName[static_cast<std::uint8_t>(header)];
 }
 
 }  // namespace sdb::network

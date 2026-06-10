@@ -270,9 +270,12 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   fs.RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
 
-  // Parse and cache system functions/views
-  // for serving from our attached catalog.
-  duckdb::Parser parser;
+  // Parse and cache system functions/views for serving from our attached catalog.
+  // Route through the database parser cache so the PEG matcher built here is the
+  // one reused by every connection -- a bare Parser uses a throwaway local cache.
+  duckdb::ParserOptions parser_options;
+  parser_options.parser_cache = &db.GetParserCache();
+  duckdb::Parser parser{parser_options};
   pg::InitSystemFunctions(parser);
   pg::InitSystemViews(parser);
 }

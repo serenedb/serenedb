@@ -38,6 +38,27 @@ if [[ $EUID -ne 0 ]]; then
 	exit 1
 fi
 
+# Forward PERF_* tuning vars through the inner sudo (it otherwise drops everything
+# but PATH/HOME). Built once, reused for the PG seeding and the main bench.
+fwd=()
+for v in $(compgen -e | grep -E '^PERF_'); do fwd+=("$v=${!v}"); done
+
+# Seed the real-PostgreSQL baseline (docker) BEFORE reserving the exclusive
+# partition: once the cores are an exclusive root partition the kernel denies them
+# to the container's cgroup, so a container pinned there can't schedule. Pin PG to
+# the same cores and cache it; the isolated run below reuses the cache. Only runs
+# when PG is requested and the cache is missing or a refresh is asked for.
+PG_CACHE="${ROOT}/scripts/perf/results/baselines/pg.tsv"
+if [[ "${PERF_PG:-0}" == 1 && ( ! -s "${PG_CACHE}" || "${PERF_REMEASURE_PG:-0}" == 1 ) ]]; then
+	echo "seeding postgres baseline (docker, outside the partition, pinned to ${CORES})"
+	# -H sets HOME to the run user's home so the docker client reads the user's
+	# ~/.docker/config.json, not root's (which it can't, hence the prior warning).
+	sudo -H -u "$RUN_USER" --preserve-env=PATH "${fwd[@]}" \
+		PERF_PG_ONLY=1 PERF_BENCH_CORES="${CORES}" \
+		bash "$ROOT/scripts/perf/bench_wire_old_vs_new.sh" ||
+		echo "postgres seeding failed; continuing without a pg column" >&2
+fi
+
 cleanup() {
 	echo $$ >/sys/fs/cgroup/cgroup.procs 2>/dev/null || true
 	if [[ -d "$CG" ]]; then
@@ -67,9 +88,12 @@ fi
 # perf) inherit it, so they all run only on the reserved cores.
 echo $$ >"$CG/cgroup.procs"
 echo "reserved cores ${CORES}; running bench as ${RUN_USER}"
-# Forward PERF_* tuning vars (e.g. PERF_WIRE_CPU_THREADS) through to the
-# unprivileged bench -- the inner sudo otherwise drops everything but PATH/HOME.
-fwd=()
-for v in $(compgen -e | grep -E '^PERF_'); do fwd+=("$v=${!v}"); done
-sudo -u "$RUN_USER" --preserve-env=PATH,HOME "${fwd[@]}" bash "$ROOT/scripts/perf/bench_wire_old_vs_new.sh"
+# PERF_PG_REUSE_ONLY=1: the postgres baseline was already measured OUTSIDE the
+# partition (seeded above); the main bench must NOT re-measure it here -- a
+# container inside the exclusive partition is denied the reserved cores and would
+# produce a bogus number. So always reuse the cache, even if PERF_REMEASURE_PG was
+# requested (the seeding already honored it).
+sudo -H -u "$RUN_USER" --preserve-env=PATH "${fwd[@]}" \
+	PERF_BENCH_CORES="${CORES}" PERF_PG_REUSE_ONLY=1 \
+	bash "$ROOT/scripts/perf/bench_wire_old_vs_new.sh"
 # trap cleanup releases the partition

@@ -28,12 +28,28 @@ add_bench(norm_gather)
 add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(filter_prepare)
+add_bench(parse_query)
+add_bench(literal_lookup)
+add_bench(ci_hash)
+add_bench(ci_lower)
+add_bench(ci_fold128)
+add_bench(ci_compare)
+target_include_directories(
+    serenedb-bench-micro-ci_hash
+    SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/lz4/lib)
 
 target_include_directories(
     serenedb-bench-micro-regexp_vs_wildcard
     SYSTEM
     PRIVATE $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
 )
+
+target_include_directories(
+    serenedb-bench-micro-literal_lookup
+    SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/frozen/include)
+# frozen's compile-time perfect-hash construction at N=1000 exceeds the default
+# constexpr step budget.
+target_compile_options(serenedb-bench-micro-literal_lookup PRIVATE -fconstexpr-steps=200000000)
 
 # vector distances
 add_executable(vector-distances-bench vector_distances.cpp)

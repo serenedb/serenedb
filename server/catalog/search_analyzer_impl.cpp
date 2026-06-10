@@ -29,20 +29,12 @@
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/norm.hpp>
 
-#include "basics/containers/trivial_map.h"
 #include "basics/serializer.h"
 #include "catalog/object.h"
 
+#include <absl/container/flat_hash_set.h>
+
 namespace sdb::search {
-namespace {
-
-constexpr containers::TrivialSet kGeoAnalyzers = [](auto selector) {
-  return selector()
-    .Case(irs::analysis::GeoJsonAnalyzer::type_name())
-    .Case(irs::analysis::GeoPointAnalyzer::type_name());
-};
-
-}  // namespace
 
 void Features::Visit(std::function<void(std::string_view)> visitor) const {
   if (HasFeatures(irs::IndexFeatures::Freq)) {
@@ -123,7 +115,11 @@ Result Features::Validate(std::string_view type) const {
 }
 
 bool IsGeoAnalyzer(std::string_view type) noexcept {
-  return kGeoAnalyzers.Contains(type);
+  static const absl::flat_hash_set<std::string_view> kGeoAnalyzers = {
+    irs::analysis::GeoJsonAnalyzer::type_name(),
+    irs::analysis::GeoPointAnalyzer::type_name(),
+  };
+  return kGeoAnalyzers.contains(type);
 }
 
 AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(StringStreamTag) {

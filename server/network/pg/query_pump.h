@@ -28,7 +28,7 @@
 #include <duckdb/parallel/task.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <yaclib/exe/executor.hpp>
-#include <yaclib/exe/submit.hpp>
+#include <yaclib/exe/job.hpp>
 
 #include "network/io_executor.h"
 
@@ -40,18 +40,29 @@ namespace sdb::network::pg {
 // The pump IS a duckdb::Task. The io coroutine (already hopped onto a DuckDB
 // worker) does `co_await pump.Drive(pending)`: the first task slice runs INLINE
 // on that worker, so a query that finishes immediately (the common prepared-OLTP
-// case) never leaves the thread -- no enqueue, no suspend. If the query is not
-// done, the pump enqueues itself and the rest of the query is driven by the
-// scheduler's native reschedule loop (ExecuteForever re-enqueues a
-// TASK_NOT_FINISHED task via its own token), so the per-slice churn stays inside
-// the worker pool instead of round-tripping a coroutine resume through the io
-// executor per slice. When the query reaches a terminal status the pump resumes
-// the io coroutine on `resume` and the coroutine reads the status from Result().
+// case) never leaves the thread -- no enqueue, no suspend.
+//
+// When the query is not done in one slice the pump does NOT busy-poll. It only
+// keeps running while ExecuteTask makes progress (RESULT_NOT_READY). The moment
+// it has no runnable task (NO_TASKS_AVAILABLE -- the worker pool is executing the
+// query) or is blocked (BLOCKED), it PARKS: it returns TASK_BLOCKED and suspends
+// until the executor wakes it. The executor fires our reschedule callback when
+// the query reaches a state the driver cares about -- a result chunk is ready
+// (streaming collector blocks), the query finishes, it errors, or a blocked task
+// unblocks. So instead of ~thousands of NO_TASKS reschedules per analytical query
+// the pump sleeps through execution and wakes a handful of times. (This relies on
+// the executor patch that stores on_reschedule on NO_TASKS and fires it on
+// completion / result-ready / error; see Executor::ExecuteTask / CompletePipeline
+// / AddToBeRescheduled / PushError.)
+//
+// Wakes arrive on arbitrary worker threads, so _run guards against the pump being
+// run concurrently with itself: a wake that lands while we are mid-Execute is
+// folded into a single re-run rather than a second concurrent Execute.
 //
 // `final` so the Task vtable call from ExecuteForever is the only indirection.
-// Held by value on the session (a session has one query in flight at a time), so
-// there is no per-query allocation; the queue gets a non-owning aliasing
-// shared_ptr (empty control block, zero refcount) and never deletes the pump.
+// Held by value on the session (one query in flight at a time), so there is no
+// per-query allocation; the queue gets a non-owning aliasing shared_ptr (empty
+// control block, zero refcount) and never deletes the pump.
 class QueryPump final : public duckdb::Task {
  public:
   QueryPump(duckdb::TaskScheduler& scheduler, IoExecutor& io_worker,
@@ -67,8 +78,15 @@ class QueryPump final : public duckdb::Task {
 
     bool await_ready() const noexcept { return false; }
 
-    bool await_suspend(std::coroutine_handle<> handle) noexcept {
-      return _pump.Start(_pending, handle);
+    // The yaclib coroutine promise IS a yaclib::Job, so we hand the pump the
+    // promise directly (like yaclib's own On awaiter) instead of a
+    // coroutine_handle: resuming is then _resume.Submit(job) -- no allocated
+    // wrapper job, no handle.resume() trampoline frame. The coroutine's executor
+    // is already *_resume (the dispatch hopped onto it before Drive), so we need
+    // not reset promise._executor.
+    template <typename Promise>
+    bool await_suspend(std::coroutine_handle<Promise> handle) noexcept {
+      return _pump.Start(_pending, handle.promise());
     }
 
     duckdb::PendingExecutionResult await_resume() const noexcept {
@@ -85,57 +103,92 @@ class QueryPump final : public duckdb::Task {
   }
 
  private:
-  enum State : uint8_t { kInit, kSuspended, kCompleted };
+  // Run-concurrency states. kQueued: in the scheduler queue (or about to be).
+  // kRunning: Execute is in flight. kRunningWoke: a wake landed during Execute.
+  // kParked: suspended, waiting for a wake to re-enqueue us.
+  enum Run : uint8_t { kParked, kQueued, kRunning, kRunningWoke };
+  // Suspend-handshake states for the awaiting coroutine.
+  enum Done : uint8_t { kInit, kSuspended, kCompleted };
 
   // Runs the first slice inline. Returns true if the caller must suspend (the
   // pump will resume it once the query terminates), false if the query already
   // terminated inline and the caller should continue without suspending.
-  bool Start(duckdb::PendingQueryResult& pending,
-             std::coroutine_handle<> handle) noexcept {
+  bool Start(duckdb::PendingQueryResult& pending, yaclib::Job& job) noexcept {
     _pending = &pending;
-    _handle = handle;
-    _state.store(kInit, std::memory_order_relaxed);
+    _job = &job;
+    _done.store(kInit, std::memory_order_relaxed);
+    _run.store(kRunning, std::memory_order_relaxed);
     const auto status = Step();
     if (duckdb::PendingQueryResult::IsResultReady(status)) {
       _result = status;
       return false;
     }
-    // Keep driving on the pool. NO_TASKS / NOT_READY: enqueue ourselves now.
-    // BLOCKED: the query executor stored our on_reschedule and re-enqueues us
-    // when it unblocks, so we must NOT also enqueue here.
-    if (status != duckdb::PendingExecutionResult::BLOCKED) {
+    if (status == duckdb::PendingExecutionResult::RESULT_NOT_READY) {
+      _run.store(kQueued, std::memory_order_release);
       Enqueue();
+    } else {
+      // NO_TASKS / BLOCKED: park unless a wake already raced in (kRunningWoke).
+      uint8_t expect = kRunning;
+      if (!_run.compare_exchange_strong(expect, kParked, std::memory_order_acq_rel)) {
+        _run.store(kQueued, std::memory_order_release);
+        Enqueue();
+      }
     }
-    // Publish the suspend; if the pump already completed (it ran to terminal on
-    // another worker before we got here) it left kCompleted -> resume in place.
-    return _state.exchange(kSuspended, std::memory_order_acq_rel) != kCompleted;
+    return _done.exchange(kSuspended, std::memory_order_acq_rel) != kCompleted;
   }
 
   duckdb::TaskExecutionResult Execute(duckdb::TaskExecutionMode) override {
+    _run.store(kRunning, std::memory_order_release);
     const auto status = Step();
-    switch (status) {
-      case duckdb::PendingExecutionResult::RESULT_NOT_READY:
-      case duckdb::PendingExecutionResult::NO_TASKS_AVAILABLE:
-        // Native reschedule: ExecuteForever re-enqueues us via task->token.
-        return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
-      case duckdb::PendingExecutionResult::BLOCKED:
-        // Descheduled; our on_reschedule re-enqueues us when the query unblocks.
-        return duckdb::TaskExecutionResult::TASK_BLOCKED;
-      default:
-        _result = status;
-        if (_state.exchange(kCompleted, std::memory_order_acq_rel) == kSuspended) {
-          yaclib::Submit(_resume, [handle = _handle] { handle.resume(); });
-        }
-        return duckdb::TaskExecutionResult::TASK_FINISHED;
+    if (duckdb::PendingQueryResult::IsResultReady(status)) {
+      _result = status;
+      if (_done.exchange(kCompleted, std::memory_order_acq_rel) == kSuspended) {
+        _resume.Submit(*_job);
+      }
+      return duckdb::TaskExecutionResult::TASK_FINISHED;
     }
+    if (status == duckdb::PendingExecutionResult::RESULT_NOT_READY) {
+      // Made progress; yield and run again via the scheduler.
+      _run.store(kQueued, std::memory_order_release);
+      return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
+    }
+    // NO_TASKS / BLOCKED: park. A wake during Step() set kRunningWoke instead.
+    uint8_t expect = kRunning;
+    if (_run.compare_exchange_strong(expect, kParked, std::memory_order_acq_rel)) {
+      return duckdb::TaskExecutionResult::TASK_BLOCKED;
+    }
+    _run.store(kQueued, std::memory_order_release);
+    return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
   }
 
   // The session owns the pump; we never store a self-ptr to be rescheduled from.
-  // On unblock, our on_reschedule enqueues a fresh aliasing ptr instead.
+  // RequestRun re-enqueues a fresh aliasing ptr instead.
   void Deschedule() override {}
 
+  // Reschedule callback handed to ExecuteTask. The executor fires it (on result-
+  // ready / completion / error / unblock) possibly while we are still running, so
+  // coalesce: enqueue only from kParked; a wake during kRunning is remembered so
+  // Execute re-runs instead of parking.
+  void RequestRun() {
+    uint8_t s = _run.load(std::memory_order_acquire);
+    for (;;) {
+      if (s == kParked) {
+        if (_run.compare_exchange_weak(s, kQueued, std::memory_order_acq_rel)) {
+          Enqueue();
+          return;
+        }
+      } else if (s == kRunning) {
+        if (_run.compare_exchange_weak(s, kRunningWoke, std::memory_order_acq_rel)) {
+          return;
+        }
+      } else {  // kQueued or kRunningWoke: already going to run
+        return;
+      }
+    }
+  }
+
   duckdb::PendingExecutionResult Step() {
-    return _pending->ExecuteTask([this] { Enqueue(); });
+    return _pending->ExecuteTask([this] { RequestRun(); });
   }
 
   void Enqueue() {
@@ -148,9 +201,10 @@ class QueryPump final : public duckdb::Task {
   IoExecutor& _io_worker;
   yaclib::IExecutor& _resume;
   duckdb::PendingQueryResult* _pending = nullptr;
-  std::coroutine_handle<> _handle{};
+  yaclib::Job* _job = nullptr;
   duckdb::PendingExecutionResult _result{};
-  std::atomic<uint8_t> _state{kInit};
+  std::atomic<uint8_t> _run{kParked};
+  std::atomic<uint8_t> _done{kInit};
 };
 
 }  // namespace sdb::network::pg

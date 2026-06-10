@@ -27,8 +27,9 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/containers/trivial_map.h"
 #include "basics/system-compiler.h"
+
+#include <absl/container/flat_hash_set.h>
 #include "catalog/database.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_sst_insert.h"
@@ -144,10 +145,8 @@ void SereneDBClientState::Register(
                                      const std::string& name) {
     // Internal knobs -- hidden from SHOW ALL / pg_settings / duckdb_settings().
     // Still settable/readable by name.
-    static constexpr containers::TrivialSet kHidden = [](auto selector) {
-      return selector().Case("sdb_faults").Case("debug_verification");
-    };
-    return !kHidden.Contains(name);
+    static const absl::flat_hash_set<std::string_view> kHidden = {"sdb_faults", "debug_verification"};
+    return !kHidden.contains(name);
   };
 
   client_ctx.isolation_level_validator =

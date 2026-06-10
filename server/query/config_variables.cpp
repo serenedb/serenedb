@@ -24,14 +24,15 @@
 #include <absl/strings/str_replace.h>
 
 #include <duckdb/common/assert.hpp>
+#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <iterator>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
-#include "basics/containers/trivial_map.h"
 #include "basics/debugging.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
@@ -528,20 +529,31 @@ constexpr std::pair<std::string_view,
     },
 };
 
-constexpr auto kVarIndex =
-  containers::MakeTrivialBiMapFirstToIndex<kVariableDescription>();
-constexpr auto kVarCanonicalIndex =
-  containers::MakeTrivialBiMapFirstToIndex<kVariableDescriptionCanonical>();
-
 }  // namespace
 
 std::optional<std::pair<std::string_view, VariableDescription>> GetDefault(
   std::string_view name) {
-  if (auto idx = kVarIndex.TryFindICaseByFirst(name)) {
-    return kVariableDescription[*idx];
+  static const duckdb::case_insensitive_map_view_t<std::size_t> var_index = [] {
+    duckdb::case_insensitive_map_view_t<std::size_t> m;
+    m.reserve(std::size(kVariableDescription));
+    for (std::size_t i = 0; i < std::size(kVariableDescription); ++i) {
+      m.emplace(kVariableDescription[i].first, i);
+    }
+    return m;
+  }();
+  static const duckdb::case_insensitive_map_view_t<std::size_t> var_canonical_index = [] {
+    duckdb::case_insensitive_map_view_t<std::size_t> m;
+    m.reserve(std::size(kVariableDescriptionCanonical));
+    for (std::size_t i = 0; i < std::size(kVariableDescriptionCanonical); ++i) {
+      m.emplace(kVariableDescriptionCanonical[i].first, i);
+    }
+    return m;
+  }();
+  if (auto it = var_index.find(name); it != var_index.end()) {
+    return kVariableDescription[it->second];
   }
-  if (auto idx = kVarCanonicalIndex.TryFindICaseByFirst(name)) {
-    return kVariableDescriptionCanonical[*idx].second;
+  if (auto it = var_canonical_index.find(name); it != var_canonical_index.end()) {
+    return kVariableDescriptionCanonical[it->second].second;
   }
   return std::nullopt;
 }

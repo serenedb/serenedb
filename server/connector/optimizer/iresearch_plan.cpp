@@ -991,21 +991,11 @@ bool TryClaimSearchFilter(
   };
 
   auto& scan = bind_data.scan_source->Cast<connector::SearchScan>();
-  std::shared_ptr<irs::Filter> stored;
-  irs::And* root_ptr;
-  if (scan.vector_scorer) {
-    auto proxy = std::make_shared<irs::ProxyFilter>();
-    root_ptr = &proxy->set_filter<irs::And>(irs::IResourceManager::gNoop).first;
-    stored = std::move(proxy);
-  } else {
-    auto and_filter = std::make_shared<irs::And>();
-    root_ptr = and_filter.get();
-    stored = std::move(and_filter);
-  }
+  auto root_and = std::make_unique<irs::And>();
 
   bool any_claimed = false;
   for (size_t i = 0; i < filters.size();) {
-    if (TryClaimIResearchConjunct(*root_ptr, filters[i], getter, expr_getter,
+    if (TryClaimIResearchConjunct(*root_and, filters[i], getter, expr_getter,
                                   options)) {
       any_claimed = true;
       std::swap(filters[i], filters.back());
@@ -1016,6 +1006,23 @@ bool TryClaimSearchFilter(
   }
   if (!any_claimed) {
     return false;
+  }
+
+  irs::Filter::ptr root = std::move(root_and);
+  std::unique_ptr<irs::Scorer> scorer;
+  if (!scan.vector_scorer &&
+      bind_data.entry_kind != connector::ScanEntryKind::BaseTable) {
+    scorer = catalog::MakeScorer({});
+  }
+  irs::Optimize(root, {.scorer = scorer.get()});
+
+  std::shared_ptr<irs::Filter> stored;
+  if (scan.vector_scorer) {
+    auto proxy = std::make_shared<irs::ProxyFilter>();
+    proxy->set_filter(irs::IResourceManager::gNoop, std::move(root));
+    stored = std::move(proxy);
+  } else {
+    stored = std::move(root);
   }
 
   scan.stored_filter = std::move(stored);

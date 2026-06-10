@@ -418,8 +418,8 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
   } else if (type == Type<ByNestedFilter>::id()) {
     StringifyNested(&out, downCast<const ByNestedFilter>(filter), ft);
   } else if (type == Type<ByColumnExistence>::id()) {
-    StringifyColumnExistence(&out,
-                             downCast<const ByColumnExistence>(filter), ft);
+    StringifyColumnExistence(&out, downCast<const ByColumnExistence>(filter),
+                             ft);
   } else if (type == Type<AutomatonFilter>::id()) {
     StringifyAutomaton(&out, downCast<const AutomatonFilter>(filter), ft);
   } else if (type == Type<ByWildcard>::id()) {

@@ -7,11 +7,13 @@ hash-threshold 100
 # fields) and builds the vector graph together; ANN search then pulls
 # the variant back from the columnstore overlay.
 
-# Force variant shredding so the shredded write/read path is exercised
-# even for this tiny dataset (default gate is 1/4 of a row group).
-statement ok
-SET variant_minimum_shredding_size = 0;
-
+# variant_minimum_shredding_size is GLOBAL_ONLY -- a SET here would
+# leak to concurrently running test files (show_all.test races on the
+# value). Instead the segment carries >= 30000 rows (the default gate)
+# so shredding engages on its own; the row volume is why this file is
+# .test_slow. The 4 sentinel rows sit near the probe points; the 40000
+# filler rows cluster far away ([200..250, 200, 200]) so they never
+# enter any top-k below.
 
 statement ok
 CREATE TABLE variant_ann (
@@ -35,7 +37,22 @@ INSERT INTO variant_ann VALUES
 
 
 statement ok
+INSERT INTO variant_ann
+SELECT i + 100,
+       {'emb': [200 + (i % 50), 200, 200],
+        'label': 'f' || (i % 100)::VARCHAR}::VARIANT
+FROM range(40000) t(i)
+
+
+statement ok
 VACUUM (REFRESH_TABLE) variant_ann
+
+
+query
+SELECT COUNT(*) FROM variant_ann_idx;
+----
+count_star()
+40004
 
 
 # Nearest to [1,0,0] is pk=1; the whole variant (embedding + label)
@@ -68,6 +85,3 @@ SELECT pk, meta FROM variant_ann_idx
 ----
 pk	meta
 4	{"emb":[10,10,10],"label":"four"}
-
-statement ok
-SET variant_minimum_shredding_size TO DEFAULT;

@@ -713,6 +713,9 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   duckdb::OperatorSinkCombineInput& input) const {
   if (auto* lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state)) {
     lstate->writer.reset();
+    if (lstate->search_trx) {
+      lstate->search_trx->Commit();
+    }
     lstate->search_trx.reset();
   }
   return duckdb::SinkCombineResultType::FINISHED;

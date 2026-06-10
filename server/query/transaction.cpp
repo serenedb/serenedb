@@ -26,7 +26,7 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
-#include "storage_engine/engine_feature.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::query {
@@ -245,9 +245,7 @@ void Transaction::RegisterSearchFlushes() noexcept {
 void Transaction::CommitSearchTransactions(uint64_t post_ingest_seq) noexcept {
   for (auto& [id, trx] : _search_transactions) {
     const auto queries = trx->GetQueries();
-    if (!trx->Commit(post_ingest_seq + queries)) {
-      trx->Abort();
-    }
+    trx->Commit(post_ingest_seq + queries);
   }
 }
 

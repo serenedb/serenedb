@@ -924,6 +924,7 @@ void IndexWriter::SegmentContext::Flush() {
   if (writer_meta.meta.live_docs_count == 0) {
     return;
   }
+  SDB_ASSERT(!writer_meta.meta.files.empty());
   const auto docs_context = writer->docs_context();
   SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
@@ -1952,11 +1953,10 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   auto& next_cached = ctx->next->cached;
 
   SDB_ASSERT(pending_meta.segments.size() == readers.size());
-  if (info.reopen_columnstore) {
+  if (info.reopen_reader) {
     auto it = pending_meta.segments.begin();
     for (auto& reader : readers) {
-      auto impl =
-        reader.GetImpl()->ReopenColumnStore(dir, it->meta, reader_options);
+      auto impl = reader.GetImpl()->ReopenReader(dir, it->meta, reader_options);
       reader = SegmentReader{std::move(impl)};
       ++it;
     }
@@ -2107,7 +2107,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   // only flush a new index version upon a new index or a metadata change
   if (!modified) {
     SDB_ASSERT(readers.size() == committed_reader_size);
-    if (info.reopen_columnstore) {
+    if (info.reopen_reader) {
       auto new_reader = std::make_shared<const DirectoryReaderImpl>(
         committed_reader.Dir(), committed_reader.Codec(),
         committed_reader.Options(), DirectoryMeta{committed_reader.Meta()},

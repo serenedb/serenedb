@@ -285,17 +285,17 @@ void ReadIResearchSegments(Lstate& l, Gstate& g, const View& view,
       absl::Overload{
         [](std::monostate) {},
         [&](auto& pk) {
-          const auto [cs_reader, pk_col] = SegmentPkColumn(*g.reader, seg_id);
+          const auto [col_reader, pk_col] = SegmentPkColumn(*g.reader, seg_id);
           SDB_ASSERT(pk_col);
           if (!l.pk_lookup.seg_pk_vec) {
             l.pk_lookup.seg_pk_vec = std::make_unique<duckdb::Vector>(
               duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE);
           }
           if (!l.pk_lookup.fetcher) {
-            l.pk_lookup.fetcher =
-              std::make_unique<SegmentPkSequentialFetcher>(*cs_reader, *pk_col);
+            l.pk_lookup.fetcher = std::make_unique<SegmentPkSequentialFetcher>(
+              *col_reader, *pk_col);
           } else if (l.pk_lookup.last_seg_idx != seg_id) {
-            l.pk_lookup.fetcher->Reset(*cs_reader, *pk_col);
+            l.pk_lookup.fetcher->Reset(*col_reader, *pk_col);
           }
           l.pk_lookup.last_seg_idx = seg_id;
           l.pk_lookup.fetcher->Fetch(slice, *l.pk_lookup.seg_pk_vec);

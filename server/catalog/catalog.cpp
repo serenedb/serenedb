@@ -64,7 +64,6 @@
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
 #include "search/search_table_shard.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/secondary_index_shard.h"
 #include "storage_engine/table_shard.h"
 
@@ -668,11 +667,6 @@ CatalogFeature::CatalogFeature() { gInstance = this; }
 CatalogFeature::~CatalogFeature() { gInstance = nullptr; }
 
 void CatalogFeature::start() {
-  // NOTE: stop() is intentionally empty in the header. _local / _global
-  // must remain valid past every feature's stop() because
-  // EngineFeature::stop() drains the rocksdb background thread, which
-  // calls SyncStats -> GetCatalog(). The CatalogFeature dtor releases
-  // the shared_ptrs once all features are torn down.
   auto catalog = std::make_shared<LocalCatalog>();
   _global = catalog;
   _local = std::move(catalog);
@@ -681,6 +675,11 @@ void CatalogFeature::start() {
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
+}
+
+void CatalogFeature::stop() {
+  _local.reset();
+  _global.reset();
 }
 
 Result CatalogFeature::Open() {

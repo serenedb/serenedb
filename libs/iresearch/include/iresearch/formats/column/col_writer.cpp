@@ -126,7 +126,6 @@ struct HnswWriterEntry {
 
 struct ColWriter::Impl {
   Directory* dir;
-  std::string segment_name;
   std::string filename;
   duckdb::DatabaseInstance* db;
   const ColumnOptionsProvider* column_options;
@@ -142,7 +141,6 @@ struct ColWriter::Impl {
   sdb::containers::FlatHashMap<field_id, NormColumnWriter*> norm_by_id;
   std::vector<std::unique_ptr<HnswWriterEntry>> hnsw_writers;
   sdb::containers::FlatHashMap<field_id, HnswWriterEntry*> hnsw_by_id;
-  bool committed = false;
 };
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
@@ -151,22 +149,32 @@ ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
                      const NormColumnOptionsProvider* norm_column_options)
   : _impl{std::make_unique<Impl>()} {
   _impl->dir = &dir;
-  _impl->segment_name = std::string{segment_name};
   _impl->db = &db;
   _impl->column_options = column_options;
   _impl->norm_column_options = norm_column_options;
   _impl->filename = absl::StrCat(segment_name, ".", kColFormatExt);
-  _impl->out = dir.create(_impl->filename);
+}
+
+void ColWriter::EnsureOut() {
+  if (_impl->out) {
+    return;
+  }
+  _impl->out = _impl->dir->create(_impl->filename);
   if (!_impl->out) {
     throw IoError{
-      absl::StrCat("failed to create columnstore file: ", _impl->filename)};
+      absl::StrCat("failed to create .col writer file: ", _impl->filename)};
   }
   format_utils::WriteHeader(*_impl->out, kColFormatName, kColFormatVersion);
-  _impl->write_ctx = std::make_unique<WriteContext>(db, *_impl->out);
+  _impl->write_ctx = std::make_unique<WriteContext>(*_impl->db, *_impl->out);
+}
+
+bool ColWriter::Empty() const noexcept {
+  return _impl->column_writers.empty() && _impl->norm_writers.empty() &&
+         _impl->hnsw_writers.empty();
 }
 
 ColWriter::~ColWriter() {
-  if (_impl && !_impl->committed) {
+  if (_impl && _impl->out) {
     Rollback();
   }
 }
@@ -205,6 +213,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                duckdb::CompressionTypeToString(existing.Compression()), ")");
     return existing;
   }
+  EnsureOut();
   auto entry = std::make_unique<FooterColumnEntry>();
   entry->id = id;
   entry->root.type = type;
@@ -267,13 +276,17 @@ NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
   if (auto it = _impl->norm_by_id.find(id); it != _impl->norm_by_id.end()) {
     return *it->second;
   }
+  EnsureOut();
   auto cw = std::make_unique<NormColumnWriter>(id, row_group_size, *_impl->out);
   auto& back = *_impl->norm_writers.emplace_back(std::move(cw));
   _impl->norm_by_id.emplace(id, &back);
   return back;
 }
 
-std::string ColWriter::Commit(uint64_t target_row) {
+void ColWriter::Commit(uint64_t target_row) {
+  if (Empty() && !_impl->out) {
+    return;
+  }
   for (auto& cw : _impl->column_writers) {
     cw->Finalize();
   }
@@ -288,7 +301,7 @@ std::string ColWriter::Commit(uint64_t target_row) {
     // TODO(mbkkt) measure seq vs rand for hnsw construction
     auto in = _impl->dir->open(_impl->filename, IOAdvice::RANDOM);
     if (!in) {
-      throw IoError{absl::StrCat("failed to open columnstore for HNSW build: ",
+      throw IoError{absl::StrCat("failed to open .col writer for HNSW build: ",
                                  _impl->filename)};
     }
     ReadContext hnsw_ctx{*_impl->db, std::move(in)};
@@ -346,8 +359,6 @@ std::string ColWriter::Commit(uint64_t target_row) {
   _impl->out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_impl->out);
   _impl->out.reset();
-  _impl->committed = true;
-  return _impl->filename;
 }
 
 std::vector<BuiltHnsw> ColWriter::TakeBuiltHnsw() {
@@ -371,9 +382,6 @@ std::vector<BuiltHnsw> ColWriter::TakeBuiltHnsw() {
   return out;
 }
 
-void ColWriter::Rollback() noexcept {
-  _impl->out.reset();
-  _impl->committed = true;
-}
+void ColWriter::Rollback() noexcept { _impl->out.reset(); }
 
 }  // namespace irs

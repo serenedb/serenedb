@@ -65,13 +65,13 @@ inline void CaptureNameLikeFields(irs::IndexWriter::Document& d,
                                   const tests::Particle& indexed) {
   if (const auto* name =
         dynamic_cast<const tests::StringField*>(indexed.get("name"))) {
-    if (auto* cs = d.Columnstore(); cs != nullptr) {
+    if (auto* cs = d.GetColWriter(); cs != nullptr) {
       irs::tests::StoreFieldAt(*cs, kNameColumnId, d.DocId(), *name);
     }
   }
   if (const auto* name_upper =
         dynamic_cast<const tests::StringField*>(indexed.get("NAME"))) {
-    if (auto* cs = d.Columnstore(); cs != nullptr) {
+    if (auto* cs = d.GetColWriter(); cs != nullptr) {
       irs::tests::StoreFieldAt(*cs, kNameUpper, d.DocId(), *name_upper);
     }
   }
@@ -97,15 +97,18 @@ inline bool ProbeWritable(const tests::Particle& indexed) {
 inline bool InsertWithName(irs::IndexWriter& writer,
                            const tests::Document& src) {
   auto ctx = writer.GetBatch();
-  auto d = ctx.Insert();
-  if (!d.Insert(src.indexed.begin(), src.indexed.end())) {
-    return false;
+  {
+    auto d = ctx.Insert();
+    if (!d.Insert(src.indexed.begin(), src.indexed.end())) {
+      return false;
+    }
+    if (!ProbeWritable(src.indexed)) {
+      d.Writer().rollback();
+      return false;
+    }
+    CaptureNameLikeFields(d, src.indexed);
   }
-  if (!ProbeWritable(src.indexed)) {
-    d.Writer().rollback();
-    return false;
-  }
-  CaptureNameLikeFields(d, src.indexed);
+  ctx.Commit();
   return true;
 }
 
@@ -116,15 +119,18 @@ template<typename Filter>
 bool UpdateWithName(irs::IndexWriter& writer, Filter&& filter,
                     const tests::Document& src) {
   auto ctx = writer.GetBatch();
-  auto d = ctx.Replace(std::forward<Filter>(filter));
-  if (!d.Insert(src.indexed.begin(), src.indexed.end())) {
-    return false;
+  {
+    auto d = ctx.Replace(std::forward<Filter>(filter));
+    if (!d.Insert(src.indexed.begin(), src.indexed.end())) {
+      return false;
+    }
+    if (!ProbeWritable(src.indexed)) {
+      d.Writer().rollback();
+      return false;
+    }
+    CaptureNameLikeFields(d, src.indexed);
   }
-  if (!ProbeWritable(src.indexed)) {
-    d.Writer().rollback();
-    return false;
-  }
-  CaptureNameLikeFields(d, src.indexed);
+  ctx.Commit();
   return true;
 }
 
@@ -157,6 +163,7 @@ bool InsertBatchWithName(irs::IndexWriter& writer, DocGenerator& gen,
       d.Writer().remove(current_last_doc_id - batch_size + inserted_docs++);
     }
   } while (src != nullptr);
+  ctx.Commit();
   return true;
 }
 
@@ -339,13 +346,16 @@ void IndexTestBase::write_segment(irs::IndexWriter& writer,
     segment.insert(*src);
 
     auto ctx = writer.GetBatch();
-    auto doc = ctx.Insert();
-    ASSERT_TRUE(doc.Insert(src->indexed.begin(), src->indexed.end()));
-    if (store) {
-      store(doc, *src);
-    } else {
-      CaptureNameLikeFields(doc, src->indexed);
+    {
+      auto doc = ctx.Insert();
+      ASSERT_TRUE(doc.Insert(src->indexed.begin(), src->indexed.end()));
+      if (store) {
+        store(doc, *src);
+      } else {
+        CaptureNameLikeFields(doc, src->indexed);
+      }
     }
+    ctx.Commit();
   }
 
   if (writer.Comparator()) {
@@ -491,7 +501,7 @@ class IndexTestCase : public tests::IndexTestBase {
                                            irs::tests::DefaultReaderOptions());
 
         ASSERT_TRUE(InsertWithName(*writer, *doc6));
-        writer->GetBatch().Remove(std::move(query_doc4));
+        tests::Remove(*writer, std::move(query_doc4));
         ASSERT_TRUE(writer->Import(irs::DirectoryReader(
           data_dir, nullptr, irs::tests::DefaultReaderOptions())));
       }
@@ -1526,6 +1536,7 @@ void IndexTestCase::DocsBitUnion(irs::IndexFeatures features,
 
       field.value("C");
       ASSERT_TRUE(docs.Insert().Insert(field));
+      docs.Commit();
     }
 
     writer->RefreshCommit();
@@ -1805,7 +1816,7 @@ TEST_P(IndexTestCase, writer_bulk_insert) {
   // and the "drop the doc when its serializer Write() returns false"
   // semantics of the inline STORE path. Action templating is gone --
   // `Document::Insert` is inverted-indexing-only -- and STORE is now
-  // handled out-of-band via `Document::Columnstore()` + `StoreFieldAt`,
+  // handled out-of-band via `Document::GetColWriter()` + `StoreFieldAt`,
   // which has no drop-on-failure hook. The exact mixed-INDEX/STORE
   // validity matrix the test asserts no longer maps to a single API call.
   GTEST_SKIP() << "Legacy Insert<Action::INDEX|STORE> drop-on-fail "
@@ -2175,7 +2186,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_mt) {
     std::thread thread2([&writer, &query_doc1, &first_doc]() {
       while (!first_doc)
         ;  // busy-wait until first document loaded
-      writer->GetBatch().Remove(std::move(query_doc1));
+      tests::Remove(*writer, std::move(query_doc1));
     });
 
     thread0.join();
@@ -2264,7 +2275,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
     AssertSnapshotEquality(*writer);
 
     // remove docs
-    writer->GetBatch().Remove(*(query_doc1_doc2.get()));
+    tests::Remove(*writer, *(query_doc1_doc2.get()));
 
     // re-add docs into a single segment
     {
@@ -2296,6 +2307,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
 
       // FIXME TODO add once segment_context will not block flush_all()
       // ASSERT_TRUE(stop);
+      ctx.Commit();
     }
 
     thread.join();
@@ -2328,7 +2340,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
     AssertSnapshotEquality(*writer);
 
     // remove docs
-    writer->GetBatch().Remove(*(query_doc1_doc2.get()));
+    tests::Remove(*writer, *(query_doc1_doc2.get()));
 
     // re-add docs into a single segment
     {
@@ -2344,6 +2356,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
         doc.Insert(doc2->indexed.begin(), doc2->indexed.end());
         CaptureNameLikeFields(doc, doc2->indexed);
       }
+      ctx.Commit();
     }
 
     std::thread thread([&]() -> void {
@@ -2411,9 +2424,9 @@ TEST_P(IndexTestCase, document_context) {
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove<false>(*query_doc1);
+    tests::Remove<false>(*writer, *query_doc1);
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    writer->GetBatch().Remove(*query_doc3);
+    tests::Remove(*writer, *query_doc3);
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     auto reader =
@@ -2460,7 +2473,7 @@ TEST_P(IndexTestCase, document_context) {
                 field_cond_lock,
                 std::chrono::milliseconds(10000)));  // verify commit() finishes
     {
-      irs::IndexWriter::Transaction(std::move(ctx));
+      ctx.Commit();
     }  // release ctx before join() in case of test failure
     thread1.join();
 
@@ -2526,7 +2539,7 @@ TEST_P(IndexTestCase, document_context) {
     //  FIXME TODO add once segment_context will not block flush_all()
     // ASSERT_TRUE(commit);
     {
-      irs::IndexWriter::Transaction(std::move(ctx));
+      ctx.Commit();
     }  // release ctx before join() in case of test failure
     thread1.join();
     // FIXME TODO add once segment_context will not block flush_all()
@@ -2600,7 +2613,7 @@ TEST_P(IndexTestCase, document_context) {
     //  flush_all()
     // ASSERT_TRUE(commit);
     {
-      irs::IndexWriter::Transaction(std::move(ctx));
+      ctx.Commit();
     }  // release ctx before join() in case of test failure
     thread1.join();
     // FIXME TODO add once segment_context will not block
@@ -2639,6 +2652,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc1->indexed.begin(), doc1->indexed.end()));
         CaptureNameLikeFields(doc, doc1->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -2720,6 +2734,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -2770,6 +2785,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -2823,6 +2839,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -2920,6 +2937,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -2977,6 +2995,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3140,6 +3159,7 @@ TEST_P(IndexTestCase, document_context) {
         CaptureNameLikeFields(doc, doc4->indexed);
       }
       // implicit commit and flush
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3279,6 +3299,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3342,6 +3363,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3502,6 +3524,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3921,7 +3944,7 @@ TEST_P(IndexTestCase, doc_removal) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(*(query_doc1.get()));
+    tests::Remove(*writer, *(query_doc1.get()));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -3951,7 +3974,7 @@ TEST_P(IndexTestCase, doc_removal) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -3981,8 +4004,7 @@ TEST_P(IndexTestCase, doc_removal) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(
-      std::shared_ptr<irs::Filter>(std::move(query_doc1)));
+    tests::Remove(*writer, std::shared_ptr<irs::Filter>(std::move(query_doc1)));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4011,7 +4033,7 @@ TEST_P(IndexTestCase, doc_removal) {
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    writer->GetBatch().Remove(std::move(query_doc2));  // not present yet
+    tests::Remove(*writer, std::move(query_doc2));  // not present yet
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -4044,7 +4066,7 @@ TEST_P(IndexTestCase, doc_removal) {
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -4077,10 +4099,10 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(std::move(query_doc3));
+    tests::Remove(*writer, std::move(query_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // document mask with 'doc3' created
-    writer->GetBatch().Remove(std::move(query_doc2));
+    tests::Remove(*writer, std::move(query_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(
       *writer);  // new document mask with 'doc2','doc3' created
@@ -4114,7 +4136,7 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc2));
+    tests::Remove(*writer, std::move(query_doc1_doc2));
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -4148,7 +4170,7 @@ TEST_P(IndexTestCase, doc_removal) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(std::move(query_doc2));
+    tests::Remove(*writer, std::move(query_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4203,7 +4225,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
-    writer->GetBatch().Remove(std::move(query_doc1_doc3));
+    tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4261,18 +4283,18 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));  // B
     ASSERT_TRUE(InsertWithName(*writer, *doc3));  // C
     ASSERT_TRUE(InsertWithName(*writer, *doc4));  // D
-    writer->GetBatch().Remove(std::move(query_doc4));
+    tests::Remove(*writer, std::move(query_doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc5));  // E
     ASSERT_TRUE(InsertWithName(*writer, *doc6));  // F
     ASSERT_TRUE(InsertWithName(*writer, *doc7));  // G
-    writer->GetBatch().Remove(std::move(query_doc3_doc7));
+    tests::Remove(*writer, std::move(query_doc3_doc7));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc8));  // H
     ASSERT_TRUE(InsertWithName(*writer, *doc9));  // I
-    writer->GetBatch().Remove(std::move(query_doc2_doc6_doc9));
+    tests::Remove(*writer, std::move(query_doc2_doc6_doc9));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4668,7 +4690,7 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
-    writer->GetBatch().Remove(*(query_doc2));  // remove no longer existent
+    tests::Remove(*writer, *(query_doc2));  // remove no longer existent
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4706,7 +4728,7 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(*(query_doc2));  // remove no longer existent
+    tests::Remove(*writer, *(query_doc2));  // remove no longer existent
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4757,7 +4779,7 @@ TEST_P(IndexTestCase, doc_update) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(*(query_doc2));
+    tests::Remove(*writer, *(query_doc2));
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2),
                                *doc3));  // update no longer existent
     writer->RefreshCommit();
@@ -4791,7 +4813,7 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(*(query_doc2));
+    tests::Remove(*writer, *(query_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2),
@@ -4827,7 +4849,7 @@ TEST_P(IndexTestCase, doc_update) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(*(query_doc2));
+    tests::Remove(*writer, *(query_doc2));
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc3), *doc4));
     writer->RefreshCommit();
@@ -4863,7 +4885,7 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(*(query_doc2));
+    tests::Remove(*writer, *(query_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
@@ -5080,7 +5102,7 @@ TEST_P(IndexTestCase, import_reader) {
 
     ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
     data_writer->RefreshCommit();
-    data_writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*data_writer, std::move(query_doc1));
     data_writer->RefreshCommit();
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // ensure the writer has an initial
@@ -5160,7 +5182,7 @@ TEST_P(IndexTestCase, import_reader) {
 
     ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
     ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
-    data_writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*data_writer, std::move(query_doc1));
     data_writer->RefreshCommit();
     ASSERT_TRUE(writer->Import(irs::DirectoryReader(
       data_dir, codec(), irs::tests::DefaultReaderOptions())));
@@ -5247,7 +5269,7 @@ TEST_P(IndexTestCase, import_reader) {
     data_writer->RefreshCommit();
     ASSERT_TRUE(InsertWithName(*data_writer, *doc3));
     ASSERT_TRUE(InsertWithName(*data_writer, *doc4));
-    data_writer->GetBatch().Remove(std::move(query_doc2_doc3));
+    tests::Remove(*data_writer, std::move(query_doc2_doc3));
     data_writer->RefreshCommit();
     ASSERT_TRUE(writer->Import(irs::DirectoryReader(
       data_dir, codec(), irs::tests::DefaultReaderOptions())));
@@ -5290,7 +5312,7 @@ TEST_P(IndexTestCase, import_reader) {
     data_writer->RefreshCommit();
     ASSERT_TRUE(InsertWithName(*data_writer, *doc3));
     ASSERT_TRUE(InsertWithName(*data_writer, *doc4));
-    data_writer->GetBatch().Remove(std::move(query_doc4));
+    tests::Remove(*data_writer, std::move(query_doc4));
     data_writer->RefreshCommit();
     ASSERT_TRUE(writer->Import(irs::DirectoryReader(
       data_dir, codec(), irs::tests::DefaultReaderOptions())));
@@ -5335,8 +5357,8 @@ TEST_P(IndexTestCase, import_reader) {
     ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
     data_writer->RefreshCommit();
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(
-      std::move(query_doc2));  // should not match any documents
+    tests::Remove(*writer,
+                  std::move(query_doc2));  // should not match any documents
     ASSERT_TRUE(writer->Import(irs::DirectoryReader(
       data_dir, codec(), irs::tests::DefaultReaderOptions())));
     writer->RefreshCommit();
@@ -5446,7 +5468,7 @@ TEST_P(IndexTestCase, refresh_reader) {
       open_writer(irs::kOmAppend, irs::tests::DefaultWriterOptions());
     auto query_doc2 = MakeByTerm(kNameFieldId, "B");
 
-    writer->GetBatch().Remove(std::move(query_doc2));
+    tests::Remove(*writer, std::move(query_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
@@ -5568,7 +5590,7 @@ TEST_P(IndexTestCase, refresh_reader) {
       open_writer(irs::kOmAppend, irs::tests::DefaultWriterOptions());
     auto query_doc1 = MakeByTerm(kNameFieldId, "A");
 
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
@@ -6520,13 +6542,12 @@ TEST_P(IndexTestCase, compact_single_segment) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_EQ(
-      3,
-      irs::DirectoryCleaner::clean(
-        dir()));  // segments_1 + stale segment meta + unused column store
+      2,
+      irs::DirectoryCleaner::clean(dir()));  // segments_1 + stale segment meta
     ASSERT_EQ(1, irs::DirectoryReader(this->dir(), codec(),
                                       irs::tests::DefaultReaderOptions())
                    .size());
@@ -6833,7 +6854,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // add several segments in background
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);                  // commit transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));  // segments_2
@@ -6993,11 +7014,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
 
     // remove doc1 in background
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
-    // unused column store
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));
+    // No unused column store: a remove-only batch no longer creates a `.col`.
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
 
     dir.intermediate_commits_lock.unlock();  // finish compaction
     compaction_thread.join();  // wait for the compaction to complete
@@ -7137,11 +7158,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
 
     // remove doc1 in background
-    writer->GetBatch().Remove(*query_doc1_doc4);
+    tests::Remove(*writer, *query_doc1_doc4);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
-    //  unused column store
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));
+    // No unused column store: a remove-only batch no longer creates a `.col`.
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
 
     dir.intermediate_commits_lock.unlock();  // finish compaction
     compaction_thread.join();  // wait for the compaction to complete
@@ -8333,7 +8354,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8364,7 +8385,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // writer still holds a reference to segments_2
     // because it's under compaction
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // unused column store
+    // No unused column store: a remove-only batch no longer creates a `.col`.
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8470,7 +8492,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    writer->GetBatch().Remove(*query_doc1_doc4);
+    tests::Remove(*writer, *query_doc1_doc4);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8498,7 +8520,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     writer->RefreshCommit();
     // commit transaction (will commit removal)
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // unused column store
+    // No unused column store: a remove-only batch no longer creates a `.col`.
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8606,7 +8629,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8634,11 +8657,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_FALSE(writer->Compact(
       irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
 
-    writer->GetBatch().Remove(*query_doc4);
+    tests::Remove(*writer, *query_doc4);
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge + delete
-    ASSERT_EQ(count + 6, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8720,8 +8743,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // something
     auto query_doc3 = MakeByTerm(kNameFieldId, "C");
     auto query_doc5 = MakeByTerm(kNameFieldId, "E");
-    writer->GetBatch().Remove(*query_doc3);
-    writer->GetBatch().Remove(*query_doc5);
+    tests::Remove(*writer, *query_doc3);
+    tests::Remove(*writer, *query_doc5);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -8771,7 +8794,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8846,7 +8869,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8871,7 +8894,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
         writer->RefreshCommit();
         AssertSnapshotEquality(*writer);
         // new transaction with passed 1st phase
-        writer->GetBatch().Remove(*query_doc4);
+        tests::Remove(*writer, *query_doc4);
         writer->RefreshBegin();
         auto sub_policy =
           irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
@@ -8915,7 +8938,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
 
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     // this compaction will be postponed
     ASSERT_TRUE(writer->Compact(
@@ -8926,14 +8949,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     writer->RefreshAbort();
 
-    // leftovers cleanup
-    ASSERT_EQ(2, irs::DirectoryCleaner::clean(dir()));
+    // leftovers cleanup (aborted compaction segment no longer emits a `.col`)
+    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
 
     // still pending
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     // make next commit
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -8993,7 +9016,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    writer->GetBatch().Remove(*query_doc1_doc4);
+    tests::Remove(*writer, *query_doc1_doc4);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -9022,7 +9045,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     writer->RefreshCommit();
     // commit transaction (will commit removal)
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  //  unused column store
+    // No unused column store: a remove-only batch no longer creates a `.col`.
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -9188,15 +9212,15 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    writer->GetBatch().Remove(*query_doc1_doc4);
+    tests::Remove(*writer, *query_doc1_doc4);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge + removal
 
     // +1 for segments,
     // +1 for segment 1 meta,
-    // +1 for segment 2 meta + unused column store,
+    // +1 for segment 2 meta,
     // +1 for segments_2
-    ASSERT_EQ(count + 5, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -9369,7 +9393,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    writer->GetBatch().Remove(*query_doc3_doc4);
+    tests::Remove(*writer, *query_doc3_doc4);
 
     // commit pending merge + removal
     // pending compaction will fail (because segment 2 will have no live
@@ -9381,8 +9405,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // +2 for segments_2 + unused column store, +1 for segments_2
-    ASSERT_EQ(num_files_compaction_segment + num_files_segment_2 + 2 + 1,
+    // +1 for segments_2, +1 for segments_2
+    ASSERT_EQ(num_files_compaction_segment + num_files_segment_2 + 1 + 1,
               irs::DirectoryCleaner::clean(dir()));
 
     // validate structure (doesn't take removals into account)
@@ -9655,7 +9679,7 @@ TEST_P(IndexTestCase, segment_compact) {
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9673,7 +9697,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9694,7 +9718,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(std::move(query_doc1_doc2));
+    tests::Remove(*writer, std::move(query_doc1_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9739,7 +9763,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(std::move(query_doc1_doc2));
+    tests::Remove(*writer, std::move(query_doc1_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -9785,7 +9809,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc2));
+    tests::Remove(*writer, std::move(query_doc1_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -9831,7 +9855,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc2));
+    tests::Remove(*writer, std::move(query_doc1_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -9884,7 +9908,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(merge_if_masked));
@@ -9911,7 +9935,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     ASSERT_TRUE(writer->Compact(merge_if_masked));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -9951,7 +9975,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
-    writer->GetBatch().Remove(std::move(query_doc1_doc3));
+    tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10000,7 +10024,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
-    writer->GetBatch().Remove(std::move(query_doc1_doc3));
+    tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10051,7 +10075,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc3));
+    tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10102,7 +10126,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc3));
+    tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10157,7 +10181,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc6));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc3_doc5));
+    tests::Remove(*writer, std::move(query_doc1_doc3_doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10216,7 +10240,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc6));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc3_doc5));
+    tests::Remove(*writer, std::move(query_doc1_doc3_doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10724,7 +10748,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc2_doc3_doc4));
+    tests::Remove(*writer, std::move(query_doc2_doc3_doc4));
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -10774,7 +10798,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc2_doc3_doc4));
+    tests::Remove(*writer, std::move(query_doc2_doc3_doc4));
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -10855,7 +10879,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc2_doc4));
+    tests::Remove(*writer, std::move(query_doc2_doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     irs::index_utils::CompactionDocsFill options;
@@ -10906,7 +10930,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc2_doc4));
+    tests::Remove(*writer, std::move(query_doc2_doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     irs::index_utils::CompactionDocsFill options;
@@ -11032,7 +11056,7 @@ TEST_P(IndexTestCase, segment_options) {
     // ^^^ expecting timeout because pool should block indefinitely
 
     {
-      irs::IndexWriter::Transaction(std::move(ctx));
+      ctx.Commit();
     }  // force flush of GetBatch(), i.e. ulock segment
     // ASSERT_EQ(std::cv_status::no_timeout, cond.wait_for(lock, 1000ms));
     lock.unlock();
@@ -11223,11 +11247,14 @@ TEST_P(IndexTestCase, segment_options) {
     // prevent segment from being flushed
     {
       auto ctx = writer->GetBatch();
-      auto doc = ctx.Insert(true);
+      {
+        auto doc = ctx.Insert(true);
 
-      ASSERT_TRUE(
-        doc.Insert(std::begin(doc2->indexed), std::end(doc2->indexed)));
-      CaptureNameLikeFields(doc, doc2->indexed);
+        ASSERT_TRUE(
+          doc.Insert(std::begin(doc2->indexed), std::end(doc2->indexed)));
+        CaptureNameLikeFields(doc, doc2->indexed);
+      }
+      ctx.Commit();
     }
 
     ASSERT_TRUE(writer->RefreshCommit());
@@ -11331,7 +11358,7 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove) {
   ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
   auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-  writer->GetBatch().Remove(*(query_doc1.get()));
+  tests::Remove(*writer, *(query_doc1.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11339,7 +11366,7 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove) {
   // compaction is needed to force opening all file handles and make
   // cached readers indeed hold reference to a file
   auto query_doc3 = MakeByTerm(kNameFieldId, "C");
-  writer->GetBatch().Remove(*(query_doc3.get()));
+  tests::Remove(*writer, *(query_doc3.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11393,9 +11420,9 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove_all) {
   ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
   auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-  writer->GetBatch().Remove(*(query_doc1.get()));
+  tests::Remove(*writer, *(query_doc1.get()));
   auto query_doc2 = MakeByTerm(kNameFieldId, "B");
-  writer->GetBatch().Remove(*(query_doc2.get()));
+  tests::Remove(*writer, *(query_doc2.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11403,7 +11430,7 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove_all) {
   // compaction is needed to force opening all file handles and make
   // cached readers indeed hold reference to a file
   auto query_doc3 = MakeByTerm(kNameFieldId, "C");
-  writer->GetBatch().Remove(*(query_doc3.get()));
+  tests::Remove(*writer, *(query_doc3.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11450,9 +11477,9 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment) {
 
   // Remove all documents from segment
   auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-  writer->GetBatch().Remove(*(query_doc1.get()));
+  tests::Remove(*writer, *(query_doc1.get()));
   auto query_doc2 = MakeByTerm(kNameFieldId, "B");
-  writer->GetBatch().Remove(*(query_doc2.get()));
+  tests::Remove(*writer, *(query_doc2.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   {
@@ -11502,9 +11529,9 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
   AssertSnapshotEquality(*writer);  //  segment 2
 
   auto query_doc1 = MakeByTerm(kNameFieldId, "A");
-  writer->GetBatch().Remove(*(query_doc1.get()));
+  tests::Remove(*writer, *(query_doc1.get()));
   auto query_doc3 = MakeByTerm(kNameFieldId, "C");
-  writer->GetBatch().Remove(*(query_doc3.get()));
+  tests::Remove(*writer, *(query_doc3.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11514,9 +11541,9 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
     irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
   // Remove all documents from 'new' segment
   auto query_doc4 = MakeByTerm(kNameFieldId, "D");
-  writer->GetBatch().Remove(*(query_doc4.get()));
+  tests::Remove(*writer, *(query_doc4.get()));
   auto query_doc2 = MakeByTerm(kNameFieldId, "B");
-  writer->GetBatch().Remove(*(query_doc2.get()));
+  tests::Remove(*writer, *(query_doc2.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   {
@@ -11584,8 +11611,11 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
     // no norms is written as there is nothing to index
     {
       auto docs = writer->GetBatch();
-      auto doc = docs.Insert();
-      ASSERT_TRUE(doc.Insert(empty));
+      {
+        auto doc = docs.Insert();
+        ASSERT_TRUE(doc.Insert(empty));
+      }
+      docs.Commit();
     }
 
     // we don't write default norms
@@ -11593,17 +11623,23 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
       const tests::StringField field(static_cast<std::string>(empty.Name()),
                                      "bar", empty.GetIndexFeatures());
       auto docs = writer->GetBatch();
-      auto doc = docs.Insert();
-      ASSERT_TRUE(doc.Insert(field));
+      {
+        auto doc = docs.Insert();
+        ASSERT_TRUE(doc.Insert(field));
+      }
+      docs.Commit();
     }
 
     {
       const tests::StringField field(static_cast<std::string>(empty.Name()),
                                      "bar", empty.GetIndexFeatures());
       auto docs = writer->GetBatch();
-      auto doc = docs.Insert();
-      ASSERT_TRUE(doc.Insert(field));
-      ASSERT_TRUE(doc.Insert(field));
+      {
+        auto doc = docs.Insert();
+        ASSERT_TRUE(doc.Insert(field));
+        ASSERT_TRUE(doc.Insert(field));
+      }
+      docs.Commit();
     }
 
     writer->RefreshCommit();
@@ -12014,11 +12050,13 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 1)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick - 10);
       AssertSnapshotEquality(*writer);
     }
@@ -12026,11 +12064,13 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 0)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
       AssertSnapshotEquality(*writer);
     }
@@ -12065,22 +12105,26 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 1)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick - 10);
     }
 
     // insert document (trx 0)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
     }
 
@@ -12107,22 +12151,26 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 0)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
     }
 
     // insert document (trx 1)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
     }
 
@@ -12156,22 +12204,26 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 0)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
     }
 
     // insert document (trx 1)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
     }
 
@@ -12207,11 +12259,14 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 0)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
+      trx.Commit();
     }
 
     writer->RefreshCommit();

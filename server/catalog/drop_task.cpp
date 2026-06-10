@@ -38,10 +38,10 @@
 #include "general_server/scheduler.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::catalog {

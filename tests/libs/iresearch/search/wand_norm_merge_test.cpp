@@ -229,7 +229,7 @@ class WandNormMergeCase : public tests::IndexTestBase {
     ASSERT_TRUE(irs::field_limits::valid(norm_id))
       << "no norm id on " << field_id;
 
-    const auto* cs = segment.CsReader();
+    const auto* cs = segment.GetColReader();
     ASSERT_NE(nullptr, cs);
     const auto* column = cs->NormColumn(norm_id);
     ASSERT_NE(nullptr, column) << "norm column missing for " << field_id;
@@ -388,7 +388,7 @@ TEST_P(WandNormMergeCase, NormMultiRgInOneSegment) {
   const auto* field = seg.field(kBody);
   ASSERT_NE(nullptr, field);
   const auto norm_id = field->meta().norm;
-  const auto* col = seg.CsReader()->NormColumn(norm_id);
+  const auto* col = seg.GetColReader()->NormColumn(norm_id);
   ASSERT_NE(nullptr, col);
   ASSERT_EQ(3u, col->RowGroupCount())
     << "expected 4+4+2 layout, got " << col->RowGroupCount();
@@ -528,8 +528,8 @@ TEST_P(WandNormMergeCase, NormMergeWithMask) {
   // contract, so keep them as named locals.
   auto rm1 = MakeByTerm(kId, "a_1");
   auto rm2 = MakeByTerm(kId, "a_3");
-  writer->GetBatch().Remove(*rm1);
-  writer->GetBatch().Remove(*rm2);
+  tests::Remove(*writer, *rm1);
+  tests::Remove(*writer, *rm2);
   writer->RefreshCommit();
 
   for (size_t i = 0; i < std::size(kB); ++i) {

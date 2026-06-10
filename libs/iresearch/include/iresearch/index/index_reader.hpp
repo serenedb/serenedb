@@ -165,7 +165,7 @@ struct SubReader : public IndexReader, public NormProvider {
 
   virtual const TermReader* field(field_id id) const = 0;
 
-  virtual const ColReader* CsReader() const { return nullptr; }
+  virtual const ColReader* GetColReader() const { return nullptr; }
 
   virtual const ColumnReader* Column(field_id /*field*/) const {
     return nullptr;

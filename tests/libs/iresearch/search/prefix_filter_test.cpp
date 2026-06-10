@@ -446,6 +446,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
         field.id = kNameId;
         doc.Insert(field);
       }
+      ctx.Commit();
     }
     writer->RefreshCommit();
   }

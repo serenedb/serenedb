@@ -50,10 +50,10 @@ static_assert(sizeof(duckdb::validity_t) == sizeof(uint64_t));
 class ColumnExistenceIterator : public DocIterator {
  public:
   ColumnExistenceIterator(const ColumnReader& reader,
-                          const ColReader& cs_reader,
+                          const ColReader& col_reader,
                           CostAttr::Type cost) noexcept
     : _reader{&reader},
-      _ctx{cs_reader},
+      _ctx{col_reader},
       _scan{reader, _ctx, /*validity_side=*/true},
       _batch{reader.Type(), /*capacity=*/0} {
     _batch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
@@ -268,11 +268,11 @@ class ColumnExistenceQuery : public Filter::Query {
       return memory::make_managed<AllDocsExistenceIterator>(
         static_cast<uint32_t>(row_count), _boost);
     }
-    const auto* cs_reader = ctx.segment.CsReader();
-    SDB_ENSURE(cs_reader, sdb::ERROR_INTERNAL,
-               "column_existence_filter: segment has no columnstore reader");
+    const auto* col_reader = ctx.segment.GetColReader();
+    SDB_ENSURE(col_reader, sdb::ERROR_INTERNAL,
+               "column_existence_filter: segment has no .col reader");
     return memory::make_managed<ColumnExistenceIterator>(
-      *column, *cs_reader, static_cast<CostAttr::Type>(row_count));
+      *column, *col_reader, static_cast<CostAttr::Type>(row_count));
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}

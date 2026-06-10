@@ -60,7 +60,6 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::search {
 namespace {
@@ -624,7 +623,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
 void InitInvertedIndexes(bool skip_wal_recovery) {
   auto begin = std::chrono::steady_clock::now();
 
-  auto& engine = EngineFeature::instance().engine();
+  auto& engine = GetServerEngine();
   auto& rdb = basics::downCast<RocksDBEngineCatalog>(engine);
   SDB_ASSERT(!rdb.inRecovery());
   const Tick end_tick = rdb.recoveryTick();

@@ -38,7 +38,6 @@
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/search_table_shard.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb {
 

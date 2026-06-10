@@ -114,12 +114,12 @@ void SearchAnnTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
                                         uint32_t seg_idx,
                                         SearchAnnScanGlobalState& g) {
   const auto& vs = *g.scan->vector_scorer;
-  const auto* cs = seg.CsReader();
-  SDB_ASSERT(cs);
+  const auto* col_reader = seg.GetColReader();
+  SDB_ASSERT(col_reader);
   if (text_filter) {
     text_filter->Reset(seg);
   }
-  irs::ReadContext read_ctx{*cs};
+  irs::ReadContext read_ctx{*col_reader};
 
   const size_t top_k = *g.scan->score_top_k;
   irs::HNSWSearchInfo info{
@@ -190,11 +190,11 @@ void SearchAnnRangeLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
                                             const irs::SubReader& seg,
                                             uint32_t seg_idx,
                                             SearchAnnScanGlobalState& g) {
-  const auto* cs = seg.CsReader();
-  SDB_ASSERT(cs);
+  const auto* col_reader = seg.GetColReader();
+  SDB_ASSERT(col_reader);
   hits.clear();
   current_idx = 0;
-  irs::ReadContext read_ctx{*cs};
+  irs::ReadContext read_ctx{*col_reader};
 
   if (text_filter) {
     text_filter->Reset(seg);

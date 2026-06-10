@@ -49,9 +49,6 @@ struct DocsMask final {
   uint32_t count{0};
 };
 
-// Single-segment write transaction. Indexes terms (FieldsData), writes
-// posting lists at flush, and owns the segment's `<seg>.col` columnstore
-// for norm columns.
 class SegmentWriter final : public NormProvider, util::Noncopyable {
  private:
   struct ConstructToken final {
@@ -133,18 +130,11 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   SegmentWriter(ConstructToken, Directory& dir,
                 const SegmentWriterOptions& options) noexcept;
 
-  // FlushFields-time scorers (Wand / BM25 / TFIDF / LM-* / DFI / Indri)
-  // reach per-doc norms through this provider. flush() commits the
-  // columnstore first and opens `_cs_reader` on the just-written `.col`
-  // before invoking FlushFields, so reads here go to disk -- no in-memory
-  // copy of the norm values is kept on the writer side. Returns null when
-  // the field has no norm column or the reader hasn't been opened yet
-  // (e.g. caller invokes norms() outside flush()).
   NormReader::ptr norms(field_id id) const final {
-    if (_cs_reader == nullptr) {
+    if (_col_reader == nullptr) {
       return {};
     }
-    const auto* col = _cs_reader->NormColumn(id);
+    const auto* col = _col_reader->NormColumn(id);
     if (col == nullptr) {
       return {};
     }
@@ -153,7 +143,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
     return std::move(_built_hnsw_graphs);
   }
-  ColWriter* Columnstore() noexcept { return _columnstore.get(); }
+  ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
 
  private:
   bool index(field_id id, doc_id_t doc, IndexFeatures index_features,
@@ -171,12 +161,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   TrackingDirectory _dir;
   ScorerPtr _scorer;
-  // Reader on the just-committed `.col`. Set transiently by flush() between
-  // `_columnstore->Commit()` and `FlushFields`, so scorer norm reads land
-  // on the disk-backed norm readers. Cleared at end of flush().
-  std::unique_ptr<ColReader> _cs_reader;
+  std::unique_ptr<ColReader> _col_reader;
   ManagedVector<DocContext> _docs_context;
-  // Removed/invalid doc_ids (e.g. partial indexing failure).
   DocsMask _docs_mask;
   FieldsData _fields;
   std::vector<const FieldData*> _doc;
@@ -185,7 +171,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   duckdb::DatabaseInstance& _db;
   const ColumnOptionsProvider* _column_options = nullptr;
   const NormColumnOptionsProvider* _norm_column_options = nullptr;
-  std::unique_ptr<ColWriter> _columnstore;
+  std::unique_ptr<ColWriter> _col_writer;
   PreloadedHnswGraphs _built_hnsw_graphs;
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;

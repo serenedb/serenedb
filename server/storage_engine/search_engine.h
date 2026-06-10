@@ -40,7 +40,7 @@
 #include "catalog/types.h"
 #include "rest_server/database_path_feature.h"
 #include "search/search_db_wal.h"
-#include "storage_engine/engine_feature.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb {
 

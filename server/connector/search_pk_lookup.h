@@ -43,30 +43,31 @@ SegmentPkColumn(const irs::IndexReader& reader, size_t seg_idx) noexcept {
   if (seg_idx >= reader.size()) {
     return {nullptr, nullptr};
   }
-  const auto* cs_reader = reader[seg_idx].CsReader();
-  if (!cs_reader) {
+  const auto* col_reader = reader[seg_idx].GetColReader();
+  if (!col_reader) {
     return {nullptr, nullptr};
   }
-  const auto* pk_col = cs_reader->Column(
+  const auto* pk_col = col_reader->Column(
     static_cast<irs::field_id>(catalog::Column::kGeneratedPKId));
   if (!pk_col) {
     return {nullptr, nullptr};
   }
-  return {cs_reader, pk_col};
+  return {col_reader, pk_col};
 }
 
 class SegmentPkSequentialFetcher {
  public:
-  SegmentPkSequentialFetcher(const irs::ColReader& cs_reader,
+  SegmentPkSequentialFetcher(const irs::ColReader& col_reader,
                              const irs::ColumnReader& pk_col)
-    : _ctx{cs_reader}, _pk_col{&pk_col} {}
+    : _ctx{col_reader}, _pk_col{&pk_col} {}
 
   SegmentPkSequentialFetcher(const SegmentPkSequentialFetcher&) = delete;
   SegmentPkSequentialFetcher& operator=(const SegmentPkSequentialFetcher&) =
     delete;
 
-  void Reset(const irs::ColReader& cs_reader, const irs::ColumnReader& pk_col) {
-    _ctx.Reset(cs_reader);
+  void Reset(const irs::ColReader& col_reader,
+             const irs::ColumnReader& pk_col) {
+    _ctx.Reset(col_reader);
     _pk_col = &pk_col;
   }
 

@@ -116,59 +116,39 @@ TEST_P(Columnstore2TestCase, reader_ctor) {
   }
 
   // (f) After a real segment is committed, querying THAT name succeeds
-  //     while other names still return nullptr.
+  //     while other names still return nullptr. The `.col` file is created
+  //     lazily, so the segment must open at least one column and append a row
+  //     for the file to exist.
   constexpr std::string_view kSegment = "real_segment";
+  constexpr irs::byte_type kPayload[] = {7};
   {
-    irs::ColWriter w{_dir, kSegment, Db()};
-    auto filename = w.Commit(/*target_row=*/0);
-    EXPECT_FALSE(filename.empty());
+    auto w = irs::tests::MakeCsWriter(_dir, kSegment);
+    auto& cw = irs::tests::OpenBlobColumn(*w, /*id=*/0);
+    irs::tests::AppendBlob(cw, 1, {kPayload, sizeof(kPayload)});
+    w->Commit(/*target_row=*/1);
   }
   EXPECT_NE(irs::tests::MakeCsReader(_dir, kSegment), nullptr);
   EXPECT_EQ(irs::tests::MakeCsReader(_dir, "no_such_segment"), nullptr);
 }
 
-// Commit with zero columns opened: footer still written, reader sees no
-// columns / no norm columns / no HNSW columns. Reopening should yield the
-// same shape (no drift across opens). Also covers (c) probing many ids
-// returns false / nullptr, (d) repeated reopens stay stable.
+// Commit with zero columns opened: the `.col` file is created lazily, so a
+// writer that opens no column and no norm writes no file, and `MakeCsReader`
+// finds nothing on disk -> nullptr. Also covers (c) repeated reads stay stable
+// (still nullptr each time).
 TEST_P(Columnstore2TestCase, empty_columnstore) {
   constexpr std::string_view kSegment = "empty_cs";
   {
     irs::ColWriter w{_dir, kSegment, Db()};
-    auto filename = w.Commit(/*target_row=*/0);
-    EXPECT_FALSE(filename.empty());
+    w.Commit(/*target_row=*/0);
   }
-  // (a) First open.
-  {
-    auto reader = irs::tests::MakeCsReader(_dir, kSegment);
-    ASSERT_NE(reader, nullptr);
-    EXPECT_FALSE(reader->HasColumn(0));
-    EXPECT_EQ(reader->Column(0), nullptr);
-    EXPECT_TRUE(reader->Columns().empty());
-  }
-  // (b) Re-open: same view.
-  {
-    auto reader = irs::tests::MakeCsReader(_dir, kSegment);
-    ASSERT_NE(reader, nullptr);
-    EXPECT_FALSE(reader->HasColumn(0));
-    EXPECT_FALSE(reader->HasColumn(1));
-    EXPECT_EQ(reader->Column(0), nullptr);
-    EXPECT_TRUE(reader->Columns().empty());
-  }
-  // (c) Probing many ids returns false / nullptr.
-  {
-    auto reader = irs::tests::MakeCsReader(_dir, kSegment);
-    ASSERT_NE(reader, nullptr);
-    for (irs::field_id id : {0, 1, 2, 5, 11, 100, 1000, 9999}) {
-      EXPECT_FALSE(reader->HasColumn(id)) << "id=" << id;
-      EXPECT_EQ(reader->Column(id), nullptr) << "id=" << id;
-    }
-  }
-  // (d) Repeated reopens: still stable.
+  // (a) First open: no file was written, so no reader.
+  EXPECT_EQ(irs::tests::MakeCsReader(_dir, kSegment), nullptr);
+  // (b) Re-open: same view (still nullptr).
+  EXPECT_EQ(irs::tests::MakeCsReader(_dir, kSegment), nullptr);
+  // (c) Repeated reads: still stable.
   for (int i = 0; i < 4; ++i) {
-    auto reader = irs::tests::MakeCsReader(_dir, kSegment);
-    ASSERT_NE(reader, nullptr) << "iter=" << i;
-    EXPECT_TRUE(reader->Columns().empty()) << "iter=" << i;
+    EXPECT_EQ(irs::tests::MakeCsReader(_dir, kSegment), nullptr)
+      << "iter=" << i;
   }
 }
 
@@ -189,8 +169,7 @@ TEST_P(Columnstore2TestCase, empty_column) {
     auto& cw1 = irs::tests::OpenBlobColumn(*w, /*id=*/1);
     irs::tests::OpenBlobColumn(*w, /*id=*/2);
     irs::tests::AppendBlob(cw1, kDoc, {kPayload, sizeof(kPayload)});
-    auto filename = w->Commit(kDoc);
-    EXPECT_FALSE(filename.empty());
+    w->Commit(kDoc);
   }
   auto reader = irs::tests::MakeCsReader(_dir, kSegment);
   ASSERT_NE(reader, nullptr);
@@ -278,8 +257,7 @@ TEST_P(Columnstore2TestCase, empty_columns) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     irs::tests::OpenBlobColumn(*w, /*id=*/0);
     irs::tests::OpenBlobColumn(*w, /*id=*/1);
-    auto filename = w->Commit(/*target_row=*/0);
-    EXPECT_FALSE(filename.empty());
+    w->Commit(/*target_row=*/0);
   }
   auto reader = irs::tests::MakeCsReader(_dir, kSegment);
   ASSERT_NE(reader, nullptr);

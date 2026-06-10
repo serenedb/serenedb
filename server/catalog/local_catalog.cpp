@@ -97,7 +97,6 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 #include "storage_engine/secondary_index_shard.h"

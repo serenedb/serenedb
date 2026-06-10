@@ -291,7 +291,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   auto validate_row = [](const irs::SubReader& segment, std::string_view pk,
                          int32_t col1, std::string_view col2, bool col3,
                          float col4, int64_t col5) {
-    const auto* cs_reader = segment.CsReader();
+    const auto* cs_reader = segment.GetColReader();
     ASSERT_NE(nullptr, cs_reader);
     const auto* pk_column = cs_reader->Column(kPKFieldId);
     ASSERT_NE(nullptr, pk_column);
@@ -476,7 +476,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(4, reader.live_docs_count());
   auto& segment = reader[0];
-  const auto* cs_reader = segment.CsReader();
+  const auto* cs_reader = segment.GetColReader();
   ASSERT_NE(nullptr, cs_reader);
   const auto* pk_column = cs_reader->Column(kPKFieldId);
   ASSERT_NE(nullptr, pk_column);
@@ -626,7 +626,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   ASSERT_EQ(1, reader.docs_count());
   ASSERT_EQ(1, reader.live_docs_count());
   auto& segment = reader[0];
-  const auto* cs_reader = segment.CsReader();
+  const auto* cs_reader = segment.GetColReader();
   ASSERT_NE(nullptr, cs_reader);
   const auto* pk_column = cs_reader->Column(kPKFieldId);
   ASSERT_NE(nullptr, pk_column);
@@ -726,7 +726,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   ASSERT_EQ(2, reader.live_docs_count());
   {
     auto& segment = reader[1];
-    const auto* cs_reader = segment.CsReader();
+    const auto* cs_reader = segment.GetColReader();
     ASSERT_NE(nullptr, cs_reader);
     const auto* pk_column = cs_reader->Column(kPKFieldId);
     ASSERT_NE(nullptr, pk_column);
@@ -789,7 +789,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
   ASSERT_EQ(1, reader.live_docs_count());
   {
     auto& segment = reader[0];
-    const auto* cs_reader = segment.CsReader();
+    const auto* cs_reader = segment.GetColReader();
     ASSERT_NE(nullptr, cs_reader);
     const auto* pk_column = cs_reader->Column(kPKFieldId);
     ASSERT_NE(nullptr, pk_column);
@@ -864,7 +864,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
 
     {
       auto& segment = reader[2];
-      const auto* cs_reader = segment.CsReader();
+      const auto* cs_reader = segment.GetColReader();
       ASSERT_NE(nullptr, cs_reader);
       const auto* pk_column = cs_reader->Column(kPKFieldId);
       ASSERT_NE(nullptr, pk_column);
@@ -933,7 +933,7 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
   ASSERT_EQ(2, reader.live_docs_count());
   {
     auto& segment = reader[1];
-    const auto* cs_reader = segment.CsReader();
+    const auto* cs_reader = segment.GetColReader();
     ASSERT_NE(nullptr, cs_reader);
     const auto* pk_column = cs_reader->Column(kPKFieldId);
     ASSERT_NE(nullptr, pk_column);
@@ -1014,7 +1014,7 @@ TEST_F(DuckDBSearchSinkWriterTest, UpdateWithExisting) {
   };
   auto pk_of = [](const irs::SubReader& segment,
                   irs::doc_id_t doc) -> std::string {
-    const auto* cs_reader = segment.CsReader();
+    const auto* cs_reader = segment.GetColReader();
     EXPECT_NE(nullptr, cs_reader);
     const auto* pk_column = cs_reader->Column(kPKFieldId);
     EXPECT_NE(nullptr, pk_column);

@@ -39,7 +39,6 @@
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {

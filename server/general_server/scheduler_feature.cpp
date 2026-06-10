@@ -95,6 +95,9 @@ void SchedulerFeature::start() {
 }
 
 void SchedulerFeature::stop() {
+  if (!_scheduler) {
+    return;
+  }
   signal_handling::Shutdown();
   _scheduler->shutdown();
   gScheduler = nullptr;

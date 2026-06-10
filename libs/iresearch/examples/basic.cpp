@@ -52,7 +52,7 @@
 //   2. Define fields and index documents (inverted index + cs stored values)
 //   3. Parse Lucene-syntax queries and execute them (count + top-K with BM25)
 
-// Per-segment columnstore needs a duckdb::DatabaseInstance for codec lookup
+// Per-segment .col writer needs a duckdb::DatabaseInstance for codec lookup
 // and the buffer manager. main() brackets Initialize / Shutdown on the
 // process-wide sdb::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
@@ -66,7 +66,7 @@ inline constexpr irs::field_id kBodyColumnId = 2;
 
 // A minimal text field that tokenizes its value for the inverted index.
 // Fields must provide: Name(), GetIndexFeatures(), GetTokens().
-// Stored values are written separately into the columnstore (see
+// Stored values are written separately into the .col writer (see
 // AppendStoredText below) -- the legacy `Write()` STORE callback is gone.
 struct TextField {
   irs::field_id id;
@@ -114,7 +114,7 @@ void IndexDocument(irs::IndexWriter::Transaction& ctx, TextField& title_field,
   std::array<TextField*, 2> fields{&title_field, &body_field};
   doc.Insert(fields.begin(), fields.end());
 
-  auto* cs = doc.Columnstore();
+  auto* cs = doc.GetColWriter();
   if (cs == nullptr) {
     return;  // cs disabled (no `options.db` plumbed through).
   }
@@ -176,7 +176,7 @@ void BuildIndex(irs::IndexWriter& writer) {
   {
     auto ctx = writer.GetBatch();
     // cs writers are opened lazily by the first IndexDocument that observes
-    // a non-null `Document::Columnstore()`. The pointers refer into the
+    // a non-null `Document::GetColWriter()`. The pointers refer into the
     // per-segment cs Writer and stay valid until the transaction commits.
     irs::ColumnWriter* title_cw = nullptr;
     irs::ColumnWriter* body_cw = nullptr;
@@ -212,7 +212,9 @@ void BuildIndex(irs::IndexWriter& writer) {
                   "relational models and beyond, powering modern applications "
                   "from banking to social media.",
                   title_cw, body_cw);
-  }  // Transaction commits here when ctx goes out of scope.
+
+    ctx.Commit();
+  }
 
   // Commit flushes segments to disk and makes documents visible to readers.
   writer.RefreshCommit();
@@ -303,7 +305,7 @@ void QueryExclusion(const irs::DirectoryReader& reader,
   std::cout << "Query '+documents -database': " << count << " matches\n\n";
 }
 
-// Read back stored field values from the per-segment columnstore. Title
+// Read back stored field values from the per-segment .col writer. Title
 // and body live as BLOB columns at `kTitleColumnId` / `kBodyColumnId`;
 // each doc-id maps to row `doc_id - doc_limits::min()` in the column.
 void ReadStoredFields(const irs::DirectoryReader& reader) {
@@ -311,18 +313,18 @@ void ReadStoredFields(const irs::DirectoryReader& reader) {
   for (size_t seg_idx = 0; seg_idx < reader.size(); ++seg_idx) {
     auto& segment = reader[seg_idx];
 
-    const auto* cs_reader = segment.CsReader();
-    if (cs_reader == nullptr) {
-      continue;  // cs disabled.
+    const auto* col_reader = segment.GetColReader();
+    if (!col_reader) {
+      continue;
     }
-    const auto* title_col = cs_reader->Column(kTitleColumnId);
-    const auto* body_col = cs_reader->Column(kBodyColumnId);
-    if (title_col == nullptr || body_col == nullptr) {
+    const auto* title_col = col_reader->Column(kTitleColumnId);
+    const auto* body_col = col_reader->Column(kBodyColumnId);
+    if (!title_col || !body_col) {
       continue;
     }
 
-    irs::ColumnReader::PointReader title_cursor{*cs_reader, *title_col};
-    irs::ColumnReader::PointReader body_cursor{*cs_reader, *body_col};
+    irs::ColumnReader::PointReader title_cursor{*col_reader, *title_col};
+    irs::ColumnReader::PointReader body_cursor{*col_reader, *body_col};
     duckdb::Vector title_vec{duckdb::LogicalType::BLOB, 1};
     duckdb::Vector body_vec{duckdb::LogicalType::BLOB, 1};
 
@@ -335,12 +337,10 @@ void ReadStoredFields(const irs::DirectoryReader& reader) {
       const auto& body_slot =
         duckdb::FlatVector::GetData<duckdb::string_t>(body_vec)[0];
       const auto doc = static_cast<irs::doc_id_t>(row + irs::doc_limits::min());
-      std::cout << "  doc=" << doc << "\n"
-                << "    title: \""
+      std::cout << "  doc=" << doc << "\n    title: \""
                 << std::string_view{title_slot.GetData(),
                                     static_cast<size_t>(title_slot.GetSize())}
-                << "\"\n"
-                << "    body:  \""
+                << "\"\n    body:  \""
                 << std::string_view{body_slot.GetData(),
                                     static_cast<size_t>(body_slot.GetSize())}
                 << "\"\n";
@@ -354,7 +354,11 @@ void RemoveDocuments(irs::IndexWriter& writer,
                      irs::analysis::Analyzer& tokenizer) {
   std::cout << "=== Remove Documents ===\n";
   auto filter = ParseQuery("databases", kTitleColumnId, tokenizer);
-  writer.GetBatch().Remove(*filter);
+  {
+    auto trx = writer.GetBatch();
+    trx.Remove(*filter);
+    trx.Commit();
+  }
   writer.RefreshCommit();
 
   auto updated_reader = writer.GetSnapshot();
@@ -404,10 +408,6 @@ int main() {
     irs::analysis::SegmentationTokenizer::Options{});
 
   irs::MemoryDirectory dir;
-  // cs needs a DatabaseInstance plumbed through both the writer (for
-  // OpenColumn) and the reader_options (for CsReader on the snapshot).
-  // Norm-featured fields additionally require a norm_column_options
-  // callback that allocates a (column id, row-group size) pair per field.
   irs::IndexWriterOptions options;
   options.db = &Db();
   options.reader_options.db = &Db();

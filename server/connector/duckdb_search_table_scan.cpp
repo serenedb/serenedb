@@ -114,7 +114,7 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
     }
 
     if (!gstate.materializer) {
-      const auto* cs_reader = segment.CsReader();
+      const auto* cs_reader = segment.GetColReader();
       if (!cs_reader) {
         // Segment has no columnstore -- e.g. an empty pre-INSERT commit.
         // Skip it; nothing to materialise.

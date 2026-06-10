@@ -254,9 +254,10 @@ struct AndExclusionCoalesceRule {
              !(child->BoostImpl() != kNoBoost && ctx.scorer != nullptr);
     };
 
-    const size_t coalescable = absl::c_count_if(children, [&](const auto& child) {
-      return is_not(child) || is_coalescable_exclusion(child);
-    });
+    const size_t coalescable =
+      absl::c_count_if(children, [&](const auto& child) {
+        return is_not(child) || is_coalescable_exclusion(child);
+      });
     if (coalescable == 0 || children.size() == 1) {
       return false;
     }
@@ -394,6 +395,16 @@ struct AndAllFoldRule {
     if (all_count == node.size()) {
       slot = node.MakeAllDocsFilter(node.Boost() * all_boost);
       return true;
+    }
+    if (ctx.scorer != nullptr && node.size() - all_count == 1) {
+      auto& children = node.mutable_filters();
+      const auto it = absl::c_find_if(
+        children, [&](const auto& child) { return !(*all == *child); });
+      if (auto* boostable = dynamic_cast<FilterWithBoost*>(it->get())) {
+        boostable->boost(boostable->Boost() + all_boost);
+        EraseAllDocs(node, *all);
+        return true;
+      }
     }
     if (ctx.scorer != nullptr && all_count < 2) {
       return false;

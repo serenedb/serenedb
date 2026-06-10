@@ -628,9 +628,9 @@ TEST_P(FilterOptimizerTest, AndExclusionCoalesceRule) {
 
   // two exclusion children -> And of includes, Or of excludes
   {
-    irs::Filter::ptr root = MakeAnd(
-      MakeExclude(MakeTerm(kName, "A"), MakeTerm(kName, "B")),
-      MakeExclude(MakeTerm(kName, "C"), MakeTerm(kName, "D")));
+    irs::Filter::ptr root =
+      MakeAnd(MakeExclude(MakeTerm(kName, "A"), MakeTerm(kName, "B")),
+              MakeExclude(MakeTerm(kName, "C"), MakeTerm(kName, "D")));
     Optimize(root);
     ASSERT_EQ(irs::Type<irs::Exclusion>::id(), TypeOf(*root));
     auto& node = As<irs::Exclusion>(*root);

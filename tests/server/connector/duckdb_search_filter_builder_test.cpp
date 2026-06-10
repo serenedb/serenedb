@@ -2303,7 +2303,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Like) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  AddPrefixFilter(expected, 1, "foo").boost(3.0f);
+  AddLikeFilter(expected, 1, "foo%").boost(3.0f);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ (ts_like('foo%')) ^ 3.0",
                columns, true);
 }
@@ -2878,7 +2878,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLike) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  AddPrefixFilter(expected, 1, "foo").boost(3.0f);
+  AddLikeFilter(expected, 1, "foo%").boost(3.0f);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ (ts_like('foo%'))::boost(3.0)",
                columns, true);
@@ -3646,7 +3646,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsLike) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  AddPrefixFilter(expected, 1, std::string_view{"quic"});
+  AddLikeFilter(expected, 1, std::string_view{"quic%"});
   AssertFilter(expected, "SELECT * FROM foo WHERE ts_like('quic%') @@ b",
                columns, true);
 }
@@ -3693,7 +3693,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LikeWildcard) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  AddPrefixFilter(expected, 1, std::string_view{"quic"});
+  AddLikeFilter(expected, 1, std::string_view{"quic%"});
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_like('quic%')",
                columns, true);
 }
@@ -3743,9 +3743,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpSyntaxCaseInsensitive) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  expected.add(irs::CreateByRegexp(
-    ExpectedFieldId(1),
-    irs::ViewCast<irs::byte_type>(std::string_view{"abc"})));
+  AddRegexpFilter(expected, 1, std::string_view{"abc"},
+                  irs::RegexpSyntax::PosixEre);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_regexp('abc', 'POSIX')",
                columns, true);

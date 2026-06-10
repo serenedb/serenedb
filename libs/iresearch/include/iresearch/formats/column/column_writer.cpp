@@ -29,8 +29,10 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/function/variant/variant_shredding.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
@@ -38,7 +40,9 @@
 #include <duckdb/storage/table/append_state.hpp>
 #include <duckdb/storage/table/column_data_checkpointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
+#include <duckdb/storage/table/variant_column_data.hpp>
 #include <limits>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -380,6 +384,58 @@ void CompressColumn(WriteContext& write_ctx,
   picked.function->compress_finalize(*comp_state);
 }
 
+bool VariantShreddingEnabled(int64_t minimum_size, uint64_t row_count) {
+  if (minimum_size == -1) {
+    return false;
+  }
+  return row_count >= static_cast<uint64_t>(minimum_size);
+}
+
+bool NoSpilledRows(duckdb::Vector& untyped_value_index, uint64_t row_count) {
+  duckdb::UnifiedVectorFormat fmt;
+  untyped_value_index.ToUnifiedFormat(row_count, fmt);
+  const auto* indices = duckdb::UnifiedVectorFormat::GetData<uint32_t>(fmt);
+  for (uint64_t row = 0; row < row_count; ++row) {
+    const auto idx = fmt.sel->get_index(row);
+    if (fmt.validity.RowIsValid(idx) && indices[idx] > 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void MarkFullyShredded(duckdb::Vector& vec, PersistentColumnData& node,
+                       uint64_t row_count) {
+  if (vec.GetType().id() != duckdb::LogicalTypeId::STRUCT) {
+    return;
+  }
+  auto& entries = duckdb::StructVector::GetEntries(vec);
+  const auto& child_types = duckdb::StructType::GetChildTypes(vec.GetType());
+  size_t typed_value_index = child_types.size();
+  size_t untyped_value_index = child_types.size();
+  for (size_t child = 0; child < child_types.size(); ++child) {
+    if (child_types[child].first == "typed_value") {
+      typed_value_index = child;
+    } else if (child_types[child].first == "untyped_value_index") {
+      untyped_value_index = child;
+    }
+  }
+
+  if (typed_value_index == child_types.size()) {
+    for (size_t child = 0; child < entries.size(); ++child) {
+      MarkFullyShredded(entries[child], node.child_columns[child], row_count);
+    }
+    return;
+  }
+
+  if (untyped_value_index != child_types.size()) {
+    node.fully_shredded =
+      NoSpilledRows(entries[untyped_value_index], row_count);
+  }
+  MarkFullyShredded(entries[typed_value_index],
+                    node.child_columns[typed_value_index], row_count);
+}
+
 void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
                duckdb::Vector& vec, duckdb::idx_t row_count, uint64_t row_start,
                PersistentColumnData& node, bool skip_validity,
@@ -451,7 +507,75 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
                 /*skip_validity=*/false, forced);
       return;
     }
-    case duckdb::LogicalTypeId::VARIANT:
+    case duckdb::LogicalTypeId::VARIANT: {
+      if (!skip_validity) {
+        CompressColumn(write_ctx, validity_type, vec, row_count, row_start,
+                       node.validity_pointers,
+                       duckdb::CompressionType::COMPRESSION_AUTO);
+      }
+
+      auto& db = write_ctx.Database();
+      const auto& config = duckdb::DBConfig::GetConfig(db);
+      bool should_shred = VariantShreddingEnabled(
+        duckdb::Settings::Get<duckdb::VariantMinimumShreddingSizeSetting>(
+          config),
+        row_count);
+
+      duckdb::LogicalType shredded_type;
+      if (should_shred) {
+        if (config.options.force_variant_shredding.id() !=
+            duckdb::LogicalTypeId::INVALID) {
+          shredded_type = config.options.force_variant_shredding;
+        } else {
+          duckdb::VariantShreddingStats stats;
+          stats.Update(vec, row_count);
+          shredded_type = stats.GetShreddedType();
+        }
+        if (shredded_type.id() != duckdb::LogicalTypeId::STRUCT ||
+            duckdb::StructType::GetChildCount(shredded_type) != 2) {
+          should_shred = false;
+        }
+      }
+
+      node.variant_layouts.emplace_back();
+      auto& layout = node.variant_layouts.back();
+      layout.row_start = row_start;
+      layout.row_count = row_count;
+      layout.unshredded = std::make_unique<PersistentColumnData>();
+
+      if (!should_shred) {
+        layout.unshredded->type = duckdb::VariantShredding::GetUnshreddedType();
+        FlushNode(write_ctx, layout.unshredded->type, vec, row_count,
+                  /*row_start=*/0, *layout.unshredded, /*skip_validity=*/true,
+                  forced);
+        return;
+      }
+
+      duckdb::Vector shredded_out{shredded_type, row_count};
+      duckdb::VariantColumnData::ShredVariantData(vec, shredded_out, row_count);
+      auto& shred_entries = duckdb::StructVector::GetEntries(shredded_out);
+      SDB_ASSERT(shred_entries.size() == 2);
+
+      {
+        duckdb::UnifiedVectorFormat unshredded_fmt;
+        shred_entries[0].ToUnifiedFormat(row_count, unshredded_fmt);
+        layout.shred_state = unshredded_fmt.validity.CountValid(row_count) == 0
+                               ? VariantShredState::Full
+                               : VariantShredState::Partial;
+      }
+
+      layout.shredded_node = std::make_unique<PersistentColumnData>();
+      layout.unshredded->type = shred_entries[0].GetType();
+      layout.shredded_node->type = shred_entries[1].GetType();
+      FlushNode(write_ctx, layout.unshredded->type, shred_entries[0], row_count,
+                /*row_start=*/0, *layout.unshredded,
+                /*skip_validity=*/false, forced);
+      FlushNode(write_ctx, layout.shredded_node->type, shred_entries[1],
+                row_count, /*row_start=*/0, *layout.shredded_node,
+                /*skip_validity=*/false, forced);
+      MarkFullyShredded(shred_entries[1], *layout.shredded_node, row_count);
+      return;
+    }
     case duckdb::LogicalTypeId::STRUCT: {
       // STRUCT has no top-level data of its own -- just parent validity and
       // per-field children. Matches duckdb::StructColumnData::Append.

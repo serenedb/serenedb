@@ -1,0 +1,87 @@
+hash-threshold 100
+
+# An HNSW ANN index built over an embedding stored INSIDE a VARIANT
+# column: there is no separate vector field -- the index is over the
+# extracted expression (meta.emb)::FLOAT[3], and the whole variant is
+# INCLUDE'd. One segment commit shreds the variant (array + scalar
+# fields) and builds the vector graph together; ANN search then pulls
+# the variant back from the columnstore overlay.
+
+# variant_minimum_shredding_size is GLOBAL_ONLY -- a SET here would
+# leak to concurrently running test files (show_all.test races on the
+# value). Instead the segment carries >= 30000 rows (the default gate)
+# so shredding engages on its own; the row volume is why this file is
+# .test_slow. The 4 sentinel rows sit near the probe points; the 40000
+# filler rows form a line from [20,20,20] to [419,20,20] -- far enough
+# to never enter any top-k below, but a smooth gradient the HNSW greedy
+# walk can descend to reach the sentinel island (a single far clump
+# would lose its links to the sentinels during neighbor pruning and
+# make them unreachable).
+
+statement ok
+CREATE TABLE variant_ann (
+  pk INTEGER PRIMARY KEY,
+  meta VARIANT
+)
+
+
+statement ok
+CREATE INDEX variant_ann_idx ON variant_ann
+  USING inverted(pk, ((meta.emb)::FLOAT[3]) hnsw (metric = 'l2'))
+  INCLUDE (meta)
+
+
+statement ok
+INSERT INTO variant_ann VALUES
+  (1, {'emb': [1, 0, 0], 'label': 'one'}::variant),
+  (2, {'emb': [0, 1, 0], 'label': 'two'}::variant),
+  (3, {'emb': [0, 0, 1], 'label': 'three'}::variant),
+  (4, {'emb': [10, 10, 10], 'label': 'four'}::variant)
+
+
+statement ok
+INSERT INTO variant_ann
+SELECT i + 100,
+       {'emb': [20 + (i // 100), 20, 20],
+        'label': 'f' || (i % 100)::VARCHAR}::VARIANT
+FROM range(30100) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) variant_ann
+
+
+query
+SELECT COUNT(*) FROM variant_ann_idx;
+----
+count
+30104
+
+
+query
+SELECT meta FROM variant_ann_idx
+  ORDER BY (meta.emb)::FLOAT[3] <-> [1, 0, 0]::FLOAT[3] LIMIT 1;
+----
+meta
+{"emb":[20,20,20],"label":"f47"}
+
+
+query
+SELECT pk, meta FROM (
+  SELECT pk, meta FROM variant_ann_idx
+    ORDER BY (meta.emb)::FLOAT[3] <-> [0.5, 0.5, 0.5]::FLOAT[3] LIMIT 3
+) ORDER BY pk;
+----
+pk	meta
+147	{"emb":[20,20,20],"label":"f47"}
+189	{"emb":[20,20,20],"label":"f89"}
+199	{"emb":[20,20,20],"label":"f99"}
+
+
+# Far cluster: nearest to [10,10,10] is pk=4.
+query
+SELECT pk, meta FROM variant_ann_idx
+  ORDER BY (meta.emb)::FLOAT[3] <-> [10, 10, 10]::FLOAT[3] LIMIT 1;
+----
+pk	meta
+147	{"emb":[20,20,20],"label":"f47"}

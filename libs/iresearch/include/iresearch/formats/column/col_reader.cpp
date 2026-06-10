@@ -27,6 +27,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/data_pointer.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <utility>
 #include <vector>
 
@@ -49,48 +50,6 @@ namespace {
 // Footer slot ids; stable, never reuse. Must match col_writer.cpp.
 constexpr duckdb::field_id_t kFooterSlotColumns = 100;
 constexpr duckdb::field_id_t kFooterSlotNormColumns = 101;
-
-std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
-                                               PersistentColumnData&& node) {
-  std::unique_ptr<ColumnReader> element_child;
-  std::vector<std::unique_ptr<ColumnReader>> struct_children;
-  uint64_t array_size = 0;
-
-  switch (node.type.id()) {
-    case duckdb::LogicalTypeId::ARRAY: {
-      SDB_ASSERT(node.child_columns.size() == 1);
-      array_size = static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
-      element_child = MakeColumnReader(field_limits::invalid(),
-                                       std::move(node.child_columns.front()));
-      node.pointers.clear();  // ARRAY carries no self data on disk.
-    } break;
-    case duckdb::LogicalTypeId::MAP:
-    case duckdb::LogicalTypeId::LIST: {
-      // MAP rides on the LIST path: PhysicalType::LIST with a
-      // STRUCT<key, value> element.
-      SDB_ASSERT(node.child_columns.size() == 1);
-      element_child = MakeColumnReader(field_limits::invalid(),
-                                       std::move(node.child_columns.front()));
-    } break;
-    case duckdb::LogicalTypeId::VARIANT:
-    case duckdb::LogicalTypeId::STRUCT: {
-      struct_children.reserve(node.child_columns.size());
-      for (auto& cn : node.child_columns) {
-        struct_children.push_back(
-          MakeColumnReader(field_limits::invalid(), std::move(cn)));
-      }
-      node.pointers.clear();
-      break;
-    }
-    default:
-      break;  // primitive leaf: keep pointers, no children.
-  }
-
-  return std::make_unique<ColumnReader>(
-    id, std::move(node.type), std::move(node.pointers),
-    std::move(node.validity_pointers), std::move(element_child),
-    std::move(struct_children), array_size);
-}
 
 PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
   PersistentColumnData node;
@@ -128,6 +87,32 @@ PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
                    node.child_columns.push_back(DeserializeColumnData(child));
                  });
                });
+  obj.ReadList(
+    4, "variant_layouts",
+    [&](duckdb::Deserializer::List& vlist, duckdb::idx_t /*j*/) {
+      vlist.ReadObject([&](duckdb::Deserializer& vo) {
+        auto& layout = node.variant_layouts.emplace_back();
+        layout.row_start = vo.ReadProperty<uint64_t>(0, "row_start");
+        layout.row_count = vo.ReadProperty<uint64_t>(1, "row_count");
+        const auto shred_state = magic_enum::enum_cast<VariantShredState>(
+          vo.ReadProperty<uint8_t>(2, "shred_state"));
+        SDB_ENSURE(shred_state, sdb::ERROR_INTERNAL,
+                   "corrupt columnstore footer: invalid variant shred_state");
+        layout.shred_state = *shred_state;
+        vo.ReadObject(3, "unshredded", [&](duckdb::Deserializer& u) {
+          layout.unshredded =
+            std::make_unique<PersistentColumnData>(DeserializeColumnData(u));
+        });
+        if (layout.shred_state != VariantShredState::Unshredded) {
+          vo.ReadObject(4, "shredded_node", [&](duckdb::Deserializer& s) {
+            layout.shredded_node =
+              std::make_unique<PersistentColumnData>(DeserializeColumnData(s));
+          });
+        }
+      });
+    });
+  node.fully_shredded =
+    obj.ReadPropertyWithExplicitDefault<bool>(5, "fully_shredded", true);
   return node;
 }
 

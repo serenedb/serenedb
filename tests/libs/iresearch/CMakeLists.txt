@@ -20,6 +20,7 @@ set(iresearch-tests_sources
     ./analysis/tokenizer_tests.cpp
     ./analysis/pattern_tokenizer_tests.cpp
     ./formats/column/columnstore_test.cpp
+    ./formats/column/variant_shredding_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
     ./formats/sparse_bitmap_test.cpp

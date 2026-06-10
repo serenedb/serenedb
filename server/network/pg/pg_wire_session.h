@@ -356,6 +356,9 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   // By value, not IExecutorPtr: no per-connection heap alloc, and because the
   // type is concrete + final, `co_await yaclib::On(*_duck)` devirtualizes.
   std::optional<DuckExecutor> _duck;
+  // Drives each query as a DuckDB scheduler task and resumes this coroutine on
+  // *_duck once the query terminates. By value -- no per-query allocation.
+  std::optional<QueryPump> _pump;
   // Non-owning: points to this session's io worker, which IS the IoExecutor.
   IoExecutor* _ioexec = nullptr;
   containers::NodeHashMap<std::string, sdb::pg::DuckDBStatement> _statements;
@@ -962,7 +965,7 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     if (pending->HasError()) {
       ThrowDuck(pending->GetErrorObject());
     }
-    const auto status = co_await DrivePending(*_duck, *pending);
+    const auto status = co_await _pump->Drive(*pending);
     if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
         pending->HasError()) {
       ThrowDuck(pending->GetErrorObject());
@@ -1023,7 +1026,7 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
     if (pending->HasError()) {
       ThrowDuck(pending->GetErrorObject());
     }
-    const auto status = co_await DrivePending(*_duck, *pending);
+    const auto status = co_await _pump->Drive(*pending);
     if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
         pending->HasError()) {
       ThrowDuck(pending->GetErrorObject());
@@ -1484,7 +1487,7 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
   // resumes the retained result. PendingQueryResult::Execute() closes the
   // pending, so calling it twice would throw.
   if (!portal->started) {
-    const auto status = co_await DrivePending(*_duck, *portal->pending);
+    const auto status = co_await _pump->Drive(*portal->pending);
     if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
         portal->pending->HasError()) {
       ThrowDuck(portal->pending->GetErrorObject());
@@ -1726,6 +1729,7 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
     }};
 
     _duck.emplace(duckdb::TaskScheduler::GetScheduler(*_conn->context), *_ioexec);
+    _pump.emplace(duckdb::TaskScheduler::GetScheduler(*_conn->context), *_ioexec, *_duck);
 
     SendStartupBurst();
     co_await Flush();

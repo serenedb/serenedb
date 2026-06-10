@@ -848,8 +848,8 @@ bool TryClaimSearchFilter(
   };
 
   auto& scan = bind_data.scan_source->Cast<connector::SearchScan>();
-  auto [stored, root_ptr] =
-    [&] -> std::pair<std::shared_ptr<irs::Filter>, irs::And*> {
+  auto [stored,
+        root_ptr] = [&] -> std::pair<std::shared_ptr<irs::Filter>, irs::And*> {
     if (scan.vector_scorer) {
       auto proxy = std::make_shared<irs::ProxyFilter>();
       auto* root =

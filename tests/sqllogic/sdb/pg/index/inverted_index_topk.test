@@ -194,7 +194,7 @@ QUERY PLAN
 # ---- EXPLAIN with LIMIT: strategy should flip to iresearch_score_topk_scan ----
 # When the query has ORDER BY BM25() DESC + LIMIT k, the optimizer rule
 # TryAttachScoreTopK pulls the limit into SearchScan.score_top_k. This changes
-# the scan function name and adds a "TopK: k" line to the EXPLAIN box.
+# the scan function name and adds a "Top: k" line to the EXPLAIN box.
 
 query
 EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3;
@@ -221,7 +221,7 @@ QUERY PLAN
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
-│          TopK: 3          │
+│           Top: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -233,7 +233,7 @@ QUERY PLAN
 
 # ---- EXPLAIN: UNION ALL of two topk branches ----
 # Each branch independently qualifies for TryAttachScoreTopK; both scans
-# should show Strategy=iresearch_score_topk_scan with TopK=3.
+# should show Strategy=iresearch_score_topk_scan with Top=3.
 
 query
 EXPLAIN (SELECT id, BM25(docs_topk_idx.tableoid) > 0 AS has_score FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3)
@@ -282,7 +282,7 @@ QUERY PLAN
 │           Score:          ││           Score:          │
 │    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
 │                           ││                           │
-│          TopK: 3          ││          TopK: 3          │
+│           Top: 3          ││           Top: 3          │
 │                           ││                           │
 │        Projections:       ││        Projections:       │
 │             id            ││             id            │
@@ -330,7 +330,7 @@ QUERY PLAN
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
-│          TopK: 3          │
+│           Top: 3          │
 │                           │
 │        Projections:       │
 │             id            │

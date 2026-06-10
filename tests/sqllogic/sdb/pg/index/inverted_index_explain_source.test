@@ -156,7 +156,7 @@ QUERY PLAN
 │           Index:          │
 │  src_hnsw_only_idx (ANN)  │
 │                           │
-│          TopK: 1          │
+│           Top: 1          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -188,7 +188,7 @@ QUERY PLAN
 │  src_hnsw_only_idx (ANN)  │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 1          │
+│           Top: 1          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -238,7 +238,7 @@ QUERY PLAN
 │  src_hnsw_mixed_idx (ANN) │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 1          │
+│           Top: 1          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │

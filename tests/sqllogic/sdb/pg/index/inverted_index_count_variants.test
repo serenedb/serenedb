@@ -76,7 +76,9 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: ct_idx       │
-│      Lookup: rocksdb      │
+│                           │
+│          Output:          │
+│       row-count only      │
 │                           │
 │          ~5 rows          │
 └───────────────────────────┘
@@ -101,7 +103,9 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: ct_idx       │
-│      Lookup: rocksdb      │
+│                           │
+│          Output:          │
+│       row-count only      │
 │                           │
 │          ~5 rows          │
 └───────────────────────────┘
@@ -165,7 +169,9 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: ct_idx       │
-│      Lookup: rocksdb      │
+│                           │
+│          Output:          │
+│       row-count only      │
 │                           │
 │          ~5 rows          │
 └───────────────────────────┘

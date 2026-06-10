@@ -256,13 +256,14 @@ QUERY PLAN
 │           Index:          │
 │      vedernikoff_idx      │
 │                           │
-│      Lookup: rocksdb      │
-│                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
 │  <Term:pudge(0, 0); >] && │
 │  PHRASE[b(string) = <Term │
 │      :game(0, 0); >]]     │
+│                           │
+│          Output:          │
+│       row-count only      │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

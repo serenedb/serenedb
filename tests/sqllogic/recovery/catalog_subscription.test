@@ -14,13 +14,12 @@ my_sub1
 statement ok
 SET sdb_faults = 'crash_on_packet';
 
-
 statement error connection closed
 SELECT 1;
 
 
 connection after_crash
-query
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT subname FROM pg_subscription ORDER BY subname;
 ----
 subname

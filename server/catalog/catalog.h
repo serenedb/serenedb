@@ -96,6 +96,8 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Tokenizer;
   } else if constexpr (std::is_same_v<T, Sequence>) {
     return ObjectType::Sequence;
+  } else if constexpr (std::is_same_v<T, Subscription>) {
+    return ObjectType::Subscription;
   } else {
     static_assert(false);
   }

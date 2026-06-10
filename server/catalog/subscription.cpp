@@ -36,10 +36,12 @@ std::shared_ptr<Subscription> Subscription::Deserialize(
   Config config;
   basics::ReadTuple(src, config);
 
+  std::string name = config.slot_name;
   // @todo schema_id, ids...
-  return std::make_shared<Subscription>(ctx.schema_id, ctx.id, config.slot_name,
+  return std::make_shared<Subscription>(ctx.database_id, ctx.id, name,
                                         std::move(config));
 }
+
 void Subscription::Serialize(duckdb::Serializer& sink) const {
   basics::WriteTuple(sink, _config);
 }

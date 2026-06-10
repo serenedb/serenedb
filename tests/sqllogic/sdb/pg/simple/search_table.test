@@ -77,6 +77,22 @@ a	b
 3	z
 
 
+# COUNT(*) uses the count-only scan path (no real columns projected); it must
+# return the row count, not error on the virtual column.
+query
+SELECT COUNT(*) FROM search_dml;
+----
+count
+3
+
+
+query
+SELECT COUNT(*) FROM search_dml WHERE a >= 2;
+----
+count
+2
+
+
 statement error
 UPDATE search_dml SET b = 'y' WHERE a = 1;
 ----

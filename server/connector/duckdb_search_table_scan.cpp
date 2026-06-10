@@ -61,6 +61,14 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
   state->reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
     shard->GetId(), [&] { return search_shard.GetDirectoryReader(); });
 
+  // COUNT(*)-style scan projects no real columns -- answer with the live row
+  // count instead of materialising columns.
+  if (IsCountOnlyScan(bind_data, input)) {
+    state->count_only = true;
+    state->count_remaining = state->reader->live_docs_count();
+    return state;
+  }
+
   const auto num_bind_columns = bind_data.column_ids.size();
   state->field_ids.reserve(input.column_ids.size());
   state->output_slots.reserve(input.column_ids.size());
@@ -88,6 +96,15 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
   auto& gstate = data.global_state->Cast<SearchTableScanGlobalState>();
   if (gstate.finished) {
     output.SetCardinality(0);
+    return;
+  }
+  if (gstate.count_only) {
+    const auto n =
+      std::min<uint64_t>(gstate.count_remaining, STANDARD_VECTOR_SIZE);
+    output.SetCardinality(n);
+    gstate.count_remaining -= n;
+    gstate.produced_rows.fetch_add(n, std::memory_order_relaxed);
+    gstate.finished = (gstate.count_remaining == 0);
     return;
   }
   SDB_ASSERT(gstate.reader);

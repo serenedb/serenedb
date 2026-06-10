@@ -41,6 +41,10 @@ struct SearchTableScanGlobalState : public CommonScanGlobalState {
   size_t segment_idx = 0;
   uint64_t doc_in_seg = 0;
   std::unique_ptr<ColumnstoreMaterializer> materializer;
+
+  // COUNT(*)-style scan: emit `count_remaining` empty rows, no materialisation.
+  bool count_only = false;
+  uint64_t count_remaining = 0;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(

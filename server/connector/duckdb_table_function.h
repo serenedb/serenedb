@@ -364,6 +364,12 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
 
+// True when a scan projects no real columns (COUNT(*): only
+// COLUMN_IDENTIFIER_EMPTY / virtual markers) -- the scan answers with the row
+// count instead of materialising columns.
+bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
+                     const duckdb::TableFunctionInitInput& input);
+
 duckdb::TableFunction CreateTableFullscanFunction();
 
 // Full-table scan for search-backed tables (StorageKind::kSearch).

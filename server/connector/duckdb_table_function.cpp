@@ -802,8 +802,6 @@ duckdb::TableFunction CreateSKRangesScanFunction() {
   return func;
 }
 
-namespace {
-
 bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
                      const duckdb::TableFunctionInitInput& input) {
   return absl::c_none_of(input.column_ids, [&](auto col_id) {
@@ -818,6 +816,8 @@ bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
     return col_id < bind_data.column_ids.size();
   });
 }
+
+namespace {
 
 bool IsAnnScan(const SereneDBScanBindData& bind_data) {
   return !!bind_data.scan_source->Cast<SearchScan>().vector_scorer;

@@ -794,9 +794,8 @@ duckdb::TableFunction CreateSKRangesScanFunction() {
 
 namespace {
 
-bool IResearchSupportsPushdownExtract(
-  const duckdb::FunctionData& bind_data_p,
-  const duckdb::LogicalIndex& col_idx) {
+bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
+                                      const duckdb::LogicalIndex& col_idx) {
   const auto& bind = bind_data_p.Cast<SereneDBScanBindData>();
   if (!bind.IsInvertedIndexEntry() || !bind.inverted_index) {
     return false;

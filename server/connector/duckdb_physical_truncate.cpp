@@ -45,7 +45,6 @@ duckdb::SourceResultType SereneDBPhysicalTruncate::GetDataInternal(
   duckdb::OperatorSourceInput& input) const {
   auto& conn_ctx = GetSereneDBContext(context.client);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  // Re-added in M4 PR 4.1: see SereneDBPhysicalUpdate for context.
   auto shard = snapshot->GetTableShard(_table->GetId());
   SDB_ASSERT(shard);
   RejectIfSearchTable(*shard, "TRUNCATE");

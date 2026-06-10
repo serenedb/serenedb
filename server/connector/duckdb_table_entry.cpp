@@ -95,14 +95,6 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   data->entry_kind = ScanEntryKind::BaseTable;
 
   bind_data = std::move(data);
-  // Storage-kind dispatch. The kSearch path bypasses the rocksdb scan
-  // entirely (CreateSearchTableScanFunction reads the iresearch
-  // columnstore via ColumnstoreMaterializer); the kRocksDB path is the
-  // original PK-iterator-based fullscan. Other dispatch points (UPDATE /
-  // DELETE / TRUNCATE / CREATE INDEX) still trip RejectIfSearchTable
-  // upstream because they resolve the target through this scan bind --
-  // until their respective milestones land, the M2 PR 2.3 stub message
-  // surfaces.
   if (shard->GetStorage() == catalog::StorageKind::kSearch) {
     return CreateSearchTableScanFunction();
   }

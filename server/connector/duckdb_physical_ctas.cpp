@@ -98,10 +98,6 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // Table constructor wires up a generated PK sequence.
 
   ApplyColumnModes(options.columns, table_info.options);
-  // kSearch CTAS never reaches this operator --
-  // SereneDBCatalog::PlanCreateTableAs routes search-backed CTAS to
-  // SereneDBSearchInsert (CTAS mode). This operator is the rocksdb SST path
-  // only.
   ApplyStorageKind(options, table_info.options);
   SDB_ASSERT(options.storage == catalog::StorageKind::kRocksDB,
              "search-backed CTAS must route through SereneDBSearchInsert");

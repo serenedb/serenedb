@@ -410,12 +410,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto database_id = GetDatabaseId();
 
-  // Re-added in M4 PR 4.1: now that SELECT on kSearch shards dispatches
-  // to a real scan, the GetScanFunction-side reject no longer catches
-  // CREATE INDEX on a search table. No index method is supported on
-  // search-backed tables -- including USING inverted, since the
-  // iresearch columnstore already provides search capabilities. Reject
-  // before any catalog mutation.
   auto target_shard = snapshot->GetTableShard(sdb_table->GetId());
   SDB_ASSERT(target_shard);
   RejectIfSearchTable(*target_shard, "CREATE INDEX");

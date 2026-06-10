@@ -473,9 +473,6 @@ void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
-  // Search-backed CTAS routes through the single search-insert operator
-  // (CTAS mode) -- search has no separate bulk/SST path. Peek the storage
-  // kind from the WITH options; rocksdb keeps the SST-based CTAS operator.
   {
     auto& table_info = op.info->Base().Cast<duckdb::CreateTableInfo>();
     catalog::CreateTableOptions probe;
@@ -1005,10 +1002,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::CatalogEntry& target,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
-  // Reject CREATE INDEX targeting a search-backed table at bind time --
-  // SchemaEntry::CreateIndex (where the M2-era guard lived) isn't reached
-  // for the plan-bound CREATE INDEX path. View-backed indexes go through
-  // their own snapshot resolution below.
   if (target.type != duckdb::CatalogType::VIEW_ENTRY) {
     auto& table_entry =
       RequireBaseTable(target.Cast<duckdb::TableCatalogEntry>());

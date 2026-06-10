@@ -25,11 +25,6 @@
 
 #include "catalog/table.h"
 
-namespace sdb {
-
-class TableShard;
-}
-
 namespace sdb::connector {
 
 // Virtual column ID for tableoid (PG system column). Always returns 0.

@@ -51,7 +51,7 @@ VACUUM (REFRESH_TABLE) variant_ann
 query
 SELECT COUNT(*) FROM variant_ann_idx;
 ----
-count_star()
+count
 40004
 
 

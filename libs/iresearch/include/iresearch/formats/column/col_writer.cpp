@@ -34,6 +34,7 @@
 #include "basics/exceptions.h"
 #include "basics/serialization.h"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/persistent_column_data.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
@@ -74,46 +75,27 @@ void SerializeColumnData(duckdb::Serializer& obj,
                     SerializeColumnData(child, node.child_columns[j]);
                   });
                 });
-}
-
-std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
-                                               PersistentColumnData&& node) {
-  std::unique_ptr<ColumnReader> element_child;
-  std::vector<std::unique_ptr<ColumnReader>> struct_children;
-  uint64_t array_size = 0;
-
-  switch (node.type.id()) {
-    case duckdb::LogicalTypeId::ARRAY: {
-      SDB_ASSERT(node.child_columns.size() == 1);
-      array_size = static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
-      element_child = MakeColumnReader(field_limits::invalid(),
-                                       std::move(node.child_columns.front()));
-      node.pointers.clear();  // ARRAY carries no self data on disk.
-    } break;
-    case duckdb::LogicalTypeId::MAP:
-    case duckdb::LogicalTypeId::LIST: {
-      SDB_ASSERT(node.child_columns.size() == 1);
-      element_child = MakeColumnReader(field_limits::invalid(),
-                                       std::move(node.child_columns.front()));
-    } break;
-    case duckdb::LogicalTypeId::VARIANT:
-    case duckdb::LogicalTypeId::STRUCT: {
-      struct_children.reserve(node.child_columns.size());
-      for (auto& cn : node.child_columns) {
-        struct_children.push_back(
-          MakeColumnReader(field_limits::invalid(), std::move(cn)));
-      }
-      node.pointers.clear();
-      break;
-    }
-    default:
-      break;  // primitive leaf: keep pointers, no children.
-  }
-
-  return std::make_unique<ColumnReader>(
-    id, std::move(node.type), std::move(node.pointers),
-    std::move(node.validity_pointers), std::move(element_child),
-    std::move(struct_children), array_size);
+  obj.WriteList(4, "variant_layouts", node.variant_layouts.size(),
+                [&](duckdb::Serializer::List& vlist, duckdb::idx_t j) {
+                  const auto& l = node.variant_layouts[j];
+                  vlist.WriteObject([&](duckdb::Serializer& vo) {
+                    vo.WriteProperty<uint64_t>(0, "row_start", l.row_start);
+                    vo.WriteProperty<uint64_t>(1, "row_count", l.row_count);
+                    vo.WriteProperty<uint8_t>(
+                      2, "shred_state", static_cast<uint8_t>(l.shred_state));
+                    vo.WriteObject(3, "unshredded", [&](duckdb::Serializer& u) {
+                      SerializeColumnData(u, *l.unshredded);
+                    });
+                    if (l.shred_state != VariantShredState::Unshredded) {
+                      vo.WriteObject(4, "shredded_node",
+                                     [&](duckdb::Serializer& s) {
+                                       SerializeColumnData(s, *l.shredded_node);
+                                     });
+                    }
+                  });
+                });
+  obj.WritePropertyWithDefault<bool>(5, "fully_shredded", node.fully_shredded,
+                                     true);
 }
 
 }  // namespace

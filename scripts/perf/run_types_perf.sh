@@ -9,9 +9,10 @@
 # sides decodes the same codec-compressed chunks; any speed difference
 # is in the scan/materialise wrapper.
 #
-# Bench phases, picked by env:
-#  - default (no env):     hot only -- 1 warmup + 1 timed hit per query.
-#  - PERF_COLD=1:          same-session cold (1st-touch) + warmup + hot.
+# Bench phases, picked by env. In every mode hot = average of the 2nd
+# and 3rd launches of a query:
+#  - default (no env):     hot only -- 1 warmup launch + hot.
+#  - PERF_COLD=1:          same-session cold (1st launch) + hot.
 #  - PERF_DROP_CACHES=1:   restart + drop_caches before each query +
 #                          cold + hot (PERF_DROP_CACHES wins over PERF_COLD).
 #
@@ -240,8 +241,27 @@ COPY (
              [ROW('k1', i)::STRUCT(k VARCHAR, v INTEGER),
               ROW('k2', i * 2)::STRUCT(k VARCHAR, v INTEGER)])
            ::STRUCT(name VARCHAR, vals STRUCT(k VARCHAR, v INTEGER)[]) AS deep,
+         {'a': i * 2, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+           AS variant_obj,
          {'a': (i * 0.5)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
-           AS variant_obj
+           AS variant_f64,
+         CASE
+           WHEN i < 1000 AND i % 100 = 0
+             THEN {'a': (i * 0.5)::DOUBLE,
+                   'b': 'b-' || (i % 100)::VARCHAR, 'rare': i}::VARIANT
+           WHEN i % 1000 = 0
+             THEN {'a': (i * 1.5)::DOUBLE, 'b': i}::VARIANT
+           WHEN i % 9999 = 3
+             THEN {'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+           ELSE {'a': (i * 3.1415)::DOUBLE,
+                 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+         END AS variant_messy,
+         {'outer': {'mid': {'a': i * 2,
+                            'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
+           AS variant_nested,
+         {'outer': {'mid': {'a': (i * 0.5)::DOUBLE,
+                            'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
+           AS variant_nested_f64
   FROM range(${N}) t(i)
 ) TO '${PQ_SQL_PATH}' (FORMAT parquet);
 "
@@ -311,7 +331,8 @@ CREATE INDEX bench_idx ON bench_view USING inverted(bool_col)
 INCLUDE (
   i8, i16, i32, i64, f32, f64, s, bool_col,
   arr_i32, arr_f64, lst_i32, struct_basic, struct_f64,
-  map_i32, lst_struct, deep, variant_obj
+  map_i32, lst_struct, deep, variant_obj, variant_f64, variant_messy,
+  variant_nested, variant_nested_f64
 );
 "
 fi
@@ -330,6 +351,27 @@ bench_pair_idx() {
 		"SELECT ${expr} FROM bench_idx;"
 	run_sql "${phase}_${label}_native" "${SCAN_THREADS}" \
 		"SELECT ${expr} FROM bench_native;"
+}
+
+avg_ms() {
+	awk -v a="$1" -v b="$2" 'BEGIN{
+    if (a == "" || b == "") exit
+    printf "%.3f", (a + b) / 2
+  }'
+}
+
+# hot = average of the 2nd and 3rd launches (phases hot1/hot2), folded
+# into hot_<label>_<side> so the summary reads one key per query.
+bench_hot_avg() {
+	local label="$1" expr="$2"
+	bench_pair_idx "hot1" "${label}" "${expr}" # 2nd launch
+	bench_pair_idx "hot2" "${label}" "${expr}" # 3rd launch
+	local side
+	for side in indexed native; do
+		TIMINGS["hot_${label}_${side}"]=$(avg_ms \
+			"${TIMINGS[hot1_${label}_${side}]:-}" \
+			"${TIMINGS[hot2_${label}_${side}]:-}")
+	done
 }
 
 QUERIES=(
@@ -352,13 +394,18 @@ QUERIES=(
 	"map|SUM(list_sum(map_values(map_i32)))"
 	"lstStr|SUM(list_sum(list_transform(lst_struct, p -> p.v)))"
 	"deep|SUM(length(deep.name)) + SUM(list_sum(list_transform(deep.vals, p -> p.v)))"
-	"variant|SUM(variant_obj.a::DOUBLE) + SUM(1.0 / length(variant_obj.b::VARCHAR))"
+	"variant|SUM(variant_obj.a::INTEGER) + SUM(length(variant_obj.b::VARCHAR))"
+	"variantF|SUM(variant_f64.a::DOUBLE) + SUM(length(variant_f64.b::VARCHAR))"
+	"variantMsg|SUM(variant_messy.a::DOUBLE)"
+	"variantNest|SUM(variant_nested.outer.mid.a::INTEGER) + SUM(length(variant_nested.outer.mid.b::VARCHAR))"
+	"variantNestF|SUM(variant_nested_f64.outer.mid.a::DOUBLE) + SUM(length(variant_nested_f64.outer.mid.b::VARCHAR))"
 )
 
-# Three timing modes, picked by env:
+# Three timing modes, picked by env.  In every mode the hot number is
+# the average of the 2nd and 3rd launches of the query:
 #
-# - default (no env): hot only.  1 warmup hit + 1 timed hit per query
-#   per side.  Steady-state warm.  Fastest run.
+# - default (no env): hot only.  1 warmup launch, then the two timed
+#   launches.  Steady-state warm.  Fastest run.
 #
 # - PERF_COLD=1: same-session cold + hot.  "cold" means 1st-touch within
 #   the same session (per-segment open + per-codec init cost).  Does NOT
@@ -410,29 +457,29 @@ cycle_cold() {
 	reattach_native_db
 }
 
-# Default mode: hot only.  1 warmup hit + 1 timed hit.
+# Default mode: hot only.  1 warmup launch, hot = avg of 2nd + 3rd.
 run_pass_hot_only() {
 	for q in "${QUERIES[@]}"; do
 		local label="${q%%|*}" expr="${q#*|}"
-		bench_pair_idx "warmup" "${label}" "${expr}" # ignored
-		bench_pair_idx "hot" "${label}" "${expr}"    # timed
+		bench_pair_idx "warmup" "${label}" "${expr}" # 1st launch, ignored
+		bench_hot_avg "${label}" "${expr}"           # 2nd + 3rd, averaged
 	done
 }
 
-# PERF_COLD=1: same-session cold + warmup + hot.
+# PERF_COLD=1: same-session cold + hot.
 run_pass_same_session() {
 	for q in "${QUERIES[@]}"; do
 		local label="${q%%|*}" expr="${q#*|}"
-		bench_pair_idx "cold" "${label}" "${expr}" # first-touch
-		bench_pair_idx "warm" "${label}" "${expr}" # 2nd hit, ignored
-		bench_pair_idx "hot" "${label}" "${expr}"  # 3rd hit, steady-state
+		bench_pair_idx "cold" "${label}" "${expr}" # 1st launch, first-touch
+		bench_hot_avg "${label}" "${expr}"         # 2nd + 3rd, averaged
 	done
 }
 
 # PERF_DROP_CACHES=1: restart-and-drop-OS-cache before each query, then
-# cold + hot.  Each cycle: kill serened -> drop_caches -> restart ->
-# reattach native.  Clears DuckDB BufferManager too so native isn't
-# unfairly warm.
+# cold + hot.  Each cycle: kill serened -> drop_caches -> restart
+# -> reattach native.  Clears DuckDB BufferManager too so native isn't
+# unfairly warm.  cold = 1st launch from disk; hot = avg of the 2nd and
+# 3rd launches (no first-touch segment-open cost).
 run_pass_drop_caches() {
 	for q in "${QUERIES[@]}"; do
 		local label="${q%%|*}" expr="${q#*|}"
@@ -440,8 +487,8 @@ run_pass_drop_caches() {
 			echo "ERROR: drop_caches cycle failed" >&2
 			return 1
 		}
-		bench_pair_idx "cold" "${label}" "${expr}"
-		bench_pair_idx "hot" "${label}" "${expr}"
+		bench_pair_idx "cold" "${label}" "${expr}" # 1st launch, timed
+		bench_hot_avg "${label}" "${expr}"         # 2nd + 3rd, averaged
 	done
 }
 
@@ -537,39 +584,41 @@ ratio() {
 	echo "build threads: ${BUILD_THREADS}    scan threads: ${SCAN_THREADS}"
 	echo
 	if [[ "${HAS_COLD}" == "1" ]]; then
-		printf "%-10s | %s\n" "phase" \
-			"cold = 1st-touch same-session; hot = 3rd-touch steady-state"
+		printf "%-12s | %s\n" "phase" \
+			"cold = 1st launch; hot = avg of 2nd + 3rd launches"
 		echo
-		printf "%-10s %12s %12s %8s | %12s %12s %8s\n" \
+		printf "%-12s %12s %12s %8s | %12s %12s %8s\n" \
 			"query" "cs cold" "native cold" "cold x" \
 			"cs hot" "native hot" "hot x"
-		printf "%-10s %12s %12s %8s | %12s %12s %8s\n" \
-			"----------" "------------" "------------" "--------" \
+		printf "%-12s %12s %12s %8s | %12s %12s %8s\n" \
+			"------------" "------------" "------------" "--------" \
 			"------------" "------------" "--------"
 		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-			array arrayF list struct structF map lstStr deep; do
+			array arrayF list struct structF map lstStr deep \
+			variant variantF variantMsg variantNest variantNestF; do
 			ci="${TIMINGS[cold_${q}_indexed]:-}"
 			cn="${TIMINGS[cold_${q}_native]:-}"
 			hi="${TIMINGS[hot_${q}_indexed]:-}"
 			hn="${TIMINGS[hot_${q}_native]:-}"
-			printf "%-10s %12s %12s %8s | %12s %12s %8s\n" "${q}" \
+			printf "%-12s %12s %12s %8s | %12s %12s %8s\n" "${q}" \
 				"$(fmt_ms "${ci}")" "$(fmt_ms "${cn}")" \
 				"$(ratio "${cn}" "${ci}")" \
 				"$(fmt_ms "${hi}")" "$(fmt_ms "${hn}")" \
 				"$(ratio "${hn}" "${hi}")"
 		done
 	else
-		printf "%-10s | %s\n" "phase" "hot = warmup + timed hit"
+		printf "%-12s | %s\n" "phase" "hot = avg of 2nd + 3rd launches (1 warmup)"
 		echo
-		printf "%-10s %12s %12s %8s\n" \
+		printf "%-12s %12s %12s %8s\n" \
 			"query" "cs hot" "native hot" "hot x"
-		printf "%-10s %12s %12s %8s\n" \
-			"----------" "------------" "------------" "--------"
+		printf "%-12s %12s %12s %8s\n" \
+			"------------" "------------" "------------" "--------"
 		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-			array arrayF list struct structF map lstStr deep; do
+			array arrayF list struct structF map lstStr deep \
+			variant variantF variantMsg variantNest variantNestF; do
 			hi="${TIMINGS[hot_${q}_indexed]:-}"
 			hn="${TIMINGS[hot_${q}_native]:-}"
-			printf "%-10s %12s %12s %8s\n" "${q}" \
+			printf "%-12s %12s %12s %8s\n" "${q}" \
 				"$(fmt_ms "${hi}")" "$(fmt_ms "${hn}")" \
 				"$(ratio "${hn}" "${hi}")"
 		done

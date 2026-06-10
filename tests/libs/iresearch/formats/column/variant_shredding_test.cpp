@@ -88,8 +88,7 @@ void WriteVariantColumn(duckdb::DatabaseInstance& db, irs::Directory& dir,
     }
     produced += chunk->size();
   }
-  const auto filename = w.Commit(produced);
-  ASSERT_FALSE(filename.empty());
+  w.Commit(produced);
 }
 
 std::vector<duckdb::Value> ReadVariantColumn(Reader& r,
@@ -324,17 +323,16 @@ TEST_F(IRSVariantShreddingTest, MergeReshreds) {
     Writer w{dir, "merged", Db()};
     irs::MergeSource sources[2] = {
       {.reader = nullptr,
-       .cs_reader = &ra,
+       .col_reader = &ra,
        .mask = nullptr,
        .alive_count = 300},
       {.reader = nullptr,
-       .cs_reader = &rb,
+       .col_reader = &rb,
        .mask = nullptr,
        .alive_count = 300},
     };
     irs::MergeInto(sources, w, /*column_options=*/nullptr);
-    const auto filename = w.Commit(600);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(600);
   }
 
   Reader r{dir, "merged", Db()};

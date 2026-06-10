@@ -91,7 +91,7 @@ Result SearchTableShard::DropArtifacts(ObjectId db_id, ObjectId table_id) {
   }
   // Deregister from the db WAL's flush-subscription so the dropped shard's
   // frozen committed tick can't pin GC (WAL_DESIGN.md §10.3).
-  GetSearchEngine().GetDbWal(db_id).DeregisterShard(table_id.id());
+  GetSearchEngine().GetDbWal(db_id).DeregisterShard(table_id);
   return {};
 }
 
@@ -186,7 +186,7 @@ void SearchTableShard::OpenWriter() {
   // greater (iresearch monotonicity). Replay of records not yet published into
   // iresearch is wired in the recovery pass (later phase).
   _wal = &GetSearchEngine().GetDbWal(_db_id);
-  _wal->RegisterShard(GetTableId().id(), _last_committed_tick);
+  _wal->RegisterShard(GetTableId(), _last_committed_tick);
 
   if (_is_new) {
     // Force a commit so the directory contains a valid empty index --

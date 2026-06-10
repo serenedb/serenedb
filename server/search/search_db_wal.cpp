@@ -391,9 +391,9 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
   // Reused inline-CDC scratch across every INLINE op (Rewind keeps the buffer).
   duckdb::MemoryStream tmp;
   for (const auto& s : sections) {
-    // Shard header: just the table_id. The column layout is rebuilt from the
-    // catalog on replay, so it isn't recorded.
-    payload.Write<uint64_t>(s.table_id);
+    // Shard header: just the table_id (stored as its raw u64). The column
+    // layout is rebuilt from the catalog on replay, so it isn't recorded.
+    payload.Write<uint64_t>(s.table_id.id());
     // Ordered op manifest (WAL_DESIGN.md §5.4). Insert-only today: each op is
     // exactly one INLINE or REFERENCE batch.
     SDB_ASSERT(!s.ops.empty(), "shard section with no ops");
@@ -431,7 +431,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
           // final here. A stat failure only mis-times rotation (not a
           // correctness issue), but it shouldn't happen for a just-fsynced file
           // -- warn and skip it.
-          auto chunk_path = ChunkDir(s.table_id) / ChunkName(sid);
+          auto chunk_path = ChunkDir(s.table_id.id()) / ChunkName(sid);
           std::error_code se;
           auto sz = std::filesystem::file_size(chunk_path, se);
           if (se) {
@@ -449,8 +449,8 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
   return tick;
 }
 
-SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(uint64_t table_id) {
-  auto dir = ChunkDir(table_id);
+SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(ObjectId table_id) {
+  auto dir = ChunkDir(table_id.id());
   std::error_code ec;
   std::filesystem::create_directories(dir, ec);
   SDB_ASSERT(!ec, "create chunk dir '", dir.string(), "': ", ec.message());
@@ -458,9 +458,9 @@ SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(uint64_t table_id) {
   uint64_t seg_id;
   {
     std::lock_guard<std::mutex> lock(_seg_mu);
-    auto it = _seg_ids.find(table_id);
+    auto it = _seg_ids.find(table_id.id());
     if (it == _seg_ids.end()) {
-      it = _seg_ids.emplace(table_id, MaxChunkSegId(dir)).first;
+      it = _seg_ids.emplace(table_id.id(), MaxChunkSegId(dir)).first;
     }
     seg_id = ++it->second;
   }
@@ -469,10 +469,10 @@ SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(uint64_t table_id) {
   return ChunkWriter{seg_id, std::move(writer)};
 }
 
-void SearchDbWal::RegisterShard(uint64_t table_id, uint64_t committed_tick) {
+void SearchDbWal::RegisterShard(ObjectId table_id, uint64_t committed_tick) {
   {
     std::lock_guard<std::mutex> lock(_sub_mu);
-    auto& cur = _committed[table_id];
+    auto& cur = _committed[table_id.id()];
     cur = std::max(cur, committed_tick);
   }
   // Continue the tick line past every shard's durable tick (iresearch
@@ -484,10 +484,10 @@ void SearchDbWal::RegisterShard(uint64_t table_id, uint64_t committed_tick) {
   }
 }
 
-void SearchDbWal::OnShardCommit(uint64_t table_id, uint64_t committed_tick) {
+void SearchDbWal::OnShardCommit(ObjectId table_id, uint64_t committed_tick) {
   {
     std::lock_guard<std::mutex> lock(_sub_mu);
-    auto& cur = _committed[table_id];
+    auto& cur = _committed[table_id.id()];
     cur = std::max(cur, committed_tick);
   }
   {
@@ -499,10 +499,10 @@ void SearchDbWal::OnShardCommit(uint64_t table_id, uint64_t committed_tick) {
   RunGc();
 }
 
-void SearchDbWal::DeregisterShard(uint64_t table_id) {
+void SearchDbWal::DeregisterShard(ObjectId table_id) {
   {
     std::lock_guard<std::mutex> lock(_sub_mu);
-    _committed.erase(table_id);
+    _committed.erase(table_id.id());
   }
   RunGc();
 }
@@ -610,8 +610,8 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
       auto shard_count = c.Read<uint32_t>();
       for (uint32_t s = 0; s < shard_count; ++s) {
         auto h = ReadSectionHeader(c);
-        const bool live =
-          exists_of(h.table_id) && tick > committed_of(h.table_id);
+        const ObjectId tid{h.table_id};  // wire u64 -> catalog id
+        const bool live = exists_of(tid) && tick > committed_of(tid);
         // Walk the shard's ordered op manifest (§5.4). All ops share the header
         // above and the per-shard `live` skip decision (one tick, one shard).
         auto op_count = c.Read<uint32_t>();
@@ -645,7 +645,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
             // chunk.
             VisitInlineSegments(
               *cdc, segments, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                cb(tick, h.table_id, pk_base, chunk);
+                cb(tick, tid, pk_base, chunk);
               });
           } else {
             auto seg_count = c.Read<uint32_t>();
@@ -659,7 +659,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
               }
               ReplayChunkFile(_fs, chunk_path,
                               [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                                cb(tick, h.table_id, pk_base, chunk);
+                                cb(tick, tid, pk_base, chunk);
                               });
             }
           }

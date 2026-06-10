@@ -83,7 +83,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   size_t recovered_shards = 0;
   for (const auto& database : snapshot->GetDatabases()) {
     const ObjectId db_id = database->GetId();
-    containers::NodeHashMap<uint64_t, ShardInfo> shards;  // table_id -> info
+    containers::NodeHashMap<ObjectId, ShardInfo> shards;  // table_id -> info
     for (const auto& schema : snapshot->GetSchemas(db_id)) {
       for (const auto& table : snapshot->GetTables(db_id, schema->GetName())) {
         auto ts = snapshot->GetTableShard(table->GetId());
@@ -102,7 +102,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
         info.pk_columns = connector::duckdb_primary_key::BuildPKColumns(*table);
         info.table_key = connector::key_utils::PrepareTableKey(table->GetId());
         info.uses_generated_pk = table->PKColumns().empty();
-        shards.emplace(table->GetId().id(), std::move(info));
+        shards.emplace(table->GetId(), std::move(info));
       }
     }
     if (shards.empty()) {
@@ -110,18 +110,18 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     }
 
     auto& wal = engine.GetDbWal(db_id);
-    containers::NodeHashMap<uint64_t, ReplayCtx>
+    containers::NodeHashMap<ObjectId, ReplayCtx>
       ctxs;  // table_id -> ctx (stable)
 
-    auto exists_of = [&](uint64_t table_id) {
+    auto exists_of = [&](ObjectId table_id) {
       return shards.find(table_id) != shards.end();
     };
-    auto committed_of = [&](uint64_t table_id) -> uint64_t {
+    auto committed_of = [&](ObjectId table_id) -> uint64_t {
       auto it = shards.find(table_id);
       return it != shards.end() ? it->second.search->CommittedTick()
                                 : std::numeric_limits<uint64_t>::max();
     };
-    auto replay = [&](uint64_t tick, uint64_t table_id, uint64_t pk_base,
+    auto replay = [&](uint64_t tick, ObjectId table_id, uint64_t pk_base,
                       duckdb::DataChunk& chunk) {
       auto& info = shards.at(table_id);
       auto [cit, inserted] = ctxs.try_emplace(table_id);

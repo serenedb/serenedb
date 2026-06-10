@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
+#include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
 
@@ -44,8 +45,9 @@ namespace sdb::search {
 
 // Self-contained, rocksdb-free write-ahead log for a database's search-backed
 // tables (`StorageKind::kSearch`). See WAL_DESIGN.md for the full design; this
-// is the standalone primitive, decoupled from the catalog and from any DuckDB
-// DatabaseInstance -- it only needs a duckdb::FileSystem.
+// is the standalone primitive, decoupled from the catalog Snapshot and from any
+// DuckDB DatabaseInstance -- it needs only a duckdb::FileSystem and the
+// lightweight ObjectId type for table identity.
 //
 // **One instance per database** (owned by the search engine, keyed by db_id): a
 // single central commit log shared by all of the database's search shards, so a
@@ -82,8 +84,8 @@ namespace sdb::search {
 // payload begins with [u64 tick] at a fixed offset (readable without
 // deserialising the rest -- recovery skip + future PITR bound).
 //
-// The table_id identifier is an opaque uint64_t here (the operator/recovery
-// maps catalog ObjectIds <-> uint64_t via `.id()`).
+// The public API identifies tables by catalog `ObjectId`; only the on-disk
+// record + chunk path store the raw `.id()` (the wire format is a plain u64).
 class SearchDbWal {
  public:
   // One streamed chunk file for a single bulk sink thread. The thread Append()s
@@ -148,7 +150,7 @@ class SearchDbWal {
   // it from the catalog (recovery runs after the catalog loads), so the WAL
   // need not carry it.
   struct ShardSection {
-    uint64_t table_id;        // locates chunks/<table_id>/ + recovery dispatch
+    ObjectId table_id;        // locates chunks/<table_id>/ + recovery dispatch
     std::span<const Op> ops;  // this shard's ops, in order
   };
 
@@ -157,13 +159,13 @@ class SearchDbWal {
   // DataChunk to re-feed into that shard's iresearch writer. The column layout
   // comes from the catalog at replay, not the record.
   using ReplayCallback =
-    std::function<void(uint64_t tick, uint64_t table_id, uint64_t pk_base,
+    std::function<void(uint64_t tick, ObjectId table_id, uint64_t pk_base,
                        duckdb::DataChunk& chunk)>;
 
   // Recovery skip hooks: a section is replayed only if its destination shard
   // still exists in the catalog AND has not already published this tick.
-  using ShardExistsFn = std::function<bool(uint64_t table_id)>;
-  using ShardCommittedFn = std::function<uint64_t(uint64_t table_id)>;
+  using ShardExistsFn = std::function<bool(ObjectId table_id)>;
+  using ShardCommittedFn = std::function<uint64_t(ObjectId table_id)>;
 
   // Default central-segment seal threshold (PostgreSQL's WAL segment size, ==
   // DuckDB's checkpoint_wal_size): roll the active segment once
@@ -198,24 +200,24 @@ class SearchDbWal {
   // Register a shard on open with its last durable iresearch tick, and bump the
   // engine tick to at least it (so the tick line continues past every shard's
   // committed tick -- iresearch monotonicity). Idempotent.
-  void RegisterShard(uint64_t table_id, uint64_t committed_tick);
+  void RegisterShard(ObjectId table_id, uint64_t committed_tick);
 
   // A shard published up to `committed_tick` (its RefreshCommit, e.g. at
   // VACUUM): advance its subscription entry and run a GC sweep. Bumps the
   // engine tick too.
-  void OnShardCommit(uint64_t table_id, uint64_t committed_tick);
+  void OnShardCommit(ObjectId table_id, uint64_t committed_tick);
 
   // A shard is being dropped: remove its subscription entry so its frozen tick
   // can't pin GC (WAL_DESIGN.md §10.3). Its still-unconsumed central sections
   // become orphans (skipped on recovery via the catalog, GC'd with their
   // segment). Triggers a GC sweep.
-  void DeregisterShard(uint64_t table_id);
+  void DeregisterShard(ObjectId table_id);
 
   // --- commit -------------------------------------------------------------
 
   // Allocate a unique seg_id for table_id and open its chunk-file writer at
   // chunks/<table_id>/<016x seg_id>.swchunk.
-  ChunkWriter NewChunkWriter(uint64_t table_id);
+  ChunkWriter NewChunkWriter(ObjectId table_id);
 
   // Commit (under the central append mutex): assign the next tick, append ONE
   // record covering all `sections`, and fsync. Returns the assigned tick (pass

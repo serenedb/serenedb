@@ -123,7 +123,7 @@ class SearchTableShard final : public TableShard {
     // RefreshCommit invoked the meta_payload_provider, advancing
     // _last_committed_tick to the now-durable iresearch tick. Publish it to the
     // db WAL's flush-subscription + run a GC sweep (WAL_DESIGN.md §10.3).
-    _wal->OnShardCommit(GetTableId().id(), _last_committed_tick);
+    _wal->OnShardCommit(GetTableId(), _last_committed_tick);
   }
 
   // The database's shared search WAL (WAL_DESIGN.md). Valid after OpenWriter.
@@ -136,7 +136,7 @@ class SearchTableShard final : public TableShard {
   // this shard's table id). Used by the parallel INSERT sink.
   SearchDbWal::ChunkWriter NewChunkWriter() {
     SDB_ASSERT(_wal);
-    return _wal->NewChunkWriter(GetTableId().id());
+    return _wal->NewChunkWriter(GetTableId());
   }
 
   // The shard's last durable iresearch commit tick (the recovery skip / WAL GC

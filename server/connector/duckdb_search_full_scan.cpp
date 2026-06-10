@@ -216,6 +216,11 @@ void IResearchSetScanOrder(
     return;
   }
   auto& bd = bind_data->Cast<SereneDBScanBindData>();
+  const auto order_col = options->column_idx.GetPrimaryIndex();
+  if (order_col >= bd.column_ids.size() ||
+      bd.column_ids[order_col] != catalog::Column::kInvertedIndexScoreId) {
+    return;
+  }
   auto& search_scan = bd.scan_source->Cast<SearchScan>();
   if (search_scan.score_top_k) {
     return;

@@ -271,3 +271,146 @@ SELECT kostya FROM deadinside_alias_idx ORDER BY clickclack <-> [0.0, 0.0, 0.0]:
 kostya
 666
 322
+
+
+# ---- Multi-key ORDER BY over score ties: the scan must not truncate ----
+# All 8 vectors sit at the same L2 distance; with a secondary sort key the
+# limit must stay in TOP_N (an in-scan top-k would keep 2 arbitrary ties).
+
+statement ok
+CREATE TABLE arelav (kostya INT, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX arelav_idx ON arelav USING inverted(kostya, emb hnsw (metric = 'l2'));
+
+
+statement count 8
+INSERT INTO arelav VALUES
+  (8, [100, 0, 0]::FLOAT[3]),
+  (7, [0, 100, 0]::FLOAT[3]),
+  (6, [0, 0, 100]::FLOAT[3]),
+  (5, [-100, 0, 0]::FLOAT[3]),
+  (4, [0, -100, 0]::FLOAT[3]),
+  (3, [0, 0, -100]::FLOAT[3]),
+  (2, [60, 80, 0]::FLOAT[3]),
+  (1, [0, 60, 80]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) arelav;
+
+
+query I
+SELECT kostya FROM arelav_idx ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3], kostya LIMIT 2;
+----
+kostya
+1
+2
+
+
+# ---- Shapes from recovery/inverted_index_wand_faults.test, pinned at plan ----
+# level: neither may pull the limit into the scan (no "Top:" in the scan box,
+# so no WAND top-k engages).
+
+# Scorer wrapped in arithmetic: a derived expression is not a scan order key.
+query I
+SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY 2 * bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
+----
+kostya
+1337
+322
+
+
+query
+EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY 2 * bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│           kostya          │
+│(2 * sdb_inverted_index_sco│
+│            re)            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│   vedernikoff_alias_idx   │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[abramov(string)│
+│  = <Term:clickclack(0, 0);│
+│             >]]           │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│           kostya          │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+# Scorer not the primary sort key.
+query I
+SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
+----
+kostya
+42
+322
+
+
+query
+EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 2          │
+│                           │
+│         Order By:         │
+│   vedernikoff_alias_idx   │
+│        .kostya ASC        │
+│          #1 DESC          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│   vedernikoff_alias_idx   │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[abramov(string)│
+│  = <Term:clickclack(0, 0);│
+│             >]]           │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│           kostya          │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘

@@ -1,5 +1,4 @@
 # DOCS_TEST: example_001
-
 statement ok
 CREATE TABLE my_table AS SELECT * FROM (VALUES
     (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
@@ -7,49 +6,89 @@ CREATE TABLE my_table AS SELECT * FROM (VALUES
 ) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
 
 # DOCS_TEST_BODY
-
 statement ok
 VACUUM;
 
 # DOCS_TEST: example_002
-
 # DOCS_TEST_BODY
-
 statement ok
 VACUUM ANALYZE;
 
 # DOCS_TEST: example_003
+statement ok
+DROP TABLE IF EXISTS my_table;
+
+statement ok
+CREATE TABLE my_table (id INTEGER, name VARCHAR);
 
 # DOCS_TEST_BODY
-
-statement error
+statement error db error: ERROR: Column with name "my_column" does not exist
 VACUUM my_table(my_column);
-----
-db error: ERROR: Column with name "my_column" does not exist
 
 # DOCS_TEST: example_004
+statement ok
+DROP TABLE IF EXISTS my_table;
+
+statement ok
+CREATE TABLE my_table (id INTEGER, name VARCHAR);
 
 # DOCS_TEST_BODY
-
-statement error
+statement error db error: ERROR: Column with name "my_column" does not exist
 VACUUM ANALYZE my_table(my_column);
-----
-db error: ERROR: Column with name "my_column" does not exist
 
 # DOCS_TEST: example_005
-
 # DOCS_TEST_BODY
-
-statement error
+statement error db error: ERROR: FULL is not yet implemented
 VACUUM FULL;
-----
-db error: ERROR: Full vacuum option
 
 # DOCS_TEST: example_006
+# DOCS_TEST_BODY
+statement error db error: ERROR: Cannot change vacuum_rebuild_indexes setting while database is running
+SET vacuum_rebuild_indexes = 1000000;
+
+# DOCS_TEST: example_007
+statement ok
+CREATE TEXT SEARCH DICTIONARY en (
+    template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE articles (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX articles_idx ON articles USING inverted(id, body en);
 
 # DOCS_TEST_BODY
+statement ok
+INSERT INTO articles VALUES (1, 'the quick brown fox');
 
-statement error
-SET vacuum_rebuild_indexes = 1000000;
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+query
+SELECT count(*) FROM articles_idx WHERE body @@ ts_phrase('fox');
 ----
-db error: ERROR: Cannot change vacuum_rebuild_indexes setting while database is running
+count
+1
+
+# DOCS_TEST: example_008
+statement ok
+DROP TABLE IF EXISTS articles;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS en;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en (
+    template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE articles (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX articles_idx ON articles USING inverted(id, body en);
+
+# DOCS_TEST_BODY
+statement ok
+VACUUM (COMPACT_TABLE) articles;

@@ -242,13 +242,10 @@ std::string GeoDistanceRangeString(const GeoDistanceFilter& filter) {
   return s;
 }
 
-// A rendered filter is decomposed into a tree of nodes: one place that knows
-// every filter type (BuildNode) feeds one place that lays it out (the box
-// renderer below).
 struct FilterNode {
-  std::string label;                 // AND, OR, Term, Range, ...
-  std::string detail;                // leaf payload; empty for pure containers
-  std::vector<FilterNode> children;  // sub-filters
+  std::string label;
+  std::string detail;
+  std::vector<FilterNode> children;
 };
 
 FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
@@ -389,14 +386,6 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
   return {.label = "Unknown", .detail = std::string{type().name()}};
 }
 
-// --- Box rendering over DuckDB's tree renderer -----------------------------
-//
-// Mirrors the layout pass DuckDB uses for operator plans (file-local in
-// third_party/duckdb/src/common/render_tree.cpp): leaves are one column wide,
-// a parent spans the sum of its children and sits one row above them. The
-// resulting grid is handed to TextTreeRenderer, which draws the boxes and
-// connectors identically to the EXPLAIN operator tree.
-
 void ComputeSize(const FilterNode& node, duckdb::idx_t& width,
                  duckdb::idx_t& height) {
   if (node.children.empty()) {
@@ -474,22 +463,21 @@ std::string RenderBoxTree(const FilterNode& root) {
     lines.pop_back();
   }
 
-  // Frame the tree in its own box: equal-width, non-space-bounded lines survive
-  // the outer EXPLAIN renderer's RemovePadding + per-line centering intact.
   size_t inner = 0;
   for (const auto& line : lines) {
     inner = std::max(inner, DisplayWidth(line));
   }
-  std::string rule;
+  std::string bound;
+  bound.reserve(inner * sizeof("─"));
   for (size_t i = 0; i < inner; ++i) {
-    rule += "─";
+    absl::StrAppend(&bound, "─");
   }
-  std::string out = absl::StrCat("┌", rule, "┐");
+  std::string out = absl::StrCat("┌", bound, "┐");
   for (const auto& line : lines) {
     absl::StrAppend(&out, "\n│", line,
                     std::string(inner - DisplayWidth(line), ' '), "│");
   }
-  absl::StrAppend(&out, "\n└", rule, "┘");
+  absl::StrAppend(&out, "\n└", bound, "┘");
   return out;
 }
 

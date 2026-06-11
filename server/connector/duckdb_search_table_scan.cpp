@@ -83,8 +83,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
                 out_slot, ")"));
     }
     const auto catalog_col_id = bind_data.column_ids[col_id];
-    state->cs_projections.push_back(
-      ColumnstoreProjection{.output_slot = out_slot, .column_id = catalog_col_id});
+    state->cs_projections.push_back(ColumnstoreProjection{
+      .output_slot = out_slot, .column_id = catalog_col_id});
   }
 
   return state;

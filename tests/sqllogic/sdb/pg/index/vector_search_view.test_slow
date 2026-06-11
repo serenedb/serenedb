@@ -141,13 +141,26 @@ EXPLAIN SELECT id FROM vecs_pq_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
 │    ────────────────────   │
-│    Index: vecs_pq_hnsw    │
+│          Top: 10          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~10 rows         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│     vecs_pq_hnsw (ANN)    │
+│                           │
 │      Lookup: parquet      │
 │          TopK: 10         │
 │          Dims: 8          │
-│      Projections: id      │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │        ~50,000 rows       │
 └───────────────────────────┘
@@ -171,14 +184,32 @@ EXPLAIN SELECT id FROM vecs_pq_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0,
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
 │    ────────────────────   │
-│    Index: vecs_pq_hnsw    │
+│          Top: 10          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~10 rows         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│        (id > 25000)       │
+│                           │
+│        ~10,000 rows       │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│     vecs_pq_hnsw (ANN)    │
+│                           │
 │      Lookup: parquet      │
-│          TopK: 10         │
 │          Dims: 8          │
-│    Filter: (#0 > 25000)   │
-│      Projections: id      │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │        ~50,000 rows       │
 └───────────────────────────┘

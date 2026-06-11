@@ -48,10 +48,13 @@ class MemoryIndex {
       irs::IndexWriter::Make(_dir, _codec, irs::OpenMode::kOmCreate, opts);
     {
       irs::IndexWriter::Transaction trx{*writer};
-      auto doc = trx.Insert(/*disable_flush=*/false,
-                            static_cast<irs::doc_id_t>(row_count));
-      doc.NextFieldBatch();
-      write_docs(doc);
+      {
+        auto doc = trx.Insert(/*disable_flush=*/false,
+                              static_cast<irs::doc_id_t>(row_count));
+        doc.NextFieldBatch();
+        write_docs(doc);
+      }
+      trx.Commit();
     }
     writer->RefreshCommit();
     auto reader = writer->GetSnapshot();

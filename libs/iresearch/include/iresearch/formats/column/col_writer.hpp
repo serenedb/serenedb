@@ -46,8 +46,6 @@ class ColumnWriter;
 class NormColumnWriter;
 class HnswWriter;
 
-// Writes a segment's columnstore into `<segment>.col`. Forward-write only;
-// footer at the tail via duckdb::BinarySerializer.
 class ColWriter final {
  public:
   ColWriter(Directory& dir, std::string_view segment_name,
@@ -77,12 +75,15 @@ class ColWriter final {
   // an inline side-payload referenced by footer slot 102.
   HnswWriter& AttachHnsw(field_id column_id, HNSWInfo info);
 
-  std::string Commit(uint64_t target_row);
+  void Commit(uint64_t target_row);
   void Rollback() noexcept;
 
   std::vector<BuiltHnsw> TakeBuiltHnsw();
 
  private:
+  void EnsureOut();
+  bool Empty() const noexcept;
+
   struct Impl;
   std::unique_ptr<Impl> _impl;
 };

@@ -125,8 +125,7 @@ TEST_P(BufferedColumnTestCase, FlushEmpty) {
       duckdb::FlatVector::GetDataMutable<int64_t>(v)[0] = 42;
       duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
       cw.Append(0, v, 1);
-      auto filename = w.Commit(/*target_row=*/1);
-      ASSERT_FALSE(filename.empty());
+      w.Commit(/*target_row=*/1);
     }
     irs::ColReader r{dir, "flush_empty_typed", Db()};
     EXPECT_TRUE(r.HasColumn(1));
@@ -185,8 +184,7 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, kRepeatedValue);
       }
-      auto filename = w.Commit(kRowCount);
-      ASSERT_FALSE(filename.empty());
+      w.Commit(kRowCount);
     }
     irs::ColReader r{dir, "dup_value", Db()};
     ASSERT_TRUE(r.HasNormColumn(9));

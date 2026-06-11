@@ -20,10 +20,39 @@
 
 #pragma once
 
+#include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/operator/logical_order.hpp>
+#include <iresearch/index/column_info.hpp>
+#include <optional>
 #include <string>
 
+#include "connector/duckdb_table_function.h"
+
 namespace sdb::connector {
+
+struct AnnFunctionInfo : public duckdb::ScalarFunctionInfo {
+  irs::HNSWMetric metric;
+  duckdb::OrderType order;
+  bool is_norm;  // unary norm form (l2_norm/l1_norm) vs binary distance
+  ScoreEmit score_emit;
+
+  AnnFunctionInfo(irs::HNSWMetric m, duckdb::OrderType o, bool n, ScoreEmit e)
+    : metric(m), order(o), is_norm(n), score_emit(e) {}
+};
+
+inline std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
+  const duckdb::BoundFunctionExpression& func) {
+  if (!func.function.HasExtraFunctionInfo()) {
+    return std::nullopt;
+  }
+  if (const auto* info = dynamic_cast<const AnnFunctionInfo*>(
+        &func.function.GetExtraFunctionInfo())) {
+    return *info;
+  }
+  return std::nullopt;
+}
 
 inline constexpr std::string_view kL2Distance = "l2_distance";
 inline constexpr std::string_view kL2DistanceOp = "<->";

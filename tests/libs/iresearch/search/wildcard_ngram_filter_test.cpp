@@ -50,7 +50,7 @@ struct WildcardField final {
   bool Write(irs::DataOutput& out) const {
     const auto* store = irs::get<irs::StoreAttr>(*analyzer);
     if (store && !store->value.empty()) {
-      out.WriteBytes(store->value.data(), store->value.size());
+      out.WriteData(store->value.data(), store->value.size());
     }
     return true;
   }
@@ -209,7 +209,7 @@ TEST(WildcardNgramFilterTest, query) {
       ASSERT_TRUE(doc.Insert(field));
       // Stored bytes -> cs BLOB column kStoreId; filter reads via the
       // same id (set in MakeFilter / mutable_options()->store_field_id).
-      auto* cs = doc.Columnstore();
+      auto* cs = doc.GetColWriter();
       ASSERT_NE(nullptr, cs);
       irs::tests::StoreFieldAt(*cs, kStoreId, doc.DocId(), field);
     }

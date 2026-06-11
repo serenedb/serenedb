@@ -115,7 +115,7 @@ class BstringDataOutput final : public DataOutput {
   explicit BstringDataOutput(bstring& buf) noexcept : _buf{&buf} {}
 
   void WriteByte(byte_type b) final { _buf->push_back(b); }
-  void WriteBytes(const byte_type* b, size_t len) final {
+  void WriteData(const byte_type* b, uint64_t len) final {
     _buf->append(b, len);
   }
 
@@ -161,7 +161,7 @@ void AssertBlobColumn(const ColReader& cs_reader, const ColumnReader& column,
 class BlobPointReader {
  public:
   BlobPointReader(const SubReader& segment, const ColumnReader& column)
-    : _impl(*segment.CsReader(), column) {}
+    : _impl(*segment.GetColReader(), column) {}
 
   BlobPointReader(const BlobPointReader&) = delete;
   BlobPointReader& operator=(const BlobPointReader&) = delete;

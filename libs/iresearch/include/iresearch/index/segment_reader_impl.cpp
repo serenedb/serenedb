@@ -22,13 +22,10 @@
 
 #include "segment_reader_impl.hpp"
 
-#include <absl/strings/str_cat.h>
-
 #include <duckdb/common/types.hpp>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
@@ -119,6 +116,12 @@ class MaskDocIterator : public DocIterator {
     CollectImpl(*this, scorer, fetcher, collector);
   }
 
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    return _it->PrepareScore(ctx);
+  }
+
+  void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
+
  private:
   const DocumentMask& _mask;
   DocIterator::ptr _it;
@@ -188,14 +191,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) {
   SDB_ASSERT(meta.codec);
-  bool has_idx = false;
-  bool has_col = false;
-  dir.exists(has_idx, absl::StrCat(meta.name, ".", kIdxFormatExt));
-  dir.exists(has_col, absl::StrCat(meta.name, ".", kColFormatExt));
-  if (!has_idx && !has_col) {
-    throw IoError{
-      absl::StrCat("Failed to open segment '", meta.name, "': no files")};
-  }
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
   reader->_data = std::make_shared<ColumnData>();
@@ -213,7 +208,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   return reader;
 }
 
-std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenColumnStore(
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) const {
   SDB_ASSERT(meta == _info);
@@ -247,7 +242,7 @@ NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
   if (!_data) {
     return {};
   }
-  const auto* nc = _data->cs_reader->NormColumn(field);
+  const auto* nc = _data->col_reader->NormColumn(field);
   if (!nc) {
     return {};
   }
@@ -255,7 +250,7 @@ NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
 }
 
 const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
-  return _data->cs_reader->Column(field);
+  return _data->col_reader->Column(field);
 }
 
 const HnswReader* SegmentReaderImpl::HNSW(field_id field) const {
@@ -289,27 +284,27 @@ DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
                                          const SegmentMeta& meta,
                                          const IndexReaderOptions& options) {
-  SDB_ASSERT(options.db != nullptr);
-  cs_reader = std::make_unique<ColReader>(dir, meta.name, *options.db);
+  SDB_ASSERT(options.db);
+  col_reader = std::make_unique<ColReader>(dir, meta.name, *options.db);
   idx_reader = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_graphs);
 
   const auto entries = idx_reader->HNSWEntries();
   hnsw_readers.reserve(entries.size());
   hnsw_by_id.reserve(entries.size());
   for (const auto& [id, entry] : entries) {
-    const auto* col_reader = cs_reader->Column(id);
-    if (col_reader == nullptr) {
+    const auto* column_reader = col_reader->Column(id);
+    if (!column_reader) {
       continue;
     }
     HNSWInfo info = entry.info;
-    const auto& col_type = col_reader->Type();
+    const auto& col_type = column_reader->Type();
     if (col_type.id() == duckdb::LogicalTypeId::ARRAY) {
       info.d = static_cast<int>(duckdb::ArrayType::GetSize(col_type));
     }
-    auto reader =
-      std::make_unique<HnswReader>(id, entry.graph, info, *col_reader);
-    hnsw_by_id.emplace(id, reader.get());
-    hnsw_readers.push_back(std::move(reader));
+    auto hnsw_reader =
+      std::make_unique<HnswReader>(id, entry.graph, info, *column_reader);
+    hnsw_by_id.emplace(id, hnsw_reader.get());
+    hnsw_readers.push_back(std::move(hnsw_reader));
   }
 }
 

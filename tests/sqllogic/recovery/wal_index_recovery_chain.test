@@ -35,7 +35,7 @@ VACUUM (REFRESH_TABLE) chain_t;
 
 # Initial sanity
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('seed_42');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('seed_42');
 ----
 a
 42
@@ -209,7 +209,7 @@ count
 
 connection final
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('seed_599');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('seed_599');
 ----
 a
 599
@@ -221,14 +221,14 @@ a
 
 connection final
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('r1upd_1050');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('r1upd_1050');
 ----
 a
 1050
 
 connection final
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('r1upd_1300');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('r1upd_1300');
 ----
 a
 1300
@@ -237,7 +237,7 @@ a
 
 connection final
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('r2upd_4250');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('r2upd_4250');
 ----
 a
 4250
@@ -246,7 +246,7 @@ a
 
 connection final
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('r3upd_7100');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('r3upd_7100');
 ----
 a
 7100
@@ -255,7 +255,7 @@ a
 
 connection final
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('r4upd_10100');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('r4upd_10100');
 ----
 a
 10100
@@ -264,21 +264,21 @@ a
 
 connection final
 query
-SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('seed_100');
+SELECT COUNT(*) FROM chain_idx WHERE b @@ ts_phrase('seed_100');
 ----
 count
 0
 
 connection final
 query
-SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('seed_750');
+SELECT COUNT(*) FROM chain_idx WHERE b @@ ts_phrase('seed_750');
 ----
 count
 0
 
 connection final
 query
-SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('r1ins_3700');
+SELECT COUNT(*) FROM chain_idx WHERE b @@ ts_phrase('r1ins_3700');
 ----
 count
 0
@@ -287,7 +287,7 @@ count
 
 connection final
 query
-SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('r1upd_1150');
+SELECT COUNT(*) FROM chain_idx WHERE b @@ ts_phrase('r1upd_1150');
 ----
 count
 0
@@ -300,7 +300,7 @@ count
 
 connection final
 query
-SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('seed_1050');
+SELECT COUNT(*) FROM chain_idx WHERE b @@ ts_phrase('seed_1050');
 ----
 count
 0
@@ -309,7 +309,7 @@ count
 
 connection final
 query
-SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('r1ins_4250');
+SELECT COUNT(*) FROM chain_idx WHERE b @@ ts_phrase('r1ins_4250');
 ----
 count
 0
@@ -318,7 +318,7 @@ count
 
 connection final
 query
-SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('r2ins_7100');
+SELECT COUNT(*) FROM chain_idx WHERE b @@ ts_phrase('r2ins_7100');
 ----
 count
 0
@@ -327,28 +327,28 @@ count
 
 connection final
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('r1ins_5500');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('r1ins_5500');
 ----
 a
 5500
 
 connection final
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('r2ins_8500');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('r2ins_8500');
 ----
 a
 8500
 
 connection final
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('r3ins_11500');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('r3ins_11500');
 ----
 a
 11500
 
 connection final
 query
-SELECT a FROM chain_t WHERE b @@ ts_phrase('r4ins_14500');
+SELECT a FROM chain_idx WHERE b @@ ts_phrase('r4ins_14500');
 ----
 a
 14500

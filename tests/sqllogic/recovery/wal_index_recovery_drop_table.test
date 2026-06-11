@@ -116,7 +116,7 @@ count
 # pk=2 body updated.
 connection dt_after
 query
-SELECT id FROM dt_keep WHERE body @@ ts_phrase('CHANGED');
+SELECT id FROM dt_keep_idx WHERE body @@ ts_phrase('CHANGED');
 ----
 id
 2
@@ -124,7 +124,7 @@ id
 # pk=2 old body gone.
 connection dt_after
 query
-SELECT COUNT(*) FROM dt_keep WHERE body @@ ts_phrase('keep seed bravo');
+SELECT COUNT(*) FROM dt_keep_idx WHERE body @@ ts_phrase('keep seed bravo');
 ----
 count
 0
@@ -132,7 +132,7 @@ count
 # pk=3 inserted post-fault.
 connection dt_after
 query
-SELECT id FROM dt_keep WHERE body @@ ts_phrase('after fault charlie');
+SELECT id FROM dt_keep_idx WHERE body @@ ts_phrase('after fault charlie');
 ----
 id
 3
@@ -140,7 +140,7 @@ id
 # pk=4 inserted after the drop.
 connection dt_after
 query
-SELECT id FROM dt_keep WHERE body @@ ts_phrase('post drop echo');
+SELECT id FROM dt_keep_idx WHERE body @@ ts_phrase('post drop echo');
 ----
 id
 4

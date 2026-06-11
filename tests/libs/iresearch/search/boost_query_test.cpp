@@ -98,8 +98,11 @@ class BoostQueryTestCase : public tests::IndexTestBase {
       SpaceField f{kContentFieldId};
       f.value(content);
       auto batch = writer->GetBatch();
-      auto d = batch.Insert();
-      EXPECT_TRUE(d.Insert(f));
+      {
+        auto d = batch.Insert();
+        EXPECT_TRUE(d.Insert(f));
+      }
+      batch.Commit();
     };
 
     insert("open");

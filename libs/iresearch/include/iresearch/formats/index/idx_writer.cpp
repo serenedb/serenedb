@@ -33,7 +33,6 @@
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
-#include "iresearch/formats/serializer_stream.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -63,56 +62,58 @@ struct TermDictEntry {
 
 struct IdxWriter::Impl {
   Directory* dir;
-  std::string segment_name;
   std::string filename;
   duckdb::DatabaseInstance* db;
   Encryption::Stream::ptr cipher;
   IndexOutput::ptr out;
   std::vector<HnswEntry> hnsw_entries;
   std::vector<TermDictEntry> term_dict_entries;
-  bool committed{false};
 };
 
 IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db)
   : _impl{std::make_unique<Impl>()} {
   _impl->dir = &dir;
-  _impl->segment_name = std::string{segment_name};
   _impl->db = &db;
   _impl->filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
 }
 
 IdxWriter::~IdxWriter() {
-  if (_impl && !_impl->committed) {
+  if (_impl && _impl->out) {
     Rollback();
   }
 }
 
-IndexOutput& IdxWriter::BlocksOut() {
-  if (!_impl->out) {
-    auto out = _impl->dir->create(_impl->filename);
-    if (!out) {
-      throw IoError{
-        absl::StrCat("Failed to create index file, path: ", _impl->filename)};
-    }
-    format_utils::WriteHeader(*out, kIdxFormatName, kIdxFormatVersion);
-    auto* enc = _impl->dir->attributes().encryption();
-    bstring enc_header;
-    const bool encrypted =
-      Encrypt(_impl->filename, *out, enc, enc_header, _impl->cipher);
-    SDB_ENSURE(!encrypted || (_impl->cipher && _impl->cipher->block_size()),
-               sdb::ERROR_INTERNAL,
-               "IdxWriter::BlocksOut: Encrypt returned true but cipher / "
-               "block_size() is null for ",
-               _impl->filename);
-    if (encrypted) {
-      const auto blocks_in_buffer = math::DivCeil64(
-        kDefaultEncryptionBufferSize, _impl->cipher->block_size());
-      out = IndexOutput::ptr{
-        new EncryptedOutput{std::move(out), *_impl->cipher, blocks_in_buffer}};
-    }
-    _impl->out = std::move(out);
+void IdxWriter::EnsureOut() {
+  if (_impl->out) {
+    return;
   }
+  auto out = _impl->dir->create(_impl->filename);
+  if (!out) {
+    throw IoError{
+      absl::StrCat("Failed to create index file, path: ", _impl->filename)};
+  }
+  format_utils::WriteHeader(*out, kIdxFormatName, kIdxFormatVersion);
+  auto* enc = _impl->dir->attributes().encryption();
+  bstring enc_header;
+  const bool encrypted =
+    Encrypt(_impl->filename, *out, enc, enc_header, _impl->cipher);
+  SDB_ENSURE(!encrypted || (_impl->cipher && _impl->cipher->block_size()),
+             sdb::ERROR_INTERNAL,
+             "IdxWriter::EnsureOut: Encrypt returned true but cipher / "
+             "block_size() is null for ",
+             _impl->filename);
+  if (encrypted) {
+    const auto blocks_in_buffer = math::DivCeil64(kDefaultEncryptionBufferSize,
+                                                  _impl->cipher->block_size());
+    out = IndexOutput::ptr{
+      new EncryptedOutput{std::move(out), *_impl->cipher, blocks_in_buffer}};
+  }
+  _impl->out = std::move(out);
+}
+
+IndexOutput& IdxWriter::BlocksOut() {
+  EnsureOut();
   return *_impl->out;
 }
 
@@ -133,13 +134,12 @@ bool IdxWriter::Empty() const noexcept {
   return _impl->hnsw_entries.empty() && _impl->term_dict_entries.empty();
 }
 
-std::string IdxWriter::Commit() {
+void IdxWriter::Commit() {
   if (Empty() && !_impl->out) {
-    _impl->committed = true;
-    return {};
+    return;
   }
 
-  std::ignore = BlocksOut();
+  EnsureOut();
 
   for (auto& e : _impl->hnsw_entries) {
     e.graph_offset = _impl->out->Position();
@@ -149,8 +149,7 @@ std::string IdxWriter::Commit() {
 
   const uint64_t footer_offset = _impl->out->Position();
 
-  IndexOutputWriteStream stream{*_impl->out};
-  duckdb::BinarySerializer serializer{stream};
+  duckdb::BinarySerializer serializer{*_impl->out};
   serializer.Begin();
   serializer.WriteList(
     kFooterSlotTermDict, "term_dict", _impl->term_dict_entries.size(),
@@ -165,18 +164,9 @@ std::string IdxWriter::Commit() {
         obj.WriteProperty<uint64_t>(4, "total_doc_freq", e.meta.total_doc_freq);
         obj.WriteProperty<uint64_t>(5, "total_term_freq",
                                     e.meta.total_term_freq);
-        obj.WriteProperty<std::string>(
-          6, "min_term",
-          std::string{reinterpret_cast<const char*>(e.meta.min_term.data()),
-                      e.meta.min_term.size()});
-        obj.WriteProperty<std::string>(
-          7, "max_term",
-          std::string{reinterpret_cast<const char*>(e.meta.max_term.data()),
-                      e.meta.max_term.size()});
-        obj.WriteProperty<bool>(8, "has_wand", e.meta.has_wand);
-        obj.WriteProperty<uint64_t>(9, "fst_offset", e.meta.fst_offset);
-        obj.WriteProperty<uint64_t>(10, "fst_size", e.meta.fst_size);
-        obj.WriteProperty<uint64_t>(11, "norm", e.meta.norm);
+        obj.WriteProperty<bool>(6, "has_wand", e.meta.has_wand);
+        obj.WriteProperty<uint64_t>(7, "body_offset", e.meta.body_offset);
+        obj.WriteProperty<uint64_t>(8, "norm", e.meta.norm);
       });
     });
   serializer.WriteList(
@@ -207,19 +197,13 @@ std::string IdxWriter::Commit() {
   format_utils::WriteFooter(*trailer_out);
   _impl->out.reset();
   _impl->cipher.reset();
-  _impl->committed = true;
-  return _impl->filename;
 }
 
 void IdxWriter::Rollback() noexcept {
-  if (_impl->out) {
-    _impl->out.reset();
-    _impl->cipher.reset();
-    _impl->dir->remove(_impl->filename);
-  }
+  _impl->out.reset();
+  _impl->cipher.reset();
   _impl->hnsw_entries.clear();
   _impl->term_dict_entries.clear();
-  _impl->committed = true;
 }
 
 }  // namespace irs

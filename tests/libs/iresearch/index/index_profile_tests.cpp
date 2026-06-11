@@ -42,7 +42,7 @@ void StoreNamed(irs::IndexWriter::Document& d, const ParticleT& fields,
                 std::string_view name, irs::field_id id) {
   const auto* field = fields.template get<tests::StringField>(name);
   if (field) {
-    irs::tests::StoreFieldAt(*d.Columnstore(), id, d.DocId(), *field);
+    irs::tests::StoreFieldAt(*d.GetColWriter(), id, d.DocId(), *field);
   }
 }
 
@@ -442,13 +442,13 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
       const auto* column = reader[i].Column(kSameId);
       if (column) {
-        irs::tests::VisitBlobColumn(*reader[i].CsReader(), *column,
+        irs::tests::VisitBlobColumn(*reader[i].GetColReader(), *column,
                                     imported_visitor);
       }
 
       column = reader[i].Column(kUpdatedId);
       if (column) {
-        irs::tests::VisitBlobColumn(*reader[i].CsReader(), *column,
+        irs::tests::VisitBlobColumn(*reader[i].GetColReader(), *column,
                                     updated_visitor);
       }
     }

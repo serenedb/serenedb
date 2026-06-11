@@ -50,8 +50,8 @@ void ReadVector(IndexInput& in, T& vec) {
   uint32_t size = irs::read<uint32_t>(in);
   vec.resize(size);
   SDB_ASSERT(size != 0);
-  in.ReadBytes(reinterpret_cast<byte_type*>(vec.data()),
-               sizeof(*vec.data()) * size);
+  in.ReadData(reinterpret_cast<byte_type*>(vec.data()),
+              sizeof(*vec.data()) * size);
 }
 
 float ComputeNegativeInnerProduct(const byte_type* l, const byte_type* r,

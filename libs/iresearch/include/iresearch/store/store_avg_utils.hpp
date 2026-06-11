@@ -228,8 +228,8 @@ inline void visit_block_packed_tail(DataInput& in, size_t size,
 
   const size_t block_size = math::Ceil64(size, packed::kBlockSize64);
 
-  in.ReadBytes(reinterpret_cast<byte_type*>(packed),
-               sizeof(uint64_t) * packed::BlocksRequired64(block_size, bits));
+  in.ReadData(reinterpret_cast<byte_type*>(packed),
+              sizeof(uint64_t) * packed::BlocksRequired64(block_size, bits));
 
   visit_packed(base, avg, packed, size, bits, visitor);
 }
@@ -248,8 +248,8 @@ inline void visit_block_packed_tail(DataInput& in, uint32_t size,
 
   const uint32_t block_size = math::Ceil32(size, packed::kBlockSize32);
 
-  in.ReadBytes(reinterpret_cast<byte_type*>(packed),
-               sizeof(uint32_t) * packed::BlocksRequired32(block_size, bits));
+  in.ReadData(reinterpret_cast<byte_type*>(packed),
+              sizeof(uint32_t) * packed::BlocksRequired32(block_size, bits));
 
   visit_packed(base, avg, packed, size, bits, visitor);
 }
@@ -266,8 +266,8 @@ inline void visit_block_packed(DataInput& in, size_t size, uint64_t* packed,
     return;
   }
 
-  in.ReadBytes(reinterpret_cast<byte_type*>(packed),
-               sizeof(uint64_t) * packed::BlocksRequired64(size, bits));
+  in.ReadData(reinterpret_cast<byte_type*>(packed),
+              sizeof(uint64_t) * packed::BlocksRequired64(size, bits));
 
   visit_packed(base, avg, packed, size, bits, visitor);
 }
@@ -284,8 +284,8 @@ inline void visit_block_packed(DataInput& in, uint32_t size, uint32_t* packed,
     return;
   }
 
-  in.ReadBytes(reinterpret_cast<byte_type*>(packed),
-               sizeof(uint32_t) * packed::BlocksRequired32(size, bits));
+  in.ReadData(reinterpret_cast<byte_type*>(packed),
+              sizeof(uint32_t) * packed::BlocksRequired32(size, bits));
 
   visit_packed(base, avg, packed, size, bits, visitor);
 }

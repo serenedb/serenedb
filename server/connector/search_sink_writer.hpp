@@ -42,10 +42,10 @@
 #include "catalog/search_analyzer_impl.h"
 #include "connector/index_expression.hpp"
 #include "primary_key.hpp"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
 #include "search_remove_filter.hpp"
 #include "sink_writer_base.hpp"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 
@@ -142,7 +142,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
     bool Write(irs::DataOutput& out) const {
       if (store_attr && !irs::IsNull(store_attr->value)) {
-        out.WriteBytes(store_attr->value.data(), store_attr->value.size());
+        out.WriteData(store_attr->value.data(), store_attr->value.size());
       }
       return true;
     }

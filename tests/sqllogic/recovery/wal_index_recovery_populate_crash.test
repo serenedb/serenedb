@@ -78,28 +78,28 @@ count
 # Spot-check tokens at various offsets across the bulk insert.
 connection pop_after
 query
-SELECT c FROM pop_t WHERE a @@ ts_phrase('foo_0');
+SELECT c FROM pop_idx WHERE a @@ ts_phrase('foo_0');
 ----
 c
 0
 
 connection pop_after
 query
-SELECT c FROM pop_t WHERE a @@ ts_phrase('foo_4321');
+SELECT c FROM pop_idx WHERE a @@ ts_phrase('foo_4321');
 ----
 c
 4321
 
 connection pop_after
 query
-SELECT c FROM pop_t WHERE a @@ ts_phrase('foo_9876');
+SELECT c FROM pop_idx WHERE a @@ ts_phrase('foo_9876');
 ----
 c
 9876
 
 connection pop_after
 query
-SELECT c FROM pop_t WHERE b @@ ts_phrase('bar_5000');
+SELECT c FROM pop_idx WHERE b @@ ts_phrase('bar_5000');
 ----
 c
 5000
@@ -107,7 +107,7 @@ c
 # The marker doc.
 connection pop_after
 query
-SELECT c FROM pop_t WHERE a @@ ts_phrase('crashme');
+SELECT c FROM pop_idx WHERE a @@ ts_phrase('crashme');
 ----
 c
 10000

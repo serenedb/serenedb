@@ -27,6 +27,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/data_pointer.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <utility>
 #include <vector>
 
@@ -38,7 +39,6 @@
 #include "iresearch/formats/column/internal/persistent_column_data.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/serializer_stream.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
@@ -49,48 +49,6 @@ namespace {
 // Footer slot ids; stable, never reuse. Must match col_writer.cpp.
 constexpr duckdb::field_id_t kFooterSlotColumns = 100;
 constexpr duckdb::field_id_t kFooterSlotNormColumns = 101;
-
-std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
-                                               PersistentColumnData&& node) {
-  std::unique_ptr<ColumnReader> element_child;
-  std::vector<std::unique_ptr<ColumnReader>> struct_children;
-  uint64_t array_size = 0;
-
-  switch (node.type.id()) {
-    case duckdb::LogicalTypeId::ARRAY: {
-      SDB_ASSERT(node.child_columns.size() == 1);
-      array_size = static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
-      element_child = MakeColumnReader(field_limits::invalid(),
-                                       std::move(node.child_columns.front()));
-      node.pointers.clear();  // ARRAY carries no self data on disk.
-    } break;
-    case duckdb::LogicalTypeId::MAP:
-    case duckdb::LogicalTypeId::LIST: {
-      // MAP rides on the LIST path: PhysicalType::LIST with a
-      // STRUCT<key, value> element.
-      SDB_ASSERT(node.child_columns.size() == 1);
-      element_child = MakeColumnReader(field_limits::invalid(),
-                                       std::move(node.child_columns.front()));
-    } break;
-    case duckdb::LogicalTypeId::VARIANT:
-    case duckdb::LogicalTypeId::STRUCT: {
-      struct_children.reserve(node.child_columns.size());
-      for (auto& cn : node.child_columns) {
-        struct_children.push_back(
-          MakeColumnReader(field_limits::invalid(), std::move(cn)));
-      }
-      node.pointers.clear();
-      break;
-    }
-    default:
-      break;  // primitive leaf: keep pointers, no children.
-  }
-
-  return std::make_unique<ColumnReader>(
-    id, std::move(node.type), std::move(node.pointers),
-    std::move(node.validity_pointers), std::move(element_child),
-    std::move(struct_children), array_size);
-}
 
 PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
   PersistentColumnData node;
@@ -128,6 +86,32 @@ PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
                    node.child_columns.push_back(DeserializeColumnData(child));
                  });
                });
+  obj.ReadList(
+    4, "variant_layouts",
+    [&](duckdb::Deserializer::List& vlist, duckdb::idx_t /*j*/) {
+      vlist.ReadObject([&](duckdb::Deserializer& vo) {
+        auto& layout = node.variant_layouts.emplace_back();
+        layout.row_start = vo.ReadProperty<uint64_t>(0, "row_start");
+        layout.row_count = vo.ReadProperty<uint64_t>(1, "row_count");
+        const auto shred_state = magic_enum::enum_cast<VariantShredState>(
+          vo.ReadProperty<uint8_t>(2, "shred_state"));
+        SDB_ENSURE(shred_state, sdb::ERROR_INTERNAL,
+                   "corrupt columnstore footer: invalid variant shred_state");
+        layout.shred_state = *shred_state;
+        vo.ReadObject(3, "unshredded", [&](duckdb::Deserializer& u) {
+          layout.unshredded =
+            std::make_unique<PersistentColumnData>(DeserializeColumnData(u));
+        });
+        if (layout.shred_state != VariantShredState::Unshredded) {
+          vo.ReadObject(4, "shredded_node", [&](duckdb::Deserializer& s) {
+            layout.shredded_node =
+              std::make_unique<PersistentColumnData>(DeserializeColumnData(s));
+          });
+        }
+      });
+    });
+  node.fully_shredded =
+    obj.ReadPropertyWithExplicitDefault<bool>(5, "fully_shredded", true);
   return node;
 }
 
@@ -135,23 +119,20 @@ IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
                                    std::string_view filename) {
   auto in = dir.open(filename, IOAdvice::SEQUENTIAL);
   if (!in) {
-    throw IoError{
-      absl::StrCat("Failed to open columnstore file, path: ", filename)};
+    throw IoError{absl::StrCat("Failed to open .col file, path: ", filename)};
   }
   format_utils::CheckHeader(*in, kColFormatName, kColFormatVersion,
                             kColFormatVersion);
   return in;
 }
 
-std::span<const byte_type> ReadFooterBytes(
-  IndexInput& in, std::string_view filename,
-  std::vector<byte_type>& fallback_storage) {
+void SeekToFooter(IndexInput& in, std::string_view filename) {
   const auto file_len = in.Length();
   const uint64_t header_len =
     static_cast<uint64_t>(format_utils::HeaderLength(kColFormatName));
   SDB_ENSURE(
     file_len > header_len + sizeof(uint64_t) + format_utils::kFooterLen,
-    sdb::ERROR_SERVER_CORRUPTED_DATAFILE, "columnstore: truncated `.col` file ",
+    sdb::ERROR_SERVER_CORRUPTED_DATAFILE, ".col reader: truncated `.col` file ",
     filename, " (length ", file_len,
     " is not large enough to contain header + footer offset + "
     "iresearch footer)");
@@ -161,16 +142,10 @@ std::span<const byte_type> ReadFooterBytes(
   const uint64_t footer_offset = in.ReadI64();
   SDB_ENSURE(footer_offset >= header_len && footer_offset < footer_offset_pos,
              sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
-             "columnstore: corrupted `.col` file ", filename,
+             ".col reader: corrupted `.col` file ", filename,
              ": footer offset ", footer_offset, " is out of range [",
              header_len, ", ", footer_offset_pos, ")");
-  const uint64_t footer_size = footer_offset_pos - footer_offset;
-  if (const auto* view = in.ReadData(footer_offset, footer_size)) {
-    return {view, static_cast<size_t>(footer_size)};
-  }
-  fallback_storage.resize(footer_size);
-  in.ReadBytes(footer_offset, fallback_storage.data(), footer_size);
-  return {fallback_storage.data(), fallback_storage.size()};
+  in.Seek(footer_offset);
 }
 
 }  // namespace
@@ -225,7 +200,7 @@ void ColReader::BuildNormReaders(duckdb::BinaryDeserializer& deserializer) {
               SDB_ASSERT(
                 (p.byte_size == 1 || p.byte_size == 2 || p.byte_size == 4) &&
                   p.row_count != 0,
-                "columnstore: corrupt norm row-group (byte_size=", p.byte_size,
+                ".col reader: corrupt norm row-group (byte_size=", p.byte_size,
                 ", row_count=", p.row_count, ") on column id ", id);
               pointers.push_back(p);
             });
@@ -260,12 +235,10 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
   }
 
   _impl->in = OpenAndCheckHeader(dir, filename);
-  std::vector<byte_type> footer_storage;  // unused when ReadView succeeds
-  const auto footer_view =
-    ReadFooterBytes(*_impl->in, filename, footer_storage);
+  const auto footer_in = _impl->in->Dup();
+  SeekToFooter(*footer_in, filename);
 
-  MemoryReadStream stream{footer_view.data(), footer_view.size()};
-  duckdb::BinaryDeserializer deserializer{stream};
+  duckdb::BinaryDeserializer deserializer{*footer_in};
   deserializer.Set<duckdb::DatabaseInstance&>(db);
   deserializer.Begin();
   BuildColumnReaders(deserializer, db);

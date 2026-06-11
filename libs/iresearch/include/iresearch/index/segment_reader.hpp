@@ -70,7 +70,7 @@ class SegmentReader final : public SubReader {
 
   const ColumnReader* Column(field_id field) const final;
   const HnswReader* HNSW(field_id field) const final;
-  const ColReader* CsReader() const final;
+  const ColReader* GetColReader() const final;
 
   const std::shared_ptr<const SegmentReaderImpl>& GetImpl() const noexcept {
     return _impl;

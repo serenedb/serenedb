@@ -34,6 +34,7 @@
 #include "basics/exceptions.h"
 #include "basics/serialization.h"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/persistent_column_data.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
@@ -41,7 +42,6 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
-#include "iresearch/formats/serializer_stream.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -74,46 +74,27 @@ void SerializeColumnData(duckdb::Serializer& obj,
                     SerializeColumnData(child, node.child_columns[j]);
                   });
                 });
-}
-
-std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
-                                               PersistentColumnData&& node) {
-  std::unique_ptr<ColumnReader> element_child;
-  std::vector<std::unique_ptr<ColumnReader>> struct_children;
-  uint64_t array_size = 0;
-
-  switch (node.type.id()) {
-    case duckdb::LogicalTypeId::ARRAY: {
-      SDB_ASSERT(node.child_columns.size() == 1);
-      array_size = static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
-      element_child = MakeColumnReader(field_limits::invalid(),
-                                       std::move(node.child_columns.front()));
-      node.pointers.clear();  // ARRAY carries no self data on disk.
-    } break;
-    case duckdb::LogicalTypeId::MAP:
-    case duckdb::LogicalTypeId::LIST: {
-      SDB_ASSERT(node.child_columns.size() == 1);
-      element_child = MakeColumnReader(field_limits::invalid(),
-                                       std::move(node.child_columns.front()));
-    } break;
-    case duckdb::LogicalTypeId::VARIANT:
-    case duckdb::LogicalTypeId::STRUCT: {
-      struct_children.reserve(node.child_columns.size());
-      for (auto& cn : node.child_columns) {
-        struct_children.push_back(
-          MakeColumnReader(field_limits::invalid(), std::move(cn)));
-      }
-      node.pointers.clear();
-      break;
-    }
-    default:
-      break;  // primitive leaf: keep pointers, no children.
-  }
-
-  return std::make_unique<ColumnReader>(
-    id, std::move(node.type), std::move(node.pointers),
-    std::move(node.validity_pointers), std::move(element_child),
-    std::move(struct_children), array_size);
+  obj.WriteList(4, "variant_layouts", node.variant_layouts.size(),
+                [&](duckdb::Serializer::List& vlist, duckdb::idx_t j) {
+                  const auto& l = node.variant_layouts[j];
+                  vlist.WriteObject([&](duckdb::Serializer& vo) {
+                    vo.WriteProperty<uint64_t>(0, "row_start", l.row_start);
+                    vo.WriteProperty<uint64_t>(1, "row_count", l.row_count);
+                    vo.WriteProperty<uint8_t>(
+                      2, "shred_state", static_cast<uint8_t>(l.shred_state));
+                    vo.WriteObject(3, "unshredded", [&](duckdb::Serializer& u) {
+                      SerializeColumnData(u, *l.unshredded);
+                    });
+                    if (l.shred_state != VariantShredState::Unshredded) {
+                      vo.WriteObject(4, "shredded_node",
+                                     [&](duckdb::Serializer& s) {
+                                       SerializeColumnData(s, *l.shredded_node);
+                                     });
+                    }
+                  });
+                });
+  obj.WritePropertyWithDefault<bool>(5, "fully_shredded", node.fully_shredded,
+                                     true);
 }
 
 }  // namespace
@@ -126,7 +107,6 @@ struct HnswWriterEntry {
 
 struct ColWriter::Impl {
   Directory* dir;
-  std::string segment_name;
   std::string filename;
   duckdb::DatabaseInstance* db;
   const ColumnOptionsProvider* column_options;
@@ -142,7 +122,6 @@ struct ColWriter::Impl {
   sdb::containers::FlatHashMap<field_id, NormColumnWriter*> norm_by_id;
   std::vector<std::unique_ptr<HnswWriterEntry>> hnsw_writers;
   sdb::containers::FlatHashMap<field_id, HnswWriterEntry*> hnsw_by_id;
-  bool committed = false;
 };
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
@@ -151,22 +130,32 @@ ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
                      const NormColumnOptionsProvider* norm_column_options)
   : _impl{std::make_unique<Impl>()} {
   _impl->dir = &dir;
-  _impl->segment_name = std::string{segment_name};
   _impl->db = &db;
   _impl->column_options = column_options;
   _impl->norm_column_options = norm_column_options;
   _impl->filename = absl::StrCat(segment_name, ".", kColFormatExt);
-  _impl->out = dir.create(_impl->filename);
+}
+
+void ColWriter::EnsureOut() {
+  if (_impl->out) {
+    return;
+  }
+  _impl->out = _impl->dir->create(_impl->filename);
   if (!_impl->out) {
     throw IoError{
-      absl::StrCat("failed to create columnstore file: ", _impl->filename)};
+      absl::StrCat("failed to create .col writer file: ", _impl->filename)};
   }
   format_utils::WriteHeader(*_impl->out, kColFormatName, kColFormatVersion);
-  _impl->write_ctx = std::make_unique<WriteContext>(db, *_impl->out);
+  _impl->write_ctx = std::make_unique<WriteContext>(*_impl->db, *_impl->out);
+}
+
+bool ColWriter::Empty() const noexcept {
+  return _impl->column_writers.empty() && _impl->norm_writers.empty() &&
+         _impl->hnsw_writers.empty();
 }
 
 ColWriter::~ColWriter() {
-  if (_impl && !_impl->committed) {
+  if (_impl && _impl->out) {
     Rollback();
   }
 }
@@ -205,6 +194,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                duckdb::CompressionTypeToString(existing.Compression()), ")");
     return existing;
   }
+  EnsureOut();
   auto entry = std::make_unique<FooterColumnEntry>();
   entry->id = id;
   entry->root.type = type;
@@ -267,13 +257,17 @@ NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
   if (auto it = _impl->norm_by_id.find(id); it != _impl->norm_by_id.end()) {
     return *it->second;
   }
+  EnsureOut();
   auto cw = std::make_unique<NormColumnWriter>(id, row_group_size, *_impl->out);
   auto& back = *_impl->norm_writers.emplace_back(std::move(cw));
   _impl->norm_by_id.emplace(id, &back);
   return back;
 }
 
-std::string ColWriter::Commit(uint64_t target_row) {
+void ColWriter::Commit(uint64_t target_row) {
+  if (Empty() && !_impl->out) {
+    return;
+  }
   for (auto& cw : _impl->column_writers) {
     cw->Finalize();
   }
@@ -288,7 +282,7 @@ std::string ColWriter::Commit(uint64_t target_row) {
     // TODO(mbkkt) measure seq vs rand for hnsw construction
     auto in = _impl->dir->open(_impl->filename, IOAdvice::RANDOM);
     if (!in) {
-      throw IoError{absl::StrCat("failed to open columnstore for HNSW build: ",
+      throw IoError{absl::StrCat("failed to open .col writer for HNSW build: ",
                                  _impl->filename)};
     }
     ReadContext hnsw_ctx{*_impl->db, std::move(in)};
@@ -305,8 +299,8 @@ std::string ColWriter::Commit(uint64_t target_row) {
 
   const uint64_t footer_offset = _impl->out->Position();
 
-  IndexOutputWriteStream stream{*_impl->out};
-  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
+  duckdb::BinarySerializer serializer{*_impl->out,
+                                      duckdb::VersionStorageOptions()};
   serializer.Begin();
   serializer.WriteList(
     kFooterSlotColumns, "columns", _impl->column_entries.size(),
@@ -346,8 +340,6 @@ std::string ColWriter::Commit(uint64_t target_row) {
   _impl->out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_impl->out);
   _impl->out.reset();
-  _impl->committed = true;
-  return _impl->filename;
 }
 
 std::vector<BuiltHnsw> ColWriter::TakeBuiltHnsw() {
@@ -371,9 +363,6 @@ std::vector<BuiltHnsw> ColWriter::TakeBuiltHnsw() {
   return out;
 }
 
-void ColWriter::Rollback() noexcept {
-  _impl->out.reset();
-  _impl->committed = true;
-}
+void ColWriter::Rollback() noexcept { _impl->out.reset(); }
 
 }  // namespace irs

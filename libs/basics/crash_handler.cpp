@@ -20,6 +20,7 @@
 
 #include "basics/crash_handler.h"
 
+#include <absl/base/config.h>
 #include <absl/debugging/failure_signal_handler.h>
 
 #include <atomic>
@@ -41,7 +42,7 @@ std::atomic<const char*> gStateString{nullptr};
 // arrives here (plus a final nullptr-as-flush-hint). We route it via
 // LogCrash (signal-safe write(2) to stderr) so it lands in the same stderr
 // stream as our other crash records, prefixed with the server-state tag.
-void CrashWriter(const char* data) noexcept {
+[[maybe_unused]] void CrashWriter(const char* data) noexcept {
   // absl uses a nullptr argument as a "flush" hint; nothing to flush here.
   if (data == nullptr) {
     return;
@@ -138,6 +139,16 @@ void CrashHandler::SetState(std::string_view state) {
 }
 
 void CrashHandler::installCrashHandler() {
+#if defined(ABSL_HAVE_ADDRESS_SANITIZER) || \
+  defined(ABSL_HAVE_THREAD_SANITIZER) || defined(ABSL_HAVE_MEMORY_SANITIZER)
+  // Under a sanitizer the runtime owns fatal-signal handling with an
+  // async-signal-safe handler. absl's handler symbolizes in-signal
+  // (__cxa_demangle -> malloc/realloc/free); when the fault happened with the
+  // allocator lock held -- e.g. inside tsan's own mutex bookkeeping -- that
+  // re-enters the lock and the process wedges instead of dying. So leave fatal
+  // signals to the sanitizer; SIGTERM/SIGINT/SIGQUIT are still claimed later by
+  // signal_handling::Install for graceful shutdown.
+#else
   // absl::InitializeSymbolizer(argv[0]) is invoked from main() before we get
   // here, so the symbolizer is already up.
   absl::FailureSignalHandlerOptions options;
@@ -147,6 +158,7 @@ void CrashHandler::installCrashHandler() {
   options.call_previous_handler = false;
   options.writerfn = &CrashWriter;
   absl::InstallFailureSignalHandler(options);
+#endif
 }
 
 }  // namespace sdb

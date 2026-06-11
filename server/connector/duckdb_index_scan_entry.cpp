@@ -68,7 +68,8 @@ TableInvertedIndexScanEntry::TableInvertedIndexScanEntry(
 duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  GetSereneDBContext(context).EnsureSearchSnapshot(_inverted_index->GetId());
+  auto snapshot =
+    GetSereneDBContext(context).EnsureSearchSnapshot(_inverted_index->GetId());
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
@@ -78,11 +79,13 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     data->column_ids.push_back(col.GetId());
     data->column_types.push_back(col.type);
   }
-  data->has_rowid = true;
   data->table_entry = this;
   data->entry_kind = ScanEntryKind::InvertedIndex;
   data->inverted_index = _inverted_index;
   data->lookup_label = "rocksdb";
+  auto search = std::make_unique<SearchScan>();
+  search->snapshot = std::move(snapshot);
+  data->scan_source = std::move(search);
   bind_data = std::move(data);
   return CreateIResearchScanFunction();
 }
@@ -120,7 +123,8 @@ ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
 duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  GetSereneDBContext(context).EnsureSearchSnapshot(_inverted_index->GetId());
+  auto snapshot =
+    GetSereneDBContext(context).EnsureSearchSnapshot(_inverted_index->GetId());
   // The index only captures post-WHERE/ORDER/LIMIT rows; we must not
   // stream the reader directly.
   auto data = duckdb::make_uniq<ViewScanBindData>();
@@ -130,7 +134,6 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
     data->column_ids.push_back(static_cast<catalog::Column::Id>(i));
     data->column_types.push_back(vinfo.types[i]);
   }
-  data->has_rowid = true;
   data->table_entry = this;
   data->entry_kind = ScanEntryKind::InvertedIndex;
   data->inverted_index = _inverted_index;
@@ -139,6 +142,9 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   } else {
     data->lookup_label = "view";
   }
+  auto search = std::make_unique<SearchScan>();
+  search->snapshot = std::move(snapshot);
+  data->scan_source = std::move(search);
   bind_data = std::move(data);
   return CreateIResearchScanFunction();
 }
@@ -156,12 +162,14 @@ duckdb::vector<duckdb::column_t> ViewInvertedIndexScanEntry::GetRowIdColumns()
 duckdb::virtual_column_map_t ViewInvertedIndexScanEntry::GetVirtualColumns()
   const {
   duckdb::virtual_column_map_t result;
-  result.reserve(2);
+  result.reserve(3);
   result.emplace(kColumnIdentifierTableOid,
                  duckdb::TableColumn{"tableoid", duckdb::LogicalType::BIGINT});
   result.emplace(
     kColumnIdentifierGeneratedPk,
     duckdb::TableColumn{"generated_pk", duckdb::LogicalType::ROW_TYPE});
+  result.emplace(duckdb::COLUMN_IDENTIFIER_EMPTY,
+                 duckdb::TableColumn{"", duckdb::LogicalType::BOOLEAN});
   return result;
 }
 
@@ -199,7 +207,6 @@ duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
     data->column_ids.push_back(col.GetId());
     data->column_types.push_back(col.type);
   }
-  data->has_rowid = true;
   data->table_entry = this;
   data->entry_kind = ScanEntryKind::SecondaryIndex;
   data->lookup_label = "rocksdb";
@@ -250,7 +257,6 @@ duckdb::TableFunction ViewSecondaryIndexScanEntry::GetScanFunction(
     data->column_ids.push_back(static_cast<catalog::Column::Id>(i));
     data->column_types.push_back(vinfo.types[i]);
   }
-  data->has_rowid = true;
   data->table_entry = this;
   data->entry_kind = ScanEntryKind::SecondaryIndex;
   if (auto fp = ResolveViewFastPath(context, *_sdb_view)) {

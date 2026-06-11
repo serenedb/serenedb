@@ -214,7 +214,7 @@ struct Block : private util::Noncopyable {
 
     void WriteByte(byte_type b) final { weight.PushBack(b); }
 
-    void WriteBytes(const byte_type* b, size_t len) final {
+    void WriteData(const byte_type* b, uint64_t len) final {
       weight.PushBack(b, b + len);
     }
 
@@ -386,17 +386,6 @@ struct BlockMeta {
     UnsetBit(mask, std::to_underlying(EntryType::Block));
   }
 };
-
-const fst::FstReadOptions& FstReadOptions() {
-  static const auto kInstance = [] {
-    fst::FstReadOptions options;
-    options.read_osymbols = false;  // we don't need output symbols
-
-    return options;
-  }();
-
-  return kInstance;
-}
 
 // mininum size of string weight we store in FST
 [[maybe_unused]] constexpr const size_t kMinWeightSize = 2;
@@ -591,7 +580,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
 
     _suffix.stream.WriteV32(
       leaf ? suf_size : ((suf_size << 1) | static_cast<uint32_t>(type)));
-    _suffix.stream.WriteBytes(data.data() + prefix, suf_size);
+    _suffix.stream.WriteData(data.data() + prefix, suf_size);
 
     if (EntryType::Term == type) {
       _pw->Encode(_stats.stream, e.Term());
@@ -613,7 +602,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
   _blocks_out->WriteV64(ShiftPack64(block_size, leaf));
 
   auto copy = [this](const byte_type* b, size_t len) {
-    _blocks_out->WriteBytes(b, len);
+    _blocks_out->WriteData(b, len);
     return true;
   };
 
@@ -862,13 +851,14 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
   SDB_ASSERT(stats == fst_stats);
 #endif
 
-  const uint64_t fst_offset = _blocks_out->Position();
+  const uint64_t body_offset = _blocks_out->Position();
+  WriteStr(*_blocks_out, min_term);
+  WriteStr(*_blocks_out, max_term);
   const bool ok = immutable_byte_fst::Write(fst, *_blocks_out, fst_stats);
   if (!ok) [[unlikely]] {
     throw IndexError{
       absl::StrCat("Failed to write term index for field id ", id)};
   }
-  const uint64_t fst_size = _blocks_out->Position() - fst_offset;
 
   TermDictMeta meta;
   meta.features = props.index_features;
@@ -876,11 +866,8 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
   meta.doc_count = doc_count;
   meta.total_doc_freq = total_doc_freq;
   meta.total_term_freq = total_term_freq;
-  meta.min_term.assign(min_term.data(), min_term.size());
-  meta.max_term.assign(max_term.data(), max_term.size());
   meta.has_wand = has_wand != 0;
-  meta.fst_offset = fst_offset;
-  meta.fst_size = fst_size;
+  meta.body_offset = body_offset;
   meta.norm = props.norm;
   _idx->AddTermDictEntry(id, std::move(meta));
 }
@@ -911,7 +898,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
   bool has_scorer(uint8_t index) const noexcept final;
 
-  void LoadFromMeta(field_id id, const TermDictMeta& meta);
+  void LoadFromMeta(field_id id, const TermDictMeta& meta, DataInput& in);
 
   bool HasWand() const noexcept { return _has_wand; }
 
@@ -929,14 +916,15 @@ bool TermReaderBase::has_scorer(uint8_t index) const noexcept {
   return index == 0 && _has_wand;
 }
 
-void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta) {
+void TermReaderBase::LoadFromMeta(field_id id, const TermDictMeta& meta,
+                                  DataInput& in) {
   _field.id = id;
   _field.norm = meta.norm;
   _field.index_features = meta.features;
   _terms_count = meta.term_count;
   _doc_count = meta.doc_count;
-  _min_term = meta.min_term;
-  _max_term = meta.max_term;
+  _min_term = ReadString<bstring>(in);
+  _max_term = ReadString<bstring>(in);
   if (IndexFeatures::None != (meta.features & IndexFeatures::Freq)) {
     // TODO(mbkkt) for what reason we store uint64_t if we read to uint32_t
     SDB_ENSURE(meta.total_term_freq <= std::numeric_limits<uint32_t>::max(),
@@ -1190,14 +1178,12 @@ void BlockIterator::Load(IndexInput& in, Encryption::Stream* cipher) {
   _leaf = ShiftUnpack64(in.ReadV64(), block_size);
 
   // for non-encrypted index try direct buffer access first
-  _suffix.begin = cipher ? nullptr : in.ReadData(block_size);
+  _suffix.begin = cipher ? nullptr : in.ReadStable(block_size);
   _suffix.block.clear();
 
   if (!_suffix.begin) {
     _suffix.block.resize(block_size);
-    [[maybe_unused]] const auto read =
-      in.ReadBytes(_suffix.block.data(), block_size);
-    SDB_ASSERT(read == block_size);
+    in.ReadData(_suffix.block.data(), block_size);
     _suffix.begin = _suffix.block.c_str();
 
     if (cipher) {
@@ -1213,14 +1199,12 @@ void BlockIterator::Load(IndexInput& in, Encryption::Stream* cipher) {
   block_size = in.ReadV64();
 
   // try direct buffer access first
-  _stats.begin = in.ReadData(block_size);
+  _stats.begin = in.ReadStable(block_size);
   _stats.block.clear();
 
   if (!_stats.begin) {
     _stats.block.resize(block_size);
-    [[maybe_unused]] const auto read =
-      in.ReadBytes(_stats.block.data(), block_size);
-    SDB_ASSERT(read == block_size);
+    in.ReadData(_stats.block.data(), block_size);
     _stats.begin = _stats.block.c_str();
   }
 #ifdef SDB_DEV
@@ -2533,12 +2517,9 @@ class FieldReader::Impl {
 
     void PrepareFromMeta(field_id id, const TermDictMeta& meta,
                          IndexInput& blocks_in) {
-      LoadFromMeta(id, meta);
-      blocks_in.Seek(meta.fst_offset);
-      InputBuf isb(&blocks_in);
-      std::istream input(&isb);
-      _fst.reset(
-        FST::Read(input, FstReadOptions(), {_owner->_resource_manager}));
+      blocks_in.Seek(meta.body_offset);
+      LoadFromMeta(id, meta, blocks_in);
+      _fst.reset(FST::Read(blocks_in, _owner->_resource_manager));
       if (!_fst) {
         throw IndexError{
           absl::StrCat("Failed to read term index for field id ", id)};

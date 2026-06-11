@@ -60,17 +60,20 @@ auto MakeByTerm(irs::field_id field_id, std::string_view value) {
 // then read it back with `segment.Column(kNameId)` + `BlobPointReader`.
 bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   auto ctx = writer.GetBatch();
-  auto d = ctx.Insert();
-  if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
-    return false;
-  }
-  const auto* name =
-    dynamic_cast<const tests::StringField*>(doc.indexed.get_by_id(kNameId));
-  if (name != nullptr) {
-    if (auto* cs = d.Columnstore(); cs != nullptr) {
-      irs::tests::StoreFieldAt(*cs, kNameId, d.DocId(), *name);
+  {
+    auto d = ctx.Insert();
+    if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
+      return false;
+    }
+    const auto* name =
+      dynamic_cast<const tests::StringField*>(doc.indexed.get_by_id(kNameId));
+    if (name != nullptr) {
+      if (auto* cs = d.GetColWriter(); cs != nullptr) {
+        irs::tests::StoreFieldAt(*cs, kNameId, d.DocId(), *name);
+      }
     }
   }
+  ctx.Commit();
   return true;
 }
 
@@ -99,26 +102,31 @@ class FailingDirectory : public tests::DirectoryMock {
                                const FailingDirectory& dir)
       : _impl(std::move(impl)), _dir(&dir), _name(name) {}
 
-    const irs::byte_type* ReadData(uint64_t count) final {
-      return _impl->ReadData(count);
+    const irs::byte_type* ReadStable(uint64_t count) final {
+      return _impl->ReadStable(count);
     }
-    const irs::byte_type* ReadData(uint64_t offset, uint64_t count) final {
-      return _impl->ReadData(offset, count);
+    const irs::byte_type* ReadStable(uint64_t offset, uint64_t count) final {
+      return _impl->ReadStable(offset, count);
     }
 
-    const irs::byte_type* ReadView(uint64_t offset, uint64_t count) final {
-      return _impl->ReadView(offset, count);
+    const irs::byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
+      return _impl->ReadVolatile(offset, count);
     }
-    const irs::byte_type* ReadView(uint64_t count) final {
-      return _impl->ReadView(count);
+    const irs::byte_type* ReadVolatile(uint64_t count) final {
+      return _impl->ReadVolatile(count);
     }
 
     irs::byte_type ReadByte() final { return _impl->ReadByte(); }
-    size_t ReadBytes(irs::byte_type* b, size_t count) final {
-      return _impl->ReadBytes(b, count);
+    using DataInput::ReadData;
+    void ReadData(irs::byte_type* b, uint64_t count) final {
+      _impl->ReadData(b, count);
     }
-    size_t ReadBytes(uint64_t offset, irs::byte_type* b, size_t count) final {
-      return _impl->ReadBytes(offset, b, count);
+    void ReadData(duckdb::QueryContext, irs::byte_type* b,
+                  uint64_t count) final {
+      _impl->ReadData(b, count);
+    }
+    void ReadData(uint64_t offset, irs::byte_type* b, size_t count) final {
+      _impl->ReadData(offset, b, count);
     }
 
     int16_t ReadI16() final { return _impl->ReadI16(); }
@@ -306,7 +314,7 @@ void OpenReader(std::string_view format,
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
-    writer->GetBatch().Remove(*query_doc2);
+    tests::Remove(*writer, *query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
@@ -1223,7 +1231,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
-    writer->GetBatch().Remove(*query_doc2);
+    tests::Remove(*writer, *query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
@@ -1574,7 +1582,7 @@ TEST(index_death_test_formats_15,
         continue;
       }
       if (inserts_ok) {
-        writer.GetBatch().Remove(*query_doc2);
+        tests::Remove(writer, *query_doc2);
         ASSERT_THROW(writer.RefreshBegin(), irs::IoError);
         ASSERT_LT(dir.NumFailures(), failures_before);
       }
@@ -2890,7 +2898,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(*query_doc2);
+    tests::Remove(*writer, *query_doc2);
 
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(

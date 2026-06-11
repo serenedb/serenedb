@@ -41,6 +41,67 @@
 #include "iresearch/store/data_input.hpp"
 
 namespace irs {
+
+std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
+                                               PersistentColumnData&& node) {
+  std::unique_ptr<ColumnReader> element_child;
+  std::vector<std::unique_ptr<ColumnReader>> struct_children;
+  uint64_t array_size = 0;
+
+  switch (node.type.id()) {
+    case duckdb::LogicalTypeId::ARRAY: {
+      SDB_ASSERT(node.child_columns.size() == 1);
+      array_size = static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
+      element_child = MakeColumnReader(field_limits::invalid(),
+                                       std::move(node.child_columns.front()));
+      node.pointers.clear();  // ARRAY carries no self data on disk.
+    } break;
+    case duckdb::LogicalTypeId::MAP:
+    case duckdb::LogicalTypeId::LIST: {
+      // MAP rides on the LIST path: PhysicalType::LIST with a
+      // STRUCT<key, value> element.
+      SDB_ASSERT(node.child_columns.size() == 1);
+      element_child = MakeColumnReader(field_limits::invalid(),
+                                       std::move(node.child_columns.front()));
+    } break;
+    case duckdb::LogicalTypeId::VARIANT: {
+      std::vector<ColumnReader::VariantRgReader> variant_rgs;
+      variant_rgs.reserve(node.variant_layouts.size());
+      for (auto& variant_layout : node.variant_layouts) {
+        auto& row_group = variant_rgs.emplace_back();
+        row_group.row_count = variant_layout.row_count;
+        row_group.shred_state = variant_layout.shred_state;
+        row_group.unshredded = MakeColumnReader(
+          field_limits::invalid(), std::move(*variant_layout.unshredded));
+        if (variant_layout.shred_state != VariantShredState::Unshredded) {
+          row_group.shredded_node = MakeColumnReader(
+            field_limits::invalid(), std::move(*variant_layout.shredded_node));
+        }
+      }
+      return std::make_unique<ColumnReader>(id, std::move(node.type),
+                                            std::move(node.validity_pointers),
+                                            std::move(variant_rgs));
+    }
+    case duckdb::LogicalTypeId::STRUCT: {
+      struct_children.reserve(node.child_columns.size());
+      for (auto& child : node.child_columns) {
+        struct_children.push_back(
+          MakeColumnReader(field_limits::invalid(), std::move(child)));
+      }
+      node.pointers.clear();
+      break;
+    }
+    default:
+      break;  // primitive leaf: keep pointers, no children.
+  }
+
+  const bool fully_shredded = node.fully_shredded;
+  return std::make_unique<ColumnReader>(
+    id, std::move(node.type), std::move(node.pointers),
+    std::move(node.validity_pointers), std::move(element_child),
+    std::move(struct_children), array_size, fully_shredded);
+}
+
 namespace {
 
 const duckdb::LogicalType kLengthsType{duckdb::LogicalTypeId::UBIGINT};
@@ -52,6 +113,32 @@ bool AnyNonEmptyValidity(std::span<const duckdb::DataPointer> pointers) {
   });
 }
 
+RgWindow LocateInOffsets(uint64_t row_pos, std::span<const uint64_t> offsets,
+                         RgWindow hint) noexcept {
+  if (row_pos >= hint.end) {
+    // Forward jump: hint.rg + 1 is the common sequential-forward step.
+    const size_t next = hint.rg + 1;
+    SDB_ASSERT(next + 1 < offsets.size());
+    if (row_pos < offsets[next + 1]) {
+      return {next, hint.end, offsets[next + 1]};
+    }
+    SDB_ASSERT(next + 2 < offsets.size());
+    auto it =
+      std::upper_bound(offsets.begin() + next + 2, offsets.end(), row_pos);
+    const size_t rg = static_cast<size_t>(it - offsets.begin() - 1);
+    return {rg, offsets[rg], offsets[rg + 1]};
+  }
+  if (row_pos < hint.begin) {
+    // Backward jump: answer is strictly before hint.rg.
+    SDB_ASSERT(hint.rg < offsets.size());
+    auto it =
+      std::upper_bound(offsets.begin(), offsets.begin() + hint.rg, row_pos);
+    const size_t rg = static_cast<size_t>(it - offsets.begin() - 1);
+    return {rg, offsets[rg], offsets[rg + 1]};
+  }
+  return hint;
+}
+
 }  // namespace
 
 ColumnReader::ColumnReader(
@@ -60,12 +147,13 @@ ColumnReader::ColumnReader(
   std::vector<duckdb::DataPointer> validity_pointers,
   std::unique_ptr<ColumnReader> element_child,
   std::vector<std::unique_ptr<ColumnReader>> struct_children,
-  uint64_t array_size)
+  uint64_t array_size, bool fully_shredded)
   : _id{id},
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
     _validity_pointers{std::move(validity_pointers)},
     _has_validity{AnyNonEmptyValidity(_validity_pointers)},
+    _fully_shredded{fully_shredded},
     _child{std::move(element_child)},
     _array_size{array_size},
     _struct_fields{std::move(struct_children)} {
@@ -138,35 +226,38 @@ ColumnReader::ColumnReader(
   }
 }
 
-namespace {
-
-RgWindow LocateInOffsets(uint64_t row_pos, std::span<const uint64_t> offsets,
-                         RgWindow hint) noexcept {
-  if (row_pos >= hint.end) {
-    // Forward jump: hint.rg + 1 is the common sequential-forward step.
-    const size_t next = hint.rg + 1;
-    SDB_ASSERT(next + 1 < offsets.size());
-    if (row_pos < offsets[next + 1]) {
-      return {next, hint.end, offsets[next + 1]};
+ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
+                           std::vector<duckdb::DataPointer> validity_pointers,
+                           std::vector<VariantRgReader> variant_rgs)
+  : _id{id},
+    _type{std::move(type)},
+    _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
+    _variant_rgs{std::move(variant_rgs)} {
+  SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::VARIANT);
+  if (!_validity_pointers.empty()) {
+    _validity_offsets.reserve(_validity_pointers.size() + 1);
+    uint64_t vtotal = 0;
+    for (const auto& p : _validity_pointers) {
+      _validity_offsets.push_back(vtotal);
+      vtotal += p.tuple_count;
     }
-    SDB_ASSERT(next + 2 < offsets.size());
-    auto it =
-      std::upper_bound(offsets.begin() + next + 2, offsets.end(), row_pos);
-    const size_t rg = static_cast<size_t>(it - offsets.begin() - 1);
-    return {rg, offsets[rg], offsets[rg + 1]};
+    _validity_offsets.push_back(vtotal);
   }
-  if (row_pos < hint.begin) {
-    // Backward jump: answer is strictly before hint.rg.
-    SDB_ASSERT(hint.rg < offsets.size());
-    auto it =
-      std::upper_bound(offsets.begin(), offsets.begin() + hint.rg, row_pos);
-    const size_t rg = static_cast<size_t>(it - offsets.begin() - 1);
-    return {rg, offsets[rg], offsets[rg + 1]};
+  _variant_rg_starts.reserve(_variant_rgs.size() + 1);
+  uint64_t total = 0;
+  for (const auto& rg : _variant_rgs) {
+    SDB_ASSERT(rg.unshredded);
+    SDB_ASSERT(rg.unshredded->RowCount() == rg.row_count);
+    SDB_ASSERT(rg.shred_state == VariantShredState::Unshredded ||
+               rg.shredded_node->RowCount() == rg.row_count);
+    _variant_rg_starts.push_back(total);
+    total += rg.row_count;
   }
-  return hint;
+  _variant_rg_starts.push_back(total);
+  _row_count = total;
+  _data_offsets.push_back(0);
 }
-
-}  // namespace
 
 RgWindow ColumnReader::Locate(uint64_t row_pos, RgWindow hint) const noexcept {
   SDB_ASSERT(_type.id() != duckdb::LogicalTypeId::ARRAY &&
@@ -181,6 +272,13 @@ RgWindow ColumnReader::LocateValidity(uint64_t row_pos,
                                       RgWindow hint) const noexcept {
   SDB_ASSERT(row_pos < _row_count);
   return LocateInOffsets(row_pos, _validity_offsets, hint);
+}
+
+RgWindow ColumnReader::LocateVariantRg(uint64_t row,
+                                       RgWindow hint) const noexcept {
+  SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::VARIANT);
+  SDB_ASSERT(row < _row_count);
+  return LocateInOffsets(row, _variant_rg_starts, hint);
 }
 
 void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
@@ -217,7 +315,7 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   auto codec =
     cfg.TryGetCompressionFunction(p.compression_type, type.InternalType());
   SDB_ENSURE(codec, sdb::ERROR_INTERNAL,
-             "columnstore: missing compression function for codec type ",
+             ".col reader: missing compression function for codec type ",
              static_cast<uint8_t>(p.compression_type));
   auto stats = p.statistics.Copy();
   const auto byte_size = static_cast<duckdb::idx_t>(p.block_pointer.offset);
@@ -239,7 +337,7 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   auto handle = bm.RegisterTransientMemory(byte_size, ctx);
   auto buf = bm.Pin(handle);
   const uint64_t file_offset = p.block_pointer.block_id;
-  ctx.In().ReadBytes(file_offset, buf.GetDataMutable(), byte_size);
+  ctx.In().ReadData(file_offset, buf.GetDataMutable(), byte_size);
   auto segment = duckdb::make_uniq<duckdb::ColumnSegment>(
     db, std::move(handle), duckdb::ColumnSegmentType::PERSISTENT,
     static_cast<duckdb::idx_t>(p.tuple_count), *codec, std::move(stats),
@@ -321,10 +419,10 @@ uint64_t ColumnReader::ListOffsetState::Read(size_t rg, uint64_t first_in_rg,
   return first_start;
 }
 
-void ColumnReader::PointReader::Reset(const ColReader& cs_reader,
+void ColumnReader::PointReader::Reset(const ColReader& col_reader,
                                       const ColumnReader& reader) {
   _reader = &reader;
-  _ctx.Reset(cs_reader);
+  _ctx.Reset(col_reader);
   _segment.reset();
   _validity_segment.reset();
   _fetch_state = duckdb::ColumnFetchState{};

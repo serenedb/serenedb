@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector_buffer.hpp>
@@ -32,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/internal/persistent_column_data.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
@@ -51,6 +53,14 @@ template<typename Rows>
 inline size_t ConsecutiveRunLength(
   const Rows& rows, size_t i,
   uint64_t upper_bound = std::numeric_limits<uint64_t>::max()) noexcept {
+  if constexpr (requires { typename Rows::contiguous_range_tag; }) {
+    SDB_ASSERT(i < rows.size());
+    const uint64_t begin = static_cast<uint64_t>(rows[i]);
+    if (begin > upper_bound) {
+      return 1;
+    }
+    return std::min(rows.size() - i, static_cast<size_t>(upper_bound - begin));
+  }
   size_t run = 1;
   while (i + run < rows.size() &&
          static_cast<uint64_t>(rows[i + run]) ==
@@ -63,12 +73,23 @@ inline size_t ConsecutiveRunLength(
 
 class ColumnReader final {
  public:
+  struct VariantRgReader {
+    uint64_t row_count = 0;
+    VariantShredState shred_state = VariantShredState::Unshredded;
+    std::unique_ptr<ColumnReader> unshredded;
+    std::unique_ptr<ColumnReader> shredded_node;
+  };
+
   ColumnReader(field_id id, duckdb::LogicalType type,
                std::vector<duckdb::DataPointer> data_pointers,
                std::vector<duckdb::DataPointer> validity_pointers,
                std::unique_ptr<ColumnReader> element_child,
                std::vector<std::unique_ptr<ColumnReader>> struct_children,
-               uint64_t array_size);
+               uint64_t array_size, bool fully_shredded = true);
+
+  ColumnReader(field_id id, duckdb::LogicalType type,
+               std::vector<duckdb::DataPointer> validity_pointers,
+               std::vector<VariantRgReader> variant_rgs);
 
   ColumnReader(const ColumnReader&) = delete;
   ColumnReader& operator=(const ColumnReader&) = delete;
@@ -78,6 +99,7 @@ class ColumnReader final {
 
   uint64_t RowCount() const noexcept { return _row_count; }
   bool HasValidity() const noexcept { return _has_validity; }
+  bool FullyShredded() const noexcept { return _fully_shredded; }
 
   size_t DataRgCount() const noexcept { return _data_pointers.size(); }
   size_t ValidityRgCount() const noexcept { return _validity_pointers.size(); }
@@ -216,6 +238,13 @@ class ColumnReader final {
     return *_struct_fields[i];
   }
 
+  size_t VariantRgCount() const noexcept { return _variant_rgs.size(); }
+  const VariantRgReader& VariantRg(size_t rg) const noexcept {
+    SDB_ASSERT(rg < _variant_rgs.size());
+    return _variant_rgs[rg];
+  }
+  RgWindow LocateVariantRg(uint64_t row, RgWindow hint = {}) const noexcept;
+
   class ListOffsetState {
    public:
     ListOffsetState(const ColumnReader& list_column, ReadContext& ctx) noexcept
@@ -246,13 +275,13 @@ class ColumnReader final {
    public:
     explicit PointReader(duckdb::DatabaseInstance& db) noexcept : _ctx{db} {}
 
-    PointReader(const ColReader& cs_reader, const ColumnReader& reader)
-      : _ctx{cs_reader}, _reader{&reader} {}
+    PointReader(const ColReader& col_reader, const ColumnReader& reader)
+      : _ctx{col_reader}, _reader{&reader} {}
 
     PointReader(const PointReader&) = delete;
     PointReader& operator=(const PointReader&) = delete;
 
-    void Reset(const ColReader& cs_reader, const ColumnReader& reader);
+    void Reset(const ColReader& col_reader, const ColumnReader& reader);
 
     bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
 
@@ -308,6 +337,7 @@ class ColumnReader final {
   std::vector<uint64_t> _validity_offsets;  // size = validity_pointers + 1
   uint64_t _row_count = 0;
   bool _has_validity = false;  // any RG with non-EMPTY validity codec
+  bool _fully_shredded = true;
   std::unique_ptr<ColumnReader> _child;
   uint64_t _array_size = 0;  // 0 for non-ARRAY
   std::vector<std::unique_ptr<ColumnReader>>
@@ -315,6 +345,11 @@ class ColumnReader final {
   // Element-start prefix sums across LIST/MAP row groups, derived
   // eagerly from each segment's stats (max stored cumulative offset).
   std::vector<uint64_t> _rg_element_starts;
+  std::vector<VariantRgReader> _variant_rgs;
+  std::vector<uint64_t> _variant_rg_starts;
 };
+
+std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
+                                               PersistentColumnData&& node);
 
 }  // namespace irs

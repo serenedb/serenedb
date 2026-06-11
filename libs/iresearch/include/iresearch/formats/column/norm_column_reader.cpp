@@ -40,7 +40,7 @@ NormColumnReader::NormColumnReader(field_id id,
     const auto& p = _pointers[rg];
     _total_row_count += p.row_count;
     SDB_ASSERT(_total_sum + p.sum >= _total_sum,
-               "columnstore norm running sum overflow on column id ", _id);
+               ".col reader norm running sum overflow on column id ", _id);
     _total_sum += p.sum;
     _total_non_zero += p.non_zero_count;
     _row_offsets.push_back(_total_row_count);
@@ -48,7 +48,7 @@ NormColumnReader::NormColumnReader(field_id id,
     if (byte_count == 0) {
       continue;
     }
-    if (const auto* ptr = in.ReadData(p.file_offset, byte_count); ptr) {
+    if (const auto* ptr = in.ReadStable(p.file_offset, byte_count); ptr) {
       _spans[rg] = std::span<const byte_type>{ptr, byte_count};
     } else {
       _spans[rg] = {static_cast<const byte_type*>(nullptr), byte_count};
@@ -67,7 +67,7 @@ NormColumnReader::NormColumnReader(field_id id,
         continue;
       }
       auto* dst = _owned.data() + offset;
-      in.ReadBytes(_pointers[rg].file_offset, dst, byte_count);
+      in.ReadData(_pointers[rg].file_offset, dst, byte_count);
       _spans[rg] = std::span<const byte_type>{dst, byte_count};
       offset += byte_count;
     }

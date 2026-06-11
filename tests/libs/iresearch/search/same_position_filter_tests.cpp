@@ -47,7 +47,7 @@ inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
 inline constexpr irs::field_id kFieldId = tests::FieldIdFor("field");
 
 void StoreId(irs::IndexWriter::Document& doc, const tests::Document& src) {
-  auto* cs = doc.Columnstore();
+  auto* cs = doc.GetColWriter();
   if (cs == nullptr) {
     return;
   }

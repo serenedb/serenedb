@@ -167,6 +167,8 @@ start_fresh_serened() {
 	local pid=$!
 	printf -v "$pid_var" '%s' "$pid"
 
+	local start_ts
+	start_ts=$(date +%s.%N)
 	local attempt
 	for ((attempt = 0; attempt < 60; attempt++)); do
 		if ! kill -0 "$pid" 2>/dev/null; then
@@ -174,6 +176,7 @@ start_fresh_serened() {
 			return 1
 		fi
 		if python3 -c "import socket,sys; s=socket.socket(); s.settimeout(1); s.connect(('localhost',$port)); s.close()" 2>/dev/null; then
+			echo "  worker $worker_id serened ready in $(awk "BEGIN{printf \"%.1f\", $(date +%s.%N) - $start_ts}")s"
 			return 0
 		fi
 		sleep 1
@@ -185,6 +188,8 @@ start_fresh_serened() {
 stop_serened() {
 	local pid=$1
 	[[ -z "$pid" ]] && return
+	local start_ts
+	start_ts=$(date +%s.%N)
 	# Kill children FIRST (serened) -- once the parent bash dies, its children
 	# are reparented to init and pkill -P can no longer find them, leaving
 	# orphaned serened processes holding the port. Since each test uses a
@@ -192,6 +197,7 @@ stop_serened() {
 	pkill -KILL -P "$pid" 2>/dev/null
 	kill -KILL "$pid" 2>/dev/null
 	wait "$pid" 2>/dev/null
+	echo "  serened stopped in $(awk "BEGIN{printf \"%.1f\", $(date +%s.%N) - $start_ts}")s"
 }
 
 declare -a heavy=() light=()
@@ -279,7 +285,7 @@ run_worker() {
 			fi
 		fi
 
-		./run.sh \
+		SDB_SQLLOGIC_QUIET=1 ./run.sh \
 			--host "$host" \
 			--single-port "$run_port" \
 			--test "$test_file" \

@@ -136,6 +136,11 @@ set(IResearch_core_sources
     ./search/boolean_filter.cpp
     ./search/boolean_query.cpp
     ./search/filter_optimizer.cpp
+    ./search/optimizer/boolean_rules.cpp
+    ./search/optimizer/negation_rules.cpp
+    ./search/optimizer/terms_rules.cpp
+    ./search/optimizer/range_rules.cpp
+    ./search/optimizer/lowering_rules.cpp
     ./search/mixed_boolean_filter.cpp
     ./search/ngram_similarity_filter.cpp
     ./search/ngram_similarity_query.cpp

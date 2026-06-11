@@ -20,7 +20,9 @@
 
 #pragma once
 
+#include <array>
 #include <concepts>
+#include <cstddef>
 #include <span>
 #include <string_view>
 
@@ -42,6 +44,7 @@ template<typename Rule>
 concept RuleLike = requires {
   { Rule::kName } -> std::convertible_to<std::string_view>;
   { std::span<const TypeInfo::type_id>{Rule::kTargets} };
+  { Rule::kEnable } -> std::convertible_to<bool>;
   {
     &Rule::Apply
   } -> std::convertible_to<bool (*)(Filter::ptr&, const OptimizeContext&)>;
@@ -50,6 +53,22 @@ concept RuleLike = requires {
 template<RuleLike Rule>
 constexpr RuleDesc MakeRule() {
   return RuleDesc{Rule::kName, Rule::kTargets, &Rule::Apply};
+}
+
+template<RuleLike... Rules>
+constexpr auto MakeRuleSet() {
+  constexpr std::array<bool, sizeof...(Rules)> kEnabled{Rules::kEnable...};
+  constexpr size_t kCount =
+    (size_t{0} + ... + (Rules::kEnable ? size_t{1} : size_t{0}));
+  std::array<RuleDesc, kCount> result{};
+  const std::array<RuleDesc, sizeof...(Rules)> all{MakeRule<Rules>()...};
+  size_t index = 0;
+  for (size_t i = 0; i < all.size(); ++i) {
+    if (kEnabled[i]) {
+      result[index++] = all[i];
+    }
+  }
+  return result;
 }
 
 extern const std::span<const RuleDesc> kDefaultRules;

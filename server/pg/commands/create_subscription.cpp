@@ -26,17 +26,17 @@
 namespace sdb::pg {
 
 void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
-                        std::string_view conninfo) {
+                        std::string_view conninfo,
+                        std::vector<std::string>&& publications) {
   auto db_id = conn_ctx.GetDatabaseId();
 
-  // @todo local or global?
   auto& catalog = catalog::CatalogFeature::instance().Local();
 
   catalog::Subscription::Config cfg;
   cfg.conninfo = conninfo;
+  cfg.publications = std::move(publications);
   cfg.slot_name = name;
 
-  // @todo next id ?
   auto subscription = std::make_shared<catalog::Subscription>(
     db_id, catalog::NextId(), name, cfg);
 

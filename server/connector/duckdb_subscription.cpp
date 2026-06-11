@@ -18,7 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_split.h>
+
 #include <duckdb/main/database.hpp>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/create_subscription.h"
@@ -44,7 +49,19 @@ void CreateSubscriptionPragma(duckdb::ClientContext& context,
   if (params.named_parameters.count("connection")) {
     conninfo = params.named_parameters.at("connection").GetValue<std::string>();
   }
-  pg::CreateSubscription(conn_ctx, obj_name.relation, conninfo);
+
+  std::vector<std::string> publications;
+  if (params.named_parameters.count("publications")) {
+    auto raw =
+      params.named_parameters.at("publications").GetValue<std::string>();
+    for (std::string_view pub :
+         absl::StrSplit(raw, ',', absl::SkipWhitespace())) {
+      publications.emplace_back(pub);
+    }
+  }
+
+  pg::CreateSubscription(conn_ctx, obj_name.relation, conninfo,
+                         std::move(publications));
 }
 
 }  // namespace

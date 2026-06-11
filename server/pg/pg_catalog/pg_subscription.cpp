@@ -20,9 +20,13 @@
 
 #include "pg/pg_catalog/pg_subscription.h"
 
+#include <span>
+#include <string_view>
+
 #include "catalog/catalog.h"
 #include "catalog/subscription.h"
 #include "connector/duckdb_client_state.h"
+#include "pg/pg_catalog/fwd.h"
 #include "pg/system_table.h"
 
 namespace sdb::pg {
@@ -39,10 +43,11 @@ catalog::MaterializedData SystemTableSnapshot<PgSubscription>::GetTableData() {
   for (const auto& sub : subs) {
     const auto& cfg = sub->GetConfig();
 
-    Array<Text> pubs;
-    // for (const auto& p : cfg.publications) {
-    //   pubs.push_back(Text{p});
-    // }
+    std::vector<Text> pubs;
+    pubs.reserve(cfg.publications.size());
+    for (const auto& pub : cfg.publications) {
+      pubs.push_back(Text{pub});
+    }
 
     PgSubscription pg_row{
       .oid = static_cast<Oid>(sub->GetId().id()),

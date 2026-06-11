@@ -62,3 +62,14 @@ my_sub1
 my_sub2
 my_sub3
 my_sub4
+
+
+statement ok
+CREATE SUBSCRIPTION my_subscription CONNECTION 'host=publisher_host dbname=source_db user=repl_user password=secret' PUBLICATION my_publication;
+
+
+query
+SELECT subname, subconninfo, subslotname, subpublications FROM pg_subscription WHERE subname='my_subscription';
+----
+subname	subconninfo	subslotname	subpublications
+my_subscription	host=publisher_host dbname=source_db user=repl_user password=secret	my_subscription	{my_publication}

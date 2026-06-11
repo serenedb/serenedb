@@ -21,12 +21,15 @@
 #pragma once
 
 #include <duckdb/common/named_parameter_map.hpp>
+#include <string>
+#include <vector>
 
 #include "pg/connection_context.h"
 
 namespace sdb::pg {
 
 void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
-                        std::string_view conninfo);
+                        std::string_view conninfo,
+                        std::vector<std::string>&& publications);
 
 }  // namespace sdb::pg

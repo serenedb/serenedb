@@ -1653,9 +1653,7 @@ char PgSQLCommTaskBase::TransactionStatusIndicator() const noexcept {
 }
 
 void PgSQLCommTaskBase::SendReadyForQuery() {
-  // kReadyForQuery hard-codes the trailing status byte to 'I'; copy it and
-  // overwrite that byte with the live transaction status.
-  std::array<char, 6> msg = kReadyForQuery;
+  std::array<char, kReadyForQuery.size()> msg = kReadyForQuery;
   msg[5] = TransactionStatusIndicator();
   _send.Write(ToBuffer(msg), true);
 }

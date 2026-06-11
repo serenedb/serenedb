@@ -42,7 +42,9 @@
 
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/string_util.hpp"
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 #include "duckdb/common/trivial_map.hpp"
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 namespace {
 
@@ -87,7 +89,9 @@ constexpr std::string_view kLit_10_varied[] = {
   "yzje1byyqtje_2mjfcqzs",   "c30jssu5uy4t8",
   "bjwxv3g44y3vdd9osz6fkhc", "kik"};
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 constexpr auto kTriv_10_varied = duckdb::MakeTrivialSet<kLit_10_varied>();
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 constexpr frozen::string kFz_10_varied[] = {
   frozen::string("peuoe_ced8dpl_18"),
@@ -111,7 +115,9 @@ constexpr std::string_view kLit_10_same[] = {
   "kfekygdybmao", "k5zgzsqn_taz", "kmk2b02isxtj", "aq1bhwar22ij",
   "vsebyehwoc4u", "u4ivqstmi_r2"};
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 constexpr auto kTriv_10_same = duckdb::MakeTrivialSet<kLit_10_same>();
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 constexpr frozen::string kFz_10_same[] = {
   frozen::string("n06edso5v25m"), frozen::string("lfdzl8l9sx0y"),
@@ -158,7 +164,9 @@ constexpr std::string_view kLit_32_varied[] = {"vr5o8_mz5bn0_yszz326",
                                                "kbr6xrj1",
                                                "e2bc_rfi1bscyftjh4"};
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 constexpr auto kTriv_32_varied = duckdb::MakeTrivialSet<kLit_32_varied>();
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 constexpr frozen::string kFz_32_varied[] = {
   frozen::string("vr5o8_mz5bn0_yszz326"),
@@ -209,7 +217,9 @@ constexpr std::string_view kLit_32_same[] = {
   "k1z9aub2rla_", "nlq59ygmq3x1", "kuk2e5my6d62", "ipr73p2obavf",
   "ymp5ujl4vrtd", "k4arg6kk4a6e", "g5_qmmc0ihek", "jsn5va84x4yf"};
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 constexpr auto kTriv_32_same = duckdb::MakeTrivialSet<kLit_32_same>();
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 constexpr frozen::string kFz_32_same[] = {
   frozen::string("omc9t30jamz0"), frozen::string("man3j6_bp15k"),
@@ -335,7 +345,9 @@ constexpr std::string_view kLit_100_varied[] = {"im8j0v3is6",
                                                 "a2jnfa6xam47ss1tbii6onve",
                                                 "yd5ptw3c6z3tz630l9cgt"};
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 constexpr auto kTriv_100_varied = duckdb::MakeTrivialSet<kLit_100_varied>();
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 constexpr frozen::string kFz_100_varied[] = {
   frozen::string("im8j0v3is6"),
@@ -471,7 +483,9 @@ constexpr std::string_view kLit_100_same[] = {
   "mqyd0tbflj41", "k3vvufrzqezh", "knbyn9khdmwz", "pp4u8224u_7b",
   "kenaqfv54tri", "vsx9u5fs64t0", "vfgpybr4zi82", "k8gvq386wzcl"};
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 constexpr auto kTriv_100_same = duckdb::MakeTrivialSet<kLit_100_same>();
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 constexpr frozen::string kFz_100_same[] = {
   frozen::string("_so9ko7is1pt"), frozen::string("qnf19vqyzmkq"),
@@ -1531,7 +1545,9 @@ constexpr std::string_view kLit_1000_varied[] = {"kw32_d3ss7",
                                                  "wmhop31tr",
                                                  "kng9adbyvpao4pqxp72"};
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 constexpr auto kTriv_1000_varied = duckdb::MakeTrivialSet<kLit_1000_varied>();
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 constexpr frozen::string kFz_1000_varied[] = {
   frozen::string("kw32_d3ss7"),
@@ -2793,7 +2809,9 @@ constexpr std::string_view kLit_1000_same[] = {
   "qwrfv7xj8tsv", "xq1e7umfgbvi", "lu32a5po3i1m", "urwdja38g1ug",
   "btm6g5teyxit", "liix1xa0rnm_", "kzd4srpi3ztd", "kbwmj7w_7p7s"};
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 constexpr auto kTriv_1000_same = duckdb::MakeTrivialSet<kLit_1000_same>();
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 constexpr frozen::string kFz_1000_same[] = {
   frozen::string("ucupbdo4l4p8"), frozen::string("qefs5zeu4b1t"),
@@ -6051,6 +6069,7 @@ void RunHash(benchmark::State& s, const SetT& set,
     benchmark::DoNotOptimize(set.count(q[i]));
   }
 }
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 template<class SetT>
 void RunTrivCs(benchmark::State& s, const SetT& set,
                const std::vector<std::string>& q) {
@@ -6069,6 +6088,7 @@ void RunTrivCi(benchmark::State& s, const SetT& set,
     benchmark::DoNotOptimize(set.ContainsICase(std::string_view(q[i])));
   }
 }
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 template<class SetT>
 void RunFrozen(benchmark::State& s, const SetT& set,
                const std::vector<std::string>& q) {
@@ -6105,10 +6125,12 @@ static void cs_abslnode_10_varied(benchmark::State& s) {
 }
 BENCHMARK(cs_abslnode_10_varied);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void cs_trivial_10_varied(benchmark::State& s) {
   RunTrivCs(s, kTriv_10_varied, qCs_10_varied);
 }
 BENCHMARK(cs_trivial_10_varied);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void cs_frozen_10_varied(benchmark::State& s) {
   RunFrozen(s, kFrozCs_10_varied, qCs_10_varied);
@@ -6155,10 +6177,12 @@ static void ci_abslnodebad_10_varied(benchmark::State& s) {
 }
 BENCHMARK(ci_abslnodebad_10_varied);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void ci_trivial_10_varied(benchmark::State& s) {
   RunTrivCi(s, kTriv_10_varied, qCi_10_varied);
 }
 BENCHMARK(ci_trivial_10_varied);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void ci_frozen_10_varied(benchmark::State& s) {
   RunFrozen(s, kFrozCi_10_varied, qCi_10_varied);
@@ -6190,10 +6214,12 @@ static void cs_abslnode_10_same(benchmark::State& s) {
 }
 BENCHMARK(cs_abslnode_10_same);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void cs_trivial_10_same(benchmark::State& s) {
   RunTrivCs(s, kTriv_10_same, qCs_10_same);
 }
 BENCHMARK(cs_trivial_10_same);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void cs_frozen_10_same(benchmark::State& s) {
   RunFrozen(s, kFrozCs_10_same, qCs_10_same);
@@ -6240,10 +6266,12 @@ static void ci_abslnodebad_10_same(benchmark::State& s) {
 }
 BENCHMARK(ci_abslnodebad_10_same);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void ci_trivial_10_same(benchmark::State& s) {
   RunTrivCi(s, kTriv_10_same, qCi_10_same);
 }
 BENCHMARK(ci_trivial_10_same);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void ci_frozen_10_same(benchmark::State& s) {
   RunFrozen(s, kFrozCi_10_same, qCi_10_same);
@@ -6275,10 +6303,12 @@ static void cs_abslnode_32_varied(benchmark::State& s) {
 }
 BENCHMARK(cs_abslnode_32_varied);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void cs_trivial_32_varied(benchmark::State& s) {
   RunTrivCs(s, kTriv_32_varied, qCs_32_varied);
 }
 BENCHMARK(cs_trivial_32_varied);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void cs_frozen_32_varied(benchmark::State& s) {
   RunFrozen(s, kFrozCs_32_varied, qCs_32_varied);
@@ -6325,10 +6355,12 @@ static void ci_abslnodebad_32_varied(benchmark::State& s) {
 }
 BENCHMARK(ci_abslnodebad_32_varied);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void ci_trivial_32_varied(benchmark::State& s) {
   RunTrivCi(s, kTriv_32_varied, qCi_32_varied);
 }
 BENCHMARK(ci_trivial_32_varied);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void ci_frozen_32_varied(benchmark::State& s) {
   RunFrozen(s, kFrozCi_32_varied, qCi_32_varied);
@@ -6360,10 +6392,12 @@ static void cs_abslnode_32_same(benchmark::State& s) {
 }
 BENCHMARK(cs_abslnode_32_same);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void cs_trivial_32_same(benchmark::State& s) {
   RunTrivCs(s, kTriv_32_same, qCs_32_same);
 }
 BENCHMARK(cs_trivial_32_same);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void cs_frozen_32_same(benchmark::State& s) {
   RunFrozen(s, kFrozCs_32_same, qCs_32_same);
@@ -6410,10 +6444,12 @@ static void ci_abslnodebad_32_same(benchmark::State& s) {
 }
 BENCHMARK(ci_abslnodebad_32_same);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void ci_trivial_32_same(benchmark::State& s) {
   RunTrivCi(s, kTriv_32_same, qCi_32_same);
 }
 BENCHMARK(ci_trivial_32_same);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void ci_frozen_32_same(benchmark::State& s) {
   RunFrozen(s, kFrozCi_32_same, qCi_32_same);
@@ -6445,10 +6481,12 @@ static void cs_abslnode_100_varied(benchmark::State& s) {
 }
 BENCHMARK(cs_abslnode_100_varied);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void cs_trivial_100_varied(benchmark::State& s) {
   RunTrivCs(s, kTriv_100_varied, qCs_100_varied);
 }
 BENCHMARK(cs_trivial_100_varied);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void cs_frozen_100_varied(benchmark::State& s) {
   RunFrozen(s, kFrozCs_100_varied, qCs_100_varied);
@@ -6495,10 +6533,12 @@ static void ci_abslnodebad_100_varied(benchmark::State& s) {
 }
 BENCHMARK(ci_abslnodebad_100_varied);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void ci_trivial_100_varied(benchmark::State& s) {
   RunTrivCi(s, kTriv_100_varied, qCi_100_varied);
 }
 BENCHMARK(ci_trivial_100_varied);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void ci_frozen_100_varied(benchmark::State& s) {
   RunFrozen(s, kFrozCi_100_varied, qCi_100_varied);
@@ -6530,10 +6570,12 @@ static void cs_abslnode_100_same(benchmark::State& s) {
 }
 BENCHMARK(cs_abslnode_100_same);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void cs_trivial_100_same(benchmark::State& s) {
   RunTrivCs(s, kTriv_100_same, qCs_100_same);
 }
 BENCHMARK(cs_trivial_100_same);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void cs_frozen_100_same(benchmark::State& s) {
   RunFrozen(s, kFrozCs_100_same, qCs_100_same);
@@ -6580,10 +6622,12 @@ static void ci_abslnodebad_100_same(benchmark::State& s) {
 }
 BENCHMARK(ci_abslnodebad_100_same);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void ci_trivial_100_same(benchmark::State& s) {
   RunTrivCi(s, kTriv_100_same, qCi_100_same);
 }
 BENCHMARK(ci_trivial_100_same);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void ci_frozen_100_same(benchmark::State& s) {
   RunFrozen(s, kFrozCi_100_same, qCi_100_same);
@@ -6615,10 +6659,12 @@ static void cs_abslnode_1000_varied(benchmark::State& s) {
 }
 BENCHMARK(cs_abslnode_1000_varied);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void cs_trivial_1000_varied(benchmark::State& s) {
   RunTrivCs(s, kTriv_1000_varied, qCs_1000_varied);
 }
 BENCHMARK(cs_trivial_1000_varied);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void cs_frozen_1000_varied(benchmark::State& s) {
   RunFrozen(s, kFrozCs_1000_varied, qCs_1000_varied);
@@ -6665,10 +6711,12 @@ static void ci_abslnodebad_1000_varied(benchmark::State& s) {
 }
 BENCHMARK(ci_abslnodebad_1000_varied);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void ci_trivial_1000_varied(benchmark::State& s) {
   RunTrivCi(s, kTriv_1000_varied, qCi_1000_varied);
 }
 BENCHMARK(ci_trivial_1000_varied);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void ci_frozen_1000_varied(benchmark::State& s) {
   RunFrozen(s, kFrozCi_1000_varied, qCi_1000_varied);
@@ -6700,10 +6748,12 @@ static void cs_abslnode_1000_same(benchmark::State& s) {
 }
 BENCHMARK(cs_abslnode_1000_same);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void cs_trivial_1000_same(benchmark::State& s) {
   RunTrivCs(s, kTriv_1000_same, qCs_1000_same);
 }
 BENCHMARK(cs_trivial_1000_same);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void cs_frozen_1000_same(benchmark::State& s) {
   RunFrozen(s, kFrozCs_1000_same, qCs_1000_same);
@@ -6750,10 +6800,12 @@ static void ci_abslnodebad_1000_same(benchmark::State& s) {
 }
 BENCHMARK(ci_abslnodebad_1000_same);
 
+#ifdef SDB_ENABLE_TRIVIAL_BIMAP
 static void ci_trivial_1000_same(benchmark::State& s) {
   RunTrivCi(s, kTriv_1000_same, qCi_1000_same);
 }
 BENCHMARK(ci_trivial_1000_same);
+#endif  // SDB_ENABLE_TRIVIAL_BIMAP
 
 static void ci_frozen_1000_same(benchmark::State& s) {
   RunFrozen(s, kFrozCi_1000_same, qCi_1000_same);

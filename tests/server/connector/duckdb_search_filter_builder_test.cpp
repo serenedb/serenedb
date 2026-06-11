@@ -615,8 +615,9 @@ class SearchFilterBuilderTest : public ::testing::Test {
        &analyzer_provider](const duckdb::BoundColumnRefExpression& ref)
       -> std::optional<SearchColumnInfo> {
       // Mismatched table_index would mean the query referenced a table we
-      // didn't set up -- always a bug in the test itself.
-      SDB_ASSERT(ref.binding.table_index == ti);
+      // didn't set up -- always a bug in the test itself. SDB_VERIFY (not
+      // SDB_ASSERT) so `ti` is used in release builds too.
+      SDB_VERIFY(ref.binding.table_index == ti);
       const auto local = ref.binding.column_index.GetIndexUnsafe();
       const auto phys = projected[local].GetPrimaryIndex();
       return SearchColumnInfo{

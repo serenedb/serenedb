@@ -26,10 +26,12 @@
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <yaclib/async/future.hpp>
+#include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
-#include <yaclib/util/helper.hpp>
+#include <yaclib/coro/on.hpp>
 
 #include "basics/duckdb_engine.h"
+#include "network/io_context.h"
 #include "network/pg/duck_executor.h"
 #include "network/pg/query_pump.h"
 
@@ -45,9 +47,18 @@ TEST(NetworkDuckPump, RunsSelectOffIoThread) {
 
   auto& scheduler =
     duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance());
-  auto executor = yaclib::MakeShared<network::pg::DuckExecutor>(1, scheduler);
+  network::IoThreadPool pool{1};
+  pool.Start();
+  auto& io_worker = pool.Next();
+  network::pg::DuckExecutor duck{scheduler, io_worker};
+  network::pg::QueryPump pump{scheduler, io_worker, duck};
 
-  auto future = network::pg::DrivePending(*executor, *pending);
+  // Mirror the session: hop onto a DuckDB worker first -- Drive runs the
+  // first task slice inline on the calling thread.
+  auto future = [&]() -> yaclib::Future<duckdb::PendingExecutionResult> {
+    co_await yaclib::On(duck);
+    co_return co_await pump.Drive(*pending);
+  }();
   const auto status = std::move(future).Get().Ok();
   ASSERT_NE(status, duckdb::PendingExecutionResult::EXECUTION_ERROR);
 
@@ -55,4 +66,5 @@ TEST(NetworkDuckPump, RunsSelectOffIoThread) {
   ASSERT_FALSE(result->HasError());
   auto& materialized = result->Cast<duckdb::MaterializedQueryResult>();
   EXPECT_EQ(materialized.GetValue(0, 0).GetValue<int64_t>(), 42);
+  pool.Stop();
 }

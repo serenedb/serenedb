@@ -73,8 +73,9 @@ std::string SelectN(int n) {
   return sql;
 }
 
-// Like SelectN but with distinct identifiers instead of constants -- exercises the identifier
-// path (PG-default lowercasing into the arena) that number literals don't.
+// Like SelectN but with distinct identifiers instead of constants -- exercises
+// the identifier path (PG-default lowercasing into the arena) that number
+// literals don't.
 std::string SelectIdentsN(int n) {
   std::string sql = "SELECT c0";
   for (int i = 1; i < n; ++i) {
@@ -89,7 +90,8 @@ constexpr const char* kRows =
 // Parse only: PEG parse + AST build (Connection::ExtractStatements).
 void Parse(benchmark::State& state, std::string sql) {
   duckdb::Connection con{Db()};
-  // SereneDB lowercases unquoted identifiers by default (preserve_identifier_case=false, like PG).
+  // SereneDB lowercases unquoted identifiers by default
+  // (preserve_identifier_case=false, like PG).
   con.Query("SET preserve_identifier_case = false;");
   for (auto _ : state) {
     auto stmts = con.ExtractStatements(sql);
@@ -101,7 +103,8 @@ void Parse(benchmark::State& state, std::string sql) {
 // cost the simple/extended path pays before execution.
 void Prepare(benchmark::State& state, std::string sql) {
   duckdb::Connection con{Db()};
-  // SereneDB lowercases unquoted identifiers by default (preserve_identifier_case=false, like PG).
+  // SereneDB lowercases unquoted identifiers by default
+  // (preserve_identifier_case=false, like PG).
   con.Query("SET preserve_identifier_case = false;");
   for (auto _ : state) {
     auto prepared = con.Prepare(sql);

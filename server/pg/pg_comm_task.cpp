@@ -434,7 +434,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       memcpy(backend_key_data.data() + 5, &_key, sizeof(_key));
       _send.Write(ToBuffer(backend_key_data), false);
 
-      _send.Write(ToBuffer(kReadyForQuery), true);
+      SendReadyForQuery();
       std::move(cleanup).Cancel();
       _success_packet = true;
     } else if (auth.auth.auth_method == hba::UserAuth::Reject ||
@@ -1651,6 +1651,21 @@ void PgSQLCommTaskBase::SendParameterStatus(std::string_view name,
   _send.Commit(false);
 }
 
+char PgSQLCommTaskBase::TransactionStatusIndicator() const noexcept {
+  if (!_connection_ctx || !_connection_ctx->IsExplicitTransaction()) {
+    return 'I';
+  }
+  return _connection_ctx->IsTransactionInvalidated() ? 'E' : 'T';
+}
+
+void PgSQLCommTaskBase::SendReadyForQuery() {
+  // kReadyForQuery hard-codes the trailing status byte to 'I'; copy it and
+  // overwrite that byte with the live transaction status.
+  std::array<char, 6> msg = kReadyForQuery;
+  msg[5] = TransactionStatusIndicator();
+  _send.Write(ToBuffer(msg), true);
+}
+
 std::string_view PgSQLCommTaskBase::StartPacket() noexcept {
   std::lock_guard lock{_queue_mutex};
   SDB_ASSERT(!_queue.empty());
@@ -1681,7 +1696,7 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
 
   if (_current_packet_type == PQ_MSG_QUERY ||
       _current_packet_type == PQ_MSG_SYNC) {
-    _send.Write(ToBuffer(kReadyForQuery), true);
+    SendReadyForQuery();
   }
   std::lock_guard lock{_queue_mutex};
   if (_current_packet_type == PQ_MSG_QUERY ||

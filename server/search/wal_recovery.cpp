@@ -30,9 +30,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
+#include <memory>
 #include <ranges>
+#include <string>
+#include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"

@@ -15,6 +15,7 @@ add_executable(
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_key_builder_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_search_filter_builder_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_search_sink_writer_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/search_db_wal_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pg_progress_tracker_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pg_serialize_array_test.cpp
     # ${CMAKE_CURRENT_SOURCE_DIR}/data_sink_test.cpp

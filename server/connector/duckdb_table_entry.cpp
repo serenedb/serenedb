@@ -34,11 +34,16 @@
 #include <duckdb/storage/table_storage_info.hpp>
 
 #include "basics/assert.h"
+#include "catalog/catalog.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/search_table_dispatch.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 
@@ -72,6 +77,10 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  auto shard =
+    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(_sdb_table->GetId());
+  SDB_ASSERT(shard);
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
@@ -86,6 +95,9 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   data->entry_kind = ScanEntryKind::BaseTable;
 
   bind_data = std::move(data);
+  if (shard->GetStorage() == catalog::StorageKind::kSearch) {
+    return CreateSearchTableScanFunction();
+  }
   return CreateTableFullscanFunction();
 }
 

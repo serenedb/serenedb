@@ -22,6 +22,7 @@
 
 #include <cstdio>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
@@ -45,12 +46,13 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
   EntryInfoProvider&& entry_info_provider,
   std::span<const catalog::Column::Id> columns,
-  std::vector<IndexedExpression>&& indexed_exprs)
+  std::vector<IndexedExpression>&& indexed_exprs, bool store_pk_blob)
   : ColumnSinkWriterImplBase{columns},
     _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _indexed_expressions{std::move(indexed_exprs)},
-    _trx{trx} {
+    _trx{trx},
+    _store_pk_blob{store_pk_blob} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.id = catalog::term_dict::kPKFieldId;
 }
@@ -116,7 +118,7 @@ void SearchSinkInsertBaseImpl::SetFieldValueFromVector(
 }
 
 void SearchSinkInsertBaseImpl::MaybeEmitPk(std::string_view full_row_key) {
-  if (!_pk_blob_writer) {
+  if (!_emit_pk) {
     return;
   }
   const auto row_key = key_utils::ExtractRowKey(full_row_key);
@@ -125,7 +127,9 @@ void SearchSinkInsertBaseImpl::MaybeEmitPk(std::string_view full_row_key) {
     SDB_THROW(ERROR_INTERNAL,
               "Failed to insert PK field into IResearch document");
   }
-  AppendPkBlob(row_key);
+  if (_pk_blob_writer) {
+    AppendPkBlob(row_key);
+  }
 }
 
 void SearchSinkInsertBaseImpl::EmitField(Field* field_to_insert,
@@ -171,7 +175,7 @@ void SearchSinkInsertBaseImpl::WriteScalarBatch(
     }
     _document->NextDocument();
   }
-  _pk_blob_writer = nullptr;
+  _emit_pk = false;
 }
 
 template<duckdb::LogicalTypeId ChildKind>
@@ -225,12 +229,12 @@ void SearchSinkInsertBaseImpl::WriteListBatch(
     MaybeEmitPk(full_row_key);
     _document->NextDocument();
   }
-  _pk_blob_writer = nullptr;
+  _emit_pk = false;
 }
 
 void SearchSinkInsertBaseImpl::EmitPkOnlyBatch(
   std::span<const std::string_view> row_keys, duckdb::idx_t count) {
-  if (!_pk_blob_writer) {
+  if (!_emit_pk) {
     return;
   }
   SDB_ASSERT(_document);
@@ -244,7 +248,7 @@ void SearchSinkInsertBaseImpl::EmitPkOnlyBatch(
     MaybeEmitPk(full_row_key);
     _document->NextDocument();
   }
-  _pk_blob_writer = nullptr;
+  _emit_pk = false;
 }
 
 bool SearchSinkInsertBaseImpl::DispatchScalarBatch(
@@ -503,7 +507,7 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(
     MaybeEmitPk(full_row_key);
     _document->NextDocument();
   }
-  _pk_blob_writer = nullptr;
+  _emit_pk = false;
 }
 
 void SearchSinkInsertBaseImpl::SwitchFieldImpl(
@@ -621,7 +625,18 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
     _document.reset();
   }
   _document.emplace(_trx.Insert(false, batch_size));
-  _pk_blob_writer = EnsurePerRowBlobWriter(catalog::term_dict::kPKFieldId);
+  if (_store_pk_blob) {
+    // Inverted index: open the PK blob column and emit the PK iff the
+    // columnstore is available (preserves the historical gate -- no columnstore
+    // meant no PK emitted).
+    _pk_blob_writer = EnsurePerRowBlobWriter(catalog::term_dict::kPKFieldId);
+    _emit_pk = (_pk_blob_writer != nullptr);
+  } else {
+    // Search table: PK term only, no blob column. The columnstore is always
+    // present (the shard has a DB handle), so always emit the term.
+    _pk_blob_writer = nullptr;
+    _emit_pk = true;
+  }
 }
 
 void SearchSinkInsertBaseImpl::InsertNullValue() {
@@ -655,6 +670,7 @@ void SearchSinkInsertBaseImpl::FinishImpl() {
   _column_writers.clear();
   _per_row_blob_writers.clear();
   _pk_blob_writer = nullptr;
+  _emit_pk = false;
   _document.reset();
 }
 
@@ -815,6 +831,41 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
     _trx.Remove(std::move(_remove_filter));
   }
   _remove_filter.reset();
+}
+
+void WriteChunkToSearchSink(
+  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
+  std::span<const catalog::Column::Id> column_ids,
+  std::span<const duckdb_primary_key::PKColumn> pk_columns,
+  std::string_view table_key, bool uses_generated_pk, uint64_t pk_base) {
+  const auto num_rows = chunk.size();
+
+  // Build the FULL row keys up front (the sink extracts the row-key portion and
+  // emits the PK term internally, on the first column). Generated-PK uses
+  // pk_base + row; explicit-PK reads the key from the columns.
+  std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+  duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
+  std::vector<std::string> row_keys(num_rows);
+  std::vector<std::string_view> key_views;
+  key_views.reserve(num_rows);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    const uint64_t generated_pk = uses_generated_pk ? pk_base + row : 0;
+    duckdb_primary_key::MakeColumnKey(
+      pk_formats, pk_columns, row, generated_pk, table_key,
+      [](std::string_view) {}, row_keys[row]);
+    key_views.emplace_back(row_keys[row]);
+  }
+
+  // Init's batch_size must be the exact row count -- iresearch pre-allocates
+  // that many DocContext slots. Each column routes through the stored path
+  // (AppendToColumn + EmitPkOnlyBatch); the column type comes from the chunk.
+  sink.InitImpl(num_rows);
+  for (size_t col = 0; col < column_ids.size(); ++col) {
+    sink.SwitchFieldImpl(static_cast<irs::field_id>(column_ids[col]),
+                         chunk.data[col].GetType(), chunk.data[col], key_views,
+                         num_rows);
+  }
+  sink.FinishImpl();
 }
 
 }  // namespace sdb::connector

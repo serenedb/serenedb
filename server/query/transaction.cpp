@@ -37,6 +37,9 @@ void Transaction::OnNewStatement() {
     DropCatalogSnapshot();
     _rocksdb_snapshot = nullptr;
     _search_snapshots.clear();
+    if (_search_txn) {
+      _search_txn->ResetReaders();
+    }
   }
 }
 
@@ -59,11 +62,24 @@ Result Transaction::Commit() {
              "We do not expect merges for now");
   // Marker-only txns have zero rocksdb ops and would skip the commit block;
   // force a no-op Delete to consume a seq number so markers reach the WAL
-  // and the inverted index has a tick to commit on.
+  // and the inverted index has a tick to commit on. (CTAS search tables and
+  // the inverted-index path still emit rocksdb markers; plain search-table
+  // INSERT/COPY no longer does -- it commits via the self-contained WAL
+  // below, so a pure plain search INSERT legitimately has num_ops == 0.)
   if (num_ops == 0 && _num_log_data_markers > 0 && _rocksdb_transaction) {
     _rocksdb_transaction->Delete(rocksdb::Slice{});
     ++num_ops;
   }
+
+  // Search-table segments commit on the database WAL tick (not the rocksdb
+  // seq), so register their flush up-front -- before any commit point and
+  // regardless of whether rocksdb commits -- so a concurrent background
+  // RefreshCommit waits for them. They are committed in the WAL block at the
+  // end.
+  if (_search_txn) {
+    _search_txn->RegisterFlush();
+  }
+
   if (num_ops > 0) [[likely]] {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
@@ -79,6 +95,9 @@ Result Transaction::Commit() {
     absl::Cleanup rollback = [&] {
       for (auto& search_transaction : _search_transactions) {
         search_transaction.second->Abort();
+      }
+      if (_search_txn) {
+        _search_txn->Abort();
       }
       // PreCommit already ran CommitVariables, which cleared the txn map
       // after restoring SET LOCAL overlays. Nothing left to roll back here
@@ -125,6 +144,21 @@ Result Transaction::Commit() {
       search_transaction.second->Commit(post_commit_seq);
     }
   }
+
+  // Search-table INSERT/COPY commit point (WAL_DESIGN.md §9). Runs even when
+  // num_ops == 0 (a pure search INSERT touches no rocksdb data). The §9 crash
+  // boundaries + the single multi-shard WAL fsync that is the atomic commit
+  // point live in SearchTableTransaction::Commit.
+  if (_search_txn && !_search_txn->Empty()) {
+    try {
+      _search_txn->Commit();
+    } catch (const std::exception& e) {
+      _search_txn->Abort();
+      Destroy();
+      return {ERROR_INTERNAL, "Failed to commit search-table WAL: ", e.what()};
+    }
+  }
+
   ApplyTableStatsDiffs();
   Destroy();
 
@@ -135,6 +169,9 @@ Result Transaction::Rollback() {
   absl::Cleanup rollback = [&] {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Abort();
+    }
+    if (_search_txn) {
+      _search_txn->Abort();
     }
     RollbackVariables();
     Destroy();
@@ -220,6 +257,7 @@ void Transaction::Destroy() noexcept {
   _search_transactions.clear();
   _table_rows_deltas.clear();
   _search_snapshots.clear();
+  _search_txn.reset();
   _num_log_data_markers = 0;
 }
 

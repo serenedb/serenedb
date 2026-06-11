@@ -28,16 +28,19 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "basics/async_utils.hpp"
+#include "basics/containers/flat_hash_map.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/index_id.h"
 #include "catalog/types.h"
 #include "rest_server/database_path_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "search/search_db_wal.h"
 
 namespace sdb {
 
@@ -74,8 +77,16 @@ class SearchEngine final {
 
   std::filesystem::path GetPersistedPath(ObjectId database_id) const;
 
+  // The database's self-contained search WAL, lazily created on first use. ONE
+  // per database, shared by all of its search shards, so a transaction touching
+  // several search tables commits atomically.
+  SearchDbWal& GetDbWal(ObjectId database_id);
+
  private:
   DatabasePathFeature& _dir_feature;
+  // Per-database central WALs (see GetDbWal). Guarded by _db_wals_mu.
+  std::mutex _db_wals_mu;
+  containers::FlatHashMap<ObjectId, std::unique_ptr<SearchDbWal>> _db_wals;
   std::shared_ptr<SearchThreadPools> _thread_pools;
   uint32_t _compaction_threads{0};
   uint32_t _refresh_threads{0};

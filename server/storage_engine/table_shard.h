@@ -24,8 +24,11 @@
 #include <rocksdb/types.h>
 
 #include <atomic>
+#include <cstdint>
 #include <shared_mutex>
+#include <tuple>
 
+#include "basics/result_or.h"
 #include "catalog/fwd.h"
 #include "catalog/object.h"
 #include "catalog/table_options.h"
@@ -58,6 +61,8 @@ class TableShard : public catalog::Object {
 
   ObjectId GetTableId() const noexcept { return GetParentId(); }
 
+  catalog::StorageKind GetStorage() const noexcept { return _storage; }
+
   auto& GetTableLock() noexcept { return _table_lock; }
 
   void UpdateNumRows(int64_t delta) noexcept {
@@ -68,8 +73,20 @@ class TableShard : public catalog::Object {
     return {.num_rows = _num_rows.load(std::memory_order_relaxed)};
   }
 
+  // Serialize persists (StorageKind, stats) so recovery can construct the right
+  // subclass; DeserializeStats reads the stats back and DeserializeStorageKind
+  // the leading kind (used by the catalog's shard-construction dispatch).
   void Serialize(duckdb::Serializer& sink) const final;
   static catalog::TableStats DeserializeStats(std::string_view bytes);
+  static catalog::StorageKind DeserializeStorageKind(std::string_view bytes);
+
+  // Remove a shard's artifacts.
+  // For kRocksDB: rocksdb range delete on the table's key range;
+  // For kSearch: removes the iresearch directory + per-shard chunk subtree
+  // derived from (db_id, table_id).
+  static Result DropArtifacts(catalog::StorageKind kind, ObjectId db_id,
+                              ObjectId table_id, ObjectId shard_id,
+                              uint64_t size);
 
   // New table shard ctor
   explicit TableShard(ObjectId table_id, const catalog::TableStats& stats);
@@ -87,6 +104,16 @@ class TableShard : public catalog::Object {
   // may be destroyed on a different thread than they were created on (e.g.
   // during query cancellation), and absl::Mutex forbids cross-thread unlock.
   std::shared_mutex _table_lock;
+  // Set by subclasses in their constructor; default RocksDB matches every
+  // existing call site that constructs bare TableShard.
+  catalog::StorageKind _storage = catalog::StorageKind::kRocksDB;
 };
+
+// Factory for CREATE TABLE / recovery. Returns the right TableShard subclass
+// for the requested storage kind. db_id is only consumed by kSearch (it
+// determines the iresearch directory path); kRocksDB ignores it.
+ResultOr<std::shared_ptr<TableShard>> MakeTableShard(
+  catalog::StorageKind kind, ObjectId db_id, ObjectId table_id,
+  const catalog::TableStats& stats);
 
 }  // namespace sdb

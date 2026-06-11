@@ -43,6 +43,7 @@
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_full_scan.hpp"
+#include "connector/duckdb_search_table_scan.hpp"
 #include "connector/duckdb_sk_full_scan.hpp"
 #include "connector/duckdb_sk_point_lookup.hpp"
 #include "connector/duckdb_sk_range_scan.hpp"
@@ -746,6 +747,15 @@ duckdb::TableFunction CreateTableFullscanFunction() {
   return func;
 }
 
+duckdb::TableFunction CreateSearchTableScanFunction() {
+  duckdb::TableFunction func{
+    "search_table_fullscan",   {}, SearchTableScanFunction, SereneDBScanBind,
+    SearchTableScanInitGlobal,
+  };
+  SetCommonCallbacks(func);
+  return func;
+}
+
 duckdb::TableFunction CreatePKPointsLookupFunction() {
   duckdb::TableFunction func{
     "rocksdb_pk_points_lookup", {}, PKPointLookupFunction, SereneDBScanBind,
@@ -792,6 +802,21 @@ duckdb::TableFunction CreateSKRangesScanFunction() {
   return func;
 }
 
+bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
+                     const duckdb::TableFunctionInitInput& input) {
+  return absl::c_none_of(input.column_ids, [&](auto col_id) {
+    if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY) {
+      return false;
+    }
+    if (col_id == kColumnIdentifierGeneratedPk ||
+        col_id == kColumnIdentifierTableOid ||
+        col_id >= duckdb::VIRTUAL_COLUMN_START) {
+      return true;
+    }
+    return col_id < bind_data.column_ids.size();
+  });
+}
+
 namespace {
 
 bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
@@ -808,21 +833,6 @@ bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
   const auto* info =
     bind.inverted_index->FindColumnInfo(bind.column_ids[bind_col]);
   return info != nullptr && info->store_values;
-}
-
-bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
-                     const duckdb::TableFunctionInitInput& input) {
-  return absl::c_none_of(input.column_ids, [&](auto col_id) {
-    if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY) {
-      return false;
-    }
-    if (col_id == kColumnIdentifierGeneratedPk ||
-        col_id == kColumnIdentifierTableOid ||
-        col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      return true;
-    }
-    return col_id < bind_data.column_ids.size();
-  });
 }
 
 bool IsAnnScan(const SereneDBScanBindData& bind_data) {

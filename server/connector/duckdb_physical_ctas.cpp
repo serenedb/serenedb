@@ -24,6 +24,7 @@
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 
 #include "app/app_server.h"
+#include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
@@ -32,6 +33,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 
 namespace sdb::connector {
@@ -96,6 +98,9 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // Table constructor wires up a generated PK sequence.
 
   ApplyColumnModes(options.columns, table_info.options);
+  ApplyStorageKind(options, table_info.options);
+  SDB_ASSERT(options.storage == catalog::StorageKind::kRocksDB,
+             "search-backed CTAS must route through SereneDBSearchInsert");
 
   auto& catalog_impl = catalog::CatalogFeature::instance().Global();
 

@@ -36,6 +36,7 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
           "Threads in the iresearch compaction pool (0 = auto-derive from "
           "cores, clamped to [1, 4 * cores]).");
 
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/fast_text_model.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -44,6 +45,7 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 
 #include "app/app_server.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "basics/exceptions.h"
 #include "basics/lifecycle.h"
 #include "basics/log.h"
@@ -55,6 +57,8 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include "rest_server/database_path_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
+#include "search/search_db_wal.h"
+#include "search/search_table_recovery.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
 
@@ -140,6 +144,8 @@ void SearchEngine::start() {
   const bool skip_wal_recovery =
     absl::GetFlag(FLAGS_server_skip_search_recovery);
   InitInvertedIndexes(skip_wal_recovery);
+  // Replay each database's search-table WAL into iresearch.
+  RunSearchTableRecovery(skip_wal_recovery);
 
   SDB_INFO(SEARCH, "Search maintenance: ", _refresh_threads,
            " refresh thread(s), ", _compaction_threads,
@@ -151,6 +157,9 @@ void SearchEngine::stop() {
   _thread_pools->Get(ThreadGroup::Refresh).stop(false);
   _thread_pools->Get(ThreadGroup::Compaction).stop(false);
   _thread_pools->Stop();
+  // Close the per-database WALs (flush + release file handles) before shutdown.
+  std::lock_guard<std::mutex> lock(_db_wals_mu);
+  _db_wals.clear();
 }
 
 bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
@@ -189,6 +198,23 @@ std::filesystem::path SearchEngine::GetPersistedPath(
   path /= StaticStrings::kEngineDirRoot;
   path /= absl::StrCat(database_id);
   return path;
+}
+
+SearchDbWal& SearchEngine::GetDbWal(ObjectId database_id) {
+  std::lock_guard<std::mutex> lock(_db_wals_mu);
+  auto it = _db_wals.find(database_id);
+  if (it == _db_wals.end()) {
+    // Borrow the process-wide FileSystem (owned by the DuckDB instance, which
+    // outlives the engine). The WAL lives at GetPersistedPath(db)/wal/.
+    auto& fs = duckdb::FileSystem::GetFileSystem(
+      sdb::DuckDBEngine::Instance().instance());
+    auto wal_dir = GetPersistedPath(database_id) / "wal";
+    it = _db_wals
+           .emplace(database_id,
+                    std::make_unique<SearchDbWal>(fs, std::move(wal_dir)))
+           .first;
+  }
+  return *it->second;
 }
 
 }  // namespace sdb::search

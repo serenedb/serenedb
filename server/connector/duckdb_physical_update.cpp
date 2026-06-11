@@ -38,6 +38,7 @@
 #include "connector/duckdb_table_entry.h"
 #include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -214,6 +215,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   state->table_shard =
     conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
   SDB_ASSERT(state->table_shard);
+  RejectIfSearchTable(*state->table_shard, "UPDATE");
   state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
 
   const auto& columns = _table->Columns();

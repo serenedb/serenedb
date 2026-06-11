@@ -62,6 +62,7 @@
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -373,6 +374,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   }
 
   ApplyColumnModes(options.columns, table_info.options);
+  ApplyStorageKind(options, table_info.options);
 
   auto& catalog_impl = catalog::CatalogFeature::instance().Global();
   auto database_id = GetDatabaseId();
@@ -407,6 +409,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   auto& catalog_impl = catalog_feature.Global();
   auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto database_id = GetDatabaseId();
+
+  auto target_shard = snapshot->GetTableShard(sdb_table->GetId());
+  SDB_ASSERT(target_shard);
+  RejectIfSearchTable(*target_shard, "CREATE INDEX");
 
   // Map DuckDB index type to SereneDB IndexType
   // DuckDB default is empty or "ART"; PG default is "btree"

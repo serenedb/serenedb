@@ -34,6 +34,7 @@
 #include "connector/duckdb_table_entry.h"
 #include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -108,6 +109,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
   state->table_shard =
     conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
   SDB_ASSERT(state->table_shard);
+  RejectIfSearchTable(*state->table_shard, "DELETE");
   state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
 
   const auto& columns = _table->Columns();

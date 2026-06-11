@@ -114,17 +114,14 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
 
 AsyncResult TableShardDrop::Execute() {
   SDB_ASSERT(!_is_root);
-  auto& server = GetServerEngine();
-  // TODO(codeworse): Probably we should store data by table shard id, not
-  // table id. So, in that way here we would use id(not parent_id)
-  auto [start, end] = connector::key_utils::CreateTableRange(_parent_id);
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Default);
-  // Drop table data
-  // TODO(codeworse): add some parameter for large range(not just >= 1000)
-  auto r = rocksutils::RemoveLargeRange(server.db(), rocksdb::Slice{start},
-                                        rocksdb::Slice{end}, cf, true,
-                                        (_size >= 1000));
+  // By the time Execute runs the shard has been destroyed (see
+  // DropTask::ExecuteTask in drop_task.h -- it resets _object after waiting
+  // for AllowToDrop, which requires the shared_ptr count to hit zero).
+  // Live-state cleanup (closing iresearch writers, releasing resources)
+  // is the shard dtor's job; here we only wipe on-disk artifacts. Static
+  // dispatch on the storage kind captured at construction time, no live
+  // instance needed.
+  auto r = TableShard::DropArtifacts(_storage, _db_id, _parent_id, _id, _size);
   if (!r.ok()) {
     return yaclib::MakeFuture<Result>(ERROR_LOCKED);
   }

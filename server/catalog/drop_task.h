@@ -96,12 +96,30 @@ class DropTask {
 
 class TableShardDrop final : public DropTask {
  public:
-  TableShardDrop(ObjectId id, ObjectId parent_id, uint64_t size)
-    : DropTask{id, parent_id}, _size{size} {}
+  // Recovery / cleanup-after-error path: no live shard available. Caller
+  // must supply the persisted StorageKind so Execute can dispatch the
+  // backend-specific on-disk cleanup (TableShard::DropArtifacts).
+  // db_id / schema_id are consumed by the kSearch branch of DropArtifacts
+  // to locate the iresearch directory; kRocksDB ignores them.
+  TableShardDrop(ObjectId id, ObjectId parent_id, ObjectId db_id,
+                 ObjectId schema_id, uint64_t size, StorageKind storage)
+    : DropTask{id, parent_id},
+      _db_id{db_id},
+      _schema_id{schema_id},
+      _size{size},
+      _storage{storage} {}
 
+  // Normal-drop path: shard is alive at construction time, so we capture
+  // the storage kind from it. The shard itself will be destroyed (its
+  // dtor handles live-state cleanup) before Execute runs -- Execute then
+  // calls DropArtifacts for on-disk cleanup.
   TableShardDrop(const std::shared_ptr<TableShard>& shard, ObjectId parent_id,
-                 uint64_t size)
-    : DropTask{shard, parent_id}, _size{size} {}
+                 ObjectId db_id, ObjectId schema_id, uint64_t size)
+    : DropTask{shard, parent_id},
+      _db_id{db_id},
+      _schema_id{schema_id},
+      _size{size},
+      _storage{shard->GetStorage()} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("TableShardDrop(table $0 shard $1)",
@@ -115,7 +133,10 @@ class TableShardDrop final : public DropTask {
   bool AllowToDropDependencies() const noexcept final { return true; }
 
  private:
+  ObjectId _db_id;
+  ObjectId _schema_id;
   uint64_t _size;
+  StorageKind _storage;
 };
 
 struct IndexDrop final : public DropTask {
@@ -163,17 +184,21 @@ struct TableDrop final : public DropTask {
  public:
   static constexpr std::string_view kName = "table drop";
 
-  TableDrop(ObjectId id, ObjectId shard_id, uint64_t table_size,
+  // Recovery / catalog-cleanup path: caller passes the persisted
+  // StorageKind read from the shard's vpack. Forwarded to TableShardDrop
+  // so on-disk artifact cleanup can dispatch on backend.
+  TableDrop(ObjectId id, ObjectId shard_id, ObjectId db_id, uint64_t table_size,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
-            bool is_root = false)
+            StorageKind storage, bool is_root = false)
     : DropTask{id, schema_id, is_root},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
-      _shard_drop{std::make_shared<TableShardDrop>(shard_id, id, table_size)} {}
+      _shard_drop{std::make_shared<TableShardDrop>(
+        shard_id, id, db_id, schema_id, table_size, storage)} {}
 
   TableDrop(const std::shared_ptr<Table>& table,
-            const std::shared_ptr<TableShard>& shard,
+            const std::shared_ptr<TableShard>& shard, ObjectId db_id,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             bool is_root = false)
@@ -181,7 +206,7 @@ struct TableDrop final : public DropTask {
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
       _shard_drop{std::make_shared<TableShardDrop>(
-        shard, table->GetId(),
+        shard, table->GetId(), db_id, schema_id,
         table->Columns().size() * shard->GetTableStats().num_rows)} {}
 
   std::string GetContext() const noexcept final {

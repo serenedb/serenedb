@@ -32,6 +32,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
@@ -55,6 +56,7 @@
 #include "catalog/catalog.h"
 #include "catalog/pk_spec.h"
 #include "catalog/schema.h"
+#include "catalog/table_options.h"
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
@@ -62,12 +64,14 @@
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
+#include "connector/duckdb_physical_search_insert.h"
 #include "connector/duckdb_physical_sst_insert.h"
 #include "connector/duckdb_physical_truncate.h"
 #include "connector/duckdb_physical_update.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/search_table_dispatch.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -469,6 +473,18 @@ void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
+  {
+    auto& table_info = op.info->Base().Cast<duckdb::CreateTableInfo>();
+    catalog::CreateTableOptions probe;
+    ApplyStorageKind(probe, table_info.options);
+    if (probe.storage == catalog::StorageKind::kSearch) {
+      auto& search_ctas = planner.Make<SereneDBSearchInsert>(
+        std::move(op.info), op.schema, op.estimated_cardinality);
+      search_ctas.children.push_back(plan);
+      return search_ctas;
+    }
+  }
+
   // CTAS always gets a generated PK (monotonic), no sort needed.
   auto& ctas = planner.Make<SereneDBPhysicalCTAS>(std::move(op.info), op.schema,
                                                   op.estimated_cardinality);
@@ -615,6 +631,26 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   // we don't reuse upstream's single-pass ResolveDefaultsProjection here.
   if (!op.column_index_map.empty()) {
     plan = &ResolveDefaultsWithGenerated(planner, op, *plan);
+  }
+
+  // Search-table dispatch: bypass the SST / regular RocksDB paths entirely.
+  // No SST fast path -- per design D18, bulk inserts route through the
+  // regular search-insert operator until a dedicated bulk path is needed.
+  // No on-conflict handling -- M3 minimal scope rejects ON CONFLICT
+  // implicitly by ignoring the action; M6 wires it in.
+  {
+    auto& conn_ctx = GetSereneDBContext(context);
+    auto shard =
+      conn_ctx.EnsureCatalogSnapshot()->GetTableShard(sdb_table->GetId());
+    SDB_ASSERT(shard);
+    if (shard->GetStorage() == catalog::StorageKind::kSearch) {
+      auto& insert = planner.Make<SereneDBSearchInsert>(
+        std::move(sdb_table), std::move(op.types), op.estimated_cardinality);
+      if (plan) {
+        insert.children.push_back(*plan);
+      }
+      return insert;
+    }
   }
 
   // Resolve on-conflict action: when no explicit ON CONFLICT clause was given
@@ -966,6 +1002,17 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::CatalogEntry& target,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  if (target.type != duckdb::CatalogType::VIEW_ENTRY) {
+    auto& table_entry =
+      RequireBaseTable(target.Cast<duckdb::TableCatalogEntry>());
+    auto sdb_table = table_entry.GetSereneDBTable();
+    auto& conn_ctx = GetSereneDBContext(binder.context);
+    auto target_shard =
+      conn_ctx.EnsureCatalogSnapshot()->GetTableShard(sdb_table->GetId());
+    SDB_ASSERT(target_shard);
+    RejectIfSearchTable(*target_shard, "CREATE INDEX");
+  }
+
   // View-backed indexes are STATIC -- captured at CREATE INDEX, no DML refresh.
   duckdb::optional_ptr<duckdb::TableCatalogEntry> resolved_table;
   bool view_backed = false;

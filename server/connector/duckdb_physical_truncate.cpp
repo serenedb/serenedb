@@ -22,8 +22,11 @@
 
 #include <duckdb/common/types/data_chunk.hpp>
 
+#include "basics/assert.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_truncate_function.h"
+#include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
 #include "storage_engine/table_shard.h"
 
@@ -42,6 +45,9 @@ duckdb::SourceResultType SereneDBPhysicalTruncate::GetDataInternal(
   duckdb::OperatorSourceInput& input) const {
   auto& conn_ctx = GetSereneDBContext(context.client);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto shard = snapshot->GetTableShard(_table->GetId());
+  SDB_ASSERT(shard);
+  RejectIfSearchTable(*shard, "TRUNCATE");
   TruncateResolvedTable(conn_ctx, snapshot, _table);
   return duckdb::SourceResultType::FINISHED;
 }

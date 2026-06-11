@@ -63,6 +63,7 @@
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
+#include "search/search_table_shard.h"
 #include "storage_engine/secondary_index_shard.h"
 #include "storage_engine/table_shard.h"
 
@@ -109,16 +110,18 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   ObjectId table_id, uint64_t cols, bool is_root = false) {
   ObjectId shard_id;
   uint64_t table_size = std::numeric_limits<uint64_t>::max();
+  StorageKind shard_storage = StorageKind::kRocksDB;
 
-  auto r =
-    engine.VisitDefinitions(table_id, ObjectType::TableShard,
-                            [&](DefinitionKey key, std::string_view bytes) {
-                              SDB_ASSERT(!shard_id.isSet());
-                              shard_id = key.GetObjectId();
-                              auto stats = TableShard::DeserializeStats(bytes);
-                              table_size = stats.num_rows * cols;
-                              return Result{};
-                            });
+  auto r = engine.VisitDefinitions(
+    table_id, ObjectType::TableShard,
+    [&](DefinitionKey key, std::string_view bytes) {
+      SDB_ASSERT(!shard_id.isSet());
+      shard_id = key.GetObjectId();
+      shard_storage = TableShard::DeserializeStorageKind(bytes);
+      auto stats = TableShard::DeserializeStats(bytes);
+      table_size = stats.num_rows * cols;
+      return Result{};
+    });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
@@ -160,8 +163,8 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
   return std::make_shared<TableDrop>(
-    table_id, shard_id, table_size, std::move(indexes),
-    std::move(owned_sequences), schema_id, is_root);
+    table_id, shard_id, db_id, table_size, std::move(indexes),
+    std::move(owned_sequences), schema_id, shard_storage, is_root);
 }
 
 ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
@@ -245,7 +248,7 @@ class OpenDatabase {
   Result RegisterSequences(ObjectId database_id, ObjectId schema_id,
                            bool owned);
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
-  Result RegisterTableShard(ObjectId table_id);
+  Result RegisterTableShard(ObjectId db_id, ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
   Result RegisterIndexShard(const std::shared_ptr<Index>& index);
   Result RegisterIndexes(ObjectId database_id, ObjectId schema_id,
@@ -463,14 +466,25 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
   return {};
 }
 
-Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
+Result OpenDatabase::RegisterTableShard(ObjectId db_id, ObjectId table_id) {
   return GetServerEngine().VisitDefinitions(
     table_id, ObjectType::TableShard,
     [&](DefinitionKey key, std::string_view bytes) -> Result {
       ObjectId shard_id = key.GetObjectId();
       SDB_ASSERT(!IsDeleted(shard_id, DeletedScope::Relation));
+      auto kind = TableShard::DeserializeStorageKind(bytes);
       auto stats = TableShard::DeserializeStats(bytes);
-      auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
+      std::shared_ptr<TableShard> shard;
+      switch (kind) {
+        case StorageKind::kRocksDB:
+          shard = std::make_shared<TableShard>(shard_id, table_id, stats);
+          break;
+        case StorageKind::kSearch:
+          shard = std::make_shared<search::SearchTableShard>(db_id, table_id,
+                                                             shard_id, stats);
+          break;
+      }
+      SDB_ASSERT(shard);
       return _catalog.RegisterTableShard(std::move(shard));
     });
 }
@@ -547,7 +561,7 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
   irs::Finally cleanup = [&] noexcept {
     ClearDeletedDefinitions(DeletedScope::Relation);
   };
-  r = RegisterTableShard(table_id);
+  r = RegisterTableShard(db_id, table_id);
   if (!r.ok()) {
     return r;
   }

@@ -24,6 +24,8 @@
 #include <rocksdb/utilities/transaction.h>
 
 #include <iresearch/index/index_writer.hpp>
+#include <optional>
+#include <vector>
 #include <yaclib/async/future.hpp>
 
 #include "basics/containers/flat_hash_map.h"
@@ -33,7 +35,13 @@
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
+#include "search/search_table_transaction.h"
 
+namespace sdb {
+
+class TableShard;
+
+}  // namespace sdb
 namespace sdb::query {
 
 class Transaction : public Config {
@@ -56,6 +64,7 @@ class Transaction : public Config {
     // reasons) So if we get here explicit Commit/Rollback should be already
     // called. Otherwise we might have some unexpected data
     SDB_ASSERT(_search_transactions.empty());
+    SDB_ASSERT(!_search_txn || _search_txn->Empty());
     // RocksDB transactions aborts itself in destructor but just for consistency
     // we should do Commit/Rollback explicitly
     SDB_ASSERT(!_rocksdb_transaction);
@@ -109,6 +118,34 @@ class Transaction : public Config {
 
   void EraseSearchTransaction(ObjectId shard_id) noexcept {
     _search_transactions.erase(shard_id);
+  }
+
+  // Single helper for ensuring an iresearch trx exists for any shard type
+  // (InvertedIndexShard or SearchTableShard). ObjectIds are catalog-wide
+  // unique via NextId(), so one trx-per-shard_id map serves both without
+  // collision. `make_trx` is invoked only on first call for a given
+  // shard_id; for either shard type pass [&]{ return shard.GetTransaction(); }.
+  // Lifetime of the returned trx is owned by the sdb txn (Commit/Rollback
+  // drains the map).
+  template<typename Factory>
+  irs::IndexWriter::Transaction& EnsureSearchTransaction(ObjectId shard_id,
+                                                         Factory&& make_trx) {
+    auto [it, inserted] = _search_transactions.try_emplace(shard_id, nullptr);
+    if (inserted) {
+      it->second = std::make_unique<irs::IndexWriter::Transaction>(make_trx());
+    }
+    return *it->second;
+  }
+
+  // Lazily-created search-table (StorageKind::kSearch) transaction state +
+  // commit logic. Engaged on the first search-table write/scan; query::
+  // Transaction just delegates RegisterFlush/Commit/Abort to it (see Commit /
+  // Rollback). The operator and scan reach the per-shard mutators through here.
+  search::SearchTableTransaction& SearchTxn() {
+    if (!_search_txn) {
+      _search_txn.emplace();
+    }
+    return *_search_txn;
   }
 
   void Destroy() noexcept;
@@ -172,6 +209,10 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
+  // All search-table (kSearch) state + WAL commit logic. Engaged lazily via
+  // SearchTxn(); reset in Destroy. The inverted-index trxs above stay here --
+  // they commit on the rocksdb seq, not the engine WAL tick.
+  std::optional<search::SearchTableTransaction> _search_txn;
   uint64_t _num_log_data_markers = 0;
 };
 

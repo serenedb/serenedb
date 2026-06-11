@@ -92,9 +92,6 @@ class Config {
   WriteConflictPolicy GetWriteConflictPolicy() const;
   bool GetReadYourOwnWrites() const;
   bool IsExplicitTransaction() const;
-  // True when an explicit transaction has been invalidated by a failing
-  // statement (the PG "failed transaction" / 'E' state). Only meaningful
-  // inside an explicit transaction block.
   bool IsTransactionInvalidated() const;
 
   void ResetAll();

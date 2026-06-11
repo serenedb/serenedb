@@ -117,10 +117,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   void SendParameterStatus(std::string_view name, std::string_view value);
 
-  // PG ReadyForQuery transaction-status indicator: 'I' idle (no txn block),
-  // 'T' in a transaction block, 'E' in a failed transaction block.
   char TransactionStatusIndicator() const noexcept;
-  // Sends a ReadyForQuery carrying the live transaction-status indicator.
   void SendReadyForQuery();
 
   void SendNotices();

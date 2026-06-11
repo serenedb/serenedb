@@ -193,15 +193,6 @@ def test_standard_conforming_strings(conn: psycopg.Connection):
 
 
 # ---- ReadyForQuery transaction-status wiring -------------------------------
-#
-# Regression: the server hard-coded the ReadyForQuery status byte to 'I'
-# (idle), so psycopg -- which (default autocommit=False) manages transactions
-# client-side off that byte -- never saw an open transaction. commit() became
-# a no-op (it never sent COMMIT) and redundant BEGINs piled up, leaving tables
-# empty. The fixtures above force autocommit=True, where the status byte is
-# irrelevant, which is why this went unnoticed. The tests below take the
-# default autocommit=False path so the live I/T/E status is exercised.
-
 
 def test_ready_for_query_transaction_status():
     """ReadyForQuery must carry the live txn status (I/T/E), not a constant."""
@@ -234,11 +225,6 @@ def test_ready_for_query_transaction_status():
 
 
 def test_managed_transaction_commit_persists():
-    """commit() under autocommit=False must actually send COMMIT and persist.
-
-    With the bug the status byte stayed 'I', so psycopg treated commit() as a
-    no-op; CREATE/INSERT were never committed and a second session saw nothing.
-    """
     table = f"rfq_commit_{os.getpid()}"
     writer = psycopg.connect(**conn_kwargs())  # default autocommit=False
     try:

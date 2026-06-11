@@ -1416,7 +1416,7 @@ QUERY PLAN
 │      hnsw_e_idx (ANN)     │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │

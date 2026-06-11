@@ -77,13 +77,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   InitCommonState(*state, context, bind_data, input);
 
   auto& ss = bind_data.scan_source->Cast<SearchScan>();
-  // TODO: put into set_scan_order
-  duckdb::Value v;
-  if (ss.score_top_k &&
-      context.TryGetCurrentSetting("sdb_disable_top_k_optimization", v) &&
-      !v.IsNull() && v.GetValue<bool>()) {
-    ss.score_top_k.reset();
-  }
   if (!ss.offsets.empty() && !ss.stored_filter) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -210,12 +203,24 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
 }
 
 void IResearchSetScanOrder(
+  duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::RowGroupOrderOptions> options,
   duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
-  if (!bind_data || !options || !options->row_limit.IsValid()) {
+  if (!bind_data || !options || !options->row_limit.IsValid() ||
+      !options->single_order_key) {
+    return;
+  }
+  duckdb::Value v;
+  if (context.TryGetCurrentSetting("sdb_disable_top_k_optimization", v) &&
+      !v.IsNull() && v.GetValue<bool>()) {
     return;
   }
   auto& bd = bind_data->Cast<SereneDBScanBindData>();
+  const auto order_col = options->column_idx.GetPrimaryIndex();
+  if (order_col >= bd.column_ids.size() ||
+      bd.column_ids[order_col] != catalog::Column::kInvertedIndexScoreId) {
+    return;
+  }
   auto& search_scan = bd.scan_source->Cast<SearchScan>();
   if (search_scan.score_top_k) {
     return;

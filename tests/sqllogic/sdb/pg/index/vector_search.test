@@ -31,7 +31,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -59,7 +59,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 5          │
+│           Top: 5          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -88,7 +88,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 10         │
+│          Top: 10          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -355,7 +355,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 10         │
+│          Top: 10          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -493,7 +493,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l1_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 5          │
+│           Top: 5          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -522,7 +522,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l1_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 5          │
+│           Top: 5          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -585,7 +585,7 @@ QUERY PLAN
 │      cos_index (ANN)      │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -623,7 +623,7 @@ QUERY PLAN
 │      cos_index (ANN)      │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -653,7 +653,7 @@ QUERY PLAN
 │      cos_index (ANN)      │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -748,7 +748,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: ip_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -784,7 +784,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: ip_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -812,7 +812,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: ip_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -1306,7 +1306,7 @@ QUERY PLAN
 │      mixed_idx (ANN)      │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        TextFilter:        │

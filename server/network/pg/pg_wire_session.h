@@ -68,6 +68,7 @@
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "network/connection.h"
+#include "network/gate.h"
 #include "network/io_executor.h"
 #include "network/pg/auth.h"
 #include "network/pg/cancel_registry.h"
@@ -237,7 +238,10 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
     _ioexec = &exec;
   }
 
-  void Start() { Run().Detach(); }
+  void Start() {
+    SendWriter().Detach();
+    Run().Detach();
+  }
 
   void Close() noexcept { _socket.Close(); }
 
@@ -256,7 +260,34 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   };
 
   yaclib::Future<> Run();
+  // Drains: forces a flush of everything committed and awaits until the socket
+  // accepted it all (or the connection broke). For paths that must not proceed
+  // before the bytes are out -- TLS upgrade, close-with-error, teardown.
   yaclib::Future<> Flush();
+  // Kicks the send writer without waiting -- the hot path. Response bytes
+  // drain to the socket concurrently with whatever the session does next.
+  void KickSend() {
+    if (_send.GetUncommittedSize() != 0 || HasUnsentBytes()) {
+      _send.Commit(true);
+    }
+  }
+  bool HasUnsentBytes() const {
+    return _send.TotalCommitted() !=
+           _send_written.load(std::memory_order_acquire);
+  }
+  bool SendBroken() const { return _io_broken.load(std::memory_order_acquire); }
+  // Pauses the producing coroutine while the client is slower than the
+  // serializer; resumes on `resume` once the writer drains below the mark.
+  yaclib::Future<> AwaitSendBelowHighWater(yaclib::IExecutor& resume);
+  // io-pinned writer: parked until a committed flush arms a view, then drives
+  // async_write + FlushDone chains. All socket writes happen here (TLS-safe),
+  // overlapping the session coroutine's encoding/execution.
+  yaclib::Future<> SendWriter();
+  void OnSendViewReady(message::SequenceView view) {
+    _write_view = view;
+    _write_armed.store(true, std::memory_order_release);
+    _write_gate.Kick();
+  }
   yaclib::Future<Frame> NextFrame(bool typed, uint32_t max_len);
   void CopyRecvInto(uint8_t* dst, size_t n) const;
   std::optional<size_t> PeekTotalLength(bool typed) const;
@@ -291,17 +322,23 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   void SendStartupBurst();
   duckdb::unique_ptr<duckdb::PendingQueryResult> PendingQueryEnsured(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values);
-  void SerializeResult(const duckdb::PreparedStatement& prepared,
-                       duckdb::QueryResult& result,
-                       duckdb::StatementReturnType return_type,
-                       bool with_row_description,
-                       std::span<const sdb::pg::VarFormat> formats);
+  // Coroutines: between chunks they yield to send-side backpressure (resuming
+  // on `resume`, the executor they were called on) and bail early when the
+  // client is gone.
+  yaclib::Future<> SerializeResult(const duckdb::PreparedStatement& prepared,
+                                   duckdb::QueryResult& result,
+                                   duckdb::StatementReturnType return_type,
+                                   bool with_row_description,
+                                   std::span<const sdb::pg::VarFormat> formats,
+                                   yaclib::IExecutor& resume);
   // Emit up to max_rows (>0) DataRows from the portal's retained result,
   // resuming from a carried chunk. Returns true when the row limit was hit and
   // more rows remain (caller sends PortalSuspended); false when the portal
   // drained (CommandComplete already written, with this Execute's row count).
-  bool SerializePage(Portal& portal, duckdb::StatementReturnType return_type,
-                     uint64_t max_rows);
+  yaclib::Future<bool> SerializePage(Portal& portal,
+                                     duckdb::StatementReturnType return_type,
+                                     uint64_t max_rows,
+                                     yaclib::IExecutor& resume);
 
   Socket<Kind> _socket;
   asio_ns::io_context& _io;
@@ -312,7 +349,24 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   uint64_t _cancel_key = 0;
   uint32_t _max_message = kDefaultMaxMessageBytes;
   message::Buffer _recv{kReadBlock, kBufferMaxGrowth};
-  message::Buffer _send{kReadBlock, kBufferMaxGrowth};
+  // Write-behind: committed bytes auto-flush at kSendFlushSize; the callback
+  // arms a view and kicks the io-pinned SendWriter, so encoding the next rows
+  // overlaps the socket write of earlier ones (the buffer's FlushStart /
+  // FlushDone SPSC machinery -- the old server's proven send path).
+  message::Buffer _send{
+    kReadBlock, kBufferMaxGrowth, kSendFlushSize,
+    [this](message::SequenceView view) { OnSendViewReady(view); }};
+  // SendWriter state. _write_view/_write_armed are handed off strictly
+  // alternately (SendData -> write -> FlushDone -> maybe SendData), so a
+  // single slot suffices; _send_written is the writer's progress counter
+  // paired with _send.TotalCommitted() for drain/backpressure.
+  message::SequenceView _write_view;
+  std::atomic<bool> _write_armed{false};
+  Gate _write_gate;
+  Gate _producer_gate;
+  std::atomic<size_t> _send_written{0};
+  std::atomic<bool> _io_broken{false};
+  bool _writer_stop = false;
   std::string _scratch;
   // The current command frame's pending _recv consume. Normally the command
   // loop applies it after the handler; COPY FROM STDIN consumes it early (so
@@ -341,11 +395,59 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
 
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::Flush() {
-  if (!_send.Written().Empty()) {
-    co_await _socket.Write(_send.Written());
-    _send.Clear();
+  KickSend();
+  while (HasUnsentBytes() && !SendBroken()) {
+    co_await _producer_gate.Wait(*_ioexec);
   }
   co_return {};
+}
+
+template<SocketKind Kind>
+yaclib::Future<> PgWireSession<Kind>::AwaitSendBelowHighWater(
+  yaclib::IExecutor& resume) {
+  while (_send.TotalCommitted() -
+             _send_written.load(std::memory_order_acquire) >
+           kSendHighWater &&
+         !SendBroken()) {
+    co_await _producer_gate.Wait(resume);
+  }
+  co_return {};
+}
+
+template<SocketKind Kind>
+yaclib::Future<> PgWireSession<Kind>::SendWriter() {
+  auto self = this->shared_from_this();
+  for (;;) {
+    co_await _write_gate.Wait(*_ioexec);
+    if (_write_armed.exchange(false, std::memory_order_acq_rel)) {
+      const auto view = _write_view;
+      size_t bytes = 0;
+      for (const auto buffer : view) {
+        bytes += buffer.size();
+      }
+      try {
+        co_await _socket.Write(view);
+      } catch (const std::exception&) {
+        // Client is gone. Poison the send side, wake any parked producer, and
+        // close so the read side notices; the session coroutine bails at its
+        // next io touchpoint.
+        _io_broken.store(true, std::memory_order_release);
+        _producer_gate.Kick();
+        _socket.Close();
+        co_return {};
+      }
+      _send_written.fetch_add(bytes, std::memory_order_release);
+      // May immediately re-arm via the send callback (continue case) -- the
+      // pending kick is consumed by the next Wait.
+      _send.FlushDone();
+      _producer_gate.Kick();
+      continue;
+    }
+    if (_writer_stop) {
+      co_return {};
+    }
+    // Spurious (racing kicks coalesced) -- park again.
+  }
 }
 
 template<SocketKind Kind>
@@ -602,10 +704,10 @@ char PgWireSession<Kind>::TxnStatusByte() const {
 }
 
 template<SocketKind Kind>
-void PgWireSession<Kind>::SerializeResult(
+yaclib::Future<> PgWireSession<Kind>::SerializeResult(
   const duckdb::PreparedStatement& prepared, duckdb::QueryResult& result,
   duckdb::StatementReturnType return_type, bool with_row_description,
-  std::span<const sdb::pg::VarFormat> formats) {
+  std::span<const sdb::pg::VarFormat> formats, yaclib::IExecutor& resume) {
   uint64_t rows = 0;
   if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
     if (with_row_description) {
@@ -620,13 +722,14 @@ void PgWireSession<Kind>::SerializeResult(
       serializers.push_back(sdb::pg::GetSerialization(
         result.types[column], FormatFor(formats, column), context));
     }
-    for (;;) {
+    while (!SendBroken()) {
       auto chunk = result.FetchRaw();
       if (!chunk || chunk->size() == 0) {
         break;
       }
       rows += chunk->size();
       WriteDataChunk(_send, *chunk, serializers, context);
+      co_await AwaitSendBelowHighWater(resume);
     }
   } else if (return_type == duckdb::StatementReturnType::CHANGED_ROWS) {
     auto chunk = result.FetchRaw();
@@ -636,12 +739,13 @@ void PgWireSession<Kind>::SerializeResult(
   }
   WriteCommandComplete(_send,
                        sdb::pg::FormatCommandTag(prepared, return_type, rows));
+  co_return {};
 }
 
 template<SocketKind Kind>
-bool PgWireSession<Kind>::SerializePage(Portal& portal,
-                                        duckdb::StatementReturnType return_type,
-                                        uint64_t max_rows) {
+yaclib::Future<bool> PgWireSession<Kind>::SerializePage(
+  Portal& portal, duckdb::StatementReturnType return_type, uint64_t max_rows,
+  yaclib::IExecutor& resume) {
   auto& result = *portal.result;
   sdb::pg::SerializationContext context;
   context.buffer = &_send;
@@ -655,7 +759,7 @@ bool PgWireSession<Kind>::SerializePage(Portal& portal,
   }
 
   uint64_t sent = 0;
-  while (sent < max_rows) {
+  while (sent < max_rows && !SendBroken()) {
     if (!portal.carry || portal.carry_offset >= portal.carry->size()) {
       portal.carry = result.FetchRaw();
       portal.carry_offset = 0;
@@ -671,15 +775,16 @@ bool PgWireSession<Kind>::SerializePage(Portal& portal,
                         portal.carry_offset, portal.carry_offset + take);
     portal.carry_offset += take;
     sent += take;
+    co_await AwaitSendBelowHighWater(resume);
   }
 
   if (portal.exhausted) {
     // Postgres reports this Execute's row count (not the portal-wide total).
     WriteCommandComplete(_send, sdb::pg::FormatCommandTag(
                                   *portal.stmt->prepared, return_type, sent));
-    return false;
+    co_return false;
   }
-  return true;
+  co_return true;
 }
 
 template<SocketKind Kind>
@@ -946,8 +1051,8 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     if (result->HasError()) {
       ThrowDuck(result->GetErrorObject());
     }
-    SerializeResult(*prepared, *result, return_type,
-                    /*with_row_description=*/true, {});
+    co_await SerializeResult(*prepared, *result, return_type,
+                             /*with_row_description=*/true, {}, *_duck);
   }
   co_return {};
 }
@@ -1019,9 +1124,9 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   if (error) {
     std::rethrow_exception(error);
   }
-  SerializeResult(*prepared, *result,
-                  prepared->GetStatementProperties().return_type,
-                  /*with_row_description=*/true, {});
+  co_await SerializeResult(*prepared, *result,
+                           prepared->GetStatementProperties().return_type,
+                           /*with_row_description=*/true, {}, *_ioexec);
   co_return {};
 }
 
@@ -1506,14 +1611,14 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
   // which stays byte-for-byte unchanged (zero added per-row overhead).
   if (max_rows == 0 ||
       return_type != duckdb::StatementReturnType::QUERY_RESULT) {
-    SerializeResult(*portal->stmt->prepared, *portal->result, return_type,
-                    /*with_row_description=*/false,
-                    portal->bind_info.output_formats);
+    co_await SerializeResult(
+      *portal->stmt->prepared, *portal->result, return_type,
+      /*with_row_description=*/false, portal->bind_info.output_formats, *_duck);
     portal->exhausted = true;
     co_return {};
   }
 
-  if (SerializePage(*portal, return_type, max_rows)) {
+  if (co_await SerializePage(*portal, return_type, max_rows, *_duck)) {
     WriteEmptyFrame(_send, PQ_MSG_PORTAL_SUSPENDED);
   }
   co_return {};
@@ -1564,6 +1669,12 @@ void PgWireSession<Kind>::HandleClose(std::string_view payload) {
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::Run() {
   auto self = this->shared_from_this();
+  // Every exit path must release the parked SendWriter (it holds a self
+  // shared_ptr); fires on coroutine-frame unwind, after the explicit drains.
+  absl::Cleanup writer_guard{[this] {
+    _writer_stop = true;
+    _write_gate.Kick();
+  }};
   if constexpr (Kind == SocketKind::Ssl) {
     try {
       co_await _socket.Handshake();
@@ -1727,7 +1838,7 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
                   *_ioexec, *_duck);
 
     SendStartupBurst();
-    co_await Flush();
+    KickSend();
 
     // After an error in an extended-protocol message the backend silently
     // discards every following message until the next Sync (postgres.c
@@ -1753,7 +1864,7 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
         if (frame.recv_consume) {
           _recv.Consume(frame.recv_consume);
         }
-        co_await Flush();
+        KickSend();
         continue;
       }
       if (type == PQ_MSG_SYNC) {
@@ -1762,7 +1873,7 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
           _recv.Consume(frame.recv_consume);
         }
         WriteReadyForQuery(_send, TxnStatusByte());
-        co_await Flush();
+        KickSend();
         continue;
       }
       if (ignore_till_sync) {
@@ -1819,11 +1930,13 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
         _dispatch_consume = 0;
       }
 
-      // Simple Query is self-syncing: emit ReadyForQuery and flush now.
-      // Extended replies accumulate and flush at the client's Sync.
+      // Simple Query is self-syncing: emit ReadyForQuery and kick the writer.
+      // Extended replies accumulate and go out at the client's Sync. Neither
+      // waits for the socket -- the next frame is read while the response
+      // drains.
       if (type == PQ_MSG_QUERY) {
         WriteReadyForQuery(_send, TxnStatusByte());
-        co_await Flush();
+        KickSend();
       }
     }
   } catch (const std::exception&) {
@@ -1842,6 +1955,9 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
   if (_connection_ctx) {
     _connection_ctx->StealNotices();
   }
+  // Last responses (e.g. up to the Terminate) may still be draining; closing
+  // mid-write would truncate them.
+  co_await Flush();
   _socket.Close();
   co_return {};
 }

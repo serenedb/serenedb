@@ -46,6 +46,11 @@ class Buffer {
 
   size_t GetUncommittedSize() const { return _uncommitted_size; }
 
+  // Monotonic count of bytes ever Commit()ed. Producer-side: read it only from
+  // the producer; pair with an external written-bytes counter to track
+  // committed-but-unsent bytes for drain/backpressure.
+  size_t TotalCommitted() const { return _total_committed; }
+
   void FlushDone();
 
   void FlushStart();
@@ -105,6 +110,7 @@ class Buffer {
   const size_t _flush_size;
   size_t _volatile_size{0};
   size_t _uncommitted_size{0};
+  size_t _total_committed{0};
 
   const size_t _max_growth;
   mutable size_t _growth;

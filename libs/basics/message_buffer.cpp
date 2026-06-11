@@ -62,6 +62,7 @@ uint8_t* Buffer::GetContiguousData(size_t capacity) {
 }
 
 void Buffer::Commit(bool need_flush) {
+  _total_committed += _uncommitted_size;
   _volatile_size += std::exchange(_uncommitted_size, 0);
   if (need_flush || _volatile_size >= _flush_size) {
     FlushStart();

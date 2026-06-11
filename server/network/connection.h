@@ -29,6 +29,15 @@ namespace sdb::network {
 inline constexpr size_t kReadBlock = 16 * 1024;
 inline constexpr size_t kBufferMaxGrowth = 1u << 20;
 
+// Send-side write-behind: committed bytes auto-start an async socket write at
+// this threshold, so encoding the next rows overlaps the write of earlier
+// ones.
+inline constexpr size_t kSendFlushSize = 64 * 1024;
+// Backpressure high-water mark: a producer encoding rows pauses while more
+// than this many committed bytes are not yet written to the socket. Bounds
+// per-connection memory for results a slow client doesn't drain.
+inline constexpr size_t kSendHighWater = 4u << 20;
+
 // Largest single pg-wire message accepted -- a distinct concept from the
 // buffer's chunk-growth ceiling above (they previously shared one constant).
 // Bounds per-connection peak memory; bulk data goes through COPY, which streams

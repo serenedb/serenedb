@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <duckdb/common/serializer/read_stream.hpp>
 #include <iterator>
 #include <memory>
 #include <streambuf>
@@ -31,7 +32,7 @@
 
 namespace irs {
 
-class DataInput {
+class DataInput : public duckdb::ReadStream {
  public:
   enum class Type {
     Generic,
@@ -55,21 +56,23 @@ class DataInput {
   // the requested 'count' of bytes. Stream guarantees that buffer is immutable
   // and will reside in memory while underlying stream is open
   // and before the next read operation.
-  virtual const byte_type* ReadView(uint64_t count) = 0;
+  virtual const byte_type* ReadVolatile(uint64_t count) = 0;
 
   // If supported, provides access to an internal buffer containing
   // the requested 'count' of bytes. Stream guarantees that buffer is immutable
   // and will reside in memory while underlying stream is open.
-  virtual const byte_type* ReadData(uint64_t count) = 0;
+  virtual const byte_type* ReadStable(uint64_t count) = 0;
 
-  virtual size_t ReadBytes(byte_type* b, size_t count) = 0;
+  using duckdb::ReadStream::ReadData;
+
+  IRS_FORCE_INLINE void ReadBytes(byte_type* b, size_t count) {
+    ReadData(b, count);
+  }
 
   // @note calling "ReadByte()" on a stream in EOF state is undefined behavior
   virtual bool IsEOF() const noexcept = 0;
 
   virtual Type GetType() const noexcept { return Type::Generic; }
-
-  virtual ~DataInput() = default;
 
   // TODO(mbkkt) Remove this
   using iterator_category = std::forward_iterator_tag;
@@ -93,14 +96,14 @@ class IndexInput : public DataInput {
 
   virtual void Seek(uint64_t pos) = 0;
 
-  using DataInput::ReadData;
-  virtual const byte_type* ReadData(uint64_t offset, uint64_t count) = 0;
+  using DataInput::ReadStable;
+  virtual const byte_type* ReadStable(uint64_t offset, uint64_t count) = 0;
 
-  using DataInput::ReadView;
-  virtual const byte_type* ReadView(uint64_t offset, uint64_t count) = 0;
+  using DataInput::ReadVolatile;
+  virtual const byte_type* ReadVolatile(uint64_t offset, uint64_t count) = 0;
 
   using DataInput::ReadBytes;
-  virtual size_t ReadBytes(uint64_t offset, byte_type* b, size_t count) = 0;
+  virtual void ReadBytes(uint64_t offset, byte_type* b, size_t count) = 0;
 
   // TODO(mbkkt) now they're both implemented the same they,
   // also it doesn't look like all users aware. Maybe we should remove dup?
@@ -145,25 +148,30 @@ class InputBuf final : public std::streambuf, util::Noncopyable {
 
 class BufferedIndexInput : public IndexInput {
  public:
-  const byte_type* ReadData(uint64_t count) noexcept final { return nullptr; }
-  const byte_type* ReadData(uint64_t offset, uint64_t count) noexcept final {
+  const byte_type* ReadStable(uint64_t count) noexcept final { return nullptr; }
+  const byte_type* ReadStable(uint64_t offset, uint64_t count) noexcept final {
     return nullptr;
   }
 
-  const byte_type* ReadView(uint64_t count) final;
-  const byte_type* ReadView(uint64_t offset, uint64_t count) final {
+  const byte_type* ReadVolatile(uint64_t count) final;
+  const byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
     if (count <= _buf_size && offset + count <= Length()) {
       Seek(offset);
-      return ReadView(count);
+      return ReadVolatile(count);
     }
     return nullptr;
   }
 
   byte_type ReadByte() final;
-  size_t ReadBytes(byte_type* b, size_t count) final;
-  size_t ReadBytes(uint64_t offset, byte_type* b, size_t count) final {
+  using DataInput::ReadData;
+  void ReadData(byte_type* b, uint64_t count) final;
+  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
+    BufferedIndexInput::ReadData(b, count);
+  }
+  using DataInput::ReadBytes;
+  void ReadBytes(uint64_t offset, byte_type* b, size_t count) final {
     Seek(offset);
-    return ReadBytes(b, count);
+    ReadData(b, count);
   }
 
   int16_t ReadI16() final {

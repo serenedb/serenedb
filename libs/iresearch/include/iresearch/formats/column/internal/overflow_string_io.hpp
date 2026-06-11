@@ -70,7 +70,7 @@ class IndexInputOverflowReader final : public duckdb::OverflowStringReader {
     uint32_t len;
     _in->ReadBytes(pos, reinterpret_cast<byte_type*>(&len), sizeof(len));
     len = absl::little_endian::Load32(reinterpret_cast<byte_type*>(&len));
-    if (const auto* body = _in->ReadData(pos + sizeof(len), len)) {
+    if (const auto* body = _in->ReadStable(pos + sizeof(len), len)) {
       return duckdb::string_t{reinterpret_cast<const char*>(body), len};
     }
     auto out = duckdb::StringVector::EmptyString(result, len);

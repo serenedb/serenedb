@@ -255,15 +255,15 @@ void EncryptedInput::SeekInternal(uint64_t pos) {
 size_t EncryptedInput::ReadInternal(byte_type* b, size_t count) {
   const auto offset = _in->Position();
 
-  const auto read = _in->ReadBytes(b, count);
+  _in->ReadBytes(b, count);
 
-  if (!_cipher->Decrypt(offset, b, read)) {
-    throw IoError{absl::StrCat("Buffer size ", read,
+  if (!_cipher->Decrypt(offset, b, count)) {
+    throw IoError{absl::StrCat("Buffer size ", count,
                                " is not multiple of cipher block size ",
                                _cipher->block_size())};
   }
 
-  return read;
+  return count;
 }
 
 }  // namespace irs

@@ -966,12 +966,10 @@ struct FormatTraits128 {
   template<typename InputType>
   IRS_FORCE_INLINE static const byte_type* ReadDataImpl(
     uint32_t size, InputType& in, uint32_t* IRS_RESTRICT buf) {
-    if (const auto* data = in.ReadView(size)) {
+    if (const auto* data = in.ReadVolatile(size)) {
       return data;
     }
-    [[maybe_unused]] const auto read =
-      in.ReadBytes(reinterpret_cast<byte_type*>(buf), size);
-    SDB_ASSERT(read == size);
+    in.ReadBytes(reinterpret_cast<byte_type*>(buf), size);
     return reinterpret_cast<byte_type*>(buf);
   }
 

@@ -94,9 +94,7 @@ inline StringType ReadString(DataInput& in) {
   const size_t len = in.ReadV32();
 
   StringType str(len, 0);
-  [[maybe_unused]] const auto read =
-    in.ReadBytes(reinterpret_cast<byte_type*>(str.data()), str.size());
-  SDB_ASSERT(read == str.size());
+  in.ReadBytes(reinterpret_cast<byte_type*>(str.data()), str.size());
   return str;
 }
 
@@ -192,34 +190,40 @@ class BytesViewInput : public IndexInput {
   BytesViewInput() = default;
   explicit BytesViewInput(bytes_view data) noexcept : _data{data} {}
 
-  IRS_FORCE_INLINE const byte_type* ReadData(uint64_t count) noexcept final {
+  IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t count) noexcept final {
     const auto* begin = _pos;
     _pos = begin + count;
     SDB_ASSERT(_pos <= _data.data() + _data.size());
     return begin;
   }
-  IRS_FORCE_INLINE const byte_type* ReadData(uint64_t offset,
-                                             uint64_t count) noexcept final {
+  IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t offset,
+                                               uint64_t count) noexcept final {
     const auto* begin = _data.data() + offset;
     _pos = begin + count;
     SDB_ASSERT(_pos <= _data.data() + _data.size());
     return begin;
   }
 
-  IRS_FORCE_INLINE const byte_type* ReadView(uint64_t count) noexcept final {
-    return ReadData(count);
+  IRS_FORCE_INLINE const byte_type* ReadVolatile(
+    uint64_t count) noexcept final {
+    return ReadStable(count);
   }
-  IRS_FORCE_INLINE const byte_type* ReadView(uint64_t offset,
-                                             uint64_t count) noexcept final {
-    return ReadData(offset, count);
+  IRS_FORCE_INLINE const byte_type* ReadVolatile(
+    uint64_t offset, uint64_t count) noexcept final {
+    return ReadStable(offset, count);
   }
 
   IRS_FORCE_INLINE byte_type ReadByte() noexcept final {
     SDB_ASSERT(_pos < _data.data() + _data.size());
     return *_pos++;
   }
-  size_t ReadBytes(byte_type* b, size_t count) noexcept final;
-  size_t ReadBytes(uint64_t offset, byte_type* b, size_t count) noexcept final;
+  using DataInput::ReadData;
+  void ReadData(byte_type* b, uint64_t count) final;
+  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
+    BytesViewInput::ReadData(b, count);
+  }
+  using DataInput::ReadBytes;
+  void ReadBytes(uint64_t offset, byte_type* b, size_t count) noexcept final;
   void ReadBytes(bstring& buf, size_t count);
 
   int16_t ReadI16() noexcept final { return irs::read<uint16_t>(_pos); }
@@ -280,26 +284,30 @@ class RemappedBytesViewInput final : public IndexInput {
     });
   }
 
-  const byte_type* ReadData(uint64_t count) noexcept final {
-    return _input.ReadData(count);
+  const byte_type* ReadStable(uint64_t count) noexcept final {
+    return _input.ReadStable(count);
   }
-  const byte_type* ReadData(uint64_t offset, uint64_t count) noexcept final {
-    return _input.ReadData(SourceToInternal(offset), count);
+  const byte_type* ReadStable(uint64_t offset, uint64_t count) noexcept final {
+    return _input.ReadStable(SourceToInternal(offset), count);
   }
 
-  const byte_type* ReadView(uint64_t count) noexcept final {
-    return _input.ReadView(count);
+  const byte_type* ReadVolatile(uint64_t count) noexcept final {
+    return _input.ReadVolatile(count);
   }
-  const byte_type* ReadView(uint64_t offset, uint64_t count) noexcept final {
-    return _input.ReadView(SourceToInternal(offset), count);
+  const byte_type* ReadVolatile(uint64_t offset,
+                                uint64_t count) noexcept final {
+    return _input.ReadVolatile(SourceToInternal(offset), count);
   }
 
   byte_type ReadByte() noexcept final { return _input.ReadByte(); }
-  size_t ReadBytes(byte_type* b, size_t size) noexcept final {
-    return _input.ReadBytes(b, size);
+  using DataInput::ReadData;
+  void ReadData(byte_type* b, uint64_t size) final { _input.ReadData(b, size); }
+  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t size) final {
+    _input.ReadData(b, size);
   }
-  size_t ReadBytes(uint64_t offset, byte_type* b, size_t size) noexcept final {
-    return _input.ReadBytes(SourceToInternal(offset), b, size);
+  using DataInput::ReadBytes;
+  void ReadBytes(uint64_t offset, byte_type* b, size_t size) noexcept final {
+    _input.ReadBytes(SourceToInternal(offset), b, size);
   }
 
   int16_t ReadI16() noexcept final { return _input.ReadI16(); }

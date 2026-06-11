@@ -156,7 +156,7 @@ IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, InputType& in,
   }
 
   const auto required = packed::BytesRequired32(size, bits);
-  const auto* buf = in.ReadView(required);
+  const auto* buf = in.ReadVolatile(required);
 
   if constexpr (std::is_same_v<BytesViewInput, InputType>) {
     SDB_ASSERT(buf);
@@ -164,9 +164,7 @@ IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, InputType& in,
   } else if (buf) [[likely]] {
     encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
   } else {
-    [[maybe_unused]] const auto read =
-      in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
-    SDB_ASSERT(read == required);
+    in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
   }
   unpack(decoded, encoded, bits);
 }
@@ -192,16 +190,14 @@ IRS_FORCE_INLINE void read_block_delta32(UnpackFunc&& unpack, InputType& in,
   }
 
   const size_t required = packed::BytesRequired32(size, bits);
-  const auto* buf = in.ReadView(required);
+  const auto* buf = in.ReadVolatile(required);
   if constexpr (std::is_same_v<BytesViewInput, InputType>) {
     SDB_ASSERT(buf);
     encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
   } else if (buf) [[likely]] {
     encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
   } else {
-    [[maybe_unused]] const auto read =
-      in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
-    SDB_ASSERT(read == required);
+    in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
   }
 
   unpack(prev, decoded, encoded, bits);

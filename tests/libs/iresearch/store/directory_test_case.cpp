@@ -3919,9 +3919,8 @@ TEST_P(DirectoryTestCase, smoke_index_io) {
 
     // check bytes
     const bstring payload_read(payload.size(), 0);
-    const auto read = in->ReadBytes(const_cast<byte_type*>(&(payload_read[0])),
-                                    payload_read.size());
-    EXPECT_EQ(payload_read.size(), read);
+    in->ReadBytes(const_cast<byte_type*>(&(payload_read[0])),
+                  payload_read.size());
     EXPECT_EQ(payload, payload_read);
     EXPECT_FALSE(in->IsEOF());
 
@@ -4126,17 +4125,14 @@ TEST_P(DirectoryTestCase, smoke_store) {
 
     {
       buf.resize(it->size());
-      const auto read = file->ReadBytes(buf.data(), it->size());
-      ASSERT_EQ(read, it->size());
+      file->ReadBytes(buf.data(), it->size());
       ASSERT_EQ(ViewCast<byte_type>(std::string_view(*it)), buf);
 
       // random access
       {
         const auto fp = file->Position();
         buf1.resize(it->size());
-        const auto read =
-          file->ReadBytes(fp - it->size(), buf1.data(), it->size());
-        ASSERT_EQ(read, it->size());
+        file->ReadBytes(fp - it->size(), buf1.data(), it->size());
         ASSERT_EQ(ViewCast<byte_type>(std::string_view(*it)), buf1);
         ASSERT_EQ(fp, file->Position());
       }
@@ -4145,7 +4141,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
       // {
       //   const auto fp = file->Position();
       //   ASSERT_GT(file->Length(), 1);
-      //   ASSERT_EQ(nullptr, file->ReadView(file->Length() - 1,
+      //   ASSERT_EQ(nullptr, file->ReadVolatile(file->Length() - 1,
       //   file->Length()));
       //   ASSERT_EQ(fp, file->Position());
       // }
@@ -4163,7 +4159,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
 
       //   ASSERT_GT(file->Length(), 1);
       //   file->Seek(file->Length() - 1);
-      //   ASSERT_EQ(nullptr, file->ReadView(file->Length()));
+      //   ASSERT_EQ(nullptr, file->ReadVolatile(file->Length()));
       //   ASSERT_EQ(file->Length() - 1, file->Position());
       // }
 
@@ -4183,7 +4179,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
         {
           file->Seek(0);
           ASSERT_EQ(0, file->Position());
-          const byte_type* internal_buf = file->ReadView(1);
+          const byte_type* internal_buf = file->ReadVolatile(1);
           ASSERT_NE(nullptr, internal_buf);
           ASSERT_EQ(1, file->Position());
           ASSERT_EQ(it->at(0), *internal_buf);
@@ -4191,7 +4187,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
 
         // random direct access
         {
-          const byte_type* internal_buf = file->ReadView(0, 1);
+          const byte_type* internal_buf = file->ReadVolatile(0, 1);
           ASSERT_NE(nullptr, internal_buf);
           ASSERT_EQ(1, file->Position());
           ASSERT_EQ(it->at(0), *internal_buf);
@@ -4213,7 +4209,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
         {
           file->Seek(fp - it->size());
           const byte_type* internal_buf =
-            file->ReadData(fp - it->size(), it->size());
+            file->ReadStable(fp - it->size(), it->size());
           ASSERT_NE(nullptr, internal_buf);
           ASSERT_EQ(file->Position(), fp);
           ASSERT_EQ(bytes_view(internal_buf, it->size()), buf);
@@ -4222,7 +4218,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
         {
           file->Seek(fp - it->size());
           const byte_type* internal_buf =
-            file->ReadView(fp - it->size(), it->size());
+            file->ReadVolatile(fp - it->size(), it->size());
           ASSERT_NE(nullptr, internal_buf);
           ASSERT_EQ(file->Position(), fp);
           ASSERT_EQ(bytes_view(internal_buf, it->size()), buf);
@@ -4231,7 +4227,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
         // random direct access
         {
           const byte_type* internal_buf =
-            file->ReadData(fp - it->size(), it->size());
+            file->ReadStable(fp - it->size(), it->size());
           ASSERT_NE(nullptr, internal_buf);
           ASSERT_EQ(file->Position(), fp);
           ASSERT_EQ(bytes_view(internal_buf, it->size()), buf);
@@ -4240,7 +4236,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
         // random direct access
         {
           const byte_type* internal_buf =
-            file->ReadView(fp - it->size(), it->size());
+            file->ReadVolatile(fp - it->size(), it->size());
           ASSERT_NE(nullptr, internal_buf);
           ASSERT_EQ(file->Position(), fp);
           ASSERT_EQ(bytes_view(internal_buf, it->size()), buf);
@@ -4250,12 +4246,10 @@ TEST_P(DirectoryTestCase, smoke_store) {
       {
         buf.clear();
         buf.resize(it->size());
-        auto read = dup_file->ReadBytes(&(buf[0]), it->size());
-        ASSERT_EQ(read, it->size());
+        dup_file->ReadBytes(&(buf[0]), it->size());
         ASSERT_EQ(ViewCast<byte_type>(std::string_view(*it)), buf);
 
-        read = dup_file->ReadBytes(readbuf, sizeof readbuf);
-        ASSERT_EQ(read, sizeof readbuf);
+        dup_file->ReadBytes(readbuf, sizeof readbuf);
         ASSERT_TRUE(std::all_of(std::begin(readbuf), std::end(readbuf),
                                 [b](auto v) { return b == v; }));
         ASSERT_EQ(b + 1, dup_file->ReadByte());
@@ -4264,20 +4258,17 @@ TEST_P(DirectoryTestCase, smoke_store) {
       {
         buf.clear();
         buf.resize(it->size());
-        auto read = reopened_file->ReadBytes(&(buf[0]), it->size());
-        ASSERT_EQ(read, it->size());
+        reopened_file->ReadBytes(&(buf[0]), it->size());
         ASSERT_EQ(ViewCast<byte_type>(std::string_view(*it)), buf);
 
-        read = reopened_file->ReadBytes(readbuf, sizeof readbuf);
-        ASSERT_EQ(read, sizeof readbuf);
+        reopened_file->ReadBytes(readbuf, sizeof readbuf);
         ASSERT_TRUE(std::all_of(std::begin(readbuf), std::end(readbuf),
                                 [b](auto v) { return b == v; }));
         ASSERT_EQ(b + 1, reopened_file->ReadByte());
       }
 
       {
-        const size_t read = file->ReadBytes(readbuf, sizeof readbuf);
-        ASSERT_EQ(read, sizeof readbuf);
+        file->ReadBytes(readbuf, sizeof readbuf);
         ASSERT_TRUE(std::all_of(std::begin(readbuf), std::end(readbuf),
                                 [b](auto v) { return b == v; }));
         ASSERT_EQ(b + 1, file->ReadByte());
@@ -4335,7 +4326,7 @@ TEST_P(DirectoryTestCase, smoke_store) {
       ASSERT_FALSE(!in);
       ASSERT_TRUE(in->IsEOF());
 
-      ASSERT_EQ(0, in->ReadBytes(buf, sizeof buf));
+      in->ReadBytes(buf, 0);
       ASSERT_TRUE(in->IsEOF());
       ASSERT_EQ(0, in->Checksum(0));
       ASSERT_EQ(0, in->Checksum(42));
@@ -4368,15 +4359,12 @@ TEST_P(DirectoryTestCase, smoke_store) {
       byte_type buf[1024 + 691]{};  // 1024 + 691 from above
       auto in = dir.open("nonempty_file", irs::IOAdvice::NORMAL);
       ASSERT_FALSE(in->IsEOF());
-      size_t expected = sizeof buf;
       ASSERT_FALSE(!in);
-      ASSERT_EQ(expected, in->ReadBytes(buf, sizeof buf));
+      in->ReadBytes(buf, sizeof buf);
+      ASSERT_FALSE(in->IsEOF());
 
-      expected = in->Length() - sizeof buf;  // 'sizeof buf' already read above
-      const size_t read = in->ReadBytes(buf, sizeof buf);
-      ASSERT_EQ(expected, read);
-      ASSERT_TRUE(in->IsEOF());
-      ASSERT_EQ(0, in->ReadBytes(buf, sizeof buf));
+      // 'sizeof buf' already read above
+      in->ReadBytes(buf, in->Length() - sizeof buf);
       ASSERT_TRUE(in->IsEOF());
     }
 

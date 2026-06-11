@@ -529,7 +529,8 @@ TEST(encryption_test_case, ensure_no_double_bufferring) {
 
     size_t ReadInternal(irs::byte_type* b, size_t size) final {
       _last_read_size = size;
-      return _in->ReadBytes(b, size);
+      _in->ReadBytes(b, size);
+      return size;
     }
 
    private:

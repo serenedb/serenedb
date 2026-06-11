@@ -48,7 +48,7 @@ NormColumnReader::NormColumnReader(field_id id,
     if (byte_count == 0) {
       continue;
     }
-    if (const auto* ptr = in.ReadData(p.file_offset, byte_count); ptr) {
+    if (const auto* ptr = in.ReadStable(p.file_offset, byte_count); ptr) {
       _spans[rg] = std::span<const byte_type>{ptr, byte_count};
     } else {
       _spans[rg] = {static_cast<const byte_type*>(nullptr), byte_count};

@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <memory>
 #include <duckdb/common/types/vector_buffer.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/data_pointer.hpp>
@@ -71,6 +72,20 @@ inline size_t ConsecutiveRunLength(
   return run;
 }
 
+// Source for building zero-copy block wrappers at reader-construction time.
+// `in` is a duplicate of the .col file input; for memory-mapped inputs the
+// wrappers point straight into the mapping and share it via this handle.
+// When empty (or the input is not memory-mapped), OpenSegmentImpl falls
+// back to wrapping lazily / staging a copy per open.
+struct ColumnBlockSource {
+  duckdb::DatabaseInstance* db = nullptr;
+  std::shared_ptr<IndexInput> in;
+
+  explicit operator bool() const noexcept {
+    return db != nullptr && in != nullptr;
+  }
+};
+
 class ColumnReader final {
  public:
   struct VariantRgReader {
@@ -85,11 +100,13 @@ class ColumnReader final {
                std::vector<duckdb::DataPointer> validity_pointers,
                std::unique_ptr<ColumnReader> element_child,
                std::vector<std::unique_ptr<ColumnReader>> struct_children,
-               uint64_t array_size, bool fully_shredded = true);
+               uint64_t array_size, bool fully_shredded = true,
+               const ColumnBlockSource& source = {});
 
   ColumnReader(field_id id, duckdb::LogicalType type,
                std::vector<duckdb::DataPointer> validity_pointers,
-               std::vector<VariantRgReader> variant_rgs);
+               std::vector<VariantRgReader> variant_rgs,
+               const ColumnBlockSource& source = {});
 
   ColumnReader(const ColumnReader&) = delete;
   ColumnReader& operator=(const ColumnReader&) = delete;
@@ -327,7 +344,8 @@ class ColumnReader final {
 
   duckdb::unique_ptr<duckdb::ColumnSegment> OpenSegmentImpl(
     const duckdb::DataPointer& p, const duckdb::LogicalType& type,
-    ReadContext& ctx) const;
+    ReadContext& ctx,
+    const duckdb::shared_ptr<duckdb::BlockHandle>& prebuilt) const;
 
   field_id _id;
   duckdb::LogicalType _type;
@@ -347,9 +365,17 @@ class ColumnReader final {
   std::vector<uint64_t> _rg_element_starts;
   std::vector<VariantRgReader> _variant_rgs;
   std::vector<uint64_t> _variant_rg_starts;
+  // Prebuilt zero-copy block wrappers, one slot per data/validity pointer.
+  // Null slots (constant pointers, non-mmap inputs, readers built without a
+  // ColumnBlockSource) make OpenSegmentImpl fall back to lazy wrapping or
+  // per-query staging. Immutable after construction, so opens are lock-free.
+  std::vector<duckdb::shared_ptr<duckdb::BlockHandle>> _data_blocks;
+  std::vector<duckdb::shared_ptr<duckdb::BlockHandle>> _validity_blocks;
 };
 
 std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
                                                PersistentColumnData&& node);
+std::unique_ptr<ColumnReader> MakeColumnReader(
+  field_id id, PersistentColumnData&& node, const ColumnBlockSource& source);
 
 }  // namespace irs

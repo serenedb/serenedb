@@ -13,8 +13,9 @@
 # and 3rd launches of a query:
 #  - default (no env):     hot only -- 1 warmup launch + hot.
 #  - PERF_COLD=1:          same-session cold (1st launch) + hot.
-#  - PERF_DROP_CACHES=1:   restart + drop_caches before each query +
-#                          cold + hot (PERF_DROP_CACHES wins over PERF_COLD).
+#  - PERF_DROP_CACHES=1:   ClickBench-style: sync + drop OS cache before
+#                          each query, server keeps running; cold + hot
+#                          (PERF_DROP_CACHES wins over PERF_COLD).
 #
 # Regen knobs (independent):
 #  - PERF_REGEN_PARQUET=1: rebuild the source parquet only. Implies a
@@ -27,8 +28,7 @@
 #  - PERF_EXTERNAL_SERENED=1: connect to a serened the user has already
 #                             started on PERF_PORT (default 6263). The
 #                             script does NOT spawn or kill serened.
-#                             Incompatible with PERF_DROP_CACHES (needs
-#                             a restart) and with any regen path (would
+#                             Incompatible with parquet regen (would
 #                             surprise the user's data dir).
 
 set -euo pipefail
@@ -147,13 +147,6 @@ run_setup() {
 PQ_SQL_PATH=$(printf '%s' "${PARQUET_FILE}" | sed "s/'/''/g")
 NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
 
-# Reject incompatible env combinations up-front.
-if [[ "${EXTERNAL_SERENED}" == "1" ]] && [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
-	echo "ERROR: PERF_EXTERNAL_SERENED=1 is incompatible with PERF_DROP_CACHES=1" >&2
-	echo "  (drop_caches needs to kill+restart serened, which would clobber the user's server)" >&2
-	exit 1
-fi
-
 # Two independent regen knobs:
 #   PERF_REGEN_PARQUET=1 -- rebuild the synthetic source parquet.
 #                           Forces a data-dir rebuild too (the parquet
@@ -215,24 +208,29 @@ if [[ "${NEED_PARQUET}" == "1" ]]; then
 		sleep 0.5
 	done
 
+	# rnd(i, salt): deterministic pseudo-random DOUBLE in [0, 1). hash() kills
+	# the periodicity that aliases with codec analyzers' sampling strides,
+	# while staying reproducible across regens and thread counts (unlike
+	# random()).
 	run_setup "generate_parquet" "${BUILD_THREADS}" "
+CREATE MACRO rnd(x, salt) AS
+  (hash(x * 1000003 + salt) % 1048576) / 1048576.0;
 COPY (
   SELECT i AS pk,
          ((i * 3) % 200 - 100)::TINYINT AS i8,
          ((i * 5) % 60000 - 30000)::SMALLINT AS i16,
          ((i * 7) % 1000000) AS i32,
          (i * 1009)::BIGINT AS i64,
-         (((i * 13) % 1000) / 7.0)::FLOAT AS f32,
-         (((i * 17) % 10000) / 13.0)::DOUBLE AS f64,
+         rnd(i, 1)::FLOAT AS f32,
+         rnd(i, 2)::DOUBLE AS f64,
          'str-' || (i % 1024)::VARCHAR AS s,
          (i % 2 = 0) AS bool_col,
          [(i + 0) % 50, (i + 1) % 50, (i + 2) % 50]::INTEGER[3] AS arr_i32,
-         [(i + 0) % 50 + 0.5, (i + 1) % 50 + 0.5,
-          (i + 2) % 50 + 0.5]::DOUBLE[3] AS arr_f64,
+         [rnd(i, 3), rnd(i, 4), rnd(i, 5)]::DOUBLE[3] AS arr_f64,
          [(i + 0) % 30, (i + 1) % 30, (i + 2) % 30, (i + 3) % 30] AS lst_i32,
          ROW(i * 2, 'b-' || (i % 100)::VARCHAR)
            ::STRUCT(a INTEGER, b VARCHAR) AS struct_basic,
-         ROW((i * 0.5)::DOUBLE, 'b-' || (i % 100)::VARCHAR)
+         ROW(rnd(i, 6)::DOUBLE, 'b-' || (i % 100)::VARCHAR)
            ::STRUCT(a DOUBLE, b VARCHAR) AS struct_f64,
          MAP {'k1': i, 'k2': i * 2, 'k3': i * 3} AS map_i32,
          [ROW('p1', i)::STRUCT(k VARCHAR, v INTEGER),
@@ -243,23 +241,23 @@ COPY (
            ::STRUCT(name VARCHAR, vals STRUCT(k VARCHAR, v INTEGER)[]) AS deep,
          {'a': i * 2, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
            AS variant_obj,
-         {'a': (i * 0.5)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+         {'a': rnd(i, 7)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
            AS variant_f64,
          CASE
            WHEN i < 1000 AND i % 100 = 0
-             THEN {'a': (i * 0.5)::DOUBLE,
+             THEN {'a': rnd(i, 8)::DOUBLE,
                    'b': 'b-' || (i % 100)::VARCHAR, 'rare': i}::VARIANT
            WHEN i % 1000 = 0
-             THEN {'a': (i * 1.5)::DOUBLE, 'b': i}::VARIANT
+             THEN {'a': rnd(i, 9)::DOUBLE, 'b': i}::VARIANT
            WHEN i % 9999 = 3
              THEN {'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
-           ELSE {'a': (i * 3.1415)::DOUBLE,
+           ELSE {'a': rnd(i, 10)::DOUBLE,
                  'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
          END AS variant_messy,
          {'outer': {'mid': {'a': i * 2,
                             'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
            AS variant_nested,
-         {'outer': {'mid': {'a': (i * 0.5)::DOUBLE,
+         {'outer': {'mid': {'a': rnd(i, 11)::DOUBLE,
                             'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
            AS variant_nested_f64
   FROM range(${N}) t(i)
@@ -409,17 +407,19 @@ QUERIES=(
 #
 # - PERF_COLD=1: same-session cold + hot.  "cold" means 1st-touch within
 #   the same session (per-segment open + per-codec init cost).  Does NOT
-#   capture OS-cache fetch cost because the .cs files are still in page
+#   capture OS-cache fetch cost because the .col files are still in page
 #   cache from CREATE INDEX, AND DuckDB's BufferManager keeps the native
-#   side warm across the drop.
+#   side warm.
 #
-# - PERF_DROP_CACHES=1: true cold + hot.  Before each query we kill
-#   serened, drop the OS page cache, restart, and re-attach native_db.
-#   The restart drops both serened's BlockHandles AND DuckDB's
-#   BufferManager state for the native side, so both sides re-read from
-#   disk on the first query.  The view-backed `bench_idx` alias is
-#   reloaded by serened on startup (fixed in #662) so no CREATE INDEX is
-#   needed and no data duplication occurs.
+# - PERF_DROP_CACHES=1: ClickBench-style cold + hot.  The server stays up;
+#   before each query we sync + drop the OS page cache, exactly like
+#   ClickBench's per-query `echo 3 > drop_caches`.  cold = 1st launch
+#   after the drop; hot = avg of the 2nd + 3rd, in a steady-state process.
+#   After an in-run regen the server is restarted once so the first label
+#   isn't fake-warm from the CTAS/CREATE INDEX.  Inherited ClickBench
+#   caveat: drop_caches cannot evict pages mmap'd by the live server nor
+#   DuckDB's BufferManager, so data touched by EARLIER labels stays warm;
+#   per-label cold is real because labels touch disjoint columns.
 #
 #   sudo runs *only* the drop_caches command.  Credentials are cached
 #   once via `sudo -v` at the start so the bench runs uninterrupted.
@@ -444,19 +444,6 @@ SET search_path TO public, native_db.main;
 "
 }
 
-cycle_cold() {
-	# Server has to exit so its .cs mmaps release the pages before
-	# drop_caches can free them.
-	killall -9 serened >/dev/null 2>&1 || true
-	for _ in $(seq 1 30); do
-		pgrep -f "${SERENED_BIN}" >/dev/null || break
-		sleep 0.2
-	done
-	drop_os_cache_with_sudo || return 1
-	start_server
-	reattach_native_db
-}
-
 # Default mode: hot only.  1 warmup launch, hot = avg of 2nd + 3rd.
 run_pass_hot_only() {
 	for q in "${QUERIES[@]}"; do
@@ -475,19 +462,16 @@ run_pass_same_session() {
 	done
 }
 
-# PERF_DROP_CACHES=1: restart-and-drop-OS-cache before each query, then
-# cold + hot.  Each cycle: kill serened -> drop_caches -> restart
-# -> reattach native.  Clears DuckDB BufferManager too so native isn't
-# unfairly warm.  cold = 1st launch from disk; hot = avg of the 2nd and
-# 3rd launches (no first-touch segment-open cost).
+# PERF_DROP_CACHES=1: ClickBench-style -- sync + drop the OS page cache
+# before each query, server keeps running.
 run_pass_drop_caches() {
 	for q in "${QUERIES[@]}"; do
 		local label="${q%%|*}" expr="${q#*|}"
-		cycle_cold || {
-			echo "ERROR: drop_caches cycle failed" >&2
+		drop_os_cache_with_sudo || {
+			echo "ERROR: drop_caches failed" >&2
 			return 1
 		}
-		bench_pair_idx "cold" "${label}" "${expr}" # 1st launch, timed
+		bench_pair_idx "cold" "${label}" "${expr}" # 1st launch after drop
 		bench_hot_avg "${label}" "${expr}"         # 2nd + 3rd, averaged
 	done
 }
@@ -495,16 +479,15 @@ run_pass_drop_caches() {
 # Dispatch the bench pass.  PERF_DROP_CACHES wins over PERF_COLD.
 HAS_COLD=0
 echo
-if [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
-	HAS_COLD=1
-	# Cache the sudo credential up front. Without this, sudo would
-	# prompt mid-loop and stall the bench.
-	echo "PERF_DROP_CACHES=1: caching sudo credential for drop_caches"
+# Both cold modes need sudo for drop_caches. Cache the credential up front
+# (sudo would otherwise prompt mid-loop and stall the bench) and refresh it
+# in the background so a long bench doesn't expire the cache.
+setup_sudo_for_drop_caches() {
+	echo "caching sudo credential for drop_caches"
 	if ! sudo -v; then
 		echo "ERROR: failed to acquire sudo for drop_caches" >&2
 		exit 1
 	fi
-	# Refresh in the background so a long bench doesn't expire the cache.
 	(
 		while kill -0 "$$" 2>/dev/null; do
 			sudo -n true 2>/dev/null || break
@@ -513,17 +496,28 @@ if [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
 	) &
 	SUDO_REFRESH_PID=$!
 	trap "kill ${SUDO_REFRESH_PID} 2>/dev/null; killall -9 serened >/dev/null 2>&1 || true" EXIT
-	echo "================ TRUE-COLD / HOT PASS (restart + drop_caches) ================"
+}
+if [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
+	HAS_COLD=1
+	setup_sudo_for_drop_caches
+	if [[ "${NEED_DATA}" == "1" ]] && [[ "${EXTERNAL_SERENED}" != "1" ]]; then
+		# The regen's CTAS/checkpoint left native's BufferManager populated
+		# (and serened's mmaps faulted); restart once so the first cold
+		# label isn't fake-warm.
+		start_server
+		reattach_native_db
+	fi
+	echo "================ CLICKBENCH-STYLE COLD / HOT PASS (drop_caches, no restart) ================"
 	run_pass_drop_caches
 elif [[ "${PERF_COLD:-0}" == "1" ]]; then
 	HAS_COLD=1
 	echo "================ COLD / HOT PASS (same-session) ================"
-	echo "rerun with PERF_DROP_CACHES=1 for restart+drop-OS-cache cold timings"
+	echo "rerun with PERF_DROP_CACHES=1 for ClickBench-style drop-OS-cache cold timings"
 	run_pass_same_session
 else
 	echo "================ HOT PASS ================"
 	echo "rerun with PERF_COLD=1 for same-session cold timings,"
-	echo "or PERF_DROP_CACHES=1 for restart+drop-OS-cache cold timings"
+	echo "or PERF_DROP_CACHES=1 for ClickBench-style drop-OS-cache cold timings"
 	run_pass_hot_only
 fi
 
@@ -593,9 +587,7 @@ ratio() {
 		printf "%-12s %12s %12s %8s | %12s %12s %8s\n" \
 			"------------" "------------" "------------" "--------" \
 			"------------" "------------" "--------"
-		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-			array arrayF list struct structF map lstStr deep \
-			variant variantF variantMsg variantNest variantNestF; do
+		for q in "${QUERIES[@]%%|*}"; do
 			ci="${TIMINGS[cold_${q}_indexed]:-}"
 			cn="${TIMINGS[cold_${q}_native]:-}"
 			hi="${TIMINGS[hot_${q}_indexed]:-}"
@@ -613,9 +605,7 @@ ratio() {
 			"query" "cs hot" "native hot" "hot x"
 		printf "%-12s %12s %12s %8s\n" \
 			"------------" "------------" "------------" "--------"
-		for q in count i8 i16 i32 i64 f32 f64 varchar bool boolCast boolFilt \
-			array arrayF list struct structF map lstStr deep \
-			variant variantF variantMsg variantNest variantNestF; do
+		for q in "${QUERIES[@]%%|*}"; do
 			hi="${TIMINGS[hot_${q}_indexed]:-}"
 			hn="${TIMINGS[hot_${q}_native]:-}"
 			printf "%-12s %12s %12s %8s\n" "${q}" \

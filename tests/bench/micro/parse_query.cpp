@@ -73,12 +73,24 @@ std::string SelectN(int n) {
   return sql;
 }
 
+// Like SelectN but with distinct identifiers instead of constants -- exercises the identifier
+// path (PG-default lowercasing into the arena) that number literals don't.
+std::string SelectIdentsN(int n) {
+  std::string sql = "SELECT c0";
+  for (int i = 1; i < n; ++i) {
+    sql += ", c" + std::to_string(i);
+  }
+  return sql;
+}
+
 constexpr const char* kRows =
   "SELECT i, i::text AS s, i::float8 AS f FROM generate_series(1,1000) g(i)";
 
 // Parse only: PEG parse + AST build (Connection::ExtractStatements).
 void Parse(benchmark::State& state, std::string sql) {
   duckdb::Connection con{Db()};
+  // SereneDB lowercases unquoted identifiers by default (preserve_identifier_case=false, like PG).
+  con.Query("SET preserve_identifier_case = false;");
   for (auto _ : state) {
     auto stmts = con.ExtractStatements(sql);
     benchmark::DoNotOptimize(stmts.data());
@@ -89,6 +101,8 @@ void Parse(benchmark::State& state, std::string sql) {
 // cost the simple/extended path pays before execution.
 void Prepare(benchmark::State& state, std::string sql) {
   duckdb::Connection con{Db()};
+  // SereneDB lowercases unquoted identifiers by default (preserve_identifier_case=false, like PG).
+  con.Query("SET preserve_identifier_case = false;");
   for (auto _ : state) {
     auto prepared = con.Prepare(sql);
     benchmark::DoNotOptimize(prepared.get());
@@ -104,6 +118,9 @@ BENCHMARK_CAPTURE(Parse, parse_select_n4, SelectN(4));
 BENCHMARK_CAPTURE(Parse, parse_select_n16, SelectN(16));
 BENCHMARK_CAPTURE(Parse, parse_select_n64, SelectN(64));
 BENCHMARK_CAPTURE(Parse, parse_select_n256, SelectN(256));
+BENCHMARK_CAPTURE(Parse, parse_idents_n4, SelectIdentsN(4));
+BENCHMARK_CAPTURE(Parse, parse_idents_n16, SelectIdentsN(16));
+BENCHMARK_CAPTURE(Parse, parse_idents_n64, SelectIdentsN(64));
 BENCHMARK_CAPTURE(Parse, parse_rows, std::string{kRows});
 
 // Parse vs parse+bind+plan, same statements: the gap is bind/plan.

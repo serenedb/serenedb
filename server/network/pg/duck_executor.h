@@ -46,7 +46,7 @@ namespace sdb::network::pg {
 // `final` so that `co_await yaclib::On(duck)` (templated On over the concrete
 // type) devirtualizes the Submit call. Held by value (std::optional) on the
 // session -- no per-connection heap allocation.
-class DuckExecutor final : public yaclib::IExecutor {
+class DuckExecutor : public yaclib::IExecutor {
  public:
   DuckExecutor(duckdb::TaskScheduler& scheduler, IoExecutor& io_worker)
     : _scheduler{scheduler}, _io_worker{io_worker} {}

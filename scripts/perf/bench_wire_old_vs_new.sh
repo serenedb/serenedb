@@ -62,21 +62,141 @@ PERF_FREQ="${PERF_FREQ:-999}"
 #                         cache outside the cgroup partition; see run_bench_isolated.sh)
 BASELINE_DIR="${PERF_BASELINE_DIR:-${RESULTS_DIR}/baselines}"
 OLD_CACHE="${BASELINE_DIR}/old.tsv"
-PG_CACHE="${BASELINE_DIR}/pg.tsv"
 REMEASURE_OLD="${PERF_REMEASURE_OLD:-0}"
-PG_ENABLE="${PERF_PG:-0}"
-REMEASURE_PG="${PERF_REMEASURE_PG:-0}"
-PG_ONLY="${PERF_PG_ONLY:-0}"
-# Reuse the cached pg baseline only, never measure it here. run_bench_isolated.sh
-# sets this for the in-partition run: a container inside the exclusive partition
-# can't use the reserved cores, so pg must be measured outside (seeded) and reused.
-PG_REUSE_ONLY="${PERF_PG_REUSE_ONLY:-0}"
-PG_IMAGE="${PERF_PG_IMAGE:-postgres:latest}"
-PG_PORT="${PERF_PG_PORT:-6482}"
-PG_CONTAINER="${PERF_PG_CONTAINER:-sdb_wire_pg}"
-# Cores to pin the postgres container to, so it races on the same CPUs as serened.
-# run_bench_isolated.sh exports the reserved set here; empty = docker uses all cores.
-PG_CPUSET="${PERF_BENCH_CORES:-}"
+# Cores to pin the external (docker) engines to, so they race on the same CPUs as
+# serened. run_bench_isolated.sh exports the reserved set here; empty = all cores.
+ENG_CPUSET="${PERF_BENCH_CORES:-}"
+
+# --- external pg-wire engine registry --------------------------------------
+# Real PostgreSQL and the other servers (CockroachDB / CedarDB / RisingWave /
+# ClickHouse) all speak the Postgres wire protocol and all run in docker, so they
+# share ONE mechanism:
+# each is a row in this registry, cached the same way (own <name>.tsv baseline,
+# measured/seeded OUTSIDE the cgroup partition since a container can't schedule on
+# the reserved cores, reused inside it), and adds one summary column.
+#
+# Selection is by NAME, not a flag-per-engine, so you don't have to spell out every
+# server. All comma-lists also accept "all" (every registered engine):
+#   PERF_DB=pg,crdb        which engines to include   (default: none -> plain old/new)
+#   PERF_DB=all            include every engine
+#   PERF_REMEASURE_DB=all  refresh the listed engines' baselines (else reuse cache)
+#   PERF_REUSE_ONLY_DB=all reuse cache only, never measure (set inside the partition)
+#   PERF_SEED_ONLY=<name>  measure+cache ONE engine then exit (seed outside partition)
+# Per-engine image/port/etc. stay overridable via PERF_<NAME>_IMAGE / _PORT / ...
+# Back-compat: the old PERF_PG / PERF_REMEASURE_PG / PERF_PG_REUSE_ONLY / PERF_PG_ONLY
+# / PERF_EXT_ONLY flags still work (folded into the lists below).
+EXT_ORDER=(pg crdb cedar risingwave clickhouse) # display + iteration order; pg stays leftmost
+declare -A ENG_IMAGE ENG_HPORT ENG_CPORT ENG_CONTAINER ENG_USER ENG_DB ENG_PASS
+declare -A ENG_PREARGS ENG_CARGS # docker args before the image / container start args after it
+
+# Real PostgreSQL: trust auth, pg wire on 5432.
+ENG_IMAGE[pg]="${PERF_PG_IMAGE:-postgres:latest}"
+ENG_HPORT[pg]="${PERF_PG_PORT:-6482}"
+ENG_CPORT[pg]=5432
+ENG_CONTAINER[pg]="${PERF_PG_CONTAINER:-sdb_wire_pg}"
+ENG_USER[pg]=postgres
+ENG_DB[pg]=postgres
+ENG_PASS[pg]=""
+ENG_PREARGS[pg]="-e POSTGRES_HOST_AUTH_METHOD=trust"
+ENG_CARGS[pg]="-c max_connections=300 -c shared_buffers=512MB"
+
+# CockroachDB: insecure single-node, SQL on 26257, user root / db defaultdb / no pw.
+ENG_IMAGE[crdb]="${PERF_CRDB_IMAGE:-cockroachdb/cockroach:latest}"
+ENG_HPORT[crdb]="${PERF_CRDB_PORT:-6483}"
+ENG_CPORT[crdb]=26257
+ENG_CONTAINER[crdb]="${PERF_CRDB_CONTAINER:-sdb_wire_crdb}"
+ENG_USER[crdb]=root
+ENG_DB[crdb]=defaultdb
+ENG_PASS[crdb]=""
+ENG_PREARGS[crdb]=""
+ENG_CARGS[crdb]="start-single-node --insecure"
+
+# CedarDB: pg wire on 5432, user postgres / db postgres, but no trust-auth mode --
+# a password is mandatory, passed to psql/pgbench via PGPASSWORD.
+ENG_IMAGE[cedar]="${PERF_CEDAR_IMAGE:-cedardb/cedardb}"
+ENG_HPORT[cedar]="${PERF_CEDAR_PORT:-6484}"
+ENG_CPORT[cedar]=5432
+ENG_CONTAINER[cedar]="${PERF_CEDAR_CONTAINER:-sdb_wire_cedar}"
+ENG_USER[cedar]=postgres
+ENG_DB[cedar]=postgres
+ENG_PASS[cedar]="${PERF_CEDAR_PASSWORD:-bench}"
+ENG_PREARGS[cedar]="-e CEDAR_PASSWORD=${PERF_CEDAR_PASSWORD:-bench}"
+ENG_CARGS[cedar]=""
+
+# RisingWave: a Rust streaming DB, natively pg-wire. single_node mode listens on
+# 4566, user root / db dev / no password. (Replaces GlareDB, whose current 25.x line
+# dropped the persistent pg-wire server and is now embeddable/CLI/WASM only.)
+ENG_IMAGE[risingwave]="${PERF_RISINGWAVE_IMAGE:-risingwavelabs/risingwave:latest}"
+ENG_HPORT[risingwave]="${PERF_RISINGWAVE_PORT:-6485}"
+ENG_CPORT[risingwave]=4566
+ENG_CONTAINER[risingwave]="${PERF_RISINGWAVE_CONTAINER:-sdb_wire_risingwave}"
+ENG_USER[risingwave]=root
+ENG_DB[risingwave]=dev
+ENG_PASS[risingwave]=""
+ENG_PREARGS[risingwave]=""
+ENG_CARGS[risingwave]="single_node"
+
+# ClickHouse: enable its pg-wire listener (postgresql_port) via a server config
+# override arg; the pg interface requires a password, so set one and create the
+# user/db through the image's env vars. NOTE: ClickHouse's pg-wire + SQL dialect is
+# only partially Postgres-compatible -- the rows/analytical/wide workloads (and the
+# extended/prepared modes) may not all run; run_one tolerates a failed pgbench and
+# records 0 tps for those rows rather than aborting the bench.
+ENG_IMAGE[clickhouse]="${PERF_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}"
+ENG_HPORT[clickhouse]="${PERF_CLICKHOUSE_PORT:-6486}"
+ENG_CPORT[clickhouse]=9005
+ENG_CONTAINER[clickhouse]="${PERF_CLICKHOUSE_CONTAINER:-sdb_wire_clickhouse}"
+ENG_USER[clickhouse]="${PERF_CLICKHOUSE_USER:-default}"
+ENG_DB[clickhouse]="${PERF_CLICKHOUSE_DB:-default}"
+ENG_PASS[clickhouse]="${PERF_CLICKHOUSE_PASSWORD:-bench}"
+ENG_PREARGS[clickhouse]="-e CLICKHOUSE_PASSWORD=${PERF_CLICKHOUSE_PASSWORD:-bench} -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 --ulimit nofile=262144:262144"
+ENG_CARGS[clickhouse]="--postgresql_port=9005"
+
+# Expand a comma list (or "all") of engine names into a deduped, registry-ordered,
+# validated set. Used for PERF_DB / PERF_REMEASURE_DB / PERF_REUSE_ONLY_DB.
+expand_engine_list() {
+	local raw="$1" name
+	declare -A want=()
+	local IFS=','
+	for name in $raw; do
+		[[ -z "${name}" ]] && continue
+		if [[ "${name}" == all ]]; then
+			for name in "${EXT_ORDER[@]}"; do want[$name]=1; done
+			continue
+		fi
+		if [[ -z "${ENG_IMAGE[$name]+x}" ]]; then
+			echo "unknown engine '${name}' (known: ${EXT_ORDER[*]}, all)" >&2
+			return 1
+		fi
+		want[$name]=1
+	done
+	local out=()
+	for name in "${EXT_ORDER[@]}"; do [[ -n "${want[$name]+x}" ]] && out+=("$name"); done
+	# Emit space-separated (IFS is "," in this scope); the callers word-split on space.
+	IFS=' '
+	echo "${out[*]}"
+}
+
+# Resolve the three engine lists, folding the legacy single-engine flags in.
+DB_RAW="${PERF_DB:-}"
+[[ "${PERF_PG:-0}" == 1 ]] && DB_RAW="${DB_RAW:+${DB_RAW},}pg"
+REMEASURE_RAW="${PERF_REMEASURE_DB:-}"
+[[ "${PERF_REMEASURE_PG:-0}" == 1 ]] && REMEASURE_RAW="${REMEASURE_RAW:+${REMEASURE_RAW},}pg"
+REUSE_ONLY_RAW="${PERF_REUSE_ONLY_DB:-}"
+[[ "${PERF_PG_REUSE_ONLY:-0}" == 1 ]] && REUSE_ONLY_RAW="${REUSE_ONLY_RAW:+${REUSE_ONLY_RAW},}pg"
+SEED_ONLY="${PERF_SEED_ONLY:-${PERF_PG_ONLY:+pg}}"
+SEED_ONLY="${SEED_ONLY:-${PERF_EXT_ONLY:-}}"
+
+DB_LIST="$(expand_engine_list "${DB_RAW}")"
+REMEASURE_LIST="$(expand_engine_list "${REMEASURE_RAW}")"
+REUSE_ONLY_LIST="$(expand_engine_list "${REUSE_ONLY_RAW}")"
+
+# Membership test against a space-separated resolved list.
+in_list() {
+	local needle="$1" hay="$2" x
+	for x in ${hay}; do [[ "${x}" == "${needle}" ]] && return 0; done
+	return 1
+}
 
 if [[ ! -x "${SERENED_BIN}" ]]; then
 	echo "missing ${SERENED_BIN} -- build the perf binary first" >&2
@@ -135,6 +255,11 @@ WL[analytical]="SELECT k, count(*) c, sum(i) s FROM (SELECT i, i % 997 AS k FROM
 # cheaply (flat across protocols), so new/pg on the simple/extended rows isolates our
 # parser overhead -- unlike `rows`, whose modes are dominated by execution+encoding.
 WL[wide]="SELECT 1 WHERE 1=1 AND 2=2 AND 3=3 AND 4=4 AND 5=5 AND 6=6 AND 7=7 AND 8=8 AND 9=9 AND 10=10;"
+# Connection-lifecycle probe: the same trivial SELECT 1, but driven with pgbench -C
+# (reconnect per transaction), so each "query" pays the full TCP connect + startup +
+# auth handshake + teardown. The other workloads reuse connections and so never
+# exercise that path; this isolates connection setup/teardown throughput.
+WL[connect]="SELECT 1;"
 for name in "${!WL[@]}"; do
 	printf '%s\n' "${WL[$name]}" >"${OUT_DIR}/wl_${name}.sql"
 done
@@ -145,7 +270,10 @@ run_one() {
 	local label="$1" port="$2" pid="$3" sqlfile="$4" mode="$5"
 	shift 5
 	local extra=("$@")
-	local conn=(-h 127.0.0.1 -p "${port}" -U postgres postgres)
+	# External pg-wire engines connect as a different user/db (and CedarDB needs a
+	# password via PGPASSWORD); RUN_ONE_USER/RUN_ONE_DB override the serened/pg
+	# default of postgres/postgres. Empty = the original behavior, unchanged.
+	local conn=(-h 127.0.0.1 -p "${port}" -U "${RUN_ONE_USER:-postgres}" "${RUN_ONE_DB:-postgres}")
 	local pgb_log="${OUT_DIR}/pgbench_${label}.log"
 	local stat_log="${OUT_DIR}/stat_${label}.txt"
 
@@ -236,6 +364,9 @@ bench_server() {
 	run_one "${srv}_wide_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_wide.sql" prepared
 	run_one "${srv}_rows_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_rows.sql" prepared
 	run_one "${srv}_analytical_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_analytical.sql" prepared
+	# Connection lifecycle: -C reconnects per transaction (simple protocol), so this
+	# measures connect+startup+auth+teardown throughput rather than steady-state query cost.
+	run_one "${srv}_connect_select1" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_connect.sql" simple -C
 	if [[ "${PROFILE}" != "0" ]]; then
 		echo "  -- profiling ${srv} (perf record ${PROFILE_SECS}s/workload, still isolated)"
 		profile_one "${srv}_select1_simple" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_select1.sql" simple
@@ -245,6 +376,9 @@ bench_server() {
 		profile_one "${srv}_wide_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_wide.sql" prepared
 		profile_one "${srv}_rows_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_rows.sql" prepared
 		profile_one "${srv}_analytical_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_analytical.sql" prepared
+		# connect_select1 is intentionally not profiled: profile_one drives steady-state
+		# (reused-connection) load and has no -C path, so a profile here would not reflect
+		# the connect/teardown cost the workload measures.
 	fi
 	kill -9 "${CUR_PID}" 2>/dev/null || true
 	wait "${CUR_PID}" 2>/dev/null || true
@@ -252,68 +386,89 @@ bench_server() {
 	sleep 1
 }
 
-# Measure a real PostgreSQL (docker) -- an external reference. No local pid to
-# perf-stat, so tps/latency only; pinned to PG_CPUSET so it races on the same
-# cores. Appends pg_<workload> rows to results.tsv. Must NOT run inside the
-# exclusive cgroup partition (the kernel denies its container cgroup the reserved
-# cores) -- run_bench_isolated.sh seeds this cache before reserving.
-bench_postgres() {
+# Measure ONE external pg-wire engine (any registry entry: pg / crdb / cedar /
+# glare) in docker. No local pid to perf-stat, so tps/latency only; pinned to
+# ENG_CPUSET so it races on serened's cores. The container listens on its native
+# port (ENG_CPORT) which we publish on the host (ENG_HPORT); run_one connects to
+# 127.0.0.1:HPORT as the engine's user/db, with any password via PGPASSWORD.
+# Appends <name>_<workload> rows. Must NOT run inside the exclusive cgroup partition
+# (the kernel denies the container the reserved cores) -- run_bench_isolated.sh
+# seeds these caches outside the partition first.
+bench_engine() {
+	local name="$1"
+	local image="${ENG_IMAGE[$name]}" hport="${ENG_HPORT[$name]}" cport="${ENG_CPORT[$name]}"
+	local container="${ENG_CONTAINER[$name]}" user="${ENG_USER[$name]}" db="${ENG_DB[$name]}" pass="${ENG_PASS[$name]}"
 	if ! command -v docker >/dev/null 2>&1; then
-		echo "  postgres: docker not found -- skipping" >&2
+		echo "  ${name}: docker not found -- skipping" >&2
 		return 1
 	fi
 	local cpuset=()
-	[[ -n "${PG_CPUSET}" ]] && cpuset=(--cpuset-cpus "${PG_CPUSET}")
-	echo "-- postgres ${PG_IMAGE} (:${PG_PORT}) [docker${PG_CPUSET:+, cpuset ${PG_CPUSET}}]"
-	docker rm -f "${PG_CONTAINER}" >/dev/null 2>&1 || true
-	if ! docker run -d --name "${PG_CONTAINER}" "${cpuset[@]}" \
-		-e POSTGRES_HOST_AUTH_METHOD=trust -p "${PG_PORT}:5432" \
-		"${PG_IMAGE}" -c max_connections=300 -c shared_buffers=512MB >/dev/null; then
-		echo "  postgres: docker run failed -- skipping" >&2
+	[[ -n "${ENG_CPUSET}" ]] && cpuset=(--cpuset-cpus "${ENG_CPUSET}")
+	# Word-split the per-engine docker pre-image args and container start args.
+	# (read returns non-zero on the empty/no-trailing-newline here-string; harmless.)
+	local preargs=() cargs=()
+	read -r -a preargs <<<"${ENG_PREARGS[$name]}" || true
+	read -r -a cargs <<<"${ENG_CARGS[$name]}" || true
+	echo "-- ${name} ${image} (host :${hport} -> container :${cport}) [docker${ENG_CPUSET:+, cpuset ${ENG_CPUSET}}]"
+	docker rm -f "${container}" >/dev/null 2>&1 || true
+	if ! docker run -d --name "${container}" "${cpuset[@]}" \
+		-p "${hport}:${cport}" "${preargs[@]}" "${image}" "${cargs[@]}" >/dev/null; then
+		echo "  ${name}: docker run failed -- skipping" >&2
 		return 1
 	fi
+	local ready_uri="postgres://${user}:${pass}@127.0.0.1:${hport}/${db}?sslmode=disable"
 	local up=0
 	for _ in $(seq 1 90); do
-		if psql "postgres://postgres@127.0.0.1:${PG_PORT}/postgres" -c 'SELECT 1' >/dev/null 2>&1; then
+		if PGPASSWORD="${pass}" psql "${ready_uri}" -c 'SELECT 1' >/dev/null 2>&1; then
 			up=1
 			break
 		fi
 		sleep 1
 	done
 	if [[ "${up}" != 1 ]]; then
-		echo "  postgres did not come up:" >&2
-		docker logs "${PG_CONTAINER}" 2>&1 | tail -20 >&2
-		docker rm -f "${PG_CONTAINER}" >/dev/null 2>&1 || true
+		echo "  ${name} did not come up:" >&2
+		docker logs "${container}" 2>&1 | tail -20 >&2
+		docker rm -f "${container}" >/dev/null 2>&1 || true
 		return 1
 	fi
-	run_one pg_select1_simple "${PG_PORT}" "-" "${OUT_DIR}/wl_select1.sql" simple
-	run_one pg_select1_extended "${PG_PORT}" "-" "${OUT_DIR}/wl_select1.sql" extended
-	run_one pg_select1_prepared "${PG_PORT}" "-" "${OUT_DIR}/wl_select1.sql" prepared
-	run_one pg_wide_simple "${PG_PORT}" "-" "${OUT_DIR}/wl_wide.sql" simple
-	run_one pg_wide_extended "${PG_PORT}" "-" "${OUT_DIR}/wl_wide.sql" extended
-	run_one pg_wide_prepared "${PG_PORT}" "-" "${OUT_DIR}/wl_wide.sql" prepared
-	run_one pg_rows_prepared "${PG_PORT}" "-" "${OUT_DIR}/wl_rows.sql" prepared
-	run_one pg_analytical_prepared "${PG_PORT}" "-" "${OUT_DIR}/wl_analytical.sql" prepared
-	docker rm -f "${PG_CONTAINER}" >/dev/null 2>&1 || true
+	# Same workload set + layout as bench_server, as <name>_<workload> rows. The
+	# differing user/db/password reach pgbench via run_one's RUN_ONE_USER/RUN_ONE_DB
+	# overrides + PGPASSWORD.
+	local wl
+	export RUN_ONE_USER="${user}" RUN_ONE_DB="${db}" PGPASSWORD="${pass}"
+	for wl in select1:simple select1:extended select1:prepared \
+		wide:simple wide:extended wide:prepared \
+		rows:prepared analytical:prepared; do
+		run_one "${name}_${wl/:/_}" "${hport}" "-" "${OUT_DIR}/wl_${wl%%:*}.sql" "${wl##*:}"
+	done
+	run_one "${name}_connect_select1" "${hport}" "-" "${OUT_DIR}/wl_connect.sql" simple -C
+	unset RUN_ONE_USER RUN_ONE_DB PGPASSWORD
+	docker rm -f "${container}" >/dev/null 2>&1 || true
 }
 
 mkdir -p "${BASELINE_DIR}"
 
-# PG-only seeding mode: measure + cache postgres, then exit (run outside the
-# cgroup partition so the container can use the reserved cores).
-if [[ "${PG_ONLY}" == 1 ]]; then
-	echo "=== postgres-only: measuring + caching baseline ==="
-	if bench_postgres; then
-		grep '^pg_' "${OUT_DIR}/results.tsv" >"${PG_CACHE}"
-		echo "cached postgres baseline -> ${PG_CACHE}"
+# Single-engine seeding mode: measure + cache ONE engine, then exit (run outside the
+# cgroup partition so the container can use the reserved cores). run_bench_isolated.sh
+# uses it to seed each enabled engine before reserving the partition.
+if [[ -n "${SEED_ONLY}" ]]; then
+	if [[ -z "${ENG_IMAGE[$SEED_ONLY]+x}" ]]; then
+		echo "PERF_SEED_ONLY='${SEED_ONLY}' is not a known engine (${EXT_ORDER[*]})" >&2
+		exit 1
+	fi
+	echo "=== ${SEED_ONLY}-only: measuring + caching baseline ==="
+	if bench_engine "${SEED_ONLY}"; then
+		grep "^${SEED_ONLY}_" "${OUT_DIR}/results.tsv" >"${BASELINE_DIR}/${SEED_ONLY}.tsv"
+		echo "cached ${SEED_ONLY} baseline -> ${BASELINE_DIR}/${SEED_ONLY}.tsv"
 		exit 0
 	fi
-	echo "postgres baseline NOT cached (measurement failed)" >&2
+	echo "${SEED_ONLY} baseline NOT cached (measurement failed)" >&2
 	exit 1
 fi
 
 echo
-echo "=== benchmarking (old/pg cached + reused; new always measured) ==="
+echo "=== benchmarking (old + selected engines cached/reused; new always measured) ==="
+[[ -n "${DB_LIST}" ]] && echo "    engines: ${DB_LIST}"
 # OLD -- same binary as new, so cache and reuse across new-server iterations.
 if [[ -s "${OLD_CACHE}" && "${REMEASURE_OLD}" != 1 ]]; then
 	echo "-- old: reusing cached baseline (${OLD_CACHE}); PERF_REMEASURE_OLD=1 to refresh"
@@ -322,54 +477,71 @@ else
 	bench_server old "${PORT_OLD}" "${DATA_OLD}" --server_endpoints "pgsql+tcp://0.0.0.0:${PORT_OLD}"
 	grep '^old_' "${OUT_DIR}/results.tsv" >"${OLD_CACHE}" && echo "  cached old baseline -> ${OLD_CACHE}"
 fi
-# POSTGRES -- optional external reference, cached. reuse-only forces using the
-# cache (it was seeded outside the cgroup partition), ignoring REMEASURE_PG.
-if [[ "${PG_ENABLE}" == 1 ]]; then
-	if [[ -s "${PG_CACHE}" && ("${REMEASURE_PG}" != 1 || "${PG_REUSE_ONLY}" == 1) ]]; then
-		echo "-- postgres: reusing cached baseline (${PG_CACHE}); PERF_REMEASURE_PG=1 to refresh"
-		cat "${PG_CACHE}" >>"${OUT_DIR}/results.tsv"
-	elif [[ "${PG_REUSE_ONLY}" == 1 ]]; then
-		echo "-- postgres: reuse-only and no cache present -- skipping pg column" >&2
-	elif bench_postgres; then
-		grep '^pg_' "${OUT_DIR}/results.tsv" >"${PG_CACHE}" && echo "  cached postgres baseline -> ${PG_CACHE}"
+# EXTERNAL ENGINES (pg / crdb / cedar / glare) -- whichever PERF_DB selected, all
+# cached identically. reuse-only (set inside the partition) forces using the seeded
+# cache, ignoring remeasure (the container can't schedule on the reserved cores).
+for eng in ${DB_LIST}; do
+	cache="${BASELINE_DIR}/${eng}.tsv"
+	reuse_only=0
+	in_list "${eng}" "${REUSE_ONLY_LIST}" && reuse_only=1
+	remeasure=0
+	in_list "${eng}" "${REMEASURE_LIST}" && remeasure=1
+	if [[ -s "${cache}" && ("${remeasure}" != 1 || "${reuse_only}" == 1) ]]; then
+		echo "-- ${eng}: reusing cached baseline (${cache}); PERF_REMEASURE_DB=${eng} to refresh"
+		cat "${cache}" >>"${OUT_DIR}/results.tsv"
+	elif [[ "${reuse_only}" == 1 ]]; then
+		echo "-- ${eng}: reuse-only and no cache present -- skipping ${eng} column" >&2
+	elif bench_engine "${eng}"; then
+		grep "^${eng}_" "${OUT_DIR}/results.tsv" >"${cache}" && echo "  cached ${eng} baseline -> ${cache}"
 	fi
-fi
+done
 # NEW -- always measured.
 bench_server new "${PORT_NEW}" "${DATA_NEW}" --network_pg_endpoint "pgsql://0.0.0.0:${PORT_NEW}"
 
-# Summary table: pair old vs new per workload, with cycles-per-query.
+# Summary table: old vs new per workload (+ one tps/ratio column per selected
+# engine, in registry order), with cycles-per-query. The engine order is passed in
+# so the columns match the registry; engines absent from the data are dropped.
 echo
 echo "================== WIRE BENCH SUMMARY =================="
 echo "clients=${CLIENTS} jobs=${JOBS} dur=${DURATION}s io_threads=${IO_THREADS}"
 echo
-awk -F'\t' '
+awk -F'\t' -v engorder="${EXT_ORDER[*]}" '
 {
-  key=$1; sub(/^old_/,"",key); sub(/^new_/,"",key); sub(/^pg_/,"",key);
-  side = ($1 ~ /^old_/) ? "old" : ($1 ~ /^pg_/) ? "pg" : "new";
-  if (side=="pg") have_pg=1;
+  # First underscore-delimited token is the side (old/new/pg/crdb/...); the rest is
+  # the workload key. All external engines are handled uniformly here, else their
+  # prefixed rows would be misread as new_ and corrupt the table.
+  row=$1; p=index(row,"_"); side=substr(row,1,p-1); key=substr(row,p+1);
+  if (side!="old" && side!="new") have[side]=1;
   tps[key,side]=$2; lat[key,side]=$3; txn[key,side]=$4; cyc[key,side]=$5;
   if (!(key in seen)) { order[++n]=key; seen[key]=1 }
 }
 END {
-  if (have_pg) {
-    printf "%-20s %11s %11s %11s %8s %8s %12s %12s\n","workload","tps(old)","tps(pg)","tps(new)","new/old","new/pg","cyc/q(old)","cyc/q(new)";
-    printf "%-20s %11s %11s %11s %8s %8s %12s %12s\n","--------------------","-----------","-----------","-----------","--------","--------","------------","------------";
-  } else {
-    printf "%-20s %12s %12s %10s %14s %14s\n","workload","tps(old)","tps(new)","new/old","cyc/q(old)","cyc/q(new)";
-    printf "%-20s %12s %12s %10s %14s %14s\n","--------------------","------------","------------","----------","--------------","--------------";
-  }
+  # Engine columns: registry order, only those present in the data.
+  ne=0; nc=split(engorder,cand," ");
+  for (c=1;c<=nc;c++) if (have[cand[c]]) ext[++ne]=cand[c];
+
+  printf "%-20s %12s %12s","workload","tps(old)","tps(new)";
+  for (e=1;e<=ne;e++) printf " %12s","tps("ext[e]")";
+  printf " %10s",  "new/old";
+  for (e=1;e<=ne;e++) printf " %10s","new/"ext[e];
+  printf " %14s %14s\n","cyc/q(old)","cyc/q(new)";
+  printf "%-20s %12s %12s","--------------------","------------","------------";
+  for (e=1;e<=ne;e++) printf " %12s","------------";
+  printf " %10s","----------";
+  for (e=1;e<=ne;e++) printf " %10s","----------";
+  printf " %14s %14s\n","--------------","--------------";
+
   for (i=1;i<=n;i++) {
     k=order[i];
-    to=tps[k,"old"]+0; tn=tps[k,"new"]+0; tp=tps[k,"pg"]+0;
+    to=tps[k,"old"]+0; tn=tps[k,"new"]+0;
     rno=(to>0)?sprintf("%.2fx",tn/to):"n/a";
     cqo=(txn[k,"old"]+0>0)?sprintf("%.0f",cyc[k,"old"]/txn[k,"old"]):"n/a";
     cqn=(txn[k,"new"]+0>0)?sprintf("%.0f",cyc[k,"new"]/txn[k,"new"]):"n/a";
-    if (have_pg) {
-      rnp=(tp>0)?sprintf("%.2fx",tn/tp):"n/a";
-      printf "%-20s %11.1f %11.1f %11.1f %8s %8s %12s %12s\n",k,to,tp,tn,rno,rnp,cqo,cqn;
-    } else {
-      printf "%-20s %12.1f %12.1f %10s %14s %14s\n",k,to,tn,rno,cqo,cqn;
-    }
+    printf "%-20s %12.1f %12.1f",k,to,tn;
+    for (e=1;e<=ne;e++) printf " %12.1f",tps[k,ext[e]]+0;
+    printf " %10s",rno;
+    for (e=1;e<=ne;e++) { te=tps[k,ext[e]]+0; printf " %10s",(te>0)?sprintf("%.2fx",tn/te):"n/a" }
+    printf " %14s %14s\n",cqo,cqn;
   }
 }' "${OUT_DIR}/results.tsv" | tee "${OUT_DIR}/summary.txt"
 echo "======================================================="

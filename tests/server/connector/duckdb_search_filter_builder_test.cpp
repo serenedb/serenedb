@@ -611,12 +611,12 @@ class SearchFilterBuilderTest : public ::testing::Test {
     // valid and always have a primary index -- no defensive checks needed.
     const auto& projected = get_op->GetColumnIds();
     ColumnGetter getter =
-      [table_index = get_op->table_index, projected, &columns,
+      [ti = get_op->table_index, projected, &columns,
        &analyzer_provider](const duckdb::BoundColumnRefExpression& ref)
       -> std::optional<SearchColumnInfo> {
       // Mismatched table_index would mean the query referenced a table we
       // didn't set up -- always a bug in the test itself.
-      SDB_ASSERT(ref.binding.table_index == table_index);
+      SDB_ASSERT(ref.binding.table_index == ti);
       const auto local = ref.binding.column_index.GetIndexUnsafe();
       const auto phys = projected[local].GetPrimaryIndex();
       return SearchColumnInfo{

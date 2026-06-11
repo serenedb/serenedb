@@ -22,8 +22,8 @@ statement ok
 CREATE TABLE my_table (id INTEGER, name VARCHAR);
 
 # DOCS_TEST_BODY
-statement error db error: ERROR: Column with name "my_column" does not exist
-VACUUM my_table(my_column);
+statement ok
+VACUUM my_table(name);
 
 # DOCS_TEST: example_004
 statement ok
@@ -33,8 +33,8 @@ statement ok
 CREATE TABLE my_table (id INTEGER, name VARCHAR);
 
 # DOCS_TEST_BODY
-statement error db error: ERROR: Column with name "my_column" does not exist
-VACUUM ANALYZE my_table(my_column);
+statement ok
+VACUUM ANALYZE my_table(name);
 
 # DOCS_TEST: example_005
 # DOCS_TEST_BODY

@@ -181,34 +181,6 @@ inline bool IsBinaryCopy(const duckdb::SQLStatement& statement) {
   return copy.info && copy.info->format == "binary";
 }
 
-// Cheap gate for the COPY-FROM-STDIN parse-probe in HandleParse: does the text
-// begin with the COPY keyword (case-insensitive, after leading whitespace)?
-// Only COPY-prefixed statements get a parse-only ExtractStatements; everything
-// else takes the normal Prepare path unchanged. A false negative (e.g. COPY
-// behind a comment) just falls through to Prepare, which still errors cleanly.
-inline bool StartsWithCopy(std::string_view query) {
-  const auto start = query.find_first_not_of(" \t\r\n\f\v");
-  if (start == std::string_view::npos) {
-    return false;
-  }
-  query.remove_prefix(start);
-  static constexpr std::string_view kCopy = "copy";
-  if (query.size() < kCopy.size()) {
-    return false;
-  }
-  for (size_t i = 0; i < kCopy.size(); ++i) {
-    if ((query[i] | 0x20) != kCopy[i]) {
-      return false;
-    }
-  }
-  if (query.size() == kCopy.size()) {
-    return true;
-  }
-  const char c = query[kCopy.size()];
-  return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-           (c >= '0' && c <= '9') || c == '_');
-}
-
 inline sdb::pg::VarFormat FormatFor(std::span<const sdb::pg::VarFormat> formats,
                                     size_t column) {
   if (formats.empty()) {
@@ -539,7 +511,7 @@ void PgWireSession<Kind>::SendStartupBurst() {
 
   for (const auto name : kReportParams) {
     if (const auto value = _connection_ctx->Get(name)) {
-      _reported_params.insert_or_assign(std::string{name}, *value);
+      _reported_params.insert_or_assign(name, *value);
       WriteParameterStatus(_send, name, *value);
     }
   }
@@ -569,10 +541,10 @@ PgWireSession<Kind>::PendingQueryEnsured(
   const auto& props = prepared.GetStatementProperties();
   const auto db_name = DatabaseName();
   _connection_ctx->EnsureCatalogSnapshot();
-  if (props.modified_databases.contains(std::string{db_name})) {
+  if (props.modified_databases.contains(db_name)) {
     _connection_ctx->EnsureRocksDBTransaction();
     _connection_ctx->EnsureRocksDBSnapshot();
-  } else if (props.read_databases.contains(std::string{db_name})) {
+  } else if (props.read_databases.contains(db_name)) {
     if (_connection_ctx->IsExplicitTransaction()) {
       _connection_ctx->EnsureRocksDBTransaction();
     }
@@ -611,7 +583,7 @@ void PgWireSession<Kind>::ReportChangedParameters() {
     if (it != _reported_params.end() && it->second == *value) {
       continue;
     }
-    _reported_params.insert_or_assign(std::string{name}, *value);
+    _reported_params.insert_or_assign(name, *value);
     WriteParameterStatus(_send, name, *value);
   }
 }
@@ -940,7 +912,7 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     WriteEmptyFrame(_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
     co_return {};
   }
-  auto extracted = _conn->ExtractStatements(std::string{query});
+  auto extracted = _conn->ExtractStatements(query);
   if (extracted.empty()) {
     // A non-empty but statement-less query (";", a bare comment): postgres
     // replies EmptyQueryResponse, not just a bare ReadyForQuery.
@@ -1157,8 +1129,26 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   }
 
   sdb::pg::DuckDBStatement* statement = &_anon_statement;
+  if (statement_name.empty()) {
+    // PG drops the prior unnamed statement before parsing, so a failed
+    // re-Parse leaves no unnamed statement behind.
+    statement->Reset();
+  }
+  // Parse once and branch on the parsed statement (no text pre-scan). COPY ...
+  // FROM STDIN can't be bound here -- the CSV sniff would open /dev/stdin
+  // before the CopyData feeder is live -- so the unbound statement is stashed
+  // and bound at Execute via RunCopyFromStdin. Everything else binds the
+  // already-parsed statement now, so the common path parses once.
+  auto extracted = _conn->ExtractStatements(query);
+  if (extracted.size() > 1) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("cannot insert multiple commands into a prepared statement"));
+  }
+  // Named statements are stored only after a successful parse: a syntax error
+  // must win over "already exists" and must not define the name.
   if (!statement_name.empty()) {
-    auto [it, emplaced] = _statements.try_emplace(std::string{statement_name});
+    auto [it, emplaced] = _statements.try_emplace(statement_name);
     if (!emplaced) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DUPLICATE_PSTATEMENT),
@@ -1166,21 +1156,19 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     }
     statement = &it->second;
   }
-  statement->Reset();
-  // COPY ... FROM STDIN can't be prepared here (the CSV sniff would open
-  // /dev/stdin before the CopyData feeder is live). Parse-probe COPY-prefixed
-  // statements only, and stash the unbound statement; the bind happens at
-  // Execute via RunCopyFromStdin.
-  if (StartsWithCopy(query)) {
-    auto extracted = _conn->ExtractStatements(std::string{query});
-    if (extracted.size() == 1 && IsCopyFromStdin(*extracted[0])) {
-      statement->deferred_copy = std::move(extracted[0]);
-      WriteEmptyFrame(_send, PQ_MSG_PARSE_COMPLETE);
-      return;
-    }
+  if (extracted.empty()) {
+    // Empty query string is legal: Execute replies EmptyQueryResponse.
+    statement->empty = true;
+    WriteEmptyFrame(_send, PQ_MSG_PARSE_COMPLETE);
+    return;
+  }
+  if (IsCopyFromStdin(*extracted[0])) {
+    statement->deferred_copy = std::move(extracted[0]);
+    WriteEmptyFrame(_send, PQ_MSG_PARSE_COMPLETE);
+    return;
   }
   statement->prepared = _conn->Prepare(
-    std::string{query}, type_hints.empty() ? nullptr : &type_hints);
+    std::move(extracted[0]), type_hints.empty() ? nullptr : &type_hints);
   if (statement->prepared->HasError()) {
     const auto error = statement->prepared->GetErrorObject();
     statement->prepared.reset();
@@ -1300,17 +1288,17 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     }
     statement = &it->second;
   }
-  if (!statement->prepared && !statement->deferred_copy) {
+  if (!statement->prepared && !statement->deferred_copy && !statement->empty) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
                     ERR_MSG("prepared statement is not ready"));
   }
 
   Portal portal;
   portal.stmt = statement;
-  // A deferred COPY FROM STDIN has no prepared statement, no parameters, and no
-  // result columns; just record the (empty) bind. ParseBindVars would otherwise
-  // dereference the null prepared.
-  if (!statement->deferred_copy) {
+  // A deferred COPY FROM STDIN or an empty statement has no prepared
+  // statement, no parameters, and no result columns; just record the (empty)
+  // bind. ParseBindVars would otherwise dereference the null prepared.
+  if (statement->prepared) {
     portal.bind_info = ParseBindVars(payload, *statement);
     portal.pending =
       PendingQueryEnsured(*statement->prepared, portal.bind_info.param_values);
@@ -1322,7 +1310,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
   if (portal_name.empty()) {
     _anon_portal = std::move(portal);
   } else {
-    auto [it, emplaced] = _portals.try_emplace(std::string{portal_name});
+    auto [it, emplaced] = _portals.try_emplace(portal_name);
     if (!emplaced) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_CURSOR),
                       ERR_MSG("portal \"", portal_name, "\" already exists"));
@@ -1334,8 +1322,9 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
 
 template<SocketKind Kind>
 void PgWireSession<Kind>::DescribeStatement(sdb::pg::DuckDBStatement& stmt) {
-  if (stmt.deferred_copy) {
-    // COPY FROM STDIN takes no parameters and returns no rows.
+  if (stmt.deferred_copy || stmt.empty) {
+    // COPY FROM STDIN and the empty statement take no parameters and return
+    // no rows.
     WriteParameterDescription(_send, {});
     WriteEmptyFrame(_send, PQ_MSG_NO_DATA);
     return;
@@ -1388,7 +1377,7 @@ void PgWireSession<Kind>::DescribeStatement(sdb::pg::DuckDBStatement& stmt) {
 
 template<SocketKind Kind>
 void PgWireSession<Kind>::DescribePortal(Portal& portal) {
-  if (portal.stmt && portal.stmt->deferred_copy) {
+  if (portal.stmt && (portal.stmt->deferred_copy || portal.stmt->empty)) {
     WriteEmptyFrame(_send, PQ_MSG_NO_DATA);
     return;
   }
@@ -1473,6 +1462,10 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     // re-Execute (or a second portal bound to it) gets a clean "not bound"
     // error rather than re-running the COPY.
     co_await RunCopyFromStdin(std::move(portal->stmt->deferred_copy));
+    co_return {};
+  }
+  if (portal->stmt && portal->stmt->empty) {
+    WriteEmptyFrame(_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
     co_return {};
   }
   if (!portal->stmt || !portal->pending) {

@@ -37,6 +37,7 @@ struct DuckDBStatement {
     deferred_copy.reset();
     extracted.clear();
     current_stmt_idx = 0;
+    empty = false;
   }
 
   duckdb::unique_ptr<duckdb::PreparedStatement> prepared;
@@ -48,6 +49,9 @@ struct DuckDBStatement {
   // For simple protocol multi-statement support
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> extracted;
   uint32_t current_stmt_idx = 0;
+  // Parse with an empty query string is legal in PG: Bind succeeds and
+  // Execute replies EmptyQueryResponse. `prepared` stays null.
+  bool empty = false;
 };
 
 struct DuckDBBindInfo {

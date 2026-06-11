@@ -38,7 +38,12 @@ namespace sdb::network {
 // in-band (pg-wire SSLRequest / STARTTLS style). It carries the same asio type
 // as Ssl but flips a runtime flag at the handshake. Ssl is TLS-from-first-byte
 // (HTTPS). Tcp/Unix are plaintext.
-enum class SocketKind : uint8_t { Tcp, Ssl, Unix, MaybeTls };
+enum class SocketKind : uint8_t {
+  Tcp,
+  Ssl,
+  Unix,
+  MaybeTls,
+};
 
 template<SocketKind Kind>
 struct StreamTraits;

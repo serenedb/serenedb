@@ -620,6 +620,107 @@ id
 
 
 
+# --- JSON path under a text dictionary (frequency+position features) ----
+#
+# Text dicts add Freq+Pos to the string-leaf field. Pre-PR the JSON path
+# wrote every leaf (numeric/bool/string/null) into a single iresearch field
+# with the analyzer's features, which made the numeric/bool/null writes
+# slot-incompatible with the text's Freq+Pos request and silently dropped
+# them. The per-kind field_id split puts each leaf in its own term-dict
+# slot, so the numeric/bool/null leaves can keep IndexFeatures::None
+# alongside the string leaf's Freq+Pos.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_text(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE json_text (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX json_text_idx ON json_text USING inverted(
+    id, (content->'v') en_text);
+
+statement ok
+INSERT INTO json_text VALUES
+    (1, '{"v":42}'::json),
+    (2, '{"v":"the quick brown fox"}'::json),
+    (3, '{"v":true}'::json),
+    (4, '{"v":null}'::json),
+    (5, '{"v":3.14}'::json);
+
+statement ok
+VACUUM (REFRESH_TABLE) json_text;
+
+# Numeric / bool / null leaves are stored under their own field_ids with
+# IndexFeatures::None, and routed by the typed-cast filter at read time.
+query
+SELECT id FROM json_text_idx WHERE (content->'v')::int = 42;
+----
+id
+1
+
+query
+SELECT id FROM json_text_idx WHERE (content->'v')::double > 3 ORDER BY id;
+----
+id
+1
+5
+
+query
+SELECT id FROM json_text_idx WHERE (content->'v')::bool = true;
+----
+id
+3
+
+# String leaf is text-tokenized through the en_text analyzer; ts_tokenize
+# emits the same tokens, so terms / phrases work.
+query
+SELECT id FROM json_text_idx WHERE (content->'v') @@ ts_tokenize('quick', 'en_text');
+----
+id
+2
+
+query
+SELECT id FROM json_text_idx WHERE (content->'v') @@ ts_tokenize('brown fox', 'en_text');
+----
+id
+2
+
+# Negative-feature assertion: the numeric / bool / null leaves were created
+# with IndexFeatures::None, so a phrase query (which requires Pos) routed
+# against the string leaf only matches docs whose string value carries the
+# phrase. Row 2 is the only string-leaf row; the numeric / bool / null
+# rows do not match. If a regression re-introduces the pre-PR shape where
+# every leaf is written through the analyzer's feature mask, the phrase
+# would silently widen its match set (positions land on numeric/bool
+# leaves and coincidental adjacency starts matching).
+query
+SELECT id FROM json_text_idx WHERE (content->'v') @@ ts_phrase('quick brown fox');
+----
+id
+2
+
+
+
+# --- Same expression listed twice with different tokenizers is rejected.
+# The catalog stores a single tokenizer per indexed expression; without an
+# explicit check this would silently dedup on serialization and drop one
+# tokenizer's data on the floor. Block at CREATE INDEX so the user sees
+# exactly which expression was listed twice.
+
+statement ok
+CREATE TABLE dup_expr_err (id INTEGER PRIMARY KEY, content JSON);
+
+statement error
+CREATE INDEX dup_expr_err_idx ON dup_expr_err
+USING inverted(id, (content->'v') verbatim_dict, (content->'v') en_text);
+----
+db error: ERROR: Failed to create index: Expression '("content" -> 'v')' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed expression. Stack `included(...)` on the same expression instead, or remove the duplicate.
+
+
+
 # --- #> and #>> operators ------------------------------------------------
 
 # Single-segment text[] path with #>>.  Index expression and query

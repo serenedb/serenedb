@@ -55,8 +55,7 @@ start_serened_under_perf() {
 	perf record -F "${FREQ}" -g --call-graph "${PERF_CALL_GRAPH:-fp}" \
 		--output "${perf_data}" -- \
 		"${SERENED_BIN}" "${DATA_DIR}" \
-		--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-		--log.foreground-tty true \
+		--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
 		>"${serened_log}" 2>&1 &
 	PERF_PID=$!
 	for _ in $(seq 1 60); do
@@ -141,7 +140,7 @@ start_serened_under_perf "${PERF_DATA_CTAS}" "${OUT_DIR}/serened-ctas.log"
 
 psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X \
 	-c "SET threads = ${THREADS};" \
-	-c "ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);" \
+	-c "ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);" \
 	-c "SET search_path TO public, native_db.main;" \
 	2>&1 | tee "${OUT_DIR}/setup-ctas.log"
 

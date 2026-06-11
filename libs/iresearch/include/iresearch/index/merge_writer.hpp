@@ -27,7 +27,7 @@
 
 #include "basics/memory.hpp"
 #include "basics/noncopyable.hpp"
-#include "iresearch/columnstore/format.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -75,20 +75,19 @@ class MergeWriter : public util::Noncopyable {
     DocRemap remap;
   };
 
-  MergeWriter(IResourceManager& resource_manager) noexcept;
-
   explicit MergeWriter(Directory& dir,
                        const SegmentWriterOptions& options) noexcept
     : _dir{dir},
       _readers{{options.resource_manager}},
       _scorer{options.scorer},
-      _db{options.db},
+      _db{[db = options.db] -> duckdb::DatabaseInstance& {
+        SDB_ASSERT(db);
+        return *db;
+      }()},
       _column_options{options.column_options},
       _norm_column_options{options.norm_column_options} {}
   MergeWriter(MergeWriter&&) = default;
   MergeWriter& operator=(MergeWriter&&) = delete;
-
-  explicit operator bool() const noexcept;
 
   template<typename Iterator>
   void Reset(Iterator begin, Iterator end) {
@@ -101,7 +100,7 @@ class MergeWriter : public util::Noncopyable {
   // Flush all added readers into a single segment.
   bool Flush(SegmentMeta& segment, const FlushProgress& progress = {});
 
-  columnstore::PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
+  PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
     return std::move(_built_hnsw_graphs);
   }
 
@@ -114,10 +113,10 @@ class MergeWriter : public util::Noncopyable {
   Directory& _dir;
   ManagedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
-  duckdb::DatabaseInstance* _db = nullptr;
+  duckdb::DatabaseInstance& _db;
   const ColumnOptionsProvider* _column_options = nullptr;
   const NormColumnOptionsProvider* _norm_column_options = nullptr;
-  columnstore::PreloadedHnswGraphs _built_hnsw_graphs;
+  PreloadedHnswGraphs _built_hnsw_graphs;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<MergeWriter>);

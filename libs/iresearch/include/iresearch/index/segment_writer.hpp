@@ -26,10 +26,12 @@
 #include "basics/containers/bitset.hpp"
 #include "basics/noncopyable.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
-#include "iresearch/columnstore/format.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/field_data.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/index/norm_column_reader.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -47,9 +49,6 @@ struct DocsMask final {
   uint32_t count{0};
 };
 
-// Single-segment write transaction. Indexes terms (FieldsData), writes
-// posting lists at flush, and owns the segment's `<seg>.cs` columnstore
-// for norm columns.
 class SegmentWriter final : public NormProvider, util::Noncopyable {
  private:
   struct ConstructToken final {
@@ -131,38 +130,29 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   SegmentWriter(ConstructToken, Directory& dir,
                 const SegmentWriterOptions& options) noexcept;
 
-  // FlushFields-time scorers (Wand / BM25 / TFIDF / LM-* / DFI / Indri)
-  // reach per-doc norms through this provider. flush() commits the
-  // columnstore first and opens `_cs_reader` on the just-written `.cs`
-  // before invoking FlushFields, so reads here go to disk -- no in-memory
-  // copy of the norm values is kept on the writer side. Returns null when
-  // the field has no norm column or the reader hasn't been opened yet
-  // (e.g. caller invokes norms() outside flush()).
   NormReader::ptr norms(field_id id) const final {
-    if (_cs_reader == nullptr) {
+    if (_col_reader == nullptr) {
       return {};
     }
-    const auto* col = _cs_reader->NormColumn(id);
+    const auto* col = _col_reader->NormColumn(id);
     if (col == nullptr) {
       return {};
     }
     return MakePersistedNormReader(*col);
   }
-  columnstore::PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
+  PreloadedHnswGraphs TakeBuiltHnswGraphs() noexcept {
     return std::move(_built_hnsw_graphs);
   }
-  columnstore::Writer* Columnstore() noexcept { return _columnstore.get(); }
+  ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
 
  private:
-  bool index(const hashed_string_view& name, doc_id_t doc,
-             IndexFeatures index_features, Tokenizer& tokens);
+  bool index(field_id id, doc_id_t doc, IndexFeatures index_features,
+             Tokenizer& tokens);
 
   template<typename Field>
   bool index(Field&& field, doc_id_t doc) {
-    const hashed_string_view field_name{
-      static_cast<std::string_view>(field.Name())};
     auto& tokens = static_cast<Tokenizer&>(field.GetTokens());
-    return index(field_name, doc, field.GetIndexFeatures(), tokens);
+    return index(field.Id(), doc, field.GetIndexFeatures(), tokens);
   }
 
   void finish();
@@ -171,22 +161,18 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   TrackingDirectory _dir;
   ScorerPtr _scorer;
-  // Reader on the just-committed `.cs`. Set transiently by flush() between
-  // `_columnstore->Commit()` and `FlushFields`, so scorer norm reads land
-  // on the disk-backed norm readers. Cleared at end of flush().
-  std::unique_ptr<columnstore::Reader> _cs_reader;
+  std::unique_ptr<ColReader> _col_reader;
   ManagedVector<DocContext> _docs_context;
-  // Removed/invalid doc_ids (e.g. partial indexing failure).
   DocsMask _docs_mask;
   FieldsData _fields;
   std::vector<const FieldData*> _doc;
   std::string _seg_name;
-  FieldWriter::ptr _field_writer;
-  duckdb::DatabaseInstance* _db = nullptr;
+  std::unique_ptr<burst_trie::FieldWriter> _field_writer;
+  duckdb::DatabaseInstance& _db;
   const ColumnOptionsProvider* _column_options = nullptr;
   const NormColumnOptionsProvider* _norm_column_options = nullptr;
-  std::unique_ptr<columnstore::Writer> _columnstore;
-  columnstore::PreloadedHnswGraphs _built_hnsw_graphs;
+  std::unique_ptr<ColWriter> _col_writer;
+  PreloadedHnswGraphs _built_hnsw_graphs;
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;

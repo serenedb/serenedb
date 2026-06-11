@@ -87,21 +87,21 @@ count
 
 connection oni_after
 query
-SELECT id FROM oni_inv_t WHERE body @@ ts_phrase('phrase one alpha');
+SELECT id FROM oni_inv_idx WHERE body @@ ts_phrase('phrase one alpha');
 ----
 id
 1
 
 connection oni_after
 query
-SELECT id FROM oni_inv_t WHERE body @@ ts_phrase('phrase two beta');
+SELECT id FROM oni_inv_idx WHERE body @@ ts_phrase('phrase two beta');
 ----
 id
 2
 
 connection oni_after
 query
-SELECT id FROM oni_inv_t WHERE body @@ ts_phrase('phrase three gamma');
+SELECT id FROM oni_inv_idx WHERE body @@ ts_phrase('phrase three gamma');
 ----
 id
 3

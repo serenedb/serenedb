@@ -24,6 +24,7 @@
 #include <rocksdb/options.h>
 
 #include <filesystem>
+#include <span>
 #include <yaclib/async/make.hpp>
 #include <yaclib/async/when_all.hpp>
 
@@ -37,10 +38,10 @@
 #include "general_server/scheduler.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::catalog {
@@ -60,6 +61,20 @@ Result RemoveIndexShards(ObjectId db_id, ObjectId schema_id = ObjectId{0},
   }
   return {};
 }
+template<typename T>
+yaclib::Future<> RunChildrenTasks(std::span<std::shared_ptr<T>> tasks) {
+  static_assert(std::is_base_of_v<DropTask, T>);
+  if (tasks.empty()) {
+    co_return {};
+  }
+  std::vector<AsyncResult> async_results;
+  async_results.reserve(tasks.size());
+  for (const auto& task : tasks) {
+    async_results.push_back(DropTask::Schedule(task));
+  }
+  co_await yaclib::Await(async_results.begin(), async_results.end());
+  co_return {};
+}
 
 }  // namespace
 
@@ -70,8 +85,7 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
       if (!scheduler) {
         co_return {};
       }
-      co_await scheduler->delay(task->GetName(),
-                                std::chrono::microseconds{task->_delay});
+      co_await scheduler->delay(task->GetName(), task->_delay);
       auto r = co_await scheduler->queueWithFuture(
         RequestLane::InternalLow,
         [task] { return DropTask::ExecuteTask(std::move(task)); });
@@ -80,17 +94,21 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
         continue;
       }
       if (!r.ok()) {
-        SDB_ERROR("xxxxx", Logger::THREADS, "Failed to execute ",
-                  task->GetContext(), ", error: ", r.errorMessage());
+        SDB_ERROR(GENERAL, "Failed to execute ", task->GetContext(),
+                  ", error: ", r.errorMessage());
       }
       co_return r;
     }
   } catch (std::exception& e) {
-    SDB_ERROR("xxxxx", Logger::THREADS, "Unable to schedule ", task->GetName(),
-              ": \"", e.what(), "\"");
-    co_return Result{ERROR_INTERNAL,  "Unable to schedule ",
-                     task->GetName(), ": ",
-                     e.what(),        "\""};
+    SDB_ERROR(GENERAL, "Unable to schedule ", task->GetName(), ": \"", e.what(),
+              "\"");
+    co_return Result{ERROR_INTERNAL,
+                     "Unable to schedule ",
+                     task->GetName(),
+                     ": ",
+                     "\"",
+                     e.what(),
+                     "\""};
   }
 }
 
@@ -165,8 +183,6 @@ Result TableDrop::Finalize() {
 }
 
 AsyncResult TableDrop::Execute() {
-  std::vector<AsyncResult> async_results;
-  async_results.reserve(_indexes.size());
   if (_is_root && !_indexes.empty()) {
     ObjectId db_id = _indexes.back()->GetDatabaseId();
     ObjectId schema_id = _parent_id;
@@ -175,12 +191,7 @@ AsyncResult TableDrop::Execute() {
       co_return Result{ERROR_LOCKED};
     }
   }
-  for (auto& index : _indexes) {
-    async_results.push_back(Schedule(index));
-  }
-  if (!async_results.empty()) {
-    co_await yaclib::Await(async_results.begin(), async_results.end());
-  }
+  co_await RunChildrenTasks(std::span{_indexes});
   auto r = co_await Schedule(_shard_drop);
   if (!r.ok() || !Finalize().ok()) {
     co_return Result{ERROR_LOCKED};
@@ -193,7 +204,7 @@ Result SchemaDrop::Finalize() {
   // Standalone seq counter rows -- DropEntry only sweeps Definitions CF.
   auto r =
     server.VisitDefinitions(_id, catalog::ObjectType::Sequence,
-                            [&](DefinitionKey key, vpack::Slice) -> Result {
+                            [&](DefinitionKey key, std::string_view) -> Result {
                               return server.DropSequence(key.GetObjectId());
                             });
   if (!r.ok()) {
@@ -215,20 +226,13 @@ Result SchemaDrop::Finalize() {
 }
 
 AsyncResult SchemaDrop::Execute() {
-  std::vector<AsyncResult> async_results;
   if (_is_root) {
     auto r = RemoveIndexShards(_parent_id, _id);
     if (!r.ok()) {
       co_return Result{ERROR_LOCKED};
     }
   }
-  async_results.reserve(_tables.size());
-  for (auto& table : _tables) {
-    async_results.push_back(Schedule(table));
-  }
-  if (!async_results.empty()) {
-    co_await yaclib::Await(async_results.begin(), async_results.end());
-  }
+  co_await RunChildrenTasks(std::span{_tables});
   if (!Finalize().ok()) {
     co_return Result{ERROR_LOCKED};
   }
@@ -257,14 +261,7 @@ AsyncResult DatabaseDrop::Execute() {
   if (!r.ok()) {
     co_return Result{ERROR_LOCKED};
   }
-  std::vector<AsyncResult> async_results;
-  async_results.reserve(_schemas.size());
-  for (auto& schema : _schemas) {
-    async_results.push_back(Schedule(schema));
-  }
-  if (!async_results.empty()) {
-    co_await yaclib::Await(async_results.begin(), async_results.end());
-  }
+  co_await RunChildrenTasks(std::span{_schemas});
   if (!Finalize().ok()) {
     co_return Result{ERROR_LOCKED};
   }

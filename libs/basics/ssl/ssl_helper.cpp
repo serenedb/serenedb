@@ -33,7 +33,7 @@
 
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 
 using namespace sdb;
 
@@ -96,15 +96,15 @@ asio_ns::ssl::context sdb::SslContext(SslProtocol protocol,
   boost::system::error_code ec;
   sslctx.use_certificate_chain_file(keyfile, ec);
   if (ec) {
-    SDB_ERROR("xxxxx", sdb::Logger::SSL, "cannot read certificate from '",
-              keyfile, "': ", ec.to_string());
+    SDB_ERROR(SSL, "cannot read certificate from '", keyfile,
+              "': ", ec.to_string());
     SDB_THROW(ERROR_BAD_PARAMETER, "unable to read certificate from file");
   }
 
   sslctx.use_private_key_file(keyfile, asio_ns::ssl::context::file_format::pem,
                               ec);
   if (ec) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME, "cannot read key from '", keyfile,
+    SDB_ERROR(GENERAL, "cannot read key from '", keyfile,
               "': ", ec.to_string());
     SDB_THROW(ERROR_BAD_PARAMETER, "unable to read key from keyfile");
   }

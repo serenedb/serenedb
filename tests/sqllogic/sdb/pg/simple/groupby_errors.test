@@ -292,7 +292,7 @@ SELECT * FROM UNNEST(COUNT(1000 - 7))
 db error: ERROR: Table function cannot contain aggregates!
 
 
-query ?
+query
 SELECT * FROM COUNT(1000 - 7)
 ----
 count

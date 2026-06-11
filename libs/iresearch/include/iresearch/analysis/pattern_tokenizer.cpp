@@ -21,138 +21,12 @@
 #include "pattern_tokenizer.hpp"
 
 #include <re2/re2.h>
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
 
 #include <string_view>
 
+#include "basics/exceptions.h"
+
 namespace irs::analysis {
-namespace {
-
-bool ParseVPackOptions(const vpack::Slice slice,
-                       PatternTokenizer::Options& options) {
-  if (!slice.isObject()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Slice for pattern_token_stream is not an object");
-    return false;
-  }
-
-  auto r = vpack::ReadObjectNothrow(slice, options,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_WARN(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Failed to parse pattern_token_stream options: ", r.errorMessage());
-    return false;
-  }
-
-  if (options.pattern.empty()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Missing 'pattern' while constructing pattern_token_stream from "
-              "VPack arguments");
-    return false;
-  }
-
-  re2::RE2 re(options.pattern, re2::RE2::Quiet);
-  if (!re.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Invalid regex pattern while constructing pattern_token_stream");
-    return false;
-  }
-
-  return true;
-}
-
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  PatternTokenizer::Options options;
-  if (ParseVPackOptions(slice, options)) {
-    return PatternTokenizer::make(options.pattern, options.group);
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-bool MakeVPackConfig(const PatternTokenizer::Options& options,
-                     vpack::Builder* vpack_builder) {
-  vpack::WriteObject(*vpack_builder, options);
-  return true;
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice,
-                          vpack::Builder* vpack_builder) {
-  PatternTokenizer::Options options;
-  if (ParseVPackOptions(slice, options)) {
-    return MakeVPackConfig(options, vpack_builder);
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& definition) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  bool res = NormalizeVPackConfig(slice, &builder);
-  if (res) {
-    definition.assign(builder.slice().startAs<char>(),
-                      builder.slice().byteSize());
-  }
-  return res;
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while constructing pattern_token_stream");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
-              "' while constructing pattern_token_stream from JSON");
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while constructing pattern_token_stream from JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while normalizing pattern_token_stream");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder vpack_builder;
-    if (NormalizeVPackConfig(vpack->slice(), &vpack_builder)) {
-      definition = vpack_builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while normalizing pattern_token_stream from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while normalizing pattern_token_stream from JSON");
-  }
-  return false;
-}
-
-}  // namespace
 
 PatternTokenizer::PatternTokenizer(std::string_view pattern, int group)
   : _pattern(pattern, re2::RE2::Quiet),
@@ -162,19 +36,15 @@ PatternTokenizer::PatternTokenizer(std::string_view pattern, int group)
 }
 PatternTokenizer::~PatternTokenizer() = default;
 
-Analyzer::ptr PatternTokenizer::make(std::string_view pattern, int group) {
-  re2::RE2 re(pattern, re2::RE2::Quiet);
-  if (!re.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Invalid regex while constructing pattern_token_stream");
-    return nullptr;
+Analyzer::ptr PatternTokenizer::Make(Options opts) {
+  if (opts.pattern.empty()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "pattern: empty pattern");
   }
-  return std::make_unique<PatternTokenizer>(pattern, group);
-}
-
-void PatternTokenizer::init() {
-  REGISTER_ANALYZER_VPACK(PatternTokenizer, MakeVPack, NormalizeVPackConfig);
-  REGISTER_ANALYZER_JSON(PatternTokenizer, MakeJson, NormalizeJsonConfig);
+  re2::RE2 re(opts.pattern, re2::RE2::Quiet);
+  if (!re.ok()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "pattern: invalid regex");
+  }
+  return std::make_unique<PatternTokenizer>(opts.pattern, opts.group);
 }
 
 bool PatternTokenizer::reset(std::string_view data) {

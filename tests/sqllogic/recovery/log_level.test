@@ -1,58 +1,64 @@
-query
-SHOW sdb_log_level;
-----
-sdb_log_level
-authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning
+control substitution on
 
-
-statement ok
-SET sdb_log_level TO 'all=trace';
-
+# DuckDB `logging_level` / `logging_storage` are process-global settings held
+# in LogManager config. They are NOT persisted to storage; on every (re)start
+# the boot values come from --log_level / --log_storage CLI flags (default
+# "info" / "stdout"). This test confirms a runtime SET GLOBAL does not survive
+# a crash.
 
 query
-SHOW sdb_log_level;
+SHOW logging_level;
 ----
-sdb_log_level
-authentication=trace,authorization=trace,communication=trace,config=trace,crash=trace,engines=trace,flush=trace,general=trace,httpclient=trace,memory=trace,replication=trace,requests=trace,rocksdb=trace,ssl=trace,startup=trace,statistics=trace,syscall=trace,threads=trace
-
-
-statement ok
-SET sdb_log_level TO 'requests=debug';
+logging_level
+INFO
 
 
 query
-SHOW sdb_log_level;
+SHOW logging_storage;
 ----
-sdb_log_level
-authentication=trace,authorization=trace,communication=trace,config=trace,crash=trace,engines=trace,flush=trace,general=trace,httpclient=trace,memory=trace,replication=trace,requests=debug,rocksdb=trace,ssl=trace,startup=trace,statistics=trace,syscall=trace,threads=trace
+logging_storage
+stdout
 
 
 statement ok
-RESET sdb_log_level;
+SET GLOBAL logging_level = 'debug';
 
 
 query
-SHOW sdb_log_level;
+SHOW logging_level;
 ----
-sdb_log_level
-authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning
-
-
-query error
-SET LOCAL sdb_log_level TO 'all=debug';
-----
-db error: ERROR: SET LOCAL can only be used in transaction blocks
+logging_level
+DEBUG
 
 
 statement ok
-BEGIN;
+SET sdb_faults = 'crash_on_packet';
 
 
-query error
-SET sdb_log_level TO 'all=debug';
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
 ----
-db error: ERROR: parameter "sdb_log_level" is global and cannot be set inside a transaction
+?column?
+1
 
 
-statement ok
-ROLLBACK;
+# Runtime SET GLOBAL was lost; the flag default (info) is back.
+connection after_crash
+query
+SHOW logging_level;
+----
+logging_level
+INFO
+
+
+connection after_crash
+query
+SHOW logging_storage;
+----
+logging_storage
+stdout

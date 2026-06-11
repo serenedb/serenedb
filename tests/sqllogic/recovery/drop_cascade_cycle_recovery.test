@@ -1,0 +1,71 @@
+control substitution on
+
+
+# Mutual / cyclic dependency: view body references function, function body
+# references view. The cycle is the primary motivation for FinalizeLoad's
+# second pass -- AddDependencies during load processes objects in some order
+# and one of the two edges hits a not-yet-loaded target. ModifyDependency
+# tolerates the missing target under _in_load, and FinalizeLoad fills the
+# edge in after every object has registered its dependency record.
+
+statement ok
+CREATE TABLE kostya_t (n INT);
+
+
+statement count 2
+INSERT INTO kostya_t VALUES (1), (2);
+
+
+# 1. Plain function over the table.
+statement ok
+CREATE FUNCTION babsky_fn(x INT) AS x + 1;
+
+
+# 2. View references the function.
+statement ok
+CREATE VIEW clickclack_v AS SELECT babsky_fn(n) AS c FROM kostya_t;
+
+
+# 3. OR REPLACE function so its body references the view -- now g <-> v.
+statement ok
+CREATE OR REPLACE FUNCTION babsky_fn(x INT) AS (SELECT count(*)::INT FROM clickclack_v) + x;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Both halves of the cycle survived; RESTRICT is blocked from either side.
+connection after_crash
+statement error (?i)cannot drop function .*babsky_fn.* because other objects depend on it
+DROP FUNCTION babsky_fn;
+
+
+connection after_crash
+statement error (?i)cannot drop (table|relation|view) .*clickclack_v.* because other objects depend on it
+DROP VIEW clickclack_v;
+
+
+# CASCADE from either side drops both. Pick the function side.
+connection after_crash
+statement ok
+DROP FUNCTION babsky_fn CASCADE;
+
+
+connection after_crash
+statement error (?i)(table|relation|view).*clickclack_v.*does not exist
+SELECT * FROM clickclack_v;
+
+
+connection after_crash
+statement ok
+DROP TABLE kostya_t;

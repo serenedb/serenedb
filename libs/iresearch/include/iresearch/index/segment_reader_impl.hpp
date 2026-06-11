@@ -25,19 +25,20 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <memory>
+#include <vector>
 
+#include "basics/containers/flat_hash_map.h"
+#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
-namespace columnstore {
 
-class Reader;
+class ColReader;
 class NormColumnReader;
-
-}  // namespace columnstore
 
 class SegmentReaderImpl final : public SubReader {
   struct PrivateTag final {
@@ -56,7 +57,7 @@ class SegmentReaderImpl final : public SubReader {
     const Directory& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options);
 
-  std::shared_ptr<const SegmentReaderImpl> ReopenColumnStore(
+  std::shared_ptr<const SegmentReaderImpl> ReopenReader(
     const Directory& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options) const;
   std::shared_ptr<const SegmentReaderImpl> UpdateMeta(
@@ -72,26 +73,28 @@ class SegmentReaderImpl final : public SubReader {
 
   DocIterator::ptr mask(DocIterator::ptr&& it) const final;
 
-  const TermReader* field(std::string_view name) const final {
-    return _field_reader->field(name);
+  const TermReader* field(field_id id) const final {
+    return _field_reader->field(id);
   }
 
-  FieldIterator::ptr fields() const final { return _field_reader->iterator(); }
+  std::span<const field_id> field_ids() const final {
+    return _field_reader->field_ids();
+  }
 
   NormReader::ptr norms(field_id field) const final;
 
-  const columnstore::ColumnReader* Column(field_id field) const final;
-  const columnstore::HNSWReader* HNSW(field_id field) const final;
-  const columnstore::Reader* CsReader() const final {
-    return _data ? _data->cs_reader.get() : nullptr;
+  const ColumnReader* Column(field_id field) const final;
+  const HnswReader* HNSW(field_id field) const final;
+  const ColReader* GetColReader() const final {
+    return _data ? _data->col_reader.get() : nullptr;
   }
 
  private:
   struct ColumnData {
-    // Per-segment columnstore reader. Opened when IndexReaderOptions::db
-    // is non-null; norm-bearing fields are looked up directly off it via
-    // SegmentReaderImpl::norms(field_id).
-    std::unique_ptr<columnstore::Reader> cs_reader;
+    std::unique_ptr<ColReader> col_reader;
+    std::unique_ptr<IdxReader> idx_reader;
+    std::vector<std::unique_ptr<HnswReader>> hnsw_readers;
+    sdb::containers::FlatHashMap<field_id, const HnswReader*> hnsw_by_id;
 
     void Open(const Directory& dir, const SegmentMeta& meta,
               const IndexReaderOptions& options);
@@ -100,8 +103,8 @@ class SegmentReaderImpl final : public SubReader {
   FileRefs _refs;
   SegmentInfo _info;
   std::shared_ptr<const DocumentMask> _docs_mask;
-  FieldReader::ptr _field_reader;
   std::shared_ptr<ColumnData> _data;
+  std::shared_ptr<burst_trie::FieldReader> _field_reader;
 };
 
 }  // namespace irs

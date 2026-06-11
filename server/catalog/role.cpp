@@ -22,19 +22,18 @@
 #include "catalog/role.h"
 
 #include <absl/strings/match.h>
-#include <vpack/iterator.h>
-#include <vpack/vpack_helper.h>
 
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <map>
 #include <string_view>
 
 #include "app/app_server.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/random/uniform_character.h"
+#include "basics/serializer.h"
 #include "basics/ssl/ssl_interface.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
-#include "basics/system-functions.h"
-#include "basics/write_locker.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
 #include "general_server/general_server_feature.h"
@@ -76,8 +75,7 @@ ErrorCode HexHashFromData(std::string_view hash_method, std::string_view str,
     crypted_length = 16;
   } else {
     // invalid algorithm...
-    SDB_DEBUG("xxxxx", Logger::AUTHENTICATION,
-              "invalid algorithm for hexHashFromData: ", hash_method);
+    SDB_DEBUG(GENERAL, "invalid algorithm for hexHashFromData: ", hash_method);
     return ERROR_BAD_PARAMETER;
   }
 
@@ -88,38 +86,6 @@ ErrorCode HexHashFromData(std::string_view hash_method, std::string_view str,
   return ERROR_OK;
 }
 
-void AddAuthLevel(vpack::Builder& build, auth::Level lvl) {
-  if (lvl == auth::Level::RW) {
-    build.add("read", true);
-    build.add("write", true);
-  } else if (lvl == auth::Level::RO) {
-    build.add("read", true);
-    build.add("write", false);
-  } else if (lvl == auth::Level::None) {
-    build.add("read", false);
-    build.add("write", false);
-  } else if (lvl == auth::Level::Undefined) {
-    build.add("undefined", true);
-  }
-}
-
-auth::Level AuthLevelFromSlice(vpack::Slice slice) {
-  SDB_ASSERT(slice.isObject());
-  vpack::Slice v = slice.get("write");
-  if (v.isBool() && v.isTrue()) {
-    return auth::Level::RW;
-  }
-  v = slice.get("read");
-  if (v.isBool() && v.isTrue()) {
-    return auth::Level::RO;
-  }
-  v = slice.get("undefined");
-  if (v.isBool() && v.isTrue()) {
-    return auth::Level::Undefined;
-  }
-  return auth::Level::None;
-}
-
 }  // namespace
 
 Role::Role(PrivateTag, ObjectId id, std::string_view name)
@@ -128,33 +94,23 @@ Role::Role(PrivateTag, ObjectId id, std::string_view name)
 Role::Role(ObjectId id, std::string_view name)
   : catalog::Object{{}, id, std::string{name}, ObjectType::Role} {}
 
-void catalog::Role::WriteInternal(vpack::Builder& b) const {
-  b.openObject();
-  WriteObject(b, [&](vpack::Builder& build) {
-    build.add("id", GetId().id());
-    {
-      vpack::ObjectBuilder auth_guard{&build, "authData", true};
-      build.add("active", _active);
-      {
-        vpack::ObjectBuilder password_guard{&build, "simple", true};
-        build.add("hash", _password_hash);
-        build.add("salt", _password_salt);
-        build.add("method", _password_method);
-      }
-    }
-    {
-      vpack::ObjectBuilder databases_guard{&build, "databases", true};
-      for (const auto& [name, context] : _db_access) {
-        vpack::ObjectBuilder database_guard{&build, name, true};
-        {
-          vpack::ObjectBuilder permissions_guard{&build, "permissions", true};
-          auto lvl = context.database_auth_level;
-          AddAuthLevel(build, lvl);
-        }
-      }
-    }
-  });
-  b.close();
+RoleData Role::ToData() const {
+  RoleData data{
+    .id = GetId(),
+    .name = std::string{GetName()},
+    .active = _active,
+    .password_method = _password_method,
+    .password_salt = _password_salt,
+    .password_hash = _password_hash,
+  };
+  for (const auto& [db_name, context] : _db_access) {
+    data.db_access.emplace(db_name, context.database_auth_level);
+  }
+  return data;
+}
+
+void catalog::Role::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(sink, ToData());
 }
 
 std::shared_ptr<catalog::Role> catalog::Role::NewUser(std::string_view name,
@@ -180,90 +136,33 @@ std::shared_ptr<catalog::Role> catalog::Role::NewUser(std::string_view name,
   return role;
 }
 
-void catalog::Role::fromDocumentDatabases(catalog::Role& role,
-                                          vpack::Slice databases_slice) {
-  for (const auto& [obj_key, obj_value] :
-       vpack::ObjectIterator{databases_slice}) {
-    const auto db_name = obj_key.stringView();
-
-    if (obj_value.isObject()) {
-      auto database_auth = auth::Level::None;
-
-      const auto permissions_slice = obj_value.get("permissions");
-
-      if (permissions_slice.isObject()) {
-        database_auth = AuthLevelFromSlice(permissions_slice);
-      }
-
-      try {
-        role.grantDatabase(db_name, database_auth);
-      } catch (const basics::Exception& e) {
-        SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, e.message());
-      }
-    } else {
-      auto value = obj_value.stringView();
-      if (absl::EqualsIgnoreCase(value, "rw")) {
-        role.grantDatabase(db_name, auth::Level::RW);
-      } else if (absl::EqualsIgnoreCase(value, "ro")) {
-        role.grantDatabase(db_name, auth::Level::RO);
-      }
+std::shared_ptr<Role> Role::FromData(RoleData data) {
+  auto role =
+    std::make_shared<catalog::Role>(Role::PrivateTag{}, data.id, data.name);
+  role->updateActive(data.active);
+  role->_password_method = std::move(data.password_method);
+  role->_password_salt = std::move(data.password_salt);
+  role->_password_hash = std::move(data.password_hash);
+  for (const auto& [db_name, level] : data.db_access) {
+    try {
+      role->grantDatabase(db_name, level);
+    } catch (const basics::Exception& e) {
+      SDB_DEBUG(GENERAL, e.message());
     }
   }
-}
-
-std::shared_ptr<Role> Role::ReadInternal(vpack::Slice slice, ReadContext) {
-  if (!slice.isObject()) {
-    return nullptr;
-  }
-
-  auto name_slice = slice.get("name");
-  if (!name_slice.isString()) {
-    return nullptr;
-  }
-
-  auto auth_data_slice = slice.get("authData");
-  if (!auth_data_slice.isObject()) {
-    return nullptr;
-  }
-
-  auto simple_slice = auth_data_slice.get("simple");
-  if (!simple_slice.isObject()) {
-    return nullptr;
-  }
-
-  auto method_slice = simple_slice.get("method");
-  auto salt_slice = simple_slice.get("salt");
-  auto hash_slice = simple_slice.get("hash");
-
-  if (!method_slice.isString() || !salt_slice.isString() ||
-      !hash_slice.isString()) {
-    return nullptr;
-  }
-
-  auto active_slice = auth_data_slice.get("active");
-  if (!active_slice.isBool()) {
-    return nullptr;
-  }
-
-  const ObjectId id{basics::VPackHelper::extractIdValue(slice)};
-  auto role =
-    std::make_shared<catalog::Role>(PrivateTag{}, id, name_slice.stringView());
-
-  role->_active = active_slice.getBool();
-  role->_password_method = method_slice.stringView();
-  role->_password_salt = salt_slice.stringView();
-  role->_password_hash = hash_slice.stringView();
-
-  auto databases_slice = slice.get("databases");
-  if (databases_slice.isObject()) {
-    fromDocumentDatabases(*role, databases_slice);
-  }
-  // ensure the root user always has the right to change permissions
-  if (role->_name == StaticStrings::kDefaultUser) {
+  // The default user always retains RW on the default database -- enforced
+  // at load time so a tampered or downgraded grant can't lock it out.
+  if (data.name == StaticStrings::kDefaultUser) {
     role->grantDatabase(StaticStrings::kDefaultDatabase, auth::Level::RW);
   }
-
   return role;
+}
+
+std::shared_ptr<Role> Role::Deserialize(duckdb::Deserializer& src,
+                                        ReadContext) {
+  RoleData data;
+  basics::ReadTuple(src, data);
+  return FromData(std::move(data));
 }
 
 bool catalog::Role::checkPassword(std::string_view password) const {
@@ -297,8 +196,8 @@ void catalog::Role::grantDatabase(std::string_view database,
               StaticStrings::kDefaultUser, "' to ",
               StaticStrings::kDefaultDatabase);
   }
-  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, _name, ": Granting ",
-            ConvertFromAuthLevel(level), " on ", database);
+  SDB_DEBUG(GENERAL, _name, ": Granting ", ConvertFromAuthLevel(level), " on ",
+            database);
 
   auto it = _db_access.find(database);
   if (it != _db_access.end()) {
@@ -322,8 +221,7 @@ bool catalog::Role::removeDatabase(std::string_view database) {
               StaticStrings::kDefaultUser, "' to ",
               StaticStrings::kDefaultDatabase);
   }
-  SDB_DEBUG("xxxxx", Logger::AUTHENTICATION, _name, ": Removing grant on ",
-            database);
+  SDB_DEBUG(GENERAL, _name, ": Removing grant on ", database);
   return _db_access.erase(database) > 0;
 }
 
@@ -357,9 +255,9 @@ auth::Level catalog::Role::databaseAuthLevel(std::string_view database) const {
 }
 
 std::shared_ptr<Object> Role::Clone() const {
-  vpack::Builder b;
-  WriteInternal(b);
-  return ReadInternal(b.slice(), {});
+  duckdb::MemoryStream stream;
+  return catalog::DeserializeObject<Role>(
+    catalog::SerializeObject(*this, stream), {});
 }
 
 }  // namespace sdb::catalog

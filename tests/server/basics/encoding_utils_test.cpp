@@ -19,13 +19,12 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/common.h>
-
 #include "basics/buffer.h"
 #include "basics/common.h"
 #include "basics/encoding_utils.h"
 #include "basics/errors.h"
 #include "basics/string_buffer.h"
+#include "basics/wyhash.h"
 #include "gtest/gtest.h"
 
 using namespace sdb;
@@ -59,16 +58,16 @@ constexpr char kMediumString[] =
 }  // namespace
 
 TEST(EncodingUtilsTest, testVPackBufferZlibInflateDeflate) {
-  vpack::BufferUInt8 buffer;
+  basics::BufferUInt8 buffer;
 
   // test with an empty input
   {
-    vpack::BufferUInt8 deflated;
+    basics::BufferUInt8 deflated;
     EXPECT_EQ(sdb::ERROR_OK,
               encoding::ZLibDeflate(buffer.data(), buffer.size(), deflated));
     EXPECT_EQ(0, deflated.size());
     EXPECT_EQ(9095565465875628745ULL,
-              VPACK_HASH(deflated.data(), deflated.size(), 0xdeadbeef));
+              basics::WyHash(deflated.data(), deflated.size(), 0xdeadbeef));
   }
 
   // test with a short string first
@@ -77,25 +76,25 @@ TEST(EncodingUtilsTest, testVPackBufferZlibInflateDeflate) {
 
     EXPECT_EQ(61, buffer.size());
     EXPECT_EQ(8692035728977180514ULL,
-              VPACK_HASH(buffer.data(), buffer.size(), 0xdeadbeef));
+              basics::WyHash(buffer.data(), buffer.size(), 0xdeadbeef));
 
     // deflate the string
-    vpack::BufferUInt8 deflated;
+    basics::BufferUInt8 deflated;
     EXPECT_EQ(sdb::ERROR_OK,
               encoding::ZLibDeflate(buffer.data(), buffer.size(), deflated));
 
     EXPECT_EQ(61, deflated.size());
     EXPECT_EQ(11939602800036708587ULL,
-              VPACK_HASH(deflated.data(), deflated.size(), 0xdeadbeef));
+              basics::WyHash(deflated.data(), deflated.size(), 0xdeadbeef));
 
     // now inflate it. we should be back at the original size & content
-    vpack::BufferUInt8 inflated;
+    basics::BufferUInt8 inflated;
     EXPECT_EQ(ERROR_OK, encoding::ZLibInflate(deflated.data(), deflated.size(),
                                               inflated));
 
     EXPECT_EQ(61, inflated.size());
     EXPECT_EQ(8692035728977180514ULL,
-              VPACK_HASH(inflated.data(), inflated.size(), 0xdeadbeef));
+              basics::WyHash(inflated.data(), inflated.size(), 0xdeadbeef));
   }
 
   // now try a longer string
@@ -105,25 +104,25 @@ TEST(EncodingUtilsTest, testVPackBufferZlibInflateDeflate) {
 
     EXPECT_EQ(2073, buffer.size());
     EXPECT_EQ(7801811617998092707ULL,
-              VPACK_HASH(buffer.data(), buffer.size(), 0xdeadbeef));
+              basics::WyHash(buffer.data(), buffer.size(), 0xdeadbeef));
 
     // deflate the string
-    vpack::BufferUInt8 deflated;
+    basics::BufferUInt8 deflated;
     EXPECT_EQ(sdb::ERROR_OK,
               encoding::ZLibDeflate(buffer.data(), buffer.size(), deflated));
 
     EXPECT_EQ(907, deflated.size());
     EXPECT_EQ(11264577993052485727ULL,
-              VPACK_HASH(deflated.data(), deflated.size(), 0xdeadbeef));
+              basics::WyHash(deflated.data(), deflated.size(), 0xdeadbeef));
 
     // now inflate it. we should be back at the original size & content
-    vpack::BufferUInt8 inflated;
+    basics::BufferUInt8 inflated;
     EXPECT_EQ(ERROR_OK, encoding::ZLibInflate(deflated.data(), deflated.size(),
                                               inflated));
 
     EXPECT_EQ(2073, inflated.size());
     EXPECT_EQ(7801811617998092707ULL,
-              VPACK_HASH(inflated.data(), inflated.size(), 0xdeadbeef));
+              basics::WyHash(inflated.data(), inflated.size(), 0xdeadbeef));
   }
 
   // now with a 1 MB string
@@ -134,36 +133,36 @@ TEST(EncodingUtilsTest, testVPackBufferZlibInflateDeflate) {
     }
     EXPECT_EQ(1024 * 1024, buffer.size());
     EXPECT_EQ(8549693651586153351ULL,
-              VPACK_HASH(buffer.data(), buffer.size(), 0xdeadbeef));
+              basics::WyHash(buffer.data(), buffer.size(), 0xdeadbeef));
 
     // deflate the string
-    vpack::BufferUInt8 deflated;
+    basics::BufferUInt8 deflated;
     EXPECT_EQ(sdb::ERROR_OK,
               encoding::ZLibDeflate(buffer.data(), buffer.size(), deflated));
 
     EXPECT_EQ(4396, deflated.size());
     EXPECT_EQ(16555912008391160024ULL,
-              VPACK_HASH(deflated.data(), deflated.size(), 0xdeadbeef));
+              basics::WyHash(deflated.data(), deflated.size(), 0xdeadbeef));
 
     // now inflate it. we should be back at the original size & content
-    vpack::BufferUInt8 inflated;
+    basics::BufferUInt8 inflated;
     EXPECT_EQ(ERROR_OK, encoding::ZLibInflate(deflated.data(), deflated.size(),
                                               inflated));
 
     EXPECT_EQ(1024 * 1024, inflated.size());
     EXPECT_EQ(8549693651586153351ULL,
-              VPACK_HASH(inflated.data(), inflated.size(), 0xdeadbeef));
+              basics::WyHash(inflated.data(), inflated.size(), 0xdeadbeef));
   }
 
   // test deflating with empty input
   buffer.clear();
   {
-    vpack::BufferUInt8 deflated;
+    basics::BufferUInt8 deflated;
     EXPECT_EQ(sdb::ERROR_OK,
               encoding::ZLibDeflate(buffer.data(), buffer.size(), deflated));
     EXPECT_EQ(0, deflated.size());
     EXPECT_EQ(9095565465875628745ULL,
-              VPACK_HASH(deflated.data(), deflated.size(), 0xdeadbeef));
+              basics::WyHash(deflated.data(), deflated.size(), 0xdeadbeef));
   }
 
   // test inflating with broken input
@@ -171,11 +170,11 @@ TEST(EncodingUtilsTest, testVPackBufferZlibInflateDeflate) {
   {
     buffer.append("this-is-broken-deflated-content");
 
-    vpack::BufferUInt8 inflated;
+    basics::BufferUInt8 inflated;
     EXPECT_EQ(sdb::ERROR_INTERNAL,
               encoding::ZLibInflate(buffer.data(), buffer.size(), inflated));
     EXPECT_EQ(0, inflated.size());
     EXPECT_EQ(9095565465875628745ULL,
-              VPACK_HASH(inflated.data(), inflated.size(), 0xdeadbeef));
+              basics::WyHash(inflated.data(), inflated.size(), 0xdeadbeef));
   }
 }

@@ -33,9 +33,9 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/memory.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/read_context.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_iterator.hpp"
 #include "iresearch/search/cost.hpp"
@@ -49,11 +49,11 @@ static_assert(sizeof(duckdb::validity_t) == sizeof(uint64_t));
 
 class ColumnExistenceIterator : public DocIterator {
  public:
-  ColumnExistenceIterator(const columnstore::ColumnReader& reader,
-                          const columnstore::Reader& cs_reader,
+  ColumnExistenceIterator(const ColumnReader& reader,
+                          const ColReader& col_reader,
                           CostAttr::Type cost) noexcept
     : _reader{&reader},
-      _ctx{cs_reader},
+      _ctx{col_reader},
       _scan{reader, _ctx, /*validity_side=*/true},
       _batch{reader.Type(), /*capacity=*/0} {
     _batch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
@@ -177,9 +177,9 @@ class ColumnExistenceIterator : public DocIterator {
 
   using Attributes = std::tuple<CostAttr>;
 
-  const columnstore::ColumnReader* _reader;
-  columnstore::ReadContext _ctx;
-  columnstore::ColumnReader::RangeScan _scan;
+  const ColumnReader* _reader;
+  ReadContext _ctx;
+  ColumnReader::RangeScan _scan;
   duckdb::Vector _batch;
   Attributes _attrs;
 
@@ -268,11 +268,11 @@ class ColumnExistenceQuery : public Filter::Query {
       return memory::make_managed<AllDocsExistenceIterator>(
         static_cast<uint32_t>(row_count), _boost);
     }
-    const auto* cs_reader = ctx.segment.CsReader();
-    SDB_ENSURE(cs_reader, sdb::ERROR_INTERNAL,
-               "column_existence_filter: segment has no columnstore reader");
+    const auto* col_reader = ctx.segment.GetColReader();
+    SDB_ENSURE(col_reader, sdb::ERROR_INTERNAL,
+               "column_existence_filter: segment has no .col reader");
     return memory::make_managed<ColumnExistenceIterator>(
-      *column, *cs_reader, static_cast<CostAttr::Type>(row_count));
+      *column, *col_reader, static_cast<CostAttr::Type>(row_count));
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}

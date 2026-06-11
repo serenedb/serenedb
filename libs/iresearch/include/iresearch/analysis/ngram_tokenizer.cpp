@@ -22,317 +22,42 @@
 
 #include "ngram_tokenizer.hpp"
 
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
-
 #include <string_view>
 
-#include "basics/containers/trivial_map.h"
-#include "iresearch/utils/hash_utils.hpp"
+#include "basics/exceptions.h"
 #include "iresearch/utils/utf8_utils.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
-namespace {
-
-constexpr std::string_view kMinParamName = "min";
-constexpr std::string_view kMaxParamName = "max";
-constexpr std::string_view kPreserveOriginalParamName = "preserveOriginal";
-constexpr std::string_view kStreamTypeParamName = "streamType";
-constexpr std::string_view kStartMarkerParamName = "startMarker";
-constexpr std::string_view kEndMarkerParamName = "endMarker";
-
-constexpr sdb::containers::TrivialBiMap kStreamTypeConvertMap =
-  [](auto selector) {
-    return selector()
-      .Case("binary", NGramTokenizerBase::InputType::Binary)
-      .Case("utf8", NGramTokenizerBase::InputType::UTF8);
-  };
-
-bool ParseVPackOptions(const vpack::Slice slice,
-                       NGramTokenizerBase::Options& options) {
-  if (!slice.isObject()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Slice for ngram_token_stream is not an object");
-    return false;
-  }
-
-  uint64_t min = 0, max = 0;
-  bool preserve_original = false;
-  auto stream_bytes_type = NGramTokenizerBase::InputType::Binary;
-  std::string_view start_marker, end_marker;
-
-  // min
-  auto min_type_slice = slice.get(kMinParamName);
-  if (min_type_slice.isNone()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Failed to read '", kMinParamName,
-                           "' attribute as number while constructing "
-                           "ngram_token_stream from VPack arguments"));
-    return false;
-  }
-
-  if (!min_type_slice.isNumber()) {
-    SDB_WARN(
-      "xxxxx", sdb::Logger::IRESEARCH, "Invalid type '", kMinParamName,
-      "' (unsigned int expected) for ngram_token_stream from VPack arguments");
-    return false;
-  }
-  min = min_type_slice.getNumber<decltype(min)>();
-
-  // max
-  auto max_type_slice = slice.get(kMaxParamName);
-  if (max_type_slice.isNone()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Failed to read '", kMaxParamName,
-                           "' attribute as number while constructing "
-                           "ngram_token_stream from VPack arguments"));
-    return false;
-  }
-  if (!max_type_slice.isNumber()) {
-    SDB_WARN(
-      "xxxxx", sdb::Logger::IRESEARCH, "Invalid type '", kMaxParamName,
-      "' (unsigned int expected) for ngram_token_stream from VPack arguments");
-    return false;
-  }
-  max = max_type_slice.getNumber<decltype(max)>();
-
-  min = std::max<decltype(min)>(min, 1);
-  max = std::max(max, min);
-
-  options.min_gram = min;
-  options.max_gram = max;
-
-  // preserve original
-  auto preserve_type_slice = slice.get(kPreserveOriginalParamName);
-  if (preserve_type_slice.isNone()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Failed to read '", kPreserveOriginalParamName,
-                           "' attribute as boolean while constructing "
-                           "ngram_token_stream from VPack arguments"));
-    return false;
-  }
-  if (!preserve_type_slice.isBool()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid type '",
-             kPreserveOriginalParamName,
-             "' (bool expected) for ngram_token_stream from VPack arguments");
-    return false;
-  }
-  preserve_original = preserve_type_slice.getBool();
-  options.preserve_original = preserve_original;
-
-  // start marker
-  if (auto start_marker_type_slice = slice.get(kStartMarkerParamName);
-      !start_marker_type_slice.isNone()) {
-    if (!start_marker_type_slice.isString()) {
-      SDB_WARN(
-        "xxxxx", sdb::Logger::IRESEARCH, "Invalid type '",
-        kStartMarkerParamName,
-        "' (string expected) for ngram_token_stream from VPack arguments");
-      return false;
-    }
-    start_marker = start_marker_type_slice.stringView();
-  }
-  options.start_marker = ViewCast<byte_type>(start_marker);
-
-  // end marker
-  if (auto end_marker_type_slice = slice.get(kEndMarkerParamName);
-      !end_marker_type_slice.isNone()) {
-    if (!end_marker_type_slice.isString()) {
-      SDB_WARN(
-        "xxxxx", sdb::Logger::IRESEARCH, "Invalid type '", kEndMarkerParamName,
-        "' (string expected) for ngram_token_stream from VPack arguments");
-      return false;
-    }
-    end_marker = end_marker_type_slice.stringView();
-  }
-  options.end_marker = ViewCast<byte_type>(end_marker);
-
-  // stream bytes
-  if (auto stream_type_slice = slice.get(kStreamTypeParamName);
-      !stream_type_slice.isNone()) {
-    if (!stream_type_slice.isString()) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-string value in '",
-               kStreamTypeParamName,
-               "' while constructing ngram_token_stream from VPack arguments");
-      return false;
-    }
-    auto stream_type = stream_type_slice.stringView();
-    auto itr = kStreamTypeConvertMap.TryFindByFirst(stream_type);
-    if (!itr) {
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Invalid value in '",
-               kStreamTypeParamName,
-               "' while constructing ngram_token_stream from VPack arguments");
-      return false;
-    }
-    stream_bytes_type = *itr;
-  }
-  options.stream_bytes_type = stream_bytes_type;
-
-  return true;
-}
-
-bool MakeVPackConfig(const NGramTokenizerBase::Options& options,
-                     vpack::Builder* builder) {
-  // ensure disambiguating casts below are safe. Casts required for clang
-  // compiler on Mac
-  static_assert(sizeof(uint64_t) >= sizeof(size_t),
-                "sizeof(uint64_t) >= sizeof(size_t)");
-
-  vpack::ObjectBuilder object(builder);
-  {
-    // min_gram
-    builder->add(kMinParamName, options.min_gram);
-
-    // max_gram
-    builder->add(kMaxParamName, options.max_gram);
-
-    // preserve_original
-    builder->add(kPreserveOriginalParamName, options.preserve_original);
-
-    // stream type
-    auto stream_type_value =
-      kStreamTypeConvertMap.TryFindBySecond(options.stream_bytes_type);
-
-    if (stream_type_value) {
-      builder->add(kStreamTypeParamName, *stream_type_value);
-    } else {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                absl::StrCat("Invalid ", kStreamTypeParamName,
-                             " value in ngram analyzer options: ",
-                             static_cast<int>(options.stream_bytes_type)));
-      return false;
-    }
-
-    // start_marker
-    builder->add(kStartMarkerParamName,
-                 ViewCast<char>(bytes_view{options.start_marker}));
-    // end_marker
-    builder->add(kEndMarkerParamName,
-                 ViewCast<char>(bytes_view{options.end_marker}));
-  }
-
-  return true;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief args is a jSON encoded object with the following attributes:
-///        "min" (number): minimum ngram size
-///        "max" (number): maximum ngram size
-///        "preserveOriginal" (boolean): preserve or not the original term
-////////////////////////////////////////////////////////////////////////////////
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  NGramTokenizerBase::Options options;
-  if (ParseVPackOptions(slice, options)) {
-    switch (options.stream_bytes_type) {
-      case NGramTokenizerBase::InputType::Binary:
-        return NGramTokenizer<NGramTokenizerBase::InputType::Binary>::make(
-          options);
-      case NGramTokenizerBase::InputType::UTF8:
-        return NGramTokenizer<NGramTokenizerBase::InputType::UTF8>::make(
-          options);
-    }
-  }
-
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-///////////////////////////////////////////////////////////////////////////////
-/// @brief builds analyzer config from internal options in json format
-///////////////////////////////////////////////////////////////////////////////
-bool NormalizeVPackConfig(const vpack::Slice slice,
-                          vpack::Builder* vpack_builder) {
-  NGramTokenizerBase::Options options;
-  if (ParseVPackOptions(slice, options)) {
-    return MakeVPackConfig(options, vpack_builder);
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& config) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  if (NormalizeVPackConfig(slice, &builder)) {
-    config.assign(builder.slice().startAs<char>(), builder.slice().byteSize());
-    return true;
-  }
-  return false;
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while constructing ngram_token_stream");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing ngram_token_stream from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while constructing ngram_token_stream from JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while normalizing ngram_token_stream");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder builder;
-    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
-      definition = builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Caught error '", ex.what(),
-                           "' while normalizing ngram_token_stream from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while normalizing ngram_token_stream from JSON");
-  }
-  return false;
-}
-
-}  // namespace
 
 template<NGramTokenizerBase::InputType StreamType>
-Analyzer::ptr NGramTokenizer<StreamType>::make(const Options& options) {
-  return std::make_unique<NGramTokenizer<StreamType>>(options);
+Analyzer::ptr NGramTokenizer<StreamType>::make(Options&& options) {
+  return std::make_unique<NGramTokenizer<StreamType>>(std::move(options));
 }
 
-void NGramTokenizerBase::init() {
-  REGISTER_ANALYZER_VPACK(NGramTokenizerBase, MakeVPack, NormalizeVPackConfig);
-  REGISTER_ANALYZER_JSON(NGramTokenizerBase, MakeJson, NormalizeJsonConfig);
-}
-
-NGramTokenizerBase::NGramTokenizerBase(const Options& options)
-  : _options(options),
-    _start_marker_empty(options.start_marker.empty()),
-    _end_marker_empty(options.end_marker.empty()) {
+NGramTokenizerBase::NGramTokenizerBase(Options&& options)
+  : _options(std::move(options)),
+    _start_marker_empty(_options.start_marker.empty()),
+    _end_marker_empty(_options.end_marker.empty()) {
   _options.min_gram = std::max<size_t>(_options.min_gram, 1);
   _options.max_gram = std::max(_options.max_gram, _options.min_gram);
 }
 
+Analyzer::ptr NGramTokenizerBase::Make(Options opts) {
+  const auto stream_bytes_type = opts.stream_bytes_type;
+  switch (stream_bytes_type) {
+    case NGramTokenizerBase::InputType::Binary:
+      return NGramTokenizer<NGramTokenizerBase::InputType::Binary>::make(
+        std::move(opts));
+    case NGramTokenizerBase::InputType::UTF8:
+      return NGramTokenizer<NGramTokenizerBase::InputType::UTF8>::make(
+        std::move(opts));
+  }
+  SDB_THROW(sdb::ERROR_BAD_PARAMETER, "ngram: unsupported input type");
+}
+
 template<NGramTokenizerBase::InputType StreamType>
-NGramTokenizer<StreamType>::NGramTokenizer(const Options& options)
-  : NGramTokenizerBase{options} {
+NGramTokenizer<StreamType>::NGramTokenizer(Options&& options)
+  : NGramTokenizerBase{std::move(options)} {
   SDB_ASSERT(StreamType == _options.stream_bytes_type);
 }
 
@@ -354,8 +79,7 @@ void NGramTokenizerBase::emit_original() noexcept {
       SDB_ASSERT(_marked_term_buffer.capacity() >=
                  (_options.end_marker.size() + _data.size()));
       _marked_term_buffer.append(_data.data(), _data_end);
-      _marked_term_buffer.append(_options.end_marker.begin(),
-                                 _options.end_marker.end());
+      _marked_term_buffer.append_range(_options.end_marker);
       term.value = _marked_term_buffer;
       SDB_ASSERT(_marked_term_buffer.size() <=
                  std::numeric_limits<uint32_t>::max());
@@ -369,8 +93,7 @@ void NGramTokenizerBase::emit_original() noexcept {
       _marked_term_buffer.clear();
       SDB_ASSERT(_marked_term_buffer.capacity() >=
                  (_options.start_marker.size() + _data.size()));
-      _marked_term_buffer.append(_options.start_marker.begin(),
-                                 _options.start_marker.end());
+      _marked_term_buffer.append_range(_options.start_marker);
       _marked_term_buffer.append(_data.data(), _data_end);
       term.value = _marked_term_buffer;
       SDB_ASSERT(_marked_term_buffer.size() <=
@@ -486,8 +209,7 @@ bool NGramTokenizer<StreamType>::next() noexcept {
             _marked_term_buffer.clear();
             SDB_ASSERT(_marked_term_buffer.capacity() >=
                        (_options.start_marker.size() + ngram_byte_len));
-            _marked_term_buffer.append(_options.start_marker.begin(),
-                                       _options.start_marker.end());
+            _marked_term_buffer.append_range(_options.start_marker);
             _marked_term_buffer.append(_begin, ngram_byte_len);
             term.value = _marked_term_buffer;
             SDB_ASSERT(_marked_term_buffer.size() <=
@@ -504,8 +226,7 @@ bool NGramTokenizer<StreamType>::next() noexcept {
             SDB_ASSERT(_marked_term_buffer.capacity() >=
                        (_options.end_marker.size() + ngram_byte_len));
             _marked_term_buffer.append(_begin, ngram_byte_len);
-            _marked_term_buffer.append(_options.end_marker.begin(),
-                                       _options.end_marker.end());
+            _marked_term_buffer.append_range(_options.end_marker);
             term.value = _marked_term_buffer;
           }
         } else {

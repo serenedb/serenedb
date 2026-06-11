@@ -20,18 +20,18 @@
 
 #pragma once
 
-#include <vpack/slice.h>
-
 #include "geo/geo_json.h"
 #include "iresearch/analysis/geo_analyzer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
+#include "iresearch/types.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs::tests {
 
 struct StringField final {
   std::string_view Name() const { return field_name; }
+  irs::field_id Id() const noexcept { return id; }
 
   irs::Tokenizer& GetTokens() const {
     stream.reset(value);
@@ -50,21 +50,26 @@ struct StringField final {
   mutable irs::StringTokenizer stream;
   std::string_view value;
   std::string_view field_name;
+  irs::field_id id{irs::field_limits::invalid()};
 };
 
 struct GeoField final {
   std::string_view Name() const { return field_name; }
+  irs::field_id Id() const noexcept { return id; }
 
   irs::Tokenizer& GetTokens() const {
-    if (!shape_slice.isNone()) {
-      static_cast<irs::analysis::GeoAnalyzer&>(*stream).reset(shape_slice);
+    if (!value.empty()) {
+      static_cast<irs::analysis::GeoAnalyzer&>(*stream).reset(value);
     }
     return *stream.get();
   }
 
+  // Source coding force-includes the indexed source column, so the stored
+  // value is the original GeoJSON text the filter re-parses at query time.
   bool Write(irs::DataOutput& out) const {
-    if (!shape_slice.isNone()) {
-      out.WriteBytes(shape_slice.start(), shape_slice.byteSize());
+    if (!value.empty()) {
+      out.WriteBytes(reinterpret_cast<const irs::byte_type*>(value.data()),
+                     value.size());
     }
     return true;
   }
@@ -74,10 +79,11 @@ struct GeoField final {
   }
 
   mutable irs::analysis::Analyzer::ptr stream{
-    irs::analysis::GeoJsonAnalyzer::make(
-      irs::slice_to_view<char>(vpack::Slice::emptyObjectSlice()))};
-  vpack::Slice shape_slice;
+    irs::analysis::GeoJsonAnalyzer::Make(
+      irs::analysis::GeoJsonAnalyzer::Options{})};
+  std::string_view value;
   std::string_view field_name;
+  irs::field_id id{irs::field_limits::invalid()};
 };
 
 }  // namespace irs::tests

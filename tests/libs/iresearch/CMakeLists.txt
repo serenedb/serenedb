@@ -56,7 +56,6 @@ set(iresearch-tests_sources
     ./search/regexp_filter_test.cpp
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp
-    ./search/scorers_tests.cpp
     ./search/bitset_doc_iterator_test.cpp
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
@@ -95,7 +94,6 @@ set(iresearch-tests_sources
     ./utils/bitvector_tests.cpp
     ./utils/encryption_test.cpp
     ./utils/container_utils_tests.cpp
-    ./utils/compression_test.cpp
     ./utils/crc_test.cpp
     ./utils/file_utils_tests.cpp
     ./utils/object_pool_tests.cpp
@@ -165,6 +163,9 @@ endif()
 
 target_link_libraries(
     iresearch-tests
+    # serene_base brings sdb::DuckDBEngine so tests_main can Initialize /
+    # Shutdown the LogManager that backs SDB_*. It re-exports duckdb_static
+    # PUBLICly.
     serene_base
     iresearch-static
     search-benchmark-common
@@ -194,18 +195,19 @@ target_include_directories(
         $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
-# Standalone SearchBench binary -- split out so CI doesn't have to compile and
+# Standalone iresearch-load binary -- split out so CI doesn't have to compile and
 # link the full iresearch-tests just to run the corpus-driven validation.
 add_executable(
-    iresearch-searchbench-tests
-    ./search/search_bench_test.cpp
+    iresearch-load-tests
+    ./search/load_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./tests_param.cpp
     ./tests_main.cpp
 )
 
 target_link_libraries(
-    iresearch-searchbench-tests
+    iresearch-load-tests
+    # See iresearch-tests note above re: serene_base dependency.
     serene_base
     iresearch-static
     search-benchmark-common
@@ -215,11 +217,11 @@ target_link_libraries(
 )
 
 target_include_directories(
-    iresearch-searchbench-tests
+    iresearch-load-tests
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
 )
 target_include_directories(
-    iresearch-searchbench-tests
+    iresearch-load-tests
     SYSTEM
     PRIVATE
         ${Fasttext_INCLUDE_DIR}

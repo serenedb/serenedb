@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <vpack/slice.h>
-
 #include <boost/pfr.hpp>
 #include <boost/pfr/core.hpp>
 #include <boost/pfr/detail/core17_generated.hpp>
@@ -29,7 +27,9 @@
 #include <tuple>
 #include <type_traits>
 
+#include "basics/assert.h"
 #include "basics/identifier.h"
+#include "basics/string_utils.h"
 
 namespace sdb::rocksutils {
 namespace detail {
@@ -38,8 +38,6 @@ template<typename T>
 constexpr size_t GetByteSizeImpl(T v) noexcept {
   if constexpr (std::is_same_v<T, std::string_view>) {
     return v.size();
-  } else if constexpr (std::is_same_v<T, vpack::Slice>) {
-    return v.byteSize();
   } else if constexpr (std::is_integral_v<T> || std::is_enum_v<T> ||
                        std::is_base_of_v<basics::Identifier, T>) {
     return sizeof(T);
@@ -54,10 +52,6 @@ size_t WriteImpl(char* p, const T& v) noexcept {
     static_assert(sizeof(T) == 1);
     *p = std::to_underlying(v);
     return sizeof(T);
-  } else if constexpr (std::is_same_v<T, vpack::Slice>) {
-    const auto size = v.byteSize();
-    std::memcpy(p, v.start(), size);
-    return size;
   } else if constexpr (std::is_base_of_v<basics::Identifier, T>) {
     absl::big_endian::Store64(p, v.id());
     return sizeof(T);
@@ -77,9 +71,6 @@ const char* ReadImpl(const char* p, const char* end, T& v) noexcept {
   if constexpr (std::is_enum_v<T>) {
     static_assert(sizeof(T) == 1);
     v = static_cast<T>(*p++);
-  } else if constexpr (std::is_same_v<T, vpack::Slice>) {
-    v = vpack::Slice{reinterpret_cast<const uint8_t*>(p)};
-    p += v.byteSize();
   } else if constexpr (std::is_base_of_v<basics::Identifier, T>) {
     v = T{absl::big_endian::Load64(p)};
     p += sizeof(T);

@@ -18,27 +18,24 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
+#include <simdjson.h>
 
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <iostream>
-#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
-#include <iresearch/columnstore/column_writer.hpp>
-#include <iresearch/columnstore/format.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/geo_filter.hpp>
-#include <iresearch/search/scorers.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/compression.hpp>
-#include <iresearch/utils/text_format.hpp>
-#include <iresearch/utils/vpack_utils.hpp>
 #include <memory>
+#include <string>
+#include <vector>
 
+#include "basics/duckdb_engine.h"
 #include "geo/shape_container.h"
 #include "s2/s2latlng.h"
 #include "s2/s2loop.h"
@@ -51,57 +48,73 @@
 //
 // The geo analyzer tokenizes a shape into S2 cell ids; the filter narrows to
 // candidate cells, then re-checks each candidate's stored geometry to drop
-// false positives. The "store" side is wired through the columnstore.
+// false positives. The "store" side is wired through the .col writer.
 
 namespace {
 
-// Per-segment columnstore needs a duckdb::DatabaseInstance for codec lookup
-// and the buffer manager. C++11 thread-safe local statics keep this lazy
-// and process-wide; a real app would wire its own DatabaseInstance.
+// Per-segment .col writer needs a duckdb::DatabaseInstance for codec lookup
+// and the buffer manager. main() brackets Initialize / Shutdown on the
+// process-wide sdb::DuckDBEngine; this helper just hands out a reference.
 duckdb::DatabaseInstance& Db() {
-  static std::unique_ptr<duckdb::DuckDB> kDb = [] {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
+  return sdb::DuckDBEngine::Instance().instance();
 }
 
 // Stored-geometry column id. The geo filter reads this column back to
 // re-check each candidate (S2 cells are an approximation).
 inline constexpr irs::field_id kGeoColumnId = 1;
 
-// A geo field that tokenizes a GeoJSON shape (vpack::Slice) into S2 terms.
-// The analyzer is constructed once per field instance; reset() is called
-// per document with the shape to index.
+// A geo field that tokenizes a GeoJSON shape (text) into S2 terms. The
+// analyzer is constructed once per field instance; reset() is called per
+// document with the shape text to index.
 struct GeoField {
-  std::string_view name;
-  vpack::Slice shape_slice;
-  irs::analysis::Analyzer::ptr analyzer{irs::analysis::GeoJsonAnalyzer::make(
-    irs::slice_to_view<char>(vpack::Slice::emptyObjectSlice()))};
+  irs::field_id id{kGeoColumnId};
+  std::string_view shape_text;
+  irs::analysis::Analyzer::ptr analyzer{irs::analysis::GeoJsonAnalyzer::Make(
+    irs::analysis::GeoJsonAnalyzer::Options{})};
 
-  std::string_view Name() const noexcept { return name; }
+  irs::field_id Id() const noexcept { return id; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::None;
   }
 
   irs::Tokenizer& GetTokens() const {
-    static_cast<irs::analysis::GeoAnalyzer&>(*analyzer).reset(shape_slice);
+    static_cast<irs::analysis::GeoAnalyzer&>(*analyzer).reset(shape_text);
     return *analyzer;
   }
 };
 
-// Append one BLOB row (the raw vpack bytes of the shape) to the cs column.
-void AppendStoredShape(irs::columnstore::ColumnWriter& cw, irs::doc_id_t doc,
-                       vpack::Slice shape) {
+// Append one BLOB row (the GeoJSON source text of the shape) to the cs column.
+// Source coding force-includes this column and the filter re-parses it.
+void AppendStoredShape(irs::ColumnWriter& cw, irs::doc_id_t doc,
+                       std::string_view shape) {
   duckdb::Vector v{duckdb::LogicalType::BLOB, /*capacity=*/1};
   auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
-  slots[0] = duckdb::StringVector::AddStringOrBlob(
-    v, reinterpret_cast<const char*>(shape.start()), shape.byteSize());
+  slots[0] =
+    duckdb::StringVector::AddStringOrBlob(v, shape.data(), shape.size());
   duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
   const uint64_t row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
   cw.Append(row, v, /*count=*/1);
+}
+
+// A single corpus entry: row name plus the GeoJSON geometry text.
+struct GeoEntry {
+  std::string name;
+  std::string geometry;
+};
+
+std::vector<GeoEntry> ParseCorpus(std::string_view json) {
+  std::string buffer{json};
+  buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+  simdjson::dom::parser parser;
+  std::vector<GeoEntry> entries;
+  for (auto element : parser.parse(buffer.data(), json.size())) {
+    GeoEntry entry;
+    entry.name = std::string{std::string_view{element["name"]}};
+    entry.geometry = simdjson::to_string(element["geometry"]);
+    entries.emplace_back(std::move(entry));
+  }
+  return entries;
 }
 
 // 28 named points around central Moscow (lat/lon). The first 16 cluster
@@ -148,7 +161,7 @@ irs::IndexWriterOptions MakeWriterOptions() {
   };
   options.norm_column_options =
     [next = std::make_shared<std::atomic<irs::field_id>>(0)](
-      std::string_view) -> irs::NormColumnOptions {
+      irs::field_id) -> irs::NormColumnOptions {
     return {.id = next->fetch_add(1, std::memory_order_relaxed),
             .row_group_size = DEFAULT_ROW_GROUP_SIZE};
   };
@@ -157,31 +170,31 @@ irs::IndexWriterOptions MakeWriterOptions() {
 
 // Build a tiny index from the corpus above. Returns the writer's snapshot.
 irs::DirectoryReader BuildIndex(irs::Directory& dir,
-                                std::shared_ptr<vpack::Builder> docs,
+                                const std::vector<GeoEntry>& docs,
                                 std::vector<std::string>& names_out) {
   auto format = irs::formats::Get("1_5simd");
   auto writer =
     irs::IndexWriter::Make(dir, format, irs::kOmCreate, MakeWriterOptions());
 
   GeoField geo;
-  geo.name = "geometry";
 
   {
     auto trx = writer->GetBatch();
-    irs::columnstore::ColumnWriter* geo_cw = nullptr;
-    for (auto doc_slice : vpack::ArrayIterator(docs->slice())) {
-      names_out.emplace_back(irs::slice_to_string_view(doc_slice.get("name")));
+    irs::ColumnWriter* geo_cw = nullptr;
+    for (const auto& entry : docs) {
+      names_out.emplace_back(entry.name);
 
-      geo.shape_slice = doc_slice.get("geometry");
+      geo.shape_text = entry.geometry;
       auto doc = trx.Insert();
       doc.Insert(geo);
 
       if (geo_cw == nullptr) {
-        geo_cw = &doc.Columnstore()->OpenColumn(kGeoColumnId,
-                                                duckdb::LogicalType::BLOB);
+        geo_cw = &doc.GetColWriter()->OpenColumn(kGeoColumnId,
+                                                 duckdb::LogicalType::BLOB);
       }
-      AppendStoredShape(*geo_cw, doc.DocId(), geo.shape_slice);
+      AppendStoredShape(*geo_cw, doc.DocId(), geo.shape_text);
     }
+    trx.Commit();
   }
   writer->RefreshCommit();
   return writer->GetSnapshot();
@@ -224,84 +237,90 @@ void PrintHits(std::string_view label, const std::vector<std::string>& hits) {
 }  // namespace
 
 int main() {
-  irs::analysis::analyzers::Init();
+  // Bracket the process-wide duckdb::DuckDB lifetime; Db() reads it back.
+  auto& engine = sdb::DuckDBEngine::Instance();
+  engine.Initialize();
+
   irs::formats::Init();
-  irs::scorers::Init();
-  irs::compression::Init();
 
-  auto docs = vpack::Parser::fromJson(kCorpus);
-  std::vector<std::string> names;
-
-  irs::MemoryDirectory dir;
-  auto reader = BuildIndex(dir, docs, names);
-  std::cout << "Indexed " << reader.docs_count() << " points across "
-            << reader.size() << " segment(s).\n\n";
-
-  // 1) Distance query: everything within 300m of a center point.
+  // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
+  // down the duckdb::DuckDB they were dispatching through.
   {
-    std::cout << "=== GeoDistanceFilter (radius 300m) ===\n";
-    irs::GeoDistanceFilter q;
-    *q.mutable_field() = "geometry";
-    q.mutable_options()->store_field_id = kGeoColumnId;
-    q.mutable_options()->origin =
-      S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
-    auto& range = q.mutable_options()->range;
-    range.max_type = irs::BoundType::Inclusive;
-    range.max = 300;  // meters
+    auto docs = ParseCorpus(kCorpus);
+    std::vector<std::string> names;
 
-    PrintHits("origin=(55.70892, 37.607768), max=300m",
-              RunFilter(reader, q, names));
-  }
+    irs::MemoryDirectory dir;
+    auto reader = BuildIndex(dir, docs, names);
+    std::cout << "Indexed " << reader.docs_count() << " points across "
+              << reader.size() << " segment(s).\n\n";
 
-  // 2) Annulus query: 1km <= distance <= 5km from a different center.
-  {
-    std::cout << "\n=== GeoDistanceFilter (annulus 1km..5km) ===\n";
-    irs::GeoDistanceFilter q;
-    *q.mutable_field() = "geometry";
-    q.mutable_options()->store_field_id = kGeoColumnId;
-    q.mutable_options()->origin =
-      S2LatLng::FromDegrees(55.704, 37.615).ToPoint();
-    auto& range = q.mutable_options()->range;
-    range.min_type = irs::BoundType::Inclusive;
-    range.min = 1000;
-    range.max_type = irs::BoundType::Inclusive;
-    range.max = 5000;
+    // 1) Distance query: everything within 300m of a center point.
+    {
+      std::cout << "=== GeoDistanceFilter (radius 300m) ===\n";
+      irs::GeoDistanceFilter q;
+      *q.mutable_field_id() = kGeoColumnId;
+      q.mutable_options()->store_field_id = kGeoColumnId;
+      q.mutable_options()->origin =
+        S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
+      auto& range = q.mutable_options()->range;
+      range.max_type = irs::BoundType::Inclusive;
+      range.max = 300;  // meters
 
-    PrintHits("origin=(55.704, 37.615), 1km <= d <= 5km",
-              RunFilter(reader, q, names));
-  }
-
-  // 3) Polygon query: points falling inside an arbitrary quadrilateral
-  //    covering the central cluster (lat/lon corners chosen to enclose
-  //    the tightly clustered first 16 points).
-  {
-    std::cout << "\n=== GeoFilter (Intersects polygon) ===\n";
-    std::vector<S2LatLng> corners{
-      S2LatLng::FromDegrees(55.7030, 37.6130),
-      S2LatLng::FromDegrees(55.7030, 37.6175),
-      S2LatLng::FromDegrees(55.7050, 37.6175),
-      S2LatLng::FromDegrees(55.7050, 37.6130),
-    };
-    std::vector<S2Point> points;
-    points.reserve(corners.size());
-    for (const auto& ll : corners) {
-      points.push_back(ll.ToPoint());
+      PrintHits("origin=(55.70892, 37.607768), max=300m",
+                RunFilter(reader, q, names));
     }
-    auto loop = std::make_unique<S2Loop>(points);
-    loop->Normalize();
 
-    sdb::geo::ShapeContainer shape;
-    shape.reset(std::make_unique<S2Polygon>(std::move(loop)),
-                sdb::geo::ShapeContainer::Type::S2Polygon);
+    // 2) Annulus query: 1km <= distance <= 5km from a different center.
+    {
+      std::cout << "\n=== GeoDistanceFilter (annulus 1km..5km) ===\n";
+      irs::GeoDistanceFilter q;
+      *q.mutable_field_id() = kGeoColumnId;
+      q.mutable_options()->store_field_id = kGeoColumnId;
+      q.mutable_options()->origin =
+        S2LatLng::FromDegrees(55.704, 37.615).ToPoint();
+      auto& range = q.mutable_options()->range;
+      range.min_type = irs::BoundType::Inclusive;
+      range.min = 1000;
+      range.max_type = irs::BoundType::Inclusive;
+      range.max = 5000;
 
-    irs::GeoFilter q;
-    *q.mutable_field() = "geometry";
-    q.mutable_options()->store_field_id = kGeoColumnId;
-    q.mutable_options()->type = irs::GeoFilterType::Intersects;
-    q.mutable_options()->shape = std::move(shape);
+      PrintHits("origin=(55.704, 37.615), 1km <= d <= 5km",
+                RunFilter(reader, q, names));
+    }
 
-    PrintHits("polygon over central cluster", RunFilter(reader, q, names));
+    // 3) Polygon query: points falling inside an arbitrary quadrilateral
+    //    covering the central cluster (lat/lon corners chosen to enclose
+    //    the tightly clustered first 16 points).
+    {
+      std::cout << "\n=== GeoFilter (Intersects polygon) ===\n";
+      std::vector<S2LatLng> corners{
+        S2LatLng::FromDegrees(55.7030, 37.6130),
+        S2LatLng::FromDegrees(55.7030, 37.6175),
+        S2LatLng::FromDegrees(55.7050, 37.6175),
+        S2LatLng::FromDegrees(55.7050, 37.6130),
+      };
+      std::vector<S2Point> points;
+      points.reserve(corners.size());
+      for (const auto& ll : corners) {
+        points.push_back(ll.ToPoint());
+      }
+      auto loop = std::make_unique<S2Loop>(points);
+      loop->Normalize();
+
+      sdb::geo::ShapeContainer shape;
+      shape.reset(std::make_unique<S2Polygon>(std::move(loop)),
+                  sdb::geo::ShapeContainer::Type::S2Polygon);
+
+      irs::GeoFilter q;
+      *q.mutable_field_id() = kGeoColumnId;
+      q.mutable_options()->store_field_id = kGeoColumnId;
+      q.mutable_options()->type = irs::GeoFilterType::Intersects;
+      q.mutable_options()->shape = std::move(shape);
+
+      PrintHits("polygon over central cluster", RunFilter(reader, q, names));
+    }
   }
 
+  engine.Shutdown();
   return 0;
 }

@@ -1,0 +1,148 @@
+hash-threshold 100
+
+# Direct LIST/ARRAY column indexing (post-#146 -- ARRAY/LIST listed inside
+# `inverted(...)` rather than `INCLUDE(...)`). Exercises:
+#   1. CREATE INDEX accepts direct LIST<VARCHAR> / VARCHAR[N] / INTEGER[]
+#   2. Backfill writes per-element tokens
+#   3. INSERT after CREATE INDEX writes per-element tokens
+#   4. `<list_col> @@ ts_like(...)` matches rows containing the token
+#   5. NULL list and NULL element are handled
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict( template = 'keyword' );
+
+# --- VARCHAR[] (variable-length LIST) -- backfill path ---
+
+statement ok
+CREATE TABLE tags_t ( pk INTEGER PRIMARY KEY, tags VARCHAR[] );
+
+statement ok
+INSERT INTO tags_t VALUES (1, ['alpha', 'beta']);
+
+statement ok
+INSERT INTO tags_t VALUES (2, ['beta', 'gamma']);
+
+statement ok
+INSERT INTO tags_t VALUES (3, ['delta']);
+
+statement ok
+CREATE INDEX tags_t_idx ON tags_t USING inverted(pk, tags verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) tags_t;
+
+query
+SELECT pk FROM tags_t_idx WHERE tags @@ ts_like('beta') ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM tags_t_idx WHERE tags @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM tags_t_idx WHERE tags @@ ts_like('delta') ORDER BY pk;
+----
+pk
+3
+
+# --- INSERT after CREATE INDEX (live path) ---
+
+statement ok
+INSERT INTO tags_t VALUES (4, ['beta', 'epsilon']);
+
+statement ok
+VACUUM (REFRESH_TABLE) tags_t;
+
+query
+SELECT pk FROM tags_t_idx WHERE tags @@ ts_like('beta') ORDER BY pk;
+----
+pk
+1
+2
+4
+
+query
+SELECT pk FROM tags_t_idx WHERE tags @@ ts_like('epsilon') ORDER BY pk;
+----
+pk
+4
+
+# --- INTEGER[3] (fixed-size ARRAY) ---
+
+statement ok
+CREATE TABLE nums_t ( pk INTEGER PRIMARY KEY, nums INTEGER[3] );
+
+statement ok
+INSERT INTO nums_t VALUES (1, [10, 20, 30]);
+
+statement ok
+INSERT INTO nums_t VALUES (2, [20, 40, 60]);
+
+statement ok
+INSERT INTO nums_t VALUES (3, [10, 50, 70]);
+
+statement ok
+CREATE INDEX nums_t_idx ON nums_t USING inverted(pk, nums);
+
+statement ok
+VACUUM (REFRESH_TABLE) nums_t;
+
+query
+SELECT pk FROM nums_t_idx WHERE nums @@ ts_between(10, 10, true, true) ORDER BY pk;
+----
+pk
+1
+3
+
+query
+SELECT pk FROM nums_t_idx WHERE nums @@ ts_between(20, 20, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+# --- NULL list and NULL element ---
+
+statement ok
+CREATE TABLE tags_n ( pk INTEGER PRIMARY KEY, tags VARCHAR[] );
+
+statement ok
+INSERT INTO tags_n VALUES (1, ['p', 'q']);
+
+statement ok
+INSERT INTO tags_n VALUES (2, NULL);
+
+statement ok
+INSERT INTO tags_n VALUES (3, ['r', NULL, 's']);
+
+statement ok
+INSERT INTO tags_n VALUES (4, []);
+
+statement ok
+CREATE INDEX tags_n_idx ON tags_n USING inverted(pk, tags verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) tags_n;
+
+query
+SELECT pk FROM tags_n_idx WHERE tags @@ ts_like('r') ORDER BY pk;
+----
+pk
+3
+
+query
+SELECT pk FROM tags_n_idx WHERE tags @@ ts_like('p') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT count(*) FROM tags_n_idx;
+----
+count
+4

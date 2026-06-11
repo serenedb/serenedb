@@ -28,8 +28,8 @@
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 namespace {
@@ -150,8 +150,7 @@ ResolvedName ResolveName(const VacuumBindData& bind, Scope scope,
           "expects a single database name");
       }
       out.database = bind.name;
-      break;
-    }
+    } break;
     case Scope::Schema: {
       if (!bind.catalog.empty()) {
         throw duckdb::BinderException(
@@ -160,15 +159,13 @@ ResolvedName ResolveName(const VacuumBindData& bind, Scope scope,
       }
       out.database = bind.schema;
       out.schema = bind.name;
-      break;
-    }
+    } break;
     case Scope::Table:
     case Scope::Index: {
       out.database = bind.catalog;
       out.schema = bind.schema;
       out.object = bind.name;
-      break;
-    }
+    } break;
     case Scope::All:
       break;
   }
@@ -279,8 +276,7 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
                                        target.object);
       }
       ForEachInvertedShard(snapshot, table->GetId(), apply);
-      break;
-    }
+    } break;
     case Scope::Schema: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
       if (!snapshot.GetSchema(db_id, target.schema)) {
@@ -288,12 +284,10 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
                                        target.schema);
       }
       walk_schema(db_id, target.schema);
-      break;
-    }
+    } break;
     case Scope::Database: {
       walk_database(LookupDatabaseId(snapshot, target.database));
-      break;
-    }
+    } break;
     case Scope::All: {
       for (auto& db : snapshot.GetDatabases()) {
         walk_database(db->GetId());
@@ -336,8 +330,7 @@ void DispatchSyncStats(const catalog::Snapshot& snapshot, Scope scope,
                                        target.object);
       }
       sync_table(table->GetId());
-      break;
-    }
+    } break;
     case Scope::Schema: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
       if (!snapshot.GetSchema(db_id, target.schema)) {
@@ -345,8 +338,7 @@ void DispatchSyncStats(const catalog::Snapshot& snapshot, Scope scope,
                                        target.schema);
       }
       sync_schema(db_id, target.schema);
-      break;
-    }
+    } break;
     case Scope::Database:
       sync_database(LookupDatabaseId(snapshot, target.database));
       break;

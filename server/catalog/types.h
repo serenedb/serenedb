@@ -24,7 +24,6 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "basics/containers/flat_hash_map.h"
-#include "basics/reboot_id.h"
 
 namespace sdb {
 
@@ -34,13 +33,6 @@ enum class WriteConflictPolicy : uint8_t {
   EmitError,
   DoNothing,
   Replace,
-};
-
-struct PeerState {
-  std::string server_id;
-  RebootId reboot_id{0};
-
-  friend bool operator==(const PeerState&, const PeerState&) noexcept = default;
 };
 
 }  // namespace sdb

@@ -23,8 +23,7 @@
 namespace sdb::connector {
 
 ColumnstoreMaterializer::ColumnstoreMaterializer(
-  const irs::columnstore::Reader& reader,
-  std::span<const irs::field_id> column_ids,
+  const irs::ColReader& reader, std::span<const irs::field_id> column_ids,
   std::span<const duckdb::idx_t> output_slots)
   : _ctx{reader} {
   SDB_ASSERT(column_ids.size() == output_slots.size());
@@ -34,7 +33,7 @@ ColumnstoreMaterializer::ColumnstoreMaterializer(
       _bound.push_back(Binding{
         .reader = r,
         .output_slot = output_slots[i],
-        .state = irs::columnstore::MakeMaterializeState(*r, _ctx),
+        .state = irs::MakeMaterializeState(*r, _ctx),
       });
     }
   }

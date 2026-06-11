@@ -80,7 +80,7 @@ inline bool AppendSKValue(
 }  // namespace duckdb_secondary_key
 
 template<bool Unique>
-class DuckDBSecondarySinkWriteBase : public DuckDBSinkIndexWriter,
+class DuckDBSecondarySinkWriteBase : public DuckDBSinkColumnWriter,
                                      public DuckDBColumnSinkWriterImplBase {
  public:
   DuckDBSecondarySinkWriteBase(
@@ -94,6 +94,7 @@ class DuckDBSecondarySinkWriteBase : public DuckDBSinkIndexWriter,
       _trigger_column_id{columns[0]} {}
 
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& /*vec*/,
+                    std::span<const std::string_view> /*row_keys*/,
                     duckdb::idx_t /*count*/) final {
     return col.id == _trigger_column_id;
   }

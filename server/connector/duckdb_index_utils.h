@@ -120,6 +120,6 @@ void EvaluateAndWriteIndexedExpressions(
   duckdb::DataChunk& chunk, ObjectId table_id,
   std::span<const catalog::Column::Id> slot_to_col_id,
   duckdb::ClientContext& client_context, duckdb::idx_t num_rows,
-  std::vector<std::string>& row_keys, DuckDBColumnSerializer& serializer);
+  std::vector<std::string>& row_keys);
 
 }  // namespace sdb::connector

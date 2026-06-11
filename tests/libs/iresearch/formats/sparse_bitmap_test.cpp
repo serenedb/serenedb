@@ -48,9 +48,9 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/column_writer.hpp"
-#include "iresearch/columnstore/format.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
@@ -64,7 +64,9 @@ namespace {
 // directory is always MemoryDirectory for these tests).
 class SparseBitmapTestCase : public ::testing::TestWithParam<bool> {
  protected:
-  duckdb::DatabaseInstance& Db() { return irs::tests::CsDb(); }
+  duckdb::DatabaseInstance& Db() {
+    return ::sdb::DuckDBEngine::Instance().instance();
+  }
 };
 
 // min, max -- half-open range of valid (non-null) doc ids.
@@ -168,7 +170,7 @@ bool DocInRanges(const RangeType (&ranges)[N], irs::doc_id_t doc) {
 template<size_t N>
 void WriteRanges(duckdb::DatabaseInstance& db, irs::Directory& dir,
                  std::string_view name, const RangeType (&ranges)[N]) {
-  irs::columnstore::Writer w{dir, name, db};
+  irs::ColWriter w{dir, name, db};
   // Use the override that lets us pick the row-group size. We pass
   // skip_validity=false (we *want* the validity bits) and
   // COMPRESSION_AUTO so the codec picks an appropriate validity
@@ -218,7 +220,7 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   constexpr std::string_view kName = "tmp_next";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::columnstore::Reader r{dir, kName, db};
+  irs::ColReader r{dir, kName, db};
   ASSERT_TRUE(r.HasColumn(1));
   // An id that was never written must report HasColumn=false and
   // Column()=nullptr. Legacy `read_write_empty` covered the empty-
@@ -249,7 +251,7 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   // columns and miscounts for million-row sparse columns); the
   // per-row PointReader path is canonical and tested elsewhere.
   {
-    irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+    irs::ColumnReader::BlobPointReader reader{r, *col};
     size_t valid_visited = 0;
     size_t null_visited = 0;
     // Iterate `col->RowCount()` rows -- one per doc starting at
@@ -278,7 +280,7 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   // segment cache must keep working across this jump-pattern). Also
   // checks `IsNullDoc` for the doc right after each range, mirroring
   // the legacy "next() crosses into a null run" boundary check.
-  irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+  irs::ColumnReader::BlobPointReader reader{r, *col};
   for (const auto& range : ranges) {
     for (irs::doc_id_t doc = range.first; doc < range.second; ++doc) {
       SCOPED_TRACE(doc);
@@ -319,14 +321,14 @@ void TestRwSeek(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   constexpr std::string_view kName = "tmp_seek";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::columnstore::Reader r{dir, kName, db};
+  irs::ColReader r{dir, kName, db};
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), LastRowExclusive(ranges));
 
   // ---------- Pass 1: fresh reader per range (cold cache). ----------
   for (const auto& range : ranges) {
-    irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+    irs::ColumnReader::BlobPointReader reader{r, *col};
     for (irs::doc_id_t doc = range.first; doc < range.second; ++doc) {
       SCOPED_TRACE(doc);
       ASSERT_FALSE(reader.IsNullDoc(doc));
@@ -336,7 +338,7 @@ void TestRwSeek(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
 
   // ---------- Pass 2: single reader, monotonic walk (warm cache). ----
   {
-    irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+    irs::ColumnReader::BlobPointReader reader{r, *col};
     for (const auto& range : ranges) {
       for (irs::doc_id_t doc = range.first; doc < range.second; ++doc) {
         SCOPED_TRACE(doc);
@@ -382,13 +384,13 @@ void TestRwSeekNext(duckdb::DatabaseInstance& db,
   constexpr std::string_view kName = "tmp_seek_next";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::columnstore::Reader r{dir, kName, db};
+  irs::ColReader r{dir, kName, db};
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
 
   // --- Per-range cold seek + warm forward walk. ---
   for (const auto& range : ranges) {
-    irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+    irs::ColumnReader::BlobPointReader reader{r, *col};
     // "seek" -> point-fetch first doc.
     {
       SCOPED_TRACE(range.first);
@@ -417,7 +419,7 @@ void TestRwSeekNext(duckdb::DatabaseInstance& db,
   // on the gap between ranges and a re-fetch on every range's first
   // doc (the "seek backwards" of the previous range, conceptually).
   {
-    irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+    irs::ColumnReader::BlobPointReader reader{r, *col};
     for (size_t i = 0; i < N; ++i) {
       const auto& range = ranges[i];
       // First doc of this range -- fresh fetch.
@@ -473,14 +475,14 @@ void TestRwSeekNext(duckdb::DatabaseInstance& db,
       // Fresh reader -> warm to `later`.
       {
         SCOPED_TRACE(later);
-        irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+        irs::ColumnReader::BlobPointReader reader{r, *col};
         ASSERT_FALSE(reader.IsNullDoc(later));
         ExpectPayloadEq(reader.FetchDoc(later), later);
       }
       // Fresh reader -> position to `earlier` (jump-back across rg).
       {
         SCOPED_TRACE(earlier);
-        irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+        irs::ColumnReader::BlobPointReader reader{r, *col};
         ASSERT_FALSE(reader.IsNullDoc(earlier));
         ExpectPayloadEq(reader.FetchDoc(earlier), earlier);
       }
@@ -488,7 +490,7 @@ void TestRwSeekNext(duckdb::DatabaseInstance& db,
       // session; this exercises the cached-segment invalidation when
       // a back-jump crosses a row group boundary.
       {
-        irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+        irs::ColumnReader::BlobPointReader reader{r, *col};
         SCOPED_TRACE(later);
         ASSERT_FALSE(reader.IsNullDoc(later));
         ExpectPayloadEq(reader.FetchDoc(later), later);
@@ -529,7 +531,7 @@ void TestRwSeekRandom(duckdb::DatabaseInstance& db,
   constexpr std::string_view kName = "tmp_seek_rand";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::columnstore::Reader r{dir, kName, db};
+  irs::ColReader r{dir, kName, db};
   // HasColumn / Column on an *unused* id must report false / nullptr.
   // Legacy `read_write_empty` covered that for an empty column; the
   // stronger invariant is "any id we did not write returns false".
@@ -545,7 +547,7 @@ void TestRwSeekRandom(duckdb::DatabaseInstance& db,
 
   // --- Pass A: stateful (warm reader, one walk over all seeks). ---
   {
-    irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+    irs::ColumnReader::BlobPointReader reader{r, *col};
     for (const auto& [target, expected_first_valid] : seeks) {
       SCOPED_TRACE(target);
       const uint64_t row =
@@ -603,7 +605,7 @@ void TestRwSeekRandom(duckdb::DatabaseInstance& db,
   // state every time, including back-jumps (where target_{i+1} < target_i).
   for (const auto& [target, expected_first_valid] : seeks) {
     SCOPED_TRACE(target);
-    irs::columnstore::ColumnReader::BlobPointReader fresh{r, *col};
+    irs::ColumnReader::BlobPointReader fresh{r, *col};
     const uint64_t row = static_cast<uint64_t>(target) - irs::doc_limits::min();
     const bool past_end = row >= col->RowCount();
     if (past_end) {
@@ -637,12 +639,12 @@ TEST_P(SparseBitmapTestCase, read_write_empty) {
   // Shape (a): segment with no columns at all.
   constexpr std::string_view kName = "empty_seg";
   {
-    irs::columnstore::Writer w{dir, kName, Db()};
+    irs::ColWriter w{dir, kName, Db()};
     // No OpenColumn -> footer has zero column entries; the segment
-    // still commits with a valid .cs file.
+    // still commits with a valid .col file.
     w.Commit(/*target_row=*/0);
   }
-  irs::columnstore::Reader r{dir, kName, Db()};
+  irs::ColReader r{dir, kName, Db()};
   EXPECT_FALSE(r.HasColumn(1));
   EXPECT_EQ(r.Column(1), nullptr);
   // HasColumn(unused_id) == false on a column-less segment is the
@@ -655,11 +657,11 @@ TEST_P(SparseBitmapTestCase, read_write_empty) {
   // Shape (b): segment with a column that has zero rows.
   constexpr std::string_view kName2 = "empty_col";
   {
-    irs::columnstore::Writer w{dir, kName2, Db()};
+    irs::ColWriter w{dir, kName2, Db()};
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Commit(/*target_row=*/0);
   }
-  irs::columnstore::Reader r2{dir, kName2, Db()};
+  irs::ColReader r2{dir, kName2, Db()};
   ASSERT_TRUE(r2.HasColumn(1));
   // Other ids on a segment that has id=1 must still report false.
   EXPECT_FALSE(r2.HasColumn(2));
@@ -675,7 +677,7 @@ TEST_P(SparseBitmapTestCase, read_write_empty) {
   // PointReader on any row reports past-end -> IsNullDoc true.
   // Legacy: `next()` then `eof(it.value())`. Walking the column row
   // by row visits zero valid rows (RowCount() == 0).
-  irs::columnstore::ColumnReader::BlobPointReader reader{r2, *col};
+  irs::ColumnReader::BlobPointReader reader{r2, *col};
   EXPECT_TRUE(reader.IsNullDoc(irs::doc_limits::min()));
   // Legacy did `next()` twice past eof; cs analogue is two IsNullDoc
   // calls returning the same value.
@@ -789,7 +791,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kName = "sparse_blocks";
   {
-    irs::columnstore::Writer w{dir, kName, Db()};
+    irs::ColWriter w{dir, kName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false, kRowGroupSize,
                             duckdb::CompressionType::COMPRESSION_AUTO);
@@ -804,7 +806,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
       static_cast<uint64_t>(valid_docs.back()) + 1 - irs::doc_limits::min();
     w.Commit(target_row);
   }
-  irs::columnstore::Reader r{dir, kName, Db()};
+  irs::ColReader r{dir, kName, Db()};
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   EXPECT_TRUE(col->HasValidity());
@@ -821,7 +823,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   // order" loop. The reader handles 64 cross-row-group jumps in
   // succession (one per kStep doc gap).
   {
-    irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+    irs::ColumnReader::BlobPointReader reader{r, *col};
     for (auto doc : valid_docs) {
       SCOPED_TRACE(doc);
       ASSERT_FALSE(reader.IsNullDoc(doc));
@@ -836,7 +838,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   // re-fetching the valid one (must succeed). Re-fetching a doc
   // exercises the warm-cache code paths after a backward move.
   {
-    irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+    irs::ColumnReader::BlobPointReader reader{r, *col};
     for (auto doc : valid_docs) {
       if (doc > irs::doc_limits::min()) {
         const irs::doc_id_t prev = doc - 1;
@@ -853,7 +855,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   // valid docs) -- exercises validity-rg locate for arbitrary rows.
   // Each cold seek goes through `LocateValidity` from scratch.
   {
-    irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+    irs::ColumnReader::BlobPointReader reader{r, *col};
     for (size_t i = 0; i + 1 < valid_docs.size(); ++i) {
       const irs::doc_id_t mid = valid_docs[i] + kStep / 2;
       SCOPED_TRACE(mid);
@@ -866,7 +868,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   // the validity locate logic when the doc-id sequence goes
   // strictly backwards.
   {
-    irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+    irs::ColumnReader::BlobPointReader reader{r, *col};
     for (auto it = valid_docs.rbegin(); it != valid_docs.rend(); ++it) {
       const auto doc = *it;
       SCOPED_TRACE(doc);
@@ -884,7 +886,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   for (auto it = valid_docs.rbegin(); it != valid_docs.rend(); ++it) {
     const auto doc = *it;
     SCOPED_TRACE(doc);
-    irs::columnstore::ColumnReader::BlobPointReader fresh{r, *col};
+    irs::ColumnReader::BlobPointReader fresh{r, *col};
     ASSERT_FALSE(fresh.IsNullDoc(doc));
     ExpectPayloadEq(fresh.FetchDoc(doc), doc);
   }
@@ -897,10 +899,10 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
     for (size_t i = valid_docs.size() - 1; i > 0; --i) {
       const irs::doc_id_t later = valid_docs[i];
       const irs::doc_id_t earlier = valid_docs[0];
-      irs::columnstore::ColumnReader::BlobPointReader r1{r, *col};
+      irs::ColumnReader::BlobPointReader r1{r, *col};
       ASSERT_FALSE(r1.IsNullDoc(later));
       ExpectPayloadEq(r1.FetchDoc(later), later);
-      irs::columnstore::ColumnReader::BlobPointReader r2{r, *col};
+      irs::ColumnReader::BlobPointReader r2{r, *col};
       ASSERT_FALSE(r2.IsNullDoc(earlier));
       ExpectPayloadEq(r2.FetchDoc(earlier), earlier);
     }
@@ -913,7 +915,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   // Past-end IsNullDoc: doc immediately after the last valid doc is
   // still in the column (it was auto-padded as null up to row
   // count); doc one past the end of the column is past-end.
-  irs::columnstore::ColumnReader::BlobPointReader past{r, *col};
+  irs::ColumnReader::BlobPointReader past{r, *col};
   const irs::doc_id_t past_end =
     static_cast<irs::doc_id_t>(col->RowCount() + irs::doc_limits::min());
   EXPECT_TRUE(past.IsNullDoc(past_end));
@@ -1065,7 +1067,7 @@ TEST_P(SparseBitmapTestCase, insert_erase) {
   constexpr irs::doc_id_t kSurvivingDoc = 70000;   // valid, later RG
 
   {
-    irs::columnstore::Writer w{dir, kName, Db()};
+    irs::ColWriter w{dir, kName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false, kRowGroupSize,
                             duckdb::CompressionType::COMPRESSION_AUTO);
@@ -1080,7 +1082,7 @@ TEST_P(SparseBitmapTestCase, insert_erase) {
     w.Commit(static_cast<uint64_t>(kSurvivingDoc) + 1 - irs::doc_limits::min());
   }
 
-  irs::columnstore::Reader r{dir, kName, Db()};
+  irs::ColReader r{dir, kName, Db()};
   ASSERT_TRUE(r.HasColumn(1));
   EXPECT_FALSE(r.HasColumn(2));  // unused id -> false.
   EXPECT_EQ(r.Column(2), nullptr);
@@ -1091,7 +1093,7 @@ TEST_P(SparseBitmapTestCase, insert_erase) {
             static_cast<uint64_t>(kSurvivingDoc) + 1 - irs::doc_limits::min());
 
   // --- Point-read pass: erased doc is null, survivors carry payload. ---
-  irs::columnstore::ColumnReader::BlobPointReader reader{r, *col};
+  irs::ColumnReader::BlobPointReader reader{r, *col};
   EXPECT_TRUE(reader.IsNullDoc(kErasedDoc));
   // Idempotent IsNullDoc on the erased doc -- legacy iterator never
   // emitted it; the cs analogue is "querying it twice still says null".
@@ -1119,7 +1121,7 @@ TEST_P(SparseBitmapTestCase, insert_erase) {
   // (including the "erased" doc 42). This is the new-cs analogue of
   // the legacy "iterator yielded only docs we hadn't erased" check.
   {
-    irs::columnstore::ColumnReader::BlobPointReader sweep{r, *col};
+    irs::ColumnReader::BlobPointReader sweep{r, *col};
     std::vector<irs::doc_id_t> seen;
     for (uint64_t row = 0; row < col->RowCount(); ++row) {
       const auto doc = static_cast<irs::doc_id_t>(row + irs::doc_limits::min());

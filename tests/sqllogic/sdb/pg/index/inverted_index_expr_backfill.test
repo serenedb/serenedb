@@ -1,0 +1,164 @@
+# CREATE INDEX backfill must evaluate indexed expressions over rows that
+# already exist in the table. The sibling inverted_index_json.test covers the
+# INSERT-after-CREATE path; here every row is inserted BEFORE the index, so the
+# expression is only ever indexed by the backfill scan.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict(
+    template = 'keyword'
+);
+
+statement ok
+CREATE TABLE logs (id INTEGER PRIMARY KEY, content JSON);
+
+
+# Rows land first -- nothing evaluates the expression yet.
+statement ok
+INSERT INTO logs VALUES
+    (1, '{"host":"server-01","status":"ok"}'::json),
+    (2, '{"host":"server-02","status":"error"}'::json),
+    (3, '{"host":"server-03","status":"ok"}'::json),
+    (4, '{"host":"server-14","status":"warning"}'::json);
+
+
+# Index over a JSON-path expression; backfill must evaluate (content->>'host')
+# for the four existing rows.
+statement ok
+CREATE INDEX logs_idx ON logs USING inverted(id, (content->>'host') verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) logs;
+
+
+# Wildcard 'server-0_' matches the backfilled ids 1..3.
+query
+SELECT id FROM logs_idx WHERE content->>'host' @@ ts_like('server-0_') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+# Exact match resolves through the same backfilled postings.
+query
+SELECT id FROM logs_idx WHERE content->>'host' @@ ts_like('server-14') ORDER BY id;
+----
+id
+4
+
+
+# A row inserted AFTER the index still indexes through the INSERT path, so both
+# paths share the same field.
+statement ok
+INSERT INTO logs VALUES (5, '{"host":"server-05","status":"ok"}'::json);
+
+statement ok
+VACUUM (REFRESH_TABLE) logs;
+
+query
+SELECT id FROM logs_idx WHERE content->>'host' @@ ts_like('server-0_') ORDER BY id;
+----
+id
+1
+2
+3
+5
+
+
+# An expression depending on more than one base column: backfill must project
+# and evaluate every referenced column (a and b), not just the index key.
+statement ok
+CREATE TABLE kv (id INTEGER PRIMARY KEY, a TEXT, b TEXT);
+
+statement ok
+INSERT INTO kv VALUES (1, 'foo', 'bar'), (2, 'hello', 'world');
+
+statement ok
+CREATE INDEX kv_idx ON kv USING inverted(id, (a || '-' || b) verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) kv;
+
+query
+SELECT id FROM kv_idx WHERE (a || '-' || b) @@ ts_like('foo-bar') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM kv_idx WHERE (a || '-' || b) @@ ts_like('hello-world') ORDER BY id;
+----
+id
+2
+
+
+# An expression whose only dependency is NOT the first non-PK column: the
+# backfill scan projects {pk, n} and skips `name`, so the bound expression's
+# column index is a projection slot, not a table position. Mapping it back
+# through the full table order would resolve `n` to `name` -- regression guard.
+statement ok
+CREATE TABLE gap (id INTEGER PRIMARY KEY, name TEXT, n INTEGER);
+
+statement ok
+INSERT INTO gap VALUES (1, 'alpha', 10), (2, 'beta', 5);
+
+statement ok
+CREATE INDEX gap_idx ON gap
+  USING inverted(id, (CASE WHEN n > 8 THEN 'big' ELSE 'small' END) verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) gap;
+
+query
+SELECT id FROM gap_idx
+WHERE (CASE WHEN n > 8 THEN 'big' ELSE 'small' END) @@ ts_like('big') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM gap_idx
+WHERE (CASE WHEN n > 8 THEN 'big' ELSE 'small' END) @@ ts_like('small') ORDER BY id;
+----
+id
+2
+
+
+# A second expression index on the SAME table, over a different column, must
+# normalise its own dependents independently of the first index.
+statement ok
+CREATE INDEX gap_idx2 ON gap USING inverted(id, (lower(name)) verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) gap;
+
+query
+SELECT id FROM gap_idx2 WHERE (lower(name)) @@ ts_like('beta') ORDER BY id;
+----
+id
+2
+
+
+# Dependents referenced out of table order ((n) before (name) in the
+# expression): the projection is still built in table order, so the slot->id
+# mapping must follow the projection, not the order columns appear in the
+# expression.
+statement ok
+CREATE TABLE oo (id INTEGER PRIMARY KEY, name TEXT, n INTEGER);
+
+statement ok
+INSERT INTO oo VALUES (1, 'foo', 7), (2, 'bar', 3);
+
+statement ok
+CREATE INDEX oo_idx ON oo
+  USING inverted(id, ((n::TEXT) || '-' || name) verbatim_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) oo;
+
+query
+SELECT id FROM oo_idx WHERE ((n::TEXT) || '-' || name) @@ ts_like('7-foo') ORDER BY id;
+----
+id
+1

@@ -75,8 +75,7 @@ start_server() {
 	killall -9 serened >/dev/null 2>&1 || true
 	sleep 1
 	"${SERENED_BIN}" "${SERENED_DATA_DIR}" \
-		--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-		--log.foreground-tty true \
+		--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
 		>"${LOG}" 2>&1 &
 	disown
 	for _ in $(seq 1 30); do
@@ -207,8 +206,7 @@ if [[ "${NEED_PARQUET}" == "1" ]]; then
 
 	echo "generating ${PARQUET_FILE} (${N} rows) via temporary serened"
 	"${SERENED_BIN}" "${RESULTS_DIR}/types_genparquet_data" \
-		--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-		--log.foreground-tty true \
+		--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
 		>"${LOG}" 2>&1 &
 	disown
 	for _ in $(seq 1 30); do
@@ -241,7 +239,9 @@ COPY (
          ROW('name-' || (i % 100)::VARCHAR,
              [ROW('k1', i)::STRUCT(k VARCHAR, v INTEGER),
               ROW('k2', i * 2)::STRUCT(k VARCHAR, v INTEGER)])
-           ::STRUCT(name VARCHAR, vals STRUCT(k VARCHAR, v INTEGER)[]) AS deep
+           ::STRUCT(name VARCHAR, vals STRUCT(k VARCHAR, v INTEGER)[]) AS deep,
+         {'a': (i * 0.5)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+           AS variant_obj
   FROM range(${N}) t(i)
 ) TO '${PQ_SQL_PATH}' (FORMAT parquet);
 "
@@ -274,7 +274,7 @@ fi
 
 run_setup "attach_native_db" "${BUILD_THREADS}" "
 DETACH DATABASE IF EXISTS native_db;
-ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 "
 
@@ -311,7 +311,7 @@ CREATE INDEX bench_idx ON bench_view USING inverted(bool_col)
 INCLUDE (
   i8, i16, i32, i64, f32, f64, s, bool_col,
   arr_i32, arr_f64, lst_i32, struct_basic, struct_f64,
-  map_i32, lst_struct, deep
+  map_i32, lst_struct, deep, variant_obj
 );
 "
 fi
@@ -352,6 +352,7 @@ QUERIES=(
 	"map|SUM(list_sum(map_values(map_i32)))"
 	"lstStr|SUM(list_sum(list_transform(lst_struct, p -> p.v)))"
 	"deep|SUM(length(deep.name)) + SUM(list_sum(list_transform(deep.vals, p -> p.v)))"
+	"variant|SUM(variant_obj.a::DOUBLE) + SUM(1.0 / length(variant_obj.b::VARCHAR))"
 )
 
 # Three timing modes, picked by env:
@@ -391,7 +392,7 @@ drop_os_cache_with_sudo() {
 
 reattach_native_db() {
 	run_setup "cold_reattach_native_db" "${BUILD_THREADS}" "
-ATTACH IF NOT EXISTS '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
+ATTACH IF NOT EXISTS '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 "
 }

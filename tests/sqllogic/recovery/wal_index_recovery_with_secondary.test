@@ -95,14 +95,14 @@ count
 # Old token for row 2 is gone, new token present.
 connection ws_after
 query
-SELECT id FROM ws_t WHERE body @@ ts_phrase('CHANGED');
+SELECT id FROM ws_inv_idx WHERE body @@ ts_phrase('CHANGED');
 ----
 id
 2
 
 connection ws_after
 query
-SELECT COUNT(*) FROM ws_t WHERE body @@ ts_phrase('banana seed two');
+SELECT COUNT(*) FROM ws_inv_idx WHERE body @@ ts_phrase('banana seed two');
 ----
 count
 0
@@ -110,14 +110,14 @@ count
 # Old token for row 3 is gone, new token present.
 connection ws_after
 query
-SELECT id FROM ws_t WHERE body @@ ts_phrase('BOTH');
+SELECT id FROM ws_inv_idx WHERE body @@ ts_phrase('BOTH');
 ----
 id
 3
 
 connection ws_after
 query
-SELECT COUNT(*) FROM ws_t WHERE body @@ ts_phrase('cherry seed three');
+SELECT COUNT(*) FROM ws_inv_idx WHERE body @@ ts_phrase('cherry seed three');
 ----
 count
 0
@@ -125,7 +125,7 @@ count
 # Row 4 is deleted, its tokens are gone.
 connection ws_after
 query
-SELECT COUNT(*) FROM ws_t WHERE body @@ ts_phrase('date late four');
+SELECT COUNT(*) FROM ws_inv_idx WHERE body @@ ts_phrase('date late four');
 ----
 count
 0
@@ -133,14 +133,14 @@ count
 # Rows 5 and 6 inserted properly.
 connection ws_after
 query
-SELECT id FROM ws_t WHERE body @@ ts_phrase('elder late five');
+SELECT id FROM ws_inv_idx WHERE body @@ ts_phrase('elder late five');
 ----
 id
 5
 
 connection ws_after
 query
-SELECT id FROM ws_t WHERE body @@ ts_phrase('fig late six');
+SELECT id FROM ws_inv_idx WHERE body @@ ts_phrase('fig late six');
 ----
 id
 6
@@ -148,7 +148,7 @@ id
 # Row 1 — only score changed. Body still searchable as before.
 connection ws_after
 query
-SELECT id FROM ws_t WHERE body @@ ts_phrase('apple seed one');
+SELECT id FROM ws_inv_idx WHERE body @@ ts_phrase('apple seed one');
 ----
 id
 1

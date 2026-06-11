@@ -18,21 +18,21 @@ INSERT INTO vedernikoff_nums VALUES (1), (2), (3);
 # --- 1. Minimal repro: replace a view, then DROP FUNCTION CASCADE -----------
 
 statement ok
-CREATE FUNCTION vedernikoff_square(x INT) AS x * x;
+CREATE FUNCTION clickclack(x INT) AS x * x;
 
 
 statement ok
-CREATE OR REPLACE VIEW v_vedernikoff_square AS SELECT vedernikoff_square(n) AS c FROM vedernikoff_nums;
+CREATE OR REPLACE VIEW v_clickclack AS SELECT clickclack(n) AS c FROM vedernikoff_nums;
 
 
 # REPLACE the same view: this is the step that previously leaked an orphan.
 statement ok
-CREATE OR REPLACE VIEW v_vedernikoff_square AS SELECT vedernikoff_square(n) + 1 AS c FROM vedernikoff_nums;
+CREATE OR REPLACE VIEW v_clickclack AS SELECT clickclack(n) + 1 AS c FROM vedernikoff_nums;
 
 
 # The replaced body must be the one in effect (1->2, 2->5, 3->10).
 query
-SELECT c FROM v_vedernikoff_square ORDER BY c;
+SELECT c FROM v_clickclack ORDER BY c;
 ----
 c
 2
@@ -42,7 +42,7 @@ c
 
 # Exactly one catalog entry for the view -- no ghost left behind by the replace.
 query
-SELECT count(*) FROM information_schema.views WHERE table_name = 'v_vedernikoff_square';
+SELECT count(*) FROM information_schema.views WHERE table_name = 'v_clickclack';
 ----
 count
 1
@@ -50,15 +50,15 @@ count
 
 # Used to SIGABRT here. Now succeeds and drops the (single) dependent view.
 statement ok
-DROP FUNCTION vedernikoff_square(INT) CASCADE;
+DROP FUNCTION clickclack(INT) CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_vedernikoff_square.*does not exist
-SELECT * FROM v_vedernikoff_square;
+statement error (?i)(table|relation|view).*v_clickclack.*does not exist
+SELECT * FROM v_clickclack;
 
 
 query
-SELECT count(*) FROM information_schema.views WHERE table_name = 'v_vedernikoff_square';
+SELECT count(*) FROM information_schema.views WHERE table_name = 'v_clickclack';
 ----
 count
 0
@@ -76,28 +76,28 @@ n
 # --- 2. CREATE OR REPLACE FUNCTION (same signature) then CASCADE ------------
 
 statement ok
-CREATE FUNCTION vedernikoff_grow(x INT) AS x + 1;
+CREATE FUNCTION babsky(x INT) AS x + 1;
 
 
 statement ok
-CREATE VIEW v_vedernikoff_grow AS SELECT vedernikoff_grow(n) AS c FROM vedernikoff_nums;
+CREATE VIEW v_babsky AS SELECT babsky(n) AS c FROM vedernikoff_nums;
 
 
 # Replace the function body in place; the dependent view must survive and see
-# the new definition (x + 100), and there must be exactly one vedernikoff_grow.
+# the new definition (x + 100), and there must be exactly one babsky.
 statement ok
-CREATE OR REPLACE FUNCTION vedernikoff_grow(x INT) AS x + 100;
+CREATE OR REPLACE FUNCTION babsky(x INT) AS x + 100;
 
 
 query
-SELECT count(*) FROM pg_catalog.pg_proc WHERE proname = 'vedernikoff_grow';
+SELECT count(*) FROM pg_catalog.pg_proc WHERE proname = 'babsky';
 ----
 count
 1
 
 
 query
-SELECT c FROM v_vedernikoff_grow ORDER BY c;
+SELECT c FROM v_babsky ORDER BY c;
 ----
 c
 101
@@ -105,50 +105,203 @@ c
 103
 
 
-statement error (?i)cannot drop function .*vedernikoff_grow.* because other objects depend on it
-DROP FUNCTION vedernikoff_grow(INT);
+statement error (?i)cannot drop function .*babsky.* because other objects depend on it
+DROP FUNCTION babsky(INT);
 
 
 statement ok
-DROP FUNCTION vedernikoff_grow(INT) CASCADE;
+DROP FUNCTION babsky(INT) CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_vedernikoff_grow.*does not exist
-SELECT * FROM v_vedernikoff_grow;
+statement error (?i)(table|relation|view).*v_babsky.*does not exist
+SELECT * FROM v_babsky;
 
 
 # --- 3. Repeated replace churn followed by a single cascade -----------------
 
 statement ok
-CREATE FUNCTION vedernikoff_pass(x INT) AS x;
+CREATE FUNCTION kostya(x INT) AS x;
 
 
 statement ok
-CREATE OR REPLACE VIEW v_vedernikoff_pass AS SELECT vedernikoff_pass(n) AS c FROM vedernikoff_nums;
+CREATE OR REPLACE VIEW v_kostya AS SELECT kostya(n) AS c FROM vedernikoff_nums;
 
 
 statement ok
-CREATE OR REPLACE VIEW v_vedernikoff_pass AS SELECT vedernikoff_pass(n) * 2 AS c FROM vedernikoff_nums;
+CREATE OR REPLACE VIEW v_kostya AS SELECT kostya(n) * 2 AS c FROM vedernikoff_nums;
 
 
 statement ok
-CREATE OR REPLACE VIEW v_vedernikoff_pass AS SELECT vedernikoff_pass(n) * 3 AS c FROM vedernikoff_nums;
+CREATE OR REPLACE VIEW v_kostya AS SELECT kostya(n) * 3 AS c FROM vedernikoff_nums;
 
 
 query
-SELECT count(*) FROM information_schema.views WHERE table_name = 'v_vedernikoff_pass';
+SELECT count(*) FROM information_schema.views WHERE table_name = 'v_kostya';
 ----
 count
 1
 
 
 statement ok
-DROP FUNCTION vedernikoff_pass(INT) CASCADE;
+DROP FUNCTION kostya(INT) CASCADE;
 
 
-statement error (?i)(table|relation|view).*v_vedernikoff_pass.*does not exist
-SELECT * FROM v_vedernikoff_pass;
+statement error (?i)(table|relation|view).*v_kostya.*does not exist
+SELECT * FROM v_kostya;
 
 
 statement ok
 DROP TABLE vedernikoff_nums;
+
+
+# --- 4. CREATE OR REPLACE that REMOVES a dependency edge --------------------
+# ReplaceObject diffs old vs new refs: edges only in the old definition must be
+# torn down. Cover type refs and function refs separately.
+
+statement ok
+CREATE TYPE iceberg AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TYPE mop AS ENUM ('c', 'd');
+
+
+statement ok
+CREATE FUNCTION saga(x TEXT) AS CAST(x AS iceberg);
+
+
+# A is referenced, B is not -- DROP A blocked, DROP B succeeds.
+statement error (?i)cannot drop type .*iceberg.* because other objects depend on it
+DROP TYPE iceberg;
+
+
+# Replace to reference B instead of A. The old A edge must be torn down.
+statement ok
+CREATE OR REPLACE FUNCTION saga(x TEXT) AS CAST(x AS mop);
+
+
+# After replacement: A is no longer referenced, B is.
+statement ok
+DROP TYPE iceberg;
+
+
+statement error (?i)cannot drop type .*mop.* because other objects depend on it
+DROP TYPE mop;
+
+
+statement ok
+DROP FUNCTION saga(TEXT) CASCADE;
+
+
+statement ok
+DROP TYPE mop;
+
+
+# Same for function-in-view refs.
+statement ok
+CREATE FUNCTION jira_ticket(x INT) AS x + 1;
+
+
+statement ok
+CREATE FUNCTION manifest(x INT) AS x + 2;
+
+
+statement ok
+CREATE TABLE dashboard (n INT);
+
+
+statement count 2
+INSERT INTO dashboard VALUES (1), (2);
+
+
+statement ok
+CREATE VIEW audit AS SELECT jira_ticket(n) AS c FROM dashboard;
+
+
+statement error (?i)cannot drop function .*jira_ticket.* because other objects depend on it
+DROP FUNCTION jira_ticket(INT);
+
+
+# Replace to use g2 instead. The g1 edge must be torn down.
+statement ok
+CREATE OR REPLACE VIEW audit AS SELECT manifest(n) AS c FROM dashboard;
+
+
+# g1 is now unused.
+statement ok
+DROP FUNCTION jira_ticket(INT);
+
+
+statement error (?i)cannot drop function .*manifest.* because other objects depend on it
+DROP FUNCTION manifest(INT);
+
+
+statement ok
+DROP VIEW audit;
+
+
+statement ok
+DROP FUNCTION manifest(INT);
+
+
+statement ok
+DROP TABLE dashboard;
+
+
+# --- 5. CREATE OR REPLACE FUNCTION blocked when an index uses it ------------
+# Inverted indexes bake the function body into their serialized expression at
+# CREATE INDEX time. Replacing the function would silently stale the index --
+# queries via the new macro form would miss the index. Require the user to
+# drop the index first.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mop_dict(template = 'keyword');
+
+
+statement ok
+CREATE FUNCTION babsky_or(x INT) AS x * 2;
+
+
+statement ok
+CREATE TABLE clickclack_or (id INT PRIMARY KEY, n INT);
+
+
+statement count 1
+INSERT INTO clickclack_or VALUES (1, 5);
+
+
+statement ok
+CREATE INDEX clickclack_or_idx ON clickclack_or USING inverted(id, (babsky_or(n)));
+
+
+# Trying to replace the function: rejected because the index depends on it.
+statement error (?i)cannot replace function .*babsky_or.* because indexes depend on it
+CREATE OR REPLACE FUNCTION babsky_or(x INT) AS x * 3;
+
+
+# After dropping the index, replace works.
+statement ok
+DROP INDEX clickclack_or_idx;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION babsky_or(x INT) AS x * 3;
+
+
+query
+SELECT babsky_or(5);
+----
+babsky_or
+15
+
+
+statement ok
+DROP FUNCTION babsky_or(INT);
+
+
+statement ok
+DROP TABLE clickclack_or;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY mop_dict;

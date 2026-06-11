@@ -30,11 +30,11 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <memory>
+#include <shared_mutex>
 
 #include "catalog/inverted_index.h"
 #include "rest_server/flush_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 
@@ -153,7 +153,7 @@ class InvertedIndexShard final
   static std::shared_ptr<InvertedIndexShard> Create(
     ObjectId id, const catalog::InvertedIndex& index, bool is_new);
 
-  void WriteInternal(vpack::Builder& builder) const final;
+  void Serialize(duckdb::Serializer& sink) const final;
 
   struct TruncateGuard {
     struct UnlockDeleter {
@@ -203,22 +203,20 @@ class InvertedIndexShard final
     return _writer && _writer->HasActiveSegments();
   }
 
-  void StatsToVPack(vpack::Builder& builder) const;
   Stats GetStats() const;
 
   auto& GetMutex() { return _mutex; }
 
   InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
-    return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
+    std::shared_lock guard{_snapshot_mutex};
+    return _snapshot;
   }
 
   void StoreInvertedIndexSnapshot(
     InvertedIndexSnapshotPtr inverted_index_snapshot) {
-    std::atomic_store_explicit(&_snapshot, std::move(inverted_index_snapshot),
-                               std::memory_order_release);
+    std::unique_lock guard{_snapshot_mutex};
+    _snapshot = std::move(inverted_index_snapshot);
   }
-
-  void ResetInvertedIndexSnapshot() { _snapshot.reset(); }
 
   auto& GetTasksSettings() { return _tasks_settings; }
 
@@ -262,6 +260,7 @@ class InvertedIndexShard final
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;
+  mutable std::shared_mutex _snapshot_mutex;
   InvertedIndexSnapshotPtr _snapshot;
   std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
@@ -281,22 +280,6 @@ class InvertedIndexShard final
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _compactions_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
-
-  // Stats
-  metrics::Gauge<uint64_t>* _mapped_memory{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_commits{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_cleanups{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_compactions{nullptr};
-
-  std::atomic_uint64_t _commit_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_commit_time_ms{nullptr};
-
-  std::atomic_uint64_t _cleanup_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_cleanup_time_ms{nullptr};
-
-  std::atomic_uint64_t _compaction_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_compaction_time_ms{nullptr};
-  metrics::Guard<Stats>* _metric_stats{nullptr};
 
   enum class Error : uint8_t {
     // inverted index shard has no issues

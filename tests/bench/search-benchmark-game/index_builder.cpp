@@ -23,39 +23,34 @@
 #include <atomic>
 #include <duckdb/main/database.hpp>
 #include <iostream>
+#include <iresearch/search/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
 
-namespace bench {
+#include "basics/duckdb_engine.h"
 
-duckdb::DatabaseInstance& CsDb() {
-  static std::unique_ptr<duckdb::DuckDB> kDb = [] {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
-}
+namespace bench {
 
 static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
                                                  size_t segment_pool_size,
                                                  size_t segment_mem_max,
                                                  uint32_t row_group_size,
                                                  uint32_t norm_row_group_size) {
+  auto* db = &::sdb::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.reader_options.scorer = scorer_ptr;
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
-  writer_opts.db = &CsDb();
-  writer_opts.reader_options.db = &CsDb();
+  writer_opts.db = db;
+  writer_opts.reader_options.db = db;
   writer_opts.column_options =
     [row_group_size](irs::field_id id) -> irs::ColumnOptions {
     return {.row_group_size = row_group_size};
   };
   writer_opts.norm_column_options =
     [norm_row_group_size, next = std::make_shared<std::atomic<irs::field_id>>(
-                            0)](std::string_view) -> irs::NormColumnOptions {
+                            0)](irs::field_id) -> irs::NormColumnOptions {
     return {
       .id = next->fetch_add(1, std::memory_order_relaxed),
       .row_group_size = norm_row_group_size,
@@ -68,9 +63,7 @@ IndexBuilder::IndexBuilder(std::string_view path,
                            const IndexBuilderOptions& opts,
                            const BenchConfig& config)
   : _opts{opts},
-    _scorer{irs::scorers::Get(config.scorer,
-                              irs::Type<irs::text_format::Json>::get(),
-                              config.scorer_options)},
+    _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _dir{path},
     _format{irs::formats::Get(config.format_name)},
     _writer{irs::IndexWriter::Make(
@@ -205,6 +198,7 @@ void IndexBuilder::IndexFromStream(std::istream& input,
       while (batch_provider.Swap(buf)) {
         auto ctx = _writer->GetBatch();
         (*handler)(buf, ctx);
+        ctx.Commit();
         std::cout << "." << std::flush;
       }
     });

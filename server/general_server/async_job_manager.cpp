@@ -22,15 +22,14 @@
 #include "async_job_manager.h"
 
 #include <absl/strings/str_cat.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 
 #include "basics/errors.h"
-#include "basics/logger/logger.h"
-#include "basics/system-functions.h"
-#include "basics/write_locker.h"
+#include "basics/log.h"
 #include "general_server/rest_handler.h"
 #include "general_server/state.h"
 #include "rest/general_response.h"
-#include "rest_server/soft_shutdown_feature.h"
 #include "utils/exec_context.h"
 
 namespace sdb::rest {
@@ -47,7 +46,7 @@ bool Authorized(
 AsyncJobResult::AsyncJobResult(IdType job_id, Status status,
                                std::shared_ptr<RestHandler> handler)
   : job_id{job_id},
-    stamp{utilities::GetMicrotime()},
+    stamp{absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch())},
     status{status},
     handler{std::move(handler)} {}
 
@@ -168,9 +167,6 @@ void AsyncJobManager::initAsyncJob(std::shared_ptr<RestHandler> handler) {
   AsyncJobResult result{id, AsyncJobResult::kJobPending, std::move(handler)};
 
   absl::WriterMutexLock write_locker{&_lock};
-  if (_soft_shutdown_ongoing.load(std::memory_order_relaxed)) {
-    SDB_THROW(ERROR_SHUTTING_DOWN, "Soft shutdown ongoing.");
-  }
   _jobs.try_emplace(id, std::move(user), std::move(result));
 }
 
@@ -184,7 +180,8 @@ void AsyncJobManager::finishAsyncJob(RestHandler* handler) {
   }
   it->second.second.response = std::move(response);
   it->second.second.status = AsyncJobResult::kJobDone;
-  it->second.second.stamp = utilities::GetMicrotime();
+  it->second.second.stamp =
+    absl::ToDoubleSeconds(absl::Now() - absl::UnixEpoch());
 }
 
 }  // namespace sdb::rest

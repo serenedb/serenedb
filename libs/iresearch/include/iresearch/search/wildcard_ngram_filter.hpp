@@ -49,7 +49,7 @@ struct ByWildcardNgramOptions {
   bstring token;
   bool has_pos{true};
   std::shared_ptr<RE2> matcher;
-  field_id store_field_id{0};
+  field_id store_field_id{irs::field_limits::invalid()};
 
   bool operator==(const ByWildcardNgramOptions& other) const noexcept {
     if (parts != other.parts || token != other.token ||
@@ -79,11 +79,11 @@ struct ByWildcardNgramOptions {
 
 class ByWildcardNgram final : public FilterWithField<ByWildcardNgramOptions> {
  public:
-  static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
+  static Query::ptr Prepare(const PrepareContext& ctx, irs::field_id id,
                             const ByWildcardNgramOptions& options);
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return Prepare(ctx.Boost(Boost()), field(), options());
+    return Prepare(ctx.Boost(Boost()), field_id(), options());
   }
 };
 

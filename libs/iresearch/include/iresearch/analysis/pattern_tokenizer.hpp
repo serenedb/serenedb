@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "analyzers.hpp"
+#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "re2/re2.h"
 #include "token_attributes.hpp"
@@ -36,6 +36,8 @@ class PatternTokenizer final : public TypedAnalyzer<PatternTokenizer>,
                                private util::Noncopyable {
  public:
   struct Options {
+    using Owner = PatternTokenizer;
+
     // RE2 regular expression used for matching or splitting
     // Must be a valid regex
     std::string pattern;
@@ -48,8 +50,7 @@ class PatternTokenizer final : public TypedAnalyzer<PatternTokenizer>,
   };
 
   static constexpr std::string_view type_name() noexcept { return "pattern"; }
-  static void init();  // for triggering registration in a static build
-  static ptr make(std::string_view pattern, int group = -1);
+  static ptr Make(Options opts);
 
   explicit PatternTokenizer(std::string_view pattern, int group = -1);
   ~PatternTokenizer();

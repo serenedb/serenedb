@@ -21,168 +21,19 @@
 #include "path_hierarchy_tokenizer.hpp"
 
 #include <absl/strings/str_cat.h>
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
 
 #include <string_view>
 
-#include "iresearch/analysis/analyzers.hpp"
+#include "basics/exceptions.h"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs::analysis {
-namespace {
-
-bool ParseVPackOptions(const vpack::Slice slice,
-                       PathHierarchyTokenizer::Options& options) {
-  if (!slice.isObject()) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Slice for path_hierarchy_token_stream is not an object or string");
-    return false;
-  }
-
-  struct VPackOptionsTemp {
-    std::string delimiter = "/";
-    std::string replacement = "";
-    size_t buffer_size = 1024;
-    bool reverse = false;
-    size_t skip = 0;
-  } temp;
-
-  auto r = vpack::ReadObjectNothrow(slice, temp,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-             "Failed to parse path_hierarchy_token_stream options: ",
-             r.errorMessage());
-    return false;
-  }
-
-  if (temp.delimiter.empty()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "path_hierarchy_token_stream delimiter must not be empty");
-    return false;
-  }
-  options.delimiter = std::move(temp.delimiter);
-
-  if (temp.replacement.empty()) {
-    options.replacement = options.delimiter;
-  } else {
-    options.replacement = std::move(temp.replacement);
-  }
-
-  options.buffer_size = temp.buffer_size;
-  options.reverse = temp.reverse;
-  options.skip = temp.skip;
-
-  SDB_ASSERT(!options.delimiter.empty());
-  return true;
-}
-
-Analyzer::ptr MakeVPack(const vpack::Slice& args) {
-  PathHierarchyTokenizer::Options options;
-  if (ParseVPackOptions(args, options)) {
-    return PathHierarchyTokenizer::make(std::move(options));
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        "Null arguments while constructing path_hierarchy_token_stream");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Caught error '", ex.what(),
-                           "' while constructing path_hierarchy_token_stream "
-                           "from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while constructing path_hierarchy_token_stream "
-              "from JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
-  PathHierarchyTokenizer::Options options;
-  if (ParseVPackOptions(slice, options)) {
-    vpack::ObjectBuilder object(builder);
-    builder->add("delimiter", options.delimiter);
-    builder->add("replacement", options.replacement);
-    builder->add("buffer_size", options.buffer_size);
-    builder->add("reverse", options.reverse);
-    builder->add("skip", options.skip);
-    return true;
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& config) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  if (NormalizeVPackConfig(slice, &builder)) {
-    config.assign(builder.slice().startAs<char>(), builder.slice().byteSize());
-    return true;
-  }
-  return false;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while normalizing path_hierarchy_token_stream");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder builder;
-    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
-      definition = builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Caught error '", ex.what(),
-                           "' while normalizing path_hierarchy_token_stream "
-                           "from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while normalizing path_hierarchy_token_stream "
-              "from JSON");
-  }
-  return false;
-}
-
-}  // namespace
 
 PathHierarchyTokenizer::PathHierarchyTokenizer(Options&& options) noexcept
   : _options{std::move(options)}, _term_eof{true} {}
 
 PathHierarchyTokenizer::~PathHierarchyTokenizer() = default;
-
-void PathHierarchyTokenizer::init() {
-  REGISTER_ANALYZER_JSON(PathHierarchyTokenizer, MakeJson, NormalizeJsonConfig);
-  REGISTER_ANALYZER_VPACK(PathHierarchyTokenizer, MakeVPack,
-                          NormalizeVPackConfig);
-}
 
 Attribute* PathHierarchyTokenizer::GetMutable(TypeInfo::type_id type) noexcept {
   return irs::GetMutable(_attrs, type);
@@ -505,41 +356,45 @@ bool ReversePathHierarchyTokenizer<SingleChar, NoReplacement>::next() {
   return true;
 }
 
-Analyzer::ptr PathHierarchyTokenizer::make(Options&& options) {
-  if (options.replacement.empty()) {
-    options.replacement = options.delimiter;
+Analyzer::ptr PathHierarchyTokenizer::Make(Options opts) {
+  if (opts.delimiter.empty()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "path_hierarchy: empty delimiter");
   }
 
-  const bool single_char = (options.delimiter.size() == 1);
-  const bool no_replacement = (options.delimiter == options.replacement);
+  if (opts.replacement.empty()) {
+    opts.replacement = opts.delimiter;
+  }
 
-  if (options.reverse) {
+  const bool single_char = (opts.delimiter.size() == 1);
+  const bool no_replacement = (opts.delimiter == opts.replacement);
+
+  if (opts.reverse) {
     if (single_char && no_replacement) {
       return std::make_unique<ReversePathHierarchyTokenizer<true, true>>(
-        std::move(options));
+        std::move(opts));
     } else if (single_char && !no_replacement) {
       return std::make_unique<ReversePathHierarchyTokenizer<true, false>>(
-        std::move(options));
+        std::move(opts));
     } else if (!single_char && no_replacement) {
       return std::make_unique<ReversePathHierarchyTokenizer<false, true>>(
-        std::move(options));
+        std::move(opts));
     } else {
       return std::make_unique<ReversePathHierarchyTokenizer<false, false>>(
-        std::move(options));
+        std::move(opts));
     }
   } else {
     if (single_char && no_replacement) {
       return std::make_unique<ForwardPathHierarchyTokenizer<true, true>>(
-        std::move(options));
+        std::move(opts));
     } else if (single_char && !no_replacement) {
       return std::make_unique<ForwardPathHierarchyTokenizer<true, false>>(
-        std::move(options));
+        std::move(opts));
     } else if (!single_char && no_replacement) {
       return std::make_unique<ForwardPathHierarchyTokenizer<false, true>>(
-        std::move(options));
+        std::move(opts));
     } else {
       return std::make_unique<ForwardPathHierarchyTokenizer<false, false>>(
-        std::move(options));
+        std::move(opts));
     }
   }
 }

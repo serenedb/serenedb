@@ -21,12 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-// All tests in this file are gated on a sort-aware path through the new
-// columnstore that does not exist yet. The TEST_P shells are present so
-// the suite names and instantiations stay in the test catalog; each body
-// short-circuits at runtime via GTEST_SKIP. When sorted-index lands on
-// the new cs, drop the GTEST_SKIP lines and refill the bodies (rewritten
-// to use the new typed columnstore + IndexWriter sort options).
+// All tests in this file are gated on a sort-aware path through the
+// columnstore that does not exist yet. The TEST_P shells stay in the
+// catalog so the suite names and instantiations are preserved; each
+// body short-circuits at runtime via GTEST_SKIP. When sorted-index
+// support lands, drop the GTEST_SKIP lines and refill the bodies
+// against the typed columnstore + IndexWriter sort options.
 
 #include "index_tests.hpp"
 #include "tests_shared.hpp"
@@ -36,7 +36,7 @@ namespace {
 class SortedIndexTestCase : public tests::IndexTestBase {};
 class SortedIndexStressTestCase : public tests::IndexTestBase {};
 
-constexpr const char kSortedReason[] = "sorted-index not supported on new cs";
+constexpr const char kSortedReason[] = "sorted-index not supported";
 
 const auto kTestValuesSorted = ::testing::Combine(
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefaultRot13>()),

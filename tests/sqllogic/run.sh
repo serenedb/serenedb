@@ -530,26 +530,30 @@ for engine in "${engines_list[@]}"; do
 	fi
 done
 
-echo "Database: $database"
-echo "Host: $host"
-echo "Single Port: $single_port"
-echo "Single Port SSL: $single_port_ssl"
-echo "Cluster Port: $cluster_port"
-echo "Engines: $engines"
-echo "Test Paths: ${tests[*]}"
-echo "JUnit Path: $junit"
-echo "Runner: $runner"
-echo "Jobs: $jobs"
-echo "Debug: $debug"
-echo "Override: $override"
-echo "Force override: $force_override"
-echo "Format: $format"
-echo "Show all errors: $show_all_errors"
-echo "Fast: $fast"
-echo "Skip failed: $skip_failed"
-echo "Skip: $skip"
-echo "Iterations: $iterations"
-echo "Cancellation: $cancellation"
+# The recovery harness invokes run.sh once per test; the identical config
+# banner on every call drowns the logs. SDB_SQLLOGIC_QUIET=1 suppresses it.
+if [[ "${SDB_SQLLOGIC_QUIET:-0}" != "1" ]]; then
+	echo "Database: $database"
+	echo "Host: $host"
+	echo "Single Port: $single_port"
+	echo "Single Port SSL: $single_port_ssl"
+	echo "Cluster Port: $cluster_port"
+	echo "Engines: $engines"
+	echo "Test Paths: ${tests[*]}"
+	echo "JUnit Path: $junit"
+	echo "Runner: $runner"
+	echo "Jobs: $jobs"
+	echo "Debug: $debug"
+	echo "Override: $override"
+	echo "Force override: $force_override"
+	echo "Format: $format"
+	echo "Show all errors: $show_all_errors"
+	echo "Fast: $fast"
+	echo "Skip failed: $skip_failed"
+	echo "Skip: $skip"
+	echo "Iterations: $iterations"
+	echo "Cancellation: $cancellation"
+fi
 
 if [[ "$fast" == "true" ]]; then
 	# Strip trailing * to exclude .test_slow files (*.test* -> *.test)
@@ -610,6 +614,15 @@ run_tests() {
 	# TODO(Misha) move this to sqllogictest-rs
 	mkdir -p "$(dirname -- "$junit-$engine")"
 
+	# Slowest-first off the persisted per-engine timing cache (opt-in): the runner
+	# reads SDB_TIMING_CACHE to order discovered files and SDB_TIMING_OUT to record.
+	local cache="" timing_out=""
+	if [[ -n "${SDB_TIMING_CACHE_DIR:-}" ]]; then
+		cache="$SDB_TIMING_CACHE_DIR/${engine}${SDB_TIMING_KEY:+.$SDB_TIMING_KEY}.tsv"
+		timing_out=$(mktemp)
+		export SDB_TIMING_CACHE="$cache" SDB_TIMING_OUT="$timing_out"
+	fi
+
 	sqllogictest "${tests[@]}" \
 		--host "$host" --port "$port" --engine "$engine" \
 		--jobs "$jobs" \
@@ -619,7 +632,14 @@ run_tests() {
 		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
 		$skip_opt \
 		$ssl_port_opt
-	return $?
+	local rc=$?
+
+	if [[ -n "$timing_out" ]]; then
+		unset SDB_TIMING_CACHE SDB_TIMING_OUT
+		python3 "$SCRIPT_DIR/timing_cache.py" merge "$cache" "$timing_out" 2>/dev/null || true
+		rm -f "$timing_out"
+	fi
+	return $rc
 }
 
 # Default port when none specified

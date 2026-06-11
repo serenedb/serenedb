@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_storage_extension.h"
 
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 
@@ -32,12 +33,12 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_transaction.h"
 #include "connector/optimizer/iresearch_plan.h"
+#include "connector/optimizer/wrap_unsupported_types.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-#include "rest_server/serened.h"
 
 namespace sdb::connector {
 namespace {
@@ -47,8 +48,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
-  auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto& catalog_feature = catalog::CatalogFeature::instance();
 
   if (info.path.empty()) {
     // CREATE DATABASE: create new database in SereneDB catalog
@@ -97,41 +97,27 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
   return duckdb::make_uniq<SereneDBTransactionManager>(db);
 }
 
-void DropSereneDB(duckdb::ClientContext& context, const duckdb::string& name,
-                  duckdb::OnEntryNotFound if_not_found) {
+}  // namespace
+
+void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  if (state && state->GetConnectionContext().GetDatabase() == name) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                    ERR_MSG("cannot drop the currently open database"));
-  }
   const auto& exec_ctx =
     state ? state->GetConnectionContext() : ExecContext::superuser();
-  // Release current connection's catalog snapshot so the Database object
-  // can become unreferenced, allowing synchronous detach by DuckDB.
   if (state) {
     state->GetConnectionContext().DropCatalogSnapshot();
   }
-  auto r = catalog::DropDatabase(exec_ctx, name);
-  if (r.is(ERROR_SERVER_DATABASE_NOT_FOUND)) {
-    if (if_not_found == duckdb::OnEntryNotFound::RETURN_NULL) {
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
-                    ERR_MSG("database \"", name, "\" does not exist"));
-  }
+  duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
+  auto r = catalog::DropDatabase(exec_ctx, GetName(), std::move(keep_alive));
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
 }
 
-}  // namespace
-
 SereneDBStorageExtension::SereneDBStorageExtension() {
   attach = AttachSereneDB;
   create_transaction_manager = CreateTransactionManager;
-  drop_database = DropSereneDB;
 }
 
 void RegisterSereneDBStorage(duckdb::DBConfig& config) {
@@ -140,7 +126,8 @@ void RegisterSereneDBStorage(duckdb::DBConfig& config) {
 }
 
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
-  optimizer::RegisterIresearchPlanOptimizer(db);
+  optimizer::RegisterWrapUnsupportedTypesExtension(db);
+  optimizer::RegisterIResearchPlanOptimizer(db);
 }
 
 }  // namespace sdb::connector

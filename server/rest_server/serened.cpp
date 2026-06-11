@@ -19,167 +19,188 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "rest_server/serened.h"
+#include <absl/cleanup/cleanup.h>
 
-#include <absl/functional/overload.h>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <exception>
+#include <functional>
+#include <utility>
 
-#include "general_server/server_options_feature.h"
-#include "rest_server/serened_includes.h"
+#include "app/app_server.h"
+#include "app/init.h"
+#include "basics/crash_handler.h"
+#include "basics/duckdb_engine.h"
+#include "basics/log.h"
+#include "catalog/catalog.h"
+#include "duckdb_shell.hpp"
+#include "general_server/general_server_feature.h"
+#include "general_server/scheduler_feature.h"
+#include "general_server/ssl_server_feature.h"
+#include "pg/pg_feature.h"
+#include "query/server_engine.h"
+#include "rest_server/database_path_feature.h"
+#include "rest_server/flush_feature.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
+#include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
+#include "storage_engine/search_engine.h"
+
+namespace {
 
 using namespace sdb;
 using namespace sdb::app;
 
-static_assert(SerenedServer::id<LoggerFeature>() == 0);
+const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
 
-constexpr auto kNonServerFeatures = std::array{
-#ifdef SERENEDB_HAVE_FORK
-  SerenedServer::id<SupervisorFeature>(),
-  SerenedServer::id<DaemonFeature>(),
-#endif
-  SerenedServer::id<GeneralServerFeature>(),
-  SerenedServer::id<HttpEndpointProvider>(),
-  SerenedServer::id<LogBufferFeature>(),
-  SerenedServer::id<ServerFeature>(),
-  SerenedServer::id<SslServerFeature>(),
-  SerenedServer::id<StatisticsFeature>(),
-};
-
-static const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
-
-static int RunServer(int argc, char** argv, GlobalContext& context) {
+int RunServer(int argc, char** argv) {
   try {
     CrashHandler::installCrashHandler();
-    std::string name = context.binaryName();
 
-    auto options = std::make_shared<sdb::options::ProgramOptions>(
-      argv[0], "Usage: " + name + " [<options>]",
-      "For more information use:", BIN_DIRECTORY);
+    AppServer server;
 
-    int ret{EXIT_FAILURE};
-    SerenedServer server{options, BIN_DIRECTORY};
-    ServerState state;
+    // 1. Parse CLI before constructing any feature (ctors read flags).
+    //    parseOptions can SDB_FATAL on bad CLI -- DuckDB is already up
+    //    by the time we get here (Initialize ran in main(), see below).
+    server.parseOptions(argc, argv);
 
-    server.addReporter(
-      {[&](SerenedServer::State state) {
-         CrashHandler::SetState(magic_enum::enum_name(state));
+    // 2. Construct features in dependency order. Each ctor reads its
+    //    own flags, runs validation, and sets its static gInstance
+    //    pointer; Feature::instance() works from here on.
+    SslServerFeature ssl;
+    DatabasePathFeature db_path;
+    SchedulerFeature scheduler;
+    RocksDBOptionFeature rocksdb_opt;
+    RocksDBEngineCatalog engine;
+    FlushFeature flush;
+    RocksDBRecoveryManager recovery;
+    catalog::CatalogFeature catalog;
+    search::SearchEngine search;
+    GeneralServerFeature general;
+    pg::PostgresFeature pg;
 
-         if (state == SerenedServer::State::InStart) {
-           // drop priveleges before starting features
-           server.getFeature<PrivilegeFeature>().dropPrivilegesPermanently();
-         }
-       },
-       {}});
+    // Lifecycle is two explicit, flat lists: bring features UP in dependency
+    // order, then take them DOWN in a dependency order that is deliberately
+    // NOT the reverse of startup. The non-obvious edges: the scheduler must
+    // drain (it runs drop tasks that touch search + rocksdb) before those go
+    // down; the catalog must release the rocksdb snapshots its index shards
+    // hold BEFORE rocksdb is closed, yet must stay alive while the engine's
+    // background thread drains. DuckDBEngine brackets all of this from main().
+    // The up_* flags let DOWN skip whatever never came UP (start() threw).
+    bool up_ssl = false, up_scheduler = false, up_engine = false,
+         up_catalog = false, up_search = false, up_general = false;
 
-    server.addFeatures(absl::Overload{
-      []<typename T>(auto& server, type::Tag<T>) {
-        return std::make_unique<T>(server);
-      },
-      [&ret](auto& server, type::Tag<CheckVersionFeature>) {
-        return std::make_unique<CheckVersionFeature>(server, &ret,
-                                                     kNonServerFeatures);
-      },
-      [&name](auto& server, type::Tag<ConfigFeature>) {
-        return std::make_unique<ConfigFeature>(
-          server, name, [] { return GetServerOptions().app_print_version; });
-      },
-      [](auto& server, type::Tag<InitDatabaseFeature>) {
-        return std::make_unique<InitDatabaseFeature>(server,
-                                                     kNonServerFeatures);
-      },
-      [](auto& server, type::Tag<LoggerFeature>) {
-        return std::make_unique<LoggerFeature>(server, true);
-      },
-      [](auto& server, type::Tag<NetworkFeature>) {
-        auto& metrics = server.template getFeature<metrics::MetricsFeature>();
-        return std::make_unique<NetworkFeature>(
-          server, metrics, network::ConnectionPool::Config{metrics});
-      },
-      [&ret](auto& server, type::Tag<ServerFeature>) {
-        return std::make_unique<ServerFeature>(server, &ret);
-      },
-      [&name](auto& server, type::Tag<TempPath>) {
-        return std::make_unique<TempPath>(server, name);
-      },
-      [](auto& server, type::Tag<SslServerFeature>) {
-        return std::make_unique<SslServerFeature>(server);
-      },
-      [&ret](auto& server, type::Tag<UpgradeFeature>) {
-        return std::make_unique<UpgradeFeature>(server, &ret,
-                                                kNonServerFeatures);
-      },
-      [](auto& server, type::Tag<HttpEndpointProvider>) {
-        return std::make_unique<EndpointFeature>(server);
-      },
-    });
-
-    try {
-      server.run(argc, argv);
-      if (server.helpShown()) {
-        // --help was displayed
-        ret = EXIT_SUCCESS;
+    absl::Cleanup down = [&]() noexcept {
+      CrashHandler::SetState("stopping");
+      auto stop = [](const char* what, auto&& fn) noexcept {
+        try {
+          fn();
+        } catch (const std::exception& ex) {
+          SDB_ERROR(GENERAL, "exception stopping ", what, ": ", ex.what());
+        } catch (...) {
+          SDB_ERROR(GENERAL, "unknown exception stopping ", what);
+        }
+      };
+      if (up_general) {
+        stop("general", [&] { general.stop(); });
       }
-    } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
-                "serened terminated because of an exception: ", ex.what());
-      ret = EXIT_FAILURE;
-    } catch (...) {
-      SDB_ERROR("xxxxx", Logger::FIXME,
-                "serened terminated because of an exception of "
-                "unknown type");
-      ret = EXIT_FAILURE;
-    }
-    log::Flush();
-    return context.exit(ret);
+      if (up_scheduler) {
+        stop("scheduler", [&] { scheduler.stop(); });
+      }
+      if (up_search) {
+        stop("search", [&] { search.stop(); });
+      }
+      if (up_engine) {
+        stop("engine", [&] {
+          engine.stop();  // drain bg threads; rocksdb stays open
+        });
+      }
+      if (up_catalog) {
+        stop("catalog", [&] { catalog.stop(); });
+      }
+      if (up_engine) {
+        stop("rocksdb", [&] { engine.unprepare(); });  // close rocksdb
+      }
+      stop("flush", [&] { flush.stop(); });
+      if (up_ssl) {
+        stop("ssl", [&] { ssl.stop(); });
+      }
+    };
+
+    CrashHandler::SetState("starting");
+    ssl.start();
+    up_ssl = true;
+    scheduler.start();
+    up_scheduler = true;
+    engine.prepare();
+    engine.start();
+    up_engine = true;
+    recovery.start();  // WAL replay only; no teardown step
+    catalog.start();
+    up_catalog = true;
+    search.start();
+    up_search = true;
+    general.start();
+    up_general = true;
+    pg.start();  // engine-ready assertion only; no teardown step
+
+    SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
+
+    CrashHandler::SetState("running");
+    server.wait();
+    return EXIT_SUCCESS;
   } catch (const std::exception& ex) {
-    SDB_ERROR("xxxxx", Logger::FIXME,
+    // gLogger is still up (Shutdown runs in main() after RunServer
+    // returns), but go through SDB_ERROR so the line lands in the same
+    // duckdb_logs() store as everything else.
+    SDB_ERROR(GENERAL,
               "serened terminated because of an exception: ", ex.what());
   } catch (...) {
-    SDB_ERROR("xxxxx", Logger::FIXME,
-              "serened terminated because of an exception of "
-              "unknown type");
+    SDB_ERROR(GENERAL,
+              "serened terminated because of an exception of unknown type");
   }
-  exit(EXIT_FAILURE);
+  // Return non-zero -- main() will run DuckDBEngine::Shutdown() before exit.
+  return EXIT_FAILURE;
 }
 
+// Trim argv in place: overwrite argv[1] with argv[0] and hand the shell
+// `argv + 1`. The shell sees {<binary>, <user args>...} with no copy.
+int RunSubcommand(int argc, char* argv[],
+                  duckdb_shell::ShellSubcommand subcommand) {
+  argv[1] = argv[0];
+  return duckdb_shell::Run(argc - 1, argv + 1, subcommand);
+}
+
+}  // namespace
+
 int main(int argc, char* argv[]) {
-  std::string workdir(basics::file_utils::CurrentDirectory().result());
+  if (argc >= 2 && std::strcmp(argv[1], "shell") == 0) {
+    // Pure duckdb shell -- manages its own DuckDB instance, no SDB_*.
+    return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::SHELL);
+  }
+  if (argc >= 2 && std::strcmp(argv[1], "psql") == 0) {
+    return RunSubcommand(argc, argv, duckdb_shell::ShellSubcommand::PSQL);
+  }
 
-  GlobalContext context(argc, argv, BIN_DIRECTORY);
+  // DuckDBEngine must be up BEFORE the first SDB_* fires. VPackHelper::
+  // initialize() below does SDB_TRACE, so it has to run after the engine
+  // is initialized. Bracket the whole RunServer lifetime so the contract
+  // holds.
+  //
+  // Two-step boot: the lite Initialize (serene_base) installs the storage
+  // extension via the ConfigureServerDBConfig mutator BEFORE the duckdb
+  // ctor runs (storage extensions must be registered pre-construct), then
+  // RegisterServerExtensions fills connector/pg/index types on the live
+  // DatabaseInstance.
+  auto& engine = sdb::DuckDBEngine::Instance();
+  engine.Initialize(&server::query::ConfigureServerDBConfig);
+  server::query::RegisterServerExtensions(engine.instance());
 
-  gRestartAction = nullptr;
+  sdb::app::InitProcess(argv[0]);
+  int rc = RunServer(argc, argv);
+  sdb::app::ShutdownGlobals();
 
-  int res = RunServer(argc, argv, context);
-  if (res != 0) {
-    return res;
-  }
-  if (gRestartAction == nullptr) {
-    return 0;
-  }
-  try {
-    res = (*gRestartAction)();
-  } catch (...) {
-    res = -1;
-  }
-  delete gRestartAction;
-  if (res != 0) {
-    std::cerr << "FATAL: RestartAction returned non-zero exit status: " << res
-              << ", giving up." << std::endl;
-    return res;
-  }
-  // It is not clear if we want to do the following under Linux and OSX,
-  // it is a clean way to restart from scratch with the same process ID,
-  // so the process does not have to be terminated. On Windows, we have
-  // to do this because the solution below is not possible. In these
-  // cases, we need outside help to get the process restarted.
-#if defined(__linux__)
-  res = chdir(workdir.c_str());
-  if (res != 0) {
-    std::cerr << "WARNING: could not change into directory '" << workdir << "'"
-              << std::endl;
-  }
-  if (execvp(argv[0], argv) == -1) {
-    std::cerr << "WARNING: could not execvp ourselves, restore will not work!"
-              << std::endl;
-  }
-#endif
+  engine.Shutdown();
+  return rc;
 }

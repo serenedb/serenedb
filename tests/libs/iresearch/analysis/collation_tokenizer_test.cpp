@@ -23,14 +23,20 @@
 #include <unicode/coll.h>
 #include <unicode/locid.h>
 #include <unicode/sortkey.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
 
 #include "iresearch/analysis/collation_tokenizer.hpp"
 #include "iresearch/analysis/collation_tokenizer_encoder.hpp"
 #include "tests_shared.hpp"
 
 namespace {
+
+inline irs::analysis::Analyzer::ptr MakeCollation(
+  std::string_view locale_name) {
+  return irs::analysis::CollationTokenizer::Make(
+    irs::analysis::CollationTokenizer::Options{
+      .locale = icu::Locale::createFromName(locale_name.data()),
+    });
+}
 
 std::vector<uint8_t> Encode(uint8_t b) {
   std::vector<uint8_t> res;
@@ -89,88 +95,22 @@ TEST(collation_token_stream_test, test_byte_encoder) {
 }
 
 TEST(collation_token_stream_test, construct_from_str) {
-  // json
-  {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "ru.koi8.r"})");
+  for (auto locale_name :
+       {"ru.koi8.r", "en-US", "en-US.utf-8", "de_DE_phonebook", "C",
+        "de_DE.utf-8@phonebook", "de_DE.UTF-8@collation=phonebook"}) {
+    auto stream = MakeCollation(locale_name);
     ASSERT_NE(nullptr, stream);
     ASSERT_EQ(irs::Type<irs::analysis::CollationTokenizer>::id(),
               stream->type());
   }
 
-  {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "en-US"})");
-    ASSERT_NE(nullptr, stream);
-    ASSERT_EQ(irs::Type<irs::analysis::CollationTokenizer>::id(),
-              stream->type());
-  }
-
-  {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "en-US.utf-8"})");
-    ASSERT_NE(nullptr, stream);
-    ASSERT_EQ(irs::Type<irs::analysis::CollationTokenizer>::id(),
-              stream->type());
-  }
-
-  {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "de_DE_phonebook"})");
-    ASSERT_NE(nullptr, stream);
-    ASSERT_EQ(irs::Type<irs::analysis::CollationTokenizer>::id(),
-              stream->type());
-  }
-
-  {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "C"})");
-    ASSERT_NE(nullptr, stream);
-    ASSERT_EQ(irs::Type<irs::analysis::CollationTokenizer>::id(),
-              stream->type());
-  }
-
-  {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "de_DE.utf-8@phonebook"})");
-    ASSERT_NE(nullptr, stream);
-    ASSERT_EQ(irs::Type<irs::analysis::CollationTokenizer>::id(),
-              stream->type());
-  }
-
-  {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "de_DE.UTF-8@collation=phonebook"})");
-    ASSERT_NE(nullptr, stream);
-    ASSERT_EQ(irs::Type<irs::analysis::CollationTokenizer>::id(),
-              stream->type());
-  }
-
-  // invalid
-  {
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "collation", irs::Type<irs::text_format::Json>::get(),
-                         std::string_view{}));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "collation", irs::Type<irs::text_format::Json>::get(), "1"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "collation", irs::Type<irs::text_format::Json>::get(), "[]"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "collation", irs::Type<irs::text_format::Json>::get(), "{}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "collation", irs::Type<irs::text_format::Json>::get(),
-                         "{\"locale\":1}"));
-  }
+  // .........................................................................
+  // invalid -- JSON-parser cases ("{}", "[]", "1", `{"locale":1}`) collapse to
+  // a single direct-API case: missing locale yields a default Options whose
+  // `locale` is bogus, which `Make` must reject.
+  // .........................................................................
+  ASSERT_ANY_THROW(irs::analysis::CollationTokenizer::Make(
+    irs::analysis::CollationTokenizer::Options{}));
 }
 
 TEST(collation_token_stream_test, check_collation) {
@@ -203,9 +143,7 @@ TEST(collation_token_stream_test, check_collation) {
   };
 
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale": "en"})");
+    auto stream = MakeCollation("en");
     ASSERT_NE(nullptr, stream);
 
     auto* offset = irs::get<irs::OffsAttr>(*stream);
@@ -228,9 +166,7 @@ TEST(collation_token_stream_test, check_collation) {
   }
 
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale": "sv"})");
+    auto stream = MakeCollation("sv");
 
     ASSERT_NE(nullptr, stream);
 
@@ -288,9 +224,7 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
   // locale defined as object
   // different variants, should be NOT EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale": "de__pinyin"})");
+    auto stream = MakeCollation("de__pinyin");
 
     ASSERT_NE(nullptr, stream);
 
@@ -316,9 +250,7 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
   // locale defined as string
   // different variants, should be NOT EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "de_pinyan"})");
+    auto stream = MakeCollation("de_pinyan");
 
     ASSERT_NE(nullptr, stream);
 
@@ -344,9 +276,7 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
   // locale defined as string
   // different variants, should be NOT EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "de@pinyan"})");
+    auto stream = MakeCollation("de@pinyan");
 
     ASSERT_NE(nullptr, stream);
 
@@ -372,9 +302,7 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
   // locale defined as string
   // different variants, should be NOT EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "de@collation=pinyan"})");
+    auto stream = MakeCollation("de@collation=pinyan");
 
     ASSERT_NE(nullptr, stream);
 
@@ -400,9 +328,7 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
   // locale defined as object
   // same variants, should be EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale": "de__phonebook"})");
+    auto stream = MakeCollation("de__phonebook");
 
     ASSERT_NE(nullptr, stream);
 
@@ -428,9 +354,7 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
   // locale defined as object
   // same variants, should be EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale": "de_phonebook"})");
+    auto stream = MakeCollation("de_phonebook");
 
     ASSERT_NE(nullptr, stream);
 
@@ -456,9 +380,7 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
   // locale defined as object
   // same variants, should be EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale": "de@collation=phonebook"})");
+    auto stream = MakeCollation("de@collation=phonebook");
 
     ASSERT_NE(nullptr, stream);
 
@@ -482,9 +404,7 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
   }
 
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "de@collation=phonebook"})");
+    auto stream = MakeCollation("de@collation=phonebook");
 
     ASSERT_NE(nullptr, stream);
 
@@ -511,9 +431,7 @@ TEST(collation_token_stream_test, check_collation_with_variant1) {
   // same variants, but collation is ignored, because input as old string.
   // should be NOT EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "de_phonebook"})");
+    auto stream = MakeCollation("de_phonebook");
 
     ASSERT_NE(nullptr, stream);
 
@@ -569,9 +487,7 @@ TEST(collation_token_stream_test, check_collation_with_variant2) {
   // locale defined as object
   // different variants, should be NOT EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale": "de__pinyan"})");
+    auto stream = MakeCollation("de__pinyan");
 
     ASSERT_NE(nullptr, stream);
 
@@ -597,9 +513,7 @@ TEST(collation_token_stream_test, check_collation_with_variant2) {
   // locale defined as object
   // same variants, should be EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale": "de__phonebook"})");
+    auto stream = MakeCollation("de__phonebook");
 
     ASSERT_NE(nullptr, stream);
 
@@ -625,9 +539,7 @@ TEST(collation_token_stream_test, check_collation_with_variant2) {
   // locale defined as object
   // same variants, should be EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale": "de@collation=phonebook"})");
+    auto stream = MakeCollation("de@collation=phonebook");
 
     ASSERT_NE(nullptr, stream);
 
@@ -653,9 +565,7 @@ TEST(collation_token_stream_test, check_collation_with_variant2) {
   // locale defined as string
   // same variants, should be EQUAL
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "de_phonebook"})");
+    auto stream = MakeCollation("de_phonebook");
 
     ASSERT_NE(nullptr, stream);
 
@@ -679,9 +589,7 @@ TEST(collation_token_stream_test, check_collation_with_variant2) {
   }
 
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({"locale" : "de@collation=phonebook"})");
+    auto stream = MakeCollation("de@collation=phonebook");
 
     ASSERT_NE(nullptr, stream);
 
@@ -735,9 +643,7 @@ TEST(collation_token_stream_test, check_tokens_utf8) {
   };
 
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({ "locale" : "en" })");
+    auto stream = MakeCollation("en");
 
     ASSERT_NE(nullptr, stream);
 
@@ -837,9 +743,7 @@ TEST(collation_token_stream_test, check_tokens) {
   };
 
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "collation", irs::Type<irs::text_format::Json>::get(),
-      R"({ "locale" : "de_DE" })");
+    auto stream = MakeCollation("de_DE");
 
     ASSERT_NE(nullptr, stream);
 
@@ -861,52 +765,5 @@ TEST(collation_token_stream_test, check_tokens) {
       ASSERT_EQ(1, inc->value);
       ASSERT_FALSE(stream->next());
     }
-  }
-}
-
-TEST(collation_token_stream_test, normalize) {
-  {
-    std::string config = R"({ "locale" : "de_DE_phonebook" })";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "collation", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson(R"({ "locale" : "de_DE_PHONEBOOK" })")
-                ->toString(),
-              actual);
-  }
-
-  {
-    std::string config = R"({ "locale" : "de_DE.utf-8" })";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "collation", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson(R"({ "locale" : "de_DE"})")->toString(),
-              actual);
-  }
-
-  {
-    std::string config = R"({ "locale" : "de_DE@collation=phonebook" })";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "collation", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(
-      vpack::Parser::fromJson(R"({ "locale" : "de_DE@collation=phonebook" })")
-        ->toString(),
-      actual);
-  }
-
-  {
-    std::string config = R"({ "locale" : "de_DE@phonebook" })";
-    auto in_vpack = vpack::Parser::fromJson(config.c_str(), config.size());
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "collation", irs::Type<irs::text_format::VPack>::get(), in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ(
-      vpack::Parser::fromJson(R"({ "locale" : "de_DE_PHONEBOOK"})")->toString(),
-      out_slice.toString());
   }
 }

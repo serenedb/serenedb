@@ -26,8 +26,9 @@
 #include <string>
 #include <string_view>
 
-#include "analyzers.hpp"
 #include "basics/result.h"
+#include "basics/result_or.h"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
@@ -48,6 +49,13 @@ class WordnetSynonymsTokenizer final
     SynonymsMap mapping;
   };
 
+  struct Options {
+    using Owner = WordnetSynonymsTokenizer;
+    // Inline synonyms file content (Wordnet `s(...)` lines).
+    std::string synonyms_text;
+  };
+  static Analyzer::ptr Make(Options opts);
+
   static constexpr std::string_view type_name() noexcept {
     return "wordnet_synonyms";
   }
@@ -55,7 +63,6 @@ class WordnetSynonymsTokenizer final
   static sdb::ResultOr<SynonymsMap> Parse(std::string_view input);
   static sdb::ResultOr<std::shared_ptr<const State>> MakeState(
     std::string text);
-  static void init();
 
   explicit WordnetSynonymsTokenizer(
     std::shared_ptr<const State> state) noexcept;

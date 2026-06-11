@@ -373,7 +373,8 @@ TEST(postings_tests, clear) {
   ASSERT_TRUE(bh.empty());
   ASSERT_EQ(0, bh.size());
   ASSERT_EQ(0, memory.Counter());
-  [[maybe_unused]] auto res = bh.emplace(tests::detail::ToBytesView("string"));
+  [[maybe_unused]] auto res =
+    bh.emplace(tests::detail::ToBytesView("string_long_enough_to_pool"));
   ASSERT_FALSE(bh.empty());
   ASSERT_EQ(1, bh.size());
   ASSERT_GT(memory.Counter(), kBlockSize);
@@ -408,13 +409,13 @@ TEST(postings_tests, slice_alignment) {
       ASSERT_EQ(0, bh.size());
 
       [[maybe_unused]] auto res =
-        bh.emplace(tests::detail::ToBytesView("string0"));
+        bh.emplace(tests::detail::ToBytesView("string0_long_enough_to_pool"));
       ASSERT_FALSE(bh.empty());
       ASSERT_EQ(1, bh.size());
       bh.get_sorted_postings(sorted_postings);
       ASSERT_EQ(1, sorted_postings.size());
-      ASSERT_EQ(tests::detail::ToBytesView("string0"),
-                (*sorted_postings.begin())->term);
+      ASSERT_EQ(tests::detail::ToBytesView("string0_long_enough_to_pool"),
+                (*sorted_postings.begin())->TermBytes());
       ASSERT_LT(mem, memory.Counter());
       mem = memory.Counter();
     }
@@ -430,13 +431,13 @@ TEST(postings_tests, slice_alignment) {
       ASSERT_EQ(0, bh.size());
 
       [[maybe_unused]] auto res =
-        bh.emplace(tests::detail::ToBytesView("string1"));
+        bh.emplace(tests::detail::ToBytesView("string1_long_enough_to_pool"));
       ASSERT_FALSE(bh.empty());
       ASSERT_EQ(1, bh.size());
       bh.get_sorted_postings(sorted_postings);
       ASSERT_EQ(1, sorted_postings.size());
-      ASSERT_EQ(tests::detail::ToBytesView("string1"),
-                (*sorted_postings.begin())->term);
+      ASSERT_EQ(tests::detail::ToBytesView("string1_long_enough_to_pool"),
+                (*sorted_postings.begin())->TermBytes());
       ASSERT_EQ(mem, memory.Counter());
     }
   }

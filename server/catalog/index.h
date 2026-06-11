@@ -21,11 +21,14 @@
 #pragma once
 
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/object.h"
+#include "catalog/persistence/index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 
@@ -41,21 +44,8 @@ inline constexpr std::string_view kHNSWKind = "hnsw";
 class SecondaryIndex;
 class InvertedIndex;
 
-struct InvertedIndexOptions {
-  uint32_t row_group_size = 0;
-  uint32_t norm_row_group_size = 0;
-  uint32_t refresh_interval_ms = 0;
-  uint32_t compaction_interval_ms = 0;
-  uint32_t cleanup_interval_step = 0;
-  std::optional<ScorerOptions> topk_scorer;
-};
-
-struct ExpressionData {
-  std::string serialized_expr;
-  std::vector<Column::Id> dependent_columns;
-  duckdb::LogicalType return_type;
-  std::string pretty_printed;
-};
+using persistence::ExpressionData;
+using persistence::InvertedIndexOptions;
 
 struct CreateIndexColumn {
   const catalog::Column* catalog_column = nullptr;
@@ -123,8 +113,9 @@ ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
   bool unique);
 
 ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
-  ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
-  ObjectId id, ObjectId relation_id, std::string name,
+  duckdb::ClientContext& context, ObjectId database_id,
+  std::string_view schema_name, ObjectId schema_id, ObjectId id,
+  ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
   const std::shared_ptr<const Snapshot>& snapshot,
   InvertedIndexOptions options);

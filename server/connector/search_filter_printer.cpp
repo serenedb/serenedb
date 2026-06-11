@@ -35,6 +35,7 @@
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
+#include <iresearch/search/proxy_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/search/search_range.hpp>
@@ -43,10 +44,12 @@
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 
-#include "catalog/mangling.h"
+#include "basics/down_cast.h"
 
 namespace irs {
 namespace {
+
+using sdb::basics::downCast;
 
 // Prints a binary term byte-by-byte, escaping non-printable chars.
 template<typename Term>
@@ -148,20 +151,20 @@ struct PhrasePartVisitor : util::Noncopyable {
 
 template<typename FT>
 void StringifyRange(std::string* out, const ByRange& range, FT&& ft) {
-  absl::StrAppend(out, "Range(", ft(range.field()),
+  absl::StrAppend(out, "Range(", ft(range.field_id()),
                   RangeToString(range.options().range), ")");
 }
 
 template<typename FT>
 void StringifyGranularRange(std::string* out, const ByGranularRange& range,
                             FT&& ft) {
-  absl::StrAppend(out, "GranularRange(", ft(range.field()),
+  absl::StrAppend(out, "GranularRange(", ft(range.field_id()),
                   RangeToString(range.options().range), ")");
 }
 
 template<typename FT>
 void StringifyTerm(std::string* out, const ByTerm& term, FT&& ft) {
-  absl::StrAppend(out, "Term(", ft(term.field()), "=",
+  absl::StrAppend(out, "Term(", ft(term.field_id()), "=",
                   TermToString(term.options().term), ")");
 }
 
@@ -210,7 +213,7 @@ void StringifyNot(std::string* out, const Not& filter, FT&& ft) {
 template<typename FT>
 void StringifyNGram(std::string* out, const ByNGramSimilarity& filter,
                     FT&& ft) {
-  absl::StrAppend(out, "NGRAM_SIMILARITY[", ft(filter.field()), ", ",
+  absl::StrAppend(out, "NGRAM_SIMILARITY[", ft(filter.field_id()), ", ",
                   absl::StrJoin(filter.options().ngrams, "",
                                 [](std::string* o, const auto& ngram) {
                                   absl::StrAppend(o, TermToString(ngram));
@@ -220,14 +223,14 @@ void StringifyNGram(std::string* out, const ByNGramSimilarity& filter,
 
 template<typename FT>
 void StringifyColumnExistence(std::string* out, const ByColumnExistence& filter,
-                              FT&& /*ft*/) {
-  absl::StrAppend(out, "EXISTS[", filter.id(), "]");
+                              FT&& ft) {
+  absl::StrAppend(out, "EXISTS[", ft(filter.id()), "]");
 }
 
 template<typename FT>
 void StringifyEditDistance(std::string* out, const ByEditDistance& lev,
                            FT&& ft) {
-  absl::StrAppend(out, "LEVENSHTEIN_MATCH[", ft(lev.field()), ", '",
+  absl::StrAppend(out, "LEVENSHTEIN_MATCH[", ft(lev.field_id()), ", '",
                   TermToString(lev.options().term), "', ",
                   static_cast<int>(lev.options().max_distance), ", ",
                   lev.options().with_transpositions, ", ",
@@ -237,7 +240,7 @@ void StringifyEditDistance(std::string* out, const ByEditDistance& lev,
 
 template<typename FT>
 void StringifyPrefix(std::string* out, const ByPrefix& filter, FT&& ft) {
-  absl::StrAppend(out, "STARTS_WITH[", ft(filter.field()), ", '",
+  absl::StrAppend(out, "STARTS_WITH[", ft(filter.field_id()), ", '",
                   TermToString(filter.options().term), "', ",
                   filter.options().scored_terms_limit, "]");
 }
@@ -249,19 +252,19 @@ void StringifyTerms(std::string* out, const ByTerms& filter, FT&& ft) {
       const auto& [term, boost] = term_boost;
       absl::StrAppend(o, "['", TermToString(term), "', ", boost, "],");
     });
-  absl::StrAppend(out, "TERMS[", ft(filter.field()), ", {", terms_str, "}, ",
+  absl::StrAppend(out, "TERMS[", ft(filter.field_id()), ", {", terms_str, "}, ",
                   filter.options().min_match, "]");
 }
 
 template<typename FT>
 void StringifyWildcard(std::string* out, const ByWildcard& filter, FT&& ft) {
-  absl::StrAppend(out, "WILDCARD[", ft(filter.field()), ", ",
+  absl::StrAppend(out, "WILDCARD[", ft(filter.field_id()), ", ",
                   TermToString(filter.options().term), "]");
 }
 
 template<typename FT>
 void StringifyRegexp(std::string* out, const ByRegexp& filter, FT&& ft) {
-  absl::StrAppend(out, "REGEXP[", ft(filter.field()), ", ",
+  absl::StrAppend(out, "REGEXP[", ft(filter.field_id()), ", ",
                   TermToString(filter.options().pattern), "]");
 }
 
@@ -274,7 +277,8 @@ void StringifyPhrase(std::string* out, const ByPhrase& filter, FT&& ft) {
     absl::StrAppend(&parts_str, part_str, "(", part.offs_max, ", ",
                     part.offs_min, ")", "; ");
   }
-  absl::StrAppend(out, "PHRASE[", ft(filter.field()), " = <", parts_str, ">]");
+  absl::StrAppend(out, "PHRASE[", ft(filter.field_id()), " = <", parts_str,
+                  ">]");
 }
 
 template<typename FT>
@@ -291,7 +295,7 @@ void StringifyWildcardNgram(std::string* out, const ByWildcardNgram& filter,
     }
     absl::StrAppend(&parts_str, ">; ");
   }
-  absl::StrAppend(out, "WILDCARD_NGRAM[", ft(filter.field()), ", '",
+  absl::StrAppend(out, "WILDCARD_NGRAM[", ft(filter.field_id()), ", '",
                   TermToString(filter.options().token),
                   "', has_pos=", filter.options().has_pos, ", parts=[",
                   parts_str, "]]");
@@ -330,7 +334,7 @@ std::string_view GeoShapeTypeName(sdb::geo::ShapeContainer::Type type) {
 
 template<typename FT>
 void StringifyGeo(std::string* out, const GeoFilter& filter, FT&& ft) {
-  absl::StrAppend(out, "GEO[", ft(filter.field()),
+  absl::StrAppend(out, "GEO[", ft(filter.field_id()),
                   ", op=", GeoFilterTypeName(filter.options().type),
                   ", shape=", GeoShapeTypeName(filter.options().shape.type()),
                   "]");
@@ -340,7 +344,7 @@ template<typename FT>
 void StringifyGeoDistance(std::string* out, const GeoDistanceFilter& filter,
                           FT&& ft) {
   const auto& range = filter.options().range;
-  absl::StrAppend(out, "GEO_DISTANCE[", ft(filter.field()), ",");
+  absl::StrAppend(out, "GEO_DISTANCE[", ft(filter.field_id()), ",");
   if (range.min_type == BoundType::Unbounded) {
     absl::StrAppend(out, " *");
   } else {
@@ -360,76 +364,53 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
   std::string out;
   const auto& type = filter.type();
   if (type == Type<All>::id()) {
-    absl::StrAppend(&out, "ALL[", static_cast<const All&>(filter).Boost(), "]");
+    absl::StrAppend(&out, "ALL[", downCast<const All>(filter).Boost(), "]");
   } else if (type == Type<And>::id()) {
-    StringifyAnd(&out, static_cast<const And&>(filter), ft);
+    StringifyAnd(&out, downCast<const And>(filter), ft);
   } else if (type == Type<Or>::id()) {
-    StringifyOr(&out, static_cast<const Or&>(filter), ft);
+    StringifyOr(&out, downCast<const Or>(filter), ft);
   } else if (type == Type<Not>::id()) {
-    StringifyNot(&out, static_cast<const Not&>(filter), ft);
+    StringifyNot(&out, downCast<const Not>(filter), ft);
   } else if (type == Type<ByTerm>::id()) {
-    StringifyTerm(&out, static_cast<const ByTerm&>(filter), ft);
+    StringifyTerm(&out, downCast<const ByTerm>(filter), ft);
   } else if (type == Type<ByTerms>::id()) {
-    StringifyTerms(&out, static_cast<const ByTerms&>(filter), ft);
+    StringifyTerms(&out, downCast<const ByTerms>(filter), ft);
   } else if (type == Type<ByRange>::id()) {
-    StringifyRange(&out, static_cast<const ByRange&>(filter), ft);
+    StringifyRange(&out, downCast<const ByRange>(filter), ft);
   } else if (type == Type<ByGranularRange>::id()) {
-    StringifyGranularRange(&out, static_cast<const ByGranularRange&>(filter),
-                           ft);
+    StringifyGranularRange(&out, downCast<const ByGranularRange>(filter), ft);
   } else if (type == Type<ByNGramSimilarity>::id()) {
-    StringifyNGram(&out, static_cast<const ByNGramSimilarity&>(filter), ft);
+    StringifyNGram(&out, downCast<const ByNGramSimilarity>(filter), ft);
   } else if (type == Type<ByEditDistance>::id()) {
-    StringifyEditDistance(&out, static_cast<const ByEditDistance&>(filter), ft);
+    StringifyEditDistance(&out, downCast<const ByEditDistance>(filter), ft);
   } else if (type == Type<ByPrefix>::id()) {
-    StringifyPrefix(&out, static_cast<const ByPrefix&>(filter), ft);
+    StringifyPrefix(&out, downCast<const ByPrefix>(filter), ft);
   } else if (type == Type<ByNestedFilter>::id()) {
-    StringifyNested(&out, static_cast<const ByNestedFilter&>(filter), ft);
+    StringifyNested(&out, downCast<const ByNestedFilter>(filter), ft);
   } else if (type == Type<ByColumnExistence>::id()) {
-    StringifyColumnExistence(&out,
-                             static_cast<const ByColumnExistence&>(filter), ft);
+    StringifyColumnExistence(&out, downCast<const ByColumnExistence>(filter),
+                             ft);
   } else if (type == Type<ByWildcard>::id()) {
-    StringifyWildcard(&out, static_cast<const ByWildcard&>(filter), ft);
+    StringifyWildcard(&out, downCast<const ByWildcard>(filter), ft);
   } else if (type == Type<ByWildcardNgram>::id()) {
-    StringifyWildcardNgram(&out, static_cast<const ByWildcardNgram&>(filter),
-                           ft);
+    StringifyWildcardNgram(&out, downCast<const ByWildcardNgram>(filter), ft);
   } else if (type == Type<Empty>::id()) {
     out = "EMPTY[]";
   } else if (type == Type<ByPhrase>::id()) {
-    StringifyPhrase(&out, static_cast<const ByPhrase&>(filter), ft);
+    StringifyPhrase(&out, downCast<const ByPhrase>(filter), ft);
   } else if (type == Type<GeoFilter>::id()) {
-    StringifyGeo(&out, static_cast<const GeoFilter&>(filter), ft);
+    StringifyGeo(&out, downCast<const GeoFilter>(filter), ft);
   } else if (type == Type<GeoDistanceFilter>::id()) {
-    StringifyGeoDistance(&out, static_cast<const GeoDistanceFilter&>(filter),
-                         ft);
+    StringifyGeoDistance(&out, downCast<const GeoDistanceFilter>(filter), ft);
+  } else if (type == Type<ProxyFilter>::id()) {
+    out = StringifyFilter(downCast<const ProxyFilter>(filter).inner(), ft);
   } else {
     out = absl::StrCat("[Unknown filter ", type().name(), " ]");
   }
   return out;
 }
 
-std::string_view IdentityField(std::string_view f) { return f; }
-
-std::string_view MangleName(std::string_view mangle_suffix) {
-  if (mangle_suffix.empty()) {
-    return "unknown";
-  }
-  switch (mangle_suffix[0]) {
-    case sdb::search::mangling::kNull:
-      return "null";
-    case sdb::search::mangling::kBool:
-      return "bool";
-    case sdb::search::mangling::kNumeric:
-      return "numeric";
-    case sdb::search::mangling::kString:
-      return "string";
-    case sdb::search::mangling::kAnalyzer:
-      return "analyzer";
-    case sdb::search::mangling::kNested:
-      return "nested";
-    default:
-      return "unknown";
-  }
-}
+std::string IdentityField(field_id id) { return absl::StrCat(id); }
 
 }  // namespace
 
@@ -440,14 +421,8 @@ std::string ToString(const Filter& f) {
 std::string ToStringDemangled(
   const Filter& f,
   const std::function<std::string(sdb::catalog::Column::Id)>& col_name) {
-  return StringifyFilter(f, [&](std::string_view field) -> std::string {
-    constexpr size_t kIdSize = sizeof(uint64_t);
-    if (field.size() < kIdSize) {
-      return TermToString(field);
-    }
-    const uint64_t col_id = absl::big_endian::Load64(field.data());
-    return absl::StrCat(col_name(sdb::catalog::Column::Id{col_id}), "(",
-                        MangleName(field.substr(kIdSize)), ")");
+  return StringifyFilter(f, [&](field_id id) -> std::string {
+    return std::string{col_name(sdb::catalog::Column::Id{id})};
   });
 }
 

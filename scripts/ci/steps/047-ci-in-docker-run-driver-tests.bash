@@ -2,7 +2,7 @@
 
 set -o pipefail
 
-if cd "${WORKSPACE}" && BUILD_DIR="${BUILD_DIR}" ./tests/drivers/run_in_docker.sh 2>&1 | tee -a ./drivers-tests.log; then
+if cd "${WORKSPACE}" && BUILD_DIR="${BUILD_DIR}" ./tests/drivers/run_in_docker.sh 2>&1 | tee -a ./out/logs/drivers-tests.log; then
 	test_result="PASSED"
 	exit_code=0
 else

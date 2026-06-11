@@ -35,7 +35,7 @@
 #include "basics/application-exit.h"
 #include "basics/debugging.h"
 #include "basics/error.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "exceptions.h"
 
 namespace sdb::basics {
@@ -60,13 +60,18 @@ Exception::Exception(ErrorCode code, std::string&& error_message,
 }
 
 [[noreturn]] void helper::DieWithLogMessage(const char* error_message) {
-  SDB_FATAL("xxxxx", Logger::FIXME,
-            "Failed to create an error message, giving up. ", error_message);
+  SDB_FATAL(GENERAL, "Failed to create an error message, giving up. ",
+            error_message);
 }
 
 [[noreturn]] void helper::LogAndAbort(const char* what) {
+  // In SDB_DEV, SDB_ASSERT already routes through
+  // CrashHandler::assertionFailure
+  // -> LogCrash -> std::abort(). In non-DEV it is a no-op, so emit the crash
+  // line directly and abort here.
   SDB_ASSERT(false, what);
-  SDB_FATAL("xxxxx", ::sdb::Logger::CRASH, what);
+  log::LogCrash(what != nullptr ? what : "LogAndAbort");
+  std::abort();
 }
 
 Result TryToResult(yaclib::Result<Result>&& try_result) noexcept {

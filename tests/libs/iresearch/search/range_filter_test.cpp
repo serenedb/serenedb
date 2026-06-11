@@ -27,11 +27,29 @@
 
 namespace {
 
-irs::ByRange MakeFilter(const std::string_view& field,
-                        const irs::bytes_view& min, irs::BoundType min_type,
-                        const irs::bytes_view& max, irs::BoundType max_type) {
+// Per-file field_id constants used by all fixtures + filter-side calls.
+// Sourced from `tests::FieldIdFor` so the shared JSON factories and these
+// tests agree on which id a name maps to.
+[[maybe_unused]] inline constexpr irs::field_id kSeqFieldId =
+  tests::FieldIdFor("seq");
+[[maybe_unused]] inline constexpr irs::field_id kValueFieldId =
+  tests::FieldIdFor("value");
+[[maybe_unused]] inline constexpr irs::field_id kNameFieldId =
+  tests::FieldIdFor("name");
+[[maybe_unused]] inline constexpr irs::field_id kInvalidNameFieldId =
+  tests::FieldIdFor("invalid_name");
+[[maybe_unused]] inline constexpr irs::field_id kFieldFieldId =
+  tests::FieldIdFor("field");
+[[maybe_unused]] inline constexpr irs::field_id kField1FieldId =
+  tests::FieldIdFor("field1");
+[[maybe_unused]] inline constexpr irs::field_id kPrefixFieldId =
+  tests::FieldIdFor("prefix");
+
+irs::ByRange MakeFilter(irs::field_id field, const irs::bytes_view& min,
+                        irs::BoundType min_type, const irs::bytes_view& max,
+                        irs::BoundType max_type) {
   irs::ByRange filter;
-  *filter.mutable_field() = field;
+  *filter.mutable_field_id() = field;
 
   auto& range = filter.mutable_options()->range;
   range.min = min;
@@ -50,24 +68,30 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
         resource("simple_sequential.json"),
         [](tests::Document& doc, const std::string& name,
            const tests::JsonDocGenerator::JsonValue& data) {
+          const auto fid = tests::FieldIdFor(name);
           if (data.is_string()) {
-            doc.insert(std::make_shared<tests::StringField>(name, data.str));
+            auto f = std::make_shared<tests::StringField>(name, data.str);
+            f->id = fid;
+            doc.insert(std::move(f));
           } else if (data.is_null()) {
             doc.insert(std::make_shared<tests::BinaryField>());
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
+            field.id = fid;
             field.value(
               irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
           } else if (data.is_bool() && data.b) {
             doc.insert(std::make_shared<tests::BinaryField>());
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
+            field.id = fid;
             field.value(irs::ViewCast<irs::byte_type>(
               irs::BooleanTokenizer::value_true()));
           } else if (data.is_bool() && !data.b) {
             doc.insert(std::make_shared<tests::BinaryField>());
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
+            field.id = fid;
             field.value(irs::ViewCast<irs::byte_type>(
               irs::BooleanTokenizer::value_true()));
           } else if (data.is_number()) {
@@ -77,6 +101,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::DoubleField>());
               auto& field = (doc.indexed.end() - 1).as<tests::DoubleField>();
               field.Name(name);
+              field.id = fid;
               field.value(d_value);
             }
 
@@ -86,6 +111,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::FloatField>());
               auto& field = (doc.indexed.end() - 1).as<tests::FloatField>();
               field.Name(name);
+              field.id = fid;
               field.value(f_value);
             }
 
@@ -94,12 +120,14 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::LongField>());
               auto& field = (doc.indexed.end() - 1).as<tests::LongField>();
               field.Name(name);
+              field.id = fid;
               field.value(static_cast<int64_t>(value));
             }
             {
               doc.insert(std::make_shared<tests::IntField>());
               auto& field = (doc.indexed.end() - 1).as<tests::IntField>();
               field.Name(name);
+              field.id = fid;
               field.value(static_cast<int32_t>(value));
             }
           }
@@ -124,7 +152,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query =
-        MakeFilter("seq", min_term->value, irs::BoundType::Inclusive,
+        MakeFilter(kSeqFieldId, min_term->value, irs::BoundType::Inclusive,
                    max_term->value, irs::BoundType::Inclusive);
 
       auto prepared = query.prepare({
@@ -160,7 +188,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query =
-        MakeFilter("seq", min_term->value, irs::BoundType::Inclusive,
+        MakeFilter(kSeqFieldId, min_term->value, irs::BoundType::Inclusive,
                    max_term->value, irs::BoundType::Inclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -185,7 +213,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(min_stream.next());
 
       irs::ByRange query =
-        MakeFilter("seq", min_term->value, irs::BoundType::Exclusive,
+        MakeFilter(kSeqFieldId, min_term->value, irs::BoundType::Exclusive,
                    (irs::numeric_utils::numeric_traits<int64_t>::max)(),
                    irs::BoundType::Inclusive);
 
@@ -211,7 +239,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query = MakeFilter(
-        "seq", (irs::numeric_utils::numeric_traits<int64_t>::min)(),
+        kSeqFieldId, (irs::numeric_utils::numeric_traits<int64_t>::min)(),
         irs::BoundType::Inclusive, max_term->value, irs::BoundType::Inclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -241,7 +269,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query =
-        MakeFilter("seq", min_term->value, irs::BoundType::Inclusive,
+        MakeFilter(kSeqFieldId, min_term->value, irs::BoundType::Inclusive,
                    max_term->value, irs::BoundType::Inclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -271,7 +299,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query =
-        MakeFilter("seq", min_term->value, irs::BoundType::Inclusive,
+        MakeFilter(kSeqFieldId, min_term->value, irs::BoundType::Inclusive,
                    max_term->value, irs::BoundType::Inclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -296,7 +324,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(min_stream.next());
 
       irs::ByRange query =
-        MakeFilter("seq", min_term->value, irs::BoundType::Exclusive,
+        MakeFilter(kSeqFieldId, min_term->value, irs::BoundType::Exclusive,
                    (irs::numeric_utils::numeric_traits<int32_t>::max)(),
                    irs::BoundType::Inclusive);
 
@@ -322,7 +350,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query = MakeFilter(
-        "seq", (irs::numeric_utils::numeric_traits<int32_t>::min)(),
+        kSeqFieldId, (irs::numeric_utils::numeric_traits<int32_t>::min)(),
         irs::BoundType::Inclusive, max_term->value, irs::BoundType::Inclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -352,7 +380,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query =
-        MakeFilter("value", min_term->value, irs::BoundType::Inclusive,
+        MakeFilter(kValueFieldId, min_term->value, irs::BoundType::Inclusive,
                    max_term->value, irs::BoundType::Inclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -382,7 +410,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query =
-        MakeFilter("value", min_term->value, irs::BoundType::Inclusive,
+        MakeFilter(kValueFieldId, min_term->value, irs::BoundType::Inclusive,
                    max_term->value, irs::BoundType::Exclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -407,7 +435,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query = MakeFilter(
-        "value", irs::numeric_utils::numeric_traits<float_t>::ninf(),
+        kValueFieldId, irs::numeric_utils::numeric_traits<float_t>::ninf(),
         irs::BoundType::Inclusive, max_term->value, irs::BoundType::Exclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -432,7 +460,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(min_stream.next());
 
       irs::ByRange query =
-        MakeFilter("value", min_term->value, irs::BoundType::Exclusive,
+        MakeFilter(kValueFieldId, min_term->value, irs::BoundType::Exclusive,
                    irs::numeric_utils::numeric_traits<float_t>::inf(),
                    irs::BoundType::Inclusive);
 
@@ -462,7 +490,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query =
-        MakeFilter("value", min_term->value, irs::BoundType::Inclusive,
+        MakeFilter(kValueFieldId, min_term->value, irs::BoundType::Inclusive,
                    max_term->value, irs::BoundType::Inclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -491,7 +519,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query =
-        MakeFilter("value", min_term->value, irs::BoundType::Exclusive,
+        MakeFilter(kValueFieldId, min_term->value, irs::BoundType::Exclusive,
                    max_term->value, irs::BoundType::Inclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -516,7 +544,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange query = MakeFilter(
-        "value", irs::numeric_utils::numeric_traits<double_t>::ninf(),
+        kValueFieldId, irs::numeric_utils::numeric_traits<double_t>::ninf(),
         irs::BoundType::Exclusive, max_term->value, irs::BoundType::Exclusive);
 
       auto prepared = query.prepare({.index = rdr});
@@ -541,7 +569,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(min_stream.next());
 
       irs::ByRange query =
-        MakeFilter("value", min_term->value, irs::BoundType::Exclusive,
+        MakeFilter(kValueFieldId, min_term->value, irs::BoundType::Exclusive,
                    irs::numeric_utils::numeric_traits<double_t>::inf(),
                    irs::BoundType::Inclusive);
 
@@ -580,7 +608,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
 
       CheckQuery(filter, docs, costs, rdr);
     }
@@ -588,7 +616,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
     // invalid_name = (..;..)
     {
       irs::ByRange filter;
-      *filter.mutable_field() = "invalid_name";
+      *filter.mutable_field_id() = kInvalidNameFieldId;
 
       CheckQuery(filter, Docs{}, rdr);
     }
@@ -600,7 +628,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
 
       CheckQuery(filter, docs, costs, rdr);
@@ -613,7 +641,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
 
       CheckQuery(filter, docs, costs, rdr);
@@ -625,7 +653,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       filter.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -640,7 +668,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("A"));
       filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -656,7 +684,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("A"));
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -671,7 +699,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.max =
         irs::ViewCast<irs::byte_type>(std::string_view("C"));
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
@@ -686,7 +714,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.max =
         irs::ViewCast<irs::byte_type>(std::string_view("C"));
       filter.mutable_options()->range.max_type = irs::BoundType::Inclusive;
@@ -701,7 +729,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("A"));
       filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -719,7 +747,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("A"));
       filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -737,7 +765,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("A"));
       filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -755,7 +783,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("A"));
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -770,7 +798,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
     // result:
     {
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("A"));
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -788,7 +816,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("A"));
       filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -806,7 +834,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("A"));
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -824,7 +852,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("A"));
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -839,7 +867,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
     // result:
     {
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("C"));
       filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -857,7 +885,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("~"));
       filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -872,7 +900,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
     // result:
     {
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("~"));
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -887,7 +915,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{1};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("a"));
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -906,7 +934,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("a"));
       filter.mutable_options()->range.min_type = irs::BoundType::Unbounded;
@@ -925,7 +953,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.max =
         irs::ViewCast<irs::byte_type>(std::string_view("a"));
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
@@ -937,7 +965,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
     // result:
     {
       irs::ByRange filter;
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kNameFieldId;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("\x7f"));
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -964,36 +992,25 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Docs docs{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
       Costs costs{docs.size()};
 
-      size_t collect_field_count = 0;
-      size_t collect_term_count = 0;
       size_t finish_count = 0;
+      uint64_t finish_docs_with_field = 0;
+      uint64_t finish_docs_with_term = 0;
 
       irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
       auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
 
-      scorer.collector_collect_field = [&collect_field_count](
-                                         const irs::SubReader&,
-                                         const irs::TermReader&) -> void {
-        ++collect_field_count;
-      };
-      scorer.collector_collect_term =
-        [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                              const irs::AttributeProvider&) -> void {
-        ++collect_term_count;
-      };
-      scorer.collectors_collect =
-        [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                        const irs::TermCollector*) -> void { ++finish_count; };
-      scorer.prepare_field_collector = [&scorer]() -> irs::FieldCollector::ptr {
-        return std::make_unique<tests::sort::CustomSort::FieldCollector>(
-          scorer);
-      };
-      scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
-        return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+      scorer.collectors_collect = [&](irs::byte_type*,
+                                      const irs::FieldCollector* field,
+                                      const irs::TermCollector* term) -> void {
+        ++finish_count;
+        ASSERT_NE(nullptr, field);
+        ASSERT_NE(nullptr, term);
+        finish_docs_with_field += field->docs_with_field;
+        finish_docs_with_term += term->docs_with_term;
       };
 
       irs::ByRange filter;
-      *filter.mutable_field() = "value";
+      *filter.mutable_field_id() = kValueFieldId;
       filter.mutable_options()->range.min =
         irs::numeric_utils::numeric_traits<double_t>::ninf();
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1002,9 +1019,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
       CheckQuery(tests::FilterWrapper{filter}, std::span{&sort, 1}, docs, rdr);
-      ASSERT_EQ(11, collect_field_count);  // 1 field in 1 segment
-      ASSERT_EQ(11, collect_term_count);   // 11 different terms
-      ASSERT_EQ(11, finish_count);         // 11 different terms
+      ASSERT_EQ(11, finish_count);
+      ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+      ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
     }
 
     // value = (..;..)
@@ -1013,7 +1030,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "value";
+      *filter.mutable_field_id() = kValueFieldId;
 
       irs::Scorer::ptr sort{std::make_unique<tests::sort::FrequencySort>()};
 
@@ -1026,7 +1043,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       Costs costs{docs.size()};
 
       irs::ByRange filter;
-      *filter.mutable_field() = "value";
+      *filter.mutable_field_id() = kValueFieldId;
       filter.mutable_options()->range.min =
         irs::numeric_utils::numeric_traits<double_t>::ninf();
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1051,7 +1068,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(max_stream.next());
 
       irs::ByRange filter;
-      *filter.mutable_field() = "value";
+      *filter.mutable_field_id() = kValueFieldId;
       filter.mutable_options()->range.min =
         irs::numeric_utils::numeric_traits<double_t>::ninf();
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1082,7 +1099,7 @@ TEST(by_range_test, ctor) {
 
 TEST(by_range_test, equal) {
   irs::ByRange q0;
-  *q0.mutable_field() = "field";
+  *q0.mutable_field_id() = kFieldFieldId;
   q0.mutable_options()->range.min =
     irs::ViewCast<irs::byte_type>(std::string_view("min_term"));
   q0.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1091,7 +1108,7 @@ TEST(by_range_test, equal) {
   q0.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
   irs::ByRange q1;
-  *q1.mutable_field() = "field";
+  *q1.mutable_field_id() = kFieldFieldId;
   q1.mutable_options()->range.min =
     irs::ViewCast<irs::byte_type>(std::string_view("min_term"));
   q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1102,7 +1119,7 @@ TEST(by_range_test, equal) {
   ASSERT_EQ(q0, q1);
 
   irs::ByRange q2;
-  *q2.mutable_field() = "field1";
+  *q2.mutable_field_id() = kField1FieldId;
   q2.mutable_options()->range.min =
     irs::ViewCast<irs::byte_type>(std::string_view("min_term"));
   q2.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1113,7 +1130,7 @@ TEST(by_range_test, equal) {
   ASSERT_NE(q0, q2);
 
   irs::ByRange q3;
-  *q3.mutable_field() = "field";
+  *q3.mutable_field_id() = kFieldFieldId;
   q3.mutable_options()->range.min =
     irs::ViewCast<irs::byte_type>(std::string_view("min_term1"));
   q3.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1124,7 +1141,7 @@ TEST(by_range_test, equal) {
   ASSERT_NE(q0, q3);
 
   irs::ByRange q4;
-  *q4.mutable_field() = "field";
+  *q4.mutable_field_id() = kFieldFieldId;
   q4.mutable_options()->range.min =
     irs::ViewCast<irs::byte_type>(std::string_view("min_term"));
   q4.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1135,7 +1152,7 @@ TEST(by_range_test, equal) {
   ASSERT_NE(q0, q4);
 
   irs::ByRange q5;
-  *q5.mutable_field() = "field";
+  *q5.mutable_field_id() = kFieldFieldId;
   q5.mutable_options()->range.min =
     irs::ViewCast<irs::byte_type>(std::string_view("min_term"));
   q5.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1146,7 +1163,7 @@ TEST(by_range_test, equal) {
   ASSERT_NE(q0, q5);
 
   irs::ByRange q6;
-  *q6.mutable_field() = "field";
+  *q6.mutable_field_id() = kFieldFieldId;
   q6.mutable_options()->range.min =
     irs::ViewCast<irs::byte_type>(std::string_view("min_term"));
   q6.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1161,7 +1178,7 @@ TEST(by_range_test, boost) {
   // no boost
   {
     irs::ByRange q;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("min_term"));
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1178,7 +1195,7 @@ TEST(by_range_test, boost) {
     irs::score_t boost = 1.5f;
 
     irs::ByRange q;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("min_term"));
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1198,6 +1215,148 @@ TEST_P(RangeFilterTestCase, by_range_numeric) { ByRangeSequentialNumeric(); }
 
 TEST_P(RangeFilterTestCase, by_range_order) { ByRangeSequentialOrder(); }
 
+TEST_P(RangeFilterTestCase, by_range_order_multi_segment_field_stats) {
+  // two segments, both holding the queried field
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+    gen.reset();
+    add_segment(gen, irs::kOmAppend);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  // field stats are summed across every segment that has the field
+  uint64_t expected_docs_with_field = 0;
+  for (const auto& segment : rdr) {
+    if (const auto* field = segment.field(kValueFieldId)) {
+      expected_docs_with_field += field->docs_count();
+    }
+  }
+  ASSERT_GT(expected_docs_with_field, 0u);
+
+  const irs::FieldCollector* shared_field = nullptr;
+  size_t finish_count = 0;
+
+  irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
+  auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    ASSERT_NE(nullptr, field);
+    ASSERT_NE(nullptr, term);
+    if (shared_field == nullptr) {
+      shared_field = field;
+    } else {
+      ASSERT_EQ(shared_field, field);  // same collector reused for every term
+    }
+    ASSERT_EQ(expected_docs_with_field, field->docs_with_field);
+  };
+
+  irs::ByRange filter;
+  *filter.mutable_field_id() = kValueFieldId;
+  filter.mutable_options()->range.min =
+    irs::numeric_utils::numeric_traits<double_t>::ninf();
+  filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->range.max =
+    irs::numeric_utils::numeric_traits<double_t>::inf();
+  filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+
+  auto q = filter.prepare({.index = rdr, .scorer = sort.get()});
+  ASSERT_NE(nullptr, q);
+
+  ASSERT_GT(finish_count, 1u);       // multiple scored terms
+  ASSERT_NE(nullptr, shared_field);  // field stats were collected
+}
+
+TEST_P(RangeFilterTestCase, by_range_order_limit_field_stats) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+    gen.reset();
+    add_segment(gen, irs::kOmAppend);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  const irs::FieldCollector* shared_field = nullptr;
+  size_t finish_count = 0;
+
+  irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
+  auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
+  scorer.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+    ++finish_count;
+    ASSERT_NE(nullptr, field);
+    ASSERT_NE(nullptr, term);
+    if (shared_field == nullptr) {
+      shared_field = field;
+    } else {
+      ASSERT_EQ(shared_field, field);
+    }
+  };
+
+  irs::ByRange filter;
+  *filter.mutable_field_id() = kValueFieldId;
+  filter.mutable_options()->range.min =
+    irs::numeric_utils::numeric_traits<double_t>::ninf();
+  filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->range.max =
+    irs::numeric_utils::numeric_traits<double_t>::inf();
+  filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->scored_terms_limit = 2;
+
+  auto q = filter.prepare({.index = rdr, .scorer = sort.get()});
+  ASSERT_NE(nullptr, q);
+
+  ASSERT_GT(finish_count, 0u);
+  ASSERT_LE(finish_count, 2u);  // capped by scored_terms_limit
+}
+
+TEST_P(RangeFilterTestCase, by_range_order_no_match_field_stats) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+    gen.reset();
+    add_segment(gen, irs::kOmAppend);
+  }
+
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  size_t finish_count = 0;
+  irs::Scorer::ptr sort{std::make_unique<tests::sort::CustomSort>()};
+  auto& scorer = static_cast<tests::sort::CustomSort&>(*sort);
+  scorer.collectors_collect = [&](irs::byte_type*, const irs::FieldCollector*,
+                                  const irs::TermCollector*) -> void {
+    ++finish_count;
+  };
+
+  irs::NumericTokenizer min_stream;
+  min_stream.reset((double_t)1e9);
+  auto* min_term = irs::get<irs::TermAttr>(min_stream);
+  ASSERT_TRUE(min_stream.next());
+
+  irs::ByRange filter;
+  *filter.mutable_field_id() = kValueFieldId;
+  filter.mutable_options()->range.min = min_term->value;
+  filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  filter.mutable_options()->range.max =
+    irs::numeric_utils::numeric_traits<double_t>::inf();
+  filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+
+  auto q = filter.prepare({.index = rdr, .scorer = sort.get()});
+  ASSERT_NE(nullptr, q);
+  ASSERT_EQ(0u, finish_count);  // nothing scored, no field stats collected
+}
+
 TEST_P(RangeFilterTestCase, visit) {
   // add segment
   {
@@ -1206,7 +1365,7 @@ TEST_P(RangeFilterTestCase, visit) {
     add_segment(gen);
   }
 
-  const std::string_view field = "prefix";
+  constexpr irs::field_id field = kPrefixFieldId;
   irs::ByRangeOptions::range_type range;
   range.min = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
   range.max = irs::ViewCast<irs::byte_type>(std::string_view("abcd"));

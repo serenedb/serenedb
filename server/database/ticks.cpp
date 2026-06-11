@@ -25,23 +25,14 @@
 
 #include <atomic>
 
-#include "basics/hybrid_logical_clock.h"
 #include "catalog/identifiers/object_id.h"
-#include "general_server/state.h"
 
 namespace sdb {
 namespace {
 
 std::atomic<uint64_t> gCurrentTick = id::kMaxSystem.id();
-basics::HybridLogicalClock gHybridLogicalClock;
 
 }  // namespace
-
-Tick NewTickHybridLogicalClock() { return gHybridLogicalClock.getTimeStamp(); }
-
-Tick NewTickHybridLogicalClock(Tick received) {
-  return gHybridLogicalClock.getTimeStamp(received);
-}
 
 Tick NewTickServer(uint64_t count) {
   return gCurrentTick.fetch_add(count, std::memory_order_relaxed) + 1;
@@ -61,40 +52,5 @@ void UpdateTickServer(Tick tick) {
 }
 
 Tick GetCurrentTickServer() { return gCurrentTick; }
-
-Tick NewServerSpecificTick() {
-  static constexpr uint64_t kLowerMask{0x000000FFFFFFFFFF};
-  static constexpr uint64_t kUpperMask{0xFFFFFF0000000000};
-  static constexpr size_t kUpperShift{40};
-
-  uint64_t lower = NewTickServer() & kLowerMask;
-  uint64_t upper = (static_cast<uint64_t>(ServerState::instance()->GetShortId())
-                    << kUpperShift) &
-                   kUpperMask;
-  uint64_t tick = (upper | lower);
-  return static_cast<Tick>(tick);
-}
-
-Tick NewServerSpecificTickMod4() {
-  static constexpr uint64_t kLowerMask{0x000000FFFFFFFFFC};
-  static constexpr uint64_t kUpperMask{0xFFFFFF0000000000};
-  static constexpr size_t kLowerShift{2};
-  static constexpr size_t kUpperShift{40};
-
-  const uint64_t lower = (NewTickServer() << kLowerShift) & kLowerMask;
-  const uint64_t upper =
-    (static_cast<uint64_t>(ServerState::instance()->GetShortId())
-     << kUpperShift) &
-    kUpperMask;
-  return static_cast<Tick>(upper | lower);
-}
-
-uint32_t ExtractServerIdFromTick(Tick tick) {
-  static constexpr uint64_t kMask{0x0000000000FFFFFF};
-  static constexpr size_t kShift{40};
-
-  uint32_t short_id = static_cast<uint32_t>((tick >> kShift) & kMask);
-  return short_id;
-}
 
 }  // namespace sdb

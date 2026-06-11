@@ -368,7 +368,7 @@ inline bool Validate(const automaton& a,
     return true;
   }
   SDB_ERROR(
-    "xxxxx", sdb::Logger::IRESEARCH,
+    IRESEARCH,
     absl::StrCat(
       "Expected deterministic, epsilon-free acceptor, got the following "
       "properties ",
@@ -457,7 +457,7 @@ inline automaton MakeAll() {
 /// @returns compiled filter
 //////////////////////////////////////////////////////////////////////////////
 Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
-                                          std::string_view field,
+                                          irs::field_id id,
                                           const automaton& acceptor,
                                           size_t scored_terms_limit);
 

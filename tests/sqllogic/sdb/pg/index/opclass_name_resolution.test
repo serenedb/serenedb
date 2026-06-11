@@ -189,45 +189,44 @@ VACUUM (REFRESH_TABLE) parens_inc_expr;
 query
 SELECT id, a + b AS s FROM parens_inc_expr_idx ORDER BY id;
 ----
-id    s
-1     30
-2     10
+id	s
+1	30
+2	10
 
 
-# --- ARRAY columns and expressions only allowed with built-in HNSW -------
-# Bare 'hnsw' would resolve to the user dict named 'hnsw' (text tokenizer),
-# but ARRAY values can only be indexed with the parens form of the built-in
-# 'hnsw' opclass. Validation rejects every other ARRAY case, regardless of
-# the element type. The shadowing dict in scope is irrelevant.
+# --- ARRAY: bare 'hnsw' resolves to the user text dict, which requires
+# VARCHAR/BLOB elements -- it cannot be applied to ARRAY/LIST of numerics.
+# Vector search uses the parens form 'hnsw(...)' which selects the built-in
+# HNSW opclass and requires ARRAY(FLOAT, N).
 
 statement ok
 CREATE TABLE shadow_hnsw_int_arr_col(id INT PRIMARY KEY, emb INT[3]);
 
 statement error
-CREATE INDEX bad_shadow_hnsw_int_arr_col_idx ON shadow_hnsw_int_arr_col USING inverted(
+CREATE INDEX shadow_hnsw_int_arr_col_idx ON shadow_hnsw_int_arr_col USING inverted(
     id, emb hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'emb' has unsupported type INTEGER[3]
+db error: ERROR: Failed to create index: Column 'emb' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
 
 
 statement ok
 CREATE TABLE shadow_hnsw_float_arr_col(id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement error
-CREATE INDEX bad_shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
+CREATE INDEX shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
     id, emb hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]
+db error: ERROR: Failed to create index: Column 'emb' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT[3])
 
 
 statement ok
 CREATE TABLE shadow_hnsw_arr_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
 
 statement error
-CREATE INDEX bad_shadow_hnsw_arr_expr_idx ON shadow_hnsw_arr_expr USING inverted(
+CREATE INDEX shadow_hnsw_arr_expr_idx ON shadow_hnsw_arr_expr USING inverted(
     id, (array_value(x, y, z)) hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' has unsupported type FLOAT[3]
+db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT[3])
 
 
 # The parens form selects the built-in HNSW even with the shadowing dict

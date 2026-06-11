@@ -24,199 +24,21 @@
 #include "stemming_tokenizer.hpp"
 
 #include <libstemmer.h>
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
 
 #include <string_view>
 
-#include "iresearch/utils/vpack_utils.hpp"
+#include "basics/exceptions.h"
 
 namespace irs::analysis {
-namespace {
 
-constexpr std::string_view kLocaleParamName = "locale";
+StemmingTokenizer::StemmingTokenizer(Options options)
+  : _options{std::move(options)} {}
 
-bool LocaleFromSlice(vpack::Slice slice, icu::Locale& locale) {
-  if (!slice.isString()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH, "Non-string value in '",
-             kLocaleParamName,
-             "' while constructing stemming_tokenizer from VPack arguments");
-
-    return false;
+Analyzer::ptr StemmingTokenizer::Make(Options opts) {
+  if (opts.locale.isBogus()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "stem: invalid locale");
   }
-
-  const auto locale_name = slice.copyString();
-
-  locale = icu::Locale::createFromName(locale_name.c_str());
-
-  if (!locale.isBogus()) {
-    locale = icu::Locale{locale.getLanguage()};
-  }
-
-  if (locale.isBogus()) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-             "Failed to instantiate locale from the supplied string '",
-             locale_name,
-             "' while constructing stemming_tokenizer from VPack arguments");
-
-    return false;
-  }
-
-  // validate creation of sb_stemmer, defaults to utf-8
-  stemmer_ptr stemmer = make_stemmer_ptr(locale.getLanguage(), nullptr);
-
-  if (!stemmer) {
-    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-             "Failed to instantiate sb_stemmer from locale '", locale_name,
-             "' while constructing stemming_token_stream from VPack arguments");
-  }
-
-  return true;
-}
-
-bool ParseVPackOptions(const vpack::Slice slice,
-                       StemmingTokenizer::OptionsT& opts) {
-  if (!slice.isObject()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Slice for stemming_tokenizer  is not an object");
-    return false;
-  }
-
-  try {
-    const auto locale_slice = slice.get(kLocaleParamName);
-
-    if (locale_slice.isNone()) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                absl::StrCat("Missing '", kLocaleParamName,
-                             "' while constructing stemming_tokenizer from "
-                             "VPack arguments"));
-
-      return false;
-    }
-
-    return LocaleFromSlice(locale_slice, opts.locale);
-  } catch (const std::exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing stemming_tokenizer from VPack"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while constructing stemming_tokenizer from VPack "
-              "arguments");
-  }
-
-  return false;
-}
-////////////////////////////////////////////////////////////////////////////////
-/// @brief args is a jSON encoded object with the following attributes:
-///        "locale"(string): the locale to use for stemming <required>
-////////////////////////////////////////////////////////////////////////////////
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  StemmingTokenizer::OptionsT opts;
-
-  if (ParseVPackOptions(slice, opts)) {
-    return std::make_unique<StemmingTokenizer>(opts);
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-///////////////////////////////////////////////////////////////////////////////
-/// @brief builds analyzer config from internal options in json format
-/// @param locale reference to analyzer`s locale
-/// @param definition string for storing json document with config
-///////////////////////////////////////////////////////////////////////////////
-bool MakeVPackConfig(const StemmingTokenizer::OptionsT& opts,
-                     vpack::Builder* builder) {
-  vpack::ObjectBuilder object(builder);
-  {
-    // locale
-    const auto* locale_name = opts.locale.getName();
-    builder->add(kLocaleParamName, locale_name);
-  }
-  return true;
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
-  StemmingTokenizer::OptionsT opts;
-
-  if (ParseVPackOptions(slice, opts)) {
-    return MakeVPackConfig(opts, builder);
-  }
-  return false;
-}
-
-bool NormalizeVPackConfig(std::string_view args, std::string& config) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  if (NormalizeVPackConfig(slice, &builder)) {
-    config.assign(builder.slice().startAs<char>(), builder.slice().byteSize());
-    return true;
-  }
-  return false;
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while constructing normalizing_tokenizer");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing normalizing_tokenizer from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while constructing normalizing_tokenizer from "
-              "JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while normalizing normalizing_tokenizer");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder builder;
-    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
-      definition = builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while normalizing normalizing_tokenizer from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while normalizing normalizing_tokenizer from JSON");
-  }
-  return false;
-}
-
-}  // namespace
-
-StemmingTokenizer::StemmingTokenizer(const OptionsT& options)
-  : _options{options} {}
-
-void StemmingTokenizer::init() {
-  REGISTER_ANALYZER_JSON(StemmingTokenizer, MakeJson, NormalizeJsonConfig);
-  REGISTER_ANALYZER_VPACK(StemmingTokenizer, MakeVPack, NormalizeVPackConfig);
+  return std::make_unique<StemmingTokenizer>(std::move(opts));
 }
 
 bool StemmingTokenizer::next() {

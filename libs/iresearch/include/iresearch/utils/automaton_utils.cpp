@@ -207,14 +207,14 @@ void Utf8TransitionsBuilder::Finish(automaton& a, automaton::StateId from) {
 }
 
 Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
-                                          std::string_view field,
+                                          irs::field_id id,
                                           const automaton& acceptor,
                                           size_t scored_terms_limit) {
   auto matcher = MakeAutomatonMatcher(acceptor);
 
   if (fst::kError == matcher.Properties(0)) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat("Expected deterministic, epsilon-free acceptor, got the "
                    "following properties ",
                    matcher.GetFst().Properties(
@@ -230,7 +230,7 @@ Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
   MultiTermVisitor mtv{collector, states};
 
   for (const auto& segment : ctx.index) {
-    if (const auto* reader = segment.field(field); reader) {
+    if (const auto* reader = segment.field(id); reader) {
       Visit(segment, *reader, matcher, mtv);
     }
   }

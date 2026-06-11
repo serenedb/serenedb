@@ -22,7 +22,7 @@
 #pragma once
 
 #include <s2/s2point.h>
-#include <vpack/slice.h>
+#include <simdjson.h>
 
 #include <cstdint>
 #include <string_view>
@@ -91,7 +91,7 @@ enum class Type : uint8_t {
 ///   "type": "..."
 /// }
 /// type is case-insensitive
-Type ParseType(vpack::Slice vpack) noexcept;
+Type ParseType(simdjson::ondemand::object& object) noexcept;
 
 /// Expects an GeoJson Point:
 ///
@@ -99,7 +99,7 @@ Type ParseType(vpack::Slice vpack) noexcept;
 /// {
 ///   "type": "Point",
 ///   "coordinates": [lon, lat]
-Result ParsePoint(vpack::Slice vpack, S2LatLng& region);
+Result ParsePoint(simdjson::ondemand::value json, S2LatLng& region);
 
 /// Expects an GeoJson MultiPoint:
 ///
@@ -108,7 +108,8 @@ Result ParsePoint(vpack::Slice vpack, S2LatLng& region);
 ///   "type": "MultiPoint",
 ///   "coordinates": [
 ///     [lon0, lat0], [lon1, lat1], ...
-Result ParseMultiPoint(vpack::Slice vpack, S2MultiPointRegion& region);
+Result ParseMultiPoint(simdjson::ondemand::value json,
+                       S2MultiPointRegion& region);
 
 /// Expects an GeoJson LineString:
 ///
@@ -117,7 +118,7 @@ Result ParseMultiPoint(vpack::Slice vpack, S2MultiPointRegion& region);
 ///   "type": "LineString",
 ///   "coordinates": [
 ///     [lon0, lat0], [lon1, lat1], ...
-Result ParseLinestring(vpack::Slice vpack, S2Polyline& region);
+Result ParseLinestring(simdjson::ondemand::value json, S2Polyline& region);
 
 /// Expects an GeoJson MultiLineString:
 ///
@@ -126,7 +127,8 @@ Result ParseLinestring(vpack::Slice vpack, S2Polyline& region);
 ///   "type": "MultiLineString",
 ///   "coordinates": [
 ///     [[lon0, lat0], [lon1, lat1], ...], ...
-Result ParseMultiLinestring(vpack::Slice vpack, S2MultiPolylineRegion& region);
+Result ParseMultiLinestring(simdjson::ondemand::value json,
+                            S2MultiPolylineRegion& region);
 
 /// Expects an GeoJson Polygon:
 /// Each loop should be closed, so should contains at least four points
@@ -136,7 +138,7 @@ Result ParseMultiLinestring(vpack::Slice vpack, S2MultiPolylineRegion& region);
 ///   "type": "Polygon",
 ///   "coordinates": [
 ///     [[lon0, lat0], [lon1, lat1], [lon2, lat2], [lon3, lat3], ...], ...
-Result ParsePolygon(vpack::Slice vpack, S2Polygon& region);
+Result ParsePolygon(simdjson::ondemand::value json, S2Polygon& region);
 
 /// Expects an GeoJson MultiPolygon:
 /// Each loop should be closed, so should contains at least four points
@@ -146,19 +148,19 @@ Result ParsePolygon(vpack::Slice vpack, S2Polygon& region);
 ///   "type": "MultiPolygon",
 ///   "coordinates": [
 ///     [[lon0, lat0], [lon1, lat1], [lon2, lat2], [lon3, lat3], ...], ...
-Result ParseMultiPolygon(vpack::Slice vpack, S2Polygon& region);
+Result ParseMultiPolygon(simdjson::ondemand::value json, S2Polygon& region);
 
 /// Convenience function to build a region from a GeoJson type.
-Result ParseRegion(vpack::Slice vpack, ShapeContainer& region);
+Result ParseRegion(simdjson::ondemand::value json, ShapeContainer& region);
 
 template<bool Valid = true>
-Result ParseRegion(vpack::Slice vpack, ShapeContainer& region,
+Result ParseRegion(simdjson::ondemand::value json, ShapeContainer& region,
                    std::vector<S2LatLng>& cache,
                    coding::Options options = coding::Options::Invalid,
                    Encoder* encoder = nullptr);
 
 template<bool Valid = true>
-Result ParseCoordinates(vpack::Slice vpack, ShapeContainer& region,
+Result ParseCoordinates(simdjson::ondemand::value json, ShapeContainer& region,
                         bool geo_json,
                         coding::Options options = coding::Options::Invalid,
                         Encoder* encoder = nullptr);

@@ -23,7 +23,6 @@
 #include <cstdint>
 #include <string_view>
 
-#include "basics/exceptions.h"
 #include "basics/result_or.h"
 
 namespace sdb {
@@ -57,16 +56,5 @@ struct ShardID {
  private:
   uint64_t _id = 0;
 };
-
-void VPackRead(auto ctx, ShardID& shard) {
-  // TODO(gnusi): serialize as number
-  auto r = ShardID::shardIdFromString(ctx.vpack().stringView());
-  if (!r) [[unlikely]] {
-    SDB_THROW(std::move(r).error());
-  }
-  shard = *r;
-}
-
-void VPackWrite(auto ctx, ShardID shard) { ctx.vpack().add(shard.toStr()); }
 
 }  // namespace sdb

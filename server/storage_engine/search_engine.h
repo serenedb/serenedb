@@ -33,13 +33,11 @@
 #include <vector>
 
 #include "basics/async_utils.hpp"
-#include "basics/resource_manager.hpp"
 #include "catalog/function.h"
 #include "catalog/identifiers/index_id.h"
 #include "catalog/types.h"
-#include "metrics/fwd.h"
-#include "rest_server/serened.h"
-#include "storage_engine/engine_feature.h"
+#include "rest_server/database_path_feature.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb {
 
@@ -55,58 +53,32 @@ enum class ThreadGroup : uint8_t {
   Compaction,
 };
 
+class SearchEngine;
 SearchEngine& GetSearchEngine();
 
-class SearchEngine final : public SerenedFeature {
+class SearchEngine final {
  public:
-  static constexpr std::string_view name() noexcept { return "Search"; }
+  inline static SearchEngine* gInstance = nullptr;
+  static SearchEngine& instance() noexcept { return *gInstance; }
 
-  explicit SearchEngine(Server& server);
+  SearchEngine();
+  ~SearchEngine();
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void prepare() final;
-  void start() final;
-  void stop() final;
-  void unprepare() final;
-  void beginShutdown() final;
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
+  void start();
+  void stop();
 
   std::tuple<size_t, size_t, size_t> stats(ThreadGroup id) const;
   std::pair<size_t, size_t> limits(ThreadGroup id) const;
   bool Queue(ThreadGroup id, absl::Duration delay,
              absl::AnyInvocable<void()>&& fn);
-  void trackOutOfSyncLink() noexcept;
-  void untrackOutOfSyncLink() noexcept;
-
-  bool failQueriesOnOutOfSync() const noexcept;
-
-  irs::IResourceManager& getCachedColumnsManager() const noexcept {
-    return _columns_cache_memory_used;
-  }
-
-#ifdef SDB_GTEST
-  void setDefaultParallelism(uint32_t v) noexcept { _default_parallelism = v; }
-#endif
 
   std::filesystem::path GetPersistedPath(ObjectId database_id) const;
 
  private:
   DatabasePathFeature& _dir_feature;
-
   std::shared_ptr<SearchThreadPools> _thread_pools;
-
-  bool _fail_queries_on_out_of_sync{false};
-  bool _skip_wal_recovery{false};
-
-  std::vector<std::string> _skip_recovery_items;
-
-  metrics::Gauge<uint64_t>& _out_of_sync_links;
-  irs::IResourceManager& _columns_cache_memory_used;
-
   uint32_t _compaction_threads{0};
-  uint32_t _commit_threads{0};
-  uint32_t _search_execution_threads_limit{0};
-  uint32_t _default_parallelism{1};
+  uint32_t _refresh_threads{0};
 };
 
 }  // namespace search

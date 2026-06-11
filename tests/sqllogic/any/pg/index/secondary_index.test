@@ -1014,6 +1014,10 @@ INSERT INTO gayazov_dual VALUES
   (4, 'gayazov plays games', 30);
 
 onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) gayazov_dual;
+
+onlyif serenedb
 query
 EXPLAIN SELECT pid, name FROM gayazov_dual_inv_idx WHERE rank = 10;
 ----

@@ -13,8 +13,16 @@ if [[ "${SKIP_SLOW_TESTS:-false}" == "true" ]]; then
 	FAST_FLAG="--fast"
 fi
 
+# sqlite subtree is under sdb/pg/any via the any/pg symlink; --skip is a path regex.
+declare -a SEL
+case "${SDB_SQLLOGIC_SCOPE:-all}" in
+ours) SEL=(--test "sdb/**/*.test*" --skip "sqlite") ;;
+sqlite) SEL=(--test "sdb/pg/any/sqlite/**/*.test*") ;;
+all | *) SEL=(--test "sdb/**/*.test*") ;;
+esac
+
 exec ./run.sh \
-	--test "sdb/**/*.test*" \
+	"${SEL[@]}" \
 	--junit "tests-serenedb" \
 	--engines "pg-wire-simple,pg-wire-extended" \
 	--database serenedb \

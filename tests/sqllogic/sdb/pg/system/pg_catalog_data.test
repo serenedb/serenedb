@@ -47,7 +47,7 @@ query
 SELECT datcollate, datctype FROM pg_catalog.pg_database LIMIT 1
 ----
 datcollate	datctype
-en_US.UTF-8	en_US.UTF-8
+C.UTF-8	C.UTF-8
 
 
 # pg_namespace
@@ -273,26 +273,31 @@ f
 # pg_am (access methods)
 
 
-# Should have at least heap and btree
+# serened access methods: rocksdb/iresearch back tables;
+# secondary/inverted back indexes.
 query
 SELECT amname, amtype FROM pg_catalog.pg_am ORDER BY amname
 ----
 amname	amtype
+inverted	i
+iresearch	t
+rocksdb	t
+secondary	i
 
 
-# Should have table and index access methods
+# Index vs table access-method counts
 query
 SELECT count(*) FROM pg_catalog.pg_am WHERE amtype = 'i'
 ----
 count
-0
+2
 
 
 query
 SELECT count(*) FROM pg_catalog.pg_am WHERE amtype = 't'
 ----
 count
-0
+2
 
 
 # pg_language
@@ -509,9 +514,9 @@ query
 SELECT column_name, ordinal_position, is_nullable, data_type FROM information_schema.columns WHERE table_name = 'pg_cat_t1' ORDER BY ordinal_position
 ----
 column_name	ordinal_position	is_nullable	data_type
-id	1	NO	NULL
-name	2	NO	NULL
-value	3	YES	NULL
+id	1	NO	integer
+name	2	NO	text
+value	3	YES	double precision
 
 
 query
@@ -537,7 +542,7 @@ query
 SELECT count(*) FROM information_schema.columns WHERE table_name = 'pg_cat_t1' AND data_type IS NOT NULL AND data_type != ''
 ----
 count
-0
+3
 
 
 # information_schema.table_constraints
@@ -601,7 +606,7 @@ query
 SELECT data_type FROM information_schema.routines WHERE routine_name = 'pg_cat_add'
 ----
 data_type
-NULL
+integer
 
 
 # System views (pg_tables, pg_views, pg_roles)

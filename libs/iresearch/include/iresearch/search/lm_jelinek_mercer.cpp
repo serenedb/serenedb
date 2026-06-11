@@ -20,12 +20,6 @@
 
 #include "lm_jelinek_mercer.hpp"
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
-#include <vpack/vpack.h>
-
 #include <cmath>
 
 #include "basics/down_cast.h"
@@ -36,11 +30,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
-#include "iresearch/search/scorers.hpp"
 
 namespace irs {
 namespace {
@@ -51,86 +44,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 }
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
-
-struct ObjectParams {
-  score_t lambda = LMJelinekMercer::LAMBDA();
-};
-
-Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadObjectNothrow(slice, params,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing lm_jm scorer from VPack");
-    return {};
-  }
-  if (params.lambda <= 0.f || params.lambda > 1.f ||
-      !std::isfinite(params.lambda)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "lm_jm lambda must be in (0, 1]");
-    return {};
-  }
-  return std::make_unique<LMJelinekMercer>(params.lambda);
-}
-
-Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadTupleNothrow(slice, params);
-  if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing lm_jm scorer from VPack array");
-    return {};
-  }
-  if (params.lambda <= 0.f || params.lambda > 1.f ||
-      !std::isfinite(params.lambda)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "lm_jm lambda must be in (0, 1]");
-    return {};
-  }
-  return std::make_unique<LMJelinekMercer>(params.lambda);
-}
-
-Scorer::ptr MakeVPack(const vpack::Slice slice) {
-  switch (slice.type()) {
-    case vpack::ValueType::Object:
-      return MakeFromObject(slice);
-    case vpack::ValueType::Array:
-      return MakeFromArray(slice);
-    default:
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Invalid VPack arguments for lm_jm scorer");
-      return nullptr;
-  }
-}
-
-Scorer::ptr MakeVPack(std::string_view args) {
-  if (IsNull(args)) {
-    return std::make_unique<LMJelinekMercer>();
-  }
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-Scorer::ptr MakeJson(std::string_view args) {
-  if (IsNull(args)) {
-    return std::make_unique<LMJelinekMercer>();
-  }
-  try {
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
-              "' while constructing VPack from JSON for lm_jm");
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while constructing VPack from JSON for lm_jm");
-  }
   return nullptr;
 }
 
@@ -226,27 +139,12 @@ void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
                               const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* field_ptr = sdb::basics::downCast<LMFieldCollector>(field);
-  const auto* term_ptr = sdb::basics::downCast<LMTermCollector>(term);
+  const auto ttf_field = field ? field->total_term_freq : 0;
+  const auto ttf_term = term ? term->total_term_freq : 0;
 
-  const auto ttf_field = field_ptr ? field_ptr->total_term_freq : 0;
-  const auto ttf_term = term_ptr ? term_ptr->total_term_freq : 0;
-
-  // DefaultCollectionModel: P(t|C) = (ttf_t + 1) / (ttf_field + 1).
-  // Stats are allocated per-term (see TermCollectors::finish), so assignment
-  // is safe; multi-term filters produce one prepared scorer per term with
-  // its own stats buffer.
   const double num = static_cast<double>(ttf_term) + 1.0;
   const double den = static_cast<double>(ttf_field) + 1.0;
   stats->collection_prob = static_cast<score_t>(num / den);
-}
-
-FieldCollector::ptr LMJelinekMercer::PrepareFieldCollector() const {
-  return std::make_unique<LMFieldCollector>();
-}
-
-TermCollector::ptr LMJelinekMercer::PrepareTermCollector() const {
-  return std::make_unique<LMTermCollector>();
 }
 
 ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
@@ -296,11 +194,6 @@ bool LMJelinekMercer::equals(const Scorer& other) const noexcept {
   }
   const auto& p = sdb::basics::downCast<LMJelinekMercer>(other);
   return p._lambda == _lambda;
-}
-
-void LMJelinekMercer::init() {
-  REGISTER_SCORER_JSON(LMJelinekMercer, MakeJson);
-  REGISTER_SCORER_VPACK(LMJelinekMercer, MakeVPack);
 }
 
 }  // namespace irs

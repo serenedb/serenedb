@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
@@ -46,15 +46,15 @@ class NearestNeighborsTokenizer final
     model_provider_f provider) noexcept;
 
   struct Options {
+    using Owner = NearestNeighborsTokenizer;
     std::string model_location;
     int32_t top_k{1};
   };
+  static Analyzer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept {
     return "nearest_neighbors";
   }
-
-  static void init();  // for registration in a static build
 
   explicit NearestNeighborsTokenizer(const Options& options,
                                      model_ptr model_provider) noexcept;

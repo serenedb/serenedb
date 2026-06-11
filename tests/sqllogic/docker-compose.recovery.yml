@@ -8,8 +8,9 @@ services:
       - "${WORKSPACE}:/serenedb"
       - "${SQLLOGIC_DIR}:/sqllogic"
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
-      - "${WORKSPACE}/logs:/var/log/serenedb"
+      - "${WORKSPACE}/out/logs:/var/log/serenedb"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+      - "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}:/timing-cache"
       - type: tmpfs
         target: /recovery_data
         tmpfs:
@@ -24,6 +25,8 @@ services:
       - LOG_DIR=/var/log/serenedb
       - CARGO_HOME=/tmp/cargo
       - CARGO_TARGET_DIR=/cargo-target
+      - SDB_TIMING_CACHE_DIR=/timing-cache
+      - SDB_TIMING_KEY
       - TMPDIR=/recovery_data
       - SKIP_SLOW_TESTS
     working_dir: /sqllogic

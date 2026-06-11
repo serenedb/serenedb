@@ -41,7 +41,6 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
@@ -78,7 +77,7 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
 
   // Reusable buffers
   std::vector<std::string> row_keys;
-  std::vector<DuckDBSinkIndexWriter*> active_writers;
+  std::vector<DuckDBSinkColumnWriter*> active_writers;
   std::string value_buffer;
   duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
   DuckDBWriteConflictResolver conflict_resolver;
@@ -246,17 +245,23 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   // 4. Write each column via DuckDBColumnSerializer
   DuckDBColumnSerializer::TxnWriter txn_writer{*gstate.sdb_txn, gstate.cf};
 
+  std::vector<std::string_view> view_row_keys;
+  if (need_filter) {
+    view_row_keys.reserve(affected_rows);
+    for (duckdb::idx_t i = 0; i < affected_rows; ++i) {
+      view_row_keys.emplace_back(gstate.row_keys[survivor_sel.get_index(i)]);
+    }
+  } else {
+    view_row_keys.assign(gstate.row_keys.begin(), gstate.row_keys.end());
+  }
+
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
       continue;
     }
 
     auto& vec = chunk.data[col.input_col_idx];
-    const bool may_have_nulls =
-      vec.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-      !duckdb::FlatVector::Validity(vec).CannotHaveNull();
-    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
-                                may_have_nulls};
+    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type};
 
     duckdb::Vector cs_vec{vec.GetType(), affected_rows};
     if (need_filter) {
@@ -267,8 +272,9 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
 
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
-      if (writer->SwitchColumn(desc, cs_input, cs_count)) {
-        gstate.active_writers.push_back(writer.get());
+      if (writer->SwitchColumn(desc, cs_input, view_row_keys, cs_count)) {
+        gstate.active_writers.push_back(
+          basics::downCast<DuckDBSinkColumnWriter>(writer.get()));
       }
     }
 
@@ -296,7 +302,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     }
     EvaluateAndWriteIndexedExpressions(*writer, exprs, chunk, gstate.table_id,
                                        slot_to_col_id, context.client, num_rows,
-                                       gstate.row_keys, *gstate.serializer);
+                                       gstate.row_keys);
   }
 
   // 5. Finish index writers

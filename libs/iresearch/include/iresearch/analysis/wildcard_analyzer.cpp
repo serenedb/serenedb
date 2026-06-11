@@ -23,85 +23,17 @@
 
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 
-#include <vpack/builder.h>
-
 #include <iresearch/utils/attribute_provider.hpp>
 
 #include "basics/down_cast.h"
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
 namespace {
-
-constexpr std::string_view kNgramSize = "ngramSize";
-constexpr std::string_view kParseError =
-  ", failed to parse options for wildcard analyzer";
-constexpr size_t kMinNgram = 2;
-
-bool ParseNgramSize(vpack::Slice input, size_t& ngram_size) {
-  SDB_ASSERT(input.isObject());
-  input = input.get(kNgramSize);
-  if (!input.isNumber<size_t>()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kNgramSize,
-              " attribute must be size_t", kParseError);
-    return false;
-  }
-  ngram_size = input.getNumber<size_t>();
-  if (ngram_size < kMinNgram) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, kNgramSize,
-              " attribute must be at least ", kMinNgram, kParseError);
-    return false;
-  }
-  return true;
-}
-
-bool ParseOptions(vpack::Slice slice, WildcardAnalyzer::Options& options) {
-  if (!slice.isObject()) {
-    return false;
-  }
-  if (!ParseNgramSize(slice, options.ngram_size)) {
-    return false;
-  }
-  if (!analyzers::MakeAnalyzer(slice, options.base_analyzer)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Invalid analyzer definition in ", slice_to_string(slice),
-              kParseError);
-    return false;
-  }
-  return true;
-}
-
-Analyzer::ptr MakeImpl(vpack::Slice slice) {
-  WildcardAnalyzer::Options opts;
-  if (ParseOptions(slice, opts)) {
-    return std::make_unique<WildcardAnalyzer>(std::move(opts));
-  }
-  return {};
-}
-
-bool NormalizeImpl(vpack::Slice input, vpack::Builder& output) {
-  if (!input.isObject()) {
-    return false;
-  }
-  size_t ngram_size = 0;
-  if (!ParseNgramSize(input, ngram_size)) {
-    return false;
-  }
-  vpack::ObjectBuilder scope{&output};
-  output.add(kNgramSize, ngram_size);
-  if (!analyzers::NormalizeAnalyzer(input, output)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Invalid analyzer definition in ", slice_to_string(input),
-              kParseError);
-    return false;
-  }
-  return true;
-}
 
 constexpr std::string_view kFill = "00000\xFF";
 
@@ -111,28 +43,13 @@ constexpr std::string_view Fill(size_t len) noexcept {
 
 }  // namespace
 
-bool WildcardAnalyzer::normalize(std::string_view args,
-                                 std::string& definition) {
-  if (args.empty()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Empty arguments", kParseError);
-    return false;
+Analyzer::ptr WildcardAnalyzer::Make(Options opts) {
+  Analyzer::ptr base;
+  if (opts.base_analyzer) {
+    base = CreateAnalyzer(std::move(*opts.base_analyzer));
   }
-  vpack::Slice input{reinterpret_cast<const uint8_t*>(args.data())};
-  vpack::Builder output;
-  if (!NormalizeImpl(input, output)) {
-    return false;
-  }
-  definition.assign(output.slice().startAs<char>(), output.slice().byteSize());
-  return true;
-}
-
-Analyzer::ptr WildcardAnalyzer::make(std::string_view args) {
-  if (args.empty()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Empty arguments", kParseError);
-    return {};
-  }
-  vpack::Slice slice{reinterpret_cast<const uint8_t*>(args.data())};
-  return MakeImpl(slice);
+  // If `base_analyzer` is absent the ctor falls back to StringTokenizer.
+  return std::make_unique<WildcardAnalyzer>(std::move(base), opts.ngram_size);
 }
 
 Attribute* WildcardAnalyzer::GetMutable(TypeInfo::type_id type) noexcept {
@@ -155,8 +72,7 @@ bool WildcardAnalyzer::reset(std::string_view data) {
     auto size = _term->value.size();
     if (size > std::numeric_limits<int32_t>::max()) {
       // icu doesn't support more
-      SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-               "too long input for wildcard analyzer: ", size);
+      SDB_WARN(IRESEARCH, "too long input for wildcard analyzer: ", size);
       continue;
     }
     auto idx = _terms.size();
@@ -198,19 +114,15 @@ bool WildcardAnalyzer::next() {
   return true;
 }
 
-void WildcardAnalyzer::init() {
-  REGISTER_ANALYZER_VPACK(WildcardAnalyzer, WildcardAnalyzer::make,
-                          WildcardAnalyzer::normalize);
-}
-
-WildcardAnalyzer::WildcardAnalyzer(Options&& options) noexcept
-  : _analyzer{std::move(options.base_analyzer)} {
+WildcardAnalyzer::WildcardAnalyzer(Analyzer::ptr base_analyzer,
+                                   size_t ngram_size) noexcept
+  : _analyzer{std::move(base_analyzer)} {
   if (!_analyzer) {
     _analyzer = std::make_unique<StringTokenizer>();
   }
   auto ptr = Ngram::make({
-    options.ngram_size,
-    options.ngram_size,
+    ngram_size,
+    ngram_size,
     false,
     NGramTokenizerBase::InputType::UTF8,
     {},

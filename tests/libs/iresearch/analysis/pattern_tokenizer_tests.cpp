@@ -18,10 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -152,12 +148,10 @@ TEST_F(PatternTokenizerTests, test_no_match) {
 
 TEST_F(PatternTokenizerTests, test_bad_regex) {
   // Invalid regex should make analyzer construction fail
-  ASSERT_EQ(nullptr, irs::analysis::PatternTokenizer::make("(", -1));
-  ASSERT_EQ(nullptr, irs::analysis::PatternTokenizer::make("(", 1));
-
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "pattern", irs::Type<irs::text_format::Json>::get(),
-                       R"({"pattern": "(", "group": -1})"));
+  ASSERT_ANY_THROW(irs::analysis::PatternTokenizer::Make(
+    irs::analysis::PatternTokenizer::Options{.pattern = "(", .group = -1}));
+  ASSERT_ANY_THROW(irs::analysis::PatternTokenizer::Make(
+    irs::analysis::PatternTokenizer::Options{.pattern = "(", .group = 1}));
 }
 
 TEST_F(PatternTokenizerTests, test_reset) {
@@ -315,12 +309,11 @@ TEST_F(PatternTokenizerTests, test_utf8_split_comma_4byte_emoji) {
   AssertTokenStreamContents(&stream, {"a", emoji}, {0, 2}, {1, 6}, {1, 1});
 }
 
-TEST_F(PatternTokenizerTests, test_vpack_options) {
+TEST_F(PatternTokenizerTests, test_make_options) {
   // Valid: pattern only, default group -1 (split mode)
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "pattern", irs::Type<irs::text_format::Json>::get(),
-      R"({"pattern": ","})");
+    auto stream = irs::analysis::PatternTokenizer::Make(
+      irs::analysis::PatternTokenizer::Options{.pattern = ",", .group = -1});
     ASSERT_NE(nullptr, stream);
 
     std::string_view data("a,b,c");
@@ -332,9 +325,9 @@ TEST_F(PatternTokenizerTests, test_vpack_options) {
 
   // Valid: pattern + group 1 (extract first capturing group)
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "pattern", irs::Type<irs::text_format::Json>::get(),
-      R"({"pattern": "'([^']+)'", "group": 1})");
+    auto stream = irs::analysis::PatternTokenizer::Make(
+      irs::analysis::PatternTokenizer::Options{.pattern = "'([^']+)'",
+                                               .group = 1});
     ASSERT_NE(nullptr, stream);
 
     std::string_view data("a 'foo' b 'bar'");
@@ -346,9 +339,8 @@ TEST_F(PatternTokenizerTests, test_vpack_options) {
 
   // Valid: group omitted -> default -1
   {
-    auto stream = irs::analysis::analyzers::Get(
-      "pattern", irs::Type<irs::text_format::Json>::get(),
-      R"({"pattern": ":"})");
+    auto stream = irs::analysis::PatternTokenizer::Make(
+      irs::analysis::PatternTokenizer::Options{.pattern = ":"});
     ASSERT_NE(nullptr, stream);
 
     std::string_view data("a:b:c");
@@ -358,80 +350,21 @@ TEST_F(PatternTokenizerTests, test_vpack_options) {
                               {1, 3, 5}, {1, 1, 1});
   }
 
-  // Invalid: empty object -> missing pattern
-  ASSERT_EQ(nullptr,
-            irs::analysis::analyzers::Get(
-              "pattern", irs::Type<irs::text_format::Json>::get(), "{}"));
+  // Invalid: empty pattern -- ported from the legacy "empty pattern
+  // string" / "missing pattern key" / "empty object" JSON-parse
+  // rejections. With the direct-Options API, the absence of a pattern
+  // collapses to a default-initialized empty `pattern` field.
+  ASSERT_ANY_THROW(irs::analysis::PatternTokenizer::Make(
+    irs::analysis::PatternTokenizer::Options{}));
+  ASSERT_ANY_THROW(irs::analysis::PatternTokenizer::Make(
+    irs::analysis::PatternTokenizer::Options{.pattern = ""}));
+  ASSERT_ANY_THROW(irs::analysis::PatternTokenizer::Make(
+    irs::analysis::PatternTokenizer::Options{.group = 0}));
 
-  // Invalid: missing pattern key
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "pattern", irs::Type<irs::text_format::Json>::get(),
-                       R"({"group": 0})"));
-
-  // Invalid: pattern not a string
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "pattern", irs::Type<irs::text_format::Json>::get(),
-                       R"({"pattern": 123})"));
-
-  // Invalid: empty pattern string
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "pattern", irs::Type<irs::text_format::Json>::get(),
-                       R"({"pattern": ""})"));
-
-  // Invalid: not an object
-  ASSERT_EQ(nullptr,
-            irs::analysis::analyzers::Get(
-              "pattern", irs::Type<irs::text_format::Json>::get(), "[]"));
-
-  // Invalid: not an object
-  ASSERT_EQ(nullptr,
-            irs::analysis::analyzers::Get(
-              "pattern", irs::Type<irs::text_format::Json>::get(), R"("x")"));
-
-  // Invalid: group wrong type
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "pattern", irs::Type<irs::text_format::Json>::get(),
-                       R"({"pattern": ",", "group": "ignored"})"));
-
-  // Invalid: group is non-integer number
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "pattern", irs::Type<irs::text_format::Json>::get(),
-                       R"({"pattern": ",", "group": 1.5})"));
-
-  // Invalid: group out of int range
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "pattern", irs::Type<irs::text_format::Json>::get(),
-                       R"({"pattern": ",", "group": 9223372036854775807})"));
-
-  // Invalid: unknown fields should be ignored
-  {
-    auto stream = irs::analysis::analyzers::Get(
-      "pattern", irs::Type<irs::text_format::Json>::get(),
-      R"({"pattern": ",", "unknown_field": 1, "group": -1})");
-    ASSERT_NE(nullptr, stream);
-
-    std::string_view data("a,b");
-    ASSERT_TRUE(stream->reset(data));
-
-    AssertTokenStreamContents(stream.get(), {"a", "b"}, {0, 2}, {1, 3}, {1, 1});
-  }
-
-  // Valid: config produces parseable definition
-  {
-    std::string definition;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      definition, "pattern", irs::Type<irs::text_format::Json>::get(),
-      R"({"pattern": "\\s+", "group": -1})"));
-    ASSERT_FALSE(definition.empty());
-
-    auto stream = irs::analysis::analyzers::Get(
-      "pattern", irs::Type<irs::text_format::Json>::get(), definition);
-    ASSERT_NE(nullptr, stream);
-
-    std::string_view data("a b c");
-    ASSERT_TRUE(stream->reset(data));
-
-    AssertTokenStreamContents(stream.get(), {"a", "b", "c"}, {0, 2, 4},
-                              {1, 3, 5}, {1, 1, 1});
-  }
+  // Legacy JSON-parser cases with no direct-API analogue: the typed
+  // Options struct makes "pattern not a string", "not an object",
+  // "group wrong type", "group is non-integer number", "group out of
+  // int range", and "unknown fields ignored" all compile-time
+  // impossibilities. Documenting here so future readers see the
+  // assertions intentionally collapsed.
 }

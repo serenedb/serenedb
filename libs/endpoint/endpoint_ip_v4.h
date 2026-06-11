@@ -22,23 +22,17 @@
 #pragma once
 
 #include "basics/common.h"
-#include "basics/string_utils.h"
 #include "endpoint/endpoint_ip.h"
 
 namespace sdb {
 
 class EndpointIpV4 final : public EndpointIp {
  public:
-  EndpointIpV4(EndpointType, TransportType, EncryptionType, int, bool,
-               const std::string&, uint16_t);
+  EndpointIpV4(TransportType, EncryptionType, int, bool, const std::string&,
+               uint16_t);
 
  public:
   int domain() const override { return AF_INET; }
-  bool isBroadcastBind() const override;
-
-  std::string hostAndPort() const override {
-    return host() + ':' + sdb::basics::string_utils::Itoa(port());
-  }
 };
 
 }  // namespace sdb

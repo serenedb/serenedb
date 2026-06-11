@@ -22,24 +22,17 @@
 #include "endpoint.h"
 
 #include <absl/strings/str_cat.h>
-#include <errno.h>
 
 #include <cstdint>
-#include <cstring>
 #include <limits>
 
 #include "basics/debugging.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/operating-system.h"
-#include "basics/socket-utils.h"
-#include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "endpoint/endpoint_ip.h"
 #include "endpoint/endpoint_ip_v4.h"
 #include "endpoint/endpoint_ip_v6.h"
-#include "endpoint/endpoint_srv.h"
 
 #if SERENEDB_HAVE_DOMAIN_SOCKETS
 #include "endpoint/endpoint_unix_domain.h"
@@ -49,18 +42,14 @@ namespace sdb {
 
 using namespace sdb::basics;
 
-Endpoint::Endpoint(DomainType domain_type, EndpointType type,
-                   TransportType transport, EncryptionType encryption,
-                   std::string_view specification, int listen_backlog)
+Endpoint::Endpoint(DomainType domain_type, TransportType transport,
+                   EncryptionType encryption, std::string_view specification,
+                   int listen_backlog)
   : _domain_type(domain_type),
-    _type(type),
     _transport(transport),
     _encryption(encryption),
     _specification(specification),
-    _listen_backlog(listen_backlog),
-    _connected(false) {
-  Sdbinvalidatesocket(&_socket);
-}
+    _listen_backlog(listen_backlog) {}
 
 std::string Endpoint::uriForm(std::string_view endpoint) {
   if (endpoint.starts_with("http+tcp://")) {
@@ -134,8 +123,6 @@ std::string Endpoint::unifiedForm(std::string_view spec) {
     // no unix socket for windows
     return {};
 #endif
-  } else if (schema.starts_with("srv://")) {
-    return absl::StrCat(prefix, schema, spec.substr(6));
   }
 
   // strip tcp:// or ssl://
@@ -206,35 +193,11 @@ std::string Endpoint::unifiedForm(std::string_view spec) {
 
 std::unique_ptr<Endpoint> Endpoint::serverFactory(
   std::string_view specification, int listen_backlog, bool reuse_address) {
-  return Endpoint::factory(EndpointType::Server, specification, listen_backlog,
-                           reuse_address);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// create a client endpoint object from a string value
-////////////////////////////////////////////////////////////////////////////////
-
-std::unique_ptr<Endpoint> Endpoint::clientFactory(
-  std::string_view specification) {
-  return Endpoint::factory(EndpointType::Client, specification, 0, false);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// create an endpoint object from a string value
-////////////////////////////////////////////////////////////////////////////////
-
-std::unique_ptr<Endpoint> Endpoint::factory(Endpoint::EndpointType type,
-                                            std::string_view specification,
-                                            int listen_backlog,
-                                            bool reuse_address) {
   if (specification.size() < 7) {
     return nullptr;
   }
 
-  // backlog is only allowed for server endpoints
-  SDB_ASSERT(listen_backlog == 0 || type != EndpointType::Client);
-
-  if (listen_backlog == 0 && type == EndpointType::Server) {
+  if (listen_backlog == 0) {
     // use some default value
     listen_backlog = 10;
   }
@@ -256,20 +219,11 @@ std::unique_ptr<Endpoint> Endpoint::factory(Endpoint::EndpointType type,
 
   if (copy.starts_with("unix://")) {
 #if SERENEDB_HAVE_DOMAIN_SOCKETS
-    return std::make_unique<EndpointUnixDomain>(type, listen_backlog,
-                                                copy.substr(7));
+    return std::make_unique<EndpointUnixDomain>(listen_backlog, copy.substr(7));
 #else
     // no unix socket for windows
     return nullptr;
 #endif
-  }
-
-  if (copy.starts_with("srv://")) {
-    if (type != EndpointType::Client) {
-      return nullptr;
-    }
-
-    return std::make_unique<EndpointSrv>(copy.substr(6));
   }
 
   if (copy.starts_with("ssl://")) {
@@ -293,7 +247,7 @@ std::unique_ptr<Endpoint> Endpoint::factory(Endpoint::EndpointType type,
       // check port over-/underrun
       if (value < (std::numeric_limits<uint16_t>::min)() ||
           value > (std::numeric_limits<uint16_t>::max)()) {
-        SDB_ERROR("xxxxx", sdb::Logger::FIXME, "specified port number '", value,
+        SDB_ERROR(GENERAL, "specified port number '", value,
                   "' is outside the allowed range");
         return nullptr;
       }
@@ -301,7 +255,7 @@ std::unique_ptr<Endpoint> Endpoint::factory(Endpoint::EndpointType type,
       std::string host = copy.substr(1, found - 1);
 
       return std::make_unique<EndpointIpV6>(
-        type, protocol, encryption, listen_backlog, reuse_address, host, port);
+        protocol, encryption, listen_backlog, reuse_address, host, port);
     }
 
     found = copy.find("]", 1);
@@ -310,7 +264,7 @@ std::unique_ptr<Endpoint> Endpoint::factory(Endpoint::EndpointType type,
     if (found != std::string::npos && found > 2 && found + 1 == copy.size()) {
       std::string host = copy.substr(1, found - 1);
 
-      return std::make_unique<EndpointIpV6>(type, protocol, encryption,
+      return std::make_unique<EndpointIpV6>(protocol, encryption,
                                             listen_backlog, reuse_address, host,
                                             default_port);
     }
@@ -328,81 +282,20 @@ std::unique_ptr<Endpoint> Endpoint::factory(Endpoint::EndpointType type,
     // check port over-/underrun
     if (value < (std::numeric_limits<uint16_t>::min)() ||
         value > (std::numeric_limits<uint16_t>::max)()) {
-      SDB_ERROR("xxxxx", sdb::Logger::FIXME, "specified port number '", value,
+      SDB_ERROR(GENERAL, "specified port number '", value,
                 "' is outside the allowed range");
       return nullptr;
     }
     uint16_t port = static_cast<uint16_t>(value);
     std::string host = copy.substr(0, found);
 
-    return std::make_unique<EndpointIpV4>(
-      type, protocol, encryption, listen_backlog, reuse_address, host, port);
+    return std::make_unique<EndpointIpV4>(protocol, encryption, listen_backlog,
+                                          reuse_address, host, port);
   }
 
   // hostname only
-  return std::make_unique<EndpointIpV4>(type, protocol, encryption,
-                                        listen_backlog, reuse_address, copy,
-                                        default_port);
-}
-
-std::string Endpoint::defaultEndpoint(TransportType type) {
-  switch (type) {
-    case TransportType::HTTP:
-      return absl::StrCat("http+tcp://", EndpointIp::kDefaultHost, ":",
-                          EndpointIp::kDefaultPortHttp);
-    default:
-      SDB_THROW(ERROR_INTERNAL, "invalid transport type");
-  }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// compare two endpoints
-////////////////////////////////////////////////////////////////////////////////
-
-bool Endpoint::operator==(const Endpoint& that) const {
-  return specification() == that.specification();
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// set socket timeout
-////////////////////////////////////////////////////////////////////////////////
-
-bool Endpoint::setTimeout(SocketWrapper s, double timeout) {
-  return Sdbsetsockopttimeout(s, timeout);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// set common socket flags
-////////////////////////////////////////////////////////////////////////////////
-
-bool Endpoint::setSocketFlags(SocketWrapper s) {
-  if (_encryption == EncryptionType::SSL && _type == EndpointType::Client) {
-    // SSL client endpoints are not set to non-blocking
-    return true;
-  }
-
-  // set to non-blocking, executed for both client and server endpoints
-  bool ok = SdbSetNonBlockingSocket(s);
-
-  if (!ok) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME,
-              "cannot switch to non-blocking: ", errno, " (", strerror(errno),
-              ")");
-
-    return false;
-  }
-
-  // set close-on-exec flag, executed for both client and server endpoints
-  ok = SdbSetCloseOnExecSocket(s);
-
-  if (!ok) {
-    SDB_ERROR("xxxxx", sdb::Logger::FIXME, "cannot set close-on-exit: ", errno,
-              " (", strerror(errno), ")");
-
-    return false;
-  }
-
-  return true;
+  return std::make_unique<EndpointIpV4>(protocol, encryption, listen_backlog,
+                                        reuse_address, copy, default_port);
 }
 
 }  // namespace sdb

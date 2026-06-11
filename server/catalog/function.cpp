@@ -20,13 +20,12 @@
 
 #include "catalog/function.h"
 
-#include <vpack/vpack_helper.h>
+#include <duckdb/function/scalar_macro_function.hpp>
+#include <duckdb/function/table_macro_function.hpp>
+#include <duckdb/parser/query_node.hpp>
 
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
-
-#include "basics/static_strings.h"
+#include "basics/serializer.h"
+#include "catalog/create_info_serde.h"
 
 namespace sdb::catalog {
 
@@ -36,40 +35,17 @@ PgSqlFunction::PgSqlFunction(ObjectId schema_id, ObjectId id,
   : Object{schema_id, id, std::string{name}, ObjectType::PgSqlFunction},
     _info{std::move(info)} {}
 
-std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(vpack::Slice slice,
-                                                           ReadContext ctx) {
-  auto name =
-    basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
-
-  auto info_slice = slice.get("info");
-  SDB_ASSERT(info_slice.isString());
-  auto str = info_slice.stringViewUnchecked();
-  duckdb::MemoryStream stream(
-    const_cast<duckdb::data_t*>(
-      reinterpret_cast<const duckdb::data_t*>(str.data())),
-    str.size());
-  duckdb::BinaryDeserializer deserializer(stream);
-  auto create_info = duckdb::CreateInfo::Deserialize(deserializer);
-  auto macro_info =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
-      std::move(create_info));
-  return std::make_shared<PgSqlFunction>(ctx.schema_id, ctx.id, name,
-                                         std::move(macro_info));
+std::shared_ptr<PgSqlFunction> PgSqlFunction::Deserialize(
+  duckdb::Deserializer& src, ReadContext ctx) {
+  CreateInfoReadData<duckdb::CreateMacroInfo> data;
+  basics::ReadTuple(src, data);
+  return std::make_shared<PgSqlFunction>(ctx.schema_id, ctx.id, data.name,
+                                         std::move(data.info.info));
 }
 
-void PgSqlFunction::WriteInternal(vpack::Builder& builder) const {
-  builder.openObject();
-  builder.add(StaticStrings::kDataSourceName, GetName());
-
-  // Serialize CreateMacroInfo via DuckDB BinarySerializer
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(*_info, stream);
-  auto data = stream.GetData();
-  auto size = stream.GetPosition();
-  builder.add("info",
-              std::string_view{reinterpret_cast<const char*>(data), size});
-
-  builder.close();
+void PgSqlFunction::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(sink, CreateInfoWriteData<duckdb::CreateMacroInfo>{
+                             GetName(), {_info.get()}});
 }
 
 std::shared_ptr<Object> PgSqlFunction::Clone() const {
@@ -78,6 +54,48 @@ std::shared_ptr<Object> PgSqlFunction::Clone() const {
       _info->Copy());
   return std::make_shared<PgSqlFunction>(GetParentId(), GetId(), GetName(),
                                          std::move(cloned_info));
+}
+
+Refs PgSqlFunction::GetRefs(RefKinds kinds) const {
+  Refs out;
+  auto append = [&](Refs body) {
+    out.sequences.insert(out.sequences.end(), body.sequences.begin(),
+                         body.sequences.end());
+    out.relations.insert(out.relations.end(), body.relations.begin(),
+                         body.relations.end());
+    out.functions.insert(out.functions.end(), body.functions.begin(),
+                         body.functions.end());
+    out.unbound_types.insert(out.unbound_types.end(),
+                             body.unbound_types.begin(),
+                             body.unbound_types.end());
+    out.types.insert(out.types.end(), body.types.begin(), body.types.end());
+  };
+  const bool wants_types = RefKinds::None != (kinds & RefKinds::Types);
+  for (const auto& macro : _info->macros) {
+    if (!macro) {
+      continue;
+    }
+    if (wants_types) {
+      for (const auto& t : macro->types) {
+        CollectTypeRefs(t, out);
+      }
+      for (const auto& t : macro->return_types) {
+        CollectTypeRefs(t, out);
+      }
+    }
+    if (macro->type == duckdb::MacroType::SCALAR_MACRO) {
+      const auto& sm = macro->Cast<duckdb::ScalarMacroFunction>();
+      if (sm.expression) {
+        append(ExtractRefs(*sm.expression, kinds));
+      }
+    } else if (macro->type == duckdb::MacroType::TABLE_MACRO) {
+      const auto& tm = macro->Cast<duckdb::TableMacroFunction>();
+      if (tm.query_node) {
+        append(ExtractRefs(*tm.query_node, kinds));
+      }
+    }
+  }
+  return out;
 }
 
 }  // namespace sdb::catalog

@@ -29,7 +29,6 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 
 namespace irs {
 namespace {
@@ -41,14 +40,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
   return nullptr;
-}
-
-Scorer::ptr MakeJson(std::string_view /*args*/) {
-  return std::make_unique<RawDL>();
-}
-
-Scorer::ptr MakeVPack(std::string_view /*args*/) {
-  return std::make_unique<RawDL>();
 }
 
 template<ScoreMergeType MergeType, bool HasBoost>
@@ -147,11 +138,6 @@ ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Make<RawDLScore<HasBoost>>(ctx.boost, norm,
                                                      filter_boost);
   });
-}
-
-void RawDL::init() {
-  REGISTER_SCORER_JSON(RawDL, MakeJson);
-  REGISTER_SCORER_VPACK(RawDL, MakeVPack);
 }
 
 }  // namespace irs

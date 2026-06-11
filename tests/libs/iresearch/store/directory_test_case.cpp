@@ -37,7 +37,6 @@
 #include "basics/crc.hpp"
 #include "basics/file_utils_ext.hpp"
 #include "basics/network_utils.hpp"
-#include "basics/process_utils.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/store/store_utils.hpp"

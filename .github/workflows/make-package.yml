@@ -64,6 +64,9 @@ on:
       packages_ok:
         description: "Whether packaging succeeded"
         value: ${{ jobs.package.outputs.packages_ok }}
+      rta_ok:
+        description: "Whether deb + tarball RTA passed (true when RTA=off or both passed)"
+        value: ${{ jobs.package.outputs.rta_ok }}
 env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
@@ -74,6 +77,7 @@ jobs:
     name: "package (${{ inputs.LOCATION }})"
     outputs:
       packages_ok: ${{ steps.package.outcome == 'success' }}
+      rta_ok: ${{ steps.deb_rta.outcome != 'failure' && steps.tarball_rta.outcome != 'failure' }}
     runs-on:
       - ${{ inputs.LOCATION }}
     permissions:
@@ -183,10 +187,7 @@ jobs:
         with:
           name: package-artifacts-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
-            cmake_*.log
-            make_*.log
-            ccache_*.log
+            out/
             install.log
-            logs/
           if-no-files-found: ignore
           retention-days: 30

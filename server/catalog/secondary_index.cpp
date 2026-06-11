@@ -20,9 +20,25 @@
 
 #include "catalog/secondary_index.h"
 
-#include <vpack/serializer.h>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
+
+#include "basics/serializer.h"
+#include "catalog/persistence/secondary_index.h"
 
 namespace sdb::catalog {
+namespace {
+
+using persistence::SecondaryIndexData;
+
+std::shared_ptr<SecondaryIndex> FromData(SecondaryIndexData data,
+                                         ReadContext ctx) {
+  return std::make_shared<SecondaryIndex>(
+    ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
+    std::move(data.name), std::move(data.column_ids), data.unique);
+}
+
+}  // namespace
 
 SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
                                ObjectId id, ObjectId relation_id,
@@ -32,44 +48,28 @@ SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
           std::move(column_ids), ObjectType::SecondaryIndex),
     _unique{unique} {}
 
-std::shared_ptr<SecondaryIndex> SecondaryIndex::ReadInternal(vpack::Slice slice,
-                                                             ReadContext ctx) {
-  auto name_slice = slice.get("name");
-  if (!name_slice.isString()) {
-    return nullptr;
-  }
-
-  std::vector<Column::Id> column_ids;
-  if (auto r = vpack::ReadTupleNothrow(slice.get("column_ids"), column_ids);
-      !r.ok()) {
-    return nullptr;
-  }
-
-  auto unique = slice.get("unique");
-
-  return std::make_shared<SecondaryIndex>(
-    ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
-    std::string{name_slice.stringView()}, std::move(column_ids),
-    unique.getBool());
+std::shared_ptr<SecondaryIndex> SecondaryIndex::Deserialize(
+  duckdb::Deserializer& src, ReadContext ctx) {
+  SecondaryIndexData data;
+  basics::ReadTuple(src, data);
+  return FromData(std::move(data), ctx);
 }
 
-void SecondaryIndex::WriteInternal(vpack::Builder& b) const {
-  b.openObject();
-  WriteObject(b, [&](vpack::Builder& b) {
-    b.add("unique", _unique);
-    b.add("column_ids");
-    vpack::WriteTuple(b, _column_ids);
-  });
-  b.close();
+void SecondaryIndex::Serialize(duckdb::Serializer& sink) const {
+  auto ids = GetColumnIds();
+  basics::WriteTuple(sink, SecondaryIndexData{
+                             .name = std::string{GetName()},
+                             .column_ids = {ids.begin(), ids.end()},
+                             .unique = _unique,
+                           });
 }
 
 std::shared_ptr<Object> SecondaryIndex::Clone() const {
-  vpack::Builder b;
-  WriteInternal(b);
-  return ReadInternal(b.slice(), {.id = GetId(),
-                                  .database_id = GetDatabaseId(),
-                                  .schema_id = GetParentId(),
-                                  .relation_id = GetRelationId()});
+  auto ids = GetColumnIds();
+  return std::make_shared<SecondaryIndex>(
+    GetDatabaseId(), GetParentId(), GetId(), GetRelationId(),
+    std::string{GetName()}, std::vector<Column::Id>{ids.begin(), ids.end()},
+    _unique);
 }
 
 }  // namespace sdb::catalog

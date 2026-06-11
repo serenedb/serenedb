@@ -52,29 +52,25 @@ inline void AppendDuckDBValueToKey(std::string& key, const duckdb::Value& v) {
       basics::StrAppend(key, sizeof(int8_t));
       key[base] = static_cast<char>(v.GetValue<int8_t>());
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::SMALLINT: {
       const auto base = key.size();
       basics::StrAppend(key, sizeof(int16_t));
       absl::big_endian::Store16(key.data() + base, v.GetValue<int16_t>());
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::INTEGER: {
       const auto base = key.size();
       basics::StrAppend(key, sizeof(int32_t));
       absl::big_endian::Store32(key.data() + base, v.GetValue<int32_t>());
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::BIGINT: {
       const auto base = key.size();
       basics::StrAppend(key, sizeof(int64_t));
       absl::big_endian::Store64(key.data() + base, v.GetValue<int64_t>());
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
       const auto base = key.size();
@@ -82,16 +78,14 @@ inline void AppendDuckDBValueToKey(std::string& key, const duckdb::Value& v) {
       absl::big_endian::Store64(key.data() + base,
                                 v.GetValue<duckdb::timestamp_t>().value);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::DATE: {
       const auto base = key.size();
       basics::StrAppend(key, sizeof(int32_t));
       absl::big_endian::Store32(key.data() + base,
                                 v.GetValue<duckdb::date_t>().days);
       key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB: {
       static constexpr std::string_view kNullEsc{"\0\1", 2};
@@ -104,8 +98,7 @@ inline void AppendDuckDBValueToKey(std::string& key, const duckdb::Value& v) {
         }
       }
       key.append(kStringEnd);
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::FLOAT: {
       const auto base = key.size();
       basics::StrAppend(key, sizeof(float));
@@ -121,8 +114,7 @@ inline void AppendDuckDBValueToKey(std::string& key, const duckdb::Value& v) {
         static constexpr char kPosNaN[] = "\xFF\xC0\x00\x00";
         std::memcpy(key.data() + base, kPosNaN, sizeof(float));
       }
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::DOUBLE: {
       const auto base = key.size();
       basics::StrAppend(key, sizeof(double));

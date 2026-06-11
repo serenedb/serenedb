@@ -31,31 +31,28 @@
 #include <functional>
 #include <queue>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <yaclib/async/connect.hpp>
 #include <yaclib/async/contract.hpp>
 #include <yaclib/async/make.hpp>
 #include <yaclib/util/type_traits.hpp>
 
+#include "app/app_server.h"
 #include "basics/exceptions.h"
 #include "basics/system-compiler.h"
 #include "general_server/request_lane.h"
-#include "metrics/fwd.h"
-#include "rest_server/serened.h"
 #include "utils/coro_helper.h"
 
 namespace sdb {
 
-class SchedulerCronThread;
-
 class Scheduler {
  public:
-  explicit Scheduler(SerenedServer& server, uint64_t min_threads,
+  explicit Scheduler(app::AppServer& server, uint64_t min_threads,
                      uint64_t max_threads, uint64_t max_queue_size,
                      uint64_t fifo1_size, uint64_t fifo2_size,
-                     uint64_t fifo3_size, uint64_t ongoing_low_priority_limit,
-                     double unavailability_queue_fill_grade,
-                     metrics::MetricsFeature& metrics);
+                     uint64_t fifo3_size,
+                     double unavailability_queue_fill_grade);
 
   ~Scheduler();
 
@@ -105,7 +102,7 @@ class Scheduler {
     absl::AnyInvocable<void(bool canceled)> handler) noexcept;
 
   // Returns the scheduler's server object
-  SerenedServer& server() noexcept { return _server; }
+  app::AppServer& server() noexcept { return _server; }
 
   class DelayedWorkItem {
    public:
@@ -154,14 +151,11 @@ class Scheduler {
   // Throws a logic error if delay was cancelled.
   yaclib::Future<> delay(std::string_view name, clock::duration d);
 
-  bool start();
+  void start();
   void shutdown();
 
-  void trackCreateHandlerTask() noexcept;
   void trackBeginOngoingLowPriorityTask() noexcept;
   void trackEndOngoingLowPriorityTask() noexcept;
-
-  void trackQueueTimeViolation();
 
   /// returns the last stored dequeue time [ms]
   uint64_t getLastLowPriorityDequeueTime() const noexcept;
@@ -190,8 +184,7 @@ class Scheduler {
 
   static constexpr const uint64_t kNumberOfQueues = 4;
 
-  SerenedServer& _server;
-  NetworkFeature& _nf;
+  app::AppServer& _server;
   const uint64_t _min_threads;
   const uint64_t _max_threads;
   std::unique_ptr<folly::CPUThreadPoolExecutor> _executor_handle;
@@ -226,19 +219,12 @@ class Scheduler {
     std::atomic<uint64_t> num_counted_items{0};
   } _queues[kNumberOfQueues];
   const uint64_t _max_fifo_sizes[kNumberOfQueues];
-  const uint64_t _ongoing_low_priority_limit;
   /// fill grade of the scheduler's queue (in %) from which onwards
   /// the server is considered unavailable (because of overload)
   const double _unavailability_queue_fill_grade;
-  metrics::Counter& _metrics_handler_tasks_created;
-  metrics::Counter& _metrics_queue_time_violations;
-  metrics::Gauge<uint64_t>& _ongoing_low_priority_gauge;
-  /// amount of time it took for the last low prio item to be dequeued
-  /// (time between queuing and dequeing) [ms].
-  /// this metric is only updated probabilistically
-  metrics::Gauge<uint64_t>& _metrics_last_low_priority_dequeue_time;
-  std::array<std::reference_wrapper<metrics::Gauge<uint64_t>>, kNumberOfQueues>
-    _metrics_queue_lengths;
+  std::atomic<uint64_t> _ongoing_low_priority{0};
+  std::atomic<uint64_t> _last_low_priority_dequeue_time_ms{0};
+  std::array<std::atomic<uint64_t>, kNumberOfQueues> _queue_lengths{};
 
   // ---------------------------------------------------------------------------
   // CronThread and delayed tasks
@@ -254,7 +240,6 @@ class Scheduler {
 
   // Entry point for the CronThread
   void runCronThread();
-  friend class SchedulerCronThread;
 
   typedef std::pair<clock::time_point, std::weak_ptr<DelayedWorkItem>>
     CronWorkItem;
@@ -272,7 +257,9 @@ class Scheduler {
   bool _cron_stopping{false};
   absl::Mutex _cron_queue_mutex;
   absl::CondVar _croncv;
-  std::unique_ptr<SchedulerCronThread> _cron_thread;
+  // Cron thread is the last member so it joins first on destruction (before
+  // _cron_queue/_cron_queue_mutex/_croncv get torn down).
+  std::jthread _cron_thread;
 };
 
 Scheduler* GetScheduler() noexcept;

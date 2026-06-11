@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <limits>
 #include <map>
 
 #include "index/index_tests.hpp"
@@ -26,9 +27,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/indri_dirichlet.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -40,9 +39,7 @@ TEST(indri_dirichlet_test, consts) {
 }
 
 TEST(indri_dirichlet_test, load_default) {
-  auto scorer = irs::scorers::Get("indri_dirichlet",
-                                  irs::Type<irs::text_format::Json>::get(),
-                                  std::string_view{});
+  auto scorer = irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{});
   ASSERT_NE(nullptr, scorer);
   ASSERT_EQ(irs::Type<irs::IndriDirichlet>::id(), scorer->type());
   auto& lm = dynamic_cast<irs::IndriDirichlet&>(*scorer);
@@ -52,18 +49,27 @@ TEST(indri_dirichlet_test, load_default) {
 }
 
 TEST(indri_dirichlet_test, load_object) {
-  auto scorer = irs::scorers::Get("indri_dirichlet",
-                                  irs::Type<irs::text_format::Json>::get(),
-                                  "{ \"mu\": 500.0 }");
+  auto scorer =
+    irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{.mu = 500.f});
   ASSERT_NE(nullptr, scorer);
   auto& lm = dynamic_cast<irs::IndriDirichlet&>(*scorer);
   ASSERT_FLOAT_EQ(500.f, lm.mu());
 }
 
 TEST(indri_dirichlet_test, load_invalid) {
-  ASSERT_EQ(nullptr, irs::scorers::Get("indri_dirichlet",
-                                       irs::Type<irs::text_format::Json>::get(),
-                                       "{ \"mu\": -1.0 }"));
+  // μ must be non-negative -- it scales the collection prior; a negative μ
+  // produces a meaningless ratio.
+  EXPECT_ANY_THROW(
+    irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{.mu = -1.f}));
+  EXPECT_ANY_THROW(
+    irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{.mu = -0.001f}));
+  EXPECT_ANY_THROW(irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{
+    .mu = std::numeric_limits<float>::quiet_NaN()}));
+  EXPECT_ANY_THROW(irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{
+    .mu = std::numeric_limits<float>::infinity()}));
+  // Boundary: μ = 0 is allowed (degenerate).
+  EXPECT_NE(nullptr,
+            irs::IndriDirichlet::Make(irs::IndriDirichlet::Options{.mu = 0.f}));
 }
 
 TEST(indri_dirichlet_test, equals) {
@@ -74,6 +80,8 @@ TEST(indri_dirichlet_test, equals) {
   ASSERT_FALSE(a->equals(*c));
 }
 
+constexpr irs::field_id kBodyFieldId = 1;
+
 class IndriDirichletIndexTest : public IndexTestBase {
  protected:
   void BuildFixture();
@@ -83,18 +91,19 @@ void IndriDirichletIndexTest::BuildFixture() {
   using TextField = tests::TextField<std::string>;
   const auto extra = irs::IndexFeatures::Norm;
 
+  auto make_body = [&](std::string value) {
+    auto f =
+      std::make_shared<TextField>("body", std::move(value), false, extra);
+    f->id = kBodyFieldId;
+    return f;
+  };
+
   tests::Document doc1;
-  doc1.insert(std::make_shared<TextField>("body", std::string{"fox fox dog"},
-                                          false, extra),
-              true, false);
+  doc1.insert(make_body(std::string{"fox fox dog"}), true, false);
   tests::Document doc2;
-  doc2.insert(
-    std::make_shared<TextField>("body", std::string{"fox cat"}, false, extra),
-    true, false);
+  doc2.insert(make_body(std::string{"fox cat"}), true, false);
   tests::Document doc3;
-  doc3.insert(std::make_shared<TextField>("body", std::string{"dog rabbit fox"},
-                                          false, extra),
-              true, false);
+  doc3.insert(make_body(std::string{"dog rabbit fox"}), true, false);
 
   irs::IndexWriterOptions opts;
 
@@ -118,7 +127,7 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
   auto& segment = *(index.begin());
 
   irs::ByTerm filter;
-  *filter.mutable_field() = "body";
+  *filter.mutable_field_id() = kBodyFieldId;
   filter.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 

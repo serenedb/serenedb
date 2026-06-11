@@ -77,7 +77,7 @@ class ByTerms final : public FilterWithField<ByTermsOptions>,
                     const ByTermsOptions::search_terms& terms,
                     FilterVisitor& visitor);
 
-  static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
+  static Query::ptr Prepare(const PrepareContext& ctx, irs::field_id id,
                             const ByTermsOptions& options);
 
   Query::ptr prepare(const PrepareContext& ctx) const final;

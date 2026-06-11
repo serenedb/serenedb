@@ -1,0 +1,301 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE mt (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX mt_idx ON mt USING inverted(id, body en);
+
+
+# apple x3 (df 3), avocado / banana / blueberry / cherry x1 (df 1 each)
+statement ok
+INSERT INTO mt VALUES
+  (1, 'apple'), (2, 'apple'), (3, 'apple'),
+  (4, 'avocado'), (5, 'banana'), (6, 'blueberry'), (7, 'cherry');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt;
+
+
+# --- ByPrefix: prefix 'a' expands to {apple, avocado} ---
+
+# Counting: 3 apple + 1 avocado.
+query I
+SELECT COUNT(*) FROM mt_idx WHERE body @@ ts_starts_with('a');
+----
+count
+4
+
+
+# Every matched doc is scored.
+query
+SELECT id, body, BM25(mt_idx.tableoid) > 0 AS has_score FROM mt_idx
+WHERE body @@ ts_starts_with('a') ORDER BY id;
+----
+id	body	has_score
+1	apple	t
+2	apple	t
+3	apple	t
+4	avocado	t
+
+
+# Score order: the rarer term (avocado, df 1) outranks apple (df 3).
+query
+SELECT id, body FROM mt_idx WHERE body @@ ts_starts_with('a')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body
+4	avocado
+1	apple
+2	apple
+3	apple
+
+
+# Exact BM25 scores. Every doc is a single token (dl == avgdl, tf == 1), so the
+# tf/length factor collapses to 1 and the score is just the idf:
+#   score = ln(1 + (N - n + 0.5) / (n + 0.5)),  N = docs with body = 7.
+#   avocado: n=1 -> ln(1 + 6.5/1.5) = ln(5.3333) = 1.6739764
+#   apple:   n=3 -> ln(1 + 4.5/3.5) = ln(2.2857) = 0.8266785
+query
+SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ ts_starts_with('a')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body	score
+4	avocado	1.6739764
+1	apple	0.8266785
+2	apple	0.8266785
+3	apple	0.8266785
+
+
+# TFIDF, same single-token simplification: score = idf = ln((N + 1) / (n + 1)).
+#   avocado: n=1 -> ln(8/2) = ln(4) = 1.609438
+#   apple:   n=3 -> ln(8/4) = ln(3) = 1.0986123
+query
+SELECT id, body, TFIDF(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ ts_starts_with('a')
+ORDER BY TFIDF(mt_idx.tableoid) DESC, id;
+----
+id	body	score
+4	avocado	1.609438
+1	apple	1.0986123
+2	apple	1.0986123
+3	apple	1.0986123
+
+
+# --- ByRange: half-open term ranges ---
+
+# ts_lt('c') matches {apple, avocado, banana, blueberry}; the three df-1 terms
+# share the top score, apple (df 3) sits below.
+query I
+SELECT COUNT(*) FROM mt_idx WHERE body @@ ts_lt('c');
+----
+count
+6
+
+
+query
+SELECT id, body FROM mt_idx WHERE body @@ ts_lt('c')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body
+4	avocado
+5	banana
+6	blueberry
+1	apple
+2	apple
+3	apple
+
+
+# Exact BM25 scores for the ByRange path. avocado/banana/blueberry are three
+# distinct terms that each have df 1, so they share one idf and tie at the top,
+# while apple (df 3) ranks below. This pins two things: scoring keys on df, not
+# on term identity, and range expansion scores identically to prefix expansion.
+# Same N=7. avocado/banana/blueberry are df 1 -> ln(5.3333) = 1.6739764;
+# apple is df 3 -> ln(2.2857) = 0.8266785 (identical idf to the prefix case).
+query
+SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ ts_lt('c')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body	score
+4	avocado	1.6739764
+5	banana	1.6739764
+6	blueberry	1.6739764
+1	apple	0.8266785
+2	apple	0.8266785
+3	apple	0.8266785
+
+
+# --- Multi-segment: a second batch lands in a new segment, so the collector
+# must aggregate per-term document frequency across both segments. ---
+
+statement ok
+INSERT INTO mt VALUES (8, 'apple'), (9, 'avocado'), (10, 'apricot');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt;
+
+
+# apple x4, avocado x2, apricot x1.
+query I
+SELECT COUNT(*) FROM mt_idx WHERE body @@ ts_starts_with('a');
+----
+count
+7
+
+
+# Cross-segment df drives the ranking: apricot (df 1) > avocado (df 2) >
+# apple (df 4). Wrong per-segment-only stats would reorder these.
+query
+SELECT id, body FROM mt_idx WHERE body @@ ts_starts_with('a')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body
+10	apricot
+4	avocado
+9	avocado
+1	apple
+2	apple
+3	apple
+8	apple
+
+
+# N = docs with body across both segments = 10.
+#   apricot: n=1 -> ln(1 + 9.5/1.5) = ln(7.3333) = 1.9924302
+#   avocado: n=2 -> ln(1 + 8.5/2.5) = ln(4.4)    = 1.4816045
+#   apple:   n=4 -> ln(1 + 6.5/4.5) = ln(2.4444) = 0.8938179
+query
+SELECT id, body, BM25(mt_idx.tableoid) AS score FROM mt_idx
+WHERE body @@ ts_starts_with('a')
+ORDER BY BM25(mt_idx.tableoid) DESC, id;
+----
+id	body	score
+10	apricot	1.9924302
+4	avocado	1.4816045
+9	avocado	1.4816045
+1	apple	0.8938179
+2	apple	0.8938179
+3	apple	0.8938179
+8	apple	0.8938179
+
+
+statement ok
+DROP TABLE mt;
+
+
+# --- A document matching several terms of the disjunction accumulates the
+# per-term contributions (Sum merge). ---
+
+statement ok
+CREATE TABLE mt_multi (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX mt_multi_idx ON mt_multi USING inverted(id, body en);
+
+
+statement ok
+INSERT INTO mt_multi VALUES (1, 'apple'), (2, 'avocado'), (3, 'apple avocado');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_multi;
+
+
+# Disjunction scores merge by Sum: a doc's BM25 is the sum, over every query
+# term t the doc contains, of that term's full BM25 contribution:
+#   score(doc) = SUM_t  idf(t) * (k1 + 1) * tf / (k1 * (1 - b + b*dl/avgdl) + tf)
+#   idf(t)     = ln(1 + (N - n_t + 0.5) / (n_t + 0.5)),   k1 = 1.2,  b = 0.75
+# apple and avocado each have df 2 (n=2, N=3), so each idf = ln(1 + 1.5/2.5) =
+# ln(1.6) = 0.470004. avgdl = (1 + 1 + 2)/3 = 4/3; tf = 1. The per-term factor is
+# 2.2 / (1.2*(1 - 0.75 + 0.75*dl/avgdl) + 1) -> 2.2/1.975 at dl=1, 2.2/2.65 at
+# dl=2 (the asserted scores are BM25's float32 results):
+#   id 3 'apple avocado' 2 terms, dl=2: 2 * 0.470004 * 2.2/2.65 = 0.78038335
+#   id 1 'apple'         1 term,  dl=1:     0.470004 * 2.2/1.975 = 0.52354836
+#   id 2 'avocado'       1 term,  dl=1:     0.470004 * 2.2/1.975 = 0.52354836
+# id 3 wins even though each of its terms contributes only ~0.39 (the longer doc
+# is length-penalized): the Sum over two terms beats either single term.
+query
+SELECT id, body, BM25(mt_multi_idx.tableoid) AS score FROM mt_multi_idx
+WHERE body @@ ts_starts_with('a')
+ORDER BY BM25(mt_multi_idx.tableoid) DESC, id;
+----
+id	body	score
+3	apple avocado	0.78038335
+1	apple	0.52354836
+2	avocado	0.52354836
+
+
+statement ok
+DROP TABLE mt_multi;
+
+
+# --- Multi-token docs exercise the full BM25 tf/length factor. Above, every doc
+# was a single token so the factor was 1 and score == idf; here tf and document
+# length vary, so the factor does the work. ---
+
+statement ok
+CREATE TABLE mtok (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX mtok_idx ON mtok USING inverted(id, body en);
+
+
+# Only 'apple' matches, so the disjunction Sum has a single summand and the score
+# is that one term's full BM25 contribution:
+#   score(doc) = idf * (k1 + 1) * tf / (k1 * (1 - b + b*dl/avgdl) + tf)
+#   idf        = ln(1 + (N - n + 0.5) / (n + 0.5)),   k1 = 1.2,  b = 0.75
+# Lengths 1,2,2,3 -> avgdl = 8/4 = 2. apple has df 4 (n=4, N=4), so idf is a
+# constant ln(1 + 0.5/4.5) = ln(1.1111) = 0.10536051, and the ranking is driven
+# purely by the tf/length factor (k1+1)*tf / (k1*(1 - b + b*dl/avgdl) + tf):
+statement ok
+INSERT INTO mtok VALUES
+  (1, 'apple'),         -- tf=1 dl=1
+  (2, 'apple apple'),   -- tf=2 dl=2
+  (3, 'apple cat'),     -- tf=1 dl=2  (dl == avgdl)
+  (4, 'apple cat dog'); -- tf=1 dl=3
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mtok;
+
+
+# id 3 is at average length with tf=1, so its factor is exactly 1 and its score
+# is the bare idf. id 2 (same length, tf=2) is lifted by term frequency; ids
+# 1 -> 3 -> 4 share tf=1 but grow in length, so length normalization lowers them.
+#   id 2: 0.10536051 * 4.4/3.2  = 0.1448707
+#   id 1: 0.10536051 * 2.2/1.75 = 0.13245323
+#   id 3: 0.10536051 * 2.2/2.2  = 0.10536051   (dl == avgdl, factor 1)
+#   id 4: 0.10536051 * 2.2/2.65 = 0.0874691
+query
+SELECT id, body, BM25(mtok_idx.tableoid) AS score FROM mtok_idx
+WHERE body @@ ts_starts_with('apple')
+ORDER BY BM25(mtok_idx.tableoid) DESC, id;
+----
+id	body	score
+2	apple apple	0.1448707
+1	apple	0.13245323
+3	apple cat	0.10536051
+4	apple cat dog	0.0874691
+
+
+statement ok
+DROP TABLE mtok;

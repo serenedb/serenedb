@@ -15,13 +15,11 @@ db error: ERROR: required parameter "pattern" was not found
 
 # --- Invalid regex pattern ---
 
-statement error
+statement error pattern: invalid regex
 CREATE TEXT SEARCH DICTIONARY pat_err2(
     template = 'pattern',
     pattern = '('
 )
-----
-db error: ERROR: Failed to create text search dictionary "pat_err2"
 
 
 # --- Pattern option not applicable to other tokenizers ---
@@ -222,7 +220,7 @@ ts_lexize
 
 # --- Empty pattern should fail ---
 
-statement error Failed to create text search dictionary
+statement error pattern: empty pattern
 CREATE TEXT SEARCH DICTIONARY pattern_empty(
     template = 'pattern',
     pattern = ''

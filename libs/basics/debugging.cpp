@@ -21,6 +21,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <csignal>
 #include <stdexcept>
@@ -29,12 +30,8 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/crash_handler.h"
-#include "basics/logger/logger.h"
-
-#ifdef SERENEDB_HAVE_UNISTD_H
-#include <unistd.h>
-#endif
+#include "basics/containers/flat_hash_set.h"
+#include "basics/log.h"
 
 #ifdef SDB_FAULT_INJECTION
 namespace sdb {
@@ -49,56 +46,6 @@ constinit absl::Mutex gFailurePointsLock{absl::kConstInit};
 containers::FlatHashSet<std::string> gFailurePoints;
 
 }  // namespace
-
-/// intentionally cause a segmentation violation or other failures
-/// this is used for crash and recovery tests
-void TerminateDebugging(std::string_view message) {
-#ifdef SDB_DEV
-  CrashHandler::setHardKill();
-
-  // there are some reserved crash messages we use in testing the
-  // crash handler
-  if (message == "CRASH-HANDLER-TEST-ABORT") {
-    // intentionally crashes the program!
-    std::abort();
-  } else if (message == "CRASH-HANDLER-TEST-TERMINATE") {
-    // intentionally crashes the program!
-    std::terminate();
-  } else if (message == "CRASH-HANDLER-TEST-TERMINATE-ACTIVE") {
-    // intentionally crashes the program!
-    // note: when using ASan/UBSan, this actually does not crash
-    // the program but continues.
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wexceptions"
-#endif
-
-    auto f = [] noexcept {
-      // intentionally crashes the program!
-      throw std::runtime_error("Intentional test error");
-    };
-    f();
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
-    // we will get here at least with ASan/UBSan.
-    std::terminate();
-  } else if (message == "CRASH-HANDLER-TEST-SEGFAULT") {
-    // intentionally crashes the program!
-    // If we instead try to dereference a nullptr, macOS might do SIGABRT
-    raise(SIGSEGV);
-  } else if (message == "CRASH-HANDLER-TEST-ASSERT") {
-    int a = 1;
-    // intentionally crashes the program!
-    SDB_ASSERT(a == 2);
-  }
-
-#endif
-
-  // intentional crash - no need for a backtrace here
-  CrashHandler::disableBacktraces();
-  CrashHandler::crash(message);
-}
 
 bool ShouldFailDebugging(std::string_view value) noexcept {
   if (gHasFailurePoints.load(std::memory_order_relaxed)) {
@@ -116,8 +63,7 @@ bool AddFailurePointDebugging(std::string_view value) {
     gHasFailurePoints.store(true, std::memory_order_relaxed);
   }
   if (added) {
-    SDB_WARN("xxxxx", sdb::Logger::FIXME,
-             "activating intentional failure point '", value,
+    SDB_WARN(GENERAL, "activating intentional failure point '", value,
              "'. the server will misbehave!");
   }
   return added;
@@ -134,7 +80,7 @@ bool RemoveFailurePointDebugging(std::string_view value) {
   }
 
   if (removed) {
-    SDB_INFO("xxxxx", sdb::Logger::FIXME, "cleared failure point ", value);
+    SDB_INFO(GENERAL, "cleared failure point ", value);
   }
   return removed;
 }
@@ -149,8 +95,7 @@ void ClearFailurePointsDebugging() noexcept {
   }
 
   if (num_existing > 0) {
-    SDB_INFO("xxxxx", sdb::Logger::FIXME, "cleared ", num_existing,
-             " failure point(s)");
+    SDB_INFO(GENERAL, "cleared ", num_existing, " failure point(s)");
   }
 }
 

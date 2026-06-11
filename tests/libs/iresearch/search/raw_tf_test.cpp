@@ -26,14 +26,14 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/raw_tf.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
 
 using namespace tests;
+
+inline constexpr irs::field_id kBodyId = 1;
 
 // Factory / registration tests.
 
@@ -42,8 +42,7 @@ TEST(raw_tf_test, consts) {
 }
 
 TEST(raw_tf_test, load) {
-  auto scorer = irs::scorers::Get(
-    "raw_tf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+  auto scorer = irs::RawTF::Make(irs::RawTF::Options{});
   ASSERT_NE(nullptr, scorer);
   ASSERT_EQ(irs::Type<irs::RawTF>::id(), scorer->type());
   ASSERT_EQ(irs::IndexFeatures::Freq, scorer->GetIndexFeatures());
@@ -72,18 +71,19 @@ void RawTfIndexTest::BuildFixture() {
   using TextField = tests::TextField<std::string>;
   const auto extra = irs::IndexFeatures::Norm;
 
+  auto make_body = [&](std::string value) {
+    auto field = std::make_shared<TextField>("body", std::move(value),
+                                             /*payload=*/false, extra);
+    field->id = kBodyId;
+    return field;
+  };
+
   tests::Document doc1;
-  doc1.insert(std::make_shared<TextField>("body", std::string{"fox fox dog"},
-                                          /*payload=*/false, extra),
-              true, false);
+  doc1.insert(make_body("fox fox dog"), true, false);
   tests::Document doc2;
-  doc2.insert(std::make_shared<TextField>("body", std::string{"fox cat"},
-                                          /*payload=*/false, extra),
-              true, false);
+  doc2.insert(make_body("fox cat"), true, false);
   tests::Document doc3;
-  doc3.insert(std::make_shared<TextField>("body", std::string{"dog rabbit fox"},
-                                          /*payload=*/false, extra),
-              true, false);
+  doc3.insert(make_body("dog rabbit fox"), true, false);
 
   irs::IndexWriterOptions opts;
 
@@ -105,7 +105,7 @@ TEST_P(RawTfIndexTest, scores_match_freq) {
   auto& segment = *(index.begin());
 
   irs::ByTerm filter;
-  *filter.mutable_field() = "body";
+  *filter.mutable_field_id() = kBodyId;
   filter.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 

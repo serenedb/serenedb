@@ -6,7 +6,7 @@ services:
       - seccomp:unconfined
     volumes:
       - "${WORKSPACE}:/serenedb"
-      - "${WORKSPACE}/logs:/var/log/serenedb"
+      - "${WORKSPACE}/out/logs:/var/log/serenedb"
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:
@@ -17,10 +17,8 @@ services:
     command: >
       sh -c '
         exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
-          --server.endpoint pgsql+tcp://0.0.0.0:7777 \
-          --server.endpoint pgsql+ssl://0.0.0.0:7778 \
-          --ssl.keyfile /serenedb/resources/ca.pem \
-          --server.authentication 0
+          --server_endpoints pgsql+tcp://0.0.0.0:7777,pgsql+ssl://0.0.0.0:7778 \
+          --ssl_keyfile /serenedb/resources/ca.pem
       '
 
   tests:
@@ -31,8 +29,9 @@ services:
     volumes:
       - "${SQLLOGIC_DIR}:/sqllogic"
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
-      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/logs:/logs"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+      - "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}:/timing-cache"
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - serenedb-single
@@ -43,7 +42,10 @@ services:
       - HOME=/sqllogic
       - CARGO_HOME=/tmp/cargo
       - CARGO_TARGET_DIR=/cargo-target
+      - SDB_TIMING_CACHE_DIR=/timing-cache
+      - SDB_TIMING_KEY
       - SKIP_SLOW_TESTS
+      - SDB_SQLLOGIC_SCOPE
     networks:
       - test-network
     command: >

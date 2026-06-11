@@ -251,7 +251,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│      IRESEARCH_COUNT      │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
 │      vedernikoff_idx      │
@@ -263,9 +263,6 @@ QUERY PLAN
 │  <Term:pudge(0, 0); >] && │
 │  PHRASE[b(string) = <Term │
 │      :game(0, 0); >]]     │
-│                           │
-│          Output:          │
-│       row-count only      │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -1281,3 +1278,71 @@ SELECT * FROM no_pk_index WHERE word @@ ts_phrase('bad') LIMIT 1;
 ----
 word
 word is bad: 1
+
+
+# --- Same column listed twice with different tokenizers is rejected.
+# Without an explicit check, the second `ApplyOpclassToEntry` call would
+# silently overwrite the first tokenizer's settings on the shared entry
+# slot, leaving stored data unsearchable by the dropped tokenizer.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_kw(template = 'keyword');
+
+statement ok
+CREATE TABLE dup_tok (id INTEGER PRIMARY KEY, txt VARCHAR);
+
+statement error
+CREATE INDEX dup_tok_idx ON dup_tok USING inverted(id, txt tok_kw, txt test_english);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+# Same column listed twice with the same tokenizer is also rejected --
+# nothing to merge, just user mistake.
+statement error
+CREATE INDEX dup_tok_same_idx ON dup_tok USING inverted(id, txt tok_kw, txt tok_kw);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+# A bare column (no opclass) implicitly binds the default tokenizer, so it
+# counts as a tokenizer entry too. Listing the same bare column twice or a
+# bare column alongside an explicit tokenizer opclass on the same column must
+# also be rejected by the dedup path in `IsTokenizerOpclass`.
+statement error
+CREATE INDEX dup_tok_bare_idx ON dup_tok USING inverted(id, txt, txt);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+statement error
+CREATE INDEX dup_tok_bare_mix_idx ON dup_tok USING inverted(id, txt, txt tok_kw);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+# Stacking a tokenizer with `included()` on the same column stays legal:
+# `included()` attaches columnstore-storage to the entry without binding a
+# tokenizer, so it composes with one tokenizer cleanly.
+statement ok
+CREATE INDEX dup_tok_stack_idx ON dup_tok USING inverted(id, txt tok_kw, txt included());
+
+# The stacked index must serve both the tokenizer-driven filter path and the
+# columnstore-fetch path that `included(...)` enables.
+statement ok
+INSERT INTO dup_tok VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+
+statement ok
+VACUUM (REFRESH_TABLE) dup_tok;
+
+query
+SELECT id, txt FROM dup_tok_stack_idx WHERE txt @@ 'alpha';
+----
+id	txt
+1	alpha
+
+query
+SELECT id, txt FROM dup_tok_stack_idx WHERE txt @@ 'gamma';
+----
+id	txt
+3	gamma

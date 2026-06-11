@@ -22,17 +22,12 @@
 #include "http_response.h"
 
 #include <time.h>
-#include <vpack/builder.h>
-#include <vpack/dumper.h>
-#include <vpack/options.h>
-#include <vpack/vpack_helper.h>
 
 #include <string_view>
 
 #include "basics/encoding_utils.h"
 #include "basics/error_code.h"
 #include "basics/exceptions.h"
-#include "basics/sink.h"
 #include "basics/static_strings.h"
 #include "basics/string_buffer.h"
 #include "basics/string_utils.h"
@@ -251,9 +246,6 @@ void HttpResponse::writeHeader(StringBuffer* output) {
     case ContentType::Json:
       output->PushStr("Content-Type: application/json; charset=utf-8\r\n");
       break;
-    case ContentType::VPack:
-      output->PushStr("Content-Type: application/x-vpack\r\n");
-      break;
     case ContentType::Text:
       output->PushStr("Content-Type: text/plain; charset=utf-8\r\n");
       break;
@@ -306,114 +298,8 @@ void HttpResponse::writeHeader(StringBuffer* output) {
   // end of header, body to follow
 }
 
-void HttpResponse::addPayload(vpack::Slice slice,
-                              const vpack::Options* options) {
-  if (_content_type == rest::ContentType::Json &&
-      _content_type_requested == rest::ContentType::VPack) {
-    // content type was set by a handler to Json but the client wants VPACK
-    // as we have a slice at had we are able to reply with VPACK
-    _content_type = rest::ContentType::VPack;
-  }
-
-  addPayloadInternal(slice.start(), slice.byteSize(), options);
-}
-
-void HttpResponse::addPayload(vpack::BufferUInt8&& buffer,
-                              const vpack::Options* options) {
-  if (_content_type == rest::ContentType::Json &&
-      _content_type_requested == rest::ContentType::VPack) {
-    // content type was set by a handler to Json but the client wants VPACK
-    // as we have a slice at had we are able to reply with VPACK
-    _content_type = rest::ContentType::VPack;
-  }
-
-  if (buffer.size() > 0) {
-    addPayloadInternal(buffer.data(), buffer.size(), options);
-  }
-}
-
 void HttpResponse::addRawPayload(std::string_view payload) {
   _body->PushStr(payload);
-}
-
-void HttpResponse::addPayloadInternal(const uint8_t* data, size_t length,
-                                      const vpack::Options* options) {
-  SDB_ASSERT(data != nullptr);
-
-  if (!options) {
-    options = &vpack::Options::gDefaults;
-  }
-  SDB_ASSERT(options != nullptr);
-
-  if (_content_type == rest::ContentType::VPack) {
-    // the input (data) may contain multiple vpack values, written
-    // one after the other
-    // here, we iterate over the slices in the input data, until we have
-    // reached the specified total size (length)
-
-    // total length of our generated response
-    size_t result_length = 0;
-
-    while (length > 0) {
-      vpack::Slice current_data(data);
-      const vpack::ValueLength input_length = current_data.byteSize();
-      vpack::ValueLength output_length = input_length;
-
-      SDB_ASSERT(length >= input_length);
-
-      // will contain sanitized data
-      if (_generate_body) {
-        _body->PushStr({current_data.startAs<const char>(), output_length});
-      }
-      result_length += output_length;
-
-      // advance to next slice (if any)
-      if (length < input_length) {
-        // oops, length specification may be wrong?!
-        break;
-      }
-
-      data += input_length;
-      length -= input_length;
-    }
-
-    if (!_generate_body) {
-      headResponse(result_length);
-    }
-    return;
-  }
-
-  setContentType(rest::ContentType::Json);
-
-  /// dump options contain have the escapeUnicode attribute set to true
-  /// this allows dumping of string values as plain 7-bit ASCII values.
-  /// for example, the string "möter" will be dumped as "m\u00F6ter".
-  /// this allows faster JSON parsing in some client implementations,
-  /// which speculate on ASCII strings first and only fall back to slower
-  /// multibyte strings on first actual occurrence of a multibyte character.
-  vpack::Options tmp_opts = *options;
-  tmp_opts.escape_unicode = true;
-
-  // here, the input (data) must **not** contain multiple vpack values,
-  // written one after the other
-  vpack::Slice current(data);
-  SDB_ASSERT(current.byteSize() == length);
-
-  if (_generate_body) {
-    // convert object to JSON string
-    vpack::Dumper dumper(&static_cast<basics::StrSink&>(*_body), &tmp_opts);
-    dumper.Dump(current);
-  } else {
-    // determine the length of the to-be-generated JSON string,
-    // without actually generating it
-    basics::LenSink sink;
-
-    // usual dumping -  but not to the response body
-    vpack::Dumper dumper(&sink, &tmp_opts);
-    dumper.Dump(current);
-
-    headResponse(sink.Impl());
-  }
 }
 
 ErrorCode HttpResponse::ZLibDeflate(bool only_if_smaller) {

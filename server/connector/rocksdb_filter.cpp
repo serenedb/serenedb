@@ -998,8 +998,7 @@ std::vector<KeyBounds> ExtractFilterExprImpl(const duckdb::Expression& expr,
           auto negated_ctx = ctx;
           negated_ctx.negated = !ctx.negated;
           key_bounds = ExtractFilterExprImpl(*op_expr.children[0], negated_ctx);
-          break;
-        }
+        } break;
         case duckdb::ExpressionType::OPERATOR_IS_NULL:
           key_bounds = ExtractFilterIsNull(op_expr, ctx);
           break;
@@ -1007,8 +1006,7 @@ std::vector<KeyBounds> ExtractFilterExprImpl(const duckdb::Expression& expr,
           auto negated_ctx = ctx;
           negated_ctx.negated = !ctx.negated;
           key_bounds = ExtractFilterIsNull(op_expr, negated_ctx);
-          break;
-        }
+        } break;
         case duckdb::ExpressionType::COMPARE_IN:
           key_bounds = ExtractFilterIn(op_expr, ctx);
           break;

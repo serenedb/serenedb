@@ -53,8 +53,7 @@ start_server() {
 	killall -9 serened >/dev/null 2>&1 || true
 	sleep 1
 	"${SERENED_BIN}" "${SERENED_DATA_DIR}" \
-		--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-		--log.foreground-tty true \
+		--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
 		>"${LOG}" 2>&1 &
 	disown
 	for _ in $(seq 1 30); do
@@ -72,7 +71,7 @@ setup_session() {
 	# session-local).  CREATE INDEX is safe because iresearch dedups
 	# against existing .cs files for the segments already on disk.
 	psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 <<EOF
-ATTACH IF NOT EXISTS '${NATIVE_DB}' AS native_db (TYPE duckdb);
+ATTACH IF NOT EXISTS '${NATIVE_DB}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
 CREATE INDEX IF NOT EXISTS bench_idx ON bench_view USING inverted()
 INCLUDE (

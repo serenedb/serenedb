@@ -28,7 +28,6 @@
 #include <optional>
 #include <string_view>
 
-#include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -72,7 +71,6 @@ struct NormColumnOptions {
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
 };
 
-using NormColumnOptionsProvider =
-  std::function<NormColumnOptions(std::string_view field_name)>;
+using NormColumnOptionsProvider = std::function<NormColumnOptions(field_id)>;
 
 }  // namespace irs

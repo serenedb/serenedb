@@ -20,27 +20,42 @@
 
 #include "catalog/tokenizer.h"
 
-#include <vpack/builder.h>
-#include <vpack/slice.h>
-
+#include <cstdint>
+#include <duckdb/common/serializer/deserializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/serializer/serializer.hpp>
 #include <expected>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/analysis/tokenizer_config.hpp>
+#include <string>
+#include <utility>
 
 #include "basics/assert.h"
 #include "basics/errors.h"
+#include "basics/exceptions.h"
+#include "basics/serializer.h"
+#include "catalog/persistence/tokenizer.h"
 #include "catalog/search_analyzer_impl.h"
 
 namespace sdb::catalog {
+namespace {
+
+using persistence::TokenizerData;
+
+}  // namespace
 
 ResultOr<Tokenizer::TokenizerWrapper> Tokenizer::GetTokenizer() {
   absl::MutexLock lock{&_m};
   if (_pool.empty()) {
-    auto analyzer = CreateAnalyzer();
-    if (!analyzer) {
-      return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
-                                     "Failed to create analyzer"};
+    irs::analysis::Analyzer::ptr analyzer;
+    if (auto r = basics::SafeCall([&] -> Result {
+          analyzer = CreateAnalyzer();
+          return {};
+        });
+        !r.ok()) {
+      return std::unexpected<Result>{std::move(r)};
     }
     return TokenizerWrapper{analyzer.release(), Deleter{this}};
   }
@@ -56,61 +71,43 @@ void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
   _pool.push_back(std::move(analyzer));
 }
 
-vpack::Slice Tokenizer::Slice() const noexcept {
-  return vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
-}
-
 irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
-  irs::analysis::Analyzer::ptr output;
-  irs::analysis::analyzers::MakeAnalyzer(Slice(), output);
-  return output;
+  return irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
 }
 
 Tokenizer::Tokenizer(ObjectId schema_id, ObjectId id, std::string_view name,
                      search::Features features, uint32_t norm_row_group_size,
-                     std::string data)
+                     irs::analysis::TokenizerConfig config)
   : Object{schema_id, id, name, ObjectType::Tokenizer},
-    _data{std::move(data)},
+    _config{std::move(config)},
     _features{features},
     _norm_row_group_size{norm_row_group_size} {}
 
-std::shared_ptr<Tokenizer> Tokenizer::ReadInternal(vpack::Slice slice,
-                                                   ReadContext ctx) {
-  auto name = slice.get("name");
-  if (!name.isString()) {
-    return nullptr;
-  }
-  auto features_slice = slice.get("features");
-  search::Features features;
-  if (auto r = features.FromVPack(features_slice); !r.ok()) {
-    return nullptr;
-  }
-  const auto norm_row_group_size_slice = slice.get("norm_row_group_size");
-  const uint32_t norm_row_group_size =
-    norm_row_group_size_slice.isNumber<uint32_t>()
-      ? norm_row_group_size_slice.getNumber<uint32_t>()
-      : DEFAULT_ROW_GROUP_SIZE;
-  return std::make_shared<Tokenizer>(
-    ctx.schema_id, ctx.id, name.stringView(), std::move(features),
-    norm_row_group_size, std::string{slice.startAs<char>(), slice.byteSize()});
+std::shared_ptr<Tokenizer> Tokenizer::Deserialize(duckdb::Deserializer& src,
+                                                  ReadContext ctx) {
+  TokenizerData data;
+  basics::ReadTuple(src, data);
+
+  return std::make_shared<Tokenizer>(ctx.schema_id, ctx.id, data.name,
+                                     data.features, data.norm_row_group_size,
+                                     std::move(data.config));
 }
 
-void Tokenizer::WriteInternal(vpack::Builder& b) const {
-  b.openObject();
-  WriteObject(b, [&](vpack::Builder& b) {
-    auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
-    b.add("tokenizer", slice.get("tokenizer"));
-    b.add("features");
-    _features.ToVPack(b);
-    b.add("norm_row_group_size", _norm_row_group_size);
-  });
-  b.close();
+void Tokenizer::Serialize(duckdb::Serializer& sink) const {
+  TokenizerData data{
+    .name = std::string{GetName()},
+    .config = irs::analysis::Clone(_config),
+    .features = _features,
+    .norm_row_group_size = _norm_row_group_size,
+  };
+  basics::WriteTuple(sink, data);
 }
 
 std::shared_ptr<Object> Tokenizer::Clone() const {
-  vpack::Builder b;
-  WriteInternal(b);
-  return ReadInternal(b.slice(), {.id = GetId(), .schema_id = GetParentId()});
+  duckdb::MemoryStream stream;
+  return DeserializeObject<Tokenizer>(
+    SerializeObject(*this, stream),
+    {.id = GetId(), .schema_id = GetParentId()});
 }
 
 }  // namespace sdb::catalog

@@ -27,7 +27,6 @@
 
 #include "basics/common.h"
 #include "basics/containers/flat_hash_map.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 namespace app {
@@ -47,7 +46,7 @@ class RestHandlerFactory {
 
  public:
   // handler creator
-  typedef std::shared_ptr<RestHandler> (*create_fptr)(SerenedServer&,
+  typedef std::shared_ptr<RestHandler> (*create_fptr)(app::AppServer&,
                                                       GeneralRequest*,
                                                       GeneralResponse*,
                                                       void* data);
@@ -56,7 +55,7 @@ class RestHandlerFactory {
 
   // creates a new handler
   std::shared_ptr<RestHandler> createHandler(
-    SerenedServer&, std::unique_ptr<GeneralRequest>,
+    app::AppServer&, std::unique_ptr<GeneralRequest>,
     std::unique_ptr<GeneralResponse>) const;
 
   // adds a path and constructor to the factory

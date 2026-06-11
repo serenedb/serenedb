@@ -29,7 +29,14 @@
 #include <string>
 
 #include "catalog/object.h"
+#include "catalog/persistence/sequence.h"
 
+namespace duckdb {
+
+class Serializer;
+class Deserializer;
+
+}  // namespace duckdb
 namespace rocksdb {
 
 class ColumnFamilyHandle;
@@ -38,16 +45,7 @@ class DB;
 }  // namespace rocksdb
 namespace sdb::catalog {
 
-struct SequenceOptions {
-  uint64_t start_value = 1;
-  uint64_t increment = 1;
-  uint64_t min_value = 1;
-  uint64_t max_value = std::numeric_limits<int64_t>::max();
-  bool cycle = false;
-  uint64_t cache = 1;
-
-  uint64_t Seed() const noexcept { return start_value - increment; }
-};
+using persistence::SequenceOptions;
 
 class Table;
 
@@ -55,22 +53,25 @@ class Sequence final : public Object {
   friend class Table;
 
  public:
-  Sequence(ObjectId schema_id, ObjectId id, std::string_view name,
-           SequenceOptions opts, ObjectId owner_table_id);
+  // opts.name and opts.owner_table_id provide the Object name and the owner
+  // table id; no separate parameters needed.
+  Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts);
 
   ~Sequence() = default;
 
-  static std::shared_ptr<Sequence> ReadInternal(vpack::Slice slice,
-                                                ReadContext ctx);
+  static std::shared_ptr<Sequence> Deserialize(duckdb::Deserializer& src,
+                                               ReadContext ctx);
 
-  void WriteInternal(vpack::Builder& b) const final;
+  void Serialize(duckdb::Serializer& s) const final;
   std::shared_ptr<Object> Clone() const final;
 
   const SequenceOptions& Options() const noexcept { return _options; }
 
   // Set for SERIAL implicit sequences (and the auto-PK Sequence). Wires the
   // sequence into TableDependency::owned_sequences for PG OWNED BY cascade.
-  ObjectId GetOwnerTableId() const noexcept { return _owner_table_id; }
+  ObjectId GetOwnerTableId() const noexcept {
+    return ObjectId{_options.owner_table_id};
+  }
 
   // Hand out [base, base+count-1]; returns base. Merge persists before the
   // atomic increment, so a crash burns the range but never reuses it.
@@ -86,8 +87,9 @@ class Sequence final : public Object {
  private:
   std::atomic_uint64_t _cnt{0};
   mutable absl::Mutex _cnt_mtx;
+  // Owns the wire-format state (name, options, owner_table_id) -- see
+  // SequenceOptions comment for the reflection-based persistence contract.
   SequenceOptions _options;
-  ObjectId _owner_table_id;
 
   std::atomic_uint64_t _cache_begin{0};
   std::atomic_uint64_t _cache_end{0};

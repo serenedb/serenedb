@@ -23,7 +23,7 @@
 #pragma once
 
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/scorers.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace irs {
 
@@ -65,7 +65,19 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
   static constexpr bool BOOST_AS_SCORE() noexcept { return false; }
 
-  static void init();  // for trigering registration in a static build
+  struct Options {
+    using Owner = BM25;
+    float k1 = K();
+    float b = B();
+    bool boost_as_score = BOOST_AS_SCORE();
+    bool approximate = true;
+    bool operator==(const Options&) const = default;
+  };
+
+  static std::unique_ptr<BM25> Make(const Options& opts) {
+    return std::make_unique<BM25>(opts.k1, opts.b, opts.boost_as_score,
+                                  opts.approximate);
+  }
 
   BM25(score_t k = K(), score_t b = B(), bool boost_as_score = BOOST_AS_SCORE(),
        bool approximate = true) noexcept
@@ -85,15 +97,11 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
     return IndexFeatures::Freq;
   }
 
-  FieldCollector::ptr PrepareFieldCollector() const final;
-
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   WandWriter::ptr prepare_wand_writer(size_t max_levels) const final;
 
   WandSource::ptr prepare_wand_source() const final;
-
-  TermCollector::ptr PrepareTermCollector() const final;
 
   WandType wand_type() const noexcept final;
 

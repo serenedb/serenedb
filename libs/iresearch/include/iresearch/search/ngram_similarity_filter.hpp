@@ -48,13 +48,12 @@ struct ByNGramSimilarityOptions {
 
 class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
  public:
-  static Query::ptr Prepare(const PrepareContext& ctx,
-                            std::string_view field_name,
+  static Query::ptr Prepare(const PrepareContext& ctx, irs::field_id id,
                             const std::vector<irs::bstring>& ngrams,
                             float_t threshold, bool allow_phrase = true);
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
-    return Prepare(ctx.Boost(Boost()), field(), options().ngrams,
+    return Prepare(ctx.Boost(Boost()), field_id(), options().ngrams,
                    options().threshold, options().allow_phrase);
   }
 };

@@ -10,7 +10,8 @@ control substitution on
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY wal_geo_ni_dict(
-    template = 'geojson'
+    template = 'geojson',
+    coding = 's2point'
 );
 
 statement ok

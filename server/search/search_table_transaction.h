@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <cstdint>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -30,6 +32,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
 #include "catalog/identifiers/object_id.h"
+#include "search/search_db_wal.h"
 #include "search/search_table_changes.h"
 
 namespace sdb {
@@ -41,38 +44,28 @@ namespace sdb::search {
 
 struct SearchShardWrites {
   std::shared_ptr<TableShard> shard;
-  std::vector<uint64_t> seg_ids;
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
+  std::vector<SearchDbWal::PendingChunk> chunks;
 };
 
 // Holds a query::Transaction's search-table (StorageKind::kSearch) state and
 // commit logic.
 class SearchTableTransaction {
  public:
+  // Bulk INSERT: each parallel sink thread hands off its iresearch trx + the
+  // chunk file it streamed. Records the destination shard (the commit reaches
+  // the per-database WAL through it); the table id comes from the shard.
   void AddParallelSearchTransaction(
-    ObjectId table_id, std::unique_ptr<irs::IndexWriter::Transaction> trx) {
-    _writes[table_id].transactions.push_back(std::move(trx));
-  }
+    const std::shared_ptr<TableShard>& shard,
+    std::unique_ptr<irs::IndexWriter::Transaction> trx,
+    SearchDbWal::PendingChunk chunk);
 
-  template<typename Factory>
+  // Single-threaded INSERT: reuse this shard's serial trx (created via
+  // `make_trx` on first use) so consecutive statements coalesce into one
+  // segment. Also records the destination shard.
   irs::IndexWriter::Transaction& EnsureSerialSearchTransaction(
-    ObjectId table_id, Factory&& make_trx) {
-    auto& trxs = _writes[table_id].transactions;
-    if (trxs.empty()) {
-      trxs.push_back(
-        std::make_unique<irs::IndexWriter::Transaction>(make_trx()));
-    }
-    return *trxs.back();
-  }
-
-  void FinishSearchTableStatement(std::shared_ptr<TableShard> shard,
-                                  ObjectId table_id,
-                                  std::vector<uint64_t> seg_ids) {
-    auto& w = _writes[table_id];
-    w.shard = std::move(shard);
-    auto& acc = w.seg_ids;
-    acc.insert(acc.end(), seg_ids.begin(), seg_ids.end());
-  }
+    const std::shared_ptr<TableShard>& shard,
+    absl::AnyInvocable<irs::IndexWriter::Transaction()> make_trx);
 
   template<typename Factory>
   std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(

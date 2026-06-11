@@ -180,12 +180,12 @@ TEST_F(SearchDbWalTest, ReferenceRoundTrip) {
     duckdb::DataChunk c1;
     FetchMaterialized(c1, Alloc(), *cdc1);
     cw1.Append(c1, 0);
-    cw1.Finish();
+    cw1.Finish().MarkCommitted();
     auto cdc2 = MakeIntCdc(Alloc(), {3, 4, 5});
     duckdb::DataChunk c2;
     FetchMaterialized(c2, Alloc(), *cdc2);
     cw2.Append(c2, 0);
-    cw2.Finish();
+    cw2.Finish().MarkCommitted();
     std::vector<uint64_t> segs{cw1.SegId(), cw2.SegId()};
     auto sec = ReferenceSection(2, segs);
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), 1u);
@@ -208,7 +208,7 @@ TEST_F(SearchDbWalTest, ReferenceRoundTripCompressed) {
     duckdb::DataChunk c;
     FetchMaterialized(c, Alloc(), *cdc);
     cw.Append(c, 0);
-    cw.Finish();
+    cw.Finish().MarkCommitted();
     EXPECT_LT(std::filesystem::file_size(ChunkPath(2, 1)), 1024u);
     std::vector<uint64_t> segs{cw.SegId()};
     auto sec = ReferenceSection(2, segs);
@@ -314,7 +314,7 @@ TEST_F(SearchDbWalTest, TickAndSegIdContinueOnReopen) {
     duckdb::DataChunk c;
     FetchMaterialized(c, Alloc(), *cdc);
     cw.Append(c, 0);
-    cw.Finish();
+    cw.Finish().MarkCommitted();
     std::vector<uint64_t> segs{cw.SegId()};
     auto sec = ReferenceSection(2, segs);
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), 1u);
@@ -345,7 +345,7 @@ TEST_F(SearchDbWalTest, OrphanChunkSweptOnRecover) {
     duckdb::DataChunk c;
     FillIntChunk(c, Alloc(), {1});
     cw.Append(c, 0);
-    cw.Finish();
+    cw.Finish().MarkCommitted();
   }
   EXPECT_TRUE(std::filesystem::exists(ChunkPath(2, 1)));
   Collected got;
@@ -353,6 +353,42 @@ TEST_F(SearchDbWalTest, OrphanChunkSweptOnRecover) {
   EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got)), 0u);
   EXPECT_TRUE(got.chunks.empty());
   EXPECT_FALSE(std::filesystem::exists(ChunkPath(2, 1)));
+}
+
+// An uncommitted PendingChunk reclaims its file when destroyed -- a rolled-back
+// bulk insert leaves no orphan (the in-process counterpart of recovery's
+// sweep).
+TEST_F(SearchDbWalTest, UncommittedPendingChunkReclaimsFile) {
+  SearchDbWal wal(Fs(), _dir);
+  duckdb::DataChunk c;
+  FillIntChunk(c, Alloc(), {1, 2, 3});
+  std::filesystem::path path;
+  {
+    auto cw = wal.NewChunkWriter(ObjectId{7});
+    cw.Append(c, 0);
+    auto pending = cw.Finish();  // durable on disk, but never committed
+    path = ChunkPath(7, pending.SegId());
+    EXPECT_TRUE(std::filesystem::exists(path));
+  }
+  EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+// MarkCommitted() suppresses the reclaim: a committed chunk survives its
+// PendingChunk's destruction.
+TEST_F(SearchDbWalTest, CommittedPendingChunkKeepsFile) {
+  SearchDbWal wal(Fs(), _dir);
+  duckdb::DataChunk c;
+  FillIntChunk(c, Alloc(), {1, 2, 3});
+  std::filesystem::path path;
+  {
+    auto cw = wal.NewChunkWriter(ObjectId{7});
+    cw.Append(c, 0);
+    auto pending = cw.Finish();
+    pending.MarkCommitted();
+    path = ChunkPath(7, pending.SegId());
+    EXPECT_TRUE(std::filesystem::exists(path));
+  }
+  EXPECT_TRUE(std::filesystem::exists(path));
 }
 
 TEST_F(SearchDbWalTest, MinTickGcDeletesConsumedSealedSegments) {
@@ -384,7 +420,7 @@ TEST_F(SearchDbWalTest, MinTickGcReferenceChunksReclaimed) {
   duckdb::DataChunk c;
   FillIntChunk(c, Alloc(), {1});
   cw.Append(c, 0);
-  cw.Finish();
+  cw.Finish().MarkCommitted();
   std::vector<uint64_t> segs{cw.SegId()};
   auto sec = ReferenceSection(7, segs);
   EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), 1u);  // sealed seg 1
@@ -431,7 +467,7 @@ TEST_F(SearchDbWalTest, MinTickGcReclaimsLoneSealedSegment) {
   duckdb::DataChunk c;
   FillIntChunk(c, Alloc(), {1});
   cw.Append(c, 0);
-  cw.Finish();
+  cw.Finish().MarkCommitted();
   std::vector<uint64_t> segs{cw.SegId()};
   auto sec = ReferenceSection(7, segs);
   EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}),
@@ -496,7 +532,7 @@ TEST_F(SearchDbWalTest, SealedSegmentChunksDoNotForceActiveRoll) {
     duckdb::DataChunk c;
     FetchMaterialized(c, Alloc(), *cdc);
     cw.Append(c, 0);
-    cw.Finish();
+    cw.Finish().MarkCommitted();
     std::vector<uint64_t> segs{cw.SegId()};
     auto sec = ReferenceSection(7, segs);
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}),
@@ -548,7 +584,7 @@ TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
     duckdb::DataChunk c;
     FetchMaterialized(c, Alloc(), *cdc);
     cw.Append(c, 2000);
-    cw.Finish();
+    cw.Finish().MarkCommitted();
     std::vector<uint64_t> segs{cw.SegId()};
     auto sec = ReferenceSection(5, segs);
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}), 1u);
@@ -650,7 +686,7 @@ TEST_F(SearchDbWalTest, MixedInlineAndReferenceOps) {
     duckdb::DataChunk bc;
     FetchMaterialized(bc, Alloc(), *bulk);
     cw.Append(bc, 3000);
-    cw.Finish();
+    cw.Finish().MarkCommitted();
     std::vector<uint64_t> segids{cw.SegId()};
     // Inline rows (the INLINE op).
     auto inl = MakeIntCdc(Alloc(), {10, 11});

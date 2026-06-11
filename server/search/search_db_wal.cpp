@@ -249,9 +249,44 @@ void ReplayChunkFile(
 
 }  // namespace
 
+SearchDbWal::PendingChunk::PendingChunk(uint64_t seg_id,
+                                        std::filesystem::path path)
+  : _seg_id(seg_id), _path(std::move(path)) {}
+
+SearchDbWal::PendingChunk::PendingChunk(PendingChunk&& o) noexcept
+  : _seg_id(o._seg_id), _path(std::move(o._path)), _committed(o._committed) {
+  o._committed = true;  // the moved-from husk must not reclaim the file
+}
+
+SearchDbWal::PendingChunk& SearchDbWal::PendingChunk::operator=(
+  PendingChunk&& o) noexcept {
+  if (this != &o) {
+    ReclaimIfUncommitted();
+    _seg_id = o._seg_id;
+    _path = std::move(o._path);
+    _committed = o._committed;
+    o._committed = true;
+  }
+  return *this;
+}
+
+SearchDbWal::PendingChunk::~PendingChunk() { ReclaimIfUncommitted(); }
+
+void SearchDbWal::PendingChunk::ReclaimIfUncommitted() noexcept {
+  if (_committed || _path.empty()) {
+    return;
+  }
+  std::error_code ec;
+  std::filesystem::remove(_path, ec);
+  if (ec) {
+    SDB_WARN(SEARCH, "search WAL: failed to remove uncommitted chunk file '",
+             _path.string(), "': ", ec.message());
+  }
+}
+
 SearchDbWal::ChunkWriter::ChunkWriter(
-  uint64_t seg_id, std::unique_ptr<duckdb::BufferedFileWriter> writer)
-  : _seg_id(seg_id),
+  PendingChunk pending, std::unique_ptr<duckdb::BufferedFileWriter> writer)
+  : _pending(std::move(pending)),
     _writer(std::move(writer)),
     _stream(std::make_unique<duckdb::MemoryStream>()) {}
 SearchDbWal::ChunkWriter::ChunkWriter(ChunkWriter&&) noexcept = default;
@@ -290,9 +325,11 @@ void SearchDbWal::ChunkWriter::Append(duckdb::DataChunk& chunk,
   _writer->WriteData(payload, payload_len);
 }
 
-void SearchDbWal::ChunkWriter::Finish() {
+SearchDbWal::PendingChunk SearchDbWal::ChunkWriter::Finish() {
   SDB_ASSERT(_writer);
   _writer->Sync();
+  _writer.reset();
+  return std::move(_pending);
 }
 
 //
@@ -428,9 +465,10 @@ SearchDbWal::ChunkWriter SearchDbWal::NewChunkWriter(ObjectId table_id) {
     }
     seg_id = ++it->second;
   }
-  auto writer = std::make_unique<duckdb::BufferedFileWriter>(
-    _fs, (dir / ChunkName(seg_id)).string(), kAppendFlags);
-  return ChunkWriter{seg_id, std::move(writer)};
+  auto path = dir / ChunkName(seg_id);
+  auto writer = std::make_unique<duckdb::BufferedFileWriter>(_fs, path.string(),
+                                                             kAppendFlags);
+  return ChunkWriter{PendingChunk{seg_id, std::move(path)}, std::move(writer)};
 }
 
 void SearchDbWal::RegisterShard(ObjectId table_id, uint64_t committed_tick) {

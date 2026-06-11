@@ -78,12 +78,31 @@ namespace sdb::search {
 // record + chunk path store the raw `.id()` (the wire format is a plain u64).
 class SearchDbWal {
  public:
-  // One streamed chunk file for a single bulk sink thread. Append()s DataChunks
-  // during Sink and Finish()es (flush + fsync); the resulting seg_id goes into
-  // the transaction's REFERENCE section.
+  class PendingChunk {
+   public:
+    PendingChunk() = default;
+    PendingChunk(uint64_t seg_id, std::filesystem::path path);
+    PendingChunk(PendingChunk&&) noexcept;
+    PendingChunk& operator=(PendingChunk&&) noexcept;
+    PendingChunk(const PendingChunk&) = delete;
+    PendingChunk& operator=(const PendingChunk&) = delete;
+    ~PendingChunk();
+
+    uint64_t SegId() const noexcept { return _seg_id; }
+
+    void MarkCommitted() noexcept { _committed = true; }
+
+   private:
+    void ReclaimIfUncommitted() noexcept;
+
+    uint64_t _seg_id = 0;
+    std::filesystem::path _path;
+    bool _committed = false;
+  };
+
   class ChunkWriter {
    public:
-    ChunkWriter(uint64_t seg_id,
+    ChunkWriter(PendingChunk pending,
                 std::unique_ptr<duckdb::BufferedFileWriter> writer);
     ChunkWriter(ChunkWriter&&) noexcept;
     ChunkWriter& operator=(ChunkWriter&&) noexcept;
@@ -91,19 +110,17 @@ class SearchDbWal {
     ChunkWriter& operator=(const ChunkWriter&) = delete;
     ~ChunkWriter();
 
-    uint64_t SegId() const noexcept { return _seg_id; }
+    uint64_t SegId() const noexcept { return _pending.SegId(); }
 
     // Serialise + append one chunk with its generated-PK base `pk_base` (0 for
     // explicit-PK shards) for replay PK reconstruction; buffered, no fsync.
     // zstd-1 with raw fallback.
     void Append(duckdb::DataChunk& chunk, uint64_t pk_base);
 
-    // Flush the buffer to the OS and fsync. Call once, before the transaction's
-    // central record is committed.
-    void Finish();
+    PendingChunk Finish();
 
    private:
-    uint64_t _seg_id;
+    PendingChunk _pending;
     std::unique_ptr<duckdb::BufferedFileWriter> _writer;
     // Reused across Append() calls (Rewind keeps the backing buffer).
     std::unique_ptr<duckdb::MemoryStream> _stream;

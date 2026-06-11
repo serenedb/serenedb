@@ -76,7 +76,6 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
 
   std::mutex combine_mu;
   duckdb::idx_t insert_count = 0;
-  std::vector<uint64_t> seg_ids;
 
   // CTAS bookkeeping.
   bool ctas_mode = false;
@@ -331,7 +330,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   if (!lstate->sink) {
     SDB_ASSERT(!lstate->bulk);
     auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
-      gstate.table_id, [&] { return gstate.search_shard->GetTransaction(); });
+      gstate.table_shard,
+      [&] { return gstate.search_shard->GetTransaction(); });
     lstate->sink = MakeSearchTableInsertSink(trx, gstate.column_ids);
   }
 
@@ -374,20 +374,18 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
     return duckdb::SinkCombineResultType::FINISHED;
   }
 
-  uint64_t seg_id = 0;
+  search::SearchDbWal::PendingChunk pending;
   if (lstate->bulk) {
     SDB_ASSERT(lstate->chunk_writer,
                "bulk sink thread with rows but no chunk writer");
-    lstate->chunk_writer->Finish();
-    seg_id = lstate->chunk_writer->SegId();
+    pending = lstate->chunk_writer->Finish();
   }
 
   std::lock_guard<std::mutex> lock(gstate.combine_mu);
   gstate.insert_count += lstate->insert_count;
   if (lstate->bulk) {
-    gstate.seg_ids.push_back(seg_id);
     gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
-      gstate.table_id, std::move(lstate->search_trx));
+      gstate.table_shard, std::move(lstate->search_trx), std::move(pending));
   }
   return duckdb::SinkCombineResultType::FINISHED;
 }
@@ -402,9 +400,6 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
     RemoveCtasTombstoneIfNeeded(gstate);
     return duckdb::SinkFinalizeType::READY;
   }
-
-  gstate.sdb_txn->SearchTxn().FinishSearchTableStatement(
-    gstate.table_shard, gstate.table_id, std::move(gstate.seg_ids));
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.UpdateNumRows(gstate.table_id, gstate.insert_count);

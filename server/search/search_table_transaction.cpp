@@ -36,6 +36,33 @@
 
 namespace sdb::search {
 
+void SearchTableTransaction::AddParallelSearchTransaction(
+  const std::shared_ptr<TableShard>& shard,
+  std::unique_ptr<irs::IndexWriter::Transaction> trx,
+  SearchDbWal::PendingChunk chunk) {
+  auto& w = _writes[shard->GetTableId()];
+  if (!w.shard) {
+    w.shard = shard;
+  }
+  w.transactions.push_back(std::move(trx));
+  w.chunks.push_back(std::move(chunk));
+}
+
+irs::IndexWriter::Transaction&
+SearchTableTransaction::EnsureSerialSearchTransaction(
+  const std::shared_ptr<TableShard>& shard,
+  absl::AnyInvocable<irs::IndexWriter::Transaction()> make_trx) {
+  auto& w = _writes[shard->GetTableId()];
+  if (!w.shard) {
+    w.shard = shard;
+  }
+  if (w.transactions.empty()) {
+    w.transactions.push_back(
+      std::make_unique<irs::IndexWriter::Transaction>(make_trx()));
+  }
+  return *w.transactions.back();
+}
+
 void SearchTableTransaction::RegisterFlush() noexcept {
   for (auto& [table_id, w] : _writes) {
     for (auto& trx : w.transactions) {
@@ -50,6 +77,7 @@ void SearchTableTransaction::Abort() noexcept {
       trx->Abort();
     }
   }
+  _writes.clear();
 }
 
 void SearchTableTransaction::Commit() {
@@ -64,6 +92,9 @@ void SearchTableTransaction::Commit() {
   const uint64_t tick = AppendCommit();
   SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
   for (auto& [table_id, w] : _writes) {
+    for (auto& c : w.chunks) {
+      c.MarkCommitted();
+    }
     for (auto& trx : w.transactions) {
       trx->Commit(tick);
     }
@@ -76,6 +107,8 @@ uint64_t SearchTableTransaction::AppendCommit() {
   sections.reserve(_writes.size());
   std::vector<std::vector<SearchDbWal::Op>> op_lists;
   op_lists.reserve(_writes.size());
+  std::vector<std::vector<uint64_t>> seg_id_lists;
+  seg_id_lists.reserve(_writes.size());
   SearchDbWal* wal =
     &basics::downCast<SearchTableShard>(*_writes.begin()->second.shard).Wal();
   for (auto& [table_id, w] : _writes) {
@@ -95,9 +128,14 @@ uint64_t SearchTableTransaction::AppendCommit() {
         }
       }
     }
-    if (!w.seg_ids.empty()) {
+    if (!w.chunks.empty()) {
+      auto& segs = seg_id_lists.emplace_back();
+      segs.reserve(w.chunks.size());
+      for (const auto& c : w.chunks) {
+        segs.push_back(c.SegId());
+      }
       ops.push_back(
-        SearchDbWal::Op{nullptr, {}, std::span<const uint64_t>{w.seg_ids}});
+        SearchDbWal::Op{nullptr, {}, std::span<const uint64_t>{segs}});
     }
     SDB_ASSERT(!ops.empty(),
                "search-table commit with neither chunk files nor inline rows");

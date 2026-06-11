@@ -203,8 +203,8 @@ std::string WildcardNgramPartsString(const ByWildcardNgram& filter) {
     for (const auto& part : phrase) {
       std::string part_str;
       part.part.visit(PhrasePartVisitor{.out = &part_str});
-      absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min, ")",
-                      "; ");
+      absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
+                      ")", "; ");
     }
     absl::StrAppend(&s, ">; ");
   }
@@ -236,9 +236,8 @@ std::string GeoDistanceRangeString(const GeoDistanceFilter& filter) {
                     range.min);
   }
   if (range.max_type != BoundType::Unbounded) {
-    absl::StrAppend(&s, ", ",
-                    range.max_type == BoundType::Inclusive ? "<=" : "<",
-                    range.max);
+    absl::StrAppend(
+      &s, ", ", range.max_type == BoundType::Inclusive ? "<=" : "<", range.max);
   }
   return s;
 }
@@ -290,9 +289,10 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
   }
   if (type == Type<ByTerms>::id()) {
     const auto& f = downCast<const ByTerms>(filter);
-    return {.label = "TERMS",
-            .detail = absl::StrCat(field(f.field_id()), " {", TermsListString(f),
-                                   "} min_match=", f.options().min_match)};
+    return {
+      .label = "TERMS",
+      .detail = absl::StrCat(field(f.field_id()), " {", TermsListString(f),
+                             "} min_match=", f.options().min_match)};
   }
   if (type == Type<ByRange>::id()) {
     const auto& f = downCast<const ByRange>(filter);
@@ -309,9 +309,9 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
   if (type == Type<ByNGramSimilarity>::id()) {
     const auto& f = downCast<const ByNGramSimilarity>(filter);
     return {.label = "NGRAM_SIMILARITY",
-            .detail = absl::StrCat(field(f.field_id()),
-                                   " ngrams=", NgramListString(f),
-                                   " threshold=", f.options().threshold)};
+            .detail =
+              absl::StrCat(field(f.field_id()), " ngrams=", NgramListString(f),
+                           " threshold=", f.options().threshold)};
   }
   if (type == Type<ByEditDistance>::id()) {
     const auto& f = downCast<const ByEditDistance>(filter);
@@ -356,10 +356,10 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
   if (type == Type<ByWildcardNgram>::id()) {
     const auto& f = downCast<const ByWildcardNgram>(filter);
     return {.label = "WILDCARD_NGRAM",
-            .detail = absl::StrCat(field(f.field_id()), " '",
-                                   TermToString(f.options().token),
-                                   "' has_pos=", f.options().has_pos, " parts=[",
-                                   WildcardNgramPartsString(f), "]")};
+            .detail = absl::StrCat(
+              field(f.field_id()), " '", TermToString(f.options().token),
+              "' has_pos=", f.options().has_pos, " parts=[",
+              WildcardNgramPartsString(f), "]")};
   }
   if (type == Type<Empty>::id()) {
     return {.label = "EMPTY"};
@@ -373,10 +373,9 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
   if (type == Type<GeoFilter>::id()) {
     const auto& f = downCast<const GeoFilter>(filter);
     return {.label = "GEO",
-            .detail = absl::StrCat(field(f.field_id()),
-                                   " op=", GeoFilterTypeName(f.options().type),
-                                   " shape=",
-                                   GeoShapeTypeName(f.options().shape.type()))};
+            .detail = absl::StrCat(
+              field(f.field_id()), " op=", GeoFilterTypeName(f.options().type),
+              " shape=", GeoShapeTypeName(f.options().shape.type()))};
   }
   if (type == Type<GeoDistanceFilter>::id()) {
     const auto& f = downCast<const GeoDistanceFilter>(filter);
@@ -424,7 +423,8 @@ duckdb::unique_ptr<duckdb::RenderTreeNode> MakeRenderNode(
     // A "__"-prefixed key renders the value with no "Key:" prefix.
     extra.insert("__detail__", node.detail);
   }
-  return duckdb::make_uniq<duckdb::RenderTreeNode>(node.label, std::move(extra));
+  return duckdb::make_uniq<duckdb::RenderTreeNode>(node.label,
+                                                   std::move(extra));
 }
 
 duckdb::idx_t FillTree(duckdb::RenderTree& tree, const FilterNode& node,

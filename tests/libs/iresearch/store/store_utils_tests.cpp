@@ -969,22 +969,22 @@ TEST(store_utils_tests, test_remapped_bytes_view) {
     mapping.emplace_back(3, 0);
     RemappedBytesViewInput in(bytes_view(data.data(), data.size()),
                               std::move(mapping));
-    auto actual = in.ReadView(3, 2);
+    auto actual = in.ReadVolatile(3, 2);
     ASSERT_EQ(actual[0], data[0]);
     ASSERT_EQ(5, in.Position());
     std::array<irs::byte_type, 2> read;
-    ASSERT_EQ(2, in.ReadBytes(5, read.data(), 2));
+    in.ReadData(5, read.data(), 2);
     ASSERT_EQ(0x3, read[0]);
     ASSERT_EQ(0x4, read[1]);
     ASSERT_EQ(7, in.Position());
-    ASSERT_EQ(2, in.ReadBytes(read.data(), 2));
+    in.ReadData(read.data(), 2);
     ASSERT_EQ(0x5, read[0]);
     ASSERT_EQ(0x6, read[1]);
     ASSERT_EQ(9, in.Position());
-    auto actual2 = in.ReadView(4, 2);
+    auto actual2 = in.ReadVolatile(4, 2);
     ASSERT_EQ(actual2[0], data[1]);
     ASSERT_EQ(6, in.Position());
-    auto actual3 = in.ReadView(17, 1);
+    auto actual3 = in.ReadVolatile(17, 1);
     ASSERT_EQ(actual3[0], data[14]);
     ASSERT_EQ(18, in.Position());
   }
@@ -996,13 +996,13 @@ TEST(store_utils_tests, test_remapped_bytes_view) {
     mapping.emplace_back(25, 14);
     RemappedBytesViewInput in(bytes_view(data.data(), data.size()),
                               std::move(mapping));
-    auto actual = in.ReadView(3, 2);
+    auto actual = in.ReadVolatile(3, 2);
     ASSERT_EQ(actual[1], data[1]);
     ASSERT_EQ(5, in.Position());
-    auto actual2 = in.ReadView(5, 2);
+    auto actual2 = in.ReadVolatile(5, 2);
     ASSERT_EQ(actual2[0], data[7]);
     ASSERT_EQ(7, in.Position());
-    auto actual3 = in.ReadView(25, 1);
+    auto actual3 = in.ReadVolatile(25, 1);
     ASSERT_EQ(actual3[0], data[14]);
     ASSERT_EQ(26, in.Position());
   }

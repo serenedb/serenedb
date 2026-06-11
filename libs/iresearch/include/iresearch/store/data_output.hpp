@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <duckdb/common/serializer/write_stream.hpp>
+
 #include "basics/noncopyable.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/io_utils.hpp"
@@ -29,10 +31,8 @@
 
 namespace irs {
 
-class DataOutput {
+class DataOutput : public duckdb::WriteStream {
  public:
-  virtual ~DataOutput() = default;
-
   // According to C++ standard it's safe to convert signed to unsigned
   // But not opposite!
   // So we should read signed but write unsigned or duplicate code.
@@ -40,7 +40,6 @@ class DataOutput {
   //  more virtual functions in vtable, symbols, etc -- code colder
 
   virtual void WriteByte(byte_type b) = 0;
-  virtual void WriteBytes(const byte_type* b, size_t len) = 0;
 
   virtual void WriteU16(uint16_t n) { WriteNumU(n); }
   virtual void WriteU32(uint32_t n) { WriteNumU(n); }
@@ -52,7 +51,7 @@ class DataOutput {
   IRS_FORCE_INLINE void WriteNumU(auto n) {
     // TODO(mbkkt) change to little endian!
     n = absl::little_endian::FromHost(n);
-    WriteBytes(reinterpret_cast<byte_type*>(&n), sizeof(n));
+    WriteData(reinterpret_cast<byte_type*>(&n), sizeof(n));
   }
 
   IRS_FORCE_INLINE void WriteNumV(auto n) {
@@ -71,7 +70,7 @@ class BufferedOutput : public DataOutput {
     *_pos++ = b;
   }
 
-  void WriteBytes(const byte_type* b, size_t len) final {
+  void WriteData(const byte_type* b, uint64_t len) final {
     // We need to use <= instead of < to avoid double buffering
     if (Remain() <= len) [[unlikely]] {
       return WriteDirect(b, len);

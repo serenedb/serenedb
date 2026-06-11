@@ -102,26 +102,31 @@ class FailingDirectory : public tests::DirectoryMock {
                                const FailingDirectory& dir)
       : _impl(std::move(impl)), _dir(&dir), _name(name) {}
 
-    const irs::byte_type* ReadData(uint64_t count) final {
-      return _impl->ReadData(count);
+    const irs::byte_type* ReadStable(uint64_t count) final {
+      return _impl->ReadStable(count);
     }
-    const irs::byte_type* ReadData(uint64_t offset, uint64_t count) final {
-      return _impl->ReadData(offset, count);
+    const irs::byte_type* ReadStable(uint64_t offset, uint64_t count) final {
+      return _impl->ReadStable(offset, count);
     }
 
-    const irs::byte_type* ReadView(uint64_t offset, uint64_t count) final {
-      return _impl->ReadView(offset, count);
+    const irs::byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
+      return _impl->ReadVolatile(offset, count);
     }
-    const irs::byte_type* ReadView(uint64_t count) final {
-      return _impl->ReadView(count);
+    const irs::byte_type* ReadVolatile(uint64_t count) final {
+      return _impl->ReadVolatile(count);
     }
 
     irs::byte_type ReadByte() final { return _impl->ReadByte(); }
-    size_t ReadBytes(irs::byte_type* b, size_t count) final {
-      return _impl->ReadBytes(b, count);
+    using DataInput::ReadData;
+    void ReadData(irs::byte_type* b, uint64_t count) final {
+      _impl->ReadData(b, count);
     }
-    size_t ReadBytes(uint64_t offset, irs::byte_type* b, size_t count) final {
-      return _impl->ReadBytes(offset, b, count);
+    void ReadData(duckdb::QueryContext, irs::byte_type* b,
+                  uint64_t count) final {
+      _impl->ReadData(b, count);
+    }
+    void ReadData(uint64_t offset, irs::byte_type* b, size_t count) final {
+      _impl->ReadData(offset, b, count);
     }
 
     int16_t ReadI16() final { return _impl->ReadI16(); }

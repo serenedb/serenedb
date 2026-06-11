@@ -39,7 +39,6 @@
 #include "iresearch/formats/column/internal/persistent_column_data.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/serializer_stream.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
@@ -127,9 +126,7 @@ IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
   return in;
 }
 
-std::span<const byte_type> ReadFooterBytes(
-  IndexInput& in, std::string_view filename,
-  std::vector<byte_type>& fallback_storage) {
+void SeekToFooter(IndexInput& in, std::string_view filename) {
   const auto file_len = in.Length();
   const uint64_t header_len =
     static_cast<uint64_t>(format_utils::HeaderLength(kColFormatName));
@@ -148,13 +145,7 @@ std::span<const byte_type> ReadFooterBytes(
              ".col reader: corrupted `.col` file ", filename,
              ": footer offset ", footer_offset, " is out of range [",
              header_len, ", ", footer_offset_pos, ")");
-  const uint64_t footer_size = footer_offset_pos - footer_offset;
-  if (const auto* view = in.ReadData(footer_offset, footer_size)) {
-    return {view, static_cast<size_t>(footer_size)};
-  }
-  fallback_storage.resize(footer_size);
-  in.ReadBytes(footer_offset, fallback_storage.data(), footer_size);
-  return {fallback_storage.data(), fallback_storage.size()};
+  in.Seek(footer_offset);
 }
 
 }  // namespace
@@ -244,12 +235,10 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
   }
 
   _impl->in = OpenAndCheckHeader(dir, filename);
-  std::vector<byte_type> footer_storage;  // unused when ReadView succeeds
-  const auto footer_view =
-    ReadFooterBytes(*_impl->in, filename, footer_storage);
+  const auto footer_in = _impl->in->Dup();
+  SeekToFooter(*footer_in, filename);
 
-  MemoryReadStream stream{footer_view.data(), footer_view.size()};
-  duckdb::BinaryDeserializer deserializer{stream};
+  duckdb::BinaryDeserializer deserializer{*footer_in};
   deserializer.Set<duckdb::DatabaseInstance&>(db);
   deserializer.Begin();
   BuildColumnReaders(deserializer, db);

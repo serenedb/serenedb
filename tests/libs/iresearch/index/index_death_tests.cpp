@@ -125,9 +125,8 @@ class FailingDirectory : public tests::DirectoryMock {
                   uint64_t count) final {
       _impl->ReadData(b, count);
     }
-    using DataInput::ReadBytes;
-    void ReadBytes(uint64_t offset, irs::byte_type* b, size_t count) final {
-      _impl->ReadBytes(offset, b, count);
+    void ReadData(uint64_t offset, irs::byte_type* b, size_t count) final {
+      _impl->ReadData(offset, b, count);
     }
 
     int16_t ReadI16() final { return _impl->ReadI16(); }

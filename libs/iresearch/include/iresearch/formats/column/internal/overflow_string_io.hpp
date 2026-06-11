@@ -50,7 +50,7 @@ class IndexOutputOverflowWriter final : public duckdb::OverflowStringWriter {
     SDB_ENSURE(len <= std::numeric_limits<uint32_t>::max(), sdb::ERROR_INTERNAL,
                "string too long for overflow format");
     _out->WriteU32(len);
-    _out->WriteBytes(reinterpret_cast<const byte_type*>(string.GetData()), len);
+    _out->WriteData(reinterpret_cast<const byte_type*>(string.GetData()), len);
   }
 
   void Flush() final {}
@@ -68,14 +68,14 @@ class IndexInputOverflowReader final : public duckdb::OverflowStringReader {
     SDB_ASSERT(offset == 0);
     const auto pos = static_cast<uint64_t>(block);
     uint32_t len;
-    _in->ReadBytes(pos, reinterpret_cast<byte_type*>(&len), sizeof(len));
+    _in->ReadData(pos, reinterpret_cast<byte_type*>(&len), sizeof(len));
     len = absl::little_endian::Load32(reinterpret_cast<byte_type*>(&len));
     if (const auto* body = _in->ReadStable(pos + sizeof(len), len)) {
       return duckdb::string_t{reinterpret_cast<const char*>(body), len};
     }
     auto out = duckdb::StringVector::EmptyString(result, len);
-    _in->ReadBytes(pos + sizeof(len),
-                   reinterpret_cast<byte_type*>(out.GetDataWriteable()), len);
+    _in->ReadData(pos + sizeof(len),
+                  reinterpret_cast<byte_type*>(out.GetDataWriteable()), len);
     out.Finalize();
     return out;
   }

@@ -67,7 +67,7 @@ NormColumnReader::NormColumnReader(field_id id,
         continue;
       }
       auto* dst = _owned.data() + offset;
-      in.ReadBytes(_pointers[rg].file_offset, dst, byte_count);
+      in.ReadData(_pointers[rg].file_offset, dst, byte_count);
       _spans[rg] = std::span<const byte_type>{dst, byte_count};
       offset += byte_count;
     }

@@ -35,7 +35,7 @@ namespace irs {
 InputBuf::InputBuf(IndexInput* in) : _in(in) { SDB_ASSERT(_in); }
 
 std::streamsize InputBuf::xsgetn(InputBuf::char_type* c, std::streamsize size) {
-  _in->ReadBytes(reinterpret_cast<byte_type*>(c), size);
+  _in->ReadData(reinterpret_cast<byte_type*>(c), size);
   return size;
 }
 

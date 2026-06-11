@@ -490,7 +490,7 @@ TEST(encryption_test_case, ensure_no_double_bufferring) {
    private:
     void WriteHandle(const irs::byte_type* b, size_t len) {
       _last_written_size = len;
-      _out->WriteBytes(b, len);
+      _out->WriteData(b, len);
       _offset = _out->Position();
     }
 
@@ -529,7 +529,7 @@ TEST(encryption_test_case, ensure_no_double_bufferring) {
 
     size_t ReadInternal(irs::byte_type* b, size_t size) final {
       _last_read_size = size;
-      _in->ReadBytes(b, size);
+      _in->ReadData(b, size);
       return size;
     }
 

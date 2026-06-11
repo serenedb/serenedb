@@ -580,7 +580,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
 
     _suffix.stream.WriteV32(
       leaf ? suf_size : ((suf_size << 1) | static_cast<uint32_t>(type)));
-    _suffix.stream.WriteBytes(data.data() + prefix, suf_size);
+    _suffix.stream.WriteData(data.data() + prefix, suf_size);
 
     if (EntryType::Term == type) {
       _pw->Encode(_stats.stream, e.Term());
@@ -602,7 +602,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
   _blocks_out->WriteV64(ShiftPack64(block_size, leaf));
 
   auto copy = [this](const byte_type* b, size_t len) {
-    _blocks_out->WriteBytes(b, len);
+    _blocks_out->WriteData(b, len);
     return true;
   };
 
@@ -1183,7 +1183,7 @@ void BlockIterator::Load(IndexInput& in, Encryption::Stream* cipher) {
 
   if (!_suffix.begin) {
     _suffix.block.resize(block_size);
-    in.ReadBytes(_suffix.block.data(), block_size);
+    in.ReadData(_suffix.block.data(), block_size);
     _suffix.begin = _suffix.block.c_str();
 
     if (cipher) {
@@ -1204,7 +1204,7 @@ void BlockIterator::Load(IndexInput& in, Encryption::Stream* cipher) {
 
   if (!_stats.begin) {
     _stats.block.resize(block_size);
-    in.ReadBytes(_stats.block.data(), block_size);
+    in.ReadData(_stats.block.data(), block_size);
     _stats.begin = _stats.block.c_str();
   }
 #ifdef SDB_DEV

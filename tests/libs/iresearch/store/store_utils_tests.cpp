@@ -973,11 +973,11 @@ TEST(store_utils_tests, test_remapped_bytes_view) {
     ASSERT_EQ(actual[0], data[0]);
     ASSERT_EQ(5, in.Position());
     std::array<irs::byte_type, 2> read;
-    in.ReadBytes(5, read.data(), 2);
+    in.ReadData(5, read.data(), 2);
     ASSERT_EQ(0x3, read[0]);
     ASSERT_EQ(0x4, read[1]);
     ASSERT_EQ(7, in.Position());
-    in.ReadBytes(read.data(), 2);
+    in.ReadData(read.data(), 2);
     ASSERT_EQ(0x5, read[0]);
     ASSERT_EQ(0x6, read[1]);
     ASSERT_EQ(9, in.Position());

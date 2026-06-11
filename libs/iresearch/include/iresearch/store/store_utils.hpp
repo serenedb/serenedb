@@ -74,14 +74,14 @@ IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const char* s,
                                       size_t len) {
   SDB_ASSERT(len < std::numeric_limits<uint32_t>::max());
   out.WriteV32(static_cast<uint32_t>(len));
-  out.WriteBytes(reinterpret_cast<const byte_type*>(s), len);
+  out.WriteData(reinterpret_cast<const byte_type*>(s), len);
 }
 
 IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const byte_type* s,
                                       size_t len) {
   SDB_ASSERT(len < std::numeric_limits<uint32_t>::max());
   out.WriteV32(static_cast<uint32_t>(len));
-  out.WriteBytes(s, len);
+  out.WriteData(s, len);
 }
 
 template<typename StringType>
@@ -94,7 +94,7 @@ inline StringType ReadString(DataInput& in) {
   const size_t len = in.ReadV32();
 
   StringType str(len, 0);
-  in.ReadBytes(reinterpret_cast<byte_type*>(str.data()), str.size());
+  in.ReadData(reinterpret_cast<byte_type*>(str.data()), str.size());
   return str;
 }
 
@@ -222,9 +222,8 @@ class BytesViewInput : public IndexInput {
   void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
     BytesViewInput::ReadData(b, count);
   }
-  using DataInput::ReadBytes;
-  void ReadBytes(uint64_t offset, byte_type* b, size_t count) noexcept final;
-  void ReadBytes(bstring& buf, size_t count);
+  void ReadData(uint64_t offset, byte_type* b, size_t count) noexcept final;
+  void ReadData(bstring& buf, size_t count);
 
   int16_t ReadI16() noexcept final { return irs::read<uint16_t>(_pos); }
   int32_t ReadI32() noexcept final { return irs::read<uint32_t>(_pos); }
@@ -305,9 +304,8 @@ class RemappedBytesViewInput final : public IndexInput {
   void ReadData(duckdb::QueryContext, byte_type* b, uint64_t size) final {
     _input.ReadData(b, size);
   }
-  using DataInput::ReadBytes;
-  void ReadBytes(uint64_t offset, byte_type* b, size_t size) noexcept final {
-    _input.ReadBytes(SourceToInternal(offset), b, size);
+  void ReadData(uint64_t offset, byte_type* b, size_t size) noexcept final {
+    _input.ReadData(SourceToInternal(offset), b, size);
   }
 
   int16_t ReadI16() noexcept final { return _input.ReadI16(); }

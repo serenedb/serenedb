@@ -65,10 +65,6 @@ class DataInput : public duckdb::ReadStream {
 
   using duckdb::ReadStream::ReadData;
 
-  IRS_FORCE_INLINE void ReadBytes(byte_type* b, size_t count) {
-    ReadData(b, count);
-  }
-
   // @note calling "ReadByte()" on a stream in EOF state is undefined behavior
   virtual bool IsEOF() const noexcept = 0;
 
@@ -102,8 +98,8 @@ class IndexInput : public DataInput {
   using DataInput::ReadVolatile;
   virtual const byte_type* ReadVolatile(uint64_t offset, uint64_t count) = 0;
 
-  using DataInput::ReadBytes;
-  virtual void ReadBytes(uint64_t offset, byte_type* b, size_t count) = 0;
+  using DataInput::ReadData;
+  virtual void ReadData(uint64_t offset, byte_type* b, size_t count) = 0;
 
   // TODO(mbkkt) now they're both implemented the same they,
   // also it doesn't look like all users aware. Maybe we should remove dup?
@@ -168,8 +164,7 @@ class BufferedIndexInput : public IndexInput {
   void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
     BufferedIndexInput::ReadData(b, count);
   }
-  using DataInput::ReadBytes;
-  void ReadBytes(uint64_t offset, byte_type* b, size_t count) final {
+  void ReadData(uint64_t offset, byte_type* b, size_t count) final {
     Seek(offset);
     ReadData(b, count);
   }

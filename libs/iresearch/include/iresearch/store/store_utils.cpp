@@ -41,8 +41,8 @@ void BytesViewInput::ReadData(byte_type* b, uint64_t size) {
   }
 }
 
-void BytesViewInput::ReadBytes(uint64_t offset, byte_type* b,
-                               size_t size) noexcept {
+void BytesViewInput::ReadData(uint64_t offset, byte_type* b,
+                              size_t size) noexcept {
   if (offset < _data.size()) {
     size = std::min(size, size_t(_data.size() - offset));
     std::memcpy(b, _data.data() + offset, sizeof(byte_type) * size);
@@ -53,7 +53,7 @@ void BytesViewInput::ReadBytes(uint64_t offset, byte_type* b,
   _pos = _data.data() + _data.size();
 }
 
-void BytesViewInput::ReadBytes(bstring& buf, size_t size) {
+void BytesViewInput::ReadData(bstring& buf, size_t size) {
   const auto used = buf.size();
 
   buf.resize(used + size);

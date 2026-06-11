@@ -48,7 +48,7 @@ class MemoryFile : public container_utils::RawBlockVector<16, 8> {
 
   MemoryFile& operator>>(DataOutput& out) {
     Visit([&](const byte_type* b, size_t len) {
-      out.WriteBytes(b, len);
+      out.WriteData(b, len);
       return true;
     });
     return *this;
@@ -124,8 +124,7 @@ class MemoryIndexInput final : public IndexInput {
   void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
     MemoryIndexInput::ReadData(b, count);
   }
-  using DataInput::ReadBytes;
-  void ReadBytes(uint64_t offset, byte_type* b, size_t count) final {
+  void ReadData(uint64_t offset, byte_type* b, size_t count) final {
     Seek(offset);
     ReadData(b, count);
   }

@@ -41,10 +41,6 @@ class DataOutput : public duckdb::WriteStream {
 
   virtual void WriteByte(byte_type b) = 0;
 
-  IRS_FORCE_INLINE void WriteBytes(const byte_type* b, size_t len) {
-    WriteData(b, len);
-  }
-
   virtual void WriteU16(uint16_t n) { WriteNumU(n); }
   virtual void WriteU32(uint32_t n) { WriteNumU(n); }
   virtual void WriteU64(uint64_t n) { WriteNumU(n); }
@@ -55,7 +51,7 @@ class DataOutput : public duckdb::WriteStream {
   IRS_FORCE_INLINE void WriteNumU(auto n) {
     // TODO(mbkkt) change to little endian!
     n = absl::little_endian::FromHost(n);
-    WriteBytes(reinterpret_cast<byte_type*>(&n), sizeof(n));
+    WriteData(reinterpret_cast<byte_type*>(&n), sizeof(n));
   }
 
   IRS_FORCE_INLINE void WriteNumV(auto n) {

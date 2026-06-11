@@ -97,7 +97,7 @@ IRS_FORCE_INLINE uint32_t write_block32(PackFunc&& pack, DataOutput& out,
   // TODO(mbkkt) direct write api?
   //  out.get_buffer(buf_size + 1, /*fallback=*/encoded)?
   out.WriteByte(static_cast<byte_type>(bits & 0xFF));
-  out.WriteBytes(reinterpret_cast<byte_type*>(encoded), buf_size);
+  out.WriteData(reinterpret_cast<byte_type*>(encoded), buf_size);
 
   return bits;
 }
@@ -130,7 +130,7 @@ IRS_FORCE_INLINE uint32_t write_block64(PackFunc&& pack, DataOutput& out,
   pack(decoded, encoded, size, bits);
 
   out.WriteByte(static_cast<byte_type>(bits & 0xFF));
-  out.WriteBytes(reinterpret_cast<const byte_type*>(encoded), buf_size);
+  out.WriteData(reinterpret_cast<const byte_type*>(encoded), buf_size);
 
   return bits;
 }
@@ -164,7 +164,7 @@ IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, InputType& in,
   } else if (buf) [[likely]] {
     encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
   } else {
-    in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
+    in.ReadData(reinterpret_cast<byte_type*>(encoded), required);
   }
   unpack(decoded, encoded, bits);
 }
@@ -197,7 +197,7 @@ IRS_FORCE_INLINE void read_block_delta32(UnpackFunc&& unpack, InputType& in,
   } else if (buf) [[likely]] {
     encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
   } else {
-    in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
+    in.ReadData(reinterpret_cast<byte_type*>(encoded), required);
   }
 
   unpack(prev, decoded, encoded, bits);

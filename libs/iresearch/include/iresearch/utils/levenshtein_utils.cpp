@@ -449,7 +449,7 @@ void ParametricDescription::Write(DataOutput& out) const {
 
   const auto distances = this->distances();
   out.WriteV64(distances.size_bytes());
-  out.WriteBytes(distances.data(), distances.size_bytes());
+  out.WriteData(distances.data(), distances.size_bytes());
 }
 
 ParametricDescription ParametricDescription::Read(DataInput& in) {
@@ -469,7 +469,7 @@ ParametricDescription ParametricDescription::Read(DataInput& in) {
 
   const size_t dcount = in.ReadV64();
   std::vector<byte_type> distances(dcount);
-  in.ReadBytes(distances.data(), distances.size());
+  in.ReadData(distances.data(), distances.size());
 
   return {std::move(transitions), std::move(distances), max_distance};
 }

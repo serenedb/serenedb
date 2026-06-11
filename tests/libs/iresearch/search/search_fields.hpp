@@ -68,8 +68,8 @@ struct GeoField final {
   // value is the original GeoJSON text the filter re-parses at query time.
   bool Write(irs::DataOutput& out) const {
     if (!value.empty()) {
-      out.WriteBytes(reinterpret_cast<const irs::byte_type*>(value.data()),
-                     value.size());
+      out.WriteData(reinterpret_cast<const irs::byte_type*>(value.data()),
+                    value.size());
     }
     return true;
   }

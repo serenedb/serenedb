@@ -337,7 +337,7 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   auto handle = bm.RegisterTransientMemory(byte_size, ctx);
   auto buf = bm.Pin(handle);
   const uint64_t file_offset = p.block_pointer.block_id;
-  ctx.In().ReadBytes(file_offset, buf.GetDataMutable(), byte_size);
+  ctx.In().ReadData(file_offset, buf.GetDataMutable(), byte_size);
   auto segment = duckdb::make_uniq<duckdb::ColumnSegment>(
     db, std::move(handle), duckdb::ColumnSegmentType::PERSISTENT,
     static_cast<duckdb::idx_t>(p.tuple_count), *codec, std::move(stats),

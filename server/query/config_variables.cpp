@@ -489,84 +489,49 @@ constexpr std::pair<std::string_view, VariableDescription>
         Readonly<"is_superuser">,
       },
     },
+    {
+      "DateStyle",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets the display format for date and time values.",
+        [] { return duckdb::Value{"ISO, MDY"}; },
+      },
+    },
+    {
+      "IntervalStyle",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets the display format for interval values.",
+        [] { return duckdb::Value{"postgres"}; },
+      },
+    },
+    {
+      "TimeZone",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets the time zone for displaying and interpreting time stamps.",
+        [] { return duckdb::Value{"Etc/UTC"}; },
+      },
+    },
 };
 
-constexpr std::pair<std::string_view,
-                    std::pair<std::string_view, VariableDescription>>
-  kVariableDescriptionCanonical[] = {
-    {
-      "datestyle",
-      {
-        "DateStyle",
-        {
-          LogicalTypeId::VARCHAR,
-          "Sets the display format for date and time values.",
-          [] { return duckdb::Value{"ISO, MDY"}; },
-        },
-      },
-    },
-    {
-      "intervalstyle",
-      {
-        "IntervalStyle",
-        {
-          LogicalTypeId::VARCHAR,
-          "Sets the display format for interval values.",
-          [] { return duckdb::Value{"postgres"}; },
-        },
-      },
-    },
-    {
-      "timezone",
-      {
-        "TimeZone",
-        {
-          LogicalTypeId::VARCHAR,
-          "Sets the time zone for displaying and interpreting time stamps.",
-          [] { return duckdb::Value{"Etc/UTC"}; },
-        },
-      },
-    },
-};
+const duckdb::case_insensitive_set_view_t kVariableIndex = [] {
+  duckdb::case_insensitive_set_view_t m;
+  m.reserve(std::size(kVariableDescription));
+  for (const auto& entry : kVariableDescription) {
+    m.emplace(entry.first);
+  }
+  return m;
+}();
 
 }  // namespace
 
-std::optional<std::pair<std::string_view, VariableDescription>> GetDefault(
-  std::string_view name) {
-  static const duckdb::case_insensitive_map_view_t<std::size_t> var_index = [] {
-    duckdb::case_insensitive_map_view_t<std::size_t> m;
-    m.reserve(std::size(kVariableDescription));
-    for (std::size_t i = 0; i < std::size(kVariableDescription); ++i) {
-      m.emplace(kVariableDescription[i].first, i);
-    }
-    return m;
-  }();
-  static const duckdb::case_insensitive_map_view_t<std::size_t>
-    var_canonical_index = [] {
-      duckdb::case_insensitive_map_view_t<std::size_t> m;
-      m.reserve(std::size(kVariableDescriptionCanonical));
-      for (std::size_t i = 0; i < std::size(kVariableDescriptionCanonical);
-           ++i) {
-        m.emplace(kVariableDescriptionCanonical[i].first, i);
-      }
-      return m;
-    }();
-  if (auto it = var_index.find(name); it != var_index.end()) {
-    return kVariableDescription[it->second];
-  }
-  if (auto it = var_canonical_index.find(name);
-      it != var_canonical_index.end()) {
-    return kVariableDescriptionCanonical[it->second].second;
-  }
-  return std::nullopt;
-}
-
 std::string_view GetOriginalName(std::string_view name) {
-  auto info = GetDefault(name);
-  if (!info) {
+  auto it = kVariableIndex.find(name);
+  if (it == kVariableIndex.end()) {
     return {};
   }
-  return info->first;
+  return *it;
 }
 
 namespace {
@@ -592,10 +557,6 @@ namespace connector {
 
 void RegisterConfigVariables(duckdb::DBConfig& config) {
   for (const auto& [name, desc] : kVariableDescription) {
-    TryRegister(config, name, desc);
-  }
-  for (const auto& [_, pair] : kVariableDescriptionCanonical) {
-    const auto& [name, desc] = pair;
     TryRegister(config, name, desc);
   }
 }

@@ -523,25 +523,26 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   }
   auto& search_scan = *found->scan;
 
-  std::string_view col_name{col_ref.GetAlias()};
-  if (const auto& cids = found->get->GetColumnIds();
-      resolved.column_index.GetIndex() < cids.size()) {
-    col_name =
-      found->get->GetColumnName(cids[resolved.column_index.GetIndex()]);
-  }
+  const auto col_name = [&] -> std::string_view {
+    if (const auto& cids = found->get->GetColumnIds();
+        resolved.column_index.GetIndex() < cids.size()) {
+      return found->get->GetColumnName(cids[resolved.column_index.GetIndex()]);
+    }
+    return col_ref.GetAlias();
+  };
 
   const auto target_col_id =
     ResolveColumnId(resolved, *found->bind_data, *found->get);
   if (target_col_id == catalog::Column::kInvalidId) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_offsets(): column '", col_name, "' not found in table"));
+      ERR_MSG("ts_offsets(): column '", col_name(), "' not found in table"));
   }
   const auto& idx_col_ids = found->bind_data->inverted_index->GetColumnIds();
   if (absl::c_find(idx_col_ids, target_col_id) == idx_col_ids.end()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_offsets(): column '", col_name, "' not found in index"));
+      ERR_MSG("ts_offsets(): column '", col_name(), "' not found in index"));
   }
 
   const auto* col_info =
@@ -576,7 +577,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
     if (existing->limit != limit) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("ts_offsets() called multiple times for field '",
-                              col_name, "' with different limits"));
+                              col_name(), "' with different limits"));
     }
     get_col_idx = existing->get_col_idx;
   }

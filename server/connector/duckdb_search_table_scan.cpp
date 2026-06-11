@@ -70,8 +70,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
   }
 
   const auto num_bind_columns = bind_data.column_ids.size();
-  state->field_ids.reserve(input.column_ids.size());
-  state->output_slots.reserve(input.column_ids.size());
+  state->client_context = &context;
+  state->cs_projections.reserve(input.column_ids.size());
   for (duckdb::idx_t out_slot = 0; out_slot < input.column_ids.size();
        ++out_slot) {
     const auto col_id = input.column_ids[out_slot];
@@ -83,8 +83,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
                 out_slot, ")"));
     }
     const auto catalog_col_id = bind_data.column_ids[col_id];
-    state->field_ids.push_back(static_cast<irs::field_id>(catalog_col_id));
-    state->output_slots.push_back(out_slot);
+    state->cs_projections.push_back(
+      ColumnstoreProjection{.output_slot = out_slot, .column_id = catalog_col_id});
   }
 
   return state;
@@ -133,7 +133,7 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
         continue;
       }
       gstate.materializer = std::make_unique<ColumnstoreMaterializer>(
-        *cs_reader, gstate.field_ids, gstate.output_slots);
+        *cs_reader, gstate.cs_projections, gstate.client_context);
     }
 
     const auto take =

@@ -819,6 +819,22 @@ bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
 
 namespace {
 
+bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
+                                      const duckdb::LogicalIndex& col_idx) {
+  const auto& bind = bind_data_p.Cast<SereneDBScanBindData>();
+  if (!bind.IsInvertedIndexEntry() || !bind.inverted_index) {
+    return false;
+  }
+  const auto bind_col = col_idx.index;
+  if (bind_col >= bind.column_ids.size() ||
+      bind.column_types[bind_col].id() != duckdb::LogicalTypeId::VARIANT) {
+    return false;
+  }
+  const auto* info =
+    bind.inverted_index->FindColumnInfo(bind.column_ids[bind_col]);
+  return info != nullptr && info->store_values;
+}
+
 bool IsAnnScan(const SereneDBScanBindData& bind_data) {
   return !!bind_data.scan_source->Cast<SearchScan>().vector_scorer;
 }
@@ -879,6 +895,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.init_local = IResearchScanInitLocal;
   func.pushdown_complex_filter = &optimizer::IResearchPushdownComplexFilter;
   func.set_scan_order = &IResearchSetScanOrder;
+  func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   return func;
 }
 

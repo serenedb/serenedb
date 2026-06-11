@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/storage/data_pointer.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -55,16 +56,34 @@ namespace irs {
 //     pointers           -> per-row UBIGINT lengths, codec-picked
 //     validity_pointers  -> row-level validity per row group
 //     child_columns      -> [element]; element rows = sum of lengths
-//   STRUCT (not implemented): pointers empty, child_columns one per field.
+//   STRUCT: pointers empty, child_columns one per field.
+struct PersistentColumnData;
+
+enum class VariantShredState : uint8_t {
+  Unshredded = 0,
+  Partial = 1,
+  Full = 2,
+};
+
+struct VariantRowGroupLayout {
+  uint64_t row_start = 0;
+  uint64_t row_count = 0;
+  VariantShredState shred_state = VariantShredState::Unshredded;
+  std::unique_ptr<PersistentColumnData> unshredded;
+  std::unique_ptr<PersistentColumnData> shredded_node;
+};
+
 struct PersistentColumnData {
   duckdb::LogicalType type;
   std::vector<duckdb::DataPointer> pointers;
   std::vector<duckdb::DataPointer> validity_pointers;
   std::vector<PersistentColumnData> child_columns;
+  std::vector<VariantRowGroupLayout> variant_layouts;
   // LIST/MAP only, transient writer state -- not serialised. Cumulative
   // child element count across all row groups written so far for this
   // node, used to bias per-RG offsets into the column-global space.
   uint64_t list_global_running = 0;
+  bool fully_shredded = true;
 };
 
 // Top-level entry for one column: id + recursive metadata root.
@@ -88,6 +107,7 @@ inline duckdb::DataPointer CloneDataPointer(const duckdb::DataPointer& p) {
 inline PersistentColumnData Clone(const PersistentColumnData& src) {
   PersistentColumnData out;
   out.type = src.type;
+  out.fully_shredded = src.fully_shredded;
   out.pointers.reserve(src.pointers.size());
   for (const auto& p : src.pointers) {
     out.pointers.emplace_back(CloneDataPointer(p));
@@ -99,6 +119,22 @@ inline PersistentColumnData Clone(const PersistentColumnData& src) {
   out.child_columns.reserve(src.child_columns.size());
   for (const auto& c : src.child_columns) {
     out.child_columns.emplace_back(Clone(c));
+  }
+  out.variant_layouts.reserve(src.variant_layouts.size());
+  for (const auto& l : src.variant_layouts) {
+    VariantRowGroupLayout cl;
+    cl.row_start = l.row_start;
+    cl.row_count = l.row_count;
+    cl.shred_state = l.shred_state;
+    if (l.unshredded) {
+      cl.unshredded =
+        std::make_unique<PersistentColumnData>(Clone(*l.unshredded));
+    }
+    if (l.shredded_node) {
+      cl.shredded_node =
+        std::make_unique<PersistentColumnData>(Clone(*l.shredded_node));
+    }
+    out.variant_layouts.emplace_back(std::move(cl));
   }
   return out;
 }

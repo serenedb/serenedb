@@ -35,9 +35,7 @@ namespace irs {
 InputBuf::InputBuf(IndexInput* in) : _in(in) { SDB_ASSERT(_in); }
 
 std::streamsize InputBuf::xsgetn(InputBuf::char_type* c, std::streamsize size) {
-  [[maybe_unused]] const auto read =
-    _in->ReadBytes(reinterpret_cast<byte_type*>(c), size);
-  SDB_ASSERT(read == size_t(size));
+  _in->ReadData(reinterpret_cast<byte_type*>(c), size);
   return size;
 }
 
@@ -69,7 +67,7 @@ byte_type BufferedIndexInput::ReadByte() {
   return *_begin++;
 }
 
-const byte_type* BufferedIndexInput::ReadView(uint64_t count) {
+const byte_type* BufferedIndexInput::ReadVolatile(uint64_t count) {
   if (count <= Remain()) {
     auto begin = _begin;
     _begin += count;
@@ -88,7 +86,7 @@ const byte_type* BufferedIndexInput::ReadView(uint64_t count) {
   return nullptr;
 }
 
-size_t BufferedIndexInput::ReadBytes(byte_type* b, size_t count) {
+void BufferedIndexInput::ReadData(byte_type* b, uint64_t count) {
   SDB_ASSERT(_begin <= _end);
 
   // read remaining data from buffer
@@ -99,7 +97,7 @@ size_t BufferedIndexInput::ReadBytes(byte_type* b, size_t count) {
   }
 
   if (read == count) {
-    return read;  // it's enough for us
+    return;  // it's enough for us
   }
 
   auto size = count - read;
@@ -113,8 +111,6 @@ size_t BufferedIndexInput::ReadBytes(byte_type* b, size_t count) {
     _start += (Offset() + size);
     _begin = _end = _buf;  // will trigger refill on the next read
   }
-
-  return read + size;
 }
 
 uint64_t BufferedIndexInput::Refill() {

@@ -162,7 +162,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
     bool Write(irs::DataOutput& out) const {
       if (store_attr && !irs::IsNull(store_attr->value)) {
-        out.WriteBytes(store_attr->value.data(), store_attr->value.size());
+        out.WriteData(store_attr->value.data(), store_attr->value.size());
       }
       return true;
     }

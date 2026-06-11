@@ -60,9 +60,9 @@ void ReadContext::Reset(const ColReader& reader) {
 }
 
 void ReadContext::Read(duckdb::QueryContext /*context*/, duckdb::Block& block) {
-  _in->ReadBytes(static_cast<uint64_t>(block.id),
-                 reinterpret_cast<byte_type*>(block.InternalBuffer()),
-                 block.AllocSize());
+  _in->ReadData(static_cast<uint64_t>(block.id),
+                reinterpret_cast<byte_type*>(block.InternalBuffer()),
+                block.AllocSize());
 }
 
 void ReadContext::ReadBlocks(duckdb::FileBuffer& /*buffer*/,

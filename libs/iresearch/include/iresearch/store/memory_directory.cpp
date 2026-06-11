@@ -61,7 +61,7 @@ class SingleInstanceLock : public IndexLock {
   MemoryDirectory* _parent;
 };
 
-const byte_type* MemoryIndexInput::ReadData(uint64_t count) noexcept {
+const byte_type* MemoryIndexInput::ReadStable(uint64_t count) noexcept {
   const auto* begin = _begin + count;
 
   if (begin > _end) {
@@ -72,8 +72,8 @@ const byte_type* MemoryIndexInput::ReadData(uint64_t count) noexcept {
   return begin;
 }
 
-const byte_type* MemoryIndexInput::ReadData(uint64_t offset,
-                                            uint64_t count) noexcept {
+const byte_type* MemoryIndexInput::ReadStable(uint64_t offset,
+                                              uint64_t count) noexcept {
   const auto idx = _file->buffer_offset(offset);
   SDB_ASSERT(idx < _file->buffer_count());
   const auto& buf = _file->get_buffer(idx);
@@ -93,8 +93,7 @@ const byte_type* MemoryIndexInput::ReadData(uint64_t offset,
   return nullptr;
 }
 
-size_t MemoryIndexInput::ReadBytes(byte_type* b, size_t count) {
-  const auto bytes_left = count;  // initial length
+void MemoryIndexInput::ReadData(byte_type* b, uint64_t count) {
   while (count) {
     if (_begin >= _end) {
       if (IsEOF()) {
@@ -110,7 +109,6 @@ size_t MemoryIndexInput::ReadBytes(byte_type* b, size_t count) {
     _begin += copied;
     b += copied;
   }
-  return bytes_left - count;
 }
 
 void MemoryIndexInput::Seek(uint64_t pos) {

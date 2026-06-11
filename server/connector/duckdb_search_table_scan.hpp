@@ -23,7 +23,6 @@
 #include <duckdb/function/table_function.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <memory>
-#include <vector>
 
 #include "connector/columnstore_materializer.h"
 #include "connector/duckdb_scan_base.hpp"
@@ -32,9 +31,6 @@ namespace sdb::connector {
 
 struct SearchTableScanGlobalState : public CommonScanGlobalState {
   std::shared_ptr<irs::DirectoryReader> reader;
-
-  std::vector<irs::field_id> field_ids;
-  std::vector<duckdb::idx_t> output_slots;
 
   // doc_in_seg is a 0-based row offset within the segment's columnstore,
   // not an iresearch doc_id.

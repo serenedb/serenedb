@@ -179,7 +179,7 @@ std::shared_ptr<ImmutableFstImpl<Arc>> ImmutableFstImpl<Arc>::Read(
   }
 
   // read weights
-  stream.ReadBytes(weights.get(), total_weight_size);
+  stream.ReadData(weights.get(), total_weight_size);
 
   // noexcept block
   allocated = 0;
@@ -307,14 +307,14 @@ bool ImmutableFst<A>::Write(const FST& fst, irs::BufferedOutput& stream,
 
     static_assert(std::is_reference_v<decltype(impl->Final(s))>);
     if (const auto& weight = impl->Final(s); !weight.Empty()) {
-      stream.WriteBytes(weight.c_str(), weight.Size());
+      stream.WriteData(weight.c_str(), weight.Size());
     }
 
     for (ArcIterator<FST> aiter(fst, s); !aiter.Done(); aiter.Next()) {
       const auto& weight = aiter.Value().weight;
 
       if (!weight.Empty()) {
-        stream.WriteBytes(weight.c_str(), weight.Size());
+        stream.WriteData(weight.c_str(), weight.Size());
       }
     }
   }

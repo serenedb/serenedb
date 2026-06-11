@@ -655,41 +655,49 @@ FROM hl_docs_idx WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          ORDER_BY         │
-│    ────────────────────   │
-│     hl_docs_idx.id ASC    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│   ts_highlight(body, #2)  │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│     Index: hl_docs_idx    │
-│      Lookup: rocksdb      │
-│                           │
-│          Filter:          │
-│   PHRASE[body(string) =   │
-│    <Term:fox(0, 0); >]    │
-│                           │
-│       Offsets: body       │
-│                           │
-│        Projections:       │
-│            body           │
-│             id            │
-│ sdb_inverted_index_offsets│
-<slt:ignore>
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+┌───────────────────────────────────┐
+│              ORDER_BY             │
+│    ────────────────────────────   │
+│         hl_docs_idx.id ASC        │
+│                                   │
+│               ~1 row              │
+└─────────────────┬─────────────────┘
+┌─────────────────┴─────────────────┐
+│             PROJECTION            │
+│    ────────────────────────────   │
+│                 id                │
+│       ts_highlight(body, #2)      │
+│                                   │
+│               ~1 row              │
+└─────────────────┬─────────────────┘
+┌─────────────────┴─────────────────┐
+│           IRESEARCH_SCAN          │
+│    ────────────────────────────   │
+│         Index: hl_docs_idx        │
+│          Lookup: rocksdb          │
+│                                   │
+│              Filter:              │
+│      ┌─────────────────────┐      │
+│      │┌───────────────────┐│      │
+│      ││        AND        ││      │
+│      │└─────────┬─────────┘│      │
+│      │┌─────────┴─────────┐│      │
+│      ││       PHRASE      ││      │
+│      ││    ────────────   ││      │
+│      ││  body(string) =   ││      │
+│      ││ <Term:fox(0, 0); >││      │
+│      │└───────────────────┘│      │
+│      └─────────────────────┘      │
+│                                   │
+│           Offsets: body           │
+│                                   │
+│            Projections:           │
+│                body               │
+│                 id                │
+│ sdb_inverted_index_offsets<slt:ignore>│
+│                                   │
+│               ~1 row              │
+└───────────────────────────────────┘
 
 # Virtual-column 2-arg form with MaxOffsets in the options string. The
 # options literal stays on the outer call; bind-time parsing pulls
@@ -700,43 +708,50 @@ FROM hl_docs_idx WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          ORDER_BY         │
-│    ────────────────────   │
-│     hl_docs_idx.id ASC    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│  ts_highlight(body, #2,   │
-│       'MaxOffsets=3,      │
-│     HighlightAll=true')   │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│     Index: hl_docs_idx    │
-│      Lookup: rocksdb      │
-│                           │
-│          Filter:          │
-│   PHRASE[body(string) =   │
-│    <Term:fox(0, 0); >]    │
-│                           │
-│       Offsets: body       │
-│                           │
-│        Projections:       │
-│            body           │
-│             id            │
-│ sdb_inverted_index_offsets│
-<slt:ignore>
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+┌───────────────────────────────────┐
+│              ORDER_BY             │
+│    ────────────────────────────   │
+│         hl_docs_idx.id ASC        │
+│                                   │
+│               ~1 row              │
+└─────────────────┬─────────────────┘
+┌─────────────────┴─────────────────┐
+│             PROJECTION            │
+│    ────────────────────────────   │
+│                 id                │
+│ ts_highlight(body, #2, 'MaxOffsets│
+│      =3, HighlightAll=true')      │
+│                                   │
+│               ~1 row              │
+└─────────────────┬─────────────────┘
+┌─────────────────┴─────────────────┐
+│           IRESEARCH_SCAN          │
+│    ────────────────────────────   │
+│         Index: hl_docs_idx        │
+│          Lookup: rocksdb          │
+│                                   │
+│              Filter:              │
+│      ┌─────────────────────┐      │
+│      │┌───────────────────┐│      │
+│      ││        AND        ││      │
+│      │└─────────┬─────────┘│      │
+│      │┌─────────┴─────────┐│      │
+│      ││       PHRASE      ││      │
+│      ││    ────────────   ││      │
+│      ││  body(string) =   ││      │
+│      ││ <Term:fox(0, 0); >││      │
+│      │└───────────────────┘│      │
+│      └─────────────────────┘      │
+│                                   │
+│           Offsets: body           │
+│                                   │
+│            Projections:           │
+│                body               │
+│                 id                │
+│ sdb_inverted_index_offsets<slt:ignore>│
+│                                   │
+│               ~1 row              │
+└───────────────────────────────────┘
 
 # --- ts_highlight MaxOffsets behaviour ---
 # Row 5 has many 'fox' / 'quick' tokens; capping the synthesised
@@ -804,45 +819,52 @@ WHERE title @@ ts_phrase('fox') AND body @@ ts_phrase('fox')
 ORDER BY id
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          ORDER_BY         │
-│    ────────────────────   │
-│    hl_multi_idx.id ASC    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│             th            │
-│             bh            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: hl_multi_idx    │
-│      Lookup: rocksdb      │
-│                           │
-│          Filter:          │
-│ AND[PHRASE[title(string) =│
-│   <Term:fox(0, 0); >] &&  │
-│   PHRASE[body(string) =   │
-│    <Term:fox(0, 0); >]]   │
-│                           │
-│    Offsets: title, body   │
-│                           │
-│        Projections:       │
-│           title           │
-│            body           │
-<slt:ignore>
-│ sdb_inverted_index_offsets│
-<slt:ignore>
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+┌─────────────────────────────────────────────┐
+│                   ORDER_BY                  │
+│    ──────────────────────────────────────   │
+│             hl_multi_idx.id ASC             │
+│                                             │
+│                    ~1 row                   │
+└──────────────────────┬──────────────────────┘
+┌──────────────────────┴──────────────────────┐
+│                  PROJECTION                 │
+│    ──────────────────────────────────────   │
+│                      id                     │
+│                      th                     │
+│                      bh                     │
+│                                             │
+│                    ~1 row                   │
+└──────────────────────┬──────────────────────┘
+┌──────────────────────┴──────────────────────┐
+│                IRESEARCH_SCAN               │
+│    ──────────────────────────────────────   │
+│             Index: hl_multi_idx             │
+│               Lookup: rocksdb               │
+│                                             │
+│                   Filter:                   │
+│ ┌──────────────────────────────────────────┐│
+│ │┌───────────────────┐                     ││
+│ ││        AND        ├──────────┐          ││
+│ │└─────────┬─────────┘          │          ││
+│ │┌─────────┴─────────┐┌─────────┴─────────┐││
+│ ││       PHRASE      ││       PHRASE      │││
+│ ││    ────────────   ││    ────────────   │││
+│ ││  title(string) =  ││  body(string) =   │││
+│ ││ <Term:fox(0, 0); >││ <Term:fox(0, 0); >│││
+│ │└───────────────────┘└───────────────────┘││
+│ └──────────────────────────────────────────┘│
+│                                             │
+│             Offsets: title, body            │
+│                                             │
+│                 Projections:                │
+│                    title                    │
+│                     body                    │
+│                      id                     │
+│      sdb_inverted_index_offsets<slt:ignore>     │
+│      sdb_inverted_index_offsets<slt:ignore>     │
+│                                             │
+│                    ~1 row                   │
+└─────────────────────────────────────────────┘
 
 # Multi-field render with MaxOffsets on one column only. Title renders
 # all hits (default unlimited); body is capped at 4 fox hits.

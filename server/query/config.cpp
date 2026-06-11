@@ -30,6 +30,8 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/main/valid_checker.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
@@ -180,6 +182,12 @@ void Config::ResetAll() {
 
 bool Config::IsExplicitTransaction() const {
   return !_client_ctx.transaction.IsAutoCommit();
+}
+
+bool Config::IsTransactionInvalidated() const {
+  auto& txn = _client_ctx.transaction;
+  return txn.HasActiveTransaction() &&
+         duckdb::ValidChecker::IsInvalidated(txn.ActiveTransaction());
 }
 
 void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {

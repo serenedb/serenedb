@@ -23,11 +23,6 @@
 #include "tfidf.hpp"
 
 #include <absl/container/inlined_vector.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
-#include <vpack/vpack.h>
 
 #include <cmath>
 #include <cstddef>
@@ -42,11 +37,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
-#include "iresearch/search/scorers.hpp"
 
 namespace irs {
 namespace {
@@ -58,121 +52,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
   return nullptr;
-}
-
-struct TFIDFFieldCollector final : FieldCollector {
-  // number of documents containing the matched field
-  // (possibly without matching terms)
-  uint64_t docs_with_field = 0;
-
-  void collect(const SubReader& /*segment*/,
-               const TermReader& field) noexcept final {
-    docs_with_field += field.docs_count();
-  }
-
-  void reset() noexcept final { docs_with_field = 0; }
-
-  void collect(bytes_view in) final {
-    ByteRefIterator itr{in};
-    const auto docs_with_field_value = vread<uint64_t>(itr);
-    if (itr.pos != itr.end) {
-      throw IoError{"input not read fully"};
-    }
-    docs_with_field += docs_with_field_value;
-  }
-
-  void write(DataOutput& out) const final { out.WriteV64(docs_with_field); }
-};
-
-Scorer::ptr MakeFromBool(const vpack::Slice slice) {
-  SDB_ASSERT(slice.isBool());
-
-  return std::make_unique<TFIDF>(slice.getBool());
-}
-
-struct Params {
-  bool withNorms = TFIDF::WITH_NORMS();  // NOLINT
-};
-
-Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  Params params;
-  auto r = vpack::ReadObjectNothrow(slice, params,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Error '", r.errorMessage(),
-                   "' while constructing tfidf scorer from VPack arguments"));
-    return {};
-  }
-
-  return std::make_unique<TFIDF>(params.withNorms);
-}
-
-Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  Params params;
-  auto r = vpack::ReadTupleNothrow(slice, params);
-  if (!r.ok()) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Error '", r.errorMessage(),
-                   "' while constructing bm25 scorer from VPack arguments"));
-    return {};
-  }
-
-  return std::make_unique<TFIDF>(params.withNorms);
-}
-
-Scorer::ptr MakeVPack(const vpack::Slice slice) {
-  switch (slice.type()) {
-    case vpack::ValueType::Bool:
-      return MakeFromBool(slice);
-    case vpack::ValueType::Object:
-      return MakeFromObject(slice);
-    case vpack::ValueType::Array:
-      return MakeFromArray(slice);
-    default:  // wrong type
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        "Invalid VPack arguments passed while constructing tfidf scorer, "
-        "arguments");
-      return nullptr;
-  }
-}
-
-Scorer::ptr MakeVPack(std::string_view args) {
-  if (IsNull(args)) {
-    // default args
-    return std::make_unique<TFIDF>();
-  } else {
-    vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-    return MakeVPack(slice);
-  }
-}
-
-Scorer::ptr MakeJson(std::string_view args) {
-  if (IsNull(args)) {
-    // default args
-    return std::make_unique<TFIDF>();
-  } else {
-    try {
-      auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-      return MakeVPack(vpack->slice());
-    } catch (const vpack::Exception& ex) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        absl::StrCat("Caught error '", ex.what(),
-                     "' while constructing VPack from JSON for tfidf scorer"));
-    } catch (...) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        "Caught error while constructing VPack from JSON for tfidf scorer");
-    }
-    return nullptr;
-  }
 }
 
 // Helper functions
@@ -263,14 +142,8 @@ struct TfIdfScore : public ScoreOperator {
 
 void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
                     const TermCollector* term) const {
-  const auto* field_ptr = sdb::basics::downCast<TFIDFFieldCollector>(field);
-  const auto* term_ptr = sdb::basics::downCast<TermCollectorImpl>(term);
-
-  // nullptr possible if e.g. 'all' filter
-  const auto docs_with_field = field_ptr ? field_ptr->docs_with_field : 0;
-  // nullptr possible if e.g.'by_column_existence' filter
-  const auto docs_with_term = term_ptr ? term_ptr->docs_with_term : 0;
-  // TODO(mbkkt) SDB_ASSERT(docs_with_field >= docs_with_term);
+  const auto docs_with_field = field ? field->docs_with_field : 0;
+  const auto docs_with_term = term ? term->docs_with_term : 0;
 
   auto* idf = stats_cast(stats_buf);
   idf->value += static_cast<score_t>(
@@ -302,8 +175,6 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
       auto* attr = irs::get<Norm>(ctx.doc_attrs);
       return attr ? &attr->value : nullptr;
     }();
-
-    // Fallback to reading from columnstore
     if (!norm && ctx.fetcher) {
       norm = ctx.fetcher->AddNorms(ctx.field.norm,
                                    ctx.segment.norms(ctx.field.norm));
@@ -317,14 +188,6 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
         norm, ctx.boost, *stats, freq, filter_boost);
     });
   });
-}
-
-TermCollector::ptr TFIDF::PrepareTermCollector() const {
-  return std::make_unique<TermCollectorImpl>();
-}
-
-FieldCollector::ptr TFIDF::PrepareFieldCollector() const {
-  return std::make_unique<TFIDFFieldCollector>();
 }
 
 WandWriter::ptr TFIDF::prepare_wand_writer(size_t max_levels) const {
@@ -357,11 +220,6 @@ bool TFIDF::equals(const Scorer& other) const noexcept {
   }
   const auto& p = sdb::basics::downCast<TFIDF>(other);
   return p._normalize == _normalize;
-}
-
-void TFIDF::init() {
-  REGISTER_SCORER_JSON(TFIDF, MakeJson);
-  REGISTER_SCORER_VPACK(TFIDF, MakeVPack);
 }
 
 }  // namespace irs

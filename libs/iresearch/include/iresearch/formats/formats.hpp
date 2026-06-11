@@ -23,8 +23,8 @@
 #pragma once
 
 #include "basics/memory.hpp"
-#include "iresearch/formats/column/hnsw_index.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
+#include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/column_finalizer.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -33,6 +33,7 @@ namespace duckdb {
 
 class DatabaseInstance;
 }
+#include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -71,7 +72,7 @@ struct SegmentWriterOptions {
   const Comparer* const comparator{};
   // TODO(mbkkt) Remove it from here? We could use directory
   IResourceManager& resource_manager{IResourceManager::gNoop};
-  // Enables the typed columnstore on the segment. Lifetime of `*db` must
+  // Enables the typed .col on the segment. Lifetime of `*db` must
   // extend at least until SegmentWriter::flush() returns.
   duckdb::DatabaseInstance* db = nullptr;
   const ColumnOptionsProvider* column_options = nullptr;
@@ -116,7 +117,7 @@ struct PostingsWriter {
 struct BasicTermReader : public AttributeProvider {
   virtual TermIterator::ptr iterator() const = 0;
 
-  virtual std::string_view name() const = 0;
+  virtual field_id id() const = 0;
 
   virtual FieldProperties properties() const = 0;
 
@@ -125,15 +126,6 @@ struct BasicTermReader : public AttributeProvider {
 
   // Returns the most significant term
   virtual bytes_view(max)() const = 0;
-};
-
-struct FieldWriter {
-  using ptr = std::unique_ptr<FieldWriter>;
-
-  virtual ~FieldWriter() = default;
-  virtual void prepare(const FlushState& state) = 0;
-  virtual void write(const BasicTermReader& reader) = 0;
-  virtual void end() = 0;
 };
 
 struct IteratorFieldOptions : WandContext {
@@ -225,7 +217,7 @@ struct TermReader : public AttributeProvider {
 
   // Returns an intersection of a specified automaton and term reader.
   virtual SeekTermIterator::ptr iterator(
-    automaton_table_matcher& matcher) const = 0;
+    const automaton_table_matcher& matcher) const = 0;
 
   // Evaluates a union of all docs denoted by cookies supplied via a
   // speciified 'provider'. Each doc is represented by a bit in a
@@ -263,20 +255,6 @@ struct TermReader : public AttributeProvider {
 
   // Returns true if scorer denoted by the is supported by the field.
   virtual bool has_scorer(uint8_t index) const = 0;
-};
-
-struct FieldReader {
-  using ptr = std::shared_ptr<FieldReader>;
-
-  virtual ~FieldReader() = default;
-
-  virtual uint64_t CountMappedMemory() const = 0;
-
-  virtual void prepare(const ReaderState& stat) = 0;
-
-  virtual const TermReader* field(std::string_view field) const = 0;
-  virtual FieldIterator::ptr iterator() const = 0;
-  virtual size_t size() const = 0;
 };
 
 struct SegmentMetaWriter : memory::Managed {
@@ -327,13 +305,8 @@ class Format {
   virtual SegmentMetaWriter::ptr get_segment_meta_writer() const = 0;
   virtual SegmentMetaReader::ptr get_segment_meta_reader() const = 0;
 
-  virtual FieldWriter::ptr get_field_writer(
-    bool consolidation, IResourceManager& resource_manager) const = 0;
-  virtual FieldReader::ptr get_field_reader(
-    IResourceManager& resource_manager) const = 0;
-
   virtual PostingsWriter::ptr get_postings_writer(
-    bool consolidation, IResourceManager& resource_manager) const = 0;
+    bool compaction, IResourceManager& resource_manager) const = 0;
   virtual PostingsReader::ptr get_postings_reader() const = 0;
 
   virtual TypeInfo::type_id type() const noexcept = 0;
@@ -355,6 +328,7 @@ struct ReaderState {
   const Directory* dir;
   const SegmentMeta* meta;
   ScorerPtr scorer = nullptr;
+  IdxReader* idx = nullptr;
 };
 
 void FormatBlock128Init();

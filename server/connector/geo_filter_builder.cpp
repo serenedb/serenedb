@@ -20,7 +20,7 @@
 
 #include "geo_filter_builder.hpp"
 
-#include <vpack/parser.h>
+#include <simdjson.h>
 
 #include <duckdb/common/types/geometry_crs.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -31,7 +31,6 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "catalog/geo_validate.h"
-#include "catalog/mangling.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
 #include "functions/vector.h"
@@ -52,17 +51,17 @@ namespace {
 // re-shapes (struct field projection) are NOT peeled -- they carry data
 // changes the filter builder must respect.
 const duckdb::Expression& PeelSameTypeIdCast(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CAST) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
     return expr;
   }
   const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
   if (!cast.child) {
     return expr;
   }
-  if (cast.return_type.id() != cast.child->return_type.id()) {
+  if (cast.GetReturnType().id() != cast.child->GetReturnType().id()) {
     return expr;
   }
-  if (cast.return_type.IsNested()) {
+  if (cast.GetReturnType().IsNested()) {
     return expr;
   }
   return *cast.child;
@@ -70,22 +69,36 @@ const duckdb::Expression& PeelSameTypeIdCast(const duckdb::Expression& expr) {
 
 // Populate the iresearch geo filter base options from the column's geo
 // analyzer. Calls into GeoAnalyzer::prepare which fills in the indexer
-// terms-prefix, S2 indexer options, and the analyzer's stored-form coding.
-Result SetupGeoFilter(const irs::analysis::Analyzer& a,
+// terms-prefix, S2 indexer options, and the analyzer's stored-form coding,
+// then resolves the stored field id the filter reads per doc:
+//   - StoredType::Source: the force-included source column itself (its own
+//     field id); source_is_wkb selects WKB vs GeoJSON re-parsing.
+//   - S2 codings: the analyzer's synthetic StoreAttr blob column.
+Result SetupGeoFilter(const SearchColumnInfo& column_info,
                       irs::GeoFilterOptionsBase& options) {
+  const auto& a = *column_info.tokenizer.analyzer;
   const auto type_id = a.type();
   if (type_id != irs::Type<irs::analysis::GeoJsonAnalyzer>::id() &&
       type_id != irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
     return {ERROR_BAD_PARAMETER, "Analyzer for field is not a geo analyzer"};
   }
   basics::downCast<irs::analysis::GeoAnalyzer>(a).prepare(options);
+  if (options.stored == irs::StoredType::Source) {
+    options.store_field_id = column_info.field_id;
+    options.source_is_wkb =
+      column_info.logical_type.id() == duckdb::LogicalTypeId::GEOMETRY;
+  } else {
+    SDB_ASSERT(
+      irs::field_limits::valid(column_info.tokenizer.tokenizer_column));
+    options.store_field_id = column_info.tokenizer.tokenizer_column;
+  }
   return {};
 }
 
 // Parse a constant geo argument (centroid / target) into a ShapeContainer.
-// JSON / VARCHAR-typed string literal: GeoJSON text via the
-//   JSON->vpack->ParseShape pipeline (LogicalTypeId::VARCHAR catches both
-//   the JSON alias and bare string literals the user types inline).
+// JSON / VARCHAR-typed string literal: GeoJSON text via simdjson ondemand ->
+//   ParseShape (LogicalTypeId::VARCHAR catches both the JSON alias and bare
+//   string literals the user types inline).
 // GEOMETRY: raw WKB bytes via ParseShapeWKB (parser also re-validates CRS84
 //   when the bytes carry an EWKB SRID).
 Result ParseGeoConstant(const duckdb::Value& value,
@@ -97,19 +110,25 @@ Result ParseGeoConstant(const duckdb::Value& value,
       // GeoJSON text directly. (Value::GetValue<string>() goes through
       // ToString() which is fine for VARCHAR but not for GEOMETRY -- see
       // below -- so we use the same accessor here for consistency.)
-      const auto& json_str = duckdb::StringValue::Get(value);
-      vpack::Builder vpack;
-      try {
-        vpack::Parser parser{vpack};
-        parser.parse(json_str);
-      } catch (...) {
+      const std::string_view json_str = duckdb::StringValue::Get(value);
+      std::string buffer{json_str};
+      buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+      simdjson::padded_string_view padded_view{buffer.data(), json_str.size(),
+                                               buffer.size()};
+      simdjson::ondemand::parser parser;
+      simdjson::ondemand::document doc;
+      if (parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
+        return {ERROR_BAD_PARAMETER, "Geo argument is not valid JSON"};
+      }
+      simdjson::ondemand::value json;
+      if (doc.get_value().get(json) != simdjson::SUCCESS) {
         return {ERROR_BAD_PARAMETER, "Geo argument is not valid JSON"};
       }
       // ParseShape (geo_json.cpp) uses the cache as scratch for LatLng
       // pre-quantization; ParseShapeWKB no longer needs one.
       std::vector<S2LatLng> cache;
-      if (!sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(
-            vpack.slice(), shape, cache, coding, nullptr)) {
+      if (!sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(json, shape, cache,
+                                                            coding, nullptr)) {
         return {ERROR_BAD_PARAMETER, "Geo argument is not valid GeoJSON"};
       }
       return {};
@@ -190,22 +209,15 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
       "Geo distance: field has no analyzer attached"};
   }
 
-  std::string field_name;
-  MakeFieldName(column_info->column_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(parent)
                                  : AddFilter<irs::GeoDistanceFilter>(parent);
   geo_filter.boost(ctx.boost);
-  *geo_filter.mutable_field() = std::move(field_name);
+  *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
-  if (auto r = SetupGeoFilter(*column_info->tokenizer.analyzer, *options);
-      r.fail()) {
+  if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
     return std::unexpected<Result>(std::move(r));
   }
-  SDB_ASSERT(column_info->tokenizer.tokenizer_column);
-  options->store_field_id = *column_info->tokenizer.tokenizer_column;
 
   sdb::geo::ShapeContainer centroid_shape;
   if (auto r = ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
@@ -294,22 +306,15 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
             "ST_Distance_Between field has no analyzer attached"};
   }
 
-  std::string field_name;
-  MakeFieldName(column_info->column_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(filter)
                                  : AddFilter<irs::GeoDistanceFilter>(filter);
   geo_filter.boost(ctx.boost);
-  *geo_filter.mutable_field() = std::move(field_name);
+  *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
-  if (auto r = SetupGeoFilter(*column_info->tokenizer.analyzer, *options);
-      r.fail()) {
+  if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
     return r;
   }
-  SDB_ASSERT(column_info->tokenizer.tokenizer_column);
-  options->store_field_id = *column_info->tokenizer.tokenizer_column;
 
   sdb::geo::ShapeContainer centroid_shape;
   if (auto r = ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
@@ -343,7 +348,7 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
                      const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 2) {
-    return {ERROR_BAD_PARAMETER, func.function.name, " has ",
+    return {ERROR_BAD_PARAMETER, func.function.GetName(), " has ",
             func.children.size(), " inputs but 2 expected"};
   }
 
@@ -356,7 +361,7 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
     column_info =
       FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.children[1]));
     if (!column_info) {
-      return {ERROR_BAD_PARAMETER, func.function.name,
+      return {ERROR_BAD_PARAMETER, func.function.GetName(),
               ": one argument must be an indexed column reference"};
     }
     field_idx = 1;
@@ -366,36 +371,29 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
   const auto* shape_val =
     TryGetConstant(PeelSameTypeIdCast(*func.children[shape_idx]));
   if (!shape_val) {
-    return {ERROR_BAD_PARAMETER, func.function.name,
+    return {ERROR_BAD_PARAMETER, func.function.GetName(),
             ": shape argument must be a constant"};
   }
 
   if (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY) {
-    return {ERROR_BAD_PARAMETER, func.function.name,
+    return {ERROR_BAD_PARAMETER, func.function.GetName(),
             ": field must be JSON (GeoJSON) or GEOMETRY"};
   }
   if (!column_info->tokenizer.analyzer) {
-    return {ERROR_BAD_PARAMETER, func.function.name,
+    return {ERROR_BAD_PARAMETER, func.function.GetName(),
             ": field has no analyzer attached"};
   }
-
-  std::string field_name;
-  MakeFieldName(column_info->column_id, field_name);
-  search::mangling::MangleString(field_name);
 
   auto& geo_filter = ctx.negated ? Negate<irs::GeoFilter>(filter)
                                  : AddFilter<irs::GeoFilter>(filter);
   geo_filter.boost(ctx.boost);
-  *geo_filter.mutable_field() = std::move(field_name);
+  *geo_filter.mutable_field_id() = column_info->field_id;
 
   auto* options = geo_filter.mutable_options();
-  if (auto r = SetupGeoFilter(*column_info->tokenizer.analyzer, *options);
-      r.fail()) {
+  if (auto r = SetupGeoFilter(*column_info, *options); r.fail()) {
     return r;
   }
-  SDB_ASSERT(column_info->tokenizer.tokenizer_column);
-  options->store_field_id = *column_info->tokenizer.tokenizer_column;
 
   sdb::geo::ShapeContainer shape;
   if (auto r = ParseGeoConstant(*shape_val, options->coding, shape); r.fail()) {
@@ -403,10 +401,10 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
   options->shape = std::move(shape);
 
-  if (func.function.name == kGeoIntersects) {
+  if (func.function.GetName() == kGeoIntersects) {
     options->type = irs::GeoFilterType::Intersects;
   } else {
-    SDB_ASSERT(func.function.name == kGeoContains);
+    SDB_ASSERT(func.function.GetName() == kGeoContains);
     // ST_Contains(field, shape): indexed contains shape -> filter type
     //   IsContained ("the filter shape is contained within indexed data").
     // ST_Contains(shape, field): shape contains indexed -> filter type
@@ -438,17 +436,17 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
 // analyzer before adding the iresearch GeoDistanceFilter.
 const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
   const FilterContext& ctx, const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return nullptr;
   }
   const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
   if (func.children.size() != 2) {
     return nullptr;
   }
-  if (func.function.name == kGeoDistance) {
+  if (func.function.GetName() == kGeoDistance) {
     return &func;
   }
-  if (func.function.name == kL2DistanceOp) {
+  if (func.function.GetName() == kL2DistanceOp) {
     auto is_geo_col = [&ctx](const duckdb::Expression& child) {
       const auto* info = FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(child));
       if (!info) {
@@ -518,7 +516,7 @@ Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
 std::optional<Result> TryDispatchGeoFunction(
   irs::BooleanFilter& filter, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& func) {
-  const auto& name = func.function.name;
+  const auto& name = func.function.GetName();
   if (name == kGeoInRange) {
     return FromGeoInRange(filter, ctx, func);
   }

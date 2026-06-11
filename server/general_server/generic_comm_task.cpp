@@ -20,7 +20,6 @@
 
 #include "general_server/generic_comm_task.h"
 
-#include "app/app_feature.h"
 #include "app/app_server.h"
 #include "general_server/general_server_feature.h"
 #include "pg/pg_comm_task.h"
@@ -33,8 +32,7 @@ GenericCommTask<SocketType, Base>::GenericCommTask(
   std::shared_ptr<rest::AsioSocket<SocketType>> socket)
   : Base{server, std::move(info)},
     _protocol{std::move(socket)},
-    _general_server_feature{
-      server.server().getFeature<GeneralServerFeature>()} {
+    _general_server_feature{GeneralServerFeature::instance()} {
   if (rest::AsioSocket<SocketType>::supportsMixedIO()) {
     _protocol->setNonBlocking(true);
   }
@@ -59,19 +57,18 @@ void GenericCommTask<SocketType, Base>::Close(asio_ns::error_code ec) {
     // stream_truncated will occur when a peer closes an SSL/TLS connection
     // without performing a proper connection shutdown. unfortunately that
     // can happen at any time, and we have no control over it.
-    SDB_WARN("xxxxx", Logger::REQUESTS, "asio IO error: '", ec.message(), "'");
+    SDB_WARN(HTTP, "asio IO error: '", ec.message(), "'");
   }
 
   if (_protocol) {
     _protocol->timer.cancel();
-    _protocol->shutdown(
-      [self = this->shared_from_this(), this](asio_ns::error_code ec) {
-        if (ec) {
-          SDB_INFO("xxxxx", Logger::REQUESTS,
-                   "error shutting down asio socket: '", ec.message(), "'");
-        }
-        this->_server.unregisterTask(this);
-      });
+    _protocol->shutdown([self = this->shared_from_this(),
+                         this](asio_ns::error_code ec) {
+      if (ec) {
+        SDB_INFO(HTTP, "error shutting down asio socket: '", ec.message(), "'");
+      }
+      this->_server.unregisterTask(this);
+    });
   } else {
     this->_server.unregisterTask(this);
   }
@@ -128,8 +125,7 @@ void GenericCommTask<SocketType, Base>::AsyncReadSome() try {
         me.template AsyncReadSome<UseRaw>();
       }
     } catch (...) {
-      SDB_ERROR("xxxxx", Logger::REQUESTS,
-                "unhandled protocol exception, closing connection");
+      SDB_ERROR(HTTP, "unhandled protocol exception, closing connection");
       me.Close(ec);
     }
   };
@@ -139,8 +135,7 @@ void GenericCommTask<SocketType, Base>::AsyncReadSome() try {
     _protocol->socket.async_read_some(mutable_buff, std::move(cb));
   }
 } catch (...) {
-  SDB_ERROR("xxxxx", Logger::REQUESTS,
-            "unhandled protocol exception, closing connection");
+  SDB_ERROR(HTTP, "unhandled protocol exception, closing connection");
   Close();
 }
 

@@ -1,18 +1,34 @@
-# Verifies the cs storage split for analyzers with `StoreAttr` (geo,
-# wildcard): the analyzer-output cs column lives at a catalog-allocated
-# aux field id, distinct from the user column id. The filter consults the
-# aux column at query time; `SELECT col` returns the user's raw input,
-# never the analyzer's internal representation.
+# Verifies BOTH geojson codings plus the wildcard analyzer's cs storage.
 #
-# Four cases:
-#   geo + INCLUDE: SELECT geo → cs[user_id] = raw GeoJSON
-#   geo no INCLUDE: SELECT geo → RocksDB lookup = raw GeoJSON
+# s2point coding (aux-blob split): the analyzer emits a `StoreAttr` blob
+# that lives at a catalog-allocated aux field id, distinct from the user
+# column id. The filter consults the aux column at query time; `SELECT col`
+# returns the user's raw input, never the analyzer's internal representation.
+#
+# source coding (force-include): the source column is force-included into
+# the columnstore (entry.store_values=true) and re-parsed at query time --
+# no aux blob is written. The user column is always read from cs, so the
+# plan annotates the projections `geo (i)` / `pk (l)` even without an
+# explicit INCLUDE clause; `SELECT geo` returns the raw GeoJSON from cs.
+#
+# Cases:
+#   s2point geo + INCLUDE: SELECT geo → cs[user_id] = raw GeoJSON
+#   s2point geo no INCLUDE: SELECT geo → RocksDB lookup = raw GeoJSON
+#   source geo no INCLUDE: SELECT geo → cs[user_id] = raw GeoJSON (force-included)
+#   source geo + compression: the force-included geo column is compressed via
+#     the `included` opclass (geo listed again as `geo included
+#     (compression = 'zstd')`); plan still annotates `geo (i)` / `pk (l)` and
+#     SELECT geo round-trips. An invalid compression name is rejected.
 #   wildcard + INCLUDE: SELECT b → cs[user_id] = raw VARCHAR
 #   wildcard no INCLUDE: SELECT b → RocksDB lookup = raw VARCHAR
-# In all four, the filter still works (it reads cs[aux_id]).
+# In all cases, the filter still works (s2point reads cs[aux_id]; source
+# re-parses the force-included cs[user_id]).
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY g_dict(template = 'geojson');
+CREATE TEXT SEARCH DICTIONARY g_dict(template = 'geojson', coding = 's2point');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY g_src_dict(template = 'geojson', coding = 'source');
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY w_dict(
@@ -35,7 +51,7 @@ CREATE INDEX t_geo_inc_idx ON t_geo_inc
   USING inverted(geo g_dict) INCLUDE (geo);
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_geo_inc;
+VACUUM (REFRESH_TABLE) t_geo_inc;
 
 query
 EXPLAIN SELECT pk, geo FROM t_geo_inc_idx
@@ -86,7 +102,7 @@ statement ok
 CREATE INDEX t_geo_noi_idx ON t_geo_noi USING inverted(geo g_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_geo_noi;
+VACUUM (REFRESH_TABLE) t_geo_noi;
 
 query
 EXPLAIN SELECT pk, geo FROM t_geo_noi_idx
@@ -125,6 +141,128 @@ WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
 pk	geo
 1	{"type":"Point","coordinates":[37.615895,55.703900]}
 
+# -------- Case 2c: source geo no INCLUDE --------
+# Source coding force-includes even without an explicit INCLUDE clause, so
+# the plan still projects `geo (i)` / `pk (l)` and `SELECT geo` returns the
+# raw GeoJSON read from the force-included cs column (no RocksDB fallback).
+
+statement ok
+CREATE TABLE t_geo_src_noi(pk INTEGER PRIMARY KEY, geo JSON);
+
+statement ok
+INSERT INTO t_geo_src_noi VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}');
+
+statement ok
+CREATE INDEX t_geo_src_noi_idx ON t_geo_src_noi USING inverted(geo g_src_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) t_geo_src_noi;
+
+query
+EXPLAIN SELECT pk, geo FROM t_geo_src_noi_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            geo            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│     t_geo_src_noi_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[GEO_DISTANCE[geo   │
+│    (string), *, <1000]]   │
+│                           │
+│        Projections:       │
+│          geo (i)          │
+│           pk (l)          │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+SELECT pk, geo FROM t_geo_src_noi_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+pk	geo
+1	{"type":"Point","coordinates":[37.615895,55.703900]}
+
+# -------- Case 2d: source geo + compression --------
+# The force-included geo column can be compressed through the existing
+# `included` opclass: list `geo` again as `geo included (compression = 'zstd')`.
+# Source coding force-includes geo into cs regardless, so the plan still
+# annotates `geo (i)` / `pk (l)` and SELECT geo re-reads the (now compressed)
+# cs column. A bare INCLUDE (geo) carries no option and is meaningless here.
+
+statement ok
+CREATE TABLE t_geo_src_zstd(pk INTEGER PRIMARY KEY, geo JSON);
+
+statement ok
+INSERT INTO t_geo_src_zstd VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}');
+
+statement ok
+CREATE INDEX t_geo_src_zstd_idx ON t_geo_src_zstd
+  USING inverted(geo g_src_dict, geo included (compression = 'zstd'));
+
+statement ok
+VACUUM (REFRESH_TABLE) t_geo_src_zstd;
+
+query
+EXPLAIN SELECT pk, geo FROM t_geo_src_zstd_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            geo            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│     t_geo_src_zstd_idx    │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[GEO_DISTANCE[geo   │
+│    (string), *, <1000]]   │
+│                           │
+│        Projections:       │
+│          geo (i)          │
+│           pk (l)          │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+SELECT pk, geo FROM t_geo_src_zstd_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+pk	geo
+1	{"type":"Point","coordinates":[37.615895,55.703900]}
+
+# An invalid compression name on the force-included geo column is rejected at
+# CREATE INDEX time (mirrors cs_compression_methods.test's 'constant' case).
+
+statement error
+CREATE INDEX t_geo_src_bad_idx ON t_geo_src_zstd
+  USING inverted(geo g_src_dict, geo included (compression = 'constant'));
+
 # -------- Case 3: wildcard + INCLUDE --------
 
 statement ok
@@ -138,7 +276,7 @@ CREATE INDEX t_wild_inc_idx ON t_wild_inc
   USING inverted(b w_dict) INCLUDE (b);
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_wild_inc;
+VACUUM (REFRESH_TABLE) t_wild_inc;
 
 query
 EXPLAIN SELECT pk, b FROM t_wild_inc_idx
@@ -196,7 +334,7 @@ statement ok
 CREATE INDEX t_wild_noi_idx ON t_wild_noi USING inverted(b w_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) t_wild_noi;
+VACUUM (REFRESH_TABLE) t_wild_noi;
 
 query
 EXPLAIN SELECT pk, b FROM t_wild_noi_idx

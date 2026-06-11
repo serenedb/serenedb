@@ -1,0 +1,56 @@
+control substitution on
+
+
+# The function-to-relation dependency edge is rebuilt during catalog load
+# (AddDependencies -> ModifyFunctionDependencies parses the body and re-adds
+# refs). After a crash + restart, RESTRICT on the table must still be refused
+# while a function references it, and CASCADE must still drop the function.
+
+statement ok
+CREATE TABLE clickclack_recov_t (n INT);
+
+
+statement count 2
+INSERT INTO clickclack_recov_t VALUES (1), (2);
+
+
+statement ok
+CREATE FUNCTION babsky_recov_count() AS (SELECT count(*) FROM clickclack_recov_t);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# The reloaded dependency graph still blocks RESTRICT.
+connection after_crash
+statement error (?i)cannot drop table .*clickclack_recov_t.* because other objects depend on it
+DROP TABLE clickclack_recov_t;
+
+
+connection after_crash
+query
+SELECT babsky_recov_count();
+----
+babsky_recov_count
+2
+
+
+# CASCADE still drops the dependent function.
+connection after_crash
+statement ok
+DROP TABLE clickclack_recov_t CASCADE;
+
+
+connection after_crash
+statement error (?i)(function|macro|scalar).*babsky_recov_count.* does not exist
+SELECT babsky_recov_count();

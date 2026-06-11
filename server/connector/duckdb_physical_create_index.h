@@ -50,13 +50,16 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // (foreign-source-backed). `view_columns` is the synthesised column list
   // when `relation` is a view (Tables expose Columns() directly); ignored
   // for tables.
-  SereneDBPhysicalCreateIndex(duckdb::PhysicalPlan& plan,
-                              std::shared_ptr<catalog::Object> relation,
-                              std::vector<catalog::Column> view_columns,
-                              ObjectId database_id,
-                              duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
-                              SereneDBSchemaEntry& schema_entry,
-                              duckdb::idx_t estimated_cardinality);
+  // `bound_expressions` carries the IndexBinder's output (one per
+  // `info->parsed_expressions`). For a bare column ref the slot is set but
+  // unused; for an arbitrary expression we normalise + serialise
+  // it via helpers to emit `ExpressionSpecific`.
+  SereneDBPhysicalCreateIndex(
+    duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Object> relation,
+    std::vector<catalog::Column> view_columns, ObjectId database_id,
+    duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
+    std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
+    SereneDBSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
   bool ParallelSink() const final;
@@ -67,6 +70,9 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
+  duckdb::SinkCombineResultType Combine(
+    duckdb::ExecutionContext& context,
+    duckdb::OperatorSinkCombineInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline& pipeline, duckdb::Event& event,
     duckdb::ClientContext& context,
@@ -79,6 +85,9 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
     duckdb::OperatorSourceInput& input) const final;
   bool IsSource() const final { return true; }
+
+  ObjectId DatabaseId() const noexcept { return _database_id; }
+  ObjectId TargetRelationId() const noexcept { return _relation->GetId(); }
 
  private:
   // Returns the columns of the relation. For tables: `Table::Columns()`;
@@ -94,6 +103,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   std::vector<catalog::Column> _view_columns;
   ObjectId _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
   SereneDBSchemaEntry& _schema_entry;
 };
 

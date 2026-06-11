@@ -1,0 +1,102 @@
+control substitution on
+
+
+# Regression: CREATE OR REPLACE VIEW/FUNCTION used to allocate a fresh ObjectId
+# and write a new definition row without dropping the old one. The orphaned row
+# stayed in RocksDB, so on the next restart the catalog loader registered two
+# definitions with the same name (RegisterObject with replace=false) and failed
+# with a duplicate-name error -- the database would not reopen. Reusing the
+# existing id (CreateView/CreateFunction -> ReplaceObject) overwrites the same
+# row, so recovery loads exactly one definition.
+
+statement ok
+CREATE TABLE kostya_t (n INT);
+
+
+statement count 3
+INSERT INTO kostya_t VALUES (1), (2), (3);
+
+
+statement ok
+CREATE FUNCTION babsky_f(x INT) AS x * x;
+
+
+# Replace the function in place (would have left an orphan definition row).
+statement ok
+CREATE OR REPLACE FUNCTION babsky_f(x INT) AS x * x * x;
+
+
+statement ok
+CREATE OR REPLACE VIEW clickclack_v AS SELECT babsky_f(n) AS c FROM kostya_t;
+
+
+# Replace the view in place too.
+statement ok
+CREATE OR REPLACE VIEW clickclack_v AS SELECT babsky_f(n) + 1 AS c FROM kostya_t;
+
+
+# Crash the server; the catalog must reload cleanly from RocksDB.
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# If the reload hit a duplicate-name definition the server would not come back
+# and this retry would never succeed.
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Exactly one definition of each survived recovery -- no ghost rows.
+connection after_crash
+query
+SELECT count(*) FROM pg_catalog.pg_proc WHERE proname = 'babsky_f';
+----
+count
+1
+
+
+connection after_crash
+query
+SELECT count(*) FROM information_schema.views WHERE table_name = 'clickclack_v';
+----
+count
+1
+
+
+# The replaced bodies are the ones that persisted: babsky_f(n) = n^3,
+# the view adds 1.
+connection after_crash
+query
+SELECT c FROM clickclack_v ORDER BY c;
+----
+c
+2
+9
+28
+
+
+# Cascade still works after recovery: the reloaded dependency graph still knows
+# the view depends on the function (RESTRICT refuses), and CASCADE drops it.
+connection after_crash
+statement error (?i)cannot drop function .*babsky_f.* because other objects depend on it
+DROP FUNCTION babsky_f(INT);
+
+
+connection after_crash
+statement ok
+DROP FUNCTION babsky_f(INT) CASCADE;
+
+
+connection after_crash
+statement error (?i)(table|relation|view).*clickclack_v.*does not exist
+SELECT * FROM clickclack_v;
+
+
+connection after_crash
+statement ok
+DROP TABLE kostya_t;

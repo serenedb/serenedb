@@ -41,13 +41,13 @@ class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {
     irs::utf8_utils::ToUTF32<false>(target, std::back_inserter(target_chars));
 
     for (auto& segment : *reader) {
-      auto fields = segment.fields();
-      ASSERT_NE(nullptr, fields);
+      for (auto field_id : segment.field_ids()) {
+        const auto* field = segment.field(field_id);
+        ASSERT_NE(nullptr, field);
 
-      while (fields->next()) {
-        auto expected_terms = fields->value().iterator(irs::SeekMode::NORMAL);
+        auto expected_terms = field->iterator(irs::SeekMode::NORMAL);
         ASSERT_NE(nullptr, expected_terms);
-        auto actual_terms = fields->value().iterator(matcher);
+        auto actual_terms = field->iterator(matcher);
         ASSERT_NE(nullptr, actual_terms);
 
         auto* payload = irs::get<irs::PayAttr>(*actual_terms);

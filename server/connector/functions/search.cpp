@@ -82,7 +82,7 @@ void TSQueryStubFn(duckdb::DataChunk& /*args*/,
 void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
                   duckdb::Vector& /*result*/) {
   const auto& fn_name =
-    state.expr.Cast<duckdb::BoundFunctionExpression>().function.name;
+    state.expr.Cast<duckdb::BoundFunctionExpression>().function.GetName();
   throw duckdb::InvalidInputException(
     "%s() requires an inverted index scan in the same sub-query", fn_name);
 }
@@ -317,30 +317,42 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
   // irs::ByPhrase. Gap args are bare INTEGERs (exact gap N) or 2-element
   // INTEGER[] / arrays ([min, max] range). See FromPhrase for the full
   // grammar.
+  // Each text-arg TSQ constructor accepts VARCHAR and BLOB.
   {
-    duckdb::ScalarFunction fn(std::string{kTSQPhrase},
-                              {duckdb::LogicalType::VARCHAR}, MakeTSQueryType(),
-                              TSQueryStubFn);
-    fn.varargs = duckdb::LogicalType::ANY;
-    loader.RegisterFunction(std::move(fn));
+    duckdb::ScalarFunctionSet set{std::string{kTSQPhrase}};
+    for (auto first_arg :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      duckdb::ScalarFunction fn(std::string{kTSQPhrase}, {first_arg},
+                                MakeTSQueryType(), TSQueryStubFn);
+      fn.SetVarArgs(duckdb::LogicalType::ANY);
+      set.AddFunction(std::move(fn));
+    }
+    loader.RegisterFunction(std::move(set));
   }
 
   // NGRAM(text [, threshold]) -- tokenises via ambient analyzer.
   {
     duckdb::ScalarFunctionSet set{std::string{kTSQNgram}};
-    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::VARCHAR},
-                                           MakeTSQueryType(), TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::DOUBLE},
-      MakeTSQueryType(), TSQueryStubFn));
+    for (auto first_arg :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      set.AddFunction(
+        duckdb::ScalarFunction({first_arg}, MakeTSQueryType(), TSQueryStubFn));
+      set.AddFunction(
+        duckdb::ScalarFunction({first_arg, duckdb::LogicalType::DOUBLE},
+                               MakeTSQueryType(), TSQueryStubFn));
+    }
     loader.RegisterFunction(std::move(set));
   }
 
   // ts_like(pattern) / PREFIX(text) -- raw, no tokenisation.
   for (auto name : {kTSQLike, kTSQPrefix}) {
-    loader.RegisterFunction(
-      duckdb::ScalarFunction(std::string{name}, {duckdb::LogicalType::VARCHAR},
-                             MakeTSQueryType(), TSQueryStubFn));
+    duckdb::ScalarFunctionSet set{std::string{name}};
+    for (auto first_arg :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      set.AddFunction(
+        duckdb::ScalarFunction({first_arg}, MakeTSQueryType(), TSQueryStubFn));
+    }
+    loader.RegisterFunction(std::move(set));
   }
 
   // LESS / LESS_EQ / GREATER / GREATER_EQ -- single-bound range
@@ -358,7 +370,7 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
   for (auto name : {kTSQLess, kTSQLessEq, kTSQGreater, kTSQGreaterEq}) {
     duckdb::ScalarFunction fn(std::string{name}, {duckdb::LogicalType::ANY},
                               MakeTSQueryType(), TSQueryStubFn);
-    fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(std::move(fn));
   }
 
@@ -367,11 +379,14 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
   // the pattern is matched directly against terms in the field.
   {
     duckdb::ScalarFunctionSet set{std::string{kTSQRegexp}};
-    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::VARCHAR},
-                                           MakeTSQueryType(), TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      MakeTSQueryType(), TSQueryStubFn));
+    for (auto first_arg :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      set.AddFunction(
+        duckdb::ScalarFunction({first_arg}, MakeTSQueryType(), TSQueryStubFn));
+      set.AddFunction(
+        duckdb::ScalarFunction({first_arg, duckdb::LogicalType::VARCHAR},
+                               MakeTSQueryType(), TSQueryStubFn));
+    }
     loader.RegisterFunction(std::move(set));
   }
 
@@ -382,19 +397,21 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
   // picks the distance automatically from term length.
   {
     duckdb::ScalarFunctionSet set{std::string{kTSQLevenshtein}};
-    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::VARCHAR},
-                                           MakeTSQueryType(), TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::INTEGER},
-      MakeTSQueryType(), TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::INTEGER,
-       duckdb::LogicalType::BOOLEAN},
-      MakeTSQueryType(), TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::INTEGER,
-       duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::VARCHAR},
-      MakeTSQueryType(), TSQueryStubFn));
+    for (auto first_arg :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      set.AddFunction(
+        duckdb::ScalarFunction({first_arg}, MakeTSQueryType(), TSQueryStubFn));
+      set.AddFunction(
+        duckdb::ScalarFunction({first_arg, duckdb::LogicalType::INTEGER},
+                               MakeTSQueryType(), TSQueryStubFn));
+      set.AddFunction(duckdb::ScalarFunction(
+        {first_arg, duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN},
+        MakeTSQueryType(), TSQueryStubFn));
+      set.AddFunction(duckdb::ScalarFunction(
+        {first_arg, duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN,
+         duckdb::LogicalType::VARCHAR},
+        MakeTSQueryType(), TSQueryStubFn));
+    }
     loader.RegisterFunction(std::move(set));
   }
 
@@ -459,7 +476,7 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
       // Without SPECIAL_HANDLING, DuckDB folds any call with a NULL
       // arg to NULL at bind time; we'd never see the user's bucket
       // structure (e.g. `compound(list, NULL, NULL)` -> NULL).
-      fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+      fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
       set.AddFunction(std::move(fn));
     };
     for (const auto& a : opts) {
@@ -494,27 +511,27 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
   // registered; the filter-builder dispatch handles both.
   {
     duckdb::ScalarFunctionSet set{std::string{kTSQTokenize}};
-    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::VARCHAR},
-                                           MakeTSQueryType(), TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      MakeTSQueryType(), TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
-      duckdb::LogicalType::LIST(MakeTSQueryType()), TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
-       duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::LIST(MakeTSQueryType()), TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ARRAY(duckdb::LogicalType::VARCHAR,
-                                  duckdb::optional_idx{})},
-      duckdb::LogicalType::LIST(MakeTSQueryType()), TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ARRAY(duckdb::LogicalType::VARCHAR,
-                                  duckdb::optional_idx{}),
-       duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::LIST(MakeTSQueryType()), TSQueryStubFn));
+    for (auto first_arg :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      set.AddFunction(
+        duckdb::ScalarFunction({first_arg}, MakeTSQueryType(), TSQueryStubFn));
+      set.AddFunction(
+        duckdb::ScalarFunction({first_arg, duckdb::LogicalType::VARCHAR},
+                               MakeTSQueryType(), TSQueryStubFn));
+      set.AddFunction(duckdb::ScalarFunction(
+        {duckdb::LogicalType::LIST(first_arg)},
+        duckdb::LogicalType::LIST(MakeTSQueryType()), TSQueryStubFn));
+      set.AddFunction(duckdb::ScalarFunction(
+        {duckdb::LogicalType::LIST(first_arg), duckdb::LogicalType::VARCHAR},
+        duckdb::LogicalType::LIST(MakeTSQueryType()), TSQueryStubFn));
+      set.AddFunction(duckdb::ScalarFunction(
+        {duckdb::LogicalType::ARRAY(first_arg, duckdb::optional_idx{})},
+        duckdb::LogicalType::LIST(MakeTSQueryType()), TSQueryStubFn));
+      set.AddFunction(duckdb::ScalarFunction(
+        {duckdb::LogicalType::ARRAY(first_arg, duckdb::optional_idx{}),
+         duckdb::LogicalType::VARCHAR},
+        duckdb::LogicalType::LIST(MakeTSQueryType()), TSQueryStubFn));
+    }
     loader.RegisterFunction(std::move(set));
   }
 
@@ -535,7 +552,7 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
       {duckdb::LogicalType::ANY, duckdb::LogicalType::ANY,
        duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::BOOLEAN},
       MakeTSQueryType(), TSQueryStubFn);
-    fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(std::move(fn));
   }
 }
@@ -672,7 +689,7 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
       std::string{kPhraseMatches},
       {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BOOLEAN, SearchStubFn);
-    fn.varargs = duckdb::LogicalType::ANY;
+    fn.SetVarArgs(duckdb::LogicalType::ANY);
     loader.RegisterFunction(std::move(fn));
   }
 
@@ -759,7 +776,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // follow iresearch's Bm25 (k1 = 1.2, b = 0.75).
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::Bm25::kName}};
+      std::string{catalog::ScorerOptions::Bm25::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -773,7 +790,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // TF-IDF. `with_norms` toggles length normalisation (default false).
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::Tfidf::kName}};
+      std::string{catalog::ScorerOptions::Tfidf::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -787,7 +804,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // lambda in (0, 1]; iresearch default is 0.1.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::LmJm::kName}};
+      std::string{catalog::ScorerOptions::LmJm::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -801,7 +818,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // iresearch default is 2000.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::LmDirichlet::kName}};
+      std::string{catalog::ScorerOptions::LmDirichlet::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -815,7 +832,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // floor-at-zero clamp, so scores can be negative when tf < mu*P(t|C).
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::IndriDirichlet::kName}};
+      std::string{catalog::ScorerOptions::IndriDirichlet::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -829,7 +846,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // kernel: 'standardized' (default), 'saturated', or 'chi_squared'.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::Dfi::kName}};
+      std::string{catalog::ScorerOptions::Dfi::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -841,7 +858,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // raw_tf(tableoid) -> FLOAT -- emits raw term frequency per matched doc.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::RawBoost::kName}};
+      std::string{catalog::ScorerOptions::RawBoost::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
@@ -850,7 +867,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // raw_tf(tableoid) -> FLOAT -- emits raw term frequency per matched doc.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::RawTf::kName}};
+      std::string{catalog::ScorerOptions::RawTf::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
@@ -859,7 +876,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // raw_dl(tableoid) -> FLOAT -- emits raw document length per matched doc.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::RawDL::kName}};
+      std::string{catalog::ScorerOptions::RawDL::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
@@ -878,7 +895,7 @@ void RegisterPositionFunctions(duckdb::ExtensionLoader& loader) {
 
   auto add_inline = [&](duckdb::vector<duckdb::LogicalType> args) {
     duckdb::ScalarFunction fn{std::move(args), list_int, SearchStubFn};
-    fn.init_local_state = InitOffsetsLocalState;
+    fn.SetInitStateCallback(InitOffsetsLocalState);
     set.AddFunction(std::move(fn));
   };
   add_inline({duckdb::LogicalType::ANY});
@@ -887,8 +904,8 @@ void RegisterPositionFunctions(duckdb::ExtensionLoader& loader) {
   auto add_standalone = [&](duckdb::vector<duckdb::LogicalType> args) {
     duckdb::ScalarFunction fn{std::move(args), list_int, OffsetsScalarFn,
                               OffsetsStandaloneBind};
-    fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
-    fn.init_local_state = InitOffsetsLocalState;
+    fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    fn.SetInitStateCallback(InitOffsetsLocalState);
     set.AddFunction(std::move(fn));
   };
   add_standalone({duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,

@@ -24,7 +24,6 @@
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/prepared_state_visitor.hpp>
 #include <span>
-#include <string>
 #include <variant>
 #include <vector>
 
@@ -71,7 +70,8 @@ struct FieldState {
 
 struct FieldEntry {
   duckdb::idx_t output_idx = 0;
-  std::string name;
+  irs::field_id id{irs::field_limits::invalid()};
+  size_t limit = 0;
   FieldState state;
 };
 

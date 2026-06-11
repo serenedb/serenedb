@@ -24,11 +24,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
-#include <vpack/vpack.h>
 
 #include <cstdint>
 #include <exception>
@@ -43,10 +38,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 
@@ -59,128 +54,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 }
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
-
-struct BM25FieldCollector final : FieldCollector {
-  // number of documents containing the matched field
-  // (possibly without matching terms)
-  uint64_t docs_with_field = 0;
-  // number of terms for processed field
-  uint64_t total_term_freq = 0;
-
-  void collect(const SubReader& /*segment*/,
-               const TermReader& field) noexcept final {
-    docs_with_field += field.docs_count();
-    if (const auto* freq = irs::get<FreqAttr>(field)) {
-      total_term_freq += freq->value;
-    }
-  }
-
-  void reset() noexcept final {
-    docs_with_field = 0;
-    total_term_freq = 0;
-  }
-
-  void collect(bytes_view in) final {
-    ByteRefIterator itr{in};
-    const auto docs_with_field_value = vread<uint64_t>(itr);
-    const auto total_term_freq_value = vread<uint64_t>(itr);
-    if (itr.pos != itr.end) {
-      throw IoError{"input not read fully"};
-    }
-    docs_with_field += docs_with_field_value;
-    total_term_freq += total_term_freq_value;
-  }
-
-  void write(DataOutput& out) const final {
-    out.WriteV64(docs_with_field);
-    out.WriteV64(total_term_freq);
-  }
-};
-
-struct ObjectParams {
-  score_t k = BM25::K();
-  score_t b = BM25::B();
-  bool boost_as_score = BM25::BOOST_AS_SCORE();
-  bool approximate = true;
-};
-
-Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadObjectNothrow(slice, params,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing bm25 scorer from VPack arguments");
-    return {};
-  }
-
-  return std::make_unique<BM25>(params.k, params.b, params.boost_as_score,
-                                params.approximate);
-}
-
-struct ArrayParams {
-  score_t k = BM25::K();
-  score_t b = BM25::B();
-};
-
-Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  ArrayParams params;
-  auto r = vpack::ReadTupleNothrow(slice, params);
-  if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing bm25 scorer from VPack arguments");
-    return {};
-  }
-
-  return std::make_unique<BM25>(params.k, params.b);
-}
-
-Scorer::ptr MakeVPack(const vpack::Slice slice) {
-  switch (slice.type()) {
-    case vpack::ValueType::Object:
-      return MakeFromObject(slice);
-    case vpack::ValueType::Array:
-      return MakeFromArray(slice);
-    default:  // wrong type
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        "Invalid VPack arguments passed while constructing bm25 scorer");
-      return nullptr;
-  }
-}
-
-Scorer::ptr MakeVPack(std::string_view args) {
-  if (IsNull(args)) {
-    // default args
-    return std::make_unique<irs::BM25>();
-  }
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-Scorer::ptr MakeJson(std::string_view args) {
-  if (IsNull(args)) {
-    // default args
-    return std::make_unique<irs::BM25>();
-  }
-  try {
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing VPack from JSON for bm25 scorer"));
-  } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Caught error while constructing VPack from JSON for bm25 scorer");
-  }
   return nullptr;
 }
 
@@ -407,15 +280,9 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
                    const irs::TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* field_ptr = sdb::basics::downCast<BM25FieldCollector>(field);
-  const auto* term_ptr = sdb::basics::downCast<TermCollectorImpl>(term);
-
-  // nullptr possible if e.g. 'all' filter
-  const auto docs_with_field = field_ptr ? field_ptr->docs_with_field : 0;
-  // nullptr possible if e.g.'by_column_existence' filter
-  const auto docs_with_term = term_ptr ? term_ptr->docs_with_term : 0;
-  // nullptr possible if e.g. 'all' filter
-  const auto total_term_freq = field_ptr ? field_ptr->total_term_freq : 0;
+  const auto docs_with_field = field ? field->docs_with_field : 0;
+  const auto docs_with_term = term ? term->docs_with_term : 0;
+  const auto total_term_freq = field ? field->total_term_freq : 0;
 
   // precomputed idf value
   stats->idf += score_t(
@@ -440,10 +307,6 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
   } else {
     stats->norm_length = kb;
   }
-}
-
-FieldCollector::ptr BM25::PrepareFieldCollector() const {
-  return std::make_unique<BM25FieldCollector>();
 }
 
 ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
@@ -542,10 +405,6 @@ WandSource::ptr BM25::prepare_wand_source() const {
   return std::make_unique<FreqNormSource<kWandTagNorm>>();
 }
 
-TermCollector::ptr BM25::PrepareTermCollector() const {
-  return std::make_unique<TermCollectorImpl>();
-}
-
 Scorer::WandType BM25::wand_type() const noexcept {
   if (IsBM1()) {
     return WandType::None;
@@ -565,11 +424,6 @@ bool BM25::equals(const Scorer& other) const noexcept {
   }
   const auto& p = sdb::basics::downCast<BM25>(other);
   return p._k == _k && p._b == _b;
-}
-
-void BM25::init() {
-  REGISTER_SCORER_JSON(BM25, MakeJson);
-  REGISTER_SCORER_VPACK(BM25, MakeVPack);
 }
 
 }  // namespace irs

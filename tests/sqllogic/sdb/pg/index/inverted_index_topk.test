@@ -42,7 +42,7 @@ CREATE INDEX docs_topk_idx ON docs USING inverted(id, body en_topk);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 query
@@ -50,13 +50,6 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │           TOP_N           │
 │    ────────────────────   │
 │           Top: 5          │
@@ -81,8 +74,18 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
+
+
+query
+SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC LIMIT 5;
+----
+id
+1
+5
+4
+2
 
 
 query ?
@@ -116,7 +119,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -125,13 +128,6 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │           TOP_N           │
 │    ────────────────────   │
 │           Top: 5          │
@@ -159,7 +155,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -168,13 +164,6 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │           #1 ASC          │
@@ -198,7 +187,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -212,6 +201,14 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: docs_topk_idx   │
@@ -225,9 +222,12 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │          TopK: 3          │
-│      Projections: id      │
 │                           │
-│          ~5 rows          │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -247,16 +247,25 @@ QUERY PLAN
 │    ────────────────────   │
 │           id ASC          │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           UNION           ├──────────────┐
 └─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│           TOP_N           ││           TOP_N           │
+│    ────────────────────   ││    ────────────────────   │
+│           Top: 3          ││           Top: 3          │
+│     Order By: #2 DESC     ││     Order By: #2 DESC     │
+│                           ││                           │
+│           ~1 row          ││           ~1 row          │
+└─────────────┬─────────────┘└─────────────┬─────────────┘
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │         PROJECTION        ││         PROJECTION        │
 │    ────────────────────   ││    ────────────────────   │
 │             id            ││             id            │
 │         has_score         ││         has_score         │
+│  sdb_inverted_index_score ││  sdb_inverted_index_score │
 │                           ││                           │
 │           ~1 row          ││           ~1 row          │
 └─────────────┬─────────────┘└─────────────┬─────────────┘
@@ -279,7 +288,7 @@ QUERY PLAN
 │             id            ││             id            │
 │  sdb_inverted_index_score ││  sdb_inverted_index_score │
 │                           ││                           │
-│          ~5 rows          ││          ~5 rows          │
+│           ~1 row          ││           ~1 row          │
 └───────────────────────────┘└───────────────────────────┘
 
 
@@ -298,7 +307,15 @@ QUERY PLAN
 │    ────────────────────   │
 │         sub.id ASC        │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
@@ -319,7 +336,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -396,7 +413,7 @@ INSERT INTO docs VALUES (19, 'purple fox');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs;
+VACUUM (REFRESH_TABLE) docs;
 
 
 # Get expected results from full scan across two segments

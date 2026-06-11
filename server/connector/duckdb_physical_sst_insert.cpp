@@ -38,7 +38,6 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 namespace {
@@ -153,6 +152,11 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
       _table->GetGeneratedPkSeqId());
   SDB_ASSERT(state->generated_pk_seq || !_table->PKColumns().empty());
 
+  if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    state->progress = sdb_state->progress.get();
+  }
+
   return state;
 }
 
@@ -188,48 +192,32 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
       gstate.table_key, [](auto) {}, gstate.row_keys.emplace_back());
   }
 
-  // Write each column to its SST file
+  for (auto& writer : gstate.index_writers) {
+    writer->Init(num_rows, chunk);
+  }
+
+  std::vector<std::string_view> view_row_keys{gstate.row_keys.begin(),
+                                              gstate.row_keys.end()};
+
   for (size_t col = 0; col < gstate.columns.size(); ++col) {
     const auto& meta = gstate.columns[col];
+    auto& vec = chunk.data[meta.input_col_idx];
+    const ColumnDescriptor desc{meta.id, meta.store_mode, meta.duckdb_type};
+
+    gstate.active_writers.clear();
+    for (auto& writer : gstate.index_writers) {
+      if (writer->SwitchColumn(desc, vec, view_row_keys, num_rows)) {
+        gstate.active_writers.push_back(
+          basics::downCast<DuckDBSinkColumnWriter>(writer.get()));
+      }
+    }
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
     }
 
     DuckDBColumnSerializer::SstWriter sst_writer{gstate.writers[col].get()};
-    gstate.serializer->WriteColumn(
-      sst_writer, chunk.data[meta.input_col_idx], num_rows, gstate.row_keys, {},
-      ColumnDescriptor{meta.id, meta.store_mode, meta.duckdb_type,
-                       /*have_nulls=*/true});
-  }
-
-  // Update indexes via transaction path
-  for (auto& writer : gstate.index_writers) {
-    writer->Init(num_rows, chunk);
-  }
-
-  for (const auto& meta : gstate.columns) {
-    const ColumnDescriptor desc{meta.id, meta.store_mode, meta.duckdb_type,
-                                /*have_nulls=*/true};
-    gstate.active_writers.clear();
-    auto& vec = chunk.data[meta.input_col_idx];
-    for (auto& writer : gstate.index_writers) {
-      if (writer->SwitchColumn(desc, vec, num_rows)) {
-        gstate.active_writers.push_back(writer.get());
-      }
-    }
-
-    if (gstate.active_writers.empty()) {
-      continue;
-    }
-
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
-    }
-
-    DuckDBColumnSerializer::SstWriter noop{nullptr};
-    gstate.serializer->WriteColumn(noop, chunk.data[meta.input_col_idx],
-                                   num_rows, gstate.row_keys,
+    gstate.serializer->WriteColumn(sst_writer, vec, num_rows, gstate.row_keys,
                                    gstate.active_writers, desc);
   }
 
@@ -238,6 +226,17 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   }
 
   gstate.insert_count += num_rows;
+
+  if (gstate.progress) {
+    gstate.progress->Add(pg::copy_progress::Param::TuplesProcessed, num_rows);
+    gstate.progress->Add(pg::copy_progress::Param::BytesProcessed,
+                         chunk.GetAllocationSize());
+  }
+
+  SDB_IF_FAILURE("pause_sst_sink_mid_copy") {
+    sdb::WaitWhileFailurePointDebugging("pause_sst_sink_mid_copy");
+  }
+
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 

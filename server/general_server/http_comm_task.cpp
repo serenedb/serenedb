@@ -27,8 +27,7 @@
 
 #include "app/app_server.h"
 #include "basics/asio_ns.h"
-#include "basics/dtrace-wrapper.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/string_buffer.h"
 #include "general_server/general_server.h"
 #include "general_server/general_server_feature.h"
@@ -36,8 +35,6 @@
 #include "general_server/state.h"
 #include "rest/http_request.h"
 #include "rest/http_response.h"
-#include "statistics/connection_statistics.h"
-#include "statistics/request_statistics.h"
 
 using namespace sdb;
 using namespace sdb::basics;
@@ -105,9 +102,6 @@ int HttpCommTask<T>::on_message_began(llhttp_t* p) try {
   me->_last_header_was_value = false;
   me->_should_keep_alive = false;
   me->_message_done = false;
-
-  // acquire a new statistics entry for the request
-  me->AcquireRequestStatistics(1UL).SET_READ_START(utilities::GetMicrotime());
   return HPE_OK;
 } catch (...) {
   // the caller of this function is a C function, which doesn't know
@@ -121,10 +115,9 @@ int HttpCommTask<T>::on_url(llhttp_t* p, const char* at, size_t len) try {
   me->_request->setRequestType(LlhttpToRequestType(p));
   if (me->_request->requestType() == RequestType::Illegal) {
     me->SendSimpleResponse(rest::ResponseCode::MethodNotAllowed,
-                           rest::ContentType::Unset, 1, vpack::BufferUInt8());
+                           rest::ContentType::Unset, 1, {});
     return HPE_USER;
   }
-  me->GetRequestStatistics(1UL).SET_REQUEST_TYPE(me->_request->requestType());
 
   me->_url.append(at, len);
   return HPE_OK;
@@ -196,12 +189,12 @@ int HttpCommTask<T>::on_header_complete(llhttp_t* p) try {
   if ((p->http_major != 1 || p->http_minor != 0) &&
       (p->http_major != 1 || p->http_minor != 1)) {
     me->SendSimpleResponse(rest::ResponseCode::HttpVersionNotSupported,
-                           rest::ContentType::Unset, 1, vpack::BufferUInt8());
+                           rest::ContentType::Unset, 1, {});
     return HPE_USER;
   }
   if (p->content_length > kMaximalBodySize) {
     me->SendSimpleResponse(rest::ResponseCode::RequestEntityTooLarge,
-                           rest::ContentType::Unset, 1, vpack::BufferUInt8());
+                           rest::ContentType::Unset, 1, {});
     return HPE_USER;
   }
   me->_should_keep_alive = llhttp_should_keep_alive(p);
@@ -247,8 +240,6 @@ template<SocketType T>
 int HttpCommTask<T>::on_message_complete(llhttp_t* p) try {
   HttpCommTask<T>* me = static_cast<HttpCommTask<T>*>(p->data);
   me->_request->parseUrl(me->_url.data(), me->_url.size());
-
-  me->GetRequestStatistics(1UL).SET_READ_END();
   me->_message_done = true;
 
   return HPE_PAUSED;
@@ -265,8 +256,6 @@ HttpCommTask<T>::HttpCommTask(GeneralServer& server, ConnectionInfo info,
     _last_header_was_value(false),
     _should_keep_alive(false),
     _message_done(false) {
-  this->_connection_statistics.SET_HTTP();
-
   // initialize http parsing code
   llhttp_settings_init(&_parser_settings);
   _parser_settings.on_message_begin = HttpCommTask<T>::on_message_began;
@@ -279,8 +268,6 @@ HttpCommTask<T>::HttpCommTask(GeneralServer& server, ConnectionInfo info,
   _parser_settings.on_message_complete = HttpCommTask<T>::on_message_complete;
   llhttp_init(&_parser, HTTP_REQUEST, &_parser_settings);
   _parser.data = this;
-
-  this->_general_server_feature.countHttp1Connection();
 }
 
 template<SocketType T>
@@ -288,8 +275,8 @@ HttpCommTask<T>::~HttpCommTask() = default;
 
 template<SocketType T>
 void HttpCommTask<T>::Start() {
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "<http> opened connection \"",
-            std::bit_cast<size_t>(this), "\"");
+  SDB_DEBUG(HTTP, "<http> opened connection \"", std::bit_cast<size_t>(this),
+            "\"");
 
   asio_ns::post(
     this->_protocol->context.io_context, [self = this->shared_from_this()] {
@@ -335,8 +322,6 @@ bool HttpCommTask<T>::ReadCallback(asio_ns::error_code ec) {
     SDB_ASSERT(nparsed < std::numeric_limits<size_t>::max());
     // Remove consumed data from receive buffer.
     this->_protocol->buffer.consume(nparsed);
-    // And count it in the statistics:
-    this->GetRequestStatistics(1UL).ADD_RECEIVED_BYTES(nparsed);
 
     if (_message_done) {
       SDB_ASSERT(err == HPE_PAUSED);
@@ -350,19 +335,17 @@ bool HttpCommTask<T>::ReadCallback(asio_ns::error_code ec) {
     if (ec == asio_ns::error::misc_errors::eof) {
       err = llhttp_finish(&_parser);
     } else {
-      SDB_DEBUG("xxxxx", Logger::REQUESTS, "Error while reading from socket: '",
-                ec.message(), "'");
+      SDB_DEBUG(HTTP, "Error while reading from socket: '", ec.message(), "'");
       err = HPE_INVALID_EOF_STATE;
     }
   }
 
   if (err != HPE_OK && err != HPE_USER && err != HPE_CB_HEADERS_COMPLETE) {
     if (err == HPE_INVALID_EOF_STATE) {
-      SDB_TRACE("xxxxx", Logger::REQUESTS,
-                "Connection closed by peer, with ptr ",
+      SDB_TRACE(HTTP, "Connection closed by peer, with ptr ",
                 std::bit_cast<size_t>(this));
     } else {
-      SDB_TRACE("xxxxx", Logger::REQUESTS, "HTTP parse failure: '",
+      SDB_TRACE(HTTP, "HTTP parse failure: '",
                 llhttp_get_error_reason(&_parser), "'");
     }
     this->Close(ec);
@@ -393,8 +376,7 @@ void HttpCommTask<T>::SetIOTimeout() {
 
       auto& me = static_cast<HttpCommTask<T>&>(*s);
       if ((was_reading && me._reading) || (was_writing && me._writing)) {
-        SDB_INFO("xxxxx", Logger::REQUESTS,
-                 "keep alive timeout, closing stream!");
+        SDB_INFO(HTTP, "keep alive timeout, closing stream!");
         static_cast<GeneralCommTask<T>&>(*s).Close(ec);
       }
     });
@@ -419,7 +401,6 @@ void HttpCommTask<T>::CheckProtocolUpgrade() {
       // do not remove preface here, H2CommTask will read it from buffer
       auto comm_task = std::make_unique<H2CommTask<T>>(
         me._server, me._connection_info, std::move(me._protocol));
-      comm_task->SetRequestStatistics(1UL, me.StealRequestStatistics(1UL));
       me._server.registerTask(std::move(comm_task));
       me.Close(ec);
       return;
@@ -442,16 +423,6 @@ void HttpCommTask<T>::CheckProtocolUpgrade() {
                       std::move(cb));
 }
 
-#ifdef USE_DTRACE
-// Moved here to prevent multiplicity by template
-static void __attribute__((noinline)) DTraceHttpCommTaskProcessRequest(
-  size_t th) {
-  DTRACE_PROBE1(serened, HttpCommTaskProcessRequest, th);
-}
-#else
-static void DTraceHttpCommTaskProcessRequest(size_t) {}
-#endif
-
 template<SocketType T>
 std::string HttpCommTask<T>::url() const {
   if (_request != nullptr) {
@@ -459,29 +430,24 @@ std::string HttpCommTask<T>::url() const {
              _request->databaseName().empty()
                ? ""
                : "/_db/" + string_utils::UrlEncode(_request->databaseName()))) +
-           (log::GetLogRequestParameters() ? _request->fullUrl()
-                                           : _request->requestPath());
+           _request->fullUrl();
   }
   return "";
 }
 
 template<SocketType T>
 void HttpCommTask<T>::ProcessRequest() {
-  DTraceHttpCommTaskProcessRequest((size_t)this);
-
   SDB_ASSERT(_request);
   auto msg_id = _request->messageId();
   auto resp_content_type = _request->contentTypeResponse();
   try {
     DoProcessRequest();
   } catch (const sdb::basics::Exception& ex) {
-    SDB_WARN("xxxxx", Logger::REQUESTS, "request failed with error ", ex.code(),
-             " ", ex.message());
+    SDB_WARN(HTTP, "request failed with error ", ex.code(), " ", ex.message());
     this->SendErrorResponse(GeneralResponse::responseCode(ex.code()),
                             resp_content_type, msg_id, ex.code(), ex.message());
   } catch (const std::exception& ex) {
-    SDB_WARN("xxxxx", Logger::REQUESTS, "request failed with error ",
-             ex.what());
+    SDB_WARN(HTTP, "request failed with error ", ex.what());
     this->SendErrorResponse(ResponseCode::ServerError, resp_content_type,
                             msg_id, ErrorCode(ERROR_FAILED), ex.what());
   }
@@ -497,14 +463,13 @@ void HttpCommTask<T>::DoProcessRequest() {
 
   // we may have gotten an H2 Upgrade request
   if (_parser.upgrade) [[unlikely]] {
-    SDB_INFO("xxxxx", Logger::REQUESTS, "detected an 'Upgrade' header");
+    SDB_INFO(HTTP, "detected an 'Upgrade' header");
     bool found;
     const std::string& h2 = _request->header("upgrade");
     const std::string& settings = _request->header("http2-settings", found);
     if (h2 == "h2c" && found && !settings.empty()) {
       auto task = std::make_shared<H2CommTask<T>>(
         this->_server, this->_connection_info, std::move(this->_protocol));
-      task->SetRequestStatistics(1UL, this->StealRequestStatistics(1UL));
       task->UpgradeHttp1(std::move(_request));
       this->Close();
       return;
@@ -516,17 +481,14 @@ void HttpCommTask<T>::DoProcessRequest() {
   _request->appendNullTerminator();
   // no need to increase memory usage here!
   {
-    SDB_INFO("xxxxx", Logger::REQUESTS, "\"http-request-begin\",\"",
-             std::bit_cast<size_t>(this), "\",\"",
-             this->_connection_info.client_address, "\",\"",
+    SDB_INFO(HTTP, "\"http-request-begin\",\"", std::bit_cast<size_t>(this),
+             "\",\"", this->_connection_info.client_address, "\",\"",
              HttpRequest::translateMethod(_request->requestType()), "\",\"",
              url(), "\"");
 
     std::string_view body = _request->rawPayload();
-    this->_general_server_feature.countHttp1Request(body.size());
 
-    if (log::IsEnabled(LogLevel::TRACE, Logger::REQUESTS) &&
-        log::GetLogRequestParameters()) {
+    if (log::IsEnabled(duckdb::LogLevel::LOG_TRACE, log::HTTP)) {
       // Log HTTP headers:
       this->LogRequestHeaders("http", _request->headers());
 
@@ -550,11 +512,6 @@ void HttpCommTask<T>::DoProcessRequest() {
   // scrape the auth headers to determine and authenticate the user
   auto auth_token = this->CheckAuthHeader(*_request, mode);
 
-  // We want to separate superuser token traffic:
-  if (_request->authenticated() && _request->user().empty()) {
-    this->GetRequestStatistics(1UL).SET_SUPERUSER();
-  }
-
   // first check whether we allow the request to continue
   Flow cont = this->PrepareExecution(auth_token, *_request, mode);
   if (cont != Flow::Continue) {
@@ -577,24 +534,11 @@ void HttpCommTask<T>::DoProcessRequest() {
   this->ExecuteRequest(std::move(_request), std::move(resp), mode);
 }
 
-#ifdef USE_DTRACE
-// Moved here to prevent multiplicity by template
-static void __attribute__((noinline)) DTraceHttpCommTaskSendResponse(
-  size_t th) {
-  DTRACE_PROBE1(serened, HttpCommTaskSendResponse, th);
-}
-#else
-static void DTraceHttpCommTaskSendResponse(size_t) {}
-#endif
-
 template<SocketType T>
-void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
-                                   RequestStatistics::Item stat) {
+void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res) {
   if (this->Stopped()) {
     return;
   }
-
-  DTraceHttpCommTaskSendResponse((size_t)this);
 
 #ifdef SDB_DEV
   HttpResponse& response = dynamic_cast<HttpResponse&>(*base_res);
@@ -720,13 +664,11 @@ void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
 
   SDB_ASSERT(_response == nullptr);
   _response = response.stealBody();
-  // append write buffer and statistics
   SDB_ASSERT(response.responseCode() != rest::ResponseCode::NoContent ||
                _response->empty(),
              "response code 204 requires body length to be zero");
 
-  if (log::IsEnabled(LogLevel::TRACE, Logger::REQUESTS) &&
-      log::GetLogRequestParameters()) {
+  if (log::IsEnabled(duckdb::LogLevel::LOG_TRACE, log::HTTP)) {
     // Log HTTP headers:
     this->LogResponseHeaders("http", response.headers());
 
@@ -738,45 +680,23 @@ void HttpCommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> base_res,
   }
 
   // and give some request information
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "\"http-request-end\",\"",
-            std::bit_cast<size_t>(this), "\",\"",
-            this->_connection_info.client_address, "\",\"",
+  SDB_DEBUG(HTTP, "\"http-request-end\",\"", std::bit_cast<size_t>(this),
+            "\",\"", this->_connection_info.client_address, "\",\"",
             GeneralRequest::translateMethod(::LlhttpToRequestType(&_parser)),
             "\",\"", url(), "\",\"", static_cast<int>(response.responseCode()),
-            "\",", absl::StrFormat("%.6f", stat.ELAPSED_SINCE_READ_START()),
-            ",", absl::StrFormat("%.6f", stat.ELAPSED_WHILE_QUEUED()));
+            "\"");
 
   // sendResponse is always called from a scheduler thread
-  boost::asio::post(
-    this->_protocol->context.io_context,
-    [self = this->shared_from_this(), stat = std::move(stat)]() mutable {
-      static_cast<HttpCommTask<T>&>(*self).WriteResponse(std::move(stat));
-    });
+  boost::asio::post(this->_protocol->context.io_context,
+                    [self = this->shared_from_this()]() mutable {
+                      static_cast<HttpCommTask<T>&>(*self).WriteResponse();
+                    });
 }
-
-#ifdef USE_DTRACE
-// Moved here to prevent multiplicity by template
-static void __attribute__((noinline)) DTraceHttpCommTaskWriteResponse(
-  size_t th) {
-  DTRACE_PROBE1(serened, HttpCommTaskWriteResponse, th);
-}
-static void __attribute__((noinline)) DTraceHttpCommTaskResponseWritten(
-  size_t th) {
-  DTRACE_PROBE1(serened, HttpCommTaskResponseWritten, th);
-}
-#else
-static void DTraceHttpCommTaskWriteResponse(size_t) {}
-static void DTraceHttpCommTaskResponseWritten(size_t) {}
-#endif
 
 // called on IO context thread
 template<SocketType T>
-void HttpCommTask<T>::WriteResponse(RequestStatistics::Item stat) {
-  DTraceHttpCommTaskWriteResponse((size_t)this);
-
+void HttpCommTask<T>::WriteResponse() {
   SDB_ASSERT(!_header.empty());
-
-  stat.SET_WRITE_START();
 
   std::array<asio_ns::const_buffer, 2> buffers;
   buffers[0] = asio_ns::buffer(_header.data(), _header.size());
@@ -787,15 +707,10 @@ void HttpCommTask<T>::WriteResponse(RequestStatistics::Item stat) {
   this->_writing = true;
   asio_ns::async_write(
     this->_protocol->socket, buffers,
-    [self = this->shared_from_this(), stat = std::move(stat)](
-      asio_ns::error_code ec, size_t nwrite) {
-      DTraceHttpCommTaskResponseWritten((size_t)self.get());
-
+    [self = this->shared_from_this()](asio_ns::error_code ec,
+                                      size_t /*nwrite*/) {
       auto& me = static_cast<HttpCommTask<T>&>(*self);
       me._writing = false;
-
-      stat.SET_WRITE_END();
-      stat.ADD_SENT_BYTES(nwrite);
 
       me._response.reset();
 

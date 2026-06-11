@@ -31,19 +31,15 @@
 
 #include "app/app_server.h"
 #include "basics/asio_ns.h"
-#include "basics/dtrace-wrapper.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/string_buffer.h"
 #include "basics/string_utils.h"
-#include "general_server/authentication_feature.h"
 #include "general_server/general_server.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/state.h"
 #include "rest/http_request.h"
 #include "rest/http_response.h"
-#include "statistics/connection_statistics.h"
-#include "statistics/request_statistics.h"
 
 using namespace sdb::basics;
 using std::string_view;
@@ -60,23 +56,11 @@ bool ExpectResponseBody(int status_code) {
 }
 
 }  // namespace
-
-#ifdef USE_DTRACE
-// Moved out to avoid duplication by templates.
-static void __attribute__((noinline)) DTraceH2CommTaskSendResponse(size_t th) {
-  DTRACE_PROBE1(serened, H2CommTaskSendResponse, th);
-}
-#else
-static void DTraceH2CommTaskSendResponse(size_t) {}
-#endif
-
 namespace sdb::rest {
 
 struct H2Response : public HttpResponse {
   H2Response(ResponseCode code, uint64_t mid)
     : HttpResponse(code, mid, nullptr, rest::ResponseCompressionType::Unset) {}
-
-  RequestStatistics::Item statistics;
 };
 
 template<SocketType T>
@@ -91,12 +75,11 @@ template<SocketType T>
   }
 
   const int32_t sid = frame->hd.stream_id;
-  me->AcquireRequestStatistics(sid).SET_READ_START(utilities::GetMicrotime());
   auto req =
     std::make_unique<HttpRequest>(me->_connection_info, /*messageId*/ sid);
   me->CreateStream(sid, std::move(req));
 
-  SDB_TRACE("xxxxx", Logger::REQUESTS, "<http2> creating new stream ", sid);
+  SDB_TRACE(HTTP, "<http2> creating new stream ", sid);
 
   return HPE_OK;
 } catch (...) {
@@ -187,8 +170,7 @@ template<SocketType T>
 /*static*/ int H2CommTask<T>::on_data_chunk_recv(
   nghttp2_session* session, uint8_t flags, int32_t stream_id,
   const uint8_t* data, size_t len, void* user_data) try {
-  SDB_TRACE("xxxxx", Logger::REQUESTS, "<http2> received data for stream ",
-            stream_id);
+  SDB_TRACE(HTTP, "<http2> received data for stream ", stream_id);
   H2CommTask<T>* me = static_cast<H2CommTask<T>*>(user_data);
   Stream* strm = me->FindStream(stream_id);
   if (strm) {
@@ -208,22 +190,11 @@ template<SocketType T>
                                               uint32_t error_code,
                                               void* user_data) try {
   H2CommTask<T>* me = static_cast<H2CommTask<T>*>(user_data);
-  auto it = me->_streams.find(stream_id);
-  if (it != me->_streams.end()) {
-    Stream& strm = it->second;
-    if (strm.response) {
-      auto* h2_response = dynamic_cast<H2Response*>(strm.response.get());
-      if (h2_response != nullptr) {
-        h2_response->statistics.SET_WRITE_END();
-      }
-    }
-    me->_streams.erase(it);
-  }
+  me->_streams.erase(stream_id);
 
   if (error_code != NGHTTP2_NO_ERROR) {
-    SDB_DEBUG("xxxxx", Logger::REQUESTS, "<http2> closing stream ", stream_id,
-              " with error '", nghttp2_http2_strerror(error_code), "' (",
-              error_code, ")");
+    SDB_DEBUG(HTTP, "<http2> closing stream ", stream_id, " with error '",
+              nghttp2_http2_strerror(error_code), "' (", error_code, ")");
   }
 
   return HPE_OK;
@@ -251,9 +222,8 @@ template<SocketType T>
   }
 
   const int32_t sid = frame->hd.stream_id;
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "sending RST on stream ", sid,
-            " with error '", nghttp2_strerror(lib_error_code), "' (",
-            lib_error_code, ")");
+  SDB_DEBUG(HTTP, "sending RST on stream ", sid, " with error '",
+            nghttp2_strerror(lib_error_code), "' (", lib_error_code, ")");
 
   // Issue RST_STREAM so that stream does not hang around.
   nghttp2_submit_rst_stream(session, NGHTTP2_FLAG_NONE, sid,
@@ -270,8 +240,6 @@ template<SocketType T>
 H2CommTask<T>::H2CommTask(GeneralServer& server, ConnectionInfo info,
                           std::shared_ptr<AsioSocket<T>> so)
   : GeneralCommTask<T>(server, std::move(info), std::move(so)) {
-  this->_connection_statistics.SET_HTTP();
-  this->_general_server_feature.countHttp2Connection();
   InitNgHttp2Session();
 }
 
@@ -280,16 +248,15 @@ H2CommTask<T>::~H2CommTask() {
   nghttp2_session_del(_session);
   _session = nullptr;
   if (!_streams.empty()) {
-    SDB_DEBUG("xxxxx", Logger::REQUESTS, "<http2> got ", _streams.size(),
-              " remaining streams");
+    SDB_DEBUG(HTTP, "<http2> got ", _streams.size(), " remaining streams");
   }
   HttpResponse* res = nullptr;
   while (_responses.pop(res)) {
     delete res;
   }
 
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "<http2> closing connection \"",
-            std::bit_cast<size_t>(this), "\"");
+  SDB_DEBUG(HTTP, "<http2> closing connection \"", std::bit_cast<size_t>(this),
+            "\"");
 }
 
 namespace {
@@ -297,8 +264,8 @@ namespace {
 int OnErrorCallback(nghttp2_session* session, int lib_error_code,
                     const char* msg, size_t len, void*) try {
   // use INFO log level, its still hidden by default
-  SDB_INFO("xxxxx", Logger::REQUESTS, "http2 connection error: \"",
-           std::string_view(msg, len), "\" (", lib_error_code, ")");
+  SDB_INFO(HTTP, "http2 connection error: \"", std::string_view(msg, len),
+           "\" (", lib_error_code, ")");
   return HPE_OK;
 } catch (...) {
   // the caller of this function is a C function, which doesn't know
@@ -308,9 +275,8 @@ int OnErrorCallback(nghttp2_session* session, int lib_error_code,
 
 int OnInvalidFrameRecv(nghttp2_session* session, const nghttp2_frame* frame,
                        int lib_error_code, void* user_data) try {
-  SDB_INFO("xxxxx", Logger::REQUESTS, "received illegal data frame on stream ",
-           frame->hd.stream_id, ": '", nghttp2_strerror(lib_error_code), "' (",
-           lib_error_code, ")");
+  SDB_INFO(HTTP, "received illegal data frame on stream ", frame->hd.stream_id,
+           ": '", nghttp2_strerror(lib_error_code), "' (", lib_error_code, ")");
   return HPE_OK;
 } catch (...) {
   // the caller of this function is a C function, which doesn't know
@@ -342,8 +308,7 @@ ssize_t DataSourceReadLengthCallback(nghttp2_session* session,
                                      int32_t stream_remote_window_size,
                                      uint32_t remote_max_frame_size,
                                      void* user_data) {
-  SDB_TRACE("xxxxx", Logger::REQUESTS,
-            "session_remote_window_size: ", session_remote_window_size,
+  SDB_TRACE(HTTP, "session_remote_window_size: ", session_remote_window_size,
             ", stream_remote_window_size: ", stream_remote_window_size,
             ", remote_max_frame_size: ", remote_max_frame_size);
   return (1 << 16);  // 64kB
@@ -404,8 +369,8 @@ void H2CommTask<T>::UpgradeHttp1(std::unique_ptr<HttpRequest> req) {
 
   if (rv != 0) {
     // The settings_payload is badly formed.
-    SDB_INFO("xxxxx", Logger::REQUESTS, "error during HTTP2 upgrade: \"",
-             nghttp2_strerror((int)rv), "\" (", rv, ")");
+    SDB_INFO(HTTP, "error during HTTP2 upgrade: \"", nghttp2_strerror((int)rv),
+             "\" (", rv, ")");
     this->Close();
     return;
   }
@@ -444,8 +409,8 @@ void H2CommTask<T>::UpgradeHttp1(std::unique_ptr<HttpRequest> req) {
 
 template<SocketType T>
 void H2CommTask<T>::Start() {
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "<http2> opened connection \"",
-            std::bit_cast<size_t>(this), "\"");
+  SDB_DEBUG(HTTP, "<http2> opened connection \"", std::bit_cast<size_t>(this),
+            "\"");
 
   asio_ns::post(this->_protocol->context.io_context,
                 [self = this->shared_from_this()] {
@@ -476,8 +441,8 @@ bool H2CommTask<T>::ReadCallback(asio_ns::error_code ec) {
 
     auto rv = nghttp2_session_mem_recv(_session, data, it->size());
     if (rv < 0 || static_cast<size_t>(rv) != it->size()) {
-      SDB_INFO("xxxxx", Logger::REQUESTS, "HTTP2 parsing error: \"",
-               nghttp2_strerror((int)rv), "\" (", rv, ")");
+      SDB_INFO(HTTP, "HTTP2 parsing error: \"", nghttp2_strerror((int)rv),
+               "\" (", rv, ")");
       this->Close(ec);
       return false;  // stop read loop
     }
@@ -530,8 +495,7 @@ void H2CommTask<T>::SetIOTimeout() {
       if (idle || write_timeout) {
         // _num_processing == 0 also if responses wait for writing
         if (me._num_processing.load(std::memory_order_relaxed) == 0) {
-          SDB_INFO("xxxxx", Logger::REQUESTS,
-                   "keep alive timeout, closing stream!");
+          SDB_INFO(HTTP, "keep alive timeout, closing stream!");
           static_cast<GeneralCommTask<T>&>(*s).Close(ec);
         } else {
           SetIOTimeout();
@@ -543,15 +507,6 @@ void H2CommTask<T>::SetIOTimeout() {
     });
 }
 
-#ifdef USE_DTRACE
-// Moved out to avoid duplication by templates.
-static void __attribute__((noinline)) DTraceH2CommTaskProcessStream(size_t th) {
-  DTRACE_PROBE1(serened, H2CommTaskProcessStream, th);
-}
-#else
-static void DTraceH2CommTaskProcessStream(size_t) {}
-#endif
-
 template<SocketType T>
 std::string H2CommTask<T>::url(const HttpRequest* req) const {
   if (req != nullptr) {
@@ -559,16 +514,13 @@ std::string H2CommTask<T>::url(const HttpRequest* req) const {
              (req->databaseName().empty()
                 ? ""
                 : "/_db/" + string_utils::UrlEncode(req->databaseName()))) +
-           (log::GetLogRequestParameters() ? req->fullUrl()
-                                           : req->requestPath());
+           req->fullUrl();
   }
   return "";
 }
 
 template<SocketType T>
 void H2CommTask<T>::ProcessStream(Stream& stream) {
-  DTraceH2CommTaskProcessStream((size_t)this);
-
   if (!stream.request->header("x-omit-www-authenticate").empty()) {
     stream.must_send_auth_header = false;
   } else {
@@ -581,13 +533,11 @@ void H2CommTask<T>::ProcessStream(Stream& stream) {
   try {
     ProcessRequest(stream, std::move(req));
   } catch (const sdb::basics::Exception& ex) {
-    SDB_WARN("xxxxx", Logger::REQUESTS, "request failed with error ", ex.code(),
-             " ", ex.message());
+    SDB_WARN(HTTP, "request failed with error ", ex.code(), " ", ex.message());
     this->SendErrorResponse(GeneralResponse::responseCode(ex.code()),
                             resp_content_type, msg_id, ex.code(), ex.message());
   } catch (const std::exception& ex) {
-    SDB_WARN("xxxxx", Logger::REQUESTS, "request failed with error ",
-             ex.what());
+    SDB_WARN(HTTP, "request failed with error ", ex.what());
     this->SendErrorResponse(ResponseCode::ServerError, resp_content_type,
                             msg_id, ErrorCode(ERROR_FAILED), ex.what());
   }
@@ -608,16 +558,13 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
   // from here on we will send a response, the connection is not IDLE
   _num_processing.fetch_add(1, std::memory_order_relaxed);
   {
-    SDB_INFO("xxxxx", Logger::REQUESTS, "\"h2-request-begin\",\"",
-             std::bit_cast<size_t>(this), "\",\"",
-             this->_connection_info.client_address, "\",\"",
+    SDB_INFO(HTTP, "\"h2-request-begin\",\"", std::bit_cast<size_t>(this),
+             "\",\"", this->_connection_info.client_address, "\",\"",
              HttpRequest::translateMethod(req->requestType()), "\",\"",
              url(req.get()), "\"");
 
     std::string_view body = req->rawPayload();
-    this->_general_server_feature.countHttp2Request(body.size());
-    if (log::IsEnabled(LogLevel::TRACE, Logger::REQUESTS) &&
-        log::GetLogRequestParameters()) {
+    if (log::IsEnabled(duckdb::LogLevel::LOG_TRACE, log::HTTP)) {
       // Log HTTP headers:
       this->LogRequestHeaders("h2", req->headers());
 
@@ -630,11 +577,6 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
   // store origin header for later use
   stream.origin = req->header(StaticStrings::kOrigin);
   auto message_id = req->messageId();
-  const auto& stat = this->GetRequestStatistics(message_id);
-  stat.SET_REQUEST_TYPE(req->requestType());
-  stat.ADD_RECEIVED_BYTES(stream.header_buff_size + req->body().size());
-  stat.SET_READ_END();
-  stat.SET_WRITE_START();
 
   // OPTIONS requests currently go unauthenticated
   if (req->requestType() == rest::RequestType::Options) {
@@ -646,11 +588,6 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
 
   // scrape the auth headers to determine and authenticate the user
   auto auth_token = this->CheckAuthHeader(*req, mode);
-
-  // We want to separate superuser token traffic:
-  if (req->authenticated() && req->user().empty()) {
-    stat.SET_SUPERUSER();
-  }
 
   // first check whether we allow the request to continue
   Flow cont = this->PrepareExecution(auth_token, *req, mode);
@@ -673,10 +610,7 @@ void H2CommTask<T>::ProcessRequest(Stream& stream,
 }
 
 template<SocketType T>
-void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res,
-                                 RequestStatistics::Item stat) {
-  DTraceH2CommTaskSendResponse((size_t)this);
-
+void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res) {
   unsigned n = _num_processing.fetch_sub(1, std::memory_order_relaxed);
   SDB_ASSERT(n > 0);
 
@@ -693,8 +627,7 @@ void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res,
     tmp->clearBody();
   }
 
-  if (log::IsEnabled(LogLevel::TRACE, Logger::REQUESTS) &&
-      log::GetLogRequestParameters()) {
+  if (log::IsEnabled(duckdb::LogLevel::LOG_TRACE, log::HTTP)) {
     const auto& body_buf = tmp->body();
     std::string_view body{body_buf.data(), body_buf.size()};
     if (!body.empty()) {
@@ -704,17 +637,9 @@ void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res,
   }
 
   // and give some request information
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "\"h2-request-end\",\"",
-            std::bit_cast<size_t>(this), "\",\"",
+  SDB_DEBUG(HTTP, "\"h2-request-end\",\"", std::bit_cast<size_t>(this), "\",\"",
             this->_connection_info.client_address, "\",\"", url(nullptr),
-            "\",\"", static_cast<int>(res->responseCode()), "\",",
-            absl::StrFormat("%.6f", stat.ELAPSED_SINCE_READ_START()), ",",
-            absl::StrFormat("%.6f", stat.ELAPSED_WHILE_QUEUED()));
-
-  auto* h2_response = dynamic_cast<H2Response*>(tmp);
-  if (h2_response != nullptr) {
-    h2_response->statistics = std::move(stat);
-  }
+            "\",\"", static_cast<int>(res->responseCode()), "\"");
 
   // this uses a fixed capacity queue, push might fail (unlikely, we limit max
   // streams)
@@ -727,7 +652,7 @@ void H2CommTask<T>::SendResponse(std::unique_ptr<GeneralResponse> res,
     retries = 0;
   }
   if (retries == 0) {
-    SDB_WARN("xxxxx", Logger::REQUESTS, "was not able to queue response this=",
+    SDB_WARN(HTTP, "was not able to queue response this=",
              std::bit_cast<size_t>(this));
     // we are overloaded close stream
     asio_ns::post(this->_protocol->context.io_context,
@@ -763,8 +688,8 @@ void H2CommTask<T>::QueueHttp2Responses() {
     int32_t stream_id = static_cast<int32_t>(response->messageId());
     Stream* strm = FindStream(stream_id);
     if (strm == nullptr) {  // stream was already closed for some reason
-      SDB_DEBUG("xxxxx", Logger::REQUESTS, "response with message id '",
-                stream_id, "' has no H2 stream on server");
+      SDB_DEBUG(HTTP, "response with message id '", stream_id,
+                "' has no H2 stream on server");
       return;
     }
     strm->response = std::move(guard);
@@ -773,8 +698,7 @@ void H2CommTask<T>::QueueHttp2Responses() {
     // will add CORS headers if necessary
     this->FinishExecution(res, strm->origin);
 
-    if (log::IsEnabled(LogLevel::TRACE, Logger::REQUESTS) &&
-        log::GetLogRequestParameters()) {
+    if (log::IsEnabled(duckdb::LogLevel::LOG_TRACE, log::HTTP)) {
       this->LogResponseHeaders("h2", res.headers());
     }
 
@@ -792,8 +716,7 @@ void H2CommTask<T>::QueueHttp2Responses() {
     // suppress sending the www-authenticate header by sending us an
     // x-omit-www-authenticate header.
     bool need_www_authenticate =
-      (this->_auth->isActive() &&
-       res.responseCode() == rest::ResponseCode::Unauthorized &&
+      (false && res.responseCode() == rest::ResponseCode::Unauthorized &&
        strm->must_send_auth_header);
 
     bool seen_server_header = false;
@@ -895,39 +818,16 @@ void H2CommTask<T>::QueueHttp2Responses() {
       prd_ptr = &prd;
     }
 
-    // we may have an HTTP/1 response here or an HTTP/2 response.
-    // try if upcasting works, and only if so, treat it as HTTP/2.
-    auto* h2_response = dynamic_cast<H2Response*>(&res);
-    if (h2_response != nullptr) {
-      h2_response->statistics.ADD_SENT_BYTES(res.bodySize());
-    }
-
     int rv = nghttp2_submit_response(this->_session, stream_id, nva.data(),
                                      nva.size(), prd_ptr);
     if (rv != 0) {
-      SDB_INFO("xxxxx", sdb::Logger::REQUESTS,
-               "HTTP2 submit_response error: \"", nghttp2_strerror((int)rv),
-               "\" (", rv, ")");
+      SDB_INFO(HTTP, "HTTP2 submit_response error: \"",
+               nghttp2_strerror((int)rv), "\" (", rv, ")");
       this->Close();
       return;
     }
   }
 }
-
-#ifdef USE_DTRACE
-// Moved out to avoid duplication by templates.
-static void __attribute__((noinline)) DTraceH2CommTaskBeforeAsyncWrite(
-  size_t th) {
-  DTRACE_PROBE1(serened, H2CommTaskBeforeAsyncWrite, th);
-}
-static void __attribute__((noinline)) DTraceH2CommTaskAfterAsyncWrite(
-  size_t th) {
-  DTRACE_PROBE1(serened, H2CommTaskAfterAsyncWrite, th);
-}
-#else
-static void DTraceH2CommTaskBeforeAsyncWrite(size_t) {}
-static void DTraceH2CommTaskAfterAsyncWrite(size_t) {}
-#endif
 
 // called on IO context thread
 template<SocketType T>
@@ -950,8 +850,8 @@ void H2CommTask<T>::DoWrite() {
     auto rv = nghttp2_session_mem_send(_session, &data);
     if (rv < 0) {  // error
       this->_writing = false;
-      SDB_INFO("xxxxx", sdb::Logger::REQUESTS, "HTTP2 framing error: \"",
-               nghttp2_strerror((int)rv), "\" (", rv, ")");
+      SDB_INFO(HTTP, "HTTP2 framing error: \"", nghttp2_strerror((int)rv),
+               "\" (", rv, ")");
       this->Close();
       return;
     }
@@ -983,7 +883,6 @@ void H2CommTask<T>::DoWrite() {
   // something, it does not expect timeout while doing it.
   SetIOTimeout();
 
-  DTraceH2CommTaskBeforeAsyncWrite((size_t)this);
   asio_ns::async_write(this->_protocol->socket, out_buffers,
                        [self = this->shared_from_this()](
                          const asio_ns::error_code& ec, size_t nwrite) {
@@ -993,8 +892,6 @@ void H2CommTask<T>::DoWrite() {
                            me.Close(ec);
                            return;
                          }
-
-                         DTraceH2CommTaskAfterAsyncWrite((size_t)self.get());
 
                          me.DoWrite();
                        });

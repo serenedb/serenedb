@@ -133,6 +133,9 @@ class Or final : public BooleanFilter {
 // Represents negation
 class Not : public FilterWithType<Not>, public AllDocsProvider {
  public:
+  Not() = default;
+  explicit Not(Filter::ptr filter) : _filter{std::move(filter)} {}
+
   const Filter* filter() const { return _filter.get(); }
 
   template<typename T>

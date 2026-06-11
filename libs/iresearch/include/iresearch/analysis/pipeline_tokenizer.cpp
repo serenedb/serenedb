@@ -23,265 +23,15 @@
 
 #include "pipeline_tokenizer.hpp"
 
-#include <vpack/builder.h>
-#include <vpack/common.h>
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
-#include <vpack/slice.h>
-
 #include <string_view>
 
-#include "iresearch/utils/vpack_utils.hpp"
+#include "basics/exceptions.h"
+#include "iresearch/analysis/tokenizer_config.hpp"
 
 namespace irs::analysis {
 namespace {
 
-constexpr std::string_view kPipelineParamName = "pipeline";
-constexpr std::string_view kTypeParamName = "type";
-constexpr std::string_view kPropertiesParamName = "properties";
-
 constexpr OffsAttr kNoOffset;
-using OptionsNormalize = std::vector<std::pair<std::string, std::string>>;
-
-template<typename T>
-bool ParseVPackOptions(const vpack::Slice slice, T& options) {
-  if constexpr (std::is_same_v<T, PipelineTokenizer::options_t>) {
-    SDB_ASSERT(options.empty());
-  }
-  if (!slice.isObject()) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Not a VPack object passed while constructing pipeline_token_stream ");
-    return false;
-  }
-
-  if (auto pipeline_slice = slice.get(kPipelineParamName);
-      !pipeline_slice.isNone()) {
-    if (pipeline_slice.isArray()) {
-      for (const auto pipe : vpack::ArrayIterator(pipeline_slice)) {
-        if (pipe.isObject()) {
-          std::string_view type;
-          if (auto type_attr_slice = pipe.get(kTypeParamName);
-              !type_attr_slice.isNone()) {
-            if (type_attr_slice.isString()) {
-              type = type_attr_slice.stringView();
-            } else {
-              SDB_ERROR(
-                "xxxxx", sdb::Logger::IRESEARCH,
-                absl::StrCat("Failed to read '", kTypeParamName,
-                             "' attribute of '", kPipelineParamName,
-                             "' member as string while constructing "
-                             "pipeline_token_stream from VPack arguments"));
-              return false;
-            }
-          } else {
-            SDB_ERROR(
-              "xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Failed to get '", kTypeParamName,
-                           "' attribute of '", kPipelineParamName,
-                           "' member while constructing pipeline_token_stream "
-                           "from VPack arguments"));
-            return false;
-          }
-          if (auto properties_attr_slice = pipe.get(kPropertiesParamName);
-              !properties_attr_slice.isNone()) {
-            if constexpr (std::is_same_v<T, PipelineTokenizer::options_t>) {
-              auto analyzer =
-                analyzers::Get(type, irs::Type<text_format::VPack>::get(),
-                               {properties_attr_slice.startAs<char>(),
-                                properties_attr_slice.byteSize()});
-
-              // fallback to json format if vpack isn't available
-              if (!analyzer) {
-                analyzer =
-                  analyzers::Get(type, irs::Type<text_format::Json>::get(),
-                                 slice_to_string(properties_attr_slice));
-              }
-
-              if (analyzer) {
-                options.push_back(std::move(analyzer));
-              } else {
-                SDB_ERROR(
-                  "xxxxx", sdb::Logger::IRESEARCH,
-                  absl::StrCat("Failed to create pipeline member of type '",
-                               type, "' with properties '",
-                               slice_to_string(properties_attr_slice),
-                               "' while constructing pipeline_token_stream "
-                               "from VPack arguments"));
-                return false;
-              }
-            } else {
-              std::string normalized;
-              if (analyzers::Normalize(normalized, type,
-                                       irs::Type<text_format::VPack>::get(),
-                                       {properties_attr_slice.startAs<char>(),
-                                        properties_attr_slice.byteSize()})) {
-                options.emplace_back(std::piecewise_construct,
-                                     std::forward_as_tuple(type),
-                                     std::forward_as_tuple(normalized));
-
-                // fallback to json format if vpack isn't available
-              } else if (analyzers::Normalize(
-                           normalized, type,
-                           irs::Type<text_format::Json>::get(),
-                           slice_to_string(properties_attr_slice))) {
-                // in options we'll store vpack as string
-                auto vpack = vpack::Parser::fromJson(normalized.c_str(),
-                                                     normalized.size());
-                std::string normalized_vpack_str;
-                normalized_vpack_str.assign(vpack->slice().startAs<char>(),
-                                            vpack->slice().byteSize());
-                options.emplace_back(
-                  std::piecewise_construct, std::forward_as_tuple(type),
-                  std::forward_as_tuple(vpack->slice().startAs<char>(),
-                                        vpack->slice().byteSize()));
-              } else {
-                SDB_ERROR(
-                  "xxxxx", sdb::Logger::IRESEARCH,
-                  absl::StrCat("Failed to normalize pipeline member of type '",
-                               type, "' with properties '",
-                               slice_to_string(properties_attr_slice),
-                               "' while constructing pipeline_token_stream "
-                               "from VPack arguments"));
-                return false;
-              }
-            }
-          } else {
-            SDB_ERROR(
-              "xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Failed to get '", kPropertiesParamName,
-                           "' attribute of '", kPipelineParamName,
-                           "' member while constructing pipeline_token_stream "
-                           "from VPack arguments"));
-            return false;
-          }
-        } else {
-          SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                    absl::StrCat("Failed to read '", kPipelineParamName,
-                                 "' member as object while constructing "
-                                 "pipeline_token_stream from VPack arguments"));
-          return false;
-        }
-      }
-    } else {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                absl::StrCat("Failed to read '", kPipelineParamName,
-                             "' attribute as array while constructing "
-                             "pipeline_token_stream from VPack arguments"));
-      return false;
-    }
-  } else {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Not found parameter '", kPipelineParamName,
-                           "' while constructing pipeline_token_stream"));
-    return false;
-  }
-  if (options.empty()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Empty pipeline found while constructing pipeline_token_stream");
-    return false;
-  }
-  return true;
-}
-
-bool NormalizeVPackConfig(const vpack::Slice slice, vpack::Builder* builder) {
-  OptionsNormalize options;
-  if (ParseVPackOptions(slice, options)) {
-    vpack::ObjectBuilder object(builder);
-    {
-      vpack::ArrayBuilder array(builder, kPipelineParamName.data());
-      {
-        for (const auto& analyzer : options) {
-          vpack::ObjectBuilder analyzers_obj(builder);
-          {
-            builder->add(kTypeParamName, analyzer.first);
-            vpack::Slice sub_slice(
-              reinterpret_cast<const uint8_t*>(analyzer.second.c_str()));
-            builder->add(kPropertiesParamName, sub_slice);
-          }
-        }
-      }
-    }
-    return true;
-  }
-  return false;
-}
-bool NormalizeVPackConfig(std::string_view args, std::string& config) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  vpack::Builder builder;
-  if (NormalizeVPackConfig(slice, &builder)) {
-    config.assign(builder.slice().startAs<char>(), builder.slice().byteSize());
-    return true;
-  }
-  return false;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief args is a jSON encoded object with the following attributes:
-/// pipeline: Array of objects containing analyzers definition inside pipeline.
-/// Each definition is an object with the following attributes:
-/// type: analyzer type name (one of registered analyzers type)
-/// properties: object with properties for corresponding analyzer
-////////////////////////////////////////////////////////////////////////////////
-Analyzer::ptr MakeVPack(const vpack::Slice slice) {
-  PipelineTokenizer::options_t options;
-  if (ParseVPackOptions(slice, options)) {
-    return std::make_unique<PipelineTokenizer>(std::move(options));
-  }
-  return nullptr;
-}
-
-Analyzer::ptr MakeVPack(std::string_view args) {
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-Analyzer::ptr MakeJson(std::string_view args) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while constructing pipeline_token_stream");
-      return nullptr;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing pipeline_token_stream from JSON"));
-  } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Caught error while constructing pipeline_token_stream from JSON");
-  }
-  return nullptr;
-}
-
-bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
-  try {
-    if (IsNull(args)) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Null arguments while normalizing pipeline_token_stream");
-      return false;
-    }
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    vpack::Builder builder;
-    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
-      definition = builder.toString();
-      return !definition.empty();
-    }
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while normalizing pipeline_token_stream from JSON"));
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Caught error while normalizing pipeline_token_stream from JSON");
-  }
-  return false;
-}
 
 PayAttr* FindPayload(std::span<const Analyzer::ptr> pipeline) {
   for (auto it = pipeline.rbegin(); it != pipeline.rend(); ++it) {
@@ -301,7 +51,7 @@ bool AllHaveOffset(std::span<const Analyzer::ptr> pipeline) {
 
 }  // namespace
 
-PipelineTokenizer::PipelineTokenizer(PipelineTokenizer::options_t&& options)
+PipelineTokenizer::PipelineTokenizer(std::vector<Analyzer::ptr> options)
   : _attrs{{},
            options.empty() ? nullptr
                            : irs::GetMutable<TermAttr>(options.back().get()),
@@ -401,9 +151,21 @@ bool PipelineTokenizer::reset(std::string_view data) {
   return _pipeline.front().reset(0, static_cast<uint32_t>(data.size()), data);
 }
 
-void PipelineTokenizer::init() {
-  REGISTER_ANALYZER_JSON(PipelineTokenizer, MakeJson, NormalizeJsonConfig);
-  REGISTER_ANALYZER_VPACK(PipelineTokenizer, MakeVPack, NormalizeVPackConfig);
+Analyzer::ptr PipelineTokenizer::Make(Options opts) {
+  if (opts.children.empty()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "pipeline: requires at least one child analyzer");
+  }
+  std::vector<Analyzer::ptr> live_children;
+  live_children.reserve(opts.children.size());
+  for (auto& child : opts.children) {
+    if (!child) {
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+                "pipeline: null child analyzer config");
+    }
+    live_children.emplace_back(CreateAnalyzer(std::move(*child)));
+  }
+  return std::make_unique<PipelineTokenizer>(std::move(live_children));
 }
 
 PipelineTokenizer::SubAnalyzerT::SubAnalyzerT(Analyzer::ptr a,

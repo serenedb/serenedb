@@ -1,3 +1,5 @@
+control substitution on
+
 hash-threshold 100
 
 # Per-format reader variant coverage (read_parquet vs parquet_scan,
@@ -144,17 +146,18 @@ a	b
 
 
 # ---- json variants (objects mode) ----
-# objects mode emits a single 'json' VARCHAR column; PHRASE works via
-# the search-filter-builder cast-peel.
+# objects mode emits a single 'json' JSON column carrying the whole row;
+# index a primitive leaf via expression (text tokenizers reject JSON
+# objects/arrays under the unified per-leaf-type dispatch).
 
 statement ok
 CREATE VIEW v_read_json_objects AS SELECT * FROM read_json_objects('/tmp/${__DATABASE__}_variants.jsonl');
 
 statement ok
-CREATE INDEX v_read_json_objects_idx ON v_read_json_objects USING inverted(json variants_en);
+CREATE INDEX v_read_json_objects_idx ON v_read_json_objects USING inverted((json->>'b') variants_en);
 
 query
-SELECT json FROM v_read_json_objects_idx WHERE json @@ ts_phrase('shared term') ORDER BY json;
+SELECT json FROM v_read_json_objects_idx WHERE (json->>'b') @@ ts_phrase('shared term') ORDER BY json;
 ----
 json
 {"a":1,"b":"shared term alpha info"}
@@ -164,10 +167,10 @@ statement ok
 CREATE VIEW v_read_json_objects_auto AS SELECT * FROM read_json_objects_auto('/tmp/${__DATABASE__}_variants.jsonl');
 
 statement ok
-CREATE INDEX v_read_json_objects_auto_idx ON v_read_json_objects_auto USING inverted(json variants_en);
+CREATE INDEX v_read_json_objects_auto_idx ON v_read_json_objects_auto USING inverted((json->>'b') variants_en);
 
 query
-SELECT json FROM v_read_json_objects_auto_idx WHERE json @@ ts_phrase('shared term') ORDER BY json;
+SELECT json FROM v_read_json_objects_auto_idx WHERE (json->>'b') @@ ts_phrase('shared term') ORDER BY json;
 ----
 json
 {"a":1,"b":"shared term alpha info"}
@@ -177,10 +180,10 @@ statement ok
 CREATE VIEW v_read_ndjson_objects AS SELECT * FROM read_ndjson_objects('/tmp/${__DATABASE__}_variants.jsonl');
 
 statement ok
-CREATE INDEX v_read_ndjson_objects_idx ON v_read_ndjson_objects USING inverted(json variants_en);
+CREATE INDEX v_read_ndjson_objects_idx ON v_read_ndjson_objects USING inverted((json->>'b') variants_en);
 
 query
-SELECT json FROM v_read_ndjson_objects_idx WHERE json @@ ts_phrase('shared term') ORDER BY json;
+SELECT json FROM v_read_ndjson_objects_idx WHERE (json->>'b') @@ ts_phrase('shared term') ORDER BY json;
 ----
 json
 {"a":1,"b":"shared term alpha info"}

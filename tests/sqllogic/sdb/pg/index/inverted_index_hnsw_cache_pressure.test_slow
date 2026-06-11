@@ -33,7 +33,7 @@ FROM generate_series(1, 6000) i;
 # Forces HNSWWriter::Build to run; ASan trips here on the unfixed
 # code if the dangling read fires during build.
 statement ok
-VACUUM (UPDATE_INDEXES) vec;
+VACUUM (REFRESH_TABLE) vec;
 
 # Sanity: index is queryable and returns the requested top-K.
 query

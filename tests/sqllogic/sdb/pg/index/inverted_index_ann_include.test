@@ -38,7 +38,7 @@ INSERT INTO vec_t VALUES (4, [10, 10, 10]::FLOAT[3], 'delta', 400, 'body-four')
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vec_t
+VACUUM (REFRESH_TABLE) vec_t
 
 
 # All-INCLUDE projection: label + tag are both INCLUDE'd, so the
@@ -51,15 +51,26 @@ EXPLAIN SELECT label, tag FROM vec_t_idx
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
 │    ────────────────────   │
-│      Index: vec_t_idx     │
+│           Top: 1          │
+│      Order By: #2 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      vec_t_idx (ANN)      │
+│                           │
 │          TopK: 1          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
 │           label           │
 │            tag            │
+│  sdb_inverted_index_score │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -81,9 +92,19 @@ EXPLAIN SELECT pk, label, body FROM vec_t_idx
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
 │    ────────────────────   │
-│      Index: vec_t_idx     │
+│           Top: 1          │
+│      Order By: #3 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      vec_t_idx (ANN)      │
+│                           │
 │      Lookup: rocksdb      │
 │          TopK: 1          │
 │          Dims: 3          │
@@ -92,6 +113,7 @@ QUERY PLAN
 │           pk (l)          │
 │         label (i)         │
 │          body (l)         │
+│  sdb_inverted_index_score │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘

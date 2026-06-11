@@ -45,8 +45,7 @@ rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal"
 echo "starting ${SERENED_BIN} on port ${PORT} (rows=${ROW_COUNT})" |
 	tee -a "${RUN_LOG}"
 "${SERENED_BIN}" "${DATA_DIR}" \
-	--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
-	--log.foreground-tty true \
+	--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
 	>"${LOG}" 2>&1 &
 SERENED_PID=$!
 trap "kill -9 ${SERENED_PID} >/dev/null 2>&1 || true" EXIT
@@ -144,7 +143,7 @@ INCLUDE (val);"
 
 # 2. Native baseline -- ATTACH a fresh duckdb db, CTAS the same shape.
 run_sql "attach_native_db" "${BUILD_THREADS}" "
-ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);"
+ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);"
 run_sql "create_native_table" "${BUILD_THREADS}" "
 CREATE TABLE native_db.main.pk_native AS
 SELECT * FROM pk_bench;"

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/planner/column_binding_map.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -48,25 +49,13 @@ struct Snapshot;
 }  // namespace sdb::catalog
 namespace sdb::connector {
 
-inline std::string_view AsView(const duckdb::string_t& s) noexcept {
-  return {s.GetData(), s.GetSize()};
-}
-
 struct FilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
   const ColumnGetter& column_getter;
-  // Optional resolver for JSON-path expressions (`content->>'host'`).
-  // nullptr = JSON-path lookups are disabled for this filter pass.
-  const JsonPathGetter* json_path_getter = nullptr;
-  // Memo of resolved (column, path, mangle) -> SearchColumnInfo. Key is
-  // the iresearch field name. NodeHashMap so refs survive insertions.
-  containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache;
-  // JSON pointer (pre-encoded, see `EncodeJsonPointer`) for the current
-  // expression being resolved; empty when no JSON-path scoping applies.
-  std::string_view json_pointer;
-  // Scratch buffer reused across FindColumnInfoForExpr calls.
-  std::string& cache_key;
+  const ExpressionGetter* expr_getter = nullptr;
+  duckdb::column_binding_map_t<SearchColumnInfo>& column_cache;
+  containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
   irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;
   duckdb::ClientContext& client_context;
@@ -77,10 +66,9 @@ struct FilterContext {
       .negated = negated,
       .boost = boost,
       .column_getter = column_getter,
-      .json_path_getter = json_path_getter,
+      .expr_getter = expr_getter,
       .column_cache = column_cache,
-      .json_pointer = json_pointer,
-      .cache_key = cache_key,
+      .expr_cache = expr_cache,
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
@@ -93,10 +81,9 @@ struct FilterContext {
       .negated = negated,
       .boost = boost * factor,
       .column_getter = column_getter,
-      .json_path_getter = json_path_getter,
+      .expr_getter = expr_getter,
       .column_cache = column_cache,
-      .json_pointer = json_pointer,
-      .cache_key = cache_key,
+      .expr_cache = expr_cache,
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
@@ -130,12 +117,7 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
-void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
-// JSON-path-aware overload: emits `[BE col_id]/path/...` so per-path
-// inverted-index fields are reachable from queries that pass through a
-// SearchColumnInfo (e.g. `content->>'host' @@ ts_like(...)`).
-void MakeFieldName(const SearchColumnInfo& column, std::string& field_name);
-Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name);
+Result ValidateFilterType(duckdb::LogicalTypeId type_id);
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id);
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id);

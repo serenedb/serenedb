@@ -20,15 +20,11 @@
 
 #include "catalog/user_type.h"
 
-#include <vpack/vpack_helper.h>
-
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/extra_type_info.hpp>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
 
-#include "basics/static_strings.h"
+#include "basics/serializer.h"
+#include "catalog/create_info_serde.h"
 #include "database/ticks.h"
 
 namespace sdb::catalog {
@@ -49,40 +45,17 @@ PgSqlType::PgSqlType(ObjectId schema_id, ObjectId id, std::string_view name,
   _info->type = {_info->type.id(), std::move(type_info)};
 }
 
-std::shared_ptr<PgSqlType> PgSqlType::ReadInternal(vpack::Slice slice,
-                                                   ReadContext ctx) {
-  auto name =
-    basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
-
-  auto info_slice = slice.get("info");
-  SDB_ASSERT(info_slice.isString());
-  auto str = info_slice.stringViewUnchecked();
-  duckdb::MemoryStream stream(
-    const_cast<duckdb::data_t*>(
-      reinterpret_cast<const duckdb::data_t*>(str.data())),
-    str.size());
-  duckdb::BinaryDeserializer deserializer(stream);
-  auto create_info = duckdb::CreateInfo::Deserialize(deserializer);
-  auto type_info =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
-      std::move(create_info));
-  return std::make_shared<PgSqlType>(ctx.schema_id, ctx.id, name,
-                                     std::move(type_info));
+std::shared_ptr<PgSqlType> PgSqlType::Deserialize(duckdb::Deserializer& src,
+                                                  ReadContext ctx) {
+  CreateInfoReadData<duckdb::CreateTypeInfo> data;
+  basics::ReadTuple(src, data);
+  return std::make_shared<PgSqlType>(ctx.schema_id, ctx.id, data.name,
+                                     std::move(data.info.info));
 }
 
-void PgSqlType::WriteInternal(vpack::Builder& builder) const {
-  builder.openObject();
-  builder.add(StaticStrings::kDataSourceName, GetName());
-
-  // Serialize CreateTypeInfo via DuckDB BinarySerializer
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(*_info, stream);
-  auto data = stream.GetData();
-  auto size = stream.GetPosition();
-  builder.add("info",
-              std::string_view{reinterpret_cast<const char*>(data), size});
-
-  builder.close();
+void PgSqlType::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(sink, CreateInfoWriteData<duckdb::CreateTypeInfo>{
+                             GetName(), {_info.get()}});
 }
 
 std::shared_ptr<Object> PgSqlType::Clone() const {

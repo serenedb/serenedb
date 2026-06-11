@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <duckdb/common/types/string_type.hpp>
+
 #include "basics/noncopyable.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/utils/block_pool.hpp"
@@ -56,10 +58,15 @@ using byte_block_pool =
 
 struct Posting {
   explicit Posting(const byte_type* data, size_t size) noexcept
-    : term{data, size} {}
+    : term{reinterpret_cast<const char*>(data), static_cast<uint32_t>(size)} {}
 
-  bytes_view term;
-  uint64_t doc_code;
+  bytes_view TermBytes() const noexcept {
+    return bytes_view{reinterpret_cast<const byte_type*>(term.GetData()),
+                      term.GetSize()};
+  }
+
+  duckdb::string_t term;
+  uint64_t doc_code{0};
   // ...........................................................................
   // store pointers to data in the following way:
   // [0] - pointer to freq stream end
@@ -67,10 +74,10 @@ struct Posting {
   // [2] - pointer to freq stream begin
   // [3] - pointer to prox stream begin
   // ...........................................................................
-  size_t int_start;
+  size_t int_start{0};
   doc_id_t doc{doc_limits::invalid()};
-  uint32_t freq;
-  uint32_t pos;
+  uint32_t freq{0};
+  uint32_t pos{0};
   uint32_t offs{0};
   doc_id_t size{1};  // length of postings
 };
@@ -108,7 +115,7 @@ class Postings : util::Noncopyable {
     bool operator()(const Ref& lhs,
                     const hashed_bytes_view& rhs) const noexcept {
       SDB_ASSERT(lhs.ref < _data->size());
-      return (*_data)[lhs.ref].term == rhs;
+      return (*_data)[lhs.ref].TermBytes() == rhs;
     }
 
     bool operator()(const hashed_bytes_view& lhs,

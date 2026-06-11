@@ -30,7 +30,7 @@ statement ok
 CREATE INDEX di_idx ON di_t USING inverted(id, body di_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) di_t;
+VACUUM (REFRESH_TABLE) di_t;
 
 # Sanity: the seed row is searchable before we touch anything.
 query
@@ -99,7 +99,7 @@ CREATE INDEX di_idx ON di_t USING inverted(id, body di_dict);
 
 connection di_after
 statement ok
-VACUUM (UPDATE_INDEXES) di_t;
+VACUUM (REFRESH_TABLE) di_t;
 
 connection di_after
 query

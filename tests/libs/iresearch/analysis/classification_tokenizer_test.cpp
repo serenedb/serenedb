@@ -21,9 +21,6 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-
 #include "iresearch/analysis/classification_tokenizer.hpp"
 #include "tests_shared.hpp"
 
@@ -43,6 +40,14 @@ irs::analysis::ClassificationTokenizer::model_ptr ThrowingProvider(
   throw std::exception();
 }
 
+std::string ModelLocation() {
+#ifdef WIN32
+  return test_base::resource("model_cooking.bin").generic_string();
+#else
+  return TestBase::resource("model_cooking.bin").string();
+#endif
+}
+
 }  // namespace
 
 TEST(classification_tokenizer_test, consts) {
@@ -53,15 +58,11 @@ TEST(classification_tokenizer_test, consts) {
 TEST(classification_tokenizer_test, test_load) {
   // load json string
   {
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
     std::string_view data{"baking"};
-    auto input_json = "{\"model_location\": \"" + model_loc + "\"}";
-    auto stream = irs::analysis::analyzers::Get(
-      "classification", irs::Type<irs::text_format::Json>::get(), input_json);
+    auto stream = irs::analysis::ClassificationTokenizer::Make(
+      irs::analysis::ClassificationTokenizer::Options{
+        .model_location = ModelLocation(),
+      });
 
     ASSERT_NE(nullptr, stream);
     ASSERT_FALSE(stream->next());
@@ -85,14 +86,10 @@ TEST(classification_tokenizer_test, test_load) {
 
   // multi-word input
   {
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
-    auto input_json = "{\"model_location\": \"" + model_loc + "\"}";
-    auto stream = irs::analysis::analyzers::Get(
-      "classification", irs::Type<irs::text_format::Json>::get(), input_json);
+    auto stream = irs::analysis::ClassificationTokenizer::Make(
+      irs::analysis::ClassificationTokenizer::Options{
+        .model_location = ModelLocation(),
+      });
 
     ASSERT_NE(nullptr, stream);
     ASSERT_FALSE(stream->next());
@@ -129,14 +126,10 @@ TEST(classification_tokenizer_test, test_load) {
     constexpr std::string_view kData{
       "Which baking dish is best to bake\na banana bread ?"};
 
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
-    auto input_json = "{\"model_location\": \"" + model_loc + "\"}";
-    auto stream = irs::analysis::analyzers::Get(
-      "classification", irs::Type<irs::text_format::Json>::get(), input_json);
+    auto stream = irs::analysis::ClassificationTokenizer::Make(
+      irs::analysis::ClassificationTokenizer::Options{
+        .model_location = ModelLocation(),
+      });
 
     ASSERT_NE(nullptr, stream);
     ASSERT_FALSE(stream->next());
@@ -162,15 +155,11 @@ TEST(classification_tokenizer_test, test_load) {
     constexpr std::string_view kData{
       "Which baking dish is best to bake a banana bread ?"};
 
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
-    auto input_json =
-      "{\"model_location\": \"" + model_loc + "\", \"top_k\": 2}";
-    auto stream = irs::analysis::analyzers::Get(
-      "classification", irs::Type<irs::text_format::Json>::get(), input_json);
+    auto stream = irs::analysis::ClassificationTokenizer::Make(
+      irs::analysis::ClassificationTokenizer::Options{
+        .model_location = ModelLocation(),
+        .top_k = 2,
+      });
 
     ASSERT_NE(nullptr, stream);
     ASSERT_FALSE(stream->next());
@@ -197,222 +186,72 @@ TEST(classification_tokenizer_test, test_load) {
     ASSERT_FALSE(stream->next());
   }
 
-  // failing cases
-  {
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
+  // invalid model location
+  ASSERT_ANY_THROW(irs::analysis::ClassificationTokenizer::Make(
+    irs::analysis::ClassificationTokenizer::Options{
+      .model_location = "invalid_localtion",
+    }));
 
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "classification",
-                         irs::Type<irs::text_format::Json>::get(), R"([])"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "classification", irs::Type<irs::text_format::Json>::get(),
-                R"({"model_location": "invalid_localtion" })"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "classification", irs::Type<irs::text_format::Json>::get(),
-                R"({"model_location": bool })"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "classification", irs::Type<irs::text_format::Json>::get(),
-                R"({"model_location": {} })"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "classification", irs::Type<irs::text_format::Json>::get(),
-                R"({"model_location": 42 })"));
-    ASSERT_EQ(
-      nullptr,
-      irs::analysis::analyzers::Get(
-        "classification", irs::Type<irs::text_format::Json>::get(),
-        "{\"model_location\": \"" + model_loc + "\", \"top_k\": false}"));
-    ASSERT_EQ(
-      nullptr,
-      irs::analysis::analyzers::Get(
-        "classification", irs::Type<irs::text_format::Json>::get(),
-        "{\"model_location\": \"" + model_loc + "\", \"top_k\": 2147483648}"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "classification", irs::Type<irs::text_format::Json>::get(),
-                "{\"model_location\": \"" + model_loc +
-                  "\", \"top_k\": 42, \"threshold\": 1.1}"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "classification", irs::Type<irs::text_format::Json>::get(),
-                "{\"model_location\": \"" + model_loc +
-                  "\", \"top_k\": 42, \"threshold\": -0.1}"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "classification", irs::Type<irs::text_format::Json>::get(),
-                "{\"model_location\": \"" + model_loc +
-                  "\", \"top_k\": 42, \"threshold\": false}"));
-  }
+  // .........................................................................
+  // additional invalid-Options cases ported from the old JSON failing-case
+  // suite. JSON-parser-internal rejections (e.g. `"top_k": bool`,
+  // `"model_location": 42`) have no direct-API analogue and are dropped.
+  // .........................................................................
+
+  // missing required model_location (default-constructed Options has empty
+  // model_location).
+  ASSERT_ANY_THROW(irs::analysis::ClassificationTokenizer::Make(
+    irs::analysis::ClassificationTokenizer::Options{}));
+
+  // top_k must be > 0.
+  ASSERT_ANY_THROW(irs::analysis::ClassificationTokenizer::Make(
+    irs::analysis::ClassificationTokenizer::Options{
+      .model_location = ModelLocation(),
+      .top_k = 0,
+    }));
+  ASSERT_ANY_THROW(irs::analysis::ClassificationTokenizer::Make(
+    irs::analysis::ClassificationTokenizer::Options{
+      .model_location = ModelLocation(),
+      .top_k = -1,
+    }));
+
+  // threshold must be in [0.0, 1.0].
+  ASSERT_ANY_THROW(irs::analysis::ClassificationTokenizer::Make(
+    irs::analysis::ClassificationTokenizer::Options{
+      .model_location = ModelLocation(),
+      .threshold = 1.1,
+      .top_k = 42,
+    }));
+  ASSERT_ANY_THROW(irs::analysis::ClassificationTokenizer::Make(
+    irs::analysis::ClassificationTokenizer::Options{
+      .model_location = ModelLocation(),
+      .threshold = -0.1,
+      .top_k = 42,
+    }));
 }
 
 TEST(classification_tokenizer_test, test_custom_provider) {
-#ifdef WIN32
-  const auto model_loc =
-    test_base::resource("model_cooking.bin").generic_string();
-#else
-  const auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
+  const auto model_loc = ModelLocation();
   gExpectedModel = model_loc;
-
-  const auto input_json =
-    "{\"model_location\": \"" + model_loc + "\", \"top_k\": 2}";
 
   ASSERT_EQ(nullptr, irs::analysis::ClassificationTokenizer::set_model_provider(
                        &::NullProvider));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "classification",
-                       irs::Type<irs::text_format::Json>::get(), input_json));
+  ASSERT_ANY_THROW(irs::analysis::ClassificationTokenizer::Make(
+    irs::analysis::ClassificationTokenizer::Options{
+      .model_location = model_loc,
+      .top_k = 2,
+    }));
 
   ASSERT_EQ(&::NullProvider,
             irs::analysis::ClassificationTokenizer::set_model_provider(
               &::ThrowingProvider));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "classification",
-                       irs::Type<irs::text_format::Json>::get(), input_json));
+  ASSERT_ANY_THROW(irs::analysis::ClassificationTokenizer::Make(
+    irs::analysis::ClassificationTokenizer::Options{
+      .model_location = model_loc,
+      .top_k = 2,
+    }));
 
   ASSERT_EQ(
     &::ThrowingProvider,
     irs::analysis::ClassificationTokenizer::set_model_provider(nullptr));
-}
-
-TEST(classification_tokenizer_test, test_make_config_json) {
-  // random extra param
-  {
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
-    std::string config =
-      "{\"model_location\": \"" + model_loc + "\", \"not_valid\": false}";
-    std::string expected_conf = "{\"model_location\": \"" + model_loc +
-                                "\", \"top_k\": 1, \"threshold\": 0.0}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "classification", irs::Type<irs::text_format::Json>::get(),
-      config));
-    ASSERT_EQ(vpack::Parser::fromJson(expected_conf)->toString(), actual);
-  }
-
-  // test top k
-  {
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
-    std::string config =
-      "{\"model_location\": \"" + model_loc + "\", \"top_k\": 2}";
-    std::string expected_conf = "{\"model_location\": \"" + model_loc +
-                                "\", \"top_k\": 2, \"threshold\": 0.0}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "classification", irs::Type<irs::text_format::Json>::get(),
-      config));
-    ASSERT_EQ(vpack::Parser::fromJson(expected_conf)->toString(), actual);
-  }
-
-  // test threshold
-  {
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
-    std::string config =
-      "{\"model_location\": \"" + model_loc + "\", \"threshold\": 0.1}";
-    std::string expected_conf = "{\"model_location\": \"" + model_loc +
-                                "\", \"top_k\": 1, \"threshold\": 0.1}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "classification", irs::Type<irs::text_format::Json>::get(),
-      config));
-    ASSERT_EQ(vpack::Parser::fromJson(expected_conf)->toString(), actual);
-  }
-
-  // test all 3 params
-  {
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
-    std::string config = "{\"model_location\": \"" + model_loc +
-                         "\", \"threshold\": 0.1, \"top_k\": 2}";
-    std::string expected_conf = "{\"model_location\": \"" + model_loc +
-                                "\", \"top_k\": 2, \"threshold\": 0.1}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "classification", irs::Type<irs::text_format::Json>::get(),
-      config));
-    ASSERT_EQ(vpack::Parser::fromJson(expected_conf)->toString(), actual);
-  }
-
-  // test VPack
-  {
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
-    std::string config =
-      "{\"model_location\":\"" + model_loc + "\", \"not_valid\": false}";
-    auto expected_conf = "{\"model_location\": \"" + model_loc +
-                         "\", \"top_k\": 1, \"threshold\": 0.0}";
-    auto in_vpack = vpack::Parser::fromJson(config);
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "classification", irs::Type<irs::text_format::VPack>::get(),
-      in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ(vpack::Parser::fromJson(expected_conf)->toString(),
-              out_slice.toString());
-  }
-
-  // failing cases
-  {
-    std::string out;
-#ifdef WIN32
-    auto model_loc = test_base::resource("model_cooking.bin").generic_string();
-#else
-    auto model_loc = TestBase::resource("model_cooking.bin").string();
-#endif
-
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      out, "classification", irs::Type<irs::text_format::Json>::get(),
-      R"([])"));
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      out, "classification", irs::Type<irs::text_format::Json>::get(),
-      R"({"model_location": bool })"));
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      out, "classification", irs::Type<irs::text_format::Json>::get(),
-      R"({"model_location": {} })"));
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      out, "classification", irs::Type<irs::text_format::Json>::get(),
-      R"({"model_location": 42 })"));
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      out, "classification", irs::Type<irs::text_format::Json>::get(),
-      "{\"model_location\": \"" + model_loc + "\", \"top_k\": false}"));
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      out, "classification", irs::Type<irs::text_format::Json>::get(),
-      "{\"model_location\": \"" + model_loc +
-        "\", \"top_k\": 42, \"threshold\": 25}"));
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      out, "classification", irs::Type<irs::text_format::Json>::get(),
-      "{\"model_location\": \"" + model_loc +
-        "\", \"top_k\": 42, \"threshold\": false}"));
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      out, "classification", irs::Type<irs::text_format::Json>::get(),
-      "{\"model_location\": \"" + model_loc + "\", \"top_k\": 2147483648}"));
-  }
 }

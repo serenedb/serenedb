@@ -1,0 +1,54 @@
+statement ok
+CREATE TABLE t (id INT, v FLOAT[4]);
+
+
+statement ok
+INSERT INTO t VALUES (1, [1.0, 0.0, 0.0, 0.0]::FLOAT[4]);
+
+
+statement ok
+CREATE INDEX t_hnsw ON t USING inverted(v hnsw (metric = 'l2'));
+
+
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+
+# Catalog snapshot pinning under REPEATABLE READ. The optimizer must use
+# the transaction's pinned snapshot when resolving indexes; otherwise a
+# concurrent DROP TABLE publishes a snapshot missing the relation and
+# GetIndexesByRelation asserts on the dependency map.
+connection reader
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+
+connection reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection reader
+query
+SELECT id FROM t_hnsw ORDER BY v <-> [1.0, 0.0, 0.0, 0.0]::FLOAT[4] LIMIT 1;
+----
+id
+1
+
+
+connection writer
+statement ok
+DROP TABLE t;
+
+
+connection reader
+query
+SELECT id FROM t_hnsw ORDER BY v <-> [1.0, 0.0, 0.0, 0.0]::FLOAT[4] LIMIT 1;
+----
+id
+1
+
+
+connection reader
+statement ok
+COMMIT;

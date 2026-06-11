@@ -25,52 +25,33 @@
 #include <memory>
 
 #include "general_server/scheduler.h"
-#include "rest_server/serened.h"
 
 namespace sdb {
 
-class SchedulerFeature final : public SerenedFeature {
+class SchedulerFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "Scheduler"; }
-
   inline static Scheduler* gScheduler = nullptr;
 
-  SchedulerFeature(Server& server);
-  ~SchedulerFeature() final;
+  // Single-instance accessor; valid between ctor and dtor.
+  inline static SchedulerFeature* gInstance = nullptr;
+  static SchedulerFeature& instance() noexcept { return *gInstance; }
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void prepare() final;
-  void start() final;
-  void stop() final;
-  void unprepare() final;
+  SchedulerFeature();
+  ~SchedulerFeature();
 
-  // -------------------------------------------------------------------------
-  // UNRELATED SECTION STARTS HERE: Signals and other things crept into Sched
-  // -------------------------------------------------------------------------
-  void buildControlCHandler();
-  void buildHangupHandler();
-
-  uint64_t maximalThreads() const noexcept;
+  void start();
+  void stop();
 
  private:
-  void signalStuffInit();
-  void signalStuffDeinit();
-
   uint64_t _nr_minimal_threads = 4;
   uint64_t _nr_maximal_threads = 0;
   uint64_t _queue_size = 4096;
   uint64_t _fifo1_size = 4096;
   uint64_t _fifo2_size = 4096;
   uint64_t _fifo3_size = 4096;
-  double _ongoing_low_priority_multiplier = 4.0;
   double _unavailability_queue_fill_grade = 0.75;
 
   std::unique_ptr<Scheduler> _scheduler;
-  metrics::MetricsFeature& _metrics_feature;
-
-  struct AsioHandler;
-  std::unique_ptr<AsioHandler> _asio_handler;
 };
 
 }  // namespace sdb

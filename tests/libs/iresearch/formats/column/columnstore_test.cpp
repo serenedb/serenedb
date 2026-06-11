@@ -31,13 +31,15 @@
 #include <set>
 
 #include "basics/resource_manager.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/column_writer.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/merge.hpp"
-#include "iresearch/columnstore/norm_reader.hpp"
-#include "iresearch/columnstore/norm_writer.hpp"
-#include "iresearch/columnstore/read_context.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/column_writer.hpp"
+#include "iresearch/formats/column/merge.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
+#include "iresearch/formats/column/norm_reader.hpp"
+#include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory_cleaner.hpp"
 #include "iresearch/store/memory_directory.hpp"
@@ -57,12 +59,12 @@ class IRSColumnstoreTest : public ::testing::Test {
 // Count data-row-groups in a typed ColumnReader by walking via Locate.
 // The public ColumnReader no longer exposes RowGroupCount; tests that
 // only need the count derive it from the per-row Locate walk.
-size_t CountRowGroups(const irs::columnstore::ColumnReader& col) {
+size_t CountRowGroups(const irs::ColumnReader& col) {
   if (col.RowCount() == 0) {
     return 0;
   }
   size_t n = 0;
-  irs::columnstore::RgWindow w{};
+  irs::RgWindow w{};
   for (uint64_t row = 0; row < col.RowCount();) {
     w = col.Locate(row, w);
     ++n;
@@ -71,7 +73,7 @@ size_t CountRowGroups(const irs::columnstore::ColumnReader& col) {
   return n;
 }
 
-using TypedPointCursor = irs::columnstore::ColumnReader::PointReader;
+using TypedPointCursor = irs::ColumnReader::PointReader;
 
 TEST_F(IRSColumnstoreTest, RoundTripInt64Dense) {
   irs::MemoryDirectory dir{};
@@ -80,7 +82,7 @@ TEST_F(IRSColumnstoreTest, RoundTripInt64Dense) {
 
   // Write
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
 
     // Build a chunk's worth of values, append in 2048-row batches.
@@ -96,15 +98,14 @@ TEST_F(IRSColumnstoreTest, RoundTripInt64Dense) {
       cw.Append(produced, batch, take);
       produced += take;
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read
   {
     irs::SegmentMeta meta;
     meta.name = std::string{kSegmentName};
-    irs::columnstore::Reader r{dir, meta.name, Db()};
+    irs::ColReader r{dir, meta.name, Db()};
 
     ASSERT_TRUE(r.HasColumn(1));
     const auto* col = r.Column(1);
@@ -112,7 +113,7 @@ TEST_F(IRSColumnstoreTest, RoundTripInt64Dense) {
     EXPECT_EQ(col->RowCount(), kRowCount);
     EXPECT_EQ(CountRowGroups(*col), 1u);
 
-    irs::columnstore::ReadContext ctx{r};
+    irs::ReadContext ctx{r};
     auto seg = col->OpenSegment(0, ctx);
     duckdb::ColumnScanState state{nullptr};
     seg->InitializeScan(state);
@@ -142,7 +143,7 @@ TEST_F(IRSColumnstoreTest, RoundTripInt64WithNulls) {
   // Write all rows contiguously: even rows hold a value, odd rows are
   // null. One Append() per pair of rows.
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
 
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, 2};
@@ -160,7 +161,7 @@ TEST_F(IRSColumnstoreTest, RoundTripInt64WithNulls) {
   {
     irs::SegmentMeta meta;
     meta.name = std::string{kSegmentName};
-    irs::columnstore::Reader r{dir, meta.name, Db()};
+    irs::ColReader r{dir, meta.name, Db()};
     const auto* col = r.Column(1);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kRowCount);
@@ -183,7 +184,7 @@ TEST_F(IRSColumnstoreTest, RoundTripInt64WithNulls) {
   }
 }
 
-// Norm columns share the .cs file but bypass the duckdb codec pipeline:
+// Norm columns share the .col file but bypass the duckdb codec pipeline:
 // per-row-group raw 1/2/4-byte payload picked from the row group's max,
 // plus per-row-group max/sum/non_zero stats serialised into the footer.
 // The test exercises a multi-row-group write where each row group lands
@@ -199,7 +200,7 @@ TEST_F(IRSColumnstoreTest, NormColumnRoundTripPerRowGroupEncoding) {
 
   // Write
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& nw = w.OpenNormColumn(/*id=*/42, /*row_group_size=*/kPerGroup);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       uint32_t v;
@@ -212,13 +213,12 @@ TEST_F(IRSColumnstoreTest, NormColumnRoundTripPerRowGroupEncoding) {
       }
       nw.Append(i, v);
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read + verify each row group's encoding + per-row values.
   {
-    irs::columnstore::Reader r{dir, kSegmentName, Db()};
+    irs::ColReader r{dir, kSegmentName, Db()};
     ASSERT_TRUE(r.HasNormColumn(42));
     const auto* col = r.NormColumn(42);
     ASSERT_NE(col, nullptr);
@@ -239,8 +239,8 @@ TEST_F(IRSColumnstoreTest, NormColumnRoundTripPerRowGroupEncoding) {
       auto [rg, in_rg] = col->Locate(i);
       const auto byte_size = col->ByteSize(rg);
       auto bytes = col->RowGroupBytes(rg);
-      const auto v = irs::columnstore::ReadNormValue(
-        bytes.data() + in_rg * byte_size, byte_size);
+      const auto v =
+        irs::ReadNormValue(bytes.data() + in_rg * byte_size, byte_size);
 
       uint32_t expected;
       if (i < kPerGroup) {
@@ -285,7 +285,7 @@ TEST_F(IRSColumnstoreTest, NormColumnSingleRowGroupOldFormatShape) {
   constexpr uint64_t kRowCount = 4096;
 
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& nw = w.OpenNormColumn(/*id=*/7, /*row_group_size=*/kRowCount + 1);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       // All values fit in 1 byte -- this exercises the byte_size==1 path
@@ -296,7 +296,7 @@ TEST_F(IRSColumnstoreTest, NormColumnSingleRowGroupOldFormatShape) {
   }
 
   {
-    irs::columnstore::Reader r{dir, kSegmentName, Db()};
+    irs::ColReader r{dir, kSegmentName, Db()};
     const auto* col = r.NormColumn(7);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowGroupCount(), 1u);
@@ -320,7 +320,7 @@ TEST_F(IRSColumnstoreTest, NormColumnRoundTripWithStats) {
   constexpr std::string_view kSegmentName = "norm_in_flight";
   constexpr uint64_t kRowCount = 250;
 
-  irs::columnstore::Writer w{dir, kSegmentName, Db()};
+  irs::ColWriter w{dir, kSegmentName, Db()};
   auto& nw = w.OpenNormColumn(/*id=*/3, /*row_group_size=*/100);
 
   uint64_t expected_sum = 0;
@@ -332,10 +332,9 @@ TEST_F(IRSColumnstoreTest, NormColumnRoundTripWithStats) {
     expected_non_zero += static_cast<uint64_t>(v != 0);
   }
 
-  auto filename = w.Commit(kRowCount);
-  ASSERT_FALSE(filename.empty());
+  w.Commit(kRowCount);
 
-  irs::columnstore::Reader r{dir, kSegmentName, Db()};
+  irs::ColReader r{dir, kSegmentName, Db()};
   const auto* col = r.NormColumn(3);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), kRowCount);
@@ -349,13 +348,13 @@ TEST_F(IRSColumnstoreTest, NormColumnRoundTripWithStats) {
   }
 }
 
-// Forward-compat: opening a `.cs` file that has no norm_columns list
+// Forward-compat: opening a `.col` file that has no norm_columns list
 // (older writes) returns no norm readers and HasNormColumn=false.
 TEST_F(IRSColumnstoreTest, NormColumnAbsentOnTypedOnlySegment) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegmentName = "typed_only";
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(1, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, 8};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -365,7 +364,7 @@ TEST_F(IRSColumnstoreTest, NormColumnAbsentOnTypedOnlySegment) {
     cw.Append(0, batch, 8);
     w.Commit(/*target_row=*/8);
   }
-  irs::columnstore::Reader r{dir, kSegmentName, Db()};
+  irs::ColReader r{dir, kSegmentName, Db()};
   EXPECT_FALSE(r.HasNormColumn(1));
   EXPECT_EQ(r.NormColumn(1), nullptr);
   EXPECT_TRUE(r.HasColumn(1));
@@ -386,7 +385,7 @@ TEST_F(IRSColumnstoreTest, RoundTripArrayFloatDense) {
 
   // Write
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/42, array_type);
 
     duckdb::Vector batch{array_type, STANDARD_VECTOR_SIZE};
@@ -405,14 +404,13 @@ TEST_F(IRSColumnstoreTest, RoundTripArrayFloatDense) {
       cw.Append(produced, batch, take);
       produced += take;
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read: parent ARRAY column exposes child ColumnReader; element data is
   // a flat FLOAT primitive segment with kRowCount * kDim entries.
   {
-    irs::columnstore::Reader r{dir, kSegmentName, Db()};
+    irs::ColReader r{dir, kSegmentName, Db()};
     ASSERT_TRUE(r.HasColumn(42));
     const auto* col = r.Column(42);
     ASSERT_NE(col, nullptr);
@@ -427,7 +425,7 @@ TEST_F(IRSColumnstoreTest, RoundTripArrayFloatDense) {
 
     // Scan the element child as a flat FLOAT column and reassemble per-doc
     // vectors -- mirrors how HNSWIndexReader will pull per-doc bytes.
-    irs::columnstore::ReadContext ctx{r};
+    irs::ReadContext ctx{r};
     auto seg = element->OpenSegment(0, ctx);
     duckdb::ColumnScanState state{nullptr};
     seg->InitializeScan(state);
@@ -487,7 +485,7 @@ TEST_F(IRSColumnstoreTest, RoundTripVarcharOverflow) {
 
   // Write
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/7, duckdb::LogicalType::VARCHAR);
 
     duckdb::Vector batch{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
@@ -504,13 +502,12 @@ TEST_F(IRSColumnstoreTest, RoundTripVarcharOverflow) {
       cw.Append(produced, batch, take);
       produced += take;
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read
   {
-    irs::columnstore::Reader r{dir, std::string{kSegmentName}, Db()};
+    irs::ColReader r{dir, std::string{kSegmentName}, Db()};
     ASSERT_TRUE(r.HasColumn(7));
     const auto* col = r.Column(7);
     ASSERT_NE(col, nullptr);
@@ -519,9 +516,9 @@ TEST_F(IRSColumnstoreTest, RoundTripVarcharOverflow) {
 
     // Some codecs split the row group into multiple data segments. Walk
     // every data row group, scan all rows, and verify byte-identity.
-    irs::columnstore::ReadContext ctx{r};
+    irs::ReadContext ctx{r};
     duckdb::idx_t verified = 0;
-    irs::columnstore::RgWindow window{};
+    irs::RgWindow window{};
     for (uint64_t row_pos = 0; row_pos < col->RowCount();) {
       window = col->Locate(row_pos, window);
       auto seg = col->OpenSegment(window.rg, ctx);
@@ -575,7 +572,7 @@ TEST_F(IRSColumnstoreTest, PointReadCursorAcrossRowGroups) {
 
   // Write
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw =
       w.OpenColumn(/*id=*/9, duckdb::LogicalType::BIGINT,
                    /*skip_validity=*/true, /*row_group_size=*/kRowGroupSize,
@@ -592,13 +589,12 @@ TEST_F(IRSColumnstoreTest, PointReadCursorAcrossRowGroups) {
       cw.Append(produced, batch, take);
       produced += take;
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read
   {
-    irs::columnstore::Reader r{dir, std::string{kSegmentName}, Db()};
+    irs::ColReader r{dir, std::string{kSegmentName}, Db()};
     const auto* col = r.Column(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kRowCount);
@@ -660,7 +656,7 @@ TEST_F(IRSColumnstoreTest, PointReadCursorVarcharWithOverflow) {
 
   // Write
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/11, duckdb::LogicalType::VARCHAR);
     duckdb::Vector batch{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
     auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(batch);
@@ -681,7 +677,7 @@ TEST_F(IRSColumnstoreTest, PointReadCursorVarcharWithOverflow) {
 
   // Read via cursor
   {
-    irs::columnstore::Reader r{dir, std::string{kSegmentName}, Db()};
+    irs::ColReader r{dir, std::string{kSegmentName}, Db()};
     const auto* col = r.Column(11);
     ASSERT_NE(col, nullptr);
     TypedPointCursor cursor{r, *col};
@@ -729,7 +725,7 @@ TEST_F(IRSColumnstoreTest, RoundTripListBlob) {
 
   // Write
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw =
       w.OpenColumn(/*id=*/77, list_type, /*skip_validity=*/false, kRowGroupSize,
                    duckdb::CompressionType::COMPRESSION_AUTO);
@@ -763,15 +759,14 @@ TEST_F(IRSColumnstoreTest, RoundTripListBlob) {
       cw.Append(produced, batch, take);
       produced += take;
     }
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // Read: verify the LIST node has the right shape (UBIGINT lengths self
   // data + BLOB element child) and that the per-row lengths + element
   // bytes round-trip.
   {
-    irs::columnstore::Reader r{dir, std::string{kSegmentName}, Db()};
+    irs::ColReader r{dir, std::string{kSegmentName}, Db()};
     const auto* col = r.Column(77);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->Type().id(), duckdb::LogicalTypeId::LIST);
@@ -789,8 +784,8 @@ TEST_F(IRSColumnstoreTest, RoundTripListBlob) {
     // `offsets[i] - offsets[i-1]` (with `offsets[-1] = 0`).
     std::vector<uint64_t> offsets;
     offsets.reserve(kRowCount);
-    irs::columnstore::ReadContext ctx{r};
-    irs::columnstore::RgWindow lwindow{};
+    irs::ReadContext ctx{r};
+    irs::RgWindow lwindow{};
     for (uint64_t row_pos = 0; row_pos < col->RowCount();) {
       lwindow = col->Locate(row_pos, lwindow);
       auto seg = col->OpenSegment(lwindow.rg, ctx);
@@ -855,12 +850,11 @@ TEST_F(IRSColumnstoreTest, EmptyTypedColumnRoundTrip) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegmentName = "empty_col";
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
-    auto filename = w.Commit(/*target_row=*/0);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(/*target_row=*/0);
   }
-  irs::columnstore::Reader r{dir, std::string{kSegmentName}, Db()};
+  irs::ColReader r{dir, std::string{kSegmentName}, Db()};
   ASSERT_TRUE(r.HasColumn(1));
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
@@ -870,14 +864,14 @@ TEST_F(IRSColumnstoreTest, EmptyTypedColumnRoundTrip) {
 }
 
 // `columns_rw_writer_reuse` analogue: a Writer that's rolled back leaves
-// the eagerly-created `.cs` file behind. The file is not referenced from
+// the eagerly-created `.col` file behind. The file is not referenced from
 // any committed SegmentMeta and the directory cleaner sweeps it on the
 // next pass -- same lifecycle the legacy `.csd` writer relied on.
 TEST_F(IRSColumnstoreTest, WriterRollbackLeavesOrphanFile) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegmentName = "rollback_seg";
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, 4};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -888,12 +882,12 @@ TEST_F(IRSColumnstoreTest, WriterRollbackLeavesOrphanFile) {
     w.Rollback();
   }
   // Post-Rollback: orphan file is left on disk. The IndexWriter-driven
-  // path (see index_tests `clear_writer` / `consolidate_*`) tracks the
+  // path (see index_tests `clear_writer` / `compact_*`) tracks the
   // file via `dir.attributes().refs()` and DirectoryCleaner::clean()
   // reaps it on a later pass; in this isolated columnstore-only test
   // we only assert that Rollback itself does not remove the file.
   bool present = false;
-  ASSERT_TRUE(dir.exists(present, "rollback_seg.cs"));
+  ASSERT_TRUE(dir.exists(present, "rollback_seg.col"));
   EXPECT_TRUE(present);
 }
 
@@ -905,7 +899,7 @@ TEST_F(IRSColumnstoreTest, AllNullColumnRoundTrip) {
   constexpr std::string_view kSegmentName = "all_null";
   constexpr uint64_t kRowCount = 200;
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto& valid = duckdb::FlatVector::ValidityMutable(batch);
@@ -919,15 +913,15 @@ TEST_F(IRSColumnstoreTest, AllNullColumnRoundTrip) {
     }
     w.Commit(kRowCount);
   }
-  irs::columnstore::Reader r{dir, std::string{kSegmentName}, Db()};
+  irs::ColReader r{dir, std::string{kSegmentName}, Db()};
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), kRowCount);
   EXPECT_TRUE(col->HasValidity());
 
-  irs::columnstore::ReadContext ctx{r};
-  irs::columnstore::ColumnReader::RangeScan vscan{*col, ctx,
-                                                  /*validity_side=*/true};
+  irs::ReadContext ctx{r};
+  irs::ColumnReader::RangeScan vscan{*col, ctx,
+                                     /*validity_side=*/true};
   duckdb::Vector vbatch{duckdb::LogicalType::BIGINT, /*capacity=*/0};
   vbatch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
   uint64_t scanned = 0;
@@ -953,7 +947,7 @@ TEST_F(IRSColumnstoreTest, AlternatingValidityRoundTrip) {
   constexpr uint64_t kRowCount = 5000;
   constexpr uint32_t kRowGroupSize = 1000;
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT,
                             /*skip_validity=*/false, kRowGroupSize,
                             duckdb::CompressionType::COMPRESSION_AUTO);
@@ -977,14 +971,14 @@ TEST_F(IRSColumnstoreTest, AlternatingValidityRoundTrip) {
     }
     w.Commit(kRowCount);
   }
-  irs::columnstore::Reader r{dir, std::string{kSegmentName}, Db()};
+  irs::ColReader r{dir, std::string{kSegmentName}, Db()};
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), kRowCount);
   EXPECT_TRUE(col->HasValidity());
 
-  irs::columnstore::ReadContext ctx{r};
-  irs::columnstore::ColumnReader::RangeScan vscan{*col, ctx, true};
+  irs::ReadContext ctx{r};
+  irs::ColumnReader::RangeScan vscan{*col, ctx, true};
   duckdb::Vector vbatch{duckdb::LogicalType::BIGINT, 0};
   vbatch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
   uint64_t scanned = 0;
@@ -1009,7 +1003,7 @@ TEST_F(IRSColumnstoreTest, FreshWriterAfterRollback) {
   constexpr std::string_view kSegmentName = "rollback_then_commit";
   constexpr uint64_t kRowCount = 16;
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, 4};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1021,7 +1015,7 @@ TEST_F(IRSColumnstoreTest, FreshWriterAfterRollback) {
   }
   // Second writer: should succeed and yield a readable segment.
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1029,10 +1023,9 @@ TEST_F(IRSColumnstoreTest, FreshWriterAfterRollback) {
       data[k] = static_cast<int64_t>(k * 100);
     }
     cw.Append(0, batch, kRowCount);
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
-  irs::columnstore::Reader r{dir, std::string{kSegmentName}, Db()};
+  irs::ColReader r{dir, std::string{kSegmentName}, Db()};
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), kRowCount);
@@ -1046,7 +1039,7 @@ TEST_F(IRSColumnstoreTest, FreshWriterAfterRollback) {
   }
 }
 
-// `test_merge_writer_columns` analogue: drives `columnstore::MergeInto`
+// `test_merge_writer_columns` analogue: drives `MergeInto`
 // directly across two source segments holding the same column id and
 // verifies the merged output contains all source values in source order
 // (dense, no deletes).
@@ -1057,7 +1050,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsNoDeletes) {
 
   // Source segment A: ids 1..100 stored as i*2.
   {
-    irs::columnstore::Writer w{dir, "src_a", Db()};
+    irs::ColWriter w{dir, "src_a", Db()};
     auto& cw = w.OpenColumn(/*id=*/7, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1069,7 +1062,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsNoDeletes) {
   }
   // Source segment B: ids 0..149 stored as 1000 + i.
   {
-    irs::columnstore::Writer w{dir, "src_b", Db()};
+    irs::ColWriter w{dir, "src_b", Db()};
     auto& cw = w.OpenColumn(/*id=*/7, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1080,27 +1073,27 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsNoDeletes) {
     w.Commit(kRowsB);
   }
 
-  irs::columnstore::Reader ra{dir, "src_a", Db()};
-  irs::columnstore::Reader rb{dir, "src_b", Db()};
+  irs::ColReader ra{dir, "src_a", Db()};
+  irs::ColReader rb{dir, "src_b", Db()};
 
   // Merge into "merged".
   {
-    irs::columnstore::Writer w{dir, "merged", Db()};
-    irs::columnstore::MergeSource sources[2] = {
+    irs::ColWriter w{dir, "merged", Db()};
+    irs::MergeSource sources[2] = {
       {.reader = nullptr,
-       .cs_reader = &ra,
+       .col_reader = &ra,
        .mask = nullptr,
        .alive_count = kRowsA},
       {.reader = nullptr,
-       .cs_reader = &rb,
+       .col_reader = &rb,
        .mask = nullptr,
        .alive_count = kRowsB},
     };
-    irs::columnstore::MergeInto(sources, w, /*column_options=*/nullptr);
+    irs::MergeInto(sources, w, /*column_options=*/nullptr);
     w.Commit(kRowsA + kRowsB);
   }
 
-  irs::columnstore::Reader r{dir, std::string{"merged"}, Db()};
+  irs::ColReader r{dir, std::string{"merged"}, Db()};
   const auto* col = r.Column(7);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), kRowsA + kRowsB);
@@ -1127,7 +1120,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsWithDeletes) {
   constexpr uint64_t kRowsB = 60;
 
   {
-    irs::columnstore::Writer w{dir, "src_a", Db()};
+    irs::ColWriter w{dir, "src_a", Db()};
     auto& cw = w.OpenColumn(/*id=*/3, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1138,7 +1131,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsWithDeletes) {
     w.Commit(kRowsA);
   }
   {
-    irs::columnstore::Writer w{dir, "src_b", Db()};
+    irs::ColWriter w{dir, "src_b", Db()};
     auto& cw = w.OpenColumn(/*id=*/3, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1149,8 +1142,8 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsWithDeletes) {
     w.Commit(kRowsB);
   }
 
-  irs::columnstore::Reader ra{dir, "src_a", Db()};
-  irs::columnstore::Reader rb{dir, "src_b", Db()};
+  irs::ColReader ra{dir, "src_a", Db()};
+  irs::ColReader rb{dir, "src_b", Db()};
 
   // Mask the odd-offset source docs in each segment. `DocumentMask`'s
   // `ManagedTypedAllocator` defaults to `gForbidden` under SDB_DEV, so
@@ -1167,22 +1160,22 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsWithDeletes) {
   const uint64_t alive_b = kRowsB - mask_b.size();
 
   {
-    irs::columnstore::Writer w{dir, "merged", Db()};
-    irs::columnstore::MergeSource sources[2] = {
+    irs::ColWriter w{dir, "merged", Db()};
+    irs::MergeSource sources[2] = {
       {.reader = nullptr,
-       .cs_reader = &ra,
+       .col_reader = &ra,
        .mask = &mask_a,
        .alive_count = alive_a},
       {.reader = nullptr,
-       .cs_reader = &rb,
+       .col_reader = &rb,
        .mask = &mask_b,
        .alive_count = alive_b},
     };
-    irs::columnstore::MergeInto(sources, w, /*column_options=*/nullptr);
+    irs::MergeInto(sources, w, /*column_options=*/nullptr);
     w.Commit(alive_a + alive_b);
   }
 
-  irs::columnstore::Reader r{dir, std::string{"merged"}, Db()};
+  irs::ColReader r{dir, std::string{"merged"}, Db()};
   const auto* col = r.Column(3);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), alive_a + alive_b);
@@ -1225,7 +1218,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoUsesCallbackRowGroupSize) {
   // size, so each ends up as a single row group.
   for (auto [name, rows] : {std::pair{std::string_view{"src_a"}, kRowsA},
                             std::pair{std::string_view{"src_b"}, kRowsB}}) {
-    irs::columnstore::Writer w{dir, name, Db()};
+    irs::ColWriter w{dir, name, Db()};
     auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
@@ -1236,8 +1229,8 @@ TEST_F(IRSColumnstoreTest, MergeIntoUsesCallbackRowGroupSize) {
     w.Commit(rows);
   }
 
-  irs::columnstore::Reader ra{dir, "src_a", Db()};
-  irs::columnstore::Reader rb{dir, "src_b", Db()};
+  irs::ColReader ra{dir, "src_a", Db()};
+  irs::ColReader rb{dir, "src_b", Db()};
   ASSERT_EQ(ra.Column(kId)->DataRgCount(), 1u);
   ASSERT_EQ(rb.Column(kId)->DataRgCount(), 1u);
 
@@ -1253,22 +1246,22 @@ TEST_F(IRSColumnstoreTest, MergeIntoUsesCallbackRowGroupSize) {
   };
 
   {
-    irs::columnstore::Writer w{dir, "merged", Db(), &column_options};
-    irs::columnstore::MergeSource sources[2] = {
+    irs::ColWriter w{dir, "merged", Db(), &column_options};
+    irs::MergeSource sources[2] = {
       {.reader = nullptr,
-       .cs_reader = &ra,
+       .col_reader = &ra,
        .mask = nullptr,
        .alive_count = kRowsA},
       {.reader = nullptr,
-       .cs_reader = &rb,
+       .col_reader = &rb,
        .mask = nullptr,
        .alive_count = kRowsB},
     };
-    irs::columnstore::MergeInto(sources, w, &column_options);
+    irs::MergeInto(sources, w, &column_options);
     w.Commit(kRowsA + kRowsB);
   }
 
-  irs::columnstore::Reader r{dir, std::string{"merged"}, Db()};
+  irs::ColReader r{dir, std::string{"merged"}, Db()};
   const auto* col = r.Column(kId);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), kRowsA + kRowsB);
@@ -1291,14 +1284,14 @@ TEST_F(IRSColumnstoreTest, MergeIntoUsesCallbackRowGroupSize) {
 }
 
 // `columns_rw` multi-column variant: two columns of different types in the
-// same .cs file, independent row counts, both round-trip. Exercises the
+// same .col file, independent row counts, both round-trip. Exercises the
 // per-column footer entry + independent codec selection.
 TEST_F(IRSColumnstoreTest, TwoColumnsDifferentTypesSameSegment) {
   irs::MemoryDirectory dir{};
   constexpr std::string_view kSegmentName = "two_cols";
   constexpr uint64_t kRowCount = 500;
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw_int = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
     auto& cw_str = w.OpenColumn(/*id=*/2, duckdb::LogicalType::VARCHAR);
 
@@ -1327,7 +1320,7 @@ TEST_F(IRSColumnstoreTest, TwoColumnsDifferentTypesSameSegment) {
     }
     w.Commit(kRowCount);
   }
-  irs::columnstore::Reader r{dir, std::string{kSegmentName}, Db()};
+  irs::ColReader r{dir, std::string{kSegmentName}, Db()};
   EXPECT_TRUE(r.HasColumn(1));
   EXPECT_TRUE(r.HasColumn(2));
   const auto* int_col = r.Column(1);
@@ -1375,7 +1368,7 @@ TEST_F(IRSColumnstoreTest, LazyNormOpenSparseSchema) {
   indexed_ids.reserve(kIndexedFields);
 
   {
-    irs::columnstore::Writer w{dir, kSegmentName, Db()};
+    irs::ColWriter w{dir, kSegmentName, Db()};
     // Declare 100 column ids (mirrors FieldsData::emplace allocating an
     // id eagerly per norm-featured field).
     for (size_t i = 0; i < kDeclaredFields; ++i) {
@@ -1394,13 +1387,12 @@ TEST_F(IRSColumnstoreTest, LazyNormOpenSparseSchema) {
     EXPECT_EQ(w.NormWriters().size(), kIndexedFields)
       << "norm_writers must be linear in indexed-fields count, not "
          "declared-fields count";
-    auto filename = w.Commit(kRowCount);
-    ASSERT_FALSE(filename.empty());
+    w.Commit(kRowCount);
   }
 
   // After commit: every Allocated-but-never-Opened id must be absent
   // from the segment footer.
-  irs::columnstore::Reader r{dir, std::string{kSegmentName}, Db()};
+  irs::ColReader r{dir, std::string{kSegmentName}, Db()};
   std::set<irs::field_id> indexed_set{indexed_ids.begin(), indexed_ids.end()};
   for (auto id : declared_ids) {
     const bool expect_present = indexed_set.contains(id);

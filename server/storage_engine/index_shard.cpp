@@ -23,12 +23,12 @@
 namespace sdb {
 
 IndexShard::IndexShard(ObjectId id, ObjectId index_id, catalog::ObjectType type)
-  : catalog::Object{ObjectId{0}, id, "", type}, _index_id{index_id} {
+  : catalog::Object{index_id, id, "", type} {
   SDB_ASSERT(catalog::IsIndexShard(type));
 }
 
 IndexShard::IndexShard(ObjectId index_id, catalog::ObjectType type)
-  : catalog::Object{ObjectId{0}, ObjectId{0}, "", type}, _index_id{index_id} {
+  : catalog::Object{index_id, ObjectId{0}, "", type} {
   SDB_ASSERT(catalog::IsIndexShard(type));
 }
 

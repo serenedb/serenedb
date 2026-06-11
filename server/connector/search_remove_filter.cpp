@@ -29,7 +29,7 @@ irs::DocIterator::ptr SearchRemoveFilterBase::execute(
   _segment = &ctx.segment;
   _segment_mask = ctx.segment.docs_mask();
   _pending_mask = ctx.pending_docs_mask;
-  _pk_field = _segment->field(kPkFieldName);
+  _pk_field = _segment->field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _pos = 0;
   _doc = irs::doc_limits::invalid();
@@ -55,7 +55,7 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     // 1. Same value PKs might exist in deleted documents and this number
     // of documents is arbitrary. So we need to check all of them.
     // In general we do not expect too many delete/insert of same PK
-    // between consolidations. So postings list should be short.
+    // between compactions. So postings list should be short.
 
     // 2. Also we might have Delete/Insert sequence in a single batch,
     // So we must check pending docs mask as well in order to not fire on

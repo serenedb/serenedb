@@ -1,3 +1,5 @@
+control substitution on
+
 hash-threshold 100
 
 # View-backed inverted index queries that don't require materialisation:

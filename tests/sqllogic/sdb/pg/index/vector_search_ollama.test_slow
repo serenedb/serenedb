@@ -1,0 +1,163 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE SECRET ollama_${__DATABASE__} (
+  TYPE openai,
+  base_url 'http://${OLLAMA_HOST}:${OLLAMA_PORT}',
+  embeddings_path '/v1/embeddings'
+);
+
+
+query
+SELECT array_length(ai_embed('', '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}'));
+----
+array_length
+384
+
+
+query
+SELECT array_length(
+  ai_embed('hello world', '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}'),
+  1
+) = 384;
+----
+?column?
+t
+
+
+query I
+SELECT ai_embed(NULL, '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}') IS NULL;
+----
+?column?
+t
+
+
+statement ok
+CREATE TABLE ollama_src (id INT, txt VARCHAR);
+
+
+statement ok
+INSERT INTO ollama_src VALUES
+  (1, 'apple'),
+  (2, 'orange'),
+  (3, NULL),
+  (4, 'banana'),
+  (6, 'pear');
+
+
+query II
+SELECT
+  count(*) FILTER (WHERE e IS NOT NULL) AS embedded,
+  count(*) FILTER (WHERE e IS NULL) AS skipped
+FROM (
+  SELECT ai_embed(txt, '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}') AS e
+  FROM ollama_src
+);
+----
+embedded	skipped
+4	1
+
+
+query
+SELECT bool_and(array_length(e, 1) = 384)
+FROM (
+  SELECT ai_embed(txt, '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}') AS e
+  FROM ollama_src
+  WHERE txt IS NOT NULL
+);
+----
+bool_and
+t
+
+
+statement ok
+CREATE TABLE docs (id INT, txt TEXT, emb FLOAT[384]);
+
+
+statement ok
+INSERT INTO docs
+SELECT id, txt,
+       ai_embed(txt, '${OLLAMA_MODEL}', 'ollama_${__DATABASE__}')::FLOAT[384]
+FROM ollama_src
+WHERE txt IS NOT NULL AND txt <> '';
+
+
+statement ok
+CREATE INDEX docs_ann ON docs USING inverted(
+  emb hnsw (metric = 'cosine', m = 16, ef_construction = 64)
+);
+
+
+query
+EXPLAIN SELECT id FROM docs_ann
+ORDER BY emb <=> ai_embed(
+  'fruit',
+  '${OLLAMA_MODEL}',
+  'ollama_${__DATABASE__}'
+)::FLOAT[384]
+LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│   Index: docs_ann (ANN)   │
+│      Lookup: rocksdb      │
+│          TopK: 3          │
+│         Dims: 384         │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query error
+SELECT ai_embed('x', '${OLLAMA_MODEL}', 'does_not_exist');
+
+
+query error
+SELECT ai_embed('x', 'definitely-not-a-real-model', 'ollama_${__DATABASE__}');
+
+
+statement ok
+CREATE OR REPLACE SECRET ollama_bad_key_${__DATABASE__} (
+  TYPE openai,
+  api_key 'not-a-real-key',
+  base_url 'http://${OLLAMA_HOST}:${OLLAMA_PORT}',
+  embeddings_path '/v1/embeddings'
+);
+
+
+statement ok
+CREATE OR REPLACE SECRET ollama_no_url_${__DATABASE__} (
+  TYPE openai,
+  api_key 'not-a-real-key'
+);
+
+
+query error
+SELECT ai_embed('x', '${OLLAMA_MODEL}', 'ollama_no_url_${__DATABASE__}');
+
+
+statement ok
+CREATE OR REPLACE SECRET ollama_bad_url_${__DATABASE__} (
+  TYPE openai,
+  api_key 'not-a-real-key',
+  base_url 'http://127.0.0.1:1',
+  embeddings_path '/v1/embeddings'
+);
+
+
+query error
+SELECT ai_embed('x', '${OLLAMA_MODEL}', 'ollama_bad_url_${__DATABASE__}');

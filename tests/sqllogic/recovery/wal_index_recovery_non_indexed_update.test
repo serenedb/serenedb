@@ -32,7 +32,7 @@ statement ok
 CREATE INDEX ni_idx ON ni_t USING inverted(id, note ni_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ni_t;
+VACUUM (REFRESH_TABLE) ni_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -60,19 +60,19 @@ SELECT 1;
 
 connection ni_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) ni_t;
+VACUUM (REFRESH_TABLE) ni_t;
 
 # Indexed column unchanged for rows 1 and 2.
 connection ni_after
 query
-SELECT id FROM ni_t WHERE note @@ ts_phrase('apple');
+SELECT id FROM ni_idx WHERE note @@ ts_phrase('apple');
 ----
 id
 1
 
 connection ni_after
 query
-SELECT id FROM ni_t WHERE note @@ ts_phrase('banana');
+SELECT id FROM ni_idx WHERE note @@ ts_phrase('banana');
 ----
 id
 2
@@ -80,14 +80,14 @@ id
 # Row 3 is the new insert, both indexed and reachable.
 connection ni_after
 query
-SELECT id FROM ni_t WHERE note @@ ts_phrase('cherry');
+SELECT id FROM ni_idx WHERE note @@ ts_phrase('cherry');
 ----
 id
 3
 
 connection ni_after
 query
-SELECT COUNT(*) FROM ni_t WHERE note @@ ts_phrase('fruit');
+SELECT COUNT(*) FROM ni_idx WHERE note @@ ts_phrase('fruit');
 ----
 count
 3

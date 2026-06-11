@@ -21,7 +21,7 @@ CREATE TABLE ef_t(id INTEGER PRIMARY KEY, body TEXT);
 statement ok
 CREATE INDEX ef_idx ON ef_t USING inverted(id, body ef_dict);
 
-# No VACUUM (UPDATE_INDEXES) needed — table is empty, index has 0 docs.
+# No VACUUM (REFRESH_TABLE) needed — table is empty, index has 0 docs.
 
 # Initial sanity: index is empty.
 query
@@ -47,7 +47,7 @@ SELECT 1;
 
 connection ef_after
 statement ok retry 60 backoff 1s
-VACUUM (UPDATE_INDEXES) ef_t;
+VACUUM (REFRESH_TABLE) ef_t;
 
 connection ef_after
 query
@@ -66,21 +66,21 @@ count
 # Spot checks
 connection ef_after
 query
-SELECT id FROM ef_t WHERE body @@ ts_phrase('doc_0');
+SELECT id FROM ef_idx WHERE body @@ ts_phrase('doc_0');
 ----
 id
 0
 
 connection ef_after
 query
-SELECT id FROM ef_t WHERE body @@ ts_phrase('doc_2500');
+SELECT id FROM ef_idx WHERE body @@ ts_phrase('doc_2500');
 ----
 id
 2500
 
 connection ef_after
 query
-SELECT id FROM ef_t WHERE body @@ ts_phrase('doc_4999');
+SELECT id FROM ef_idx WHERE body @@ ts_phrase('doc_4999');
 ----
 id
 4999

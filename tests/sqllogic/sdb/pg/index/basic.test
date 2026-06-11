@@ -12,7 +12,7 @@ CREATE TEXT SEARCH DICTIONARY test_english(
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 
 statement ok
@@ -22,7 +22,7 @@ CREATE INDEX index_t ON t USING inverted(r test_english);
 statement error
 CREATE INDEX index_t_parens ON t USING inverted(r test_english ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on column 'r' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on 'r' (known: included, hnsw)
 
 
 statement error
@@ -54,16 +54,16 @@ c
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) t;
+VACUUM (REFRESH_TABLE) t;
 
 statement error
-VACUUM (UPDATE_INDEXES) wrong_t_name;
+VACUUM (REFRESH_TABLE) wrong_t_name;
 ----
 db error: ERROR: relation 'wrong_t_name' not found.
 
 
 statement error
-VACUUM (UPDATE_INDEXES) index_t;
+VACUUM (REFRESH_TABLE) index_t;
 ----
 db error: ERROR: relation 'index_t' not found.
 
@@ -144,7 +144,8 @@ CREATE TABLE test(i int);
 statement error
 CREATE INDEX test_index ON test USING inverted (invalid);
 ----
-db error: ERROR: CREATE INDEX does not refer to any columns in the base table!
+db error: ERROR: Referenced column "invalid" not found in FROM clause!
+Candidate bindings: "i"
 
 
 statement ok
@@ -213,22 +214,23 @@ indexrelid	indrelid
 statement ok
 CREATE TABLE tstest (a INTEGER, b TIMESTAMP, c VARCHAR, d HUGEINT, e DECIMAL(10,2));
 
-statement error
+statement ok
 CREATE INDEX index_ts on tstest USING inverted(b);
-----
-db error: ERROR: Failed to create index: Column b has unsupported kind TIMESTAMP and can not be indexed
+
+statement ok
+DROP INDEX index_ts;
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(d);
 ----
-db error: ERROR: Failed to create index: Column d has unsupported kind HUGEINT and can not be indexed
+db error: ERROR: Failed to create index: Column 'd' has unsupported type HUGEINT and can not be indexed
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(e);
 ----
-db error: ERROR: Failed to create index: Column e has unsupported kind DECIMAL and can not be indexed
+db error: ERROR: Failed to create index: Column 'e' has unsupported type DECIMAL(10,2) and can not be indexed
 
 
 statement ok
@@ -242,13 +244,13 @@ DROP INDEX index_ts;
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c unknown_dict);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'unknown_dict' on column 'c': not a built-in type (known: included, hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Unknown opclass 'unknown_dict' on column 'c': no text dictionary by that name in schema 'public'
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(a test_english);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'test_english' on column 'a': not a built-in type (known: included, hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Unknown opclass 'test_english' on column 'a': no text dictionary by that name in schema 'public'
 
 
 statement error
@@ -260,14 +262,14 @@ db error: ERROR: Opclass option must be a constant value
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c test_english ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on column 'c' (known: included, hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on 'c' (known: included, hnsw)
 
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(ts_lexize('test_english', c));
 ----
-db error: ERROR: CREATE INDEX does not refer to any columns in the base table!
+db error: ERROR: text search dictionary "test_english" does not exist
 
 
 statement ok
@@ -283,7 +285,7 @@ statement ok
 INSERT INTO table_numeric_idx VALUES (1,1), (2,3), (4,5);
 
 statement ok
-VACUUM (UPDATE_INDEXES) table_numeric_idx;
+VACUUM (REFRESH_TABLE) table_numeric_idx;
 
 query
 SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 ORDER BY a;
@@ -300,7 +302,7 @@ statement count 3
 INSERT INTO table_numeric_idx VALUES (3,1), (7,3), (17,5);
 
 statement ok
-VACUUM (UPDATE_INDEXES) table_numeric_idx;
+VACUUM (REFRESH_TABLE) table_numeric_idx;
 
 statement ok
 SET sdb_read_your_own_writes = 1;
@@ -323,7 +325,7 @@ statement ok
 COMMIT;
 
 statement ok
-VACUUM (UPDATE_INDEXES) table_numeric_idx;
+VACUUM (REFRESH_TABLE) table_numeric_idx;
 
 statement ok
 SET sdb_read_your_own_writes = 0;
@@ -470,8 +472,8 @@ Explain:
     oneline (boolean) [default: false] - One-line output format for physical plan
     cost (boolean) [default: false] - Show estimated costs in physical plan
 Index:
-  commit_interval (integer) [default: 1000] - Commit interval in milliseconds
-  consolidation_interval (integer) [default: 1000] - Consolidation interval in milliseconds
+  refresh_interval (integer) [default: 1000] - Refresh interval in milliseconds
+  compaction_interval (integer) [default: 1000] - Compaction interval in milliseconds
   cleanup_interval_step (integer) [default: 1] - Cleanup interval step
 
 
@@ -544,7 +546,7 @@ CREATE TABLE empty_soul();
 statement error
 CREATE INDEX empty_index ON empty_soul USING inverted(a);
 ----
-db error: ERROR: CREATE INDEX does not refer to any columns in the base table!
+db error: ERROR: Referenced column "a" was not found because the FROM clause is missing
 
 
 statement ok

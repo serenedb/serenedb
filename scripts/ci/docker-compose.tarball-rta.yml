@@ -7,7 +7,7 @@ services:
       - /var/log/serenedb
     volumes:
       - "${WORKSPACE}:/workspace:ro"
-      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/logs:/logs"
     environment:
       - HOME=/tmp
       - TARBALL_NAME
@@ -19,8 +19,7 @@ services:
         tar -xzf /workspace/$TARBALL_NAME -C /tmp/serenedb --strip-components=1 &&
         exec /tmp/serenedb/usr/bin/serened \
           --config /tmp/serenedb/etc/serenedb/serened.conf \
-          --server.endpoint pgsql+tcp://0.0.0.0:7890 \
-          --server.authentication 0
+          --server_endpoints pgsql+tcp://0.0.0.0:7890 \
       '
 
   tests:
@@ -31,7 +30,7 @@ services:
     volumes:
       - "${WORKSPACE}/tests/sqllogic:/sqllogic"
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
-      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/logs:/logs"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
     environment:
       - HOME=/sqllogic
@@ -49,7 +48,7 @@ services:
         pg_isready -h serenedb -p 7890 -U postgres &&
 
         cd /sqllogic &&
-        exec ./run_sdb_tests.sh \
+        exec env SDB_SQLLOGIC_SCOPE=ours ./run_sdb_tests.sh \
           --host serenedb \
           --single-port 7890 \
           --fast \

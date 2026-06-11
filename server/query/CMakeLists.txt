@@ -1,7 +1,7 @@
 target_sources(
     sereneserver
     PRIVATE
-        duckdb_engine.cpp
+        server_engine.cpp
         config.cpp
         utils.cpp
         config_variables.cpp

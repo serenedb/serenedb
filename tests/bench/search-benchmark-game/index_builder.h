@@ -24,17 +24,12 @@
 
 #include <array>
 #include <iosfwd>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
 
 #include "executor.h"
+#include "iresearch/utils/type_limits.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace bench {
-
-duckdb::DatabaseInstance& CsDb();
 
 struct IBatchHandler {
   virtual ~IBatchHandler() = default;
@@ -47,10 +42,10 @@ using BatchHandlerFactory = std::unique_ptr<IBatchHandler> (*)();
 struct IndexBuilderOptions {
   size_t batch_size = 100000;
   size_t indexer_threads = 1;
-  size_t commit_interval_ms = 0;
-  size_t consolidation_interval_ms = 5000;
-  size_t consolidation_threads = 0;
-  bool consolidate_all = true;
+  size_t refresh_interval_ms = 0;
+  size_t compaction_interval_ms = 5000;
+  size_t compaction_threads = 0;
+  bool compact_all = true;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   uint32_t norm_row_group_size = DEFAULT_ROW_GROUP_SIZE;
 };
@@ -66,7 +61,7 @@ class IndexBuilder {
   auto GetReader() { return _writer->GetSnapshot(); }
 
  private:
-  void ConsolidateAll();
+  void CompactAll();
 
   IndexBuilderOptions _opts;
   irs::Scorer::ptr _scorer;
@@ -79,13 +74,17 @@ class IndexBuilder {
 inline constexpr auto kTextIndexFeatures =
   irs::IndexFeatures::Freq | irs::IndexFeatures::Pos | irs::IndexFeatures::Norm;
 
-struct TextField {
-  std::string_view name;
-  std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), R"({})")};
+inline constexpr irs::field_id kIdFieldId = 1;
+inline constexpr irs::field_id kTextFieldId = 2;
 
-  std::string_view Name() const noexcept { return name; }
+struct TextField {
+  irs::field_id id{irs::field_limits::invalid()};
+  std::string_view text;
+  irs::analysis::Analyzer::ptr tokenizer{
+    irs::analysis::SegmentationTokenizer::Make(
+      irs::analysis::SegmentationTokenizer::Options{})};
+
+  irs::field_id Id() const noexcept { return id; }
 
   irs::Tokenizer& GetTokens() const {
     tokenizer->reset(text);
@@ -103,8 +102,8 @@ struct Document {
   simdjson::ondemand::parser parser;
   simdjson::ondemand::document json_doc;
   std::array<TextField, 2> fields{
-    TextField{.name = "id"},
-    TextField{.name = "text"},
+    TextField{.id = kIdFieldId},
+    TextField{.id = kTextFieldId},
   };
 
   void Fill(std::string_view line);

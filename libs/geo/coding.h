@@ -23,12 +23,13 @@
 
 #include <s2/s2region_term_indexer.h>
 #include <s2/s2shape.h>
-#include <vpack/builder.h>
-#include <vpack/slice.h>
+#include <simdjson.h>
 
 #include <cstdint>
 #include <span>
 #include <vector>
+
+#include "basics/result.h"
 
 class S2Polyline;
 class S2Polygon;
@@ -165,10 +166,8 @@ enum class Parsing : uint8_t {
 };
 
 template<Parsing P>
-bool ParseShape(vpack::Slice vpack, ShapeContainer& region,
+bool ParseShape(simdjson::ondemand::value json, ShapeContainer& region,
                 std::vector<S2LatLng>& cache, coding::Options options,
                 Encoder* encoder);
-
-void PointToVPack(vpack::Builder& builder, S2LatLng point);
 
 }  // namespace sdb::geo

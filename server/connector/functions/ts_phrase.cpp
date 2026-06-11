@@ -29,7 +29,6 @@
 #include <iresearch/utils/string.hpp>
 
 #include "basics/assert.h"
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search.h"
@@ -101,7 +100,8 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     "INTEGER / INTEGER[] gap allowed between text args.";
   SDB_ASSERT(!func.children.empty());
 
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
@@ -118,14 +118,11 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
                "`Frequency` features attached to the column."));
   }
 
-  std::string field_name;
-  MakeFieldName(column_info, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(filter)
                              : AddFilter<irs::ByPhrase>(filter);
   phrase.boost(ctx.boost);
-  *phrase.mutable_field() = field_name;
+  *phrase.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto* opts = phrase.mutable_options();
   auto& analyzer = ctx.tokenizer;
   const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
@@ -139,8 +136,9 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
                       ERR_MSG("ts_phrase argument ", i, " must be a constant"),
                       ERR_HINT(kSyntaxHint));
     }
-    if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
-      auto text = const_val->GetValue<std::string>();
+    if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR ||
+        const_val->type().id() == duckdb::LogicalTypeId::BLOB) {
+      auto text = duckdb::StringValue::Get(*const_val);
       analyzer.reset(std::string_view{text});
       while (analyzer.next()) {
         if (pending_gap) {
@@ -219,7 +217,8 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
 void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     std::string_view text) {
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase field is not VARCHAR"));
   }
@@ -235,10 +234,8 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)
                              : AddFilter<irs::ByPhrase>(parent);
-  std::string field_name;
-  MakeFieldName(column_info, field_name);
-  search::mangling::MangleString(field_name);
-  *phrase.mutable_field() = field_name;
+  *phrase.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   phrase.boost(ctx.boost);
   EmitPhraseTokens(*phrase.mutable_options(), ctx, column_info, text,
                    PhraseGap{});
@@ -298,7 +295,7 @@ PhraseGap ParseTsqueryPhraseDistance(const duckdb::Expression& expr) {
 }
 
 bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
-  const auto& type = expr.return_type;
+  const auto& type = expr.GetReturnType();
   const auto id = type.id();
   return type.IsNumeric() || id == duckdb::LogicalTypeId::LIST ||
          id == duckdb::LogicalTypeId::ARRAY;
@@ -306,12 +303,13 @@ bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
 
 bool IsPhraseSeqNode(const duckdb::Expression& expr) {
   const auto& unwrapped = UnwrapTSQueryCast(expr);
-  if (unwrapped.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (unwrapped.GetExpressionClass() !=
+      duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
   }
   const auto& f = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  return f.function.name == kTSQueryPhraseSeq ||
-         f.function.name == kTsqueryPhrase;
+  return f.function.GetName() == kTSQueryPhraseSeq ||
+         f.function.GetName() == kTsqueryPhrase;
 }
 
 }  // namespace
@@ -360,7 +358,7 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     return;
   }
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  if (func.function.name == kTsqueryPhrase) {
+  if (func.function.GetName() == kTsqueryPhrase) {
     SDB_ASSERT(func.children.size() == 2 || func.children.size() == 3);
     FlattenPhraseSeq(*func.children[0], seq);
     if (func.children.size() == 3) {
@@ -377,7 +375,7 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     return;
   }
   // `##` operator: left-associative binary tree.
-  SDB_ASSERT(func.function.name == kTSQueryPhraseSeq);
+  SDB_ASSERT(func.function.GetName() == kTSQueryPhraseSeq);
   SDB_ASSERT(func.children.size() == 2);
   FlattenPhraseSeq(*func.children[0], seq);
   const auto& right = *func.children[1];
@@ -411,7 +409,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                             "part"),
                     ERR_HINT(kSyntaxHint));
   }
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("## field is not VARCHAR"), ERR_HINT(kSyntaxHint));
   }
@@ -426,13 +425,10 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                "`Frequency` features attached to the column."));
   }
 
-  std::string field_name;
-  MakeFieldName(column_info, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)
                              : AddFilter<irs::ByPhrase>(parent);
-  *phrase.mutable_field() = field_name;
+  *phrase.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   phrase.boost(ctx.boost);
 
   auto* options = phrase.mutable_options();
@@ -452,26 +448,28 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
     TSQueryOp leaf_op;
     const duckdb::BoundFunctionExpression* f = nullptr;
     std::string bare_text;
-    if (part_expr_ref.expression_class ==
+    if (part_expr_ref.GetExpressionClass() ==
         duckdb::ExpressionClass::BOUND_CONSTANT) {
       const auto& val =
         part_expr_ref.Cast<duckdb::BoundConstantExpression>().value;
-      if (val.IsNull() || val.type().id() != duckdb::LogicalTypeId::VARCHAR) {
+      if (val.IsNull() || (val.type().id() != duckdb::LogicalTypeId::VARCHAR &&
+                           val.type().id() != duckdb::LogicalTypeId::BLOB)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("## part must be a VARCHAR constant"),
                         ERR_HINT(kSyntaxHint));
       }
-      bare_text = val.GetValue<std::string>();
+      bare_text = duckdb::StringValue::Get(val);
       leaf_op = TSQueryOp::Term;
-    } else if (part_expr_ref.expression_class ==
+    } else if (part_expr_ref.GetExpressionClass() ==
                duckdb::ExpressionClass::BOUND_FUNCTION) {
       f = &part_expr_ref.Cast<duckdb::BoundFunctionExpression>();
-      leaf_op = ClassifyTSQueryFunction(f->function.name);
+      leaf_op = ClassifyTSQueryFunction(f->function.GetName());
     } else {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("## part expression class: ",
-                              static_cast<int>(part_expr_ref.expression_class)),
-                      ERR_HINT(kSyntaxHint));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("## part expression class: ",
+                static_cast<int>(part_expr_ref.GetExpressionClass())),
+        ERR_HINT(kSyntaxHint));
     }
 
     auto get_text_arg = [&] {
@@ -483,7 +481,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
       if (f->children.size() != 1) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("## ", f->function.name,
+          ERR_MSG("## ", f->function.GetName(),
                   " phrase part expects 1 argument, got ", f->children.size()),
           ERR_HINT(kSyntaxHint));
       }
@@ -500,29 +498,38 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         auto text = get_text_arg();
         options->push_back<irs::ByTermOptions>(gap.min, gap.max)
           .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
-        break;
-      }
+      } break;
       case TSQueryOp::Prefix: {
         auto text = get_text_arg();
         options->push_back<irs::ByPrefixOptions>(gap.min, gap.max)
           .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
-        break;
-      }
+      } break;
       case TSQueryOp::Like: {
         auto text = get_text_arg();
         auto pattern = LikeEscapePattern(text, '\\');
-        options->push_back<irs::ByWildcardOptions>(gap.min, gap.max)
-          .term.assign(
-            irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
-        break;
-      }
+        irs::bstring buf;
+        // TODO(codeworse): Will be dropped with filter optimizer
+        irs::ExecuteWildcard(
+          buf, irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
+          [&](irs::bytes_view term) {
+            options->push_back<irs::ByTermOptions>(gap.min, gap.max).term =
+              term;
+          },
+          [&](irs::bytes_view term) {
+            options->push_back<irs::ByPrefixOptions>(gap.min, gap.max).term =
+              term;
+          },
+          [&](irs::bytes_view term) {
+            options->push_back<irs::ByWildcardOptions>(gap.min, gap.max) =
+              irs::ByWildcardOptions{term};
+          });
+      } break;
       case TSQueryOp::Fuzzy: {
         auto args = ParseLevenshteinArgs(*f);
         FillByEditDistanceOptions(
           args,
           options->push_back<irs::ByEditDistanceOptions>(gap.min, gap.max));
-        break;
-      }
+      } break;
       case TSQueryOp::Phrase: {
         // Nested ts_phrase('x y z') -> tokenise via column analyzer and
         // emit one term part per token. The FIRST token uses the
@@ -544,8 +551,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                           ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
         }
         EmitPhraseTokens(*options, ctx, column_info, phrase_text, gap);
-        break;
-      }
+      } break;
       case TSQueryOp::Any: {
         // ts_any as a phrase part -> ByTermsOptions slot with the
         // listed terms as alternatives at this phrase position. Only
@@ -581,8 +587,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
           terms_opts.terms.emplace(
             irs::ViewCast<irs::byte_type>(std::string_view{term_text}));
         }
-        break;
-      }
+      } break;
       case TSQueryOp::All:
         // ts_all rejected for the same reason min_match > 1 is rejected
         // for ts_any: a phrase position can match only one token.
@@ -598,9 +603,11 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         // target separate fields) make no sense at a phrase position.
         auto args = ParseRangeArgs(*f);
         if ((args.min &&
-             args.min->type().id() != duckdb::LogicalTypeId::VARCHAR) ||
+             args.min->type().id() != duckdb::LogicalTypeId::VARCHAR &&
+             args.min->type().id() != duckdb::LogicalTypeId::BLOB) ||
             (args.max &&
-             args.max->type().id() != duckdb::LogicalTypeId::VARCHAR)) {
+             args.max->type().id() != duckdb::LogicalTypeId::VARCHAR &&
+             args.max->type().id() != duckdb::LogicalTypeId::BLOB)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
             ERR_MSG("## ts_between phrase part requires VARCHAR bounds"),
@@ -615,7 +622,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("## part type not supported yet: ",
-                  f ? f->function.name : "<bare-const>"),
+                  f ? f->function.GetName() : "<bare-const>"),
           ERR_HINT("Supported phrase parts: bare 'word', ts_starts_with, "
                    "ts_like, ts_levenshtein, ts_phrase, ts_any, ts_between."));
     }

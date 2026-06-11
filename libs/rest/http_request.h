@@ -26,12 +26,6 @@
 #include "endpoint/connection_info.h"
 #include "rest/general_request.h"
 
-namespace vpack {
-
-class Builder;
-struct Options;
-
-}  // namespace vpack
 namespace sdb {
 
 class HttpRequest final : public GeneralRequest {
@@ -55,9 +49,8 @@ class HttpRequest final : public GeneralRequest {
   size_t contentLength() const noexcept override { return _payload.size(); }
   // Payload
   std::string_view rawPayload() const override;
-  vpack::Slice payload(bool strict_validation) override;
 
-  const vpack::BufferUInt8& body() { return _payload; }
+  const basics::BufferUInt8& body() { return _payload; }
   void appendBody(const char* data, size_t size);
   // append a NUL byte to the request body
   void appendNullTerminator();
@@ -74,9 +67,6 @@ class HttpRequest final : public GeneralRequest {
   EncodingType parseAcceptEncoding(std::string_view value) const;
 
   containers::FlatHashMap<std::string, std::string> _cookies;
-
-  /// was VPack payload validated
-  bool _validated_payload = false;
 };
 
 }  // namespace sdb

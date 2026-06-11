@@ -35,7 +35,6 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 namespace {
@@ -245,10 +244,10 @@ void SKRangeScanFunction(duckdb::ClientContext& context,
   }
   if (gstate.scan_tableoid) {
     output.data[gstate.tableoid_output_idx].Reference(
-      duckdb::Value::BIGINT(gstate.tableoid_value));
+      duckdb::Value::BIGINT(gstate.tableoid_value), duckdb::count_t(num_rows));
   }
 
-  output.SetCardinality(num_rows);
+  output.SetChildCardinality(num_rows);
   gstate.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
 }
 

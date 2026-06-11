@@ -24,7 +24,6 @@
 #include <iresearch/search/ngram_similarity_query.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -36,7 +35,8 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
                const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_ngram('hello', 0.7). Threshold is 0.0-1.0 (default 0.7).";
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_ngram field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
@@ -78,14 +78,11 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
                "`Frequency` features attached to the column."));
   }
 
-  std::string field_name;
-  MakeFieldName(column_info, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& ngram = ctx.negated ? Negate<irs::ByNGramSimilarity>(filter)
                             : AddFilter<irs::ByNGramSimilarity>(filter);
   ngram.boost(ctx.boost);
-  *ngram.mutable_field() = field_name;
+  *ngram.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   ngram.mutable_options()->threshold = threshold;
   auto& analyzer = ctx.tokenizer;
   analyzer.reset(std::string_view{target});

@@ -22,66 +22,14 @@
 #include "rocksdb_utils.h"
 
 #include <rocksdb/convenience.h>
-#include <vpack/iterator.h>
 
 #include <string>
 #include <string_view>
 
 #include "basics/errors.h"
-#include "basics/static_strings.h"
 
 using namespace sdb;
 
-namespace {
-
-bool HasObjectIds(vpack::Slice input_slice) {
-  bool rv = false;
-  if (input_slice.isObject()) {
-    for (auto object_pair : vpack::ObjectIterator(input_slice)) {
-      if (object_pair.key.stringView() == StaticStrings::kObjectId) {
-        return true;
-      }
-      rv = HasObjectIds(object_pair.value());
-      if (rv) {
-        break;
-      }
-    }
-  } else if (input_slice.isArray()) {
-    for (auto slice : vpack::ArrayIterator(input_slice)) {
-      rv = HasObjectIds(slice);
-      if (rv) {
-        break;
-      }
-    }
-  }
-  return rv;
-}
-
-vpack::Builder& StripObjectIdsImpl(vpack::Builder& builder,
-                                   vpack::Slice input_slice) {
-  if (input_slice.isObject()) {
-    builder.openObject();
-    for (auto object_pair : vpack::ObjectIterator(input_slice)) {
-      if (object_pair.key.stringView() == StaticStrings::kObjectId) {
-        continue;
-      }
-      builder.add(object_pair.key);
-      StripObjectIdsImpl(builder, object_pair.value());
-    }
-    builder.close();
-  } else if (input_slice.isArray()) {
-    builder.openArray();
-    for (auto slice : vpack::ArrayIterator(input_slice)) {
-      StripObjectIdsImpl(builder, slice);
-    }
-    builder.close();
-  } else {
-    builder.add(input_slice);
-  }
-  return builder;
-}
-
-}  // namespace
 namespace sdb::rocksutils {
 
 sdb::Result ConvertStatus(const rocksdb::Status& status, StatusHint hint) {
@@ -156,20 +104,6 @@ sdb::Result ConvertStatus(const rocksdb::Status& status, StatusHint hint) {
       return {ERROR_INTERNAL,
               "unknown RocksDB status code " + status.ToString()};
   }
-}
-
-std::pair<vpack::Slice, std::unique_ptr<vpack::BufferUInt8>> StripObjectIds(
-  vpack::Slice input_slice, bool check_before_copy) {
-  std::unique_ptr<vpack::BufferUInt8> buffer;
-  if (check_before_copy) {
-    if (!HasObjectIds(input_slice)) {
-      return {input_slice, std::move(buffer)};
-    }
-  }
-  buffer = std::make_unique<vpack::BufferUInt8>();
-  vpack::Builder builder(*buffer);
-  StripObjectIdsImpl(builder, input_slice);
-  return {vpack::Slice(buffer->data()), std::move(buffer)};
 }
 
 }  // namespace sdb::rocksutils

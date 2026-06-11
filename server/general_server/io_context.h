@@ -22,48 +22,27 @@
 #pragma once
 
 #include <atomic>
+#include <thread>
 
 #include "basics/asio_ns.h"
 #include "basics/common.h"
-#include "basics/thread.h"
 
 namespace sdb {
-namespace app {
-
-class AppServer;
-}
 namespace rest {
 
 class IoContext {
-  friend class IoThread;
-
- private:
-  class IoThread final : public Thread {
-   public:
-    explicit IoThread(app::AppServer&, IoContext&);
-    explicit IoThread(const IoThread&);
-    ~IoThread() final;
-    void run() final;
-
-    // allow IoThreads to start during server prepare phase
-    bool isSystem() const final { return true; }
-
-   private:
-    IoContext& _iocontext;
-  };
-
  public:
   asio_ns::io_context io_context;
 
  private:
-  app::AppServer& _server;
-  IoThread _thread;
   asio_ns::executor_work_guard<asio_ns::io_context::executor_type> _work;
   std::atomic<unsigned> _clients;
+  // jthread is declared last so it is destroyed first: this joins the IO
+  // thread before _work / io_context get torn down.
+  std::jthread _io_thread;
 
  public:
-  explicit IoContext(app::AppServer&);
-  explicit IoContext(const IoContext&);
+  IoContext();
   ~IoContext();
 
   unsigned clients() const noexcept {
@@ -78,9 +57,7 @@ class IoContext {
     _clients.fetch_sub(1, std::memory_order_release);
   }
 
-  void start();
   void stop();
-  bool runningInThisThread() const { return _thread.runningInThisThread(); }
 };
 
 }  // namespace rest

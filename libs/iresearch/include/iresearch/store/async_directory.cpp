@@ -314,7 +314,7 @@ IndexOutput::ptr AsyncIndexOutput::Open(const path_char_t* name,
     file_utils::Open(name, file_utils::OpenMode::Write, IR_FADVICE_NORMAL));
 
   if (nullptr == handle) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("Failed to open output file, error: ", GET_ERROR(),
                            ", path: ", file_utils::ToStr(name)));
 

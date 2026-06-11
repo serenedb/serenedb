@@ -67,7 +67,7 @@ INSERT INTO prim_n VALUES (
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) prim_n
+VACUUM (REFRESH_TABLE) prim_n
 
 
 # Sanity: the INCLUDE'd columns are served by the cs (i), pk by rocksdb (l).
@@ -98,7 +98,7 @@ QUERY PLAN
 │         v_date (i)        │
 │          v_ts (i)         │
 │                           │
-│          ~3 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 

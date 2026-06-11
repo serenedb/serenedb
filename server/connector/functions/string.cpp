@@ -500,7 +500,7 @@ duckdb::unique_ptr<duckdb::FunctionData> PgFormatBind(
   auto& arguments = input.GetArguments();
   auto& context = input.GetClientContext();
   for (auto& arg : arguments) {
-    if (arg->return_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+    if (arg->GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
       arg = duckdb::BoundCastExpression::AddCastToType(
         context, std::move(arg), duckdb::LogicalType::VARCHAR);
     }
@@ -660,8 +660,7 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         case 's': {
           auto val = get_arg(arg_idx);
           formatted = val.value_or("");
-          break;
-        }
+        } break;
         case 'I': {
           auto val = get_arg(arg_idx);
           if (!val) {
@@ -669,8 +668,7 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
               "null values cannot be formatted as an SQL identifier");
           }
           formatted = quote_ident(*val);
-          break;
-        }
+        } break;
         case 'L': {
           auto val = get_arg(arg_idx);
           formatted = quote_literal(val);
@@ -994,62 +992,78 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
 // Ported from Velox PgRegexpMatch.
 void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                          duckdb::Vector& result) {
-  duckdb::BinaryExecutor::ExecuteWithNulls<duckdb::string_t, duckdb::string_t,
-                                           duckdb::list_entry_t>(
-    args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t text, duckdb::string_t pattern,
-        duckdb::ValidityMask& mask, duckdb::idx_t row) {
-      re2::RE2 re(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
-                  re2::RE2::Quiet);
-      if (!re.ok()) {
-        throw duckdb::InvalidInputException("invalid regular expression: %s",
-                                            re.error());
+  duckdb::UnifiedVectorFormat tdata, pdata;
+  args.data[0].ToUnifiedFormat(tdata);
+  args.data[1].ToUnifiedFormat(pdata);
+  const auto* text_ptr =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(tdata);
+  const auto* pat_ptr =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(pdata);
+  auto* result_ptr =
+    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
+  for (duckdb::idx_t row = 0; row < args.size(); row++) {
+    auto t_idx = tdata.sel->get_index(row);
+    auto p_idx = pdata.sel->get_index(row);
+    if (!tdata.validity.RowIsValid(t_idx) ||
+        !pdata.validity.RowIsValid(p_idx)) {
+      result_validity.SetInvalid(row);
+      continue;
+    }
+    const auto& text = text_ptr[t_idx];
+    const auto& pattern = pat_ptr[p_idx];
+    re2::RE2 re(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
+                re2::RE2::Quiet);
+    if (!re.ok()) {
+      throw duckdb::InvalidInputException("invalid regular expression: %s",
+                                          re.error());
+    }
+
+    re2::StringPiece input(text.GetData(), text.GetSize());
+    int num_groups = re.NumberOfCapturingGroups();
+
+    auto& child = duckdb::ListVector::GetChildMutable(result);
+    auto current_size = duckdb::ListVector::GetListSize(result);
+
+    if (num_groups == 0) {
+      re2::StringPiece match;
+      if (!re.Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED, &match,
+                    1)) {
+        result_validity.SetInvalid(row);
+        continue;
       }
+      duckdb::ListVector::Reserve(result, current_size + 1);
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
+        child)[current_size] =
+        duckdb::StringVector::AddString(child, match.data(), match.size());
+      duckdb::ListVector::SetListSize(result, current_size + 1);
+      result_ptr[row] = duckdb::list_entry_t{current_size, 1};
+      continue;
+    }
 
-      re2::StringPiece input(text.GetData(), text.GetSize());
-      int num_groups = re.NumberOfCapturingGroups();
+    std::vector<re2::StringPiece> groups(num_groups + 1);
+    if (!re.Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED, groups.data(),
+                  num_groups + 1)) {
+      result_validity.SetInvalid(row);
+      continue;
+    }
 
-      auto& child = duckdb::ListVector::GetEntry(result);
-      auto current_size = duckdb::ListVector::GetListSize(result);
-
-      if (num_groups == 0) {
-        re2::StringPiece match;
-        if (!re.Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED, &match,
-                      1)) {
-          mask.SetInvalid(row);
-          return duckdb::list_entry_t{current_size, 0};
-        }
-        duckdb::ListVector::Reserve(result, current_size + 1);
+    duckdb::ListVector::Reserve(result, current_size + num_groups);
+    auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
+    for (int i = 1; i <= num_groups; ++i) {
+      if (groups[i].data()) {
         duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
-          child)[current_size] =
-          duckdb::StringVector::AddString(child, match.data(), match.size());
-        duckdb::ListVector::SetListSize(result, current_size + 1);
-        return duckdb::list_entry_t{current_size, 1};
+          child)[current_size + i - 1] =
+          duckdb::StringVector::AddString(child, groups[i].data(),
+                                          groups[i].size());
+      } else {
+        child_validity.SetInvalid(current_size + i - 1);
       }
-
-      std::vector<re2::StringPiece> groups(num_groups + 1);
-      if (!re.Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED,
-                    groups.data(), num_groups + 1)) {
-        mask.SetInvalid(row);
-        return duckdb::list_entry_t{current_size, 0};
-      }
-
-      duckdb::ListVector::Reserve(result, current_size + num_groups);
-      auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
-      for (int i = 1; i <= num_groups; ++i) {
-        if (groups[i].data()) {
-          duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
-            child)[current_size + i - 1] =
-            duckdb::StringVector::AddString(child, groups[i].data(),
-                                            groups[i].size());
-        } else {
-          child_validity.SetInvalid(current_size + i - 1);
-        }
-      }
-      duckdb::ListVector::SetListSize(result, current_size + num_groups);
-      return duckdb::list_entry_t{current_size,
-                                  static_cast<duckdb::idx_t>(num_groups)};
-    });
+    }
+    duckdb::ListVector::SetListSize(result, current_size + num_groups);
+    result_ptr[row] = duckdb::list_entry_t{
+      current_size, static_cast<duckdb::idx_t>(num_groups)};
+  }
 }
 
 }  // namespace
@@ -1166,7 +1180,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
        duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
       StringToArray3Function};
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
 
@@ -1178,8 +1192,8 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                 duckdb::LogicalType::VARCHAR,
                                 PgFormatFunction,
                                 PgFormatBind};
-    func.varargs = duckdb::LogicalType::ANY;
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetVarArgs(duckdb::LogicalType::ANY);
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
 
@@ -1315,7 +1329,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                 {duckdb::LogicalType::VARCHAR},
                                 duckdb::LogicalType::VARCHAR,
                                 QuoteNullableFunction};
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
 
@@ -1333,7 +1347,7 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
       RegexpMatchFunction};
-    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }
 

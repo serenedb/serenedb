@@ -1,0 +1,41 @@
+# ----------------------------------------------------------------------
+# SET GLOBAL semantics: the GLOBAL scope persists across the rollback of
+# the surrounding transaction (matches DuckDB's GLOBAL semantics, not PG).
+#
+# Hosted under recovery/ because each test there runs against its own
+# serened instance. Parallel sqllogic runs can't tolerate a single global
+# setting mutation: another test session's BEGIN would inherit the new
+# global default and behave unexpectedly. Extracted from
+# any/pg/settings/scopes.test (which still tests SET / SESSION / LOCAL).
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET GLOBAL default_transaction_read_only TO true;
+
+
+statement ok
+ROLLBACK;
+
+
+# GLOBAL SET is not tracked for rollback -- value persists.
+query
+SHOW default_transaction_read_only;
+----
+default_transaction_read_only
+on
+
+
+# Restore to default to avoid affecting later operations.
+statement ok
+SET GLOBAL default_transaction_read_only TO false;
+
+
+query
+SHOW default_transaction_read_only;
+----
+default_transaction_read_only
+off

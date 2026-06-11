@@ -184,7 +184,7 @@ INSERT INTO indexonly_search VALUES
   (3, 'pudge carries team again');
 
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_search;
+VACUUM (REFRESH_TABLE) indexonly_search;
 
 # Search predicate against the IndexOnly column passes through the inverted
 # index. Only `id` is projected; `body` is consumed by the predicate and
@@ -234,7 +234,7 @@ CREATE INDEX indexonly_late_idx
   ON indexonly_late USING inverted(body indexonly_english);
 
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_late;
+VACUUM (REFRESH_TABLE) indexonly_late;
 
 # The two pre-index rows are not searchable -- their `body` was never
 # persisted anywhere.
@@ -251,7 +251,7 @@ INSERT INTO indexonly_late VALUES
   (4, 'anchin after index');
 
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_late;
+VACUUM (REFRESH_TABLE) indexonly_late;
 
 query
 SELECT id FROM indexonly_late_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
@@ -290,7 +290,7 @@ CREATE INDEX indexonly_composite_idx
   ON indexonly_composite USING inverted(id, body indexonly_english);
 
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_composite;
+VACUUM (REFRESH_TABLE) indexonly_composite;
 
 # Pre-existing rows are not in the index (backfill was a no-op).
 query
@@ -303,7 +303,7 @@ statement ok
 INSERT INTO indexonly_composite VALUES (3, 'fresh row');
 
 statement ok
-VACUUM (UPDATE_INDEXES) indexonly_composite;
+VACUUM (REFRESH_TABLE) indexonly_composite;
 
 query
 SELECT id FROM indexonly_composite_idx WHERE body @@ ts_phrase('fresh') ORDER BY id;

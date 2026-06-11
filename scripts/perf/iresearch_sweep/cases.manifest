@@ -1,0 +1,20 @@
+# One row per case. Columns (tab-separated):
+#   1. case name (matches cases/<name>.sql)
+#   2. CREATE INDEX clause body (substituted into `CREATE INDEX sweep_idx ON sweep_t USING inverted(<this>)`)
+#   3. Hot/cold read query (must reference table `sweep_t` and column `body`)
+#   4. Online-insert generator template (parameterized with @START@ @COUNT@)
+#   5. Default rows for medium dataset
+#   6. Default rows for large dataset
+#
+# Generator templates produce rows that share the same shape as the case's
+# setup INSERT, but start at offset @START@. Used for the online-insert phase.
+
+english_icu	pk, body sweep_en_icu	SELECT count(*) FROM sweep_t WHERE body @@ ts_phrase('the')	INSERT INTO sweep_t SELECT @START@ + id, (SELECT string_agg(word, ' ') FROM (SELECT v.word FROM range(50) AS t(word_idx) JOIN sweep_vocab v ON v.idx = ((hash((@START@ + id)::BIGINT * 1009 + word_idx) % 256 + 256) % 256)) t) FROM range(@COUNT@) AS r(id)	1000000	10000000
+english_simple	pk, body sweep_en_simple	SELECT count(*) FROM sweep_t WHERE body @@ ts_phrase('the')	INSERT INTO sweep_t SELECT @START@ + id, (SELECT string_agg(word, ' ') FROM (SELECT v.word FROM range(50) AS t(word_idx) JOIN sweep_vocab v ON v.idx = ((hash((@START@ + id)::BIGINT * 1009 + word_idx) % 256 + 256) % 256)) t) FROM range(@COUNT@) AS r(id)	1000000	10000000
+ngram	pk, body sweep_ngram	SELECT count(*) FROM sweep_t WHERE body @@ ts_like('the')	INSERT INTO sweep_t SELECT @START@ + id, (SELECT string_agg(word, ' ') FROM (SELECT v.word FROM range(50) AS t(word_idx) JOIN sweep_vocab v ON v.idx = ((hash((@START@ + id)::BIGINT * 1009 + word_idx) % 256 + 256) % 256)) t) FROM range(@COUNT@) AS r(id)	200000	2000000
+uuid	pk, body sweep_verbatim	SELECT count(*) FROM sweep_t WHERE body @@ ts_like(md5('42'))	INSERT INTO sweep_t SELECT @START@ + id, md5((@START@ + id)::VARCHAR) FROM range(@COUNT@) AS r(id)	1000000	10000000
+url	pk, body sweep_verbatim	SELECT count(*) FROM sweep_t WHERE body @@ ts_like('https://host42.example.com/path42/42?q=' || md5('42'))	INSERT INTO sweep_t SELECT @START@ + id, 'https://host' || ((@START@ + id) % 1000)::VARCHAR || '.example.com/path' || ((@START@ + id) % 500)::VARCHAR || '/' || (@START@ + id)::VARCHAR || '?q=' || md5((@START@ + id)::VARCHAR) FROM range(@COUNT@) AS r(id)	1000000	10000000
+integer	pk, body	SELECT count(*) FROM sweep_t WHERE body @@ ts_between(100000, 200000, true, true)	INSERT INTO sweep_t SELECT @START@ + id, (((@START@ + id) * 99991) % 1000003)::INTEGER FROM range(@COUNT@) AS r(id)	1000000	10000000
+bigint	pk, body	SELECT count(*) FROM sweep_t WHERE body @@ ts_between(1700001000000, 1700002000000, true, true)	INSERT INTO sweep_t SELECT @START@ + id, (1700000000000 + (@START@ + id)::BIGINT * 1000000 + ((@START@ + id) * 99991) % 86400000000)::BIGINT FROM range(@COUNT@) AS r(id)	1000000	10000000
+boolean	pk, body	SELECT count(*) FROM sweep_t WHERE body = true	INSERT INTO sweep_t SELECT @START@ + id, ((@START@ + id) % 2 = 0)::BOOLEAN FROM range(@COUNT@) AS r(id)	1000000	10000000
+hnsw	pk, body hnsw (metric = 'l2', m = 16)	SELECT pk FROM sweep_t ORDER BY body <-> list_transform(range(128), x -> 0.5::FLOAT)::FLOAT[128] LIMIT 10	INSERT INTO sweep_t SELECT @START@ + id, list_transform(range(128), x -> ((((@START@ + id) * 99991 + x * 7919)::BIGINT) % 1000 + 1000) % 1000 / 1000.0)::FLOAT[128] FROM range(@COUNT@) AS r(id)	200000	1000000

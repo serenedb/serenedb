@@ -71,13 +71,13 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
 void FillByRangeOptionsVarchar(const RangeArgs& args,
                                irs::ByRangeOptions& out) {
   if (args.min) {
-    auto sv = args.min->GetValue<std::string>();
+    auto sv = duckdb::StringValue::Get(*args.min);
     out.range.min.assign(irs::ViewCast<irs::byte_type>(std::string_view{sv}));
     out.range.min_type =
       args.min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
   }
   if (args.max) {
-    auto sv = args.max->GetValue<std::string>();
+    auto sv = duckdb::StringValue::Get(*args.max);
     out.range.max.assign(irs::ViewCast<irs::byte_type>(std::string_view{sv}));
     out.range.max_type =
       args.max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
@@ -117,8 +117,10 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
       ERR_HINT("The bound's type must match the column's type family "
                "(VARCHAR / BOOLEAN / numeric)."));
   };
-  if (col_type == duckdb::LogicalTypeId::VARCHAR) {
-    if (val_type != duckdb::LogicalTypeId::VARCHAR) {
+  if (col_type == duckdb::LogicalTypeId::VARCHAR ||
+      col_type == duckdb::LogicalTypeId::BLOB) {
+    if (val_type != duckdb::LogicalTypeId::VARCHAR &&
+        val_type != duckdb::LogicalTypeId::BLOB) {
       type_mismatch();
     }
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
@@ -137,19 +139,20 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
                              "BOOLEAN and numeric columns."));
   }
 
-  std::string field_name;
-  MakeFieldName(column_info, field_name);
-  if (auto r = MangleForType(col_type, field_name); !r.ok()) {
+  if (auto r = ValidateFilterType(col_type); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()));
   }
   const auto bound_type =
     inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
 
-  if (col_type == duckdb::LogicalTypeId::VARCHAR) {
-    // VARCHAR: tokenise the bound through the ambient analyzer; the
-    // (single) token becomes the bound's bytes.
-    auto text = bound_val->GetValue<std::string>();
+  if (col_type == duckdb::LogicalTypeId::VARCHAR ||
+      col_type == duckdb::LogicalTypeId::BLOB) {
+    // VARCHAR / BLOB: tokenise the bound through the ambient analyzer; the
+    // (single) token becomes the bound's bytes. BLOB shares
+    // PhysicalType::VARCHAR storage, so GetValue<string>() returns the raw
+    // bytes either way.
+    auto text = duckdb::StringValue::Get(*bound_val);
     auto& analyzer = ctx.tokenizer;
     if (!analyzer.reset(std::string_view{text})) {
       THROW_SQL_ERROR(
@@ -166,7 +169,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     }
     auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
                               : AddFilter<irs::ByRange>(parent);
-    *range.mutable_field() = std::move(field_name);
+    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.boost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
@@ -192,7 +195,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
                               : AddFilter<irs::ByRange>(parent);
-    *range.mutable_field() = std::move(field_name);
+    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.boost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
@@ -211,7 +214,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   auto& range = ctx.negated ? Negate<irs::ByGranularRange>(parent)
                             : AddFilter<irs::ByGranularRange>(parent);
-  *range.mutable_field() = std::move(field_name);
+  *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
   range.boost(ctx.boost);
   auto* options = range.mutable_options();
   options->scored_terms_limit = ctx.scored_terms_limit;
@@ -256,8 +259,10 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
       ERR_HINT("Both bounds must match the column's type "
                "family (VARCHAR / BOOLEAN / numeric)."));
   };
-  if (col_type == duckdb::LogicalTypeId::VARCHAR) {
-    if (val_type != duckdb::LogicalTypeId::VARCHAR) {
+  if (col_type == duckdb::LogicalTypeId::VARCHAR ||
+      col_type == duckdb::LogicalTypeId::BLOB) {
+    if (val_type != duckdb::LogicalTypeId::VARCHAR &&
+        val_type != duckdb::LogicalTypeId::BLOB) {
       type_mismatch();
     }
     if (column_info.tokenizer.analyzer->type() !=
@@ -285,17 +290,16 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
                              "analyzer), BOOLEAN and numeric columns."));
   }
 
-  std::string field_name;
-  MakeFieldName(column_info, field_name);
-  if (auto r = MangleForType(col_type, field_name); !r.ok()) {
+  if (auto r = ValidateFilterType(col_type); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()));
   }
 
-  if (col_type == duckdb::LogicalTypeId::VARCHAR) {
+  if (col_type == duckdb::LogicalTypeId::VARCHAR ||
+      col_type == duckdb::LogicalTypeId::BLOB) {
     auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
                               : AddFilter<irs::ByRange>(parent);
-    *range.mutable_field() = std::move(field_name);
+    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.boost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
@@ -303,7 +307,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
                               : AddFilter<irs::ByRange>(parent);
-    *range.mutable_field() = std::move(field_name);
+    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.boost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
@@ -325,7 +329,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
     // tokenising so the indexed and queried representations match.
     auto& range = ctx.negated ? Negate<irs::ByGranularRange>(parent)
                               : AddFilter<irs::ByGranularRange>(parent);
-    *range.mutable_field() = std::move(field_name);
+    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.boost(ctx.boost);
     auto* range_opts = range.mutable_options();
     range_opts->scored_terms_limit = ctx.scored_terms_limit;

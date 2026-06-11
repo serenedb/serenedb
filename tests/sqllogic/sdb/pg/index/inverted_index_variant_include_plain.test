@@ -1,0 +1,74 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE variant_inc_plain (
+  id INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  payload VARIANT NOT NULL,
+  PRIMARY KEY (id)
+);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY variant_inc_plain_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE INDEX variant_inc_plain_idx
+  ON variant_inc_plain USING inverted(body variant_inc_plain_en)
+  INCLUDE (payload);
+
+
+statement ok
+INSERT INTO variant_inc_plain VALUES
+  (1, 'alpha cat', 42::variant),
+  (2, 'beta dog', 'hello'::variant),
+  (3, 'gamma cat', true::variant),
+  (4, 'delta horse', '{"a": 42}'::json::variant);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) variant_inc_plain;
+
+
+query
+SELECT id, payload FROM variant_inc_plain_idx WHERE body @@ ts_phrase('alpha')
+ORDER BY id;
+----
+id	payload
+1	42
+
+
+query
+SELECT id, payload FROM variant_inc_plain_idx WHERE body @@ ts_phrase('cat')
+ORDER BY id;
+----
+id	payload
+1	42
+3	true
+
+
+query
+SELECT id, payload FROM variant_inc_plain_idx WHERE body @@ ts_phrase('delta')
+ORDER BY id;
+----
+id	payload
+4	{"a":42}
+
+
+query
+SELECT id, payload FROM variant_inc_plain ORDER BY id;
+----
+id	payload
+1	42
+2	"hello"
+3	true
+4	{"a":42}

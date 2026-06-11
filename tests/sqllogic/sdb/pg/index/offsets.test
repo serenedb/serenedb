@@ -30,7 +30,7 @@ statement ok
 INSERT INTO offsets_test VALUES (4, 'good day', 'fox fox fox fox fox fox fox fox fox fox fox fox', 12);
 
 statement ok
-VACUUM (UPDATE_INDEXES) offsets_test;
+VACUUM (REFRESH_TABLE) offsets_test;
 
 statement ok
 CREATE TABLE offsets_test2 (id INTEGER PRIMARY KEY, body VARCHAR);
@@ -42,7 +42,7 @@ statement ok
 INSERT INTO offsets_test2 VALUES (1, 'fox'), (2, 'cat');
 
 statement ok
-VACUUM (UPDATE_INDEXES) offsets_test2;
+VACUUM (REFRESH_TABLE) offsets_test2;
 
 query
 SELECT id, ts_offsets(body) AS bo
@@ -79,7 +79,7 @@ QUERY PLAN
 │    ────────────────────   │
 │  offsets_test_idx.id ASC  │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
@@ -100,7 +100,7 @@ QUERY PLAN
 │ sdb_inverted_index_offsets│
 <slt:ignore>
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -324,11 +324,10 @@ QUERY PLAN
 │         PROJECTION        │
 │    ────────────────────   │
 │             #0            │
-│__internal_decompress_integ│
-│     ral_integer(#1, 2)    │
+│    CAST(#1 AS INTEGER)    │
 │             #2            │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │          ORDER_BY         │
@@ -336,14 +335,13 @@ QUERY PLAN
 │           id ASC          │
 │          lim ASC          │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             #0            │
-│__internal_compress_integra│
-│     l_utinyint(#1, 2)     │
+│    CAST(#1 AS TINYINT)    │
 │             #2            │
 │                           │
 │          ~2 rows          │
@@ -377,9 +375,9 @@ QUERY PLAN
 │        Projections:       ││        Projections:       │
 │             id            ││             id            │
 │ sdb_inverted_index_offsets││ sdb_inverted_index_offsets│
-<slt:ignore><slt:ignore>
+<slt:ignore>
 │                           ││                           │
-│          ~4 rows          ││          ~4 rows          │
+│           ~1 row          ││           ~1 row          │
 └───────────────────────────┘└───────────────────────────┘
 
 
@@ -632,15 +630,6 @@ ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│             #2            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │           TOP_N           │
 │    ────────────────────   │
 │           Top: 3          │
@@ -657,7 +646,7 @@ QUERY PLAN
 │             id            │
 │             bo            │
 │            pos            │
-│             #1            │
+│  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -680,11 +669,11 @@ QUERY PLAN
 │                           │
 │        Projections:       │
 │             id            │
-│  sdb_inverted_index_score │
 │ sdb_inverted_index_offsets│
 <slt:ignore>
+│  sdb_inverted_index_score │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -699,11 +688,20 @@ ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #3 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             id            │
 │             bo            │
 │            pos            │
+│  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -727,11 +725,11 @@ QUERY PLAN
 │                           │
 │        Projections:       │
 │             id            │
-│  sdb_inverted_index_score │
 │ sdb_inverted_index_offsets│
 <slt:ignore>
+│  sdb_inverted_index_score │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 

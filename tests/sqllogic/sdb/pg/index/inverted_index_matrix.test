@@ -1,0 +1,5816 @@
+control substitution on
+
+# ============================================================================
+# Comprehensive sink-path coverage.
+# Exercises SearchSinkInsertBaseImpl::DispatchField across:
+#   element type  x  container shape  x  source (column / expression)  x
+#   storage (store_values on / off)   x  index variant
+#
+# For every cell that's supposed to work, we INSERT one batch and read back
+# via a search query that the indexed analyzer supports. INCLUDE(col) flips
+# store_values on for that column. Expression indexes use a non-trivial
+# (and identity-equivalent) wrapper so the expression-side dispatch fires.
+#
+# Index variants per element type:
+#   VARCHAR        text / wildcard(ngram) / geo-src(GeoJSON-in-VARCHAR) /
+#                  geo-s2(GeoJSON-in-VARCHAR)
+#   BLOB           text(keyword)
+#   JSON           geo-src / geo-s2
+#   GEOMETRY       geo-src / geo-s2
+#   BOOLEAN        text(keyword)
+#   integers/floats/dates/times/timestamps  text(keyword)
+#   FLOAT[N]       HNSW(array only) and text-tokenized array
+# ============================================================================
+
+# --- Dictionaries -----------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw_dict(template = 'keyword');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ng_dict(template = 'ngram', mingram = 2,
+    maxgram = 3, preserveoriginal = false, frequency = true, position = true);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_s2_dict(template = 'geojson',
+    coding = 's2point');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_src_dict(template = 'geojson',
+    coding = 'source');
+
+
+# ============================================================================
+# VARCHAR scalar  --  column / expression  x  store / no-store  x
+#                    text / wildcard / geo-src / geo-s2
+# ============================================================================
+
+statement ok
+CREATE TABLE m_v(pk INTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+CREATE INDEX m_v_col_text_st  ON m_v USING inverted(pk, v kw_dict) INCLUDE (v);
+
+statement ok
+CREATE INDEX m_v_col_text_ns  ON m_v USING inverted(pk, v kw_dict);
+
+statement ok
+CREATE INDEX m_v_col_wild_st  ON m_v USING inverted(pk, v ng_dict) INCLUDE (v);
+
+statement ok
+CREATE INDEX m_v_col_wild_ns  ON m_v USING inverted(pk, v ng_dict);
+
+statement ok
+CREATE INDEX m_v_expr_text_ns ON m_v USING inverted(pk, (upper(v)) kw_dict);
+
+statement ok
+CREATE INDEX m_v_expr_text_st ON m_v USING inverted(pk, (upper(v)) kw_dict)
+    INCLUDE (v);
+
+statement ok
+INSERT INTO m_v VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_v;
+
+query
+SELECT pk FROM m_v_col_text_st  WHERE v @@ ts_like('beta')       ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_v_col_text_ns  WHERE v @@ ts_like('beta')       ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_v_col_wild_st  WHERE v @@ ts_ngram('beta', 0.5) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_v_col_wild_ns  WHERE v @@ ts_ngram('beta', 0.5) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_v_expr_text_st WHERE upper(v) @@ ts_like('BETA') ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_v_expr_text_ns WHERE upper(v) @@ ts_like('BETA') ORDER BY pk;
+----
+pk
+2
+
+
+# ============================================================================
+# BLOB scalar
+# ============================================================================
+
+statement ok
+CREATE TABLE m_b(pk INTEGER PRIMARY KEY, b BLOB);
+
+statement ok
+CREATE INDEX m_b_col_text_st  ON m_b USING inverted(pk, b kw_dict) INCLUDE (b);
+
+statement ok
+CREATE INDEX m_b_col_text_ns  ON m_b USING inverted(pk, b kw_dict);
+
+statement ok
+CREATE INDEX m_b_expr_text_ns ON m_b USING inverted(pk,
+    (decode(encode(b, 'hex'), 'hex')) kw_dict);
+
+statement ok
+INSERT INTO m_b VALUES
+    (1, '\\x68656c6c6f'::BLOB),
+    (2, '\\x776f726c64'::BLOB),
+    (3, '\\xdeadbeef'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_b;
+
+query
+SELECT pk FROM m_b_col_text_st  WHERE b @@ ts_like('\\xdeadbeef'::BLOB) ORDER BY pk;
+----
+pk
+3
+
+query
+SELECT pk FROM m_b_col_text_ns  WHERE b @@ ts_like('\\xdeadbeef'::BLOB) ORDER BY pk;
+----
+pk
+3
+
+query
+SELECT pk FROM m_b_expr_text_ns
+WHERE decode(encode(b, 'hex'), 'hex') @@ ts_like('\\xdeadbeef'::BLOB)
+ORDER BY pk;
+----
+pk
+3
+
+
+# ============================================================================
+# JSON scalar (GeoJSON s2point + source-coded)
+# ============================================================================
+
+statement ok
+CREATE TABLE m_j(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX m_j_col_s2_st   ON m_j USING inverted(pk, j geo_s2_dict)  INCLUDE (j);
+
+statement ok
+CREATE INDEX m_j_col_src_st  ON m_j USING inverted(pk, j geo_src_dict) INCLUDE (j);
+
+# JSON expression that extracts a primitive (string leaf) -- the only shape
+# the catalog accepts for indexed JSON expressions.
+statement ok
+CREATE INDEX m_j_expr_type_ns ON m_j USING inverted(pk, (j->>'type') kw_dict);
+
+# JSON column with a text tokenizer takes the same primitive-only dispatch
+# path as JSON expressions (catalog synthesizes bool/numeric sub-fields and
+# the sink routes through WriteJsonBatch).
+statement ok
+CREATE TABLE m_j_prim(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX m_j_prim_col_kw ON m_j_prim USING inverted(pk, j kw_dict);
+
+statement ok
+INSERT INTO m_j_prim VALUES (1, '"alpha"'), (2, '42'), (3, 'true'), (4, 'null');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_j_prim;
+
+query
+SELECT pk FROM m_j_prim_col_kw WHERE j @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+# Storing a JSON object via a text tokenizer is rejected at insert time
+# (no per-leaf path exists for objects/arrays under the text dispatch).
+statement error
+INSERT INTO m_j_prim VALUES (99, '{"obj":1}');
+----
+db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+statement ok
+INSERT INTO m_j VALUES
+    (1, '{"type":"Point","coordinates":[0.0, 0.0]}'),
+    (2, '{"type":"Point","coordinates":[10.0, 20.0]}'),
+    (3, '{"type":"Point","coordinates":[-5.0, 47.0]}');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_j;
+
+query
+SELECT count(*) FROM m_j_col_s2_st;
+----
+count
+3
+
+query
+SELECT count(*) FROM m_j_col_src_st;
+----
+count
+3
+
+query
+SELECT pk FROM m_j_expr_type_ns WHERE j->>'type' @@ ts_like('Point') ORDER BY pk;
+----
+pk
+1
+2
+3
+
+
+# JSON-returning expression `(j->'val')` — the per-leaf-type dispatch path.
+# Catalog synthesizes string/numeric/bool/null sub-field ids; the filter
+# builder peels casts (e.g. ::int, ::bool) and routes each predicate to its
+# typed sub-field. Rows hold {"val": primitive}; the JSON column itself is
+# an object so we don't add a column-side index here (the column primitive
+# path is covered by m_j_prim above).
+statement ok
+CREATE TABLE m_jv(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX m_jv_expr_kw ON m_jv USING inverted(pk, (j->'val') kw_dict);
+
+statement ok
+INSERT INTO m_jv VALUES
+    (1, '{"val":"alpha"}'),
+    (2, '{"val":42}'),
+    (3, '{"val":true}'),
+    (4, '{"val":null}');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_jv;
+
+# Expression source: string leaf via ->>
+query
+SELECT pk FROM m_jv_expr_kw WHERE j->>'val' = 'alpha';
+----
+pk
+1
+
+# Expression source: numeric leaf via cast-peel
+query
+SELECT pk FROM m_jv_expr_kw WHERE (j->'val')::int = 42;
+----
+pk
+2
+
+# Expression source: bool leaf via cast-peel
+query
+SELECT pk FROM m_jv_expr_kw WHERE (j->'val')::bool = true;
+----
+pk
+3
+
+# Expression source: null leaf
+query
+SELECT pk FROM m_jv_expr_kw WHERE (j->'val') IS NULL;
+----
+pk
+4
+
+
+# ============================================================================
+# JSON list / array
+# ----------------------------------------------------------------------------
+# Nested JSON is rejected with any tokenizer. Scalar JSON has per-leaf
+# decomposition in the sink, but JSON[] / JSON[N] would silently route
+# through WriteListBatch<VARCHAR> (JSON's LogicalTypeId is VARCHAR), so it
+# would index each element as raw text rather than per-leaf primitives.
+# INCLUDE-only (just-store) is fine -- doesn't go through the term_dict
+# dispatch.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_jl(pk INTEGER PRIMARY KEY,
+                  j JSON,
+                  js JSON[],
+                  ja JSON[2]);
+
+# INCLUDE-only: works (just-store via columnstore).
+statement ok
+CREATE INDEX m_jl_inc ON m_jl USING inverted(pk) INCLUDE (js, ja);
+
+# Indexed JSON[] with keyword/ngram/geo: rejected.
+statement error
+CREATE INDEX m_jl_kw_list ON m_jl USING inverted(pk, js kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
+
+
+statement error
+CREATE INDEX m_jl_ng_list ON m_jl USING inverted(pk, js ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
+
+
+statement error
+CREATE INDEX m_jl_geo_list ON m_jl USING inverted(pk, js geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'js' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# Indexed JSON[N] same.
+statement error
+CREATE INDEX m_jl_kw_array ON m_jl USING inverted(pk, ja kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'ja' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[2])
+
+
+statement error
+CREATE INDEX m_jl_geo_array ON m_jl USING inverted(pk, ja geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'ja' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# INCLUDE-only path indexes rows.
+statement ok
+INSERT INTO m_jl VALUES
+    (1, '{"x":1}'::JSON,
+        ARRAY['{"a":1}'::JSON, '{"b":2}'::JSON],
+        ['{"c":3}'::JSON, '{"d":4}'::JSON]),
+    (2, '{"x":2}'::JSON,
+        ARRAY[]::JSON[],
+        ['{"e":5}'::JSON, '{"f":6}'::JSON]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_jl;
+
+query
+SELECT count(*) FROM m_jl_inc;
+----
+count
+2
+
+
+# ============================================================================
+# GEOMETRY scalar (s2point + source-coded)
+# ============================================================================
+
+statement ok
+CREATE TABLE m_g(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE INDEX m_g_col_s2_st   ON m_g USING inverted(pk, g geo_s2_dict)  INCLUDE (g);
+
+statement ok
+CREATE INDEX m_g_col_src_ns  ON m_g USING inverted(pk, g geo_src_dict);
+
+statement ok
+CREATE INDEX m_g_expr_s2_ns  ON m_g USING inverted(pk, (g) geo_s2_dict);
+
+statement ok
+CREATE INDEX m_g_expr_src_ns ON m_g USING inverted(pk, (g) geo_src_dict);
+
+statement ok
+INSERT INTO m_g VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84')),
+    (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84')),
+    (3, 'POINT(-5 47)'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) m_g;
+
+query
+SELECT count(*) FROM m_g_col_s2_st;
+----
+count
+3
+
+query
+SELECT count(*) FROM m_g_col_src_ns;
+----
+count
+3
+
+query
+SELECT count(*) FROM m_g_expr_s2_ns;
+----
+count
+3
+
+query
+SELECT count(*) FROM m_g_expr_src_ns;
+----
+count
+3
+
+
+# ============================================================================
+# GEOMETRY list / array
+# ----------------------------------------------------------------------------
+# Indexed nested GEOMETRY is rejected (no semantic for keyword/ngram tokens
+# over per-element WKB bytes; geo analyzers reject too). INCLUDE-only goes
+# through the columnstore directly -- it works for GEOMETRY[] and GEOMETRY[N].
+# ============================================================================
+
+statement ok
+CREATE TABLE m_gl(pk INTEGER PRIMARY KEY,
+                  g GEOMETRY('OGC:CRS84'),
+                  gs GEOMETRY('OGC:CRS84')[],
+                  ga GEOMETRY('OGC:CRS84')[2]);
+
+# INCLUDE-only: works (just-store via columnstore).
+statement ok
+CREATE INDEX m_gl_inc ON m_gl USING inverted(pk) INCLUDE (gs, ga);
+
+# Indexed GEOMETRY[] with keyword: rejected at CREATE INDEX.
+statement error
+CREATE INDEX m_gl_kw_list ON m_gl USING inverted(pk, gs kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# Indexed GEOMETRY[N] with ngram: rejected at CREATE INDEX.
+statement error
+CREATE INDEX m_gl_ng_array ON m_gl USING inverted(pk, ga ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'ga' has unsupported type GEOMETRY('OGC:CRS84')[2] and can not be indexed
+
+
+# Indexed GEOMETRY[] with geo analyzer: rejected (geo analyzer validator).
+statement error
+CREATE INDEX m_gl_geo_list ON m_gl USING inverted(pk, gs geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# INCLUDE-only path still indexes rows.
+statement ok
+INSERT INTO m_gl VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),
+        ARRAY['POINT(1 1)', 'POINT(2 2)']::GEOMETRY('OGC:CRS84')[],
+        ['POINT(3 3)', 'POINT(4 4)']::GEOMETRY('OGC:CRS84')[2]),
+    (2, 'POINT(5 5)'::GEOMETRY('OGC:CRS84'),
+        ARRAY[]::GEOMETRY('OGC:CRS84')[],
+        ['POINT(6 6)', 'POINT(7 7)']::GEOMETRY('OGC:CRS84')[2]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_gl;
+
+query
+SELECT count(*) FROM m_gl_inc;
+----
+count
+2
+
+
+# ============================================================================
+# BOOLEAN scalar / list / array
+# ============================================================================
+
+statement ok
+CREATE TABLE m_bool(pk INTEGER PRIMARY KEY, x BOOLEAN, xs BOOLEAN[], xa BOOLEAN[3]);
+
+statement ok
+CREATE INDEX m_bool_scalar_col_st  ON m_bool USING inverted(pk, x) INCLUDE (x);
+
+statement ok
+CREATE INDEX m_bool_scalar_col_ns  ON m_bool USING inverted(pk, x);
+
+statement ok
+CREATE INDEX m_bool_list_col_st    ON m_bool USING inverted(pk, xs) INCLUDE (xs);
+
+statement ok
+CREATE INDEX m_bool_list_col_ns    ON m_bool USING inverted(pk, xs);
+
+statement ok
+CREATE INDEX m_bool_array_col_st   ON m_bool USING inverted(pk, xa) INCLUDE (xa);
+
+statement ok
+CREATE INDEX m_bool_array_col_ns   ON m_bool USING inverted(pk, xa);
+
+statement ok
+CREATE INDEX m_bool_expr_ns        ON m_bool USING inverted(pk, (NOT x));
+
+statement ok
+INSERT INTO m_bool VALUES
+    (1, true,  [true,  false, true],  [true,  false, true]),
+    (2, false, [false, false, false], [false, false, false]),
+    (3, true,  [true],                 [true,  true,  true]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_bool;
+
+query
+SELECT pk FROM m_bool_scalar_col_st WHERE x = true  ORDER BY pk;
+----
+pk
+1
+3
+
+query
+SELECT pk FROM m_bool_scalar_col_ns WHERE x = false ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_bool_expr_ns WHERE NOT x = true ORDER BY pk;
+----
+pk
+2
+
+# Drive the list/array indexes through `<val> = ANY(col)` so the term_dict
+# path is exercised end-to-end (not just create+insert). `@@ true/false` are
+# the trivial MATCH-ALL / MATCH-NONE tsquery constants, so they don't probe
+# the per-value postings for boolean lists.
+query
+SELECT pk FROM m_bool_list_col_st WHERE false = ANY(xs) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM m_bool_list_col_ns WHERE true = ANY(xs) ORDER BY pk;
+----
+pk
+1
+3
+
+query
+SELECT pk FROM m_bool_array_col_st WHERE false = ANY(xa) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM m_bool_array_col_ns WHERE true = ANY(xa) ORDER BY pk;
+----
+pk
+1
+3
+
+
+# ============================================================================
+# INTEGER scalar / list / array  (one int type stands for the family)
+# ============================================================================
+
+statement ok
+CREATE TABLE m_i(pk INTEGER PRIMARY KEY, n INTEGER, ns INTEGER[], na INTEGER[3]);
+
+statement ok
+CREATE INDEX m_i_scalar_col_st  ON m_i USING inverted(pk, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX m_i_scalar_col_ns  ON m_i USING inverted(pk, n);
+
+statement ok
+CREATE INDEX m_i_list_col_st    ON m_i USING inverted(pk, ns) INCLUDE (ns);
+
+statement ok
+CREATE INDEX m_i_list_col_ns    ON m_i USING inverted(pk, ns);
+
+statement ok
+CREATE INDEX m_i_array_col_st   ON m_i USING inverted(pk, na) INCLUDE (na);
+
+statement ok
+CREATE INDEX m_i_array_col_ns   ON m_i USING inverted(pk, na);
+
+statement ok
+CREATE INDEX m_i_expr_ns        ON m_i USING inverted(pk, (n * 2));
+
+statement ok
+INSERT INTO m_i VALUES
+    (1, 10, [10, 20, 30],    [10, 20, 30]),
+    (2, 20, [20, 30],        [20, 30, 40]),
+    (3, 30, [30],            [30, 30, 30]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_i;
+
+query
+SELECT pk FROM m_i_scalar_col_st WHERE n @@ ts_between(15, 25, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_i_scalar_col_ns WHERE n @@ ts_between(15, 25, true, true) ORDER BY pk;
+----
+pk
+2
+
+# Exercise list/array @@ for INTEGER too.
+query
+SELECT pk FROM m_i_list_col_st WHERE ns @@ ts_between(15, 25, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM m_i_array_col_ns WHERE na @@ ts_between(35, 45, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_i_expr_ns WHERE n * 2 @@ ts_between(15, 25, true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# ============================================================================
+# BIGINT scalar / list / array
+# ============================================================================
+
+statement ok
+CREATE TABLE m_l(pk INTEGER PRIMARY KEY, n BIGINT, ns BIGINT[], na BIGINT[3]);
+
+statement ok
+CREATE INDEX m_l_scalar_col_st ON m_l USING inverted(pk, n)  INCLUDE (n);
+
+statement ok
+CREATE INDEX m_l_list_col_ns   ON m_l USING inverted(pk, ns);
+
+statement ok
+CREATE INDEX m_l_array_col_st  ON m_l USING inverted(pk, na) INCLUDE (na);
+
+statement ok
+CREATE INDEX m_l_expr_ns       ON m_l USING inverted(pk, (n * 2::BIGINT));
+
+statement ok
+INSERT INTO m_l VALUES
+    (1, 100::BIGINT, [100::BIGINT, 200::BIGINT], [100::BIGINT, 200::BIGINT, 300::BIGINT]),
+    (2, 200::BIGINT, [200::BIGINT],              [200::BIGINT, 300::BIGINT, 400::BIGINT]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_l;
+
+query
+SELECT pk FROM m_l_scalar_col_st WHERE n @@ ts_between(150::BIGINT, 250::BIGINT, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_l_expr_ns WHERE n * 2::BIGINT @@ ts_between(150::BIGINT, 250::BIGINT, true, true) ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM m_l_list_col_ns WHERE ns @@ ts_between(150::BIGINT, 250::BIGINT, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM m_l_array_col_st WHERE na @@ ts_between(250::BIGINT, 350::BIGINT, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+
+# ============================================================================
+# DOUBLE scalar / list / array
+# ============================================================================
+
+statement ok
+CREATE TABLE m_d(pk INTEGER PRIMARY KEY, n DOUBLE, ns DOUBLE[], na DOUBLE[3]);
+
+statement ok
+CREATE INDEX m_d_scalar_col_st ON m_d USING inverted(pk, n)  INCLUDE (n);
+
+statement ok
+CREATE INDEX m_d_list_col_st   ON m_d USING inverted(pk, ns) INCLUDE (ns);
+
+statement ok
+CREATE INDEX m_d_array_col_ns  ON m_d USING inverted(pk, na);
+
+statement ok
+CREATE INDEX m_d_expr_ns       ON m_d USING inverted(pk, (n * 2.0::DOUBLE));
+
+statement ok
+INSERT INTO m_d VALUES
+    (1, 1.5, [1.5, 2.5, 3.5], [1.5, 2.5, 3.5]),
+    (2, 2.5, [2.5, 3.5],      [2.5, 3.5, 4.5]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_d;
+
+query
+SELECT pk FROM m_d_scalar_col_st WHERE n @@ ts_between(2.0::DOUBLE, 3.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_d_expr_ns WHERE n * 2.0::DOUBLE @@ ts_between(4.0::DOUBLE, 6.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_d_list_col_st WHERE ns @@ ts_between(2.0::DOUBLE, 3.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM m_d_array_col_ns WHERE na @@ ts_between(3.0::DOUBLE, 4.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+1
+2
+
+
+# ============================================================================
+# DATE / TIMESTAMP scalar
+# ============================================================================
+
+statement ok
+CREATE TABLE m_t(pk INTEGER PRIMARY KEY, d DATE, ts TIMESTAMP);
+
+statement ok
+CREATE INDEX m_t_date_col_st ON m_t USING inverted(pk, d)  INCLUDE (d);
+
+statement ok
+CREATE INDEX m_t_ts_col_ns   ON m_t USING inverted(pk, ts);
+
+statement ok
+CREATE INDEX m_t_date_expr_ns ON m_t USING inverted(pk, (d + INTERVAL '1 day'));
+
+statement ok
+CREATE INDEX m_t_ts_expr_ns   ON m_t USING inverted(pk, (ts + INTERVAL '1 hour'));
+
+statement ok
+INSERT INTO m_t VALUES
+    (1, DATE '2024-01-01', TIMESTAMP '2024-01-01 00:00:00'),
+    (2, DATE '2024-06-15', TIMESTAMP '2024-06-15 12:00:00');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_t;
+
+query
+SELECT count(*) FROM m_t_date_col_st;
+----
+count
+2
+
+query
+SELECT count(*) FROM m_t_ts_col_ns;
+----
+count
+2
+
+query
+SELECT count(*) FROM m_t_date_expr_ns;
+----
+count
+2
+
+query
+SELECT count(*) FROM m_t_ts_expr_ns;
+----
+count
+2
+
+# Drive DATE / TIMESTAMP via @@ on the term_dict path, both column and
+# expression sources.
+query
+SELECT pk FROM m_t_date_col_st
+WHERE d @@ ts_between(DATE '2024-03-01', DATE '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_t_ts_col_ns
+WHERE ts @@ ts_between(TIMESTAMP '2024-03-01', TIMESTAMP '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_t_date_expr_ns
+WHERE (d + INTERVAL '1 day') @@ ts_between(DATE '2024-03-01', DATE '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM m_t_ts_expr_ns
+WHERE (ts + INTERVAL '1 hour') @@ ts_between(TIMESTAMP '2024-03-01', TIMESTAMP '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+
+# ============================================================================
+# Vector  --  HNSW (array only) + text-tokenized FLOAT array
+# ============================================================================
+
+statement ok
+CREATE TABLE m_vec(pk INTEGER PRIMARY KEY, emb FLOAT[3], fs FLOAT[]);
+
+statement ok
+CREATE INDEX m_vec_hnsw_st   ON m_vec
+    USING inverted(pk, emb hnsw (metric = 'l2')) INCLUDE (emb);
+
+statement ok
+CREATE INDEX m_vec_hnsw_ns   ON m_vec
+    USING inverted(pk, emb hnsw (metric = 'cosine'));
+
+statement ok
+CREATE INDEX m_vec_hnsw_expr_ns ON m_vec
+    USING inverted(pk, (emb) hnsw (metric = 'l2'));
+
+statement ok
+CREATE INDEX m_vec_hnsw_expr_st ON m_vec
+    USING inverted(pk, (emb) hnsw (metric = 'l2')) INCLUDE (emb);
+
+statement ok
+CREATE INDEX m_vec_floats_st ON m_vec USING inverted(pk, fs) INCLUDE (fs);
+
+statement ok
+CREATE INDEX m_vec_floats_ns ON m_vec USING inverted(pk, fs);
+
+statement ok
+CREATE INDEX m_vec_floats_expr_ns ON m_vec USING inverted(pk, (fs));
+
+statement ok
+INSERT INTO m_vec VALUES
+    (1, [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT], [1.0::FLOAT, 2.0::FLOAT, 3.0::FLOAT]),
+    (2, [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT], [4.0::FLOAT, 5.0::FLOAT]),
+    (3, [0.0::FLOAT, 0.0::FLOAT, 1.0::FLOAT], [3.0::FLOAT, 3.0::FLOAT, 3.0::FLOAT]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_vec;
+
+query
+SELECT pk FROM m_vec_hnsw_st
+ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
+LIMIT 1;
+----
+pk
+1
+
+query
+SELECT pk FROM m_vec_hnsw_ns
+ORDER BY emb <=> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
+LIMIT 1;
+----
+pk
+1
+
+query
+SELECT count(*) FROM m_vec_hnsw_ns;
+----
+count
+3
+
+query
+SELECT pk FROM m_vec_floats_st
+WHERE fs @@ ts_between(2.5::FLOAT, 3.5::FLOAT, true, true)
+ORDER BY pk;
+----
+pk
+1
+3
+
+query
+SELECT pk FROM m_vec_hnsw_expr_ns
+ORDER BY (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
+LIMIT 1;
+----
+pk
+1
+
+query
+SELECT pk FROM m_vec_hnsw_expr_st
+ORDER BY (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
+LIMIT 1;
+----
+pk
+1
+
+# ANN range — radius wide enough to include the (1,0,0) row at distance 0
+# and exclude the orthogonal vectors at distance sqrt(2)~1.414... < 1.5
+# but stays away from the third row at sqrt(2).
+query
+SELECT pk FROM m_vec_hnsw_st
+WHERE emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 0.5
+ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM m_vec_hnsw_expr_ns
+WHERE (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 0.5
+ORDER BY pk;
+----
+pk
+1
+
+# Lock in that both column and expression HNSW reach the ANN scan operator
+# (not a brute-force fallback). top-K ⇒ IRESEARCH_SCAN (ANN),
+# distance < radius ⇒ IRESEARCH_SCAN (ANN range).
+query
+EXPLAIN SELECT pk FROM m_vec_hnsw_st
+  ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] LIMIT 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 1          │
+│      Order By: #1 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│    m_vec_hnsw_st (ANN)    │
+│                           │
+│      Lookup: rocksdb      │
+│          TopK: 1          │
+│          Dims: 3          │
+│                           │
+│        Projections:       │
+│             pk            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT pk FROM m_vec_hnsw_expr_ns
+  ORDER BY (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] LIMIT 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 1          │
+│      Order By: #1 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│  m_vec_hnsw_expr_ns (ANN) │
+│                           │
+│      Lookup: rocksdb      │
+│          TopK: 1          │
+│          Dims: 3          │
+│                           │
+│        Projections:       │
+│             pk            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT pk FROM m_vec_hnsw_st
+  WHERE emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 1.5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│ m_vec_hnsw_st (ANN range) │
+│                           │
+│      Lookup: rocksdb      │
+│      Radius: 1.500000     │
+│          Dims: 3          │
+│      Projections: pk      │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT pk FROM m_vec_hnsw_expr_ns
+  WHERE (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 1.5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│  m_vec_hnsw_expr_ns (ANN  │
+│           range)          │
+│                           │
+│      Lookup: rocksdb      │
+│      Radius: 1.500000     │
+│          Dims: 3          │
+│      Projections: pk      │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+query
+SELECT pk FROM m_vec_floats_expr_ns
+WHERE (fs) @@ ts_between(2.5::FLOAT, 3.5::FLOAT, true, true)
+ORDER BY pk;
+----
+pk
+1
+3
+
+
+# ============================================================================
+# Indexes with no user-indexed columns -- only the implicit PK-blob field
+# (added by every inverted index so DELETE-from-index can locate rows).
+# `USING inverted INCLUDE (...)` is the canonical syntax for this.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_pk_only(pk INTEGER PRIMARY KEY, v VARCHAR, n INTEGER);
+
+statement ok
+CREATE INDEX m_pk_only_one  ON m_pk_only USING inverted INCLUDE (v);
+
+statement ok
+CREATE INDEX m_pk_only_many ON m_pk_only USING inverted INCLUDE (v, n);
+
+statement ok
+INSERT INTO m_pk_only VALUES (1, 'alpha', 10), (2, 'beta', 20), (3, 'gamma', 30);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_pk_only;
+
+query
+SELECT count(*) FROM m_pk_only_one;
+----
+count
+3
+
+query
+SELECT pk, v FROM m_pk_only_one ORDER BY pk;
+----
+pk	v
+1	alpha
+2	beta
+3	gamma
+
+query
+SELECT pk, v, n FROM m_pk_only_many ORDER BY pk;
+----
+pk	v	n
+1	alpha	10
+2	beta	20
+3	gamma	30
+
+
+# ============================================================================
+# Width fan-out — TINYINT (i8) and SMALLINT (i16) join the I32/I64 family but
+# share the same encoder; flush a sign-extension regression with their own
+# rows.  UTINYINT / USMALLINT / UINTEGER / HUGEINT / UUID / DECIMAL / TIME /
+# TIMESTAMP_MS / TIMESTAMP_NS / INTERVAL are catalog-accepted but rocksdb
+# refuses to serialize them today, so they're left out.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_narrow(pk INTEGER PRIMARY KEY, t8 TINYINT, t16 SMALLINT);
+
+statement ok
+CREATE INDEX m_narrow_t8  ON m_narrow USING inverted(pk, t8) INCLUDE (t8);
+
+statement ok
+CREATE INDEX m_narrow_t16 ON m_narrow USING inverted(pk, t16);
+
+statement ok
+INSERT INTO m_narrow VALUES (1, -10::TINYINT, -100::SMALLINT), (2, 10::TINYINT, 100::SMALLINT);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_narrow;
+
+query
+SELECT pk FROM m_narrow_t8 WHERE t8 @@ ts_between(-50::TINYINT, -5::TINYINT, true, true);
+----
+pk
+1
+
+query
+SELECT pk FROM m_narrow_t16 WHERE t16 @@ ts_between(-200::SMALLINT, 50::SMALLINT, true, true);
+----
+pk
+1
+
+
+# ============================================================================
+# FLOAT scalar (NumericF32) — every other numeric kind has scalar coverage.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_f(pk INTEGER PRIMARY KEY, n FLOAT);
+
+statement ok
+CREATE INDEX m_f_col_st ON m_f USING inverted(pk, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX m_f_expr_ns ON m_f USING inverted(pk, (n * 2.0::FLOAT));
+
+statement ok
+INSERT INTO m_f VALUES (1, 1.5::FLOAT), (2, 2.5::FLOAT), (3, -0.5::FLOAT);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_f;
+
+query
+SELECT pk FROM m_f_col_st WHERE n @@ ts_between(2.0::FLOAT, 3.0::FLOAT, true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_f_expr_ns WHERE n * 2.0::FLOAT @@ ts_between(4.0::FLOAT, 6.0::FLOAT, true, true);
+----
+pk
+2
+
+
+# ============================================================================
+# TIMESTAMP WITH TIME ZONE — distinct logical type from TIMESTAMP.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_tz(pk INTEGER PRIMARY KEY, ts TIMESTAMPTZ);
+
+statement ok
+CREATE INDEX m_tz_col_ns ON m_tz USING inverted(pk, ts);
+
+statement ok
+INSERT INTO m_tz VALUES
+    (1, TIMESTAMPTZ '2024-01-01 00:00:00+00'),
+    (2, TIMESTAMPTZ '2024-06-15 12:00:00+00');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_tz;
+
+query
+SELECT pk FROM m_tz_col_ns WHERE ts @@ ts_between(TIMESTAMPTZ '2024-03-01 00:00:00+00', TIMESTAMPTZ '2024-12-31 00:00:00+00', true, true);
+----
+pk
+2
+
+
+# ============================================================================
+# VARCHAR list / array — text + ngram.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_vla(pk INTEGER PRIMARY KEY, vs VARCHAR[], va VARCHAR[3]);
+
+statement ok
+CREATE INDEX m_vla_vs_text ON m_vla USING inverted(pk, vs kw_dict);
+
+statement ok
+CREATE INDEX m_vla_va_text ON m_vla USING inverted(pk, va kw_dict);
+
+statement ok
+CREATE INDEX m_vla_vs_wild ON m_vla USING inverted(pk, vs ng_dict);
+
+statement ok
+INSERT INTO m_vla VALUES
+    (1, ['alpha', 'beta'],     ['alpha', 'beta', 'gamma']),
+    (2, ['delta'],             ['delta', 'epsilon', 'zeta']);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_vla;
+
+query
+SELECT pk FROM m_vla_vs_text WHERE vs @@ ts_like('beta');
+----
+pk
+1
+
+query
+SELECT pk FROM m_vla_va_text WHERE va @@ ts_like('epsilon');
+----
+pk
+2
+
+query
+SELECT pk FROM m_vla_vs_wild WHERE vs @@ ts_ngram('alp', 0.5);
+----
+pk
+1
+
+
+# ============================================================================
+# BLOB list / array (text), BLOB scalar ngram.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_bla(pk INTEGER PRIMARY KEY, bs BLOB[], ba BLOB[3], b BLOB);
+
+statement ok
+CREATE INDEX m_bla_bs ON m_bla USING inverted(pk, bs kw_dict);
+
+statement ok
+CREATE INDEX m_bla_ba ON m_bla USING inverted(pk, ba kw_dict);
+
+statement ok
+CREATE INDEX m_bla_b_wild ON m_bla USING inverted(pk, b ng_dict);
+
+statement ok
+INSERT INTO m_bla VALUES
+    (1, ['hello'::BLOB, 'world'::BLOB],
+        ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB],
+        '\\x68656c6c6f'::BLOB),
+    (2, ['deadbeef'::BLOB],
+        ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB],
+        '\\x776f726c64'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_bla;
+
+query
+SELECT pk FROM m_bla_bs WHERE bs @@ ts_like('hello');
+----
+pk
+1
+
+query
+SELECT pk FROM m_bla_bs WHERE bs @@ ts_like('deadbeef');
+----
+pk
+2
+
+query
+SELECT pk FROM m_bla_ba WHERE ba @@ ts_like('eee');
+----
+pk
+2
+
+query
+SELECT pk FROM m_bla_b_wild WHERE b @@ ts_ngram('\\x68656c'::BLOB, 0.5);
+----
+pk
+1
+
+
+# ============================================================================
+# DATE list / array — DATE classifies as NumericI32 so its list / array goes
+# through the implicit numeric tokenizer.
+# ============================================================================
+
+statement ok
+CREATE TABLE m_dla(pk INTEGER PRIMARY KEY, ds DATE[], da DATE[3]);
+
+statement ok
+CREATE INDEX m_dla_ds ON m_dla USING inverted(pk, ds);
+
+statement ok
+CREATE INDEX m_dla_da ON m_dla USING inverted(pk, da);
+
+statement ok
+INSERT INTO m_dla VALUES
+    (1, [DATE '2024-01-01', DATE '2024-06-15'], [DATE '2024-01-01', DATE '2024-06-15', DATE '2024-12-31']),
+    (2, [DATE '2025-01-01'],                    [DATE '2025-01-01', DATE '2025-06-15', DATE '2025-12-31']);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_dla;
+
+query
+SELECT pk FROM m_dla_ds WHERE ds @@ ts_between(DATE '2024-01-01', DATE '2024-12-31', true, true);
+----
+pk
+1
+
+query
+SELECT pk FROM m_dla_da WHERE da @@ ts_between(DATE '2025-03-01', DATE '2025-08-01', true, true);
+----
+pk
+2
+
+
+# ============================================================================
+# JSON geo expression — the column-source path is already covered (m_j_col_*).
+# ============================================================================
+
+statement ok
+CREATE TABLE m_jg(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX m_jg_expr_s2  ON m_jg USING inverted(pk, (j) geo_s2_dict);
+
+statement ok
+CREATE INDEX m_jg_expr_src ON m_jg USING inverted(pk, (j) geo_src_dict);
+
+statement ok
+INSERT INTO m_jg VALUES
+    (1, '{"type":"Point","coordinates":[0.0, 0.0]}'),
+    (2, '{"type":"Point","coordinates":[10.0, 20.0]}');
+
+statement ok
+VACUUM (REFRESH_TABLE) m_jg;
+
+query
+SELECT count(*) FROM m_jg_expr_s2;
+----
+count
+2
+
+query
+SELECT count(*) FROM m_jg_expr_src;
+----
+count
+2
+
+
+# ============================================================================
+# Types whose ROCKSDB row serializer refuses but which the catalog accepts
+# via term_dict (or via INCLUDE). Reached through a parquet-backed view so
+# the row store is bypassed entirely:
+#   UTINYINT, USMALLINT, UINTEGER  -- catalog NumericI32 / NumericI64 family
+#   TIME, TIME_NS, TIME_TZ, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ
+#                                  -- catalog NumericI64 family (temporal)
+#   UUID, DECIMAL, INTERVAL, HUGEINT
+#                                  -- term_dict rejects -> INCLUDE-only
+# ============================================================================
+
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,
+      TIME '01:23:45',
+      TIMESTAMP_MS '2024-01-01 00:00:00',
+      TIMESTAMP_NS '2024-01-01 00:00:00',
+      TIMESTAMPTZ  '2024-01-01 00:00:00+00',
+      'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::UUID,
+      12.34::DECIMAL(10,2),
+      INTERVAL 5 DAY,
+      100::HUGEINT),
+  (2, 250::UTINYINT, 60000::USMALLINT, 4000000000::UINTEGER,
+      TIME '23:00:00',
+      TIMESTAMP_MS '2024-06-15 12:00:00',
+      TIMESTAMP_NS '2024-06-15 12:00:00',
+      TIMESTAMPTZ  '2024-06-15 12:00:00+00',
+      'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22'::UUID,
+      56.78::DECIMAL(10,2),
+      INTERVAL 10 DAY,
+      200::HUGEINT)
+) AS t(pk, u8, u16, u32, tt, ts_ms, ts_ns, ts_tz, u, d, iv, h))
+TO '/tmp/sdb_matrix_unsup.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW m_unsup AS SELECT * FROM read_parquet('/tmp/sdb_matrix_unsup.parquet');
+
+statement ok
+CREATE INDEX m_unsup_u8    ON m_unsup USING inverted(pk, u8);
+
+statement ok
+CREATE INDEX m_unsup_u16   ON m_unsup USING inverted(pk, u16);
+
+statement ok
+CREATE INDEX m_unsup_u32   ON m_unsup USING inverted(pk, u32);
+
+statement ok
+CREATE INDEX m_unsup_tt    ON m_unsup USING inverted(pk, tt);
+
+statement ok
+CREATE INDEX m_unsup_ts_ms ON m_unsup USING inverted(pk, ts_ms);
+
+statement ok
+CREATE INDEX m_unsup_ts_ns ON m_unsup USING inverted(pk, ts_ns);
+
+statement ok
+CREATE INDEX m_unsup_ts_tz ON m_unsup USING inverted(pk, ts_tz);
+
+# INCLUDE-only sidecar for term_dict-rejected types (UUID / DECIMAL / INTERVAL
+# / HUGEINT are accepted by the included opclass but not by term_dict).
+statement ok
+CREATE INDEX m_unsup_inc ON m_unsup USING inverted INCLUDE (u, d, iv, h);
+
+query
+SELECT pk FROM m_unsup_u8 WHERE u8 @@ ts_between(100::UTINYINT, 255::UTINYINT, true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_unsup_u16 WHERE u16 @@ ts_between(50000::USMALLINT, 65535::USMALLINT, true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_unsup_u32 WHERE u32 @@ ts_between(1000::UINTEGER, 10000::UINTEGER, true, true);
+----
+pk
+1
+
+query
+SELECT pk FROM m_unsup_tt WHERE tt @@ ts_between(TIME '00:00:00', TIME '12:00:00', true, true);
+----
+pk
+1
+
+query
+SELECT pk FROM m_unsup_ts_ms WHERE ts_ms @@ ts_between(TIMESTAMP_MS '2024-03-01', TIMESTAMP_MS '2024-12-31', true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_unsup_ts_ns WHERE ts_ns @@ ts_between(TIMESTAMP_NS '2024-03-01', TIMESTAMP_NS '2024-12-31', true, true);
+----
+pk
+2
+
+query
+SELECT pk FROM m_unsup_ts_tz WHERE ts_tz @@ ts_between(TIMESTAMPTZ '2024-03-01 00:00:00+00', TIMESTAMPTZ '2024-12-31 00:00:00+00', true, true);
+----
+pk
+2
+
+query
+SELECT count(*) FROM m_unsup_inc;
+----
+count
+2
+
+
+# ============================================================================
+# Strict tokenizer-vs-column-type validator coverage.
+#
+# Locks in the CREATE INDEX-time validator:
+#  - text tokenizers (kw_dict / ng_dict) are valid only on VARCHAR, BLOB,
+#    LIST<VARCHAR|BLOB>, or ARRAY<VARCHAR|BLOB>;
+#  - geo tokenizers (geo_s2_dict / geo_src_dict) are valid only on JSON,
+#    VARCHAR (GeoJSON content), or GEOMETRY (WKB content);
+#  - GEOMETRY may only appear with a geo tokenizer, and only as a scalar;
+#  - JSON in LIST/ARRAY position is rejected for any tokenizer (the scalar
+#    "mixed" case is the only accepted JSON form).
+# ============================================================================
+
+statement ok
+CREATE TABLE m_reject(pk INTEGER PRIMARY KEY,
+                     i INTEGER, bi BIGINT, db DOUBLE, bo BOOLEAN,
+                     dt DATE, ts TIMESTAMP,
+                     u UUID, iv INTERVAL,
+                     il INTEGER[], bl BOOLEAN[],
+                     vs VARCHAR, bs BLOB,
+                     g GEOMETRY('OGC:CRS84'));
+
+# Text tokenizer kw_dict on non-string scalars: rejected.
+statement error
+CREATE INDEX m_reject_kw_i ON m_reject USING inverted(pk, i kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+statement error
+CREATE INDEX m_reject_kw_bi ON m_reject USING inverted(pk, bi kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT)
+
+
+statement error
+CREATE INDEX m_reject_kw_db ON m_reject USING inverted(pk, db kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'db' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE)
+
+
+statement error
+CREATE INDEX m_reject_kw_bo ON m_reject USING inverted(pk, bo kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'bo' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BOOLEAN)
+
+
+statement error
+CREATE INDEX m_reject_kw_dt ON m_reject USING inverted(pk, dt kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'dt' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DATE)
+
+
+statement error
+CREATE INDEX m_reject_kw_ts ON m_reject USING inverted(pk, ts kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'ts' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP)
+
+
+statement error
+CREATE INDEX m_reject_kw_u ON m_reject USING inverted(pk, u kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'u' has unsupported type UUID and can not be indexed
+
+
+statement error
+CREATE INDEX m_reject_kw_iv ON m_reject USING inverted(pk, iv kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+# Text tokenizer ng_dict on non-string scalar: rejected.
+statement error
+CREATE INDEX m_reject_ng_i ON m_reject USING inverted(pk, i ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+# Text tokenizer on non-string LIST / ARRAY: rejected.
+statement error
+CREATE INDEX m_reject_kw_il ON m_reject USING inverted(pk, il kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'il' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+
+
+statement error
+CREATE INDEX m_reject_ng_bl ON m_reject USING inverted(pk, bl ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'bl' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BOOLEAN[])
+
+
+# Text tokenizer on GEOMETRY scalar: rejected.
+statement error
+CREATE INDEX m_reject_kw_g ON m_reject USING inverted(pk, g kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+statement error
+CREATE INDEX m_reject_ng_g ON m_reject USING inverted(pk, g ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# Geo tokenizer on non-JSON VARCHAR / BLOB / numerics: rejected.
+# (VARCHAR is accepted only when carrying GeoJSON content via the JSON alias.)
+statement error
+CREATE INDEX m_reject_s2_vs ON m_reject USING inverted(pk, vs geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'vs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX m_reject_src_vs ON m_reject USING inverted(pk, vs geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'vs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX m_reject_s2_bs ON m_reject USING inverted(pk, bs geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'bs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX m_reject_s2_i ON m_reject USING inverted(pk, i geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX m_reject_src_i ON m_reject USING inverted(pk, i geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# Sanity: the accepted scalar paths still work on this same table.
+statement ok
+CREATE INDEX m_reject_kw_vs ON m_reject USING inverted(pk, vs kw_dict);
+
+statement ok
+CREATE INDEX m_reject_s2_g ON m_reject USING inverted(pk, g geo_s2_dict);
+
+# Implicit (no opclass) path still accepts numeric / temporal / boolean columns.
+statement ok
+CREATE INDEX m_reject_imp ON m_reject USING inverted(pk, i, bi, bo, dt, ts);
+
+
+# ============================================================================
+# any-class text-family analyzer  --  scalar / LIST / ARRAY accepted shapes,
+# expression source, and validator rejections (INTEGER scalar, JSON inside
+# LIST, GEOMETRY scalar).
+# ============================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY any_text_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE g1_v(pk INTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+CREATE INDEX g1_v_col_text_st ON g1_v USING inverted(pk, v any_text_dict) INCLUDE (v);
+
+statement ok
+CREATE INDEX g1_v_expr_text_ns ON g1_v USING inverted(pk, (upper(v)) any_text_dict);
+
+statement ok
+INSERT INTO g1_v VALUES (1, 'alpha beta'), (2, 'gamma delta');
+
+statement ok
+VACUUM (REFRESH_TABLE) g1_v;
+
+query
+SELECT pk FROM g1_v_col_text_st WHERE v @@ ts_like('beta') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g1_v_expr_text_ns WHERE upper(v) @@ ts_like('GAMMA') ORDER BY pk;
+----
+pk
+2
+
+statement ok
+CREATE TABLE g1_b(pk INTEGER PRIMARY KEY, b BLOB);
+
+statement ok
+CREATE INDEX g1_b_col_text_st ON g1_b USING inverted(pk, b any_text_dict) INCLUDE (b);
+
+statement ok
+INSERT INTO g1_b VALUES (1, '\\x68656c6c6f'::BLOB), (2, '\\x776f726c64'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) g1_b;
+
+query
+SELECT count(*) FROM g1_b_col_text_st;
+----
+count
+2
+
+statement ok
+CREATE TABLE g1_vla(pk INTEGER PRIMARY KEY, vs VARCHAR[], va VARCHAR[3]);
+
+statement ok
+CREATE INDEX g1_vla_vs_text_list ON g1_vla USING inverted(pk, vs any_text_dict);
+
+statement ok
+CREATE INDEX g1_vla_va_text_array ON g1_vla USING inverted(pk, va any_text_dict);
+
+statement ok
+INSERT INTO g1_vla VALUES
+    (1, ['alpha', 'beta'],  ['alpha', 'beta', 'gamma']),
+    (2, ['delta'],          ['delta', 'epsilon', 'zeta']);
+
+statement ok
+VACUUM (REFRESH_TABLE) g1_vla;
+
+query
+SELECT count(*) FROM g1_vla_vs_text_list;
+----
+count
+2
+
+query
+SELECT count(*) FROM g1_vla_va_text_array;
+----
+count
+2
+
+statement ok
+CREATE TABLE g1_bla(pk INTEGER PRIMARY KEY, bs BLOB[], ba BLOB[3]);
+
+statement ok
+CREATE INDEX g1_bla_bs_text_list ON g1_bla USING inverted(pk, bs any_text_dict);
+
+statement ok
+CREATE INDEX g1_bla_ba_text_array ON g1_bla USING inverted(pk, ba any_text_dict);
+
+statement ok
+INSERT INTO g1_bla VALUES
+    (1, ['hello'::BLOB, 'world'::BLOB], ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB]),
+    (2, ['deadbeef'::BLOB],             ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g1_bla;
+
+query
+SELECT count(*) FROM g1_bla_bs_text_list;
+----
+count
+2
+
+query
+SELECT count(*) FROM g1_bla_ba_text_array;
+----
+count
+2
+
+statement ok
+CREATE TABLE g1_reject(pk INTEGER PRIMARY KEY,
+                       i INTEGER,
+                       js JSON[],
+                       g GEOMETRY('OGC:CRS84'));
+
+statement error
+CREATE INDEX g1_reject_text_i ON g1_reject USING inverted(pk, i any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+statement error
+CREATE INDEX g1_reject_text_js ON g1_reject USING inverted(pk, js any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
+
+
+statement error
+CREATE INDEX g1_reject_text_g ON g1_reject USING inverted(pk, g any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# ============================================================================
+# ng_dict expression-side: wildcard tokenizer over expression sources
+# ============================================================================
+
+statement ok
+CREATE TABLE g2_e(pk INTEGER PRIMARY KEY, v VARCHAR, b BLOB, n INTEGER);
+
+statement ok
+CREATE INDEX g2_e_expr_wild_st ON g2_e USING inverted(pk, (upper(v)) ng_dict) INCLUDE (v);
+
+statement ok
+CREATE INDEX g2_e_expr_wild_ns ON g2_e USING inverted(pk, (decode(encode(b, 'hex'), 'hex')) ng_dict);
+
+statement error
+CREATE INDEX g2_e_expr_wild_int ON g2_e USING inverted(pk, (n + 1) ng_dict);
+----
+db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+statement ok
+INSERT INTO g2_e VALUES
+    (1, 'alpha', '\\x68656c6c6f'::BLOB, 10),
+    (2, 'beta',  '\\x776f726c64'::BLOB, 20),
+    (3, 'gamma', '\\xdeadbeef'::BLOB,   30);
+
+statement ok
+VACUUM (REFRESH_TABLE) g2_e;
+
+query
+SELECT pk FROM g2_e_expr_wild_st WHERE upper(v) @@ ts_ngram('BET', 0.5) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g2_e_expr_wild_ns
+WHERE decode(encode(b, 'hex'), 'hex') @@ ts_ngram('\\xdeadbeef'::BLOB, 0.5)
+ORDER BY pk;
+----
+pk
+3
+
+# ============================================================================
+# Expression source + INCLUDE(other_col): mirror of column-with-INCLUDE for
+# every scalar cluster. Wrapper expressions are identity-equivalent so the
+# query side stays straightforward; INCLUDE flips store_values on for the
+# sibling column without changing the indexed expression.
+# ============================================================================
+
+statement ok
+CREATE TABLE g3_f(pk INTEGER PRIMARY KEY, n FLOAT, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_f_expr_st ON g3_f USING inverted(pk, (n * 1.0::FLOAT)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_f VALUES (1, 1.5::FLOAT, 'a'), (2, 2.5::FLOAT, 'b'), (3, -0.5::FLOAT, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_f;
+
+query
+SELECT pk FROM g3_f_expr_st WHERE n * 1.0::FLOAT @@ ts_between(2.0::FLOAT, 3.0::FLOAT, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_i(pk INTEGER PRIMARY KEY, n INTEGER, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_i_expr_st ON g3_i USING inverted(pk, (n * 2)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_i VALUES (1, 10, 'a'), (2, 20, 'b'), (3, 30, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_i;
+
+query
+SELECT pk FROM g3_i_expr_st WHERE n * 2 @@ ts_between(35, 45, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_l(pk INTEGER PRIMARY KEY, n BIGINT, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_l_expr_st ON g3_l USING inverted(pk, (n * 2::BIGINT)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_l VALUES (1, 100::BIGINT, 'a'), (2, 200::BIGINT, 'b'), (3, 300::BIGINT, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_l;
+
+query
+SELECT pk FROM g3_l_expr_st WHERE n * 2::BIGINT @@ ts_between(350::BIGINT, 450::BIGINT, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_d(pk INTEGER PRIMARY KEY, n DOUBLE, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_d_expr_st ON g3_d USING inverted(pk, (n * 2.0::DOUBLE)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_d VALUES (1, 1.5, 'a'), (2, 2.5, 'b'), (3, 3.5, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_d;
+
+query
+SELECT pk FROM g3_d_expr_st WHERE n * 2.0::DOUBLE @@ ts_between(4.0::DOUBLE, 6.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_dt(pk INTEGER PRIMARY KEY, d DATE, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_dt_expr_st ON g3_dt USING inverted(pk, (d + INTERVAL '1 day')) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_dt VALUES (1, DATE '2024-01-01', 'a'), (2, DATE '2024-06-15', 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_dt;
+
+query
+SELECT pk FROM g3_dt_expr_st
+WHERE d + INTERVAL '1 day' @@ ts_between(DATE '2024-03-01', DATE '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_ts(pk INTEGER PRIMARY KEY, ts TIMESTAMP, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_ts_expr_st ON g3_ts USING inverted(pk, (ts + INTERVAL '1 hour')) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_ts VALUES
+    (1, TIMESTAMP '2024-01-01 00:00:00', 'a'),
+    (2, TIMESTAMP '2024-06-15 12:00:00', 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_ts;
+
+query
+SELECT pk FROM g3_ts_expr_st
+WHERE ts + INTERVAL '1 hour' @@ ts_between(TIMESTAMP '2024-03-01', TIMESTAMP '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_bool(pk INTEGER PRIMARY KEY, x BOOLEAN, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_bool_expr_st ON g3_bool USING inverted(pk, (NOT x)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_bool VALUES (1, true, 'a'), (2, false, 'b'), (3, true, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_bool;
+
+query
+SELECT pk FROM g3_bool_expr_st WHERE NOT x = true ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g3_b(pk INTEGER PRIMARY KEY, b BLOB, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_b_expr_st ON g3_b USING inverted(pk,
+    (decode(encode(b, 'hex'), 'hex')) kw_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_b VALUES
+    (1, '\\x68656c6c6f'::BLOB, 'a'),
+    (2, '\\x776f726c64'::BLOB, 'b'),
+    (3, '\\xdeadbeef'::BLOB,   'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_b;
+
+query
+SELECT pk FROM g3_b_expr_st
+WHERE decode(encode(b, 'hex'), 'hex') @@ ts_like('\\xdeadbeef'::BLOB) ORDER BY pk;
+----
+pk
+3
+
+
+statement ok
+CREATE TABLE g3_g(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'), tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_g_expr_st ON g3_g USING inverted(pk, (g) geo_s2_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_g VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   'a'),
+    (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 'b'),
+    (3, 'POINT(-5 47)'::GEOMETRY('OGC:CRS84'), 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_g;
+
+query
+SELECT count(*) FROM g3_g_expr_st;
+----
+count
+3
+
+
+statement ok
+CREATE TABLE g3_j(pk INTEGER PRIMARY KEY, j JSON, tag VARCHAR);
+
+statement ok
+CREATE INDEX g3_j_expr_st ON g3_j USING inverted(pk, (j->>'type') kw_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g3_j VALUES
+    (1, '{"type":"Point","coordinates":[0.0, 0.0]}',   'a'),
+    (2, '{"type":"Point","coordinates":[10.0, 20.0]}', 'b'),
+    (3, '{"type":"LineString","coordinates":[[0,0],[1,1]]}', 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) g3_j;
+
+query
+SELECT pk FROM g3_j_expr_st WHERE j->>'type' @@ ts_like('Point') ORDER BY pk;
+----
+pk
+1
+2
+
+
+# ============================================================================
+# geopoint analyzer  --  JSON-only geo class
+# ----------------------------------------------------------------------------
+# Fourth geo class alongside geo_s2_dict / geo_src_dict / geojson_shape: the
+# geopoint analyzer reads coordinates from configured JSON keys (latitude /
+# longitude). Acceptance is JSON-only -- GEOMETRY columns are explicitly
+# rejected (geopoint's JSON-path config is meaningless on WKB), and any
+# non-JSON / non-GEOMETRY scalar (VARCHAR, BLOB, INTEGER) trips the generic
+# geo-analyzer column-type check in ValidateTokenizerVsColumn.
+# ============================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_dict(template = 'geopoint', latitude = 'lat', longitude = 'lng');
+
+statement ok
+CREATE TABLE g4_j(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX g4_j_col_geo_st ON g4_j USING inverted(pk, j geopoint_dict) INCLUDE (j);
+
+statement ok
+CREATE INDEX g4_j_expr_geo_ns ON g4_j USING inverted(pk, (j) geopoint_dict);
+
+statement ok
+INSERT INTO g4_j VALUES
+    (1, '{"name":"a","lat":55.703900,"lng":37.615895}'),
+    (2, '{"name":"b","lat":55.704831,"lng":37.616297}');
+
+statement ok
+VACUUM (REFRESH_TABLE) g4_j;
+
+query
+SELECT count(*) FROM g4_j_col_geo_st;
+----
+count
+2
+
+query
+SELECT pk FROM g4_j_col_geo_st
+WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM g4_j_expr_geo_ns
+WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk
+1
+2
+
+# GEOMETRY column with geopoint: rejected with the JSON-only error.
+statement ok
+CREATE TABLE g4_g(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'));
+
+statement error
+CREATE INDEX g4_reject_geo_g ON g4_g USING inverted(pk, g geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' is GEOMETRY but the analyzer is geopoint; geopoint's latitude/longitude paths are JSON-only -- use a geojson analyzer for GEOMETRY columns
+
+
+# Non-JSON / non-GEOMETRY scalars: generic geo-analyzer column-type rejection.
+statement ok
+CREATE TABLE g4_reject(pk INTEGER PRIMARY KEY, v VARCHAR, b BLOB, i INTEGER);
+
+statement error
+CREATE INDEX g4_reject_geo_v ON g4_reject USING inverted(pk, v geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX g4_reject_geo_b ON g4_reject USING inverted(pk, b geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'b' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX g4_reject_geo_i ON g4_reject USING inverted(pk, i geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# ============================================================================
+# Validator branches: explicit statement-error pins for opclass acceptance
+# rules that aren't covered elsewhere in the matrix. Each rejection uses the
+# inventory regex so the exact error message stays observable.
+#   (a) GEOMETRY without OGC:CRS84 + geo_s2_dict       -> CRS84 validator
+#   (b) hnsw on scalar FLOAT                            -> hnsw validator
+#   (c) hnsw on LIST<FLOAT>                             -> hnsw validator
+#   (d) hnsw on ARRAY<DOUBLE,3>                         -> hnsw validator
+#   (e) hnsw on ARRAY<INTEGER,3>                        -> hnsw validator
+#   (f) hnsw on scalar VARCHAR                          -> hnsw validator
+#   (g) implicit (no opclass) on UUID                   -> term_dict Unsupported
+#   (h) implicit (no opclass) on DECIMAL(10,2)          -> term_dict Unsupported
+#   (i) implicit (no opclass) on INTERVAL               -> term_dict Unsupported
+#   (j) implicit (no opclass) on HUGEINT                -> term_dict Unsupported
+# ============================================================================
+
+statement ok
+CREATE TABLE g5_reject(pk INTEGER PRIMARY KEY,
+                       g_nocrs GEOMETRY,
+                       f FLOAT,
+                       fl FLOAT[],
+                       da DOUBLE[3],
+                       ia INTEGER[3],
+                       v VARCHAR,
+                       u UUID,
+                       d DECIMAL(10,2),
+                       iv INTERVAL,
+                       h HUGEINT);
+
+# (a) GEOMETRY without OGC:CRS84 annotation: CRS84 validator rejects.
+statement error
+CREATE INDEX g5_reject_s2_nocrs ON g5_reject USING inverted(pk, g_nocrs geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+# (b) hnsw on scalar FLOAT: must be ARRAY(FLOAT, N).
+statement error
+CREATE INDEX g5_reject_hnsw_f ON g5_reject USING inverted(pk, f hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'f' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+
+
+# (c) hnsw on LIST<FLOAT>: must be ARRAY(FLOAT, N), not a variable-length list.
+statement error
+CREATE INDEX g5_reject_hnsw_fl ON g5_reject USING inverted(pk, fl hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'fl' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT[]
+
+
+# (d) hnsw on ARRAY<DOUBLE,3>: element type must be FLOAT, not DOUBLE.
+statement error
+CREATE INDEX g5_reject_hnsw_da ON g5_reject USING inverted(pk, da hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'da' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not DOUBLE[3]
+
+
+# (e) hnsw on ARRAY<INTEGER,3>: element type must be FLOAT, not INTEGER.
+statement error
+CREATE INDEX g5_reject_hnsw_ia ON g5_reject USING inverted(pk, ia hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'ia' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+
+
+# (f) hnsw on scalar VARCHAR: not ARRAY at all.
+statement error
+CREATE INDEX g5_reject_hnsw_v ON g5_reject USING inverted(pk, v hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not VARCHAR
+
+
+# (g) implicit (no opclass) on UUID: term_dict has no codec for UUID.
+statement error
+CREATE INDEX g5_reject_imp_u ON g5_reject USING inverted(pk, u);
+----
+db error: ERROR: Failed to create index: Column 'u' has unsupported type UUID and can not be indexed
+
+
+# (h) implicit (no opclass) on DECIMAL(10,2): term_dict has no codec for DECIMAL.
+statement error
+CREATE INDEX g5_reject_imp_d ON g5_reject USING inverted(pk, d);
+----
+db error: ERROR: Failed to create index: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+
+
+# (i) implicit (no opclass) on INTERVAL: term_dict has no codec for INTERVAL.
+statement error
+CREATE INDEX g5_reject_imp_iv ON g5_reject USING inverted(pk, iv);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+# (j) implicit (no opclass) on HUGEINT: term_dict has no codec for HUGEINT.
+statement error
+CREATE INDEX g5_reject_imp_h ON g5_reject USING inverted(pk, h);
+----
+db error: ERROR: Failed to create index: Column 'h' has unsupported type HUGEINT and can not be indexed
+
+
+statement ok
+CREATE TABLE g6_t(pk INTEGER PRIMARY KEY,
+                  b BLOB,
+                  bo BOOLEAN,
+                  t8 TINYINT,
+                  t16 SMALLINT,
+                  t64 BIGINT,
+                  f FLOAT,
+                  dbl DOUBLE,
+                  dt DATE,
+                  ts TIMESTAMP,
+                  g GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE INDEX g6_idx ON g6_t USING inverted
+    INCLUDE (b, bo, t8, t16, t64, f, dbl, dt, ts, g);
+
+statement ok
+INSERT INTO g6_t VALUES
+    (1, '\\x0102'::BLOB, true,  -8::TINYINT,  -300::SMALLINT,
+        9000000000::BIGINT, 1.5::FLOAT, 2.5::DOUBLE,
+        DATE '2024-01-01', TIMESTAMP '2024-01-01 00:00:00',
+        'POINT(0 0)'::GEOMETRY('OGC:CRS84')),
+    (2, '\\x0304'::BLOB, false,  8::TINYINT,   300::SMALLINT,
+        -9000000000::BIGINT, -3.25::FLOAT, -4.75::DOUBLE,
+        DATE '2024-06-15', TIMESTAMP '2024-06-15 12:00:00',
+        'POINT(10 20)'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) g6_t;
+
+query
+SELECT count(*) FROM g6_idx;
+----
+count
+2
+
+query
+SELECT pk, bo, t8, t16, t64 FROM g6_idx ORDER BY pk;
+----
+pk	bo	t8	t16	t64
+1	t	-8	-300	9000000000
+2	f	8	300	-9000000000
+
+query
+SELECT pk, dt, ts FROM g6_idx ORDER BY pk;
+----
+pk	dt	ts
+1	2024-01-01	2024-01-01 00:00:00
+2	2024-06-15	2024-06-15 12:00:00
+
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,
+      TIMESTAMP_MS '2024-01-01 00:00:00',
+      TIMESTAMP_NS '2024-01-01 00:00:00',
+      TIMESTAMPTZ  '2024-01-01 00:00:00+00'),
+  (2, 250::UTINYINT, 60000::USMALLINT, 4000000000::UINTEGER,
+      TIMESTAMP_MS '2024-06-15 12:00:00',
+      TIMESTAMP_NS '2024-06-15 12:00:00',
+      TIMESTAMPTZ  '2024-06-15 12:00:00+00')
+) AS t(pk, u8, u16, u32, ts_ms, ts_ns, ts_tz))
+TO '/tmp/sdb_g6_unsup.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g6_v_unsup AS SELECT * FROM read_parquet('/tmp/sdb_g6_unsup.parquet');
+
+statement ok
+CREATE INDEX g6_idx_unsup ON g6_v_unsup USING inverted
+    INCLUDE (u8, u16, u32, ts_ms, ts_ns, ts_tz);
+
+query
+SELECT count(*) FROM g6_idx_unsup;
+----
+count
+2
+
+query
+SELECT pk, u8, u16, u32 FROM g6_idx_unsup ORDER BY pk;
+----
+pk	u8	u16	u32
+1	5	500	5000
+2	250	60000	4000000000
+
+# ============================================================================
+# Implicit role (no opclass) -- column listed in the indexed position with
+# no opclass attached. term_dict::Validate (inverted_index.cpp) accepts
+# every String-kind scalar (VARCHAR / BLOB / JSON-alias-VARCHAR / GEOMETRY)
+# and any LIST / ARRAY of supported elements, but special-cases LIST or
+# ARRAY of GEOMETRY as unsupported (line 262). Verifies each accepted
+# index with a @@ probe (or count(*) when ts_* rejects the type); rejected
+# cases use the implicit validator regex.
+#
+# Note: under the implicit role FillEntryFromTokenizer is never invoked,
+# so HasJsonLeafFields() stays false and the sink routes JSON columns
+# through WriteScalarBatch<VARCHAR>. JSON values are indexed as raw text
+# (quotes and all), unlike the kw_dict path in m_j_prim.
+# ============================================================================
+
+statement ok
+CREATE TABLE g7_j(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE INDEX g7_j_imp ON g7_j USING inverted(pk, j);
+
+statement ok
+INSERT INTO g7_j VALUES (1, '"alpha"'), (2, '"beta"'), (3, '42');
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_j;
+
+query
+SELECT pk FROM g7_j_imp WHERE j @@ ts_like('"alpha"') ORDER BY pk;
+----
+pk
+1
+
+
+statement ok
+CREATE TABLE g7_b(pk INTEGER PRIMARY KEY, b BLOB);
+
+statement ok
+CREATE INDEX g7_b_imp ON g7_b USING inverted(pk, b);
+
+statement ok
+INSERT INTO g7_b VALUES
+    (1, '\\x68656c6c6f'::BLOB),
+    (2, '\\xdeadbeef'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_b;
+
+query
+SELECT pk FROM g7_b_imp WHERE b @@ ts_like('\\xdeadbeef'::BLOB) ORDER BY pk;
+----
+pk
+2
+
+
+# GEOMETRY scalar with no opclass: rejected by the term_dict (implicit)
+# validator. GEOMETRY indexing requires a geo opclass (geo_s2_dict /
+# geo_src_dict / geopoint_dict) -- raw WKB bytes have no usable index codec
+# without the geo analyzer attached.
+statement ok
+CREATE TABLE g7_g(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'));
+
+statement error
+CREATE INDEX g7_g_imp ON g7_g USING inverted(pk, g);
+----
+db error: ERROR: Failed to create index: Column 'g' has unsupported type GEOMETRY('OGC:CRS84') and can not be indexed
+
+
+statement ok
+CREATE TABLE g7_vl(pk INTEGER PRIMARY KEY, vs VARCHAR[]);
+
+statement ok
+CREATE INDEX g7_vl_imp ON g7_vl USING inverted(pk, vs);
+
+statement ok
+INSERT INTO g7_vl VALUES (1, ['alpha', 'beta']), (2, ['gamma']);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_vl;
+
+query
+SELECT pk FROM g7_vl_imp WHERE vs @@ ts_like('beta') ORDER BY pk;
+----
+pk
+1
+
+
+statement ok
+CREATE TABLE g7_bl(pk INTEGER PRIMARY KEY, bs BLOB[]);
+
+statement ok
+CREATE INDEX g7_bl_imp ON g7_bl USING inverted(pk, bs);
+
+statement ok
+INSERT INTO g7_bl VALUES
+    (1, ['hello'::BLOB, 'world'::BLOB]),
+    (2, ['deadbeef'::BLOB]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_bl;
+
+query
+SELECT pk FROM g7_bl_imp WHERE bs @@ ts_like('hello'::BLOB) ORDER BY pk;
+----
+pk
+1
+
+
+statement ok
+CREATE TABLE g7_jl(pk INTEGER PRIMARY KEY, js JSON[]);
+
+statement ok
+CREATE INDEX g7_jl_imp ON g7_jl USING inverted(pk, js);
+
+statement ok
+INSERT INTO g7_jl VALUES
+    (1, ARRAY['"alpha"'::JSON, '"beta"'::JSON]),
+    (2, ARRAY['"gamma"'::JSON]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_jl;
+
+query
+SELECT pk FROM g7_jl_imp WHERE js @@ ts_like('"beta"') ORDER BY pk;
+----
+pk
+1
+
+
+statement ok
+CREATE TABLE g7_va(pk INTEGER PRIMARY KEY, va VARCHAR[3]);
+
+statement ok
+CREATE INDEX g7_va_imp ON g7_va USING inverted(pk, va);
+
+statement ok
+INSERT INTO g7_va VALUES
+    (1, ['alpha', 'beta', 'gamma']),
+    (2, ['delta', 'epsilon', 'zeta']);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_va;
+
+query
+SELECT pk FROM g7_va_imp WHERE va @@ ts_like('epsilon') ORDER BY pk;
+----
+pk
+2
+
+
+statement ok
+CREATE TABLE g7_ba(pk INTEGER PRIMARY KEY, ba BLOB[3]);
+
+statement ok
+CREATE INDEX g7_ba_imp ON g7_ba USING inverted(pk, ba);
+
+statement ok
+INSERT INTO g7_ba VALUES
+    (1, ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB]),
+    (2, ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g7_ba;
+
+query
+SELECT pk FROM g7_ba_imp WHERE ba @@ ts_like('eee'::BLOB) ORDER BY pk;
+----
+pk
+2
+
+
+# LIST<GEOMETRY> and ARRAY<GEOMETRY> rejected by the explicit special-case
+# in term_dict::Validate (inverted_index.cpp:262), even though scalar
+# GEOMETRY classifies as String-kind and is accepted on its own.
+
+statement ok
+CREATE TABLE g7_gl(pk INTEGER PRIMARY KEY,
+                   gs GEOMETRY('OGC:CRS84')[],
+                   ga GEOMETRY('OGC:CRS84')[3]);
+
+statement error
+CREATE INDEX g7_gl_imp ON g7_gl USING inverted(pk, gs);
+----
+db error: ERROR: Failed to create index: Column 'gs' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+statement error
+CREATE INDEX g7_ga_imp ON g7_gl USING inverted(pk, ga);
+----
+db error: ERROR: Failed to create index: Column 'ga' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+## ============================================================================
+## Section 8.  Nested containers — term_dict::Validate recurses one level only.
+##
+##   LIST<LIST<T>>  and  ARRAY<ARRAY<T>>  are rejected on the implicit
+##   (no-opclass) path regardless of the leaf element type.  We cover:
+##     (a) INTEGER[][]     — LIST of LIST  (variable x variable)
+##     (b) VARCHAR[][]     — LIST of LIST  (variable x variable, string leaf)
+##     (c) INTEGER[3][3]   — ARRAY of ARRAY (fixed x fixed)
+##
+##   A sibling flat INTEGER[] column on the same table is indexed
+##   successfully to anchor that the rejection is specific to nesting,
+##   not to the table or to LIST/ARRAY in general.
+## ============================================================================
+
+statement ok
+CREATE TABLE g8_nested(pk INTEGER PRIMARY KEY,
+                       ill INTEGER[][],
+                       vll VARCHAR[][],
+                       iaa INTEGER[3][3],
+                       flat INTEGER[]);
+
+# (a) INTEGER[][] — implicit (no opclass) rejected: nested LIST.
+statement error
+CREATE INDEX g8_ill_imp ON g8_nested USING inverted(pk, ill);
+----
+db error: ERROR: Failed to create index: Column 'ill' has unsupported type INTEGER[][] and can not be indexed
+
+
+# (b) VARCHAR[][] — implicit (no opclass) rejected: nested LIST, string leaf.
+statement error
+CREATE INDEX g8_vll_imp ON g8_nested USING inverted(pk, vll);
+----
+db error: ERROR: Failed to create index: Column 'vll' has unsupported type VARCHAR[][] and can not be indexed
+
+
+# (c) INTEGER[3][3] — implicit (no opclass) rejected: nested ARRAY.
+statement error
+CREATE INDEX g8_iaa_imp ON g8_nested USING inverted(pk, iaa);
+----
+db error: ERROR: Failed to create index: Column 'iaa' has unsupported type INTEGER[3][3] and can not be indexed
+
+
+# Sanity anchor: flat INTEGER[] on the same table indexes fine.
+statement ok
+CREATE INDEX g8_flat_imp ON g8_nested USING inverted(pk, flat);
+
+statement ok
+INSERT INTO g8_nested VALUES
+    (1, [[1,2],[3]],         [['a','b'],['c']],         [[1,2,3],[4,5,6],[7,8,9]],         [10, 20, 30]),
+    (2, [[4],[5,6,7]],       [['d'],['e','f','g']],     [[9,8,7],[6,5,4],[3,2,1]],         [40, 50]),
+    (3, [[8,9],[10,11,12]],  [['h','i'],['j','k','l']], [[0,0,0],[1,1,1],[2,2,2]],         [60]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g8_nested;
+
+query
+SELECT pk FROM g8_flat_imp WHERE flat = 40 ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g8_flat_imp WHERE flat = 60 ORDER BY pk;
+----
+pk
+3
+
+statement ok
+CREATE TABLE g9_smv(pk INTEGER PRIMARY KEY,
+                    text_anchor VARCHAR,
+                    s STRUCT(a INTEGER, b VARCHAR),
+                    m MAP(VARCHAR, INTEGER),
+                    vr VARIANT);
+
+# (a) STRUCT(a INTEGER, b VARCHAR) as INCLUDE-only: accepted.
+# (b) MAP(VARCHAR, INTEGER)        as INCLUDE-only: accepted.
+# (c) VARIANT                      as INCLUDE-only: accepted (DuckDB syntax permits).
+# All three ride alongside a VARCHAR/kw_dict anchor so the sidecar gets a real
+# indexed column to attach to.
+statement ok
+CREATE INDEX g9_smv_inc ON g9_smv USING inverted(pk, text_anchor kw_dict)
+    INCLUDE (s, m, vr);
+
+statement ok
+INSERT INTO g9_smv VALUES
+    (1, 'alpha', ROW(10, 'x'),  MAP {'k1': 1, 'k2': 2}, 42::VARIANT),
+    (2, 'beta',  ROW(20, 'y'),  MAP {'k3': 3},          'hello'::VARIANT);
+
+statement ok
+VACUUM (REFRESH_TABLE) g9_smv;
+
+# Round-trip: anchor served by the index, STRUCT/MAP/VARIANT served by the
+# INCLUDE sidecar.
+query
+SELECT pk, s.a, s.b FROM g9_smv_inc WHERE text_anchor @@ ts_like('alpha') ORDER BY pk;
+----
+pk	a	b
+1	10	x
+
+query
+SELECT pk, m['k3'] FROM g9_smv_inc WHERE text_anchor @@ ts_like('beta') ORDER BY pk;
+----
+pk	m
+2	3
+
+query
+SELECT count(*) FROM g9_smv_inc;
+----
+count
+2
+
+# (d) STRUCT column with kw_dict (text tokenizer): rejected by
+# term_dict::Validate (STRUCT classifies as Unsupported); the
+# tokenizer-vs-column check never runs.
+statement error
+CREATE INDEX g9_smv_kw_s ON g9_smv USING inverted(pk, s kw_dict);
+----
+db error: ERROR: Failed to create index: Column 's' has unsupported type STRUCT(a INTEGER, b VARCHAR) and can not be indexed
+
+
+# (f) MAP column with kw_dict (text tokenizer): same path as (d).
+statement error
+CREATE INDEX g9_smv_kw_m ON g9_smv USING inverted(pk, m kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'm' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+
+
+# (e) STRUCT in indexed-list with NO opclass (implicit term_dict path): rejected.
+statement error
+CREATE INDEX g9_smv_imp_s ON g9_smv USING inverted(pk, s);
+----
+db error: ERROR: Failed to create index: Column 's' has unsupported type STRUCT(a INTEGER, b VARCHAR) and can not be indexed
+
+
+# (g) MAP in indexed-list with NO opclass (implicit term_dict path): rejected.
+statement error
+CREATE INDEX g9_smv_imp_m ON g9_smv USING inverted(pk, m);
+----
+db error: ERROR: Failed to create index: Column 'm' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+
+
+# ============================================================================
+# Mixed-tokenizer multi-column inverted indexes.
+# ----------------------------------------------------------------------------
+# Each CREATE INDEX combines opclasses of different families on the same
+# index (text term_dict + geo + implicit numeric, keyword + ngram + INCLUDE,
+# hnsw with mixed INCLUDE types, two JSON columns with different opclasses).
+# For each accepted index we verify:
+#   * a single-column filter routes through the per-column codec, and
+#   * a multi-column AND filter combines posting lists across the heterogeneous
+#     opclasses on one index.
+# ============================================================================
+
+# --- (a) text(kw_dict) + geo_s2 + implicit numeric --------------------------
+
+statement ok
+CREATE TABLE g10_a(pk INTEGER PRIMARY KEY,
+                   v VARCHAR,
+                   g GEOMETRY('OGC:CRS84'),
+                   n INTEGER);
+
+statement ok
+CREATE INDEX g10_a_mix ON g10_a
+    USING inverted(pk, v kw_dict, g geo_s2_dict, n);
+
+statement ok
+INSERT INTO g10_a VALUES
+    (1, 'alpha', 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   10),
+    (2, 'beta',  'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) g10_a;
+
+query
+SELECT pk FROM g10_a_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g10_a_mix
+WHERE v @@ ts_like('beta') AND n @@ ts_between(40, 60, true, true)
+ORDER BY pk;
+----
+pk
+2
+
+# --- (b) kw_dict + ng_dict + INCLUDE(numeric) -------------------------------
+
+statement ok
+CREATE TABLE g10_b(pk INTEGER PRIMARY KEY,
+                   v1 VARCHAR,
+                   v2 VARCHAR,
+                   n  INTEGER);
+
+statement ok
+CREATE INDEX g10_b_mix ON g10_b
+    USING inverted(pk, v1 kw_dict, v2 ng_dict) INCLUDE (n);
+
+statement ok
+INSERT INTO g10_b VALUES
+    (1, 'alpha', 'wonderful', 10),
+    (2, 'beta',  'magnificent', 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) g10_b;
+
+query
+SELECT pk FROM g10_b_mix WHERE v2 @@ ts_ngram('won', 0.5) ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g10_b_mix
+WHERE v1 @@ ts_like('beta') AND v2 @@ ts_ngram('mag', 0.5)
+ORDER BY pk;
+----
+pk
+2
+
+# --- (c) hnsw + INCLUDE(VARCHAR, INTEGER, GEOMETRY) -------------------------
+
+statement ok
+CREATE TABLE g10_c(pk INTEGER PRIMARY KEY,
+                   emb FLOAT[3],
+                   v VARCHAR,
+                   n INTEGER,
+                   g GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE INDEX g10_c_mix ON g10_c
+    USING inverted(pk, emb hnsw (metric = 'l2')) INCLUDE (v, n, g);
+
+statement ok
+INSERT INTO g10_c VALUES
+    (1, [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT], 'alpha', 10,
+        'POINT(0 0)'::GEOMETRY('OGC:CRS84')),
+    (2, [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT], 'beta',  50,
+        'POINT(10 20)'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) g10_c;
+
+query
+SELECT pk FROM g10_c_mix
+ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
+LIMIT 1;
+----
+pk
+1
+
+query
+SELECT pk FROM g10_c_mix
+WHERE emb <-> [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 0.5
+  AND n = 50
+ORDER BY pk;
+----
+pk
+2
+
+# --- (d) two JSON columns: kw_dict primitive + geo_s2 GeoJSON + numeric -----
+
+statement ok
+CREATE TABLE g10_d(pk INTEGER PRIMARY KEY,
+                   j  JSON,
+                   j2 JSON,
+                   n  INTEGER);
+
+statement ok
+CREATE INDEX g10_d_mix ON g10_d
+    USING inverted(pk, j kw_dict, j2 geo_s2_dict, n);
+
+statement ok
+INSERT INTO g10_d VALUES
+    (1, '"alpha"', '{"type":"Point","coordinates":[0.0, 0.0]}',   10),
+    (2, '"beta"',  '{"type":"Point","coordinates":[10.0, 20.0]}', 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) g10_d;
+
+query
+SELECT pk FROM g10_d_mix WHERE j @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g10_d_mix
+WHERE j @@ ts_like('beta') AND n @@ ts_between(40, 60, true, true)
+ORDER BY pk;
+----
+pk
+2
+
+
+# ============================================================================
+# g11 -- Expression source + INCLUDE(tag): mirror g3 for the cells g3 omitted.
+# Wrapper expressions are identity-equivalent so the query side stays
+# straightforward; INCLUDE(tag) flips store_values on for a sibling column
+# without changing the indexed expression. Rocksdb-incompatible scalars
+# (TIMESTAMPTZ, UTINYINT/USMALLINT/UINTEGER, TIME, TIMESTAMP_MS,
+# TIMESTAMP_NS) are reached via parquet-backed views.
+# ============================================================================
+
+# (a) TIMESTAMPTZ scalar via expression -- view-backed.
+# DuckDB has no `+(TIMESTAMPTZ, INTERVAL)` overload, so use a `coalesce`
+# identity wrapper instead of the arithmetic shape used for plain TIMESTAMP.
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, TIMESTAMPTZ '2024-01-01 00:00:00+00', 'a'),
+  (2, TIMESTAMPTZ '2024-06-15 12:00:00+00', 'b')
+) AS t(pk, ts_tz, tag))
+TO '/tmp/sdb_g11_tz.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g11_a_v AS SELECT * FROM read_parquet('/tmp/sdb_g11_tz.parquet');
+
+statement ok
+CREATE INDEX g11_a_expr_st ON g11_a_v USING inverted(pk, (coalesce(ts_tz, NULL::TIMESTAMPTZ))) INCLUDE (tag);
+
+query
+SELECT pk FROM g11_a_expr_st
+WHERE coalesce(ts_tz, NULL::TIMESTAMPTZ) @@ ts_between(TIMESTAMPTZ '2024-03-01 00:00:00+00', TIMESTAMPTZ '2024-12-31 00:00:00+00', true, true) ORDER BY pk;
+----
+pk
+2
+
+
+# (b) TINYINT scalar via expression.
+statement ok
+CREATE TABLE g11_b(pk INTEGER PRIMARY KEY, t8 TINYINT, tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_b_expr_st ON g11_b USING inverted(pk, (t8 * 2::TINYINT)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_b VALUES (1, -10::TINYINT, 'a'), (2, 10::TINYINT, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_b;
+
+query
+SELECT pk FROM g11_b_expr_st WHERE t8 * 2::TINYINT @@ ts_between(15::TINYINT, 50::TINYINT, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+# (c) SMALLINT scalar via expression.
+statement ok
+CREATE TABLE g11_c(pk INTEGER PRIMARY KEY, t16 SMALLINT, tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_c_expr_st ON g11_c USING inverted(pk, (t16 * 2::SMALLINT)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_c VALUES (1, -100::SMALLINT, 'a'), (2, 100::SMALLINT, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_c;
+
+query
+SELECT pk FROM g11_c_expr_st WHERE t16 * 2::SMALLINT @@ ts_between(150::SMALLINT, 250::SMALLINT, true, true) ORDER BY pk;
+----
+pk
+2
+
+
+# (d) UTINYINT / USMALLINT / UINTEGER scalar via expression -- view-backed.
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,       'a'),
+  (2, 250::UTINYINT, 60000::USMALLINT, 4000000000::UINTEGER, 'b')
+) AS t(pk, u8, u16, u32, tag))
+TO '/tmp/sdb_g11_unsigned.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g11_d_v AS SELECT * FROM read_parquet('/tmp/sdb_g11_unsigned.parquet');
+
+statement ok
+CREATE INDEX g11_d_u8_expr_st  ON g11_d_v USING inverted(pk, (u8  + 1::UTINYINT))  INCLUDE (tag);
+
+statement ok
+CREATE INDEX g11_d_u16_expr_st ON g11_d_v USING inverted(pk, (u16 + 1::USMALLINT)) INCLUDE (tag);
+
+statement ok
+CREATE INDEX g11_d_u32_expr_st ON g11_d_v USING inverted(pk, (u32 + 1::UINTEGER))  INCLUDE (tag);
+
+query
+SELECT pk FROM g11_d_u8_expr_st  WHERE u8  + 1::UTINYINT  @@ ts_between(100::UTINYINT,  255::UTINYINT,  true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g11_d_u16_expr_st WHERE u16 + 1::USMALLINT @@ ts_between(50000::USMALLINT, 65535::USMALLINT, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g11_d_u32_expr_st WHERE u32 + 1::UINTEGER  @@ ts_between(1000::UINTEGER, 10000::UINTEGER, true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# (e) TIME / TIMESTAMP_MS / TIMESTAMP_NS scalar via expression -- view-backed.
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, TIME '01:23:45',
+      TIMESTAMP_MS '2024-01-01 00:00:00',
+      TIMESTAMP_NS '2024-01-01 00:00:00',
+      'a'),
+  (2, TIME '23:00:00',
+      TIMESTAMP_MS '2024-06-15 12:00:00',
+      TIMESTAMP_NS '2024-06-15 12:00:00',
+      'b')
+) AS t(pk, tt, ts_ms, ts_ns, tag))
+TO '/tmp/sdb_g11_temporal.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g11_e_v AS SELECT * FROM read_parquet('/tmp/sdb_g11_temporal.parquet');
+
+statement ok
+CREATE INDEX g11_e_tt_expr_st    ON g11_e_v USING inverted(pk, (tt    + INTERVAL '1 second')) INCLUDE (tag);
+
+statement ok
+CREATE INDEX g11_e_ts_ms_expr_st ON g11_e_v USING inverted(pk, (ts_ms + INTERVAL '1 hour'))   INCLUDE (tag);
+
+statement ok
+CREATE INDEX g11_e_ts_ns_expr_st ON g11_e_v USING inverted(pk, (ts_ns + INTERVAL '1 hour'))   INCLUDE (tag);
+
+query
+SELECT pk FROM g11_e_tt_expr_st
+WHERE tt + INTERVAL '1 second' @@ ts_between(TIME '00:00:00', TIME '12:00:00', true, true) ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g11_e_ts_ms_expr_st
+WHERE ts_ms + INTERVAL '1 hour' @@ ts_between(TIMESTAMP_MS '2024-03-01', TIMESTAMP_MS '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g11_e_ts_ns_expr_st
+WHERE ts_ns + INTERVAL '1 hour' @@ ts_between(TIMESTAMP_NS '2024-03-01', TIMESTAMP_NS '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+2
+
+
+# (f) BOOLEAN scalar via expression WITH INCLUDE(tag).
+statement ok
+CREATE TABLE g11_f(pk INTEGER PRIMARY KEY, x BOOLEAN, tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_f_expr_st ON g11_f USING inverted(pk, (NOT x)) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_f VALUES (1, true, 'a'), (2, false, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_f;
+
+query
+SELECT pk FROM g11_f_expr_st WHERE NOT x = true ORDER BY pk;
+----
+pk
+2
+
+
+# (g) BOOLEAN list via expression: identity-wrap a BOOLEAN[].
+statement ok
+CREATE TABLE g11_g(pk INTEGER PRIMARY KEY, bl BOOLEAN[], tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_g_expr_st ON g11_g USING inverted(pk, ((bl))) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_g VALUES
+    (1, [true,  false, true],  'a'),
+    (2, [false, false, false], 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_g;
+
+query
+SELECT pk FROM g11_g_expr_st WHERE true = ANY((bl)) ORDER BY pk;
+----
+pk
+1
+
+
+# (h) DATE list via expression: identity-wrap a DATE[].
+statement ok
+CREATE TABLE g11_h(pk INTEGER PRIMARY KEY, dl DATE[], tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_h_expr_st ON g11_h USING inverted(pk, ((dl))) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_h VALUES
+    (1, [DATE '2024-01-01', DATE '2024-06-15'], 'a'),
+    (2, [DATE '2025-01-01'],                    'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_h;
+
+query
+SELECT pk FROM g11_h_expr_st WHERE (dl) @@ ts_between(DATE '2024-01-01', DATE '2024-12-31', true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# (i) INTEGER list via expression: identity-wrap an INTEGER[].
+statement ok
+CREATE TABLE g11_i(pk INTEGER PRIMARY KEY, il INTEGER[], tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_i_expr_st ON g11_i USING inverted(pk, ((il))) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_i VALUES
+    (1, [10, 20, 30], 'a'),
+    (2, [40, 50],     'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_i;
+
+query
+SELECT pk FROM g11_i_expr_st WHERE (il) @@ ts_between(15, 25, true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# (j) BIGINT list via expression: identity-wrap a BIGINT[].
+statement ok
+CREATE TABLE g11_j(pk INTEGER PRIMARY KEY, ll BIGINT[], tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_j_expr_st ON g11_j USING inverted(pk, ((ll))) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_j VALUES
+    (1, [100::BIGINT, 200::BIGINT], 'a'),
+    (2, [400::BIGINT],              'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_j;
+
+query
+SELECT pk FROM g11_j_expr_st WHERE (ll) @@ ts_between(150::BIGINT, 250::BIGINT, true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# (k) DOUBLE list via expression: identity-wrap a DOUBLE[].
+statement ok
+CREATE TABLE g11_k(pk INTEGER PRIMARY KEY, dbl DOUBLE[], tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_k_expr_st ON g11_k USING inverted(pk, ((dbl))) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_k VALUES
+    (1, [1.5, 2.5], 'a'),
+    (2, [4.5],      'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_k;
+
+query
+SELECT pk FROM g11_k_expr_st WHERE (dbl) @@ ts_between(2.0::DOUBLE, 3.0::DOUBLE, true, true) ORDER BY pk;
+----
+pk
+1
+
+
+# (l) JSON ->>'a' kw_dict via expression WITH INCLUDE(tag).
+statement ok
+CREATE TABLE g11_l(pk INTEGER PRIMARY KEY, j JSON, tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_l_expr_st ON g11_l USING inverted(pk, (j->>'type') kw_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_l VALUES
+    (1, '{"type":"Point","coordinates":[0.0, 0.0]}',           'a'),
+    (2, '{"type":"LineString","coordinates":[[0,0],[1,1]]}',   'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_l;
+
+query
+SELECT pk FROM g11_l_expr_st WHERE j->>'type' @@ ts_like('Point') ORDER BY pk;
+----
+pk
+1
+
+
+# (m) GEOMETRY geo_src_dict via expression WITH INCLUDE(tag).
+statement ok
+CREATE TABLE g11_m(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'), tag VARCHAR);
+
+statement ok
+CREATE INDEX g11_m_expr_st ON g11_m USING inverted(pk, (g) geo_src_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g11_m VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   'a'),
+    (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) g11_m;
+
+query
+SELECT count(*) FROM g11_m_expr_st;
+----
+count
+2
+
+# ============================================================================
+# g12 -- geopoint analyzer: cells omitted by g4
+# ----------------------------------------------------------------------------
+# g4 covered geopoint on JSON scalar (col, expr) + the three primary
+# rejections (GEOMETRY scalar, VARCHAR, BLOB, INTEGER). Cells still missing:
+#   (a) JSON scalar + INCLUDE(col)              -- accept (mirrors g4 explicitly)
+#   (b) JSON-returning expression + INCLUDE     -- accept (sidecar on tag)
+#   (c) LIST<JSON>                              -- reject (falls through
+#       IsJSONType() in ValidateTokenizerVsColumn; LIST itself is not JSON)
+#   (d) ARRAY<JSON, 2>                          -- reject (same reason)
+#   (e) LIST<GEOMETRY>                          -- reject EARLY in
+#       term_dict::Validate (LIST<GEOMETRY> child trips the
+#       `child == GEOMETRY` short-circuit before the geo-analyzer validator
+#       sees the type) -- same wording as m_gl_geo_list / m_gl_kw_list.
+#   (f) VARCHAR (non-JSON)                      -- reject, generic geo error
+#   (g) BLOB scalar                             -- reject, generic geo error
+#   (h) INTEGER scalar                          -- reject, generic geo error
+#   (i) GEOMETRY scalar (CRS84)                 -- reject, geopoint-specific
+#                                                  "JSON-only" message
+# Probe lane mirrors g4_j_col_geo_st: `<->` distance to a GeoJSON Point
+# literal (ts_within / ts_distance are not exposed as standalone functions;
+# the `<->` operator is the established geopoint accept-verification path).
+# geopoint_dict is reused from line 1979 -- not redeclared.
+# ============================================================================
+
+# ---- (a) JSON scalar column WITH INCLUDE on the same JSON column ----------
+statement ok
+CREATE TABLE g12_j(pk INTEGER PRIMARY KEY, j JSON, tag VARCHAR);
+
+statement ok
+CREATE INDEX g12_j_col_geo_st ON g12_j USING inverted(pk, j geopoint_dict) INCLUDE (j);
+
+# ---- (b) JSON-returning expression `((j))` WITH INCLUDE on a sidecar col --
+statement ok
+CREATE INDEX g12_j_expr_geo_st ON g12_j USING inverted(pk, ((j)) geopoint_dict) INCLUDE (tag);
+
+statement ok
+INSERT INTO g12_j VALUES
+    (1, '{"name":"a","lat":55.703900,"lng":37.615895}', 'north'),
+    (2, '{"name":"b","lat":55.704831,"lng":37.616297}', 'south');
+
+statement ok
+VACUUM (REFRESH_TABLE) g12_j;
+
+query
+SELECT count(*) FROM g12_j_col_geo_st;
+----
+count
+2
+
+query
+SELECT pk, tag FROM g12_j_col_geo_st
+WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk	tag
+1	north
+2	south
+
+query
+SELECT pk, tag FROM g12_j_expr_geo_st
+WHERE j <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk	tag
+1	north
+2	south
+
+
+# ---- (c) LIST<JSON>: rejected (geo branch only matches scalar JSON) -------
+statement ok
+CREATE TABLE g12_jl(pk INTEGER PRIMARY KEY, jl JSON[]);
+
+statement error
+CREATE INDEX g12_reject_geo_jl ON g12_jl USING inverted(pk, jl geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'jl' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# ---- (d) ARRAY<JSON, 2>: rejected (same reason) ---------------------------
+statement ok
+CREATE TABLE g12_ja(pk INTEGER PRIMARY KEY, ja JSON[2]);
+
+statement error
+CREATE INDEX g12_reject_geo_ja ON g12_ja USING inverted(pk, ja geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'ja' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# ---- (e) LIST<GEOMETRY>: rejected EARLY by term_dict::Validate -----------
+statement ok
+CREATE TABLE g12_gl(pk INTEGER PRIMARY KEY, gl GEOMETRY('OGC:CRS84')[]);
+
+statement error
+CREATE INDEX g12_reject_geo_gl ON g12_gl USING inverted(pk, gl geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'gl' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# ---- (f/g/h/i) Mixed-scalar rejections in a single anchor table -----------
+statement ok
+CREATE TABLE g12_reject(pk INTEGER PRIMARY KEY, v VARCHAR, b BLOB, i INTEGER, g GEOMETRY('OGC:CRS84'));
+
+statement error
+CREATE INDEX g12_reject_geo_v ON g12_reject USING inverted(pk, v geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX g12_reject_geo_b ON g12_reject USING inverted(pk, b geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'b' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX g12_reject_geo_i ON g12_reject USING inverted(pk, i geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+statement error
+CREATE INDEX g12_reject_geo_g ON g12_reject USING inverted(pk, g geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' is GEOMETRY but the analyzer is geopoint; geopoint's latitude/longitude paths are JSON-only -- use a geojson analyzer for GEOMETRY columns
+
+
+
+
+# ============================================================================
+# Mixed-tokenizer multi-column inverted indexes  --  combos omitted from g10.
+# ----------------------------------------------------------------------------
+# Each subsection builds one mixed-opclass inverted index, inserts two rows,
+# and verifies (i) a single-column probe routes through the per-column codec
+# and (ii) a multi-predicate AND probe intersects posting lists across the
+# heterogeneous opclasses on one index. All dicts are reused from the
+# top-of-file and g1/g4 declarations.
+# ============================================================================
+
+# --- (a) kw_dict + ng_dict on two VARCHAR columns, no INCLUDE ---------------
+
+statement ok
+CREATE TABLE g13_a(pk INTEGER PRIMARY KEY,
+                   v  VARCHAR,
+                   v2 VARCHAR);
+
+statement ok
+CREATE INDEX g13_a_mix ON g13_a
+    USING inverted(pk, v kw_dict, v2 ng_dict);
+
+statement ok
+INSERT INTO g13_a VALUES
+    (1, 'alpha', 'wonderful'),
+    (2, 'beta',  'magnificent');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_a;
+
+query
+SELECT pk FROM g13_a_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g13_a_mix WHERE v2 @@ ts_ngram('mag', 0.5) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g13_a_mix
+WHERE v @@ ts_like('alpha') AND v2 @@ ts_ngram('won', 0.5)
+ORDER BY pk;
+----
+pk
+1
+
+# --- (b) kw_dict + any_text_dict on two VARCHAR columns ---------------------
+
+statement ok
+CREATE TABLE g13_b(pk INTEGER PRIMARY KEY,
+                   v  VARCHAR,
+                   v2 VARCHAR);
+
+statement ok
+CREATE INDEX g13_b_mix ON g13_b
+    USING inverted(pk, v kw_dict, v2 any_text_dict);
+
+statement ok
+INSERT INTO g13_b VALUES
+    (1, 'alpha', 'quick brown fox'),
+    (2, 'beta',  'lazy yellow dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_b;
+
+query
+SELECT pk FROM g13_b_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g13_b_mix WHERE v2 @@ ts_like('lazy') ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g13_b_mix
+WHERE v @@ ts_like('beta') AND v2 @@ ts_like('yellow')
+ORDER BY pk;
+----
+pk
+2
+
+# --- (c) two distinct geo opclasses on two JSON columns ---------------------
+
+statement ok
+CREATE TABLE g13_c(pk INTEGER PRIMARY KEY,
+                   j  JSON,
+                   j2 JSON);
+
+statement ok
+CREATE INDEX g13_c_mix ON g13_c
+    USING inverted(pk, j geo_s2_dict, j2 geo_src_dict);
+
+statement ok
+INSERT INTO g13_c VALUES
+    (1, '{"type":"Point","coordinates":[0.0, 0.0]}',
+        '{"type":"Point","coordinates":[0.0, 0.0]}'),
+    (2, '{"type":"Point","coordinates":[10.0, 20.0]}',
+        '{"type":"Point","coordinates":[10.0, 20.0]}');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_c;
+
+query
+SELECT count(*) FROM g13_c_mix;
+----
+count
+2
+
+query
+SELECT pk FROM g13_c_mix
+WHERE j <-> '{"type":"Point","coordinates":[0.1, 0.1]}' < 100000.0
+ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g13_c_mix
+WHERE j2 <-> '{"type":"Point","coordinates":[10.0, 20.0]}' < 1.0
+ORDER BY pk;
+----
+pk
+2
+
+# --- (d) kw + ng + hnsw + INCLUDE(numeric, VARCHAR) -------------------------
+
+statement ok
+CREATE TABLE g13_d(pk  INTEGER PRIMARY KEY,
+                   v   VARCHAR,
+                   v2  VARCHAR,
+                   emb FLOAT[3],
+                   n   INTEGER,
+                   tag VARCHAR);
+
+statement ok
+CREATE INDEX g13_d_mix ON g13_d
+    USING inverted(pk, v kw_dict, v2 ng_dict, emb hnsw (metric = 'l2'))
+    INCLUDE (n, tag);
+
+statement ok
+INSERT INTO g13_d VALUES
+    (1, 'alpha', 'wonderful',   [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT], 10, 'first'),
+    (2, 'beta',  'magnificent', [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT], 50, 'second');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_d;
+
+query
+SELECT pk, n, tag FROM g13_d_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk	n	tag
+1	10	first
+
+query
+SELECT pk, n, tag FROM g13_d_mix WHERE v2 @@ ts_ngram('mag', 0.5) ORDER BY pk;
+----
+pk	n	tag
+2	50	second
+
+query
+SELECT pk FROM g13_d_mix
+ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
+LIMIT 1;
+----
+pk
+1
+
+query
+SELECT pk, tag FROM g13_d_mix
+WHERE v @@ ts_like('beta')
+  AND v2 @@ ts_ngram('mag', 0.5)
+  AND emb <-> [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 0.5
+ORDER BY pk;
+----
+pk	tag
+2	second
+
+# --- (e) kw_dict on JSON primitive + geopoint_dict on lat/lng JSON ----------
+
+statement ok
+CREATE TABLE g13_e(pk INTEGER PRIMARY KEY,
+                   j  JSON,
+                   j2 JSON);
+
+statement ok
+CREATE INDEX g13_e_mix ON g13_e
+    USING inverted(pk, j kw_dict, j2 geopoint_dict);
+
+statement ok
+INSERT INTO g13_e VALUES
+    (1, '"alpha"', '{"name":"a","lat":55.703900,"lng":37.615895}'),
+    (2, '"beta"',  '{"name":"b","lat":55.704831,"lng":37.616297}');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_e;
+
+query
+SELECT pk FROM g13_e_mix WHERE j @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g13_e_mix
+WHERE j2 <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk
+1
+2
+
+query
+SELECT pk FROM g13_e_mix
+WHERE j @@ ts_like('beta')
+  AND j2 <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY pk;
+----
+pk
+2
+
+# --- (f) column kw + expression ng + implicit numeric on one index ----------
+
+statement ok
+CREATE TABLE g13_f(pk INTEGER PRIMARY KEY,
+                   v  VARCHAR,
+                   v2 VARCHAR,
+                   n  INTEGER);
+
+statement ok
+CREATE INDEX g13_f_mix ON g13_f
+    USING inverted(pk, v kw_dict, (upper(v2)) ng_dict, n);
+
+statement ok
+INSERT INTO g13_f VALUES
+    (1, 'alpha', 'wonderful',   10),
+    (2, 'beta',  'magnificent', 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_f;
+
+query
+SELECT pk FROM g13_f_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM g13_f_mix WHERE upper(v2) @@ ts_ngram('MAG', 0.5) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g13_f_mix WHERE n @@ ts_between(40, 60, true, true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM g13_f_mix
+WHERE v @@ ts_like('beta')
+  AND upper(v2) @@ ts_ngram('MAG', 0.5)
+  AND n @@ ts_between(40, 60, true, true)
+ORDER BY pk;
+----
+pk
+2
+
+# --- (g) geo_s2 + kw + INCLUDE(JSON) ----------------------------------------
+
+statement ok
+CREATE TABLE g13_g(pk INTEGER PRIMARY KEY,
+                   g  GEOMETRY('OGC:CRS84'),
+                   v  VARCHAR,
+                   j  JSON);
+
+statement ok
+CREATE INDEX g13_g_mix ON g13_g
+    USING inverted(pk, g geo_s2_dict, v kw_dict) INCLUDE (j);
+
+statement ok
+INSERT INTO g13_g VALUES
+    (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   'alpha', '{"meta":"first"}'),
+    (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 'beta',  '{"meta":"second"}');
+
+statement ok
+VACUUM (REFRESH_TABLE) g13_g;
+
+query
+SELECT pk, j FROM g13_g_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
+----
+pk	j
+1	{"meta":"first"}
+
+query
+SELECT count(*) FROM g13_g_mix;
+----
+count
+2
+
+query
+SELECT pk, j FROM g13_g_mix
+WHERE v @@ ts_like('beta')
+  AND g <-> 'POINT(10 20)'::GEOMETRY('OGC:CRS84') < 1.0
+ORDER BY pk;
+----
+pk	j
+2	{"meta":"second"}
+
+
+# ============================================================================
+# g14 -- INCLUDE-only with EXPRESSION source.
+#
+# g6 covered column-named INCLUDE sources across every accepted scalar type.
+# This block pins what happens when the INCLUDE list element is a
+# parenthesized expression rather than a bare column identifier.
+#
+# Grammar: CreateIndex's IncludeClause is
+#     IncludeClause  <- 'INCLUDE' Parens(List(IncludedColumn))
+#     IncludedColumn <- ColId IndexOpclass?
+# (third_party/duckdb/src/parser/peg/grammar/statements/create_index.gram).
+# An IncludedColumn is a bare identifier with an optional opclass -- no
+# Parens, no Expr. Every expression form below therefore fails at parse
+# time with the same token-level error pointing at the leading '(' that
+# opens the would-be expression. The error never reaches the catalog
+# binder, so there is no "tokenizer" / "unsupported type" wording -- only
+# the syntactic rejection.
+# ============================================================================
+
+statement ok
+CREATE TABLE g14_t(pk INTEGER PRIMARY KEY,
+                   v  VARCHAR,
+                   n  INTEGER,
+                   d  DATE,
+                   ts TIMESTAMP,
+                   bo BOOLEAN,
+                   f  FLOAT,
+                   j  JSON,
+                   g  GEOMETRY('OGC:CRS84'));
+
+# (a) VARCHAR expression -- upper(v)
+statement error
+CREATE INDEX g14_inc_expr_v ON g14_t USING inverted(pk) INCLUDE ((upper(v)));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (b) INTEGER expression -- n * 2
+statement error
+CREATE INDEX g14_inc_expr_n ON g14_t USING inverted(pk) INCLUDE ((n * 2));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (c) DATE expression -- d + INTERVAL '1 day'
+statement error
+CREATE INDEX g14_inc_expr_d ON g14_t USING inverted(pk)
+    INCLUDE ((d + INTERVAL '1 day'));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (d) TIMESTAMP expression -- ts + INTERVAL '1 hour'
+statement error
+CREATE INDEX g14_inc_expr_ts ON g14_t USING inverted(pk)
+    INCLUDE ((ts + INTERVAL '1 hour'));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (e) BOOLEAN expression -- NOT bo
+statement error
+CREATE INDEX g14_inc_expr_bo ON g14_t USING inverted(pk) INCLUDE ((NOT bo));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (f) FLOAT expression -- f * 1.0::FLOAT (constant-fold-resistant cast)
+statement error
+CREATE INDEX g14_inc_expr_f ON g14_t USING inverted(pk)
+    INCLUDE ((f * 1.0::FLOAT));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (g) JSON-extract expression -- j->>'type'
+statement error
+CREATE INDEX g14_inc_expr_j ON g14_t USING inverted(pk) INCLUDE ((j->>'type'));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# (h) GEOMETRY-identity expression -- (g). Even a trivial parenthesized
+# identity is rejected by the IncludedColumn grammar (no Parens
+# alternative), confirming the rejection is syntactic and independent of
+# the inner expression's shape or type.
+statement error
+CREATE INDEX g14_inc_expr_g ON g14_t USING inverted(pk) INCLUDE ((g));
+----
+db error: ERROR: syntax error at or near "("
+
+
+# ============================================================================
+# g15 -- Text-tokenizer rejection coverage across the full unusual-type matrix.
+#
+# Every type the AREA lists is declared as a column of one table g15_t, and
+# every (column, text-tokenizer) pair is exercised with a single
+# statement-error block. The two-stage validator in
+# server/catalog/index.cpp:ValidateInvertedIndexColumns runs in this order:
+#
+#   (1) term_dict::Validate (line 399) -- rejects types that Classify (in
+#       server/catalog/inverted_index.h:64) maps to Kind::Unsupported.
+#       Wording: "has unsupported type X and can not be indexed".
+#       For this block: UBIGINT, HUGEINT, UHUGEINT, DECIMAL(10,2), INTERVAL,
+#       UUID, STRUCT(a INTEGER), MAP(VARCHAR, INTEGER), VARIANT.
+#
+#   (2) ValidateTokenizerVsColumn (line 704) -- rejects types that are
+#       Supported by term_dict but are not VARCHAR / BLOB / LIST / ARRAY of
+#       VARCHAR / BLOB; the keyword / ngram / text analyzers can only consume
+#       string-shaped bytes. Wording:
+#       "uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of
+#        VARCHAR/BLOB (got X)".
+#       For this block: TIME, TIME_NS, TIME WITH TIME ZONE,
+#       TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP WITH TIME ZONE,
+#       TINYINT, SMALLINT, UTINYINT, USMALLINT, UINTEGER, FLOAT,
+#       GEOMETRY('OGC:CRS84').
+#
+# kw_dict / ng_dict / any_text_dict are already declared at the top of this
+# file (lines 28, 31-32, 1583) -- not redeclared.
+#
+# No rows are inserted: the entire block tests CREATE INDEX rejection, so
+# rocksdb-incompatible types (UTINYINT / USMALLINT / UINTEGER / TIME
+# variants / TIMESTAMP_MS / TIMESTAMP_NS / TIMESTAMPTZ) can sit in a regular
+# table without ever reaching the storage path.
+# ============================================================================
+
+statement ok
+CREATE TABLE g15_t(pk    INTEGER PRIMARY KEY,
+                   u64   UBIGINT,
+                   h     HUGEINT,
+                   uh    UHUGEINT,
+                   d     DECIMAL(10,2),
+                   iv    INTERVAL,
+                   uu    UUID,
+                   st    STRUCT(a INTEGER),
+                   mp    MAP(VARCHAR, INTEGER),
+                   vr    VARIANT,
+                   tt    TIME,
+                   ttns  TIME_NS,
+                   tttz  TIMETZ,
+                   tsms  TIMESTAMP_MS,
+                   tsns  TIMESTAMP_NS,
+                   tstz  TIMESTAMPTZ,
+                   t8    TINYINT,
+                   t16   SMALLINT,
+                   u8    UTINYINT,
+                   u16   USMALLINT,
+                   u32   UINTEGER,
+                   f     FLOAT,
+                   g     GEOMETRY('OGC:CRS84'));
+
+# ----------------------------------------------------------------------------
+# kw_dict (keyword tokenizer)
+# ----------------------------------------------------------------------------
+
+# Unsupported-set rejections: term_dict::Validate fails first.
+statement error
+CREATE INDEX g15_kw_u64 ON g15_t USING inverted(pk, u64 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'u64' has unsupported type UBIGINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_h ON g15_t USING inverted(pk, h kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'h' has unsupported type HUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_uh ON g15_t USING inverted(pk, uh kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_d ON g15_t USING inverted(pk, d kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_iv ON g15_t USING inverted(pk, iv kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_uu ON g15_t USING inverted(pk, uu kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_st ON g15_t USING inverted(pk, st kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'st' has unsupported type STRUCT(a INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_mp ON g15_t USING inverted(pk, mp kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'mp' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_kw_vr ON g15_t USING inverted(pk, vr kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+
+
+# Tokenizer-vs-column rejections: term_dict::Validate passes; the analyzer
+# check fires next.
+statement error
+CREATE INDEX g15_kw_tt ON g15_t USING inverted(pk, tt kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'tt' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME)
+
+
+statement error
+CREATE INDEX g15_kw_ttns ON g15_t USING inverted(pk, ttns kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'ttns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME_NS)
+
+
+statement error
+CREATE INDEX g15_kw_tttz ON g15_t USING inverted(pk, tttz kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'tttz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_kw_tsms ON g15_t USING inverted(pk, tsms kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsms' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_MS)
+
+
+statement error
+CREATE INDEX g15_kw_tsns ON g15_t USING inverted(pk, tsns kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_NS)
+
+
+statement error
+CREATE INDEX g15_kw_tstz ON g15_t USING inverted(pk, tstz kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'tstz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_kw_t8 ON g15_t USING inverted(pk, t8 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 't8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TINYINT)
+
+
+statement error
+CREATE INDEX g15_kw_t16 ON g15_t USING inverted(pk, t16 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 't16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got SMALLINT)
+
+
+statement error
+CREATE INDEX g15_kw_u8 ON g15_t USING inverted(pk, u8 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'u8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UTINYINT)
+
+
+statement error
+CREATE INDEX g15_kw_u16 ON g15_t USING inverted(pk, u16 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'u16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got USMALLINT)
+
+
+statement error
+CREATE INDEX g15_kw_u32 ON g15_t USING inverted(pk, u32 kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'u32' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UINTEGER)
+
+
+statement error
+CREATE INDEX g15_kw_f ON g15_t USING inverted(pk, f kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'f' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT)
+
+
+statement error
+CREATE INDEX g15_kw_g ON g15_t USING inverted(pk, g kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# ----------------------------------------------------------------------------
+# ng_dict (n-gram tokenizer)
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g15_ng_u64 ON g15_t USING inverted(pk, u64 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'u64' has unsupported type UBIGINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_h ON g15_t USING inverted(pk, h ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'h' has unsupported type HUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_uh ON g15_t USING inverted(pk, uh ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_d ON g15_t USING inverted(pk, d ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_iv ON g15_t USING inverted(pk, iv ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_uu ON g15_t USING inverted(pk, uu ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_st ON g15_t USING inverted(pk, st ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'st' has unsupported type STRUCT(a INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_mp ON g15_t USING inverted(pk, mp ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'mp' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_vr ON g15_t USING inverted(pk, vr ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_ng_tt ON g15_t USING inverted(pk, tt ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'tt' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME)
+
+
+statement error
+CREATE INDEX g15_ng_ttns ON g15_t USING inverted(pk, ttns ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'ttns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME_NS)
+
+
+statement error
+CREATE INDEX g15_ng_tttz ON g15_t USING inverted(pk, tttz ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'tttz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_ng_tsms ON g15_t USING inverted(pk, tsms ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsms' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_MS)
+
+
+statement error
+CREATE INDEX g15_ng_tsns ON g15_t USING inverted(pk, tsns ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_NS)
+
+
+statement error
+CREATE INDEX g15_ng_tstz ON g15_t USING inverted(pk, tstz ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'tstz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_ng_t8 ON g15_t USING inverted(pk, t8 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 't8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TINYINT)
+
+
+statement error
+CREATE INDEX g15_ng_t16 ON g15_t USING inverted(pk, t16 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 't16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got SMALLINT)
+
+
+statement error
+CREATE INDEX g15_ng_u8 ON g15_t USING inverted(pk, u8 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'u8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UTINYINT)
+
+
+statement error
+CREATE INDEX g15_ng_u16 ON g15_t USING inverted(pk, u16 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'u16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got USMALLINT)
+
+
+statement error
+CREATE INDEX g15_ng_u32 ON g15_t USING inverted(pk, u32 ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'u32' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UINTEGER)
+
+
+statement error
+CREATE INDEX g15_ng_f ON g15_t USING inverted(pk, f ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'f' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT)
+
+
+statement error
+CREATE INDEX g15_ng_g ON g15_t USING inverted(pk, g ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# ----------------------------------------------------------------------------
+# any_text_dict (template = 'text' analyzer)
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g15_at_u64 ON g15_t USING inverted(pk, u64 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'u64' has unsupported type UBIGINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_h ON g15_t USING inverted(pk, h any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'h' has unsupported type HUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_uh ON g15_t USING inverted(pk, uh any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_d ON g15_t USING inverted(pk, d any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_iv ON g15_t USING inverted(pk, iv any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_uu ON g15_t USING inverted(pk, uu any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_st ON g15_t USING inverted(pk, st any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'st' has unsupported type STRUCT(a INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_mp ON g15_t USING inverted(pk, mp any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'mp' has unsupported type MAP(VARCHAR, INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_vr ON g15_t USING inverted(pk, vr any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+
+
+statement error
+CREATE INDEX g15_at_tt ON g15_t USING inverted(pk, tt any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'tt' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME)
+
+
+statement error
+CREATE INDEX g15_at_ttns ON g15_t USING inverted(pk, ttns any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'ttns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME_NS)
+
+
+statement error
+CREATE INDEX g15_at_tttz ON g15_t USING inverted(pk, tttz any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'tttz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIME WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_at_tsms ON g15_t USING inverted(pk, tsms any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsms' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_MS)
+
+
+statement error
+CREATE INDEX g15_at_tsns ON g15_t USING inverted(pk, tsns any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'tsns' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP_NS)
+
+
+statement error
+CREATE INDEX g15_at_tstz ON g15_t USING inverted(pk, tstz any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'tstz' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP WITH TIME ZONE)
+
+
+statement error
+CREATE INDEX g15_at_t8 ON g15_t USING inverted(pk, t8 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 't8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TINYINT)
+
+
+statement error
+CREATE INDEX g15_at_t16 ON g15_t USING inverted(pk, t16 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 't16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got SMALLINT)
+
+
+statement error
+CREATE INDEX g15_at_u8 ON g15_t USING inverted(pk, u8 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'u8' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UTINYINT)
+
+
+statement error
+CREATE INDEX g15_at_u16 ON g15_t USING inverted(pk, u16 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'u16' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got USMALLINT)
+
+
+statement error
+CREATE INDEX g15_at_u32 ON g15_t USING inverted(pk, u32 any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'u32' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UINTEGER)
+
+
+statement error
+CREATE INDEX g15_at_f ON g15_t USING inverted(pk, f any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'f' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT)
+
+
+statement error
+CREATE INDEX g15_at_g ON g15_t USING inverted(pk, g any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+
+
+# ============================================================================
+# g16: implicit-rejection (no opclass) for the unsupported-leaf types g5
+#      didn't cover -- UBIGINT, UHUGEINT, BIT, ENUM, VARIANT -- plus LIST
+#      and ARRAY whose child is itself an unsupported leaf (HUGEINT, DECIMAL,
+#      INTERVAL, UUID). All paths land on term_dict::Validate's unsupported()
+#      branch (server/catalog/inverted_index.cpp:251-255 / 264-265 / 270-271),
+#      which produces the verbatim "has unsupported type X and can not be
+#      indexed" message. BIGNUM is omitted: the inventory provides no
+#      reachability recipe, so we don't gamble on CREATE TABLE accepting it.
+# ============================================================================
+
+statement ok
+CREATE TYPE g16_enum_t AS ENUM ('alpha', 'beta', 'gamma');
+
+
+statement ok
+CREATE TABLE g16_t(pk INTEGER PRIMARY KEY,
+                   ub UBIGINT,
+                   uh UHUGEINT,
+                   bi BIT,
+                   en g16_enum_t,
+                   vr VARIANT,
+                   lh HUGEINT[],
+                   ld DECIMAL(10,2)[],
+                   li INTERVAL[],
+                   lu UUID[],
+                   ah HUGEINT[2],
+                   ad DECIMAL(10,2)[2]);
+
+
+# (a) implicit (no opclass) on UBIGINT: term_dict classifies UBIGINT as
+#     Unsupported (Classify default arm), so Validate rejects.
+statement error
+CREATE INDEX g16_imp_ub ON g16_t USING inverted(pk, ub);
+----
+db error: ERROR: Failed to create index: Column 'ub' has unsupported type UBIGINT and can not be indexed
+
+
+# (b) implicit (no opclass) on UHUGEINT: 128-bit unsigned, Unsupported.
+statement error
+CREATE INDEX g16_imp_uh ON g16_t USING inverted(pk, uh);
+----
+db error: ERROR: Failed to create index: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+
+
+# (c) implicit (no opclass) on BIT: bitstring is Unsupported.
+statement error
+CREATE INDEX g16_imp_bi ON g16_t USING inverted(pk, bi);
+----
+db error: ERROR: Failed to create index: Column 'bi' has unsupported type BIT and can not be indexed
+
+
+# (d) implicit (no opclass) on ENUM: the type's alias (from CREATE TYPE) is
+#     what ToString surfaces, so the error names the user-visible type name.
+statement error
+CREATE INDEX g16_imp_en ON g16_t USING inverted(pk, en);
+----
+db error: ERROR: Failed to create index: Column 'en' has unsupported type g16_enum_t and can not be indexed
+
+
+# (e) implicit (no opclass) on VARIANT: STRUCT-backed catch-all type, Unsupported.
+statement error
+CREATE INDEX g16_imp_vr ON g16_t USING inverted(pk, vr);
+----
+db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+
+
+# (f) implicit (no opclass) on LIST<HUGEINT>: container path in Validate
+#     inspects the child kind; HUGEINT is Unsupported, so the list is rejected
+#     with the rendered "<child>[]" type string.
+statement error
+CREATE INDEX g16_imp_lh ON g16_t USING inverted(pk, lh);
+----
+db error: ERROR: Failed to create index: Column 'lh' has unsupported type HUGEINT[] and can not be indexed
+
+
+# (g) implicit (no opclass) on LIST<DECIMAL(10,2)>: same container path.
+statement error
+CREATE INDEX g16_imp_ld ON g16_t USING inverted(pk, ld);
+----
+db error: ERROR: Failed to create index: Column 'ld' has unsupported type DECIMAL(10,2)[] and can not be indexed
+
+
+# (h) implicit (no opclass) on LIST<INTERVAL>.
+statement error
+CREATE INDEX g16_imp_li ON g16_t USING inverted(pk, li);
+----
+db error: ERROR: Failed to create index: Column 'li' has unsupported type INTERVAL[] and can not be indexed
+
+
+# (i) implicit (no opclass) on LIST<UUID>.
+statement error
+CREATE INDEX g16_imp_lu ON g16_t USING inverted(pk, lu);
+----
+db error: ERROR: Failed to create index: Column 'lu' has unsupported type UUID[] and can not be indexed
+
+
+# (j) implicit (no opclass) on ARRAY<HUGEINT,2>: the container branch renders
+#     fixed-size arrays as "<child>[N]" (types.cpp:474).
+statement error
+CREATE INDEX g16_imp_ah ON g16_t USING inverted(pk, ah);
+----
+db error: ERROR: Failed to create index: Column 'ah' has unsupported type HUGEINT[2] and can not be indexed
+
+
+# (k) implicit (no opclass) on ARRAY<DECIMAL(10,2),2>: same array path.
+statement error
+CREATE INDEX g16_imp_ad ON g16_t USING inverted(pk, ad);
+----
+db error: ERROR: Failed to create index: Column 'ad' has unsupported type DECIMAL(10,2)[2] and can not be indexed
+
+
+
+
+
+# ============================================================================
+# g17 -- Tokenizer-completeness for LIST/ARRAY columns + expression-source
+# LIST/ARRAY across all tokenizers.
+#
+# Two gaps filled in one section:
+#
+#  (1) Column-source LIST/ARRAY coverage was uneven. kw_dict already had a
+#      full grid (m_vla, m_bla, g7_*), but ng_dict and any_text_dict only
+#      covered LIST<VARCHAR> + a BLOB scalar slice. g17 adds the missing
+#      ng_dict-on-ARRAY<VARCHAR,3>/LIST<BLOB>/ARRAY<BLOB,3>, JSON-scalar
+#      cells for both ng_dict and any_text_dict (JSON is a VARCHAR alias,
+#      so the tokenizer validator accepts it), and BLOB-scalar-with-INCLUDE
+#      sidecars under each tokenizer.
+#
+#  (2) Expression-source LIST/ARRAY was zero across the board. No prior
+#      test placed a parenthesized identity expression on VARCHAR[],
+#      VARCHAR[N], BLOB[], BLOB[N] under kw_dict / ng_dict / any_text_dict /
+#      implicit. g17 builds that entire matrix, plus implicit-path
+#      expression-source LIST<JSON>.
+#
+# Reuses existing dicts (kw_dict, ng_dict, any_text_dict) -- no new dict
+# declarations. All cells in g17 are validator-positive; the negative cells
+# (LIST<JSON> + tokenizer, LIST<GEOMETRY>) are already pinned by m_jl_*,
+# g1_reject_*, m_gl_*, g7_gl, and g7_ga.
+# ============================================================================
+
+statement ok
+CREATE TABLE g17_v(pk INTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+CREATE TABLE g17_b(pk INTEGER PRIMARY KEY, b BLOB);
+
+statement ok
+CREATE TABLE g17_j(pk INTEGER PRIMARY KEY, j JSON);
+
+statement ok
+CREATE TABLE g17_vla(pk INTEGER PRIMARY KEY, vs VARCHAR[], va VARCHAR[3]);
+
+statement ok
+CREATE TABLE g17_bla(pk INTEGER PRIMARY KEY, bs BLOB[], ba BLOB[3]);
+
+statement ok
+CREATE TABLE g17_jl(pk INTEGER PRIMARY KEY, js JSON[]);
+
+
+# --- (f) ng_dict on VARCHAR expression source (no INCLUDE) ------------------
+
+statement ok
+CREATE INDEX g17_v_expr_ng ON g17_v USING inverted(pk, (upper(v)) ng_dict);
+
+statement ok
+INSERT INTO g17_v VALUES (1, 'alpha'), (2, 'beta');
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_v;
+
+query
+SELECT count(*) FROM g17_v_expr_ng;
+----
+count
+2
+
+
+# --- (e) ng_dict on BLOB scalar WITH INCLUDE --------------------------------
+# --- (h) any_text_dict on BLOB scalar WITH INCLUDE --------------------------
+# --- (i) any_text_dict on BLOB expression source ----------------------------
+
+statement ok
+CREATE INDEX g17_b_col_ng_st  ON g17_b USING inverted(pk, b ng_dict)        INCLUDE (b);
+
+statement ok
+CREATE INDEX g17_b_col_at_st  ON g17_b USING inverted(pk, b any_text_dict)  INCLUDE (b);
+
+statement ok
+CREATE INDEX g17_b_expr_at_ns ON g17_b USING inverted(pk, (decode(encode(b, 'hex'), 'hex')) any_text_dict);
+
+statement ok
+INSERT INTO g17_b VALUES
+    (1, '\\x68656c6c6f'::BLOB),
+    (2, '\\xdeadbeef'::BLOB);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_b;
+
+query
+SELECT count(*) FROM g17_b_col_ng_st;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_b_col_at_st;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_b_expr_at_ns;
+----
+count
+2
+
+
+# --- (d) ng_dict on JSON scalar --------------------------------------------
+# --- (g) any_text_dict on JSON scalar --------------------------------------
+# --- (j) any_text_dict on JSON-typed expression source ---------------------
+# JSON is VARCHAR with an alias, so the tokenizer validator treats these as
+# accepted (same path that lets m_j_prim_col_kw work under kw_dict).
+
+statement ok
+CREATE INDEX g17_j_col_ng   ON g17_j USING inverted(pk, j ng_dict);
+
+statement ok
+CREATE INDEX g17_j_col_at   ON g17_j USING inverted(pk, j any_text_dict);
+
+statement ok
+CREATE INDEX g17_j_expr_at  ON g17_j USING inverted(pk, (j) any_text_dict);
+
+statement ok
+INSERT INTO g17_j VALUES
+    (1, '"alpha"'::JSON),
+    (2, '"beta"'::JSON);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_j;
+
+query
+SELECT count(*) FROM g17_j_col_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_j_col_at;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_j_expr_at;
+----
+count
+2
+
+
+# --- (a) ng_dict on ARRAY<VARCHAR, 3> column --------------------------------
+# --- (k) kw_dict on LIST<VARCHAR>   expression source -----------------------
+# --- (l) kw_dict on ARRAY<VARCHAR>  expression source -----------------------
+# --- (o) ng_dict on LIST<VARCHAR>   expression source -----------------------
+# --- (p) ng_dict on ARRAY<VARCHAR>  expression source -----------------------
+# --- (s) any_text_dict on LIST<VARCHAR>  expression source ------------------
+# --- (t) any_text_dict on ARRAY<VARCHAR> expression source ------------------
+# --- (w) implicit (no opclass) LIST<VARCHAR>  expression source -------------
+# --- (x) implicit (no opclass) ARRAY<VARCHAR> expression source -------------
+
+statement ok
+CREATE INDEX g17_vla_va_col_ng    ON g17_vla USING inverted(pk, va ng_dict);
+
+statement ok
+CREATE INDEX g17_vla_vs_expr_kw   ON g17_vla USING inverted(pk, (vs) kw_dict);
+
+statement ok
+CREATE INDEX g17_vla_va_expr_kw   ON g17_vla USING inverted(pk, (va) kw_dict);
+
+statement ok
+CREATE INDEX g17_vla_vs_expr_ng   ON g17_vla USING inverted(pk, (vs) ng_dict);
+
+statement ok
+CREATE INDEX g17_vla_va_expr_ng   ON g17_vla USING inverted(pk, (va) ng_dict);
+
+statement ok
+CREATE INDEX g17_vla_vs_expr_at   ON g17_vla USING inverted(pk, (vs) any_text_dict);
+
+statement ok
+CREATE INDEX g17_vla_va_expr_at   ON g17_vla USING inverted(pk, (va) any_text_dict);
+
+statement ok
+CREATE INDEX g17_vla_vs_expr_imp  ON g17_vla USING inverted(pk, (vs));
+
+statement ok
+CREATE INDEX g17_vla_va_expr_imp  ON g17_vla USING inverted(pk, (va));
+
+statement ok
+INSERT INTO g17_vla VALUES
+    (1, ['alpha', 'beta'], ['alpha', 'beta', 'gamma']),
+    (2, ['delta'],         ['delta', 'epsilon', 'zeta']);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_vla;
+
+query
+SELECT count(*) FROM g17_vla_va_col_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_vs_expr_kw;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_va_expr_kw;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_vs_expr_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_va_expr_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_vs_expr_at;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_va_expr_at;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_vs_expr_imp;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_vla_va_expr_imp;
+----
+count
+2
+
+
+# --- (b) ng_dict on LIST<BLOB>      column ---------------------------------
+# --- (c) ng_dict on ARRAY<BLOB, 3>  column ---------------------------------
+# --- (m) kw_dict on LIST<BLOB>      expression source ----------------------
+# --- (n) kw_dict on ARRAY<BLOB>     expression source ----------------------
+# --- (q) ng_dict on LIST<BLOB>      expression source ----------------------
+# --- (r) ng_dict on ARRAY<BLOB>     expression source ----------------------
+# --- (u) any_text_dict on LIST<BLOB>  expression source --------------------
+# --- (v) any_text_dict on ARRAY<BLOB> expression source --------------------
+# --- (y) implicit (no opclass) LIST<BLOB>  expression source ---------------
+
+statement ok
+CREATE INDEX g17_bla_bs_col_ng    ON g17_bla USING inverted(pk, bs ng_dict);
+
+statement ok
+CREATE INDEX g17_bla_ba_col_ng    ON g17_bla USING inverted(pk, ba ng_dict);
+
+statement ok
+CREATE INDEX g17_bla_bs_expr_kw   ON g17_bla USING inverted(pk, (bs) kw_dict);
+
+statement ok
+CREATE INDEX g17_bla_ba_expr_kw   ON g17_bla USING inverted(pk, (ba) kw_dict);
+
+statement ok
+CREATE INDEX g17_bla_bs_expr_ng   ON g17_bla USING inverted(pk, (bs) ng_dict);
+
+statement ok
+CREATE INDEX g17_bla_ba_expr_ng   ON g17_bla USING inverted(pk, (ba) ng_dict);
+
+statement ok
+CREATE INDEX g17_bla_bs_expr_at   ON g17_bla USING inverted(pk, (bs) any_text_dict);
+
+statement ok
+CREATE INDEX g17_bla_ba_expr_at   ON g17_bla USING inverted(pk, (ba) any_text_dict);
+
+statement ok
+CREATE INDEX g17_bla_bs_expr_imp  ON g17_bla USING inverted(pk, (bs));
+
+statement ok
+INSERT INTO g17_bla VALUES
+    (1, ['hello'::BLOB, 'world'::BLOB], ['aaa'::BLOB, 'bbb'::BLOB, 'ccc'::BLOB]),
+    (2, ['deadbeef'::BLOB],             ['ddd'::BLOB, 'eee'::BLOB, 'fff'::BLOB]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_bla;
+
+query
+SELECT count(*) FROM g17_bla_bs_col_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_ba_col_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_bs_expr_kw;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_ba_expr_kw;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_bs_expr_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_ba_expr_ng;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_bs_expr_at;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_ba_expr_at;
+----
+count
+2
+
+query
+SELECT count(*) FROM g17_bla_bs_expr_imp;
+----
+count
+2
+
+
+# --- (z) implicit (no opclass) LIST<JSON> expression source -----------------
+# Mirrors g7_jl_imp on the column side; this is the expression-source twin.
+
+statement ok
+CREATE INDEX g17_jl_js_expr_imp ON g17_jl USING inverted(pk, (js));
+
+statement ok
+INSERT INTO g17_jl VALUES
+    (1, ARRAY['"alpha"'::JSON, '"beta"'::JSON]),
+    (2, ARRAY['"gamma"'::JSON]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g17_jl;
+
+query
+SELECT count(*) FROM g17_jl_js_expr_imp;
+----
+count
+2
+
+
+
+
+# ============================================================================
+# g18 -- Geo non-CRS84 rejection for geo_src_dict and geopoint_dict
+#
+# ValidateTokenizerVsColumn (server/catalog/index.cpp) runs ValidateGeometryCRS84
+# *first* inside the GEOMETRY branch, before the geopoint-on-GEOMETRY check.
+# So for geopoint_dict on a GEOMETRY column the JSON-only error is only
+# reachable when the CRS already passes CRS84 validation -- g4 already pins
+# that case on a valid GEOMETRY('OGC:CRS84') column. Here we pin the two CRS84
+# rejection branches:
+#   no CRS attached          -> "GEOMETRY type has no CRS attached..."
+#   recognized but non-CRS84 -> "GEOMETRY type has invalid CRS '...'"
+# for both geo_src_dict (a/b) and geopoint_dict (c1/c2). DuckDB's BindGeometryType
+# rejects unrecognized short CRS identifiers at type creation, so the only SQL
+# path to a recognized-but-non-CRS84 GEOMETRY type is a full WKT2 definition;
+# the Pseudo-Mercator WKT2 below resolves to identifier 'DUCKDB:1337'.
+# ============================================================================
+
+statement ok
+CREATE TABLE g18_t(pk INTEGER PRIMARY KEY,
+                   g_nocrs GEOMETRY,
+                   g_badcrs GEOMETRY('GEOGCRS["WGS 84 (CRS84)",ENSEMBLE["World Geodetic System 1984 ensemble",MEMBER["World Geodetic System 1984 (Transit)"],ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]],ENSEMBLEACCURACY[2.0]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic longitude (Lon)",east,ORDER[1],ANGLEUNIT["degree",0.0174532925199433]],AXIS["geodetic latitude (Lat)",north,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],USAGE[SCOPE["Not known."],AREA["World."],BBOX[-90,-180,90,180]],ID["DUCKDB","1337"]]'));
+
+
+# (a) GEOMETRY without OGC:CRS84 + geo_src_dict -> CRS84 validator (no CRS).
+statement error
+CREATE INDEX g18_src_nocrs ON g18_t USING inverted(pk, g_nocrs geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+# (b) GEOMETRY with recognized non-CRS84 (Pseudo-Mercator, DUCKDB:1337) +
+# geo_src_dict -> CRS84 validator (invalid CRS).
+statement error
+CREATE INDEX g18_src_badcrs ON g18_t USING inverted(pk, g_badcrs geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_badcrs': GEOMETRY type has invalid CRS 'DUCKDB:1337'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)
+
+
+# (c1) GEOMETRY without OGC:CRS84 + geopoint_dict -> CRS84 validator fires
+# *before* the geopoint-on-GEOMETRY JSON-only check, so the "no CRS attached"
+# error is what surfaces. (g4 covers the JSON-only message on valid CRS84.)
+statement error
+CREATE INDEX g18_gp_nocrs ON g18_t USING inverted(pk, g_nocrs geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+# (c2) GEOMETRY with recognized non-CRS84 + geopoint_dict -> same precedence:
+# CRS84 validator rejects first with "invalid CRS", before the JSON-only
+# message can be reached.
+statement error
+CREATE INDEX g18_gp_badcrs ON g18_t USING inverted(pk, g_badcrs geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_badcrs': GEOMETRY type has invalid CRS 'DUCKDB:1337'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)
+
+
+
+# ============================================================================
+# g19 -- IMPLICIT (no opclass) role: close remaining rejection / accept gaps.
+#
+# This section completes the term_dict::Validate coverage matrix for the
+# implicit (opclass-less) role. Three buckets:
+#
+#   (1) LIST<unsupported> / ARRAY<unsupported> rejections that g16 didn't
+#       reach: UBIGINT, UHUGEINT, BIT, ENUM, STRUCT(a INTEGER),
+#       MAP(VARCHAR, INTEGER), VARIANT, UUID, INTERVAL, GEOMETRY('OGC:CRS84').
+#       The GEOMETRY-list/array cases are also pinned by g7_gl / g7_ga; we
+#       repeat them here under the g19_ prefix for self-contained matrix
+#       completeness.
+#
+#   (2) Scalar BIT / ENUM / VARIANT under the g19_ prefix (g16 already pins
+#       the same payload; duplicated intentionally so this section reads as
+#       a self-contained implicit-role grid).
+#
+#   (3) Accept paths the implicit/column and implicit/expression matrices
+#       didn't pin: LIST<TIMESTAMPTZ/TIME/TIMESTAMP_MS/TIMESTAMP_NS>,
+#       ARRAY<TIMESTAMP/BIGINT/JSON/BLOB/FLOAT/DOUBLE,3>, plus
+#       expression-source scalar TIMETZ / TIME_NS / BLOB / JSON / VARCHAR
+#       and expression-source ARRAY<JSON,3> / ARRAY<BLOB,3>.
+#       UTINYINT expression scalar is already covered by g11_d_u8_expr_st,
+#       so it is not repeated here.
+#
+#   (4) Nested LIST<LIST<INTEGER>> via expression: term_dict::Validate
+#       recurses one level only -- inner LIST classifies as Unsupported, so
+#       the outer LIST is rejected. ([[pk]] is the literal short form
+#       DuckDB lowers to main.list_value(main.list_value(pk)).)
+#
+# Storage strategy: term_dict-rejected columns (UBIGINT / UHUGEINT /
+# BIT / ENUM / STRUCT / MAP / VARIANT / UUID[] / INTERVAL[] / GEOMETRY[])
+# never receive INSERTs -- CREATE INDEX rejection runs before any row store
+# path. Rocksdb-incompatible accept-paths (TIMESTAMPTZ / TIME / TIMESTAMP_MS
+# / TIMESTAMP_NS LIST, TIMETZ / TIME_NS scalar expression) are routed
+# through a parquet-backed view so the rocksdb row store is bypassed --
+# same recipe as m_unsup, g6_v_unsup, g11_a_v / g11_d_v / g11_e_v.
+# Rocksdb-compatible accept-paths (TIMESTAMP / BIGINT / JSON / BLOB / FLOAT
+# / DOUBLE ARRAY, BLOB / JSON / VARCHAR scalar expression) live on a
+# dedicated table to keep INSERTs clear of the rocksdb-incompatible columns
+# on g19_t.
+# ============================================================================
+
+statement ok
+CREATE TYPE g19_enum_t AS ENUM ('alpha', 'beta', 'gamma');
+
+statement ok
+CREATE TABLE g19_t(pk           INTEGER PRIMARY KEY,
+                   list_ubig    UBIGINT[],
+                   list_uhuge   UHUGEINT[],
+                   list_bit     BIT[],
+                   list_enum    g19_enum_t[],
+                   list_struct  STRUCT(a INTEGER)[],
+                   list_map     MAP(VARCHAR, INTEGER)[],
+                   list_variant VARIANT[],
+                   arr_ubig     UBIGINT[3],
+                   arr_uhuge    UHUGEINT[3],
+                   arr_uuid     UUID[3],
+                   arr_intv     INTERVAL[3],
+                   arr_geom     GEOMETRY('OGC:CRS84')[3],
+                   bit_s        BIT,
+                   enum_s       g19_enum_t,
+                   vr           VARIANT);
+
+
+# ----------------------------------------------------------------------------
+# (a) LIST<unsupported-leaf> implicit rejections. The container branch of
+# term_dict::Validate (inverted_index.cpp:257-268) inspects the child kind;
+# every leaf here classifies as Unsupported.
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g19_imp_list_ubig ON g19_t USING inverted(pk, list_ubig);
+----
+db error: ERROR: Failed to create index: Column 'list_ubig' has unsupported type UBIGINT[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_uhuge ON g19_t USING inverted(pk, list_uhuge);
+----
+db error: ERROR: Failed to create index: Column 'list_uhuge' has unsupported type UHUGEINT[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_bit ON g19_t USING inverted(pk, list_bit);
+----
+db error: ERROR: Failed to create index: Column 'list_bit' has unsupported type BIT[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_enum ON g19_t USING inverted(pk, list_enum);
+----
+db error: ERROR: Failed to create index: Column 'list_enum' has unsupported type g19_enum_t[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_struct ON g19_t USING inverted(pk, list_struct);
+----
+db error: ERROR: Failed to create index: Column 'list_struct' has unsupported type STRUCT(a INTEGER)[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_map ON g19_t USING inverted(pk, list_map);
+----
+db error: ERROR: Failed to create index: Column 'list_map' has unsupported type MAP(VARCHAR, INTEGER)[] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_list_variant ON g19_t USING inverted(pk, list_variant);
+----
+db error: ERROR: Failed to create index: Column 'list_variant' has unsupported type VARIANT[] and can not be indexed
+
+
+# ----------------------------------------------------------------------------
+# (b) ARRAY<unsupported-leaf> implicit rejections. Fixed-size arrays render
+# as "<child>[N]" (types.cpp:474); the container branch path is the same as
+# LIST.
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g19_imp_arr_ubig ON g19_t USING inverted(pk, arr_ubig);
+----
+db error: ERROR: Failed to create index: Column 'arr_ubig' has unsupported type UBIGINT[3] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_arr_uhuge ON g19_t USING inverted(pk, arr_uhuge);
+----
+db error: ERROR: Failed to create index: Column 'arr_uhuge' has unsupported type UHUGEINT[3] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_arr_uuid ON g19_t USING inverted(pk, arr_uuid);
+----
+db error: ERROR: Failed to create index: Column 'arr_uuid' has unsupported type UUID[3] and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_arr_intv ON g19_t USING inverted(pk, arr_intv);
+----
+db error: ERROR: Failed to create index: Column 'arr_intv' has unsupported type INTERVAL[3] and can not be indexed
+
+
+# ARRAY<GEOMETRY('OGC:CRS84'),3>: rejected by the explicit GEOMETRY
+# special-case at inverted_index.cpp:263 (the GEOMETRY child is String-kind
+# and would otherwise be accepted, but the container branch carves it out).
+# Also pinned by g7_ga; repeated under g19_ for self-contained coverage.
+statement error
+CREATE INDEX g19_imp_arr_geom ON g19_t USING inverted(pk, arr_geom);
+----
+db error: ERROR: Failed to create index: Column 'arr_geom' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# ----------------------------------------------------------------------------
+# (c) Scalar BIT / ENUM / VARIANT implicit rejections (also pinned by g16_*;
+# replayed here as part of the g19_ self-contained implicit-role grid).
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g19_imp_bit_s ON g19_t USING inverted(pk, bit_s);
+----
+db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_enum_s ON g19_t USING inverted(pk, enum_s);
+----
+db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g19_enum_t and can not be indexed
+
+
+statement error
+CREATE INDEX g19_imp_vr ON g19_t USING inverted(pk, vr);
+----
+db error: ERROR: Failed to create index: Column 'vr' has unsupported type VARIANT and can not be indexed
+
+
+# ----------------------------------------------------------------------------
+# (d) Expression-source nested LIST<LIST<INTEGER>>: [[pk]] lowers to
+# main.list_value(main.list_value(pk)) (already pinned by bad_list_list in
+# inverted_index_expressions.test; replayed here under g19_ for completeness).
+# ----------------------------------------------------------------------------
+
+statement error
+CREATE INDEX g19_imp_expr_nested ON g19_t USING inverted(pk, ([[pk]]));
+----
+db error: ERROR: Failed to create index: Column 'main.list_value(main.list_value(pk))' has unsupported type INTEGER[][] and can not be indexed
+
+
+# ----------------------------------------------------------------------------
+# (e) Rocksdb-compatible ARRAY<scalar,3> accept-paths (column source) and
+# scalar / array expression accept-paths. Lives on a dedicated table so
+# INSERTs don't have to step around the rocksdb-incompatible columns on
+# g19_t. The implicit term_dict path accepts:
+#   - TIMESTAMP[3] / BIGINT[3] / JSON[3] / BLOB[3] / FLOAT[3] / DOUBLE[3]
+#     ARRAY columns (Classify maps each leaf to NumericI64 / String /
+#     NumericF32 / NumericF64).
+#   - BLOB / JSON / VARCHAR scalar expression (identity-wrapper via
+#     coalesce keeps the binder from constant-folding the projection away).
+#   - ARRAY<JSON,3> / ARRAY<BLOB,3> via identity expression.
+# ----------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE g19_acc_t(pk     INTEGER PRIMARY KEY,
+                       arr_ts TIMESTAMP[3],
+                       arr_bi BIGINT[3],
+                       arr_j  JSON[3],
+                       arr_b  BLOB[3],
+                       arr_f  FLOAT[3],
+                       arr_d  DOUBLE[3],
+                       b      BLOB,
+                       j      JSON,
+                       v      VARCHAR);
+
+statement ok
+CREATE INDEX g19_acc_arr_ts ON g19_acc_t USING inverted(pk, arr_ts);
+
+statement ok
+CREATE INDEX g19_acc_arr_bi ON g19_acc_t USING inverted(pk, arr_bi);
+
+statement ok
+CREATE INDEX g19_acc_arr_j ON g19_acc_t USING inverted(pk, arr_j);
+
+statement ok
+CREATE INDEX g19_acc_arr_b ON g19_acc_t USING inverted(pk, arr_b);
+
+statement ok
+CREATE INDEX g19_acc_arr_f ON g19_acc_t USING inverted(pk, arr_f);
+
+statement ok
+CREATE INDEX g19_acc_arr_d ON g19_acc_t USING inverted(pk, arr_d);
+
+statement ok
+CREATE INDEX g19_acc_expr_b ON g19_acc_t USING inverted(pk, (coalesce(b, NULL::BLOB)));
+
+statement ok
+CREATE INDEX g19_acc_expr_j ON g19_acc_t USING inverted(pk, (coalesce(j, NULL::JSON)));
+
+statement ok
+CREATE INDEX g19_acc_expr_v ON g19_acc_t USING inverted(pk, (coalesce(v, NULL::VARCHAR)));
+
+statement ok
+CREATE INDEX g19_acc_expr_arr_j ON g19_acc_t USING inverted(pk, (arr_j));
+
+statement ok
+CREATE INDEX g19_acc_expr_arr_b ON g19_acc_t USING inverted(pk, (arr_b));
+
+statement ok
+INSERT INTO g19_acc_t VALUES
+    (1,
+     [TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-02-01 00:00:00', TIMESTAMP '2024-03-01 00:00:00'],
+     [10::BIGINT, 20::BIGINT, 30::BIGINT],
+     ARRAY['"alpha"'::JSON, '"beta"'::JSON, '"gamma"'::JSON],
+     ['aa'::BLOB, 'bb'::BLOB, 'cc'::BLOB],
+     [1.0::FLOAT, 2.0::FLOAT, 3.0::FLOAT],
+     [1.5::DOUBLE, 2.5::DOUBLE, 3.5::DOUBLE],
+     'hello'::BLOB,
+     '"jvalue1"'::JSON,
+     'vvalue1'),
+    (2,
+     [TIMESTAMP '2024-06-01 00:00:00', TIMESTAMP '2024-07-01 00:00:00', TIMESTAMP '2024-08-01 00:00:00'],
+     [40::BIGINT, 50::BIGINT, 60::BIGINT],
+     ARRAY['"delta"'::JSON, '"epsilon"'::JSON, '"zeta"'::JSON],
+     ['dd'::BLOB, 'ee'::BLOB, 'ff'::BLOB],
+     [4.0::FLOAT, 5.0::FLOAT, 6.0::FLOAT],
+     [4.5::DOUBLE, 5.5::DOUBLE, 6.5::DOUBLE],
+     'world'::BLOB,
+     '"jvalue2"'::JSON,
+     'vvalue2');
+
+statement ok
+VACUUM (REFRESH_TABLE) g19_acc_t;
+
+query
+SELECT count(*) FROM g19_acc_arr_ts;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_arr_bi;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_arr_j;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_arr_b;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_arr_f;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_arr_d;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_b;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_j;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_v;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_arr_j;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_arr_b;
+----
+count
+2
+
+
+# ----------------------------------------------------------------------------
+# (f) Rocksdb-incompatible accept-paths via parquet-backed view: the catalog
+# accepts these types through term_dict (Classify -> NumericI64), but the
+# rocksdb row store refuses TIMESTAMPTZ / TIME / TIMESTAMP_MS / TIMESTAMP_NS
+# / TIMETZ / TIME_NS payloads. The parquet round-trip preserves the column
+# types while bypassing rocksdb -- same shape as m_unsup / g11_a_v.
+# ----------------------------------------------------------------------------
+
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1,
+   [TIMESTAMPTZ '2024-01-01 00:00:00+00', TIMESTAMPTZ '2024-02-01 00:00:00+00'],
+   [TIME '01:23:45', TIME '02:34:56'],
+   [TIMESTAMP_MS '2024-01-01 00:00:00', TIMESTAMP_MS '2024-02-01 00:00:00'],
+   [TIMESTAMP_NS '2024-01-01 00:00:00', TIMESTAMP_NS '2024-02-01 00:00:00'],
+   '01:23:45+02'::TIMETZ,
+   '01:23:45.123456789'::TIME_NS),
+  (2,
+   [TIMESTAMPTZ '2024-06-15 12:00:00+00', TIMESTAMPTZ '2024-07-15 12:00:00+00'],
+   [TIME '23:00:00', TIME '23:30:00'],
+   [TIMESTAMP_MS '2024-06-15 12:00:00', TIMESTAMP_MS '2024-07-15 12:00:00'],
+   [TIMESTAMP_NS '2024-06-15 12:00:00', TIMESTAMP_NS '2024-07-15 12:00:00'],
+   '23:00:00+05'::TIMETZ,
+   '23:00:00.987654321'::TIME_NS)
+) AS t(pk, list_tstz, list_tt, list_tsms, list_tsns, ttz, tns))
+TO '/tmp/sdb_g19_temporal.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g19_v AS SELECT * FROM read_parquet('/tmp/sdb_g19_temporal.parquet');
+
+statement ok
+CREATE INDEX g19_acc_list_tstz ON g19_v USING inverted(pk, list_tstz);
+
+statement ok
+CREATE INDEX g19_acc_list_tt ON g19_v USING inverted(pk, list_tt);
+
+statement ok
+CREATE INDEX g19_acc_list_tsms ON g19_v USING inverted(pk, list_tsms);
+
+statement ok
+CREATE INDEX g19_acc_list_tsns ON g19_v USING inverted(pk, list_tsns);
+
+statement ok
+CREATE INDEX g19_acc_expr_ttz ON g19_v USING inverted(pk, (coalesce(ttz, ttz)));
+
+statement ok
+CREATE INDEX g19_acc_expr_tns ON g19_v USING inverted(pk, (coalesce(tns, tns)));
+
+query
+SELECT count(*) FROM g19_acc_list_tstz;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_list_tt;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_list_tsms;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_list_tsns;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_ttz;
+----
+count
+2
+
+query
+SELECT count(*) FROM g19_acc_expr_tns;
+----
+count
+2
+
+
+
+
+# ============================================================================
+# g20 -- Text-tokenizer (kw_dict / ng_dict / any_text_dict) rejection
+# completeness for list/array of non-string children + scalar BIT/ENUM +
+# expression-source scalar INTEGER / GEOMETRY('OGC:CRS84').
+#
+# Closes the remaining gaps in text-tokenizer rejection:
+#
+#   (1) LIST<UUID>, LIST<GEOMETRY('OGC:CRS84')>, ARRAY<GEOMETRY('OGC:CRS84'),3>:
+#       term_dict::Validate rejects in the LIST/ARRAY container branch
+#       (server/catalog/inverted_index.cpp:257-266). UUID has no Classify entry
+#       (default arm -> Unsupported), and GEOMETRY children are caught by the
+#       explicit special-case at inverted_index.cpp:263.
+#       Wording: "has unsupported type X and can not be indexed".
+#
+#   (2) LIST<INTEGER>, LIST<BIGINT>, LIST<DOUBLE>, ARRAY<INTEGER,3>:
+#       term_dict::Validate passes (children classify as Numeric{I32,I64,F64}),
+#       so ValidateTokenizerVsColumn (server/catalog/index.cpp:447-469) fires
+#       next. Wording: "uses a tokenizer; must be VARCHAR, BLOB, or a
+#       LIST/ARRAY of VARCHAR/BLOB (got X)".
+#
+#   (3) ARRAY<JSON,3>: JSON's LogicalTypeId is VARCHAR (alias-tagged), so the
+#       child satisfies is_string_leaf but the !IsJSONType() guard at
+#       index.cpp:459 strips it back out. Same ValidateTokenizerVsColumn
+#       wording as (2). m_jl pinned JSON[] for kw/ng; g1 pinned any_text on
+#       LIST<JSON>; g20 adds ARRAY<JSON,3> across all three tokenizers.
+#
+#   (4) Scalar BIT, ENUM: term_dict::Classify default arm -> Unsupported.
+#       term_dict::Validate fails first with the "has unsupported type"
+#       wording. (BIT was already covered for implicit-path rejection in g16;
+#       g20 nails the kw/ng/any_text branches.)
+#
+#   (5) Expression-source scalar INTEGER and GEOMETRY('OGC:CRS84'):
+#       INTEGER classifies as NumericI32 (Supported) and GEOMETRY classifies
+#       as String (Supported, opclass is non-empty), so both reach
+#       ValidateTokenizerVsColumn -- which rejects because neither is
+#       VARCHAR/BLOB nor a LIST/ARRAY of them. The error label is the
+#       verbatim expression text for non-trivial expressions ('(n + 1)'); the
+#       +1 keeps the expression from constant-folding away. DuckDB's parser
+#       normalizes a single-identifier paren like `(g)` to a bare column
+#       reference, so the error label collapses to 'g' (not '(g)').
+#
+# kw_dict / ng_dict / any_text_dict are already declared near the top of this
+# file -- not redeclared. No rows are inserted: every cell is pure CREATE
+# INDEX rejection, so rocksdb-incompatible types (BIT, ENUM) sit safely in a
+# regular table without ever reaching the storage path.
+# ============================================================================
+
+statement ok
+CREATE TYPE g20_enum_t AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TABLE g20_t(pk     INTEGER PRIMARY KEY,
+                   list_i  INTEGER[],
+                   list_bi BIGINT[],
+                   list_d  DOUBLE[],
+                   list_u  UUID[],
+                   list_g  GEOMETRY('OGC:CRS84')[],
+                   arr_i   INTEGER[3],
+                   arr_g   GEOMETRY('OGC:CRS84')[3],
+                   arr_j   JSON[3],
+                   bit_s   BIT,
+                   enum_s  g20_enum_t,
+                   v       VARCHAR,
+                   n       INTEGER,
+                   g       GEOMETRY('OGC:CRS84'));
+
+
+# ----------------------------------------------------------------------------
+# kw_dict (keyword tokenizer)
+# ----------------------------------------------------------------------------
+
+# (a) kw_dict on LIST<INTEGER>: term_dict passes (NumericI32),
+#     ValidateTokenizerVsColumn rejects.
+statement error
+CREATE INDEX g20_kw_li ON g20_t USING inverted(pk, list_i kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+
+
+# (b) kw_dict on LIST<BIGINT>: NumericI64 child, ValidateTokenizerVsColumn.
+statement error
+CREATE INDEX g20_kw_lbi ON g20_t USING inverted(pk, list_bi kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
+
+
+# (c) kw_dict on LIST<DOUBLE>: NumericF64 child, ValidateTokenizerVsColumn.
+statement error
+CREATE INDEX g20_kw_ld ON g20_t USING inverted(pk, list_d kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
+
+
+# (d) kw_dict on LIST<UUID>: UUID classifies Unsupported (default arm), so
+#     term_dict::Validate fails in the container branch.
+statement error
+CREATE INDEX g20_kw_lu ON g20_t USING inverted(pk, list_u kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UUID[] and can not be indexed
+
+
+# (e) kw_dict on LIST<GEOMETRY('OGC:CRS84')>: explicit child-GEOMETRY guard
+#     in term_dict::Validate fires regardless of CRS.
+statement error
+CREATE INDEX g20_kw_lg ON g20_t USING inverted(pk, list_g kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# (f) kw_dict on ARRAY<INTEGER,3>: NumericI32 child, ValidateTokenizerVsColumn.
+statement error
+CREATE INDEX g20_kw_ai ON g20_t USING inverted(pk, arr_i kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
+
+
+# (g) kw_dict on ARRAY<GEOMETRY('OGC:CRS84'),3>: explicit child-GEOMETRY guard.
+statement error
+CREATE INDEX g20_kw_ag ON g20_t USING inverted(pk, arr_g kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (h) kw_dict on ARRAY<JSON,3>: JSON child is VARCHAR-aliased; is_string_leaf
+#     matches but the !IsJSONType() guard strips JSON back out, so
+#     ValidateTokenizerVsColumn rejects.
+statement error
+CREATE INDEX g20_kw_aj ON g20_t USING inverted(pk, arr_j kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
+
+
+# (i) kw_dict on scalar BIT: Classify default arm -> Unsupported,
+#     term_dict::Validate fails on the scalar branch.
+statement error
+CREATE INDEX g20_kw_bit ON g20_t USING inverted(pk, bit_s kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+
+
+# (j) kw_dict on scalar ENUM: same path; the user-visible type alias
+#     ('g20_enum_t') is what ToString surfaces.
+statement error
+CREATE INDEX g20_kw_en ON g20_t USING inverted(pk, enum_s kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+
+
+# (k) kw_dict on INTEGER expression source: term_dict accepts (NumericI32),
+#     ValidateTokenizerVsColumn rejects; the column label is the verbatim
+#     expression text. '+ 1' keeps it from constant-folding.
+statement error
+CREATE INDEX g20_kw_expr_n ON g20_t USING inverted(pk, (n + 1) kw_dict);
+----
+db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+# (l) kw_dict on GEOMETRY('OGC:CRS84') expression source: term_dict accepts
+#     (String, non-empty opclass), ValidateTokenizerVsColumn rejects. The
+#     DuckDB parser normalizes the single-identifier paren `(g)` to a bare
+#     column reference, so the error label collapses to 'g'.
+statement error
+CREATE INDEX g20_kw_expr_g ON g20_t USING inverted(pk, (g) kw_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# ----------------------------------------------------------------------------
+# ng_dict (n-gram tokenizer)
+# ----------------------------------------------------------------------------
+
+# (a) ng_dict on LIST<INTEGER>.
+statement error
+CREATE INDEX g20_ng_li ON g20_t USING inverted(pk, list_i ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+
+
+# (b) ng_dict on LIST<BIGINT>.
+statement error
+CREATE INDEX g20_ng_lbi ON g20_t USING inverted(pk, list_bi ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
+
+
+# (c) ng_dict on LIST<DOUBLE>.
+statement error
+CREATE INDEX g20_ng_ld ON g20_t USING inverted(pk, list_d ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
+
+
+# (d) ng_dict on LIST<UUID>.
+statement error
+CREATE INDEX g20_ng_lu ON g20_t USING inverted(pk, list_u ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UUID[] and can not be indexed
+
+
+# (e) ng_dict on LIST<GEOMETRY('OGC:CRS84')>: not previously covered for
+#     ng_dict on a LIST (only ARRAY at m_gl_ng_array).
+statement error
+CREATE INDEX g20_ng_lg ON g20_t USING inverted(pk, list_g ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# (f) ng_dict on ARRAY<INTEGER,3>.
+statement error
+CREATE INDEX g20_ng_ai ON g20_t USING inverted(pk, arr_i ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
+
+
+# (g) ng_dict on ARRAY<GEOMETRY('OGC:CRS84'),3>.
+statement error
+CREATE INDEX g20_ng_ag ON g20_t USING inverted(pk, arr_g ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (h) ng_dict on ARRAY<JSON,3>.
+statement error
+CREATE INDEX g20_ng_aj ON g20_t USING inverted(pk, arr_j ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
+
+
+# (i) ng_dict on scalar BIT.
+statement error
+CREATE INDEX g20_ng_bit ON g20_t USING inverted(pk, bit_s ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+
+
+# (j) ng_dict on scalar ENUM.
+statement error
+CREATE INDEX g20_ng_en ON g20_t USING inverted(pk, enum_s ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+
+
+# (k) ng_dict on INTEGER expression source.
+statement error
+CREATE INDEX g20_ng_expr_n ON g20_t USING inverted(pk, (n + 1) ng_dict);
+----
+db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+# (l) ng_dict on GEOMETRY('OGC:CRS84') expression source. Single-identifier
+#     paren collapses to bare column label 'g'.
+statement error
+CREATE INDEX g20_ng_expr_g ON g20_t USING inverted(pk, (g) ng_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+# ----------------------------------------------------------------------------
+# any_text_dict (text tokenizer)
+# ----------------------------------------------------------------------------
+
+# (a) any_text_dict on LIST<INTEGER>.
+statement error
+CREATE INDEX g20_at_li ON g20_t USING inverted(pk, list_i any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+
+
+# (b) any_text_dict on LIST<BIGINT>.
+statement error
+CREATE INDEX g20_at_lbi ON g20_t USING inverted(pk, list_bi any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
+
+
+# (c) any_text_dict on LIST<DOUBLE>.
+statement error
+CREATE INDEX g20_at_ld ON g20_t USING inverted(pk, list_d any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
+
+
+# (d) any_text_dict on LIST<UUID>.
+statement error
+CREATE INDEX g20_at_lu ON g20_t USING inverted(pk, list_u any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UUID[] and can not be indexed
+
+
+# (e) any_text_dict on LIST<GEOMETRY('OGC:CRS84')>.
+statement error
+CREATE INDEX g20_at_lg ON g20_t USING inverted(pk, list_g any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# (f) any_text_dict on ARRAY<INTEGER,3>.
+statement error
+CREATE INDEX g20_at_ai ON g20_t USING inverted(pk, arr_i any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
+
+
+# (g) any_text_dict on ARRAY<GEOMETRY('OGC:CRS84'),3>.
+statement error
+CREATE INDEX g20_at_ag ON g20_t USING inverted(pk, arr_g any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (h) any_text_dict on ARRAY<JSON,3>: g1 covered LIST<JSON> with any_text but
+#     not the fixed-size ARRAY<JSON,N> variant.
+statement error
+CREATE INDEX g20_at_aj ON g20_t USING inverted(pk, arr_j any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
+
+
+# (i) any_text_dict on scalar BIT.
+statement error
+CREATE INDEX g20_at_bit ON g20_t USING inverted(pk, bit_s any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+
+
+# (j) any_text_dict on scalar ENUM.
+statement error
+CREATE INDEX g20_at_en ON g20_t USING inverted(pk, enum_s any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+
+
+# (k) any_text_dict on INTEGER expression source.
+statement error
+CREATE INDEX g20_at_expr_n ON g20_t USING inverted(pk, (n + 1) any_text_dict);
+----
+db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+
+
+# (l) any_text_dict on GEOMETRY('OGC:CRS84') expression source. Single-identifier
+#     paren collapses to bare column label 'g'.
+statement error
+CREATE INDEX g20_at_expr_g ON g20_t USING inverted(pk, (g) any_text_dict);
+----
+db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+
+
+
+
+# ============================================================================
+# g21 -- Geo + HNSW rejection completeness
+#
+# Closes the remaining gaps in the geo-tokenizer and hnsw validators:
+#   - geo_s2_dict / geo_src_dict / geopoint_dict on ARRAY/LIST<JSON>: JSON is
+#     a VARCHAR alias so term_dict accepts the container; the geo-tokenizer
+#     validator then rejects it because col_id is ARRAY/LIST, not a JSON or
+#     GEOMETRY scalar leaf;
+#   - geo_s2_dict / geo_src_dict / geopoint_dict on ARRAY/LIST of GEOMETRY:
+#     term_dict::Validate runs before the geo-tokenizer validator and
+#     rejects LIST/ARRAY-of-GEOMETRY children with the generic
+#     "unsupported type ... and can not be indexed" message; the geo-analyzer
+#     branch never fires for these, so we assert the term_dict error;
+#   - geo_s2_dict on scalar GEOMETRY without an OGC:CRS84 annotation (CRS84
+#     validator's "no CRS attached" branch);
+#   - geo_s2_dict / geo_src_dict / geopoint_dict on expression sources that
+#     reduce to a non-geo type (VARCHAR / INTEGER / GEOMETRY-CRS84 for the
+#     geopoint JSON-only branch);
+#   - geo_src_dict on scalar BLOB (geo analyzer rejects non-GEOMETRY/non-JSON
+#     leaves, even though text-tokenizers accept BLOB);
+#   - hnsw on scalar DOUBLE (column-form, not just g5's FLOAT-scalar) and on
+#     expression sources of every wrong shape (scalar FLOAT/VARCHAR,
+#     LIST<FLOAT>, ARRAY<DOUBLE,3>, ARRAY<INTEGER,3>).
+# Parenthesized single-column-ref expressions parse as COLUMN_REF, so the
+# error message renders the bare column name (e.g. (v) -> Column 'v'); only
+# the index identifiers carry the col/expr distinction.
+# ============================================================================
+
+statement ok
+CREATE TABLE g21_t(pk INTEGER PRIMARY KEY,
+                   arr_g GEOMETRY('OGC:CRS84')[3], arr_j JSON[3],
+                   list_g GEOMETRY('OGC:CRS84')[], list_j JSON[],
+                   g_nocrs GEOMETRY,
+                   b BLOB, v VARCHAR, n INTEGER, dbl DOUBLE,
+                   f_scalar FLOAT,
+                   emb_list FLOAT[],
+                   arr_d DOUBLE[3], arr_i INTEGER[3],
+                   g_crs84 GEOMETRY('OGC:CRS84'));
+
+# --- geo_s2_dict rejections -------------------------------------------------
+
+# (a) ARRAY<GEOMETRY-CRS84>: term_dict::Validate runs first and rejects
+# LIST/ARRAY-of-GEOMETRY before the geo-tokenizer is consulted.
+statement error
+CREATE INDEX g21_s2_col_arr_g ON g21_t USING inverted(pk, arr_g geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (b) ARRAY<JSON>: JSON is VARCHAR-aliased so term_dict accepts the container;
+# the geo-tokenizer validator then rejects it because col_id is ARRAY.
+statement error
+CREATE INDEX g21_s2_col_arr_j ON g21_t USING inverted(pk, arr_j geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_j' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# (c) Scalar GEOMETRY with no CRS attached -> CRS84 validator's no-CRS branch.
+statement error
+CREATE INDEX g21_s2_col_nocrs ON g21_t USING inverted(pk, g_nocrs geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+
+
+# (d) Expression-source scalar VARCHAR -> geo-tokenizer rejects non-geo leaf.
+statement error
+CREATE INDEX g21_s2_expr_v ON g21_t USING inverted(pk, (v) geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# (e) Expression-source scalar INTEGER -> same.
+statement error
+CREATE INDEX g21_s2_expr_n ON g21_t USING inverted(pk, (n) geo_s2_dict);
+----
+db error: ERROR: Failed to create index: Column 'n' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# --- geo_src_dict rejections ------------------------------------------------
+
+# (f) ARRAY<GEOMETRY-CRS84>: term_dict rejects ARRAY-of-GEOMETRY first.
+statement error
+CREATE INDEX g21_src_col_arr_g ON g21_t USING inverted(pk, arr_g geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (g) LIST<GEOMETRY-CRS84>: term_dict rejects LIST-of-GEOMETRY first.
+statement error
+CREATE INDEX g21_src_col_list_g ON g21_t USING inverted(pk, list_g geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+
+
+# (h) LIST<JSON>: JSON is VARCHAR-aliased, so term_dict accepts; geo-tokenizer
+# then rejects the LIST container.
+statement error
+CREATE INDEX g21_src_col_list_j ON g21_t USING inverted(pk, list_j geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'list_j' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# (i) Scalar BLOB: text-tokenizers accept BLOB, but geo analyzers reject it.
+statement error
+CREATE INDEX g21_src_col_b ON g21_t USING inverted(pk, b geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'b' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# (j) Expression-source scalar VARCHAR.
+statement error
+CREATE INDEX g21_src_expr_v ON g21_t USING inverted(pk, (v) geo_src_dict);
+----
+db error: ERROR: Failed to create index: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# --- geopoint_dict rejections -----------------------------------------------
+
+# (k) ARRAY<GEOMETRY-CRS84>: term_dict rejects ARRAY-of-GEOMETRY first.
+statement error
+CREATE INDEX g21_gp_col_arr_g ON g21_t USING inverted(pk, arr_g geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+
+
+# (l) ARRAY<JSON>: term_dict accepts; geo-tokenizer then rejects the container.
+statement error
+CREATE INDEX g21_gp_col_arr_j ON g21_t USING inverted(pk, arr_j geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'arr_j' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# (m) Expression-source GEOMETRY('OGC:CRS84'): CRS84 passes, then the
+# geopoint-specific JSON-only message fires.
+statement error
+CREATE INDEX g21_gp_expr_g_crs84 ON g21_t USING inverted(pk, (g_crs84) geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'g_crs84' is GEOMETRY but the analyzer is geopoint; geopoint's latitude/longitude paths are JSON-only -- use a geojson analyzer for GEOMETRY columns
+
+
+# (n) Expression-source scalar VARCHAR: geo-tokenizer rejection.
+statement error
+CREATE INDEX g21_gp_expr_v ON g21_t USING inverted(pk, (v) geopoint_dict);
+----
+db error: ERROR: Failed to create index: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# --- hnsw rejections --------------------------------------------------------
+
+# (o) Column-form scalar DOUBLE: must be ARRAY(FLOAT, N).
+statement error
+CREATE INDEX g21_hnsw_col_dbl ON g21_t USING inverted(pk, dbl hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'dbl' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not DOUBLE
+
+
+# (p) Expression-source scalar FLOAT: still not ARRAY.
+statement error
+CREATE INDEX g21_hnsw_expr_f ON g21_t USING inverted(pk, (f_scalar) hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'f_scalar' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+
+
+# (q) Expression-source scalar VARCHAR: not ARRAY at all.
+statement error
+CREATE INDEX g21_hnsw_expr_v ON g21_t USING inverted(pk, (v) hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not VARCHAR
+
+
+# (r) Expression-source LIST<FLOAT>: variable-length, not fixed ARRAY.
+statement error
+CREATE INDEX g21_hnsw_expr_emb_list ON g21_t USING inverted(pk, (emb_list) hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'emb_list' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT[]
+
+
+# (s) Expression-source ARRAY<DOUBLE,3>: element type must be FLOAT.
+statement error
+CREATE INDEX g21_hnsw_expr_arr_d ON g21_t USING inverted(pk, (arr_d) hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'arr_d' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not DOUBLE[3]
+
+
+# (t) Expression-source ARRAY<INTEGER,3>: element type must be FLOAT.
+statement error
+CREATE INDEX g21_hnsw_expr_arr_i ON g21_t USING inverted(pk, (arr_i) hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'arr_i' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+
+
+
+
+# ============================================================================
+# g22 -- INCLUDE_ONLY column-scalar coverage for missing types.
+#
+# included::Validate (server/catalog/inverted_index.cpp:282-333) accepts a
+# wide whitelist that g6 sampled but did not exhaust. This block pins
+# INCLUDE-only acceptance for the remaining accepted leaves and the
+# container shapes that g7 / g9 didn't put in INCLUDE position:
+#
+#   direct table (g22_t):
+#     - BIT
+#     - ENUM (user-defined)
+#     - VARCHAR[]      LIST<VARCHAR>
+#     - INTEGER[]      LIST<INTEGER>
+#     - VARCHAR[3]     ARRAY<VARCHAR,3>
+#     - INTEGER[3]     ARRAY<INTEGER,3>
+#     - GEOMETRY('OGC:CRS84')[3]   ARRAY<GEOMETRY,3>
+#     - LIST<MAP(VARCHAR,INTEGER)>
+#     - LIST<STRUCT(a INTEGER)>
+#     - LIST<VARIANT>
+#
+#   view-backed (g22_v_unsup) -- rocksdb refuses to serialize these as
+#   live-table columns, but a parquet-fed view bypasses that and the index
+#   still accepts them on the INCLUDE side:
+#     - UBIGINT
+#     - UHUGEINT
+#     - TIME
+#     - TIME_NS
+#     - TIME_TZ
+#
+# Each cell is one CREATE INDEX ... USING inverted INCLUDE (col) on a
+# pk-only indexed position (the canonical INCLUDE-only spelling, mirroring
+# m_pk_only / m_unsup_inc). 2 rows are inserted; count(*) verifies the
+# index materialized.
+# ============================================================================
+
+statement ok
+CREATE TYPE g22_enum_t AS ENUM ('x','y','z');
+
+statement ok
+CREATE TABLE g22_t(pk INTEGER PRIMARY KEY,
+                   vl VARCHAR[],
+                   il INTEGER[],
+                   va VARCHAR[3],
+                   ia INTEGER[3],
+                   ga GEOMETRY('OGC:CRS84')[3],
+                   lm MAP(VARCHAR, INTEGER)[],
+                   ls STRUCT(a INTEGER)[],
+                   lv VARIANT[]);
+
+# BIT and ENUM scalars are rocksdb-incompatible; INCLUDE-only coverage for
+# them lives in g16 (implicit-rejection block) and m_unsup-style view-backed
+# follow-ups elsewhere. Skipping direct-table INCLUDE-only here.
+
+statement ok
+CREATE INDEX g22_inc_vl ON g22_t USING inverted INCLUDE (vl);
+
+statement ok
+CREATE INDEX g22_inc_il ON g22_t USING inverted INCLUDE (il);
+
+statement ok
+CREATE INDEX g22_inc_va ON g22_t USING inverted INCLUDE (va);
+
+statement ok
+CREATE INDEX g22_inc_ia ON g22_t USING inverted INCLUDE (ia);
+
+statement ok
+CREATE INDEX g22_inc_ga ON g22_t USING inverted INCLUDE (ga);
+
+statement ok
+CREATE INDEX g22_inc_lm ON g22_t USING inverted INCLUDE (lm);
+
+statement ok
+CREATE INDEX g22_inc_ls ON g22_t USING inverted INCLUDE (ls);
+
+statement ok
+CREATE INDEX g22_inc_lv ON g22_t USING inverted INCLUDE (lv);
+
+statement ok
+INSERT INTO g22_t VALUES
+    (1, ['alpha','beta'], [10, 20],
+        ['p','q','r'], [1, 2, 3],
+        ['POINT(0 0)'::GEOMETRY('OGC:CRS84'),
+         'POINT(1 1)'::GEOMETRY('OGC:CRS84'),
+         'POINT(2 2)'::GEOMETRY('OGC:CRS84')],
+        [MAP {'k1': 1}, MAP {'k2': 2}],
+        [ROW(10)::STRUCT(a INTEGER), ROW(20)::STRUCT(a INTEGER)],
+        [42::VARIANT, 'hello'::VARIANT]),
+    (2, ['gamma'], [30],
+        ['s','t','u'], [4, 5, 6],
+        ['POINT(3 3)'::GEOMETRY('OGC:CRS84'),
+         'POINT(4 4)'::GEOMETRY('OGC:CRS84'),
+         'POINT(5 5)'::GEOMETRY('OGC:CRS84')],
+        [MAP {'k3': 3}],
+        [ROW(30)::STRUCT(a INTEGER)],
+        ['world'::VARIANT]);
+
+statement ok
+VACUUM (REFRESH_TABLE) g22_t;
+
+query
+SELECT count(*) FROM g22_inc_vl;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_il;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_va;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_ia;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_ga;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_lm;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_ls;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_lv;
+----
+count
+2
+
+# View-backed sidecar for rocksdb-incompatible types accepted by
+# included::Validate but not by the rocksdb columnstore: UBIGINT, UHUGEINT,
+# TIME, TIME_NS, TIME_TZ. Same parquet-fed-view trick m_unsup / g6_v_unsup
+# use to land these values in a column the inverted index can read.
+statement count 2
+COPY (SELECT * FROM (VALUES
+  (1, 1000000000000::UBIGINT,
+      1234567890123456789::UHUGEINT,
+      TIME '00:00:00',
+      TIME_NS '00:00:00',
+      TIMETZ '00:00:00+00'),
+  (2, 9000000000000::UBIGINT,
+      9876543210987654321::UHUGEINT,
+      TIME '12:34:56',
+      TIME_NS '12:34:56',
+      TIMETZ '12:34:56+00')
+) AS t(pk, ub, uh, tt, tn, ttz))
+TO '/tmp/sdb_g22_unsup.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW g22_v_unsup AS SELECT * FROM read_parquet('/tmp/sdb_g22_unsup.parquet');
+
+statement ok
+CREATE INDEX g22_inc_ub ON g22_v_unsup USING inverted INCLUDE (ub);
+
+statement ok
+CREATE INDEX g22_inc_uh ON g22_v_unsup USING inverted INCLUDE (uh);
+
+statement ok
+CREATE INDEX g22_inc_tt ON g22_v_unsup USING inverted INCLUDE (tt);
+
+statement ok
+CREATE INDEX g22_inc_tn ON g22_v_unsup USING inverted INCLUDE (tn);
+
+statement ok
+CREATE INDEX g22_inc_ttz ON g22_v_unsup USING inverted INCLUDE (ttz);
+
+query
+SELECT count(*) FROM g22_inc_ub;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_uh;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_tt;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_tn;
+----
+count
+2
+
+query
+SELECT count(*) FROM g22_inc_ttz;
+----
+count
+2

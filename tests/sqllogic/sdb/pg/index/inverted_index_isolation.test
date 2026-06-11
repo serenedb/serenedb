@@ -1,0 +1,149 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE t (id INT, body TEXT);
+
+
+statement ok
+CREATE INDEX t_idx ON t USING inverted(body test_english);
+
+
+statement ok
+INSERT INTO t VALUES (1, 'foo');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+connection reader
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+
+connection reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection reader
+query
+SELECT id FROM t_idx WHERE body @@ ts_phrase('foo') ORDER BY id;
+----
+id
+1
+
+
+connection writer
+statement ok
+INSERT INTO t VALUES (2, 'foo');
+
+
+connection writer
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+
+# Same query in the reader's transaction must return the pinned result.
+connection reader
+query
+SELECT id FROM t_idx WHERE body @@ ts_phrase('foo') ORDER BY id;
+----
+id
+1
+
+
+connection reader
+statement ok
+COMMIT;
+
+connection reader_rc
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+
+connection reader_rc
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+
+connection reader_rc
+query
+SELECT id FROM t_idx WHERE body @@ ts_phrase('foo') ORDER BY id;
+----
+id
+1
+2
+
+
+connection writer
+statement ok
+INSERT INTO t VALUES (3, 'foo');
+
+
+connection writer
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+
+connection reader_rc
+query
+SELECT id FROM t_idx WHERE body @@ ts_phrase('foo') ORDER BY id;
+----
+id
+1
+2
+3
+
+
+connection reader_rc
+statement ok
+COMMIT;
+
+connection reader_bare
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+
+connection reader_bare
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection reader_bare
+query
+SELECT id FROM t_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+
+connection writer
+statement ok
+DROP TABLE t;
+
+
+connection reader_bare
+query
+SELECT id FROM t_idx ORDER BY id;
+----
+id
+1
+2
+3
+
+
+connection reader_bare
+statement ok
+COMMIT;

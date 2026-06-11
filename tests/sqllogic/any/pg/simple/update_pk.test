@@ -69,7 +69,7 @@ QUERY PLAN
 │       Filter: (a=2)       │
 │       Projections: a      │
 │                           │
-│          ~3 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 

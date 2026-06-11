@@ -1,0 +1,145 @@
+control substitution on
+
+# WAL recovery for a geo-tokenized column using the `source` coding.
+#
+# Counterpart to wal_index_recovery_geo_no_include.test: same indexing and
+# data, but the dictionary uses `coding = 'source'` instead of 's2point'.
+# Under source coding the geo column is force-included into the columnstore
+# (entry.store_values=true) and re-parsed at query time -- the analyzer
+# writes NO StoreAttr aux blob. Because the column is always force-included,
+# `SELECT geo` is served from cs (NOT from a RocksDB fallback) even though
+# the index has no explicit INCLUDE clause, and the plan annotates the
+# projections `geo (i)` / `pk (l)`.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wal_geo_src_dict(
+    template = 'geojson',
+    coding = 'source'
+);
+
+statement ok
+CREATE TABLE wal_geo_src_t(pk INTEGER PRIMARY KEY, geo JSON);
+
+statement ok
+INSERT INTO wal_geo_src_t VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}');
+
+# Indexed (geo analyzer for distance), NO explicit INCLUDE -- source coding
+# force-includes the column anyway.
+statement ok
+CREATE INDEX wal_geo_src_idx ON wal_geo_src_t
+  USING inverted(geo wal_geo_src_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) wal_geo_src_t;
+
+# Plan: filter served by inverted-index posting; the `geo` projection reads
+# the force-included cs column (`geo (i)` / `pk (l)`), no RocksDB fallback.
+query
+EXPLAIN SELECT pk, geo FROM wal_geo_src_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             pk            │
+│            geo            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      wal_geo_src_idx      │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[GEO_DISTANCE[geo   │
+│    (string), *, <1000]]   │
+│                           │
+│        Projections:       │
+│          geo (i)          │
+│           pk (l)          │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+# Pre-crash row: geo distance query works against on-disk segment.
+query
+SELECT pk FROM wal_geo_src_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0
+ORDER BY pk;
+----
+pk
+1
+
+# Pre-crash row: SELECT geo returns raw GeoJSON (read from the force-included
+# cs column -- source coding stores the raw source, no aux blob).
+query
+SELECT pk, geo FROM wal_geo_src_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+pk	geo
+1	{"type":"Point","coordinates":[37.615895,55.703900]}
+
+# Freeze iresearch commits BEFORE the second batch.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_geo_src_t VALUES
+  (2, '{"type":"Point","coordinates":[2.349014,48.864716]}'),
+  (3, '{"type":"Point","coordinates":[-74.005941,40.712784]}');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- server restarts here ---
+
+connection wal_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) wal_geo_src_t;
+
+# Pre-crash row still queryable.
+connection wal_after
+query
+SELECT pk FROM wal_geo_src_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 1000.0;
+----
+pk
+1
+
+# Post-crash rows queryable by geo distance (inverted-index side rebuilt;
+# the filter re-parses the force-included source column).
+connection wal_after
+query
+SELECT pk FROM wal_geo_src_idx
+WHERE geo <-> '{"type":"Point","coordinates":[2.35,48.86]}' < 1000.0;
+----
+pk
+2
+
+connection wal_after
+query
+SELECT pk FROM wal_geo_src_idx
+WHERE geo <-> '{"type":"Point","coordinates":[-74.0,40.71]}' < 1000.0;
+----
+pk
+3
+
+# All three rows visible and `geo` returns the raw GeoJSON (from the
+# force-included cs column).
+connection wal_after
+query
+SELECT pk, geo FROM wal_geo_src_idx ORDER BY pk;
+----
+pk	geo
+1	{"type":"Point","coordinates":[37.615895,55.703900]}
+2	{"type":"Point","coordinates":[2.349014,48.864716]}
+3	{"type":"Point","coordinates":[-74.005941,40.712784]}

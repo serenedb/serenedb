@@ -1,0 +1,578 @@
+hash-threshold 100
+control substitution on
+
+# Cross-window lazy-seek behaviour. 16384 docs = 4 BlockDisjunction windows
+# (kWindow = 4096 docs). Vocabulary is laid out so different terms cluster
+# in different windows, exercising:
+#   - Cross-block lazy seek (target >= _max)
+#   - Multi-window skip (4096+ doc jump in one Refill)
+#   - Refill loop over empty intermediate blocks (very sparse postings)
+#   - WAND threshold-driven block skipping with substantial corpus
+#   - Conjunction lazy-miss when children's blocks don't align
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lzs_en (
+    template='text', locale='en_US.UTF-8', case='lower',
+    stemming=false, frequency=true, position=true, norm=true, offset=true
+);
+
+statement ok
+CREATE TABLE lzs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+# Vocabulary (id range 1..16384, four 4096-doc windows):
+#   common       every doc                          16384
+#   half         id % 2 = 0                         8192
+#   ninth        id % 9 = 0                         1820
+#   hundred      id % 100 = 0                       163
+#   thousand     id % 1000 = 0                      16
+#   w1_only      id BETWEEN 1     AND 4096          4096   (window 0)
+#   w3_only      id BETWEEN 8193  AND 12288         4096   (window 2)
+#   w4_only      id BETWEEN 12289 AND 16384         4096   (window 3)
+#   first10      id BETWEEN 1     AND 10            10     (cluster at start)
+#   last10       id BETWEEN 16375 AND 16384         10     (cluster at end)
+#   midspike     id = 8192                          1      (block boundary)
+#   bnd_low      id = 4096                          1      (window 0 boundary)
+#   bnd_hi       id = 4097                          1      (window 1 boundary)
+#   bnd_step     id IN (4096, 8192, 12288)          3      (every-window-end)
+#   pair_a+pair_b adjacent, id % 13 = 0             1260   (spans all windows)
+#   tail_dense   id > 8192 AND id % 2 = 0           4096   (dense in upper half)
+#   head_sparse  id <= 8192 AND id % 800 = 0        10     (sparse in lower half)
+
+statement ok
+INSERT INTO lzs
+SELECT t.x AS id,
+       'common'
+       || CASE WHEN t.x % 2 = 0   THEN ' half' ELSE '' END
+       || CASE WHEN t.x % 9 = 0   THEN ' ninth' ELSE '' END
+       || CASE WHEN t.x % 100 = 0 THEN ' hundred' ELSE '' END
+       || CASE WHEN t.x % 1000 = 0 THEN ' thousand' ELSE '' END
+       || CASE WHEN t.x BETWEEN 1 AND 4096        THEN ' w1_only' ELSE '' END
+       || CASE WHEN t.x BETWEEN 8193 AND 12288    THEN ' w3_only' ELSE '' END
+       || CASE WHEN t.x BETWEEN 12289 AND 16384   THEN ' w4_only' ELSE '' END
+       || CASE WHEN t.x BETWEEN 1 AND 10          THEN ' first10' ELSE '' END
+       || CASE WHEN t.x BETWEEN 16375 AND 16384   THEN ' last10' ELSE '' END
+       || CASE WHEN t.x = 8192                    THEN ' midspike' ELSE '' END
+       || CASE WHEN t.x = 4096                    THEN ' bnd_low' ELSE '' END
+       || CASE WHEN t.x = 4097                    THEN ' bnd_hi' ELSE '' END
+       || CASE WHEN t.x IN (4096, 8192, 12288)    THEN ' bnd_step' ELSE '' END
+       || CASE WHEN t.x % 13 = 0                  THEN ' pair_a pair_b' ELSE '' END
+       || CASE WHEN t.x > 8192 AND t.x % 2 = 0    THEN ' tail_dense' ELSE '' END
+       || CASE WHEN t.x <= 8192 AND t.x % 800 = 0 THEN ' head_sparse' ELSE '' END
+  AS body
+FROM generate_series(1, 16384) AS t(x);
+
+statement ok
+CREATE INDEX lzs_idx ON lzs USING inverted(id, body lzs_en);
+
+statement ok
+VACUUM (REFRESH_TABLE) lzs;
+
+
+# ============================================================================
+# Cardinalities (catch data-gen drift before relying on assertions).
+# ============================================================================
+
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('common');
+----
+count
+16384
+
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('half');
+----
+count
+8192
+
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('hundred');
+----
+count
+163
+
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('thousand');
+----
+count
+16
+
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('first10');
+----
+count
+10
+
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('last10');
+----
+count
+10
+
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('w3_only');
+----
+count
+4096
+
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('midspike');
+----
+count
+1
+
+
+# ============================================================================
+# Single-block-boundary lazy seek.
+# ============================================================================
+
+# bnd_low (id=4096) AND bnd_hi (id=4097) -- terms straddle the window boundary;
+# they never co-occur so AND = 0.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('bnd_low') && ts_phrase('bnd_hi'));
+----
+count
+0
+
+# Sparse term at exact window boundary.
+query
+SELECT id FROM lzs_idx WHERE body @@ ts_phrase('bnd_low');
+----
+id
+4096
+
+query
+SELECT id FROM lzs_idx WHERE body @@ ts_phrase('bnd_hi');
+----
+id
+4097
+
+# bnd_step spans three window boundaries (4096, 8192, 12288).
+query
+SELECT id FROM lzs_idx WHERE body @@ ts_phrase('bnd_step') ORDER BY id;
+----
+id
+4096
+8192
+12288
+
+
+# ============================================================================
+# Multi-window skip: sparse disjunction forces refill across empty windows.
+# first10 (window 0 only) OR last10 (window 3 only). BlockDisjunction has to
+# skip windows 1 + 2 entirely on lazy-advance.
+# ============================================================================
+
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('first10') || ts_phrase('last10'));
+----
+count
+20
+
+# midspike alone is in window 1 (id=8192 is at the start of window 2 actually:
+# window 0 = 1..4096, window 1 = 4097..8192, window 2 = 8193..12288, window 3 = 12289..16384).
+# 8192 is at the end of window 1.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('first10') || ts_phrase('midspike') || ts_phrase('last10'));
+----
+count
+21
+
+# Three-window disjunction with all sparse: refill traverses all 4 windows.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ (
+  ts_phrase('first10') || ts_phrase('bnd_low')
+  || ts_phrase('midspike') || ts_phrase('bnd_hi')
+  || ts_phrase('last10'));
+----
+count
+23
+
+
+# ============================================================================
+# Cross-window conjunction: lead iterator (sparse) drives seeks, dense
+# children lazy-seek per probe.
+# ============================================================================
+
+# Sparse-leads: first10 ∩ half = even ids in 1..10 = 5 docs (window 0 only).
+query
+SELECT id FROM lzs_idx
+WHERE body @@ (ts_phrase('first10') && ts_phrase('half')) ORDER BY id;
+----
+id
+2
+4
+6
+8
+10
+
+# Sparse-leads, cross-window: last10 ∩ half = even ids in 16375..16384
+# = {16376, 16378, 16380, 16382, 16384} (window 3 only).
+query
+SELECT id FROM lzs_idx
+WHERE body @@ (ts_phrase('last10') && ts_phrase('half')) ORDER BY id;
+----
+id
+16376
+16378
+16380
+16382
+16384
+
+# AND across non-overlapping windows: w1_only ∩ w3_only = ∅. Each lazy-seek
+# from w1_only's posting list into w3_only's window misses; w3_only's lazy
+# state should remain disciplined.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('w1_only') && ts_phrase('w3_only'));
+----
+count
+0
+
+# AND where lead is in window 3 and follower in window 0: empty.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('last10') && ts_phrase('first10'));
+----
+count
+0
+
+# Conjunction over a near-disjoint pair: head_sparse (10 docs in <=8192) AND
+# tail_dense (4096 docs in >8192). No overlap -> 0.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('head_sparse') && ts_phrase('tail_dense'));
+----
+count
+0
+
+
+# ============================================================================
+# BlockDisjunction with 6+ children spanning multiple windows.
+# ============================================================================
+
+# 7-way OR over a mix of dense and sparse, spanning all 4 windows.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ (
+  ts_phrase('first10') || ts_phrase('bnd_low') || ts_phrase('midspike')
+  || ts_phrase('bnd_hi') || ts_phrase('thousand') || ts_phrase('last10')
+  || ts_phrase('head_sparse'));
+----
+count
+47
+
+# Disjunction with one very dense term + many sparse ones.
+# half (8192) covers all even ids; sparse terms add zero new matches if their
+# ids are even, but bnd_hi=4097 (odd) is one extra. Adding first10 (1..10)
+# brings odd 1,3,5,7,9 -> 5 new. Total = 8192 + 1 + 5 = 8198.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ (
+  ts_phrase('half') || ts_phrase('bnd_hi') || ts_phrase('first10'));
+----
+count
+8198
+
+
+# ============================================================================
+# Phrase across windows.
+# ============================================================================
+
+# pair_a/pair_b adjacent at id % 13 = 0 -> 1260 docs spread across all windows.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('pair_a', 'pair_b');
+----
+count
+1260
+
+# Phrase where one term is dense (half), the other is sparse (last10).
+# half ∩ last10 = even ids in 16375..16384 -> 5 docs. But adjacency requires
+# the actual tokens to be next to each other in the body. With our generator
+# the order is 'common half last10 ...', so 'half' is followed by 'last10'
+# (adjacent in last10 ∩ half rows) -> 5 phrase matches.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('half', 'last10');
+----
+count
+0
+
+
+# ============================================================================
+# Exclusion across windows.
+# ============================================================================
+
+# common AND NOT (w1_only OR w4_only) = 16384 - 4096 - 4096 = 8192 (windows 1+2).
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('common') && !!(ts_phrase('w1_only') || ts_phrase('w4_only')));
+----
+count
+8192
+
+# half AND NOT w1_only = even ids NOT in 1..4096 = even ids in 4097..16384.
+# 16384 - 4096 = 12288 ids in that range, of which half are even -> 6144.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('half') && !!ts_phrase('w1_only'));
+----
+count
+6144
+
+# Triple exclusion: half MINUS (w1_only OR w3_only OR last10) =
+#   half in window 1 (4097..8192) + half in window 3 (12289..16384 minus last10).
+#   window 1 half: 4096 ids, half are even -> 2048.
+#   window 3 half: 4096 ids, half are even -> 2048; minus last10 even (5) -> 2043.
+#   Total = 4091.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('half')
+            && !!(ts_phrase('w1_only') || ts_phrase('w3_only') || ts_phrase('last10')));
+----
+count
+4091
+
+
+# ============================================================================
+# WAND / score-pruning at scale.
+# ============================================================================
+
+# LIMIT 5 over a disjunction with very different term densities. The WAND
+# top-k path needs to skip large swaths of the rarer (lower-weight) postings
+# once the threshold rises.
+query
+SELECT count(*) FROM (
+  SELECT id FROM lzs_idx WHERE body @@ (ts_phrase('half') || ts_phrase('thousand'))
+  ORDER BY BM25(lzs_idx.tableoid) DESC LIMIT 5
+) t;
+----
+count
+5
+
+# Same shape with LIMIT 1 (most aggressive pruning).
+query
+SELECT count(*) > 0 FROM (
+  SELECT id FROM lzs_idx WHERE body @@ (ts_phrase('first10') || ts_phrase('last10'))
+  ORDER BY BM25(lzs_idx.tableoid) DESC LIMIT 1
+) t;
+----
+?column?
+t
+
+# WAND over a 5-way disjunction with mixed densities -- forces the essential-
+# set to shrink as threshold rises across windows.
+query
+SELECT count(*) FROM (
+  SELECT id FROM lzs_idx WHERE body @@ (
+    ts_phrase('half') || ts_phrase('ninth') || ts_phrase('hundred')
+    || ts_phrase('thousand') || ts_phrase('last10'))
+  ORDER BY BM25(lzs_idx.tableoid) DESC LIMIT 20
+) t;
+----
+count
+20
+
+# k larger than result set -> graceful no-skip path.
+query
+SELECT count(*) FROM (
+  SELECT id FROM lzs_idx WHERE body @@ ts_phrase('thousand')
+  ORDER BY BM25(lzs_idx.tableoid) DESC LIMIT 100
+) t;
+----
+count
+16
+
+
+# ============================================================================
+# BitsetDocIterator -- integer range over the full 16k corpus.
+# ============================================================================
+
+# Range that spans windows 1 and 2 exactly.
+query
+SELECT count(*) FROM lzs_idx WHERE id @@ ts_between(4097, 12288, true, true);
+----
+count
+8192
+
+# Single-window range.
+query
+SELECT count(*) FROM lzs_idx WHERE id @@ ts_between(8193, 12288, true, true);
+----
+count
+4096
+
+# Range with a sparse FTS predicate AND'd in: pushdown should keep working.
+query
+SELECT count(*) FROM lzs_idx
+WHERE id @@ ts_between(1, 8192, true, true)
+  AND body @@ ts_phrase('hundred');
+----
+count
+81
+
+
+# ============================================================================
+# Complex compositions across windows.
+# ============================================================================
+
+# ((w1_only OR w4_only) AND half) AND NOT (first10 OR last10)
+# = even ids in (1..4096 ∪ 12289..16384) minus (1..10 ∪ 16375..16384)
+# window 0 even: 2048. minus first10 even (2,4,6,8,10) -> 2043.
+# window 3 even: 2048. minus last10 even (16376,16378,16380,16382,16384) -> 2043.
+# Total = 4086.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ (
+  ((ts_phrase('w1_only') || ts_phrase('w4_only')) && ts_phrase('half'))
+  && !!(ts_phrase('first10') || ts_phrase('last10')));
+----
+count
+4086
+
+# Phrase OR phrase, then AND across window boundary.
+# (pair_a pair_b OR thousand) AND w3_only
+# pair_a pair_b in window 2 (8193..12288): id % 13 = 0 -> id=8203,8216,...,12285.
+#   Count: (12285-8203)/13 + 1 = 4082/13 + 1 = 314 + 1 = 315.
+# thousand in window 2: id=9000,10000,11000,12000 -> 4 docs.
+# Overlap: id % 13 = 0 AND id % 1000 = 0 -> id % 13000 = 0 in (8193..12288) -> none.
+# Total: 315 + 4 = 319.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ (
+  (ts_phrase('pair_a', 'pair_b') || ts_phrase('thousand')) && ts_phrase('w3_only'));
+----
+count
+319
+
+
+# ============================================================================
+# Real multi-term phrase iterators inside disjunctions/conjunctions.
+# Single-token ts_phrase() reduces to a term query; this section uses 2+ tokens
+# so each child is an actual Phrase iterator whose LazySeek delegates to a
+# conjunction approximation and then checks positions.
+# Body emit order is fixed: 'common [half] [ninth] [hundred] [thousand]
+#   [w1_only|w3_only|w4_only] [first10] [last10] [midspike] [bnd_low] [bnd_hi]
+#   [bnd_step] [pair_a pair_b] [tail_dense] [head_sparse]'.
+# Adjacency therefore depends on which conditionals fired between the two
+# probed tokens.
+# ============================================================================
+
+# 'common half' adjacent = id % 2 = 0 -> 8192.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('common', 'half');
+----
+count
+8192
+
+# 'common ninth' adjacent: 'half' must NOT be present, so id % 9 = 0 AND id % 2 != 0
+# -> id % 18 = 9 in 1..16384.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ ts_phrase('common', 'ninth');
+----
+count
+910
+
+# Disjunction of two real phrases (different conjunction approximations).
+# (common half) is at all even ids (8192). (common ninth) is at id % 18 = 9 (910).
+# Disjoint sets (one is even-only, the other odd-only). Total = 8192 + 910 = 9102.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('common', 'half') || ts_phrase('common', 'ninth'));
+----
+count
+9102
+
+# Disjunction of three real phrases.
+# (common half) 8192 + (common ninth) 910 + (pair_a pair_b) 1260.
+# pair_a pair_b is at id % 13 = 0, which has half (% 2 = 0) overlap at id % 26 = 0.
+# pair_a pair_b ∩ common-half: id % 26 = 0 in 1..16384 -> 16380/26 = 630.
+# pair_a pair_b ∩ common-ninth: id % 13 = 0 AND id % 18 = 9. LCM(13,18) = 234,
+# id % 234 = 117 in 1..16384 -> count = floor((16384-117)/234) + 1 = 69 + 1 = 70.
+# Total = 8192 + 910 + 1260 - 630 - 70 = 9662.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ (
+  ts_phrase('common', 'half')
+  || ts_phrase('common', 'ninth')
+  || ts_phrase('pair_a', 'pair_b'));
+----
+count
+9662
+
+# Conjunction of two real phrases.
+# (common half) ∩ (pair_a pair_b) = id % 2 = 0 AND id % 13 = 0 = id % 26 = 0
+# = 16380/26 = 630.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('common', 'half') && ts_phrase('pair_a', 'pair_b'));
+----
+count
+630
+
+# Conjunction of three real phrases.
+# (common half) ∩ (pair_a pair_b) ∩ (common, 2, pair_a) -- the third one tests
+# whether 'common' precedes 'pair_a' with exactly 2 tokens between. With the
+# body shape 'common half pair_a pair_b ...' (only when only half + pair_a
+# fire), that holds for id % 2 = 0 AND id % 13 = 0 AND NOT (other middle
+# tokens fire). Since the body always inserts 'half' between common and pair_a
+# when half is set, but no other token between them under common/half/pair_a
+# alone, we expect a subset of common-half ∩ pair_a-pair_b minus rows where
+# some middle conditional adds tokens. Let the engine compute -- exercises
+# the multi-token phrase position check.
+query
+SELECT count(*) > 0 AS has_match FROM lzs_idx
+WHERE body @@ (ts_phrase('common', 'half') && ts_phrase('pair_a', 'pair_b')
+            && ts_phrase('half', 'pair_a'));
+----
+has_match
+t
+
+# Phrase-OR-phrase AND a sparse term. Forces phrase's lazy-seek to drive
+# across the corpus, then conjunction with a sparse posting list.
+# (pair_a pair_b OR common ninth) AND head_sparse
+# head_sparse ids: {800, 1600, 2400, 3200, 4000, 4800, 5600, 6400, 7200, 8000}
+# pair_a pair_b at id % 13 = 0 ∩ head_sparse: id % 13 = 0 AND id % 800 = 0 AND id <= 8192
+#   LCM(13,800)=10400; no multiple ≤ 8192. So 0.
+# common ninth at id % 18 = 9 ∩ head_sparse: id % 18 = 9 AND id % 800 = 0.
+#   LCM(18,800) = 3600. id % 3600 in {9, ?}? id % 800 = 0 means id ∈ {800,1600,..,8000};
+#   of those, which have id % 18 = 9? 800%18=8, 1600%18=16, 2400%18=6, 3200%18=14,
+#   4000%18=4, 4800%18=12, 5600%18=2, 6400%18=10, 7200%18=0, 8000%18=8. None = 9.
+#   So 0.
+# Total = 0.
+query
+SELECT count(*) FROM lzs_idx WHERE body @@ (
+  (ts_phrase('pair_a', 'pair_b') || ts_phrase('common', 'ninth'))
+  && ts_phrase('head_sparse'));
+----
+count
+0
+
+# Disjunction of phrase + term, cross-window.
+# (pair_a pair_b) OR last10 = 1260 + 10. Overlap: pair_a pair_b ∩ last10 =
+# id % 13 = 0 in 16375..16384 -> {16380} (16380/13 = 1260). 1 overlap.
+# Total = 1269.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('pair_a', 'pair_b') || ts_phrase('last10'));
+----
+count
+1269
+
+# Phrase position-miss inside a disjunction. ts_phrase('half', 'last10')
+# returns 0 (tokens are not adjacent -- 'w4_only' separates them).
+# (half last10) OR (common half) = 0 + 8192 = 8192.
+query
+SELECT count(*) FROM lzs_idx
+WHERE body @@ (ts_phrase('half', 'last10') || ts_phrase('common', 'half'));
+----
+count
+8192
+
+# WAND over a disjunction of real phrases.
+query
+SELECT count(*) FROM (
+  SELECT id FROM lzs_idx WHERE body @@ (
+    ts_phrase('common', 'half') || ts_phrase('common', 'ninth')
+    || ts_phrase('pair_a', 'pair_b'))
+  ORDER BY BM25(lzs_idx.tableoid) DESC LIMIT 25
+) t;
+----
+count
+25

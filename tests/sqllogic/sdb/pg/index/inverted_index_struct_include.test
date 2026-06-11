@@ -50,7 +50,7 @@ INSERT INTO struct_t VALUES (4, 'fourth', ROW('delta', NULL))
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) struct_t
+VACUUM (REFRESH_TABLE) struct_t
 
 
 # Sanity: the nested column is served by the iresearch columnstore (i),
@@ -74,7 +74,7 @@ QUERY PLAN
 │           pk (l)          │
 │        payload (i)        │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 

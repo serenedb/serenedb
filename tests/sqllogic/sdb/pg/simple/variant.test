@@ -1,0 +1,243 @@
+query
+SELECT '{"a": 42}'::json::variant;
+----
+variant
+{"a":42}
+
+
+# The regtype text formatter on the server returns "variant", but the
+# extended-protocol client (sqllogictest-rs) has a hardcoded OID->name map
+# of well-known PG OIDs and falls back to printing the raw OID for VARIANT,
+# so the assertions below only run on the simple protocol.
+skipif pg-wire-extended
+query
+SELECT pg_typeof('{"a": 42}'::json::variant);
+----
+pg_typeof
+variant
+
+
+skipif pg-wire-extended
+query
+SELECT 'variant'::regtype;
+----
+regtype
+variant
+
+
+statement ok
+CREATE TABLE variant_values(id INTEGER, x VARIANT);
+
+
+statement ok
+INSERT INTO variant_values VALUES
+  (1, 42::variant),
+  (2, 'hello'::variant),
+  (3, true::variant),
+  (4, '{"a": 42}'::json::variant);
+
+
+skipif pg-wire-extended
+query
+SELECT pg_typeof(x) FROM variant_values WHERE id = 1;
+----
+pg_typeof
+variant
+
+
+statement ok
+CREATE TABLE ctas_variant AS SELECT '{"a": 42}'::json::variant AS v;
+
+
+skipif pg-wire-extended
+query
+SELECT pg_typeof(v) FROM ctas_variant;
+----
+pg_typeof
+variant
+
+
+query
+EXPLAIN SELECT x FROM variant_values;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│      CAST(#0 AS JSON)     │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│   Table: variant_values   │
+│       Projections: x      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT x FROM variant_values ORDER BY id;
+----
+x
+42
+"hello"
+true
+{"a":42}
+
+
+query
+EXPLAIN SELECT id, x FROM variant_values;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│      CAST(#1 AS JSON)     │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│   Table: variant_values   │
+│                           │
+│        Projections:       │
+│             id            │
+│             x             │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT id, x FROM variant_values ORDER BY id;
+----
+id	x
+1	42
+2	"hello"
+3	true
+4	{"a":42}
+
+
+query
+EXPLAIN SELECT id FROM variant_values;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│   Table: variant_values   │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT id FROM variant_values ORDER BY id;
+----
+id
+1
+2
+3
+4
+
+
+statement ok
+CREATE TABLE variant_pk(id INTEGER PRIMARY KEY, x VARIANT);
+
+
+statement ok
+INSERT INTO variant_pk VALUES
+  (1, 42::variant),
+  (2, 'hello'::variant),
+  (3, true::variant),
+  (4, '{"a": 42}'::json::variant);
+
+
+query
+EXPLAIN SELECT x FROM variant_pk WHERE id = 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│      CAST(#0 AS JSON)     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│     Table: variant_pk     │
+│       Filter: (id=2)      │
+│       Projections: x      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+query
+SELECT x FROM variant_pk WHERE id = 2;
+----
+x
+"hello"
+
+
+query
+EXPLAIN SELECT id, x FROM variant_pk WHERE id = 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│      CAST(#1 AS JSON)     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│     Table: variant_pk     │
+│       Filter: (id=3)      │
+│                           │
+│        Projections:       │
+│             id            │
+│             x             │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+query
+SELECT id, x FROM variant_pk WHERE id = 3;
+----
+id	x
+3	true
+
+
+query
+EXPLAIN SELECT id FROM variant_pk WHERE id = 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│     Table: variant_pk     │
+│       Filter: (id=1)      │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+query
+SELECT id FROM variant_pk WHERE id = 1;
+----
+id
+1

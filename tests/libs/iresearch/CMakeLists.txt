@@ -20,6 +20,7 @@ set(iresearch-tests_sources
     ./analysis/tokenizer_tests.cpp
     ./analysis/pattern_tokenizer_tests.cpp
     ./formats/column/columnstore_test.cpp
+    ./formats/column/variant_shredding_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
     ./formats/sparse_bitmap_test.cpp
@@ -46,7 +47,7 @@ set(iresearch-tests_sources
     ./index/postings_tests.cpp
     ./index/segment_writer_tests.cpp
     ./index/sorted_index_tests.cpp
-    ./index/consolidation_policy_tests.cpp
+    ./index/compaction_policy_tests.cpp
     ./parser/lucene_parser_test.cpp
     ./search/empty_filter_tests.cpp
     ./search/nested_filter_test.cpp
@@ -56,7 +57,6 @@ set(iresearch-tests_sources
     ./search/regexp_filter_test.cpp
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp
-    ./search/scorers_tests.cpp
     ./search/bitset_doc_iterator_test.cpp
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
@@ -89,14 +89,12 @@ set(iresearch-tests_sources
     ./search/block_scoring_test.cpp
     ./search/boost_query_test.cpp
     ./search/wand_scoring_test.cpp
-    ./search/search_bench_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/wkb_parser_test.cpp
     ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp
     ./utils/encryption_test.cpp
     ./utils/container_utils_tests.cpp
-    ./utils/compression_test.cpp
     ./utils/crc_test.cpp
     ./utils/file_utils_tests.cpp
     ./utils/object_pool_tests.cpp
@@ -166,6 +164,9 @@ endif()
 
 target_link_libraries(
     iresearch-tests
+    # serene_base brings sdb::DuckDBEngine so tests_main can Initialize /
+    # Shutdown the LogManager that backs SDB_*. It re-exports duckdb_static
+    # PUBLICly.
     serene_base
     iresearch-static
     search-benchmark-common
@@ -185,6 +186,43 @@ target_include_directories(
 )
 target_include_directories(
     iresearch-tests
+    SYSTEM
+    PRIVATE
+        ${Fasttext_INCLUDE_DIR}
+        ${Boost_INCLUDE_DIRS}
+        ${FROZEN_INCLUDE_DIR}
+        $<TARGET_PROPERTY:iresearch-cmdline,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
+)
+
+# Standalone iresearch-load binary -- split out so CI doesn't have to compile and
+# link the full iresearch-tests just to run the corpus-driven validation.
+add_executable(
+    iresearch-load-tests
+    ./search/load_test.cpp
+    ./formats/column/test_cs_helpers.cpp
+    ./tests_param.cpp
+    ./tests_main.cpp
+)
+
+target_link_libraries(
+    iresearch-load-tests
+    # See iresearch-tests note above re: serene_base dependency.
+    serene_base
+    iresearch-static
+    search-benchmark-common
+    gtest
+    rapidjson
+    simdjson
+)
+
+target_include_directories(
+    iresearch-load-tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
+)
+target_include_directories(
+    iresearch-load-tests
     SYSTEM
     PRIVATE
         ${Fasttext_INCLUDE_DIR}

@@ -65,7 +65,7 @@ CREATE INDEX wand_small_idx ON wand_small USING inverted(id, body en_wand)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) wand_small;
+VACUUM (REFRESH_TABLE) wand_small;
 
 
 # Term-only filter + matching scorer + LIMIT -> WAND engages.
@@ -75,6 +75,14 @@ EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
@@ -88,9 +96,12 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │     TopK: 3, optimized    │
-│      Projections: id      │
 │                           │
-│          ~5 rows          │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -101,6 +112,14 @@ EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_any(['fox', 'rabbit']) OR
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
@@ -115,9 +134,12 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │     TopK: 3, optimized    │
-│      Projections: id      │
 │                           │
-│          ~5 rows          │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -130,10 +152,9 @@ QUERY PLAN
 ┌───────────────────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
-│  sdb_inverted_index_score │
-│            DESC           │
+│          #1 DESC          │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
@@ -152,7 +173,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -163,13 +184,6 @@ EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │           TOP_N           │
 │    ────────────────────   │
 │           Top: 3          │
@@ -194,7 +208,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -207,6 +221,14 @@ EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY TF
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
@@ -220,9 +242,12 @@ QUERY PLAN
 │  tfidf(with_norms=false)  │
 │                           │
 │          TopK: 3          │
-│      Projections: id      │
 │                           │
-│          ~5 rows          │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -273,11 +298,11 @@ CREATE INDEX plain_big_idx ON plain_big USING inverted(id, body en_wand);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) wand_big;
+VACUUM (REFRESH_TABLE) wand_big;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) plain_big;
+VACUUM (REFRESH_TABLE) plain_big;
 
 
 # Sanity: both indexes match the same population.

@@ -21,7 +21,7 @@
 
 #include "name_validator.h"
 
-#include <vpack/utf8_helper.h>
+#include <simdjson.h>
 
 #include <cstdint>
 #include <string>
@@ -79,8 +79,7 @@ bool DatabaseNameValidator::isAllowedName(bool allow_system,
 
     // new naming convention allows Unicode characters. we need to
     // make sure everything is valid UTF-8 now.
-    ok &= vpack::Utf8Helper::isValidUtf8(
-      reinterpret_cast<const uint8_t*>(name.data()), name.size());
+    ok &= simdjson::validate_utf8(name);
 
     if (!ok) {
       return false;
@@ -145,8 +144,7 @@ bool TableNameValidator::isAllowedName(std::string_view name) noexcept {
 
     // new naming convention allows Unicode characters. we need to
     // make sure everything is valid UTF-8 now.
-    ok &= vpack::Utf8Helper::isValidUtf8(
-      reinterpret_cast<const uint8_t*>(name.data()), name.size());
+    ok &= simdjson::validate_utf8(name);
 
     if (!ok) {
       return false;
@@ -164,186 +162,6 @@ Result TableNameValidator::validateName(std::string_view name) {
   if (name != NormalizeUtf8ToNFC(name)) {
     return {ERROR_SERVER_ILLEGAL_NAME,
             "collection name is not properly UTF-8 NFC-normalized"};
-  }
-
-  return {};
-}
-
-/// checks if a view name is valid
-/// returns true if the name is allowed and false otherwise
-bool ViewNameValidator::isAllowedName(std::string_view name) noexcept {
-  size_t length = 0;
-
-  for (const char* ptr = name.data(); length < name.size(); ++ptr, ++length) {
-    unsigned char c = static_cast<unsigned char>(*ptr);
-    bool ok = true;
-
-    // forward slashes are disallowed inside view names because we use the
-    // forward slash for splitting _everywhere_
-    ok &= (c != '/');
-
-    // non visible characters below ASCII code 32 (control characters) not
-    // allowed, including '\0'
-    ok &= (c >= 32U);
-
-    if (!ok) {
-      return false;
-    }
-  }
-
-  if (!name.empty()) {
-    char c = name.front();
-    // a view name must not start with a digit, because then it can be
-    // confused with numeric collection ids
-    bool ok = (c < '0' || c > '9');
-
-    // a view name must not start with a dot, because this is used for
-    // hidden agency entries
-    ok &= (c != '.');
-
-    // leading spaces are not allowed
-    ok &= (c != ' ');
-
-    // trailing spaces are not allowed
-    c = name.back();
-    ok &= (c != ' ');
-
-    // new naming convention allows Unicode characters. we need to
-    // make sure everything is valid UTF-8 now.
-    ok &= vpack::Utf8Helper::isValidUtf8(
-      reinterpret_cast<const uint8_t*>(name.data()), name.size());
-
-    if (!ok) {
-      return false;
-    }
-  }
-
-  // view names must be within the expected length limits
-  return length > 0 && length <= kMaxNameLength;
-}
-
-Result ViewNameValidator::validateName(std::string_view name) {
-  if (!isAllowedName(name)) {
-    return {ERROR_SERVER_ILLEGAL_NAME, "illegal name: view name invalid"};
-  }
-  if (name != NormalizeUtf8ToNFC(name)) {
-    return {ERROR_SERVER_ILLEGAL_NAME,
-            "view name is not properly UTF-8 NFC-normalized"};
-  }
-
-  return {};
-}
-
-/// checks if an index name is valid
-/// returns true if the name is allowed and false otherwise
-bool IndexNameValidator::isAllowedName(std::string_view name) noexcept {
-  size_t length = 0;
-
-  for (const char* ptr = name.data(); length < name.size(); ++ptr, ++length) {
-    unsigned char c = static_cast<unsigned char>(*ptr);
-    bool ok = true;
-
-    // forward slashes are disallowed inside index names because we use the
-    // forward slash for splitting _everywhere_
-    ok &= (c != '/');
-
-    // non visible characters below ASCII code 32 (control characters) not
-    // allowed, including '\0'
-    ok &= (c >= 32U);
-
-    if (!ok) {
-      return false;
-    }
-  }
-
-  if (!name.empty()) {
-    char c = name.front();
-    // an index name must not start with a digit, because then it can be
-    // confused with numeric collection ids
-    bool ok = (c < '0' || c > '9');
-
-    // leading spaces are not allowed
-    ok &= (c != ' ');
-
-    // trailing spaces are not allowed
-    c = name.back();
-    ok &= (c != ' ');
-
-    // new naming convention allows Unicode characters. we need to
-    // make sure everything is valid UTF-8 now.
-    ok &= vpack::Utf8Helper::isValidUtf8(
-      reinterpret_cast<const uint8_t*>(name.data()), name.size());
-
-    if (!ok) {
-      return false;
-    }
-  }
-
-  // index names must be within the expected length limits
-  return length > 0 && length <= kMaxNameLength;
-}
-
-Result IndexNameValidator::validateName(std::string_view name) {
-  if (!isAllowedName(name)) {
-    return {ERROR_SERVER_ILLEGAL_NAME, "illegal name: index name invalid"};
-  }
-  if (name != NormalizeUtf8ToNFC(name)) {
-    return {ERROR_SERVER_ILLEGAL_NAME,
-            "index name is not properly UTF-8 NFC-normalized"};
-  }
-
-  return {};
-}
-
-/// checks if an analyzer name is valid
-/// returns true if the name is allowed and false otherwise
-bool AnalyzerNameValidator::isAllowedName(std::string_view name) noexcept {
-  size_t length = 0;
-
-  for (const char* ptr = name.data(); length < name.size(); ++ptr, ++length) {
-    unsigned char c = static_cast<unsigned char>(*ptr);
-    bool ok = true;
-
-    // forward slashes are disallowed inside analyzer names because we use the
-    // forward slash for splitting _everywhere_
-    ok &= (c != '/');
-
-    // colons are used to separate database names from analyzer names
-    ok &= (c != ':');
-
-    // non visible characters below ASCII code 32 (control characters) not
-    // allowed, including '\0'
-    ok &= (c >= 32U);
-
-    if (length == 0) {
-      // an analyzer name must not start with a digit, because then it can be
-      // confused with numeric ids
-      ok &= (c < '0' || c > '9');
-    }
-
-    if (!ok) {
-      return false;
-    }
-  }
-
-  if (!vpack::Utf8Helper::isValidUtf8(
-        reinterpret_cast<const uint8_t*>(name.data()), name.size())) {
-    // new naming convention allows Unicode characters. we need to
-    // make sure everything is valid UTF-8 now.
-    return false;
-  }
-
-  // analyzer names must be within the expected length limits
-  return length > 0 && length <= kMaxNameLength;
-}
-
-Result AnalyzerNameValidator::validateName(std::string_view name) {
-  if (!isAllowedName(name)) {
-    return {ERROR_SERVER_ILLEGAL_NAME, "analyzer name invalid"};
-  }
-  if (name != NormalizeUtf8ToNFC(name)) {
-    return {ERROR_SERVER_ILLEGAL_NAME,
-            "analyzer name is not properly UTF-8 NFC-normalized"};
   }
 
   return {};

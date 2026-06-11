@@ -21,18 +21,19 @@
 #include "pg/system_catalog.h"
 
 #include <absl/strings/str_cat.h>
-#include <vpack/serializer.h>
 
 #include <boost/pfr.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/select_statement.hpp>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/trivial_map.h"
+#include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
@@ -108,7 +109,6 @@
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/pg_catalog/pg_user_mapping.h"
 #include "pg/pg_feature.h"
-#include "pg/sdb_catalog/sdb_log.h"
 #include "pg/sdb_catalog/sdb_search_tasks_status.h"
 #include "pg/system_functions.h"
 #include "pg/system_table.h"
@@ -213,7 +213,6 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgTsTemplate>>(),
   MakeTable<SystemTable<PgType>>(),
   MakeTable<SystemTable<PgUserMapping>>(),
-  MakeTable<SystemTable<SdbLog>>(),
   MakeTable<SystemTable<SdbSearchTasksStatus>>(),
 };
 
@@ -253,8 +252,6 @@ const VirtualTable* GetSystemTable(std::string_view schema,
   }
 }
 const VirtualTable* GetTable(std::string_view name) {
-  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
-
   if (name.starts_with("pg_") || name.starts_with("sdb_")) {
     return GetTableFromSchema(name, kPgCatalog);
   }
@@ -263,7 +260,6 @@ const VirtualTable* GetTable(std::string_view name) {
 
 void VisitSystemTables(
   absl::FunctionRef<void(const VirtualTable&, Oid)> visitor) {
-  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   for (const auto* table : kPgCatalog) {
     SDB_ASSERT(table);
     visitor(*table, id::kPgCatalogSchema.id());
@@ -276,7 +272,6 @@ void VisitSystemTables(
 
 void VisitSystemViews(
   absl::FunctionRef<void(const catalog::PgSqlView&, Oid)> visitor) {
-  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   for (const auto& [name, view] : gPgCatalogViews) {
     SDB_ASSERT(view);
     visitor(*view, id::kPgCatalogSchema.id());
@@ -338,7 +333,6 @@ std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaFunction(
 std::shared_ptr<catalog::PgSqlFunction> GetPgCatalogFunction(
   std::string_view name) {
 #ifndef SDB_GTEST
-  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
 #endif
   auto it = gPgCatalogFunctions.find(name);
   return it != gPgCatalogFunctions.end() ? it->second : nullptr;
@@ -353,7 +347,6 @@ std::shared_ptr<PgSqlView> GetInfoSchemaView(std::string_view name) {
 }
 
 std::shared_ptr<PgSqlView> GetView(std::string_view name) {
-  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   auto it = gPgCatalogViews.find(name);
   if (it == gPgCatalogViews.end()) {
     return nullptr;
@@ -361,7 +354,7 @@ std::shared_ptr<PgSqlView> GetView(std::string_view name) {
   return it->second;
 }
 
-void InitSystemViews() {
+void InitSystemViews(duckdb::Parser& parser) {
   for (const auto& view : kExternalViews) {
     auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
     info->schema = view.schema;
@@ -369,7 +362,15 @@ void InitSystemViews() {
     info->sql = view.sql;
     info->temporary = true;
     info->internal = true;
-    info->query = duckdb::CreateViewInfo::ParseSelect(info->sql);
+
+    parser.statements.clear();
+    parser.ParseQuery(info->sql);
+    SDB_ASSERT(parser.statements.size() == 1);
+    SDB_ASSERT(parser.statements[0]->type ==
+               duckdb::StatementType::SELECT_STATEMENT);
+    info->query =
+      duckdb::unique_ptr_cast<duckdb::SQLStatement, duckdb::SelectStatement>(
+        std::move(parser.statements[0]));
 
     auto entry = std::make_shared<catalog::PgSqlView>(
       ObjectId{}, ObjectId{}, view.name, std::move(info));
@@ -382,10 +383,10 @@ void InitSystemViews() {
 }
 
 static duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
-  const SystemMacro& macro) {
+  duckdb::Parser& parser, const SystemMacro& macro) {
   auto sql =
     absl::StrCat("CREATE FUNCTION ", macro.name, macro.macro_definition);
-  duckdb::Parser parser;
+  parser.statements.clear();
   parser.ParseQuery(sql);
   SDB_ASSERT(parser.statements.size() == 1 &&
              parser.statements[0]->type ==
@@ -411,9 +412,9 @@ static duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
   return info;
 }
 
-void InitSystemFunctions() {
+void InitSystemFunctions(duckdb::Parser& parser) {
   for (const auto& macro : kExternalMacros) {
-    auto info = ParseMacro(macro);
+    auto info = ParseMacro(parser, macro);
 
     // DEFAULT_SCHEMA schema macros go into pg_catalog because in PG,
     // pg_catalog is always implicitly searched -- functions like current_user,

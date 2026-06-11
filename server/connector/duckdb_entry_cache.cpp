@@ -27,7 +27,6 @@
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
-#include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
@@ -263,7 +262,7 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   const auto& cols = table.Columns();
   containers::FlatHashSet<size_t> idx_set;
   for (auto& index : indexes) {
-    for (auto col_id : index->GetColumnIds()) {
+    for (auto col_id : index->GetReferencedColumnIds()) {
       for (size_t i = 0; i < cols.size(); ++i) {
         if (cols[i].GetId() == col_id) {
           idx_set.insert(i);
@@ -328,16 +327,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
     if (index.GetType() == catalog::ObjectType::SecondaryIndex) {
       const auto& sec_index =
         basics::downCast<const catalog::SecondaryIndex>(index);
-      const auto& shards = snapshot.GetIndexShardsByRelation(view->GetId());
-      auto it = absl::c_find_if(shards, [&](const auto& shard) {
-        return shard->GetIndexId() == index.GetId();
-      });
-      if (it == shards.end()) {
+      auto sk_shard = snapshot.GetIndexShard(index.GetId());
+      if (!sk_shard) {
         return nullptr;
       }
       return duckdb::make_uniq<ViewSecondaryIndexScanEntry>(
         catalog, schema, *info, std::move(view), std::move(indexed_col_indices),
-        (*it)->GetId(), sec_index.IsUnique());
+        sk_shard->GetId(), sec_index.IsUnique());
     }
     return nullptr;
   }
@@ -362,16 +358,11 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
   // Secondary (rocksdb-backed) index: find the shard for scanning.
   const auto& sec_index =
     basics::downCast<const catalog::SecondaryIndex>(index);
-  ObjectId sk_shard_id;
-  for (auto& shard : snapshot.GetIndexShardsByRelation(table->GetId())) {
-    if (shard->GetIndexId() == index.GetId()) {
-      sk_shard_id = shard->GetId();
-      break;
-    }
-  }
-  if (sk_shard_id == ObjectId{}) {
+  auto shard = snapshot.GetIndexShard(index.GetId());
+  if (!shard) {
     return nullptr;
   }
+  auto sk_shard_id = shard->GetId();
   return duckdb::make_uniq<TableSecondaryIndexScanEntry>(
     catalog, schema, *built.info, std::move(table),
     std::move(built.indexed_col_indices), sk_shard_id, sec_index.IsUnique());
@@ -532,6 +523,18 @@ void DuckDBEntryCache::ScanEntries(
         run([&](auto v) { snapshot.VisitIndexes(database, schema, v); },
             kIndex);
         break;
+      case SEQUENCE_ENTRY:
+        run(
+          [&](auto v) {
+            snapshot.VisitRelations(
+              database, schema, [&](const catalog::Object& o) {
+                if (o.GetType() == catalog::ObjectType::Sequence) {
+                  v(o);
+                }
+              });
+          },
+          kRelation);
+        break;
       case SCALAR_FUNCTION_ENTRY:
       case MACRO_ENTRY:
       case TABLE_FUNCTION_ENTRY:
@@ -568,7 +571,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
     case INDEX_ENTRY: {
       if (system) {
         // System tables (pg_class, pg_type, etc.)
-        if (type == TABLE_ENTRY) {
+        if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
           auto* vtable = pg::GetSystemTable(schema, name);
           if (vtable) {
             auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
@@ -597,7 +600,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
       auto relation = snapshot.GetRelation(database, schema, name);
       if (!relation) {
         // GetRelation doesn't find regular tables -- use GetTable.
-        if (type == TABLE_ENTRY) {
+        if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
           return BuildTableEntry(catalog, entry, database, schema, name,
                                  snapshot);
         }
@@ -605,7 +608,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
       }
       switch (relation->GetType()) {
         case catalog::ObjectType::Table:
-          if (type == TABLE_ENTRY) {
+          if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
             return BuildTableEntry(catalog, entry, database, schema, name,
                                    snapshot);
           }
@@ -619,7 +622,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           return nullptr;
         case catalog::ObjectType::SecondaryIndex:
         case catalog::ObjectType::InvertedIndex: {
-          if (type == TABLE_ENTRY) {
+          if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
             // Index-as-table (SELECT * FROM index_name)
             const auto& index =
               basics::downCast<const catalog::Index>(*relation);

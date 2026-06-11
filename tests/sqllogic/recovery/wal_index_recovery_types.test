@@ -39,7 +39,7 @@ CREATE INDEX ty_idx ON ty_t
   USING inverted(id, txt ty_dict, small_i, big_i, flt, dbl, flag, d);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ty_t;
+VACUUM (REFRESH_TABLE) ty_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -62,7 +62,7 @@ SELECT 1;
 
 connection ty_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) ty_t;
+VACUUM (REFRESH_TABLE) ty_t;
 
 # Total row count
 connection ty_after
@@ -83,7 +83,7 @@ count
 # Text column.
 connection ty_after
 query
-SELECT id FROM ty_t WHERE txt @@ ts_phrase('delta');
+SELECT id FROM ty_idx WHERE txt @@ ts_phrase('delta');
 ----
 id
 4

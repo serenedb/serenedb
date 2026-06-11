@@ -30,11 +30,11 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <memory>
+#include <shared_mutex>
 
 #include "catalog/inverted_index.h"
 #include "rest_server/flush_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 
@@ -50,16 +50,16 @@ class InvertedIndexShard;
 struct ThreadPoolState {
   std::atomic_size_t pending_commits{0};
   std::atomic_size_t non_empty_commits{0};
-  std::atomic_size_t pending_consolidations{0};
-  std::atomic_size_t noop_consolidation_count{0};
+  std::atomic_size_t pending_compactions{0};
+  std::atomic_size_t noop_compaction_count{0};
   std::atomic_size_t noop_commit_count{0};
 };
 
 struct TasksSettings {
   size_t cleanup_interval_step{};
-  size_t commit_interval_msec{};
-  size_t consolidation_interval_msec{};
-  irs::ConsolidationPolicy consolidation_policy;
+  size_t refresh_interval_msec{};
+  size_t compaction_interval_msec{};
+  irs::CompactionPolicy compaction_policy;
   uint32_t version{};
   size_t writebuffer_active{};
   size_t writebuffer_idle{};
@@ -153,7 +153,7 @@ class InvertedIndexShard final
   static std::shared_ptr<InvertedIndexShard> Create(
     ObjectId id, const catalog::InvertedIndex& index, bool is_new);
 
-  void WriteInternal(vpack::Builder& builder) const final;
+  void Serialize(duckdb::Serializer& sink) const final;
 
   struct TruncateGuard {
     struct UnlockDeleter {
@@ -180,9 +180,9 @@ class InvertedIndexShard final
     return _writer->GetBatch();
   }
 
-  ResultWithTime ConsolidateUnsafe(
-    const irs::ConsolidationPolicy& policy,
-    const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation);
+  ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
+                               const irs::MergeWriter::FlushProgress& progress,
+                               bool& empty_compaction);
 
   ResultWithTime CommitUnsafe(bool wait,
                               const irs::ProgressReportCallback& progress,
@@ -191,7 +191,7 @@ class InvertedIndexShard final
   ResultWithTime CleanupUnsafe();
   Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
-  void ScheduleConsolidation(absl::Duration delay);
+  void ScheduleCompaction(absl::Duration delay);
   void ScheduleCommit(absl::Duration delay);
 
   yaclib::Future<> CommitWait();
@@ -203,28 +203,26 @@ class InvertedIndexShard final
     return _writer && _writer->HasActiveSegments();
   }
 
-  void StatsToVPack(vpack::Builder& builder) const;
   Stats GetStats() const;
 
   auto& GetMutex() { return _mutex; }
 
   InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
-    return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
+    std::shared_lock guard{_snapshot_mutex};
+    return _snapshot;
   }
 
   void StoreInvertedIndexSnapshot(
     InvertedIndexSnapshotPtr inverted_index_snapshot) {
-    std::atomic_store_explicit(&_snapshot, std::move(inverted_index_snapshot),
-                               std::memory_order_release);
+    std::unique_lock guard{_snapshot_mutex};
+    _snapshot = std::move(inverted_index_snapshot);
   }
-
-  void ResetInvertedIndexSnapshot() { _snapshot.reset(); }
 
   auto& GetTasksSettings() { return _tasks_settings; }
 
   void StartTasks() {
     ScheduleCommit({});
-    ScheduleConsolidation({});
+    ScheduleCompaction({});
   }
 
   void FinishCreation();
@@ -251,9 +249,9 @@ class InvertedIndexShard final
   int64_t GetIcebergSnapshotId() const noexcept { return _iceberg_snapshot_id; }
 
  private:
-  Result ConsolidateUnsafeImpl(const irs::ConsolidationPolicy& policy,
-                               const irs::MergeWriter::FlushProgress& progress,
-                               bool& empty_consolidation);
+  Result CompactUnsafeImpl(const irs::CompactionPolicy& policy,
+                           const irs::MergeWriter::FlushProgress& progress,
+                           bool& empty_compaction);
   Result CommitUnsafeImpl(bool wait,
                           const irs::ProgressReportCallback& progress,
                           CommitResult& code);
@@ -262,6 +260,7 @@ class InvertedIndexShard final
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;
+  mutable std::shared_mutex _snapshot_mutex;
   InvertedIndexSnapshotPtr _snapshot;
   std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
@@ -279,24 +278,8 @@ class InvertedIndexShard final
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};
-  irs::IResourceManager* _consolidations_memory{&irs::IResourceManager::gNoop};
+  irs::IResourceManager* _compactions_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
-
-  // Stats
-  metrics::Gauge<uint64_t>* _mapped_memory{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_commits{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_cleanups{nullptr};
-  metrics::Gauge<uint64_t>* _num_failed_consolidations{nullptr};
-
-  std::atomic_uint64_t _commit_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_commit_time_ms{nullptr};
-
-  std::atomic_uint64_t _cleanup_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_cleanup_time_ms{nullptr};
-
-  std::atomic_uint64_t _consolidation_time_num{0};
-  metrics::Gauge<uint64_t>* _avg_consolidation_time_ms{nullptr};
-  metrics::Guard<Stats>* _metric_stats{nullptr};
 
   enum class Error : uint8_t {
     // inverted index shard has no issues

@@ -62,7 +62,7 @@ CREATE INDEX docs_wand_idx ON docs_wand USING inverted(id, body en_wand)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_wand;
+VACUUM (REFRESH_TABLE) docs_wand;
 
 
 # Top-K with WAND on. Tie-break on id for deterministic ordering across
@@ -111,7 +111,7 @@ CREATE INDEX docs_plain_idx ON docs_plain USING inverted(id, body en_wand);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_plain;
+VACUUM (REFRESH_TABLE) docs_plain;
 
 
 query I
@@ -141,6 +141,135 @@ id
 5
 
 
+# --- OFFSET behavior ---
+# Single-key ORDER BY + LIMIT + OFFSET: the scan caps at limit + offset
+# (combined_limit in row_group_pruner.cpp), so WAND top-K still engages
+# and TOP_N above slices the surplus. Multi-key ORDER BY still bails.
+
+# OFFSET 0 matches LIMIT-only behavior.
+query I
+SELECT id FROM docs_wand_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(docs_wand_idx.tableoid) DESC
+LIMIT 3 OFFSET 0;
+----
+id
+1
+2
+4
+
+
+# Non-zero OFFSET: scan returns top (limit+offset)=4 rows, TOP_N drops 2.
+query I
+SELECT id FROM docs_wand_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(docs_wand_idx.tableoid) DESC
+LIMIT 2 OFFSET 2;
+----
+id
+4
+5
+
+
+# OFFSET past the result set yields empty output.
+query I
+SELECT id FROM docs_wand_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(docs_wand_idx.tableoid) DESC
+LIMIT 10 OFFSET 100;
+----
+id
+
+
+# Plain (non-WAND) index produces the same rows under LIMIT + OFFSET.
+query I
+SELECT id FROM docs_plain_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(docs_plain_idx.tableoid) DESC
+LIMIT 2 OFFSET 2;
+----
+id
+4
+5
+
+
+# EXPLAIN: scan reports `TopK: <limit+offset>, optimized` -- the rewrite
+# engages and the scan caps at 4 rows; TOP_N drops the first 1.
+query
+EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_wand_idx.tableoid) DESC LIMIT 3 OFFSET 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│         Offset: 1         │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│    Index: docs_wand_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│     TopK: 4, optimized    │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+# Multi-key ORDER BY + OFFSET: rewrite bails (tied-tiebreak unsafe), no
+# `TopK:` line. TOP_N handles both ordering and slicing.
+query
+EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_wand_idx.tableoid) DESC, id LIMIT 3 OFFSET 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│         Offset: 1         │
+│                           │
+│         Order By:         │
+│          #1 DESC          │
+│    docs_wand_idx.id ASC   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│    Index: docs_wand_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
 # EXPLAIN: WAND-enabled scan reports `TopK: <k>, optimized`; plain scan
 # reports `TopK: <k>` without the suffix. WAND only applies on the top-K
 # path so the marker is bundled into the same row instead of a separate one.
@@ -150,6 +279,14 @@ EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: docs_wand_idx   │
@@ -163,9 +300,12 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │     TopK: 3, optimized    │
-│      Projections: id      │
 │                           │
-│          ~5 rows          │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -174,6 +314,14 @@ EXPLAIN SELECT id FROM docs_plain_idx WHERE body @@ ts_phrase('fox') ORDER BY BM
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: docs_plain_idx   │
@@ -187,9 +335,12 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │          TopK: 3          │
-│      Projections: id      │
 │                           │
-│          ~5 rows          │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -212,7 +363,7 @@ CREATE INDEX docs_default_idx ON docs_default USING inverted(id, body en_wand);
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_default;
+VACUUM (REFRESH_TABLE) docs_default;
 
 
 query I
@@ -310,11 +461,11 @@ INSERT INTO docs_plain VALUES (8, 'no match here');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_wand;
+VACUUM (REFRESH_TABLE) docs_wand;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_plain;
+VACUUM (REFRESH_TABLE) docs_plain;
 
 
 query I
@@ -387,10 +538,9 @@ QUERY PLAN
 ┌───────────────────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
-│  sdb_inverted_index_score │
-│            DESC           │
+│          #1 DESC          │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
@@ -409,7 +559,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~8 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -421,13 +571,6 @@ EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM2
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │           TOP_N           │
 │    ────────────────────   │
 │           Top: 3          │
@@ -452,7 +595,7 @@ QUERY PLAN
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
-│          ~8 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -483,7 +626,7 @@ CREATE INDEX docs_tfidf_idx ON docs_tfidf
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_tfidf;
+VACUUM (REFRESH_TABLE) docs_tfidf;
 
 
 query
@@ -491,6 +634,14 @@ EXPLAIN SELECT id FROM docs_tfidf_idx WHERE body @@ ts_phrase('fox') ORDER BY TF
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 2          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: docs_tfidf_idx   │
@@ -504,9 +655,12 @@ QUERY PLAN
 │  tfidf(with_norms=false)  │
 │                           │
 │     TopK: 2, optimized    │
-│      Projections: id      │
 │                           │
-│          ~2 rows          │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -532,7 +686,7 @@ CREATE INDEX docs_bm25_args_idx ON docs_bm25_args
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_bm25_args;
+VACUUM (REFRESH_TABLE) docs_bm25_args;
 
 
 query
@@ -540,6 +694,14 @@ EXPLAIN SELECT id FROM docs_bm25_args_idx WHERE body @@ ts_phrase('fox') ORDER B
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 2          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
@@ -555,9 +717,12 @@ QUERY PLAN
 │    bm25(k1=1.5, b=0.8)    │
 │                           │
 │     TopK: 2, optimized    │
-│      Projections: id      │
 │                           │
-│          ~2 rows          │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -569,6 +734,14 @@ EXPLAIN SELECT id FROM docs_bm25_args_idx WHERE body @@ ts_phrase('fox') ORDER B
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 2          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
@@ -584,9 +757,12 @@ QUERY PLAN
 │  tfidf(with_norms=false)  │
 │                           │
 │          TopK: 2          │
-│      Projections: id      │
 │                           │
-│          ~2 rows          │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -618,7 +794,10 @@ CREATE INDEX docs_default_bad_bare ON docs_default
 
 # DuckDB's CREATE INDEX grammar still rejects non-constant values like the
 # bare `true` keyword.
-statement error db error: ERROR: Create index option must be a constant value
+statement error
 CREATE INDEX docs_default_bad_keyword ON docs_default
   USING inverted(id, body en_wand)
   WITH (optimize_top_k = true);
+----
+db error: ERROR: 'optimize_top_k' expects a scorer function call, got 'true'
+HINT: Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'

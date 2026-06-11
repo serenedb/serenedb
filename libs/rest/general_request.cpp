@@ -21,10 +21,8 @@
 
 #include "general_request.h"
 
-#include <vpack/vpack_helper.h>
-
 #include "basics/debugging.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "rest/request_context.h"
@@ -86,8 +84,7 @@ std::string_view GeneralRequest::translateMethod(RequestType method) {
     case RequestType::Put:
       return "PUT";
     default:
-      SDB_WARN("xxxxx", Logger::FIXME,
-               "illegal http request method encountered in switch");
+      SDB_WARN(GENERAL, "illegal http request method encountered in switch");
       return "UNKNOWN";
   }
 }
@@ -107,7 +104,7 @@ void GeneralRequest::setRequestContext(
   _request_context = std::move(request_context);
 }
 
-void GeneralRequest::setPayload(vpack::BufferUInt8 buffer) {
+void GeneralRequest::setPayload(basics::BufferUInt8 buffer) {
   auto old = _payload.size();
   _payload = std::move(buffer);
   _memory_usage += _payload.size();
@@ -291,16 +288,5 @@ template auto GeneralRequest::ParsedValue<uint64_t>(std::string_view, uint64_t)
   -> uint64_t;
 template auto GeneralRequest::ParsedValue<double>(std::string_view, double)
   -> double;
-
-/// get VPack options for validation. effectively turns off
-/// validation if strictValidation is false. This optimization can be used for
-/// internal requests
-const vpack::Options* GeneralRequest::validationOptions(
-  bool strict_validation) {
-  if (strict_validation) {
-    return &basics::VPackHelper::gStrictRequestValidationOptions;
-  }
-  return &basics::VPackHelper::gLooseRequestValidationOptions;
-}
 
 }  // namespace sdb

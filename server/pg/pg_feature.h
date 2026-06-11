@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include "app/app_feature.h"
 #include "app/app_server.h"
 #include "basics/containers/flat_hash_map.h"
 #include "general_server/request_lane.h"
@@ -29,16 +28,15 @@
 
 namespace sdb::pg {
 
-class PostgresFeature final : public SerenedFeature {
+class PostgresFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "postgres"; }
+  inline static PostgresFeature* gInstance = nullptr;
+  static PostgresFeature& instance() noexcept { return *gInstance; }
 
-  explicit PostgresFeature(SerenedServer& server);
+  PostgresFeature();
+  ~PostgresFeature();
 
-  void validateOptions(std::shared_ptr<options::ProgramOptions> options) final;
-  void prepare() final;
-  void start() final;
-  void unprepare() final;
+  void start();
 
   uint64_t RegisterTask(PgSQLCommTaskBase& task);
   void UnregisterTask(uint64_t key);

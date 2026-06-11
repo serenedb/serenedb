@@ -12,61 +12,63 @@
 
 </div>
 
-IResearch is an open-source (Apache 2.0) C++ information retrieval library designed to be embedded into transactional database systems. It provides a feature set comparable to Lucene -- inverted indexes with BM25 scoring, columnar storage, vector search, S2 geospatial indexing and semi-structured filtering -- while integrating natively with the host database's write-ahead log and transaction protocol. There is no separate process, no JVM dependency and no consistency gap between the search index and the primary store.
+IResearch is a high-performance C++ search engine library. It's up to [5x faster](#performance) than Lucene and Tantivy, runs without a JVM and has powered [production](#production-history) search since 2018.
 
-## Performance
-
-Benchmarked against Lucene and Tantivy on the [search-benchmark-game](https://github.com/serenedb/search-benchmark-game) -- a standard benchmark built by the Tantivy team using the English Wikipedia corpus and the AOL query dataset.
-Results, methodology and per-query breakdowns are available in the [benchmark overview post](https://serenedb.com/blog/search-benchmark-game-overview).
-[Detailed benchmark results](https://serenedb.com/search-benchmark-game).
-
-## Features
-
-**Full-text search.** Inverted indexes with BM25 and TFIDF scoring. Phrase queries, boolean conjunctions and disjunctions, required/optional, negation, wildcard and fuzzy matching.
-
-**Vectorized scoring.** Scoring is restructured as a block-at-a-time SIMD pipeline over posting list data rather than a document-at-a-time scalar loop. This delivers x2-5 throughput improvement depending on query type and posting list density.
-
-**Lazy evaluation.** The `LazySeek` iterator contract allows non-lead iterators in conjunctions, exclusions and two-phase queries to defer work until strictly necessary. Position intersection uses frequency-sorted zigzag traversal, bounding cost to the rarest term in the query and document.
-
-**Pluggable scoring.** The scoring function is a composable component configurable at query time. BM25 parameters are tunable without recompilation. Custom scorers can be registered and receive the same block buffers -- frequencies, norms, filter boosts and columnar signals -- as the built-in implementation.
-
-**Columnar storage.** Document field values are stored alongside the inverted index. Numeric attributes, timestamps and other per-document signals are first-class inputs to the scoring pipeline, not afterthoughts.
-
-**Vector search.** Approximate nearest-neighbor search for embedding vectors, integrated with the same transaction and WAL protocol as the inverted index.
-
-**Geospatial indexing.** S2-based indexing for intersects and contains queries.
-
-**NLP pipeline.** Analyzers covering many languages, with support for custom analysis components. A lot of builtin tokenizers, token/char filters and analyzers, similar to Lucene.
-
-**Transactional integration.** IResearch integrates with the host database's WAL and transaction manager. Search indexes participate in the host's commit protocol, providing eventual snapshot-isolation.
-
-## Examples
-
-The [examples/](examples/) directory contains self-contained programs demonstrating common iresearch workflows:
-
-- **[basic.cpp](examples/basic.cpp)** -- Index documents with text fields, run term queries, boolean queries, top-K retrieval with BM25 scoring, read stored fields and delete documents.
-
-To build the examples:
+## Quickstart
 
 ```bash
+git clone --recursive https://github.com/serenedb/serenedb
+cd serenedb
 cmake --preset lldb
 cmake --build build --target iresearch-example-basic
 ./build/iresearch/examples/iresearch-example-basic
 ```
 
-## Architecture
+To depend on iresearch from your own CMake project, vendor SereneDB as a submodule and link against the `iresearch-static` target:
 
-The library exposes two primary interfaces: a **IndexWriter** that accepts document batches and indexes field values per-transaction and a **IndexReader** that evaluates query trees against a consistent snapshot of the index. Concurrent readers and writers are supported without external locking.
+```cmake
+add_subdirectory(third_party/serenedb)
+target_link_libraries(my_app PRIVATE iresearch-static)
+```
 
-Internally, the index is organized into segments. Each segment contains an inverted index, columnar storage and optional skip structures. Segments are immutable once written; updates and deletions are tracked as new revisions, allowing readers to hold a consistent view while writers continue to ingest data.
+## Features
 
-Query trees are constructed directly from API building blocks -- terms, phrases, booleans, ranges, geospatial filters -- and evaluated by a pipeline of iterator objects that merge posting lists and feed candidates into the scoring pipeline.
+- **Full-text search.** Phrase, boolean, prefix, wildcard, fuzzy (Levenshtein), n-gram, regex, range.
+- **Pluggable scoring.** BM25, TFIDF, LM-Dirichlet, DFI built-in; custom scorers supported.
+- **Vectorized scoring.** Block-at-a-time SIMD pipeline over posting lists; up to 5x throughput vs scalar loops.
+- **Lazy evaluation.** Non-lead iterators in conjunctions, exclusions and two-phase queries defer work.
+- **Columnar storage.** Modern column store with adaptive compression.
+- **Vector search.** Approximate nearest-neighbor (HNSW).
+- **Geospatial.** S2-based intersects/contains.
+- **NLP pipeline.** Tokenizers, stemmers, stopwords, synonyms (Solr/WordNet), language-aware analysis, pluggable custom analyzers.
+
+## Performance
+
+IResearch is **up to 5x faster than Lucene and Tantivy** on the Tantivy team's [Search Benchmark, The Game](https://tantivy-search.github.io/bench/). The Tantivy maintainers validated and merged iresearch's [results](https://github.com/quickwit-oss/search-benchmark-game/commit/f4149454e8de6d97a0b5c1b4253db1a6e2c82622) themselves.
+
+* [Detailed per-query breakdown](https://serenedb.com/search-benchmark-game)
+* [Benchmark overview](https://blog.serenedb.com/search-benchmark-game-overview)
+
+### Where the speed comes from
+
+The win is a result of specific optimizations. We wrote them up as a five-post technical retrospective called `Search Optimization Journey`:
+* [Collecting top-K candidates](https://blog.serenedb.com/search-optimization-1)
+* [Block scoring](https://blog.serenedb.com/search-optimization-2)
+* [Norm gathering](https://blog.serenedb.com/norm-gathering)
+* [Lazy two-phase queries](https://blog.serenedb.com/search-optimization-4)
+* [Adaptive posting list format](https://blog.serenedb.com/search-optimization-5)
+
+## Examples
+
+See the [examples](examples/) directory for complete programs covering the public API, all built and exercised in CI on every PR so they stay in sync:
+
+- [basic.cpp](examples/basic.cpp) -- index documents, run term / phrase / boolean / prefix / fuzzy / top-K BM25 queries, read stored fields, delete documents, compact.
+- [text_filters.cpp](examples/text_filters.cpp) -- phrase search, n-gram similarity matching, regular expressions, SQL-style wildcard patterns (`%` and `_`) and fuzzy term matching with a configurable edit distance, all shown side-by-side against the same small corpus.
+- [geo.cpp](examples/geo.cpp) -- geospatial search over a GeoJSON-indexed point corpus: find everything within a radius of a center point, everything inside an annulus and everything that falls inside an arbitrary polygon.
 
 ## Production history
 
-IResearch has been in continuous production use since 2018, first as the search engine behind [ArangoSearch](https://docs.arango.ai/arangodb/stable/indexes-and-search/arangosearch) in ArangoDB.</br>
-Since 2024 it is the search foundation of [SereneDB](https://github.com/serenedb/serenedb), a search-OLAP database.</br>
-Both deployments have stress-tested the embedding design across architecturally distinct host databases.
+IResearch has been in continuous production use since 2018, first as the search engine behind ArangoSearch. Since 2024 it is the search foundation of search-OLAP database [SereneDB](https://github.com/serenedb/serenedb).
 
 ## License
 

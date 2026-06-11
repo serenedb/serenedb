@@ -25,6 +25,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/phrase_filter.hpp"
@@ -34,14 +35,16 @@
 
 namespace {
 
-inline constexpr irs::field_id kName = 1;
+inline constexpr irs::field_id kName = tests::FieldIdFor("name");
+inline constexpr irs::field_id kPhraseAnl = tests::FieldIdFor("phrase_anl");
+inline constexpr irs::field_id kPhrase = tests::FieldIdFor("phrase");
 
 auto StoreName() {
   return [](irs::IndexWriter::Document& doc, const tests::Document& src) {
     const auto* name =
-      dynamic_cast<const tests::StringField*>(src.stored.get("name"));
+      dynamic_cast<const tests::StringField*>(src.stored.get_by_id(kName));
     if (name) {
-      irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(), *name);
+      irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(), *name);
     }
   };
 }
@@ -60,12 +63,17 @@ void AnalyzedJsonFieldFactory(tests::Document& doc, const std::string& name,
   };
 
   if (data.is_string()) {
-    // analyzed field
-    doc.indexed.push_back(
-      std::make_shared<TextField>(std::string(name.data()) + "_anl", data.str));
+    // analyzed field -- id derived per source JSON field name so different
+    // sources (e.g. "name" vs "phrase") don't collide on the same writer slot.
+    const std::string anl_name = std::string(name.data()) + "_anl";
+    auto analyzed = std::make_shared<TextField>(anl_name, data.str);
+    analyzed->id = tests::FieldIdFor(anl_name);
+    doc.indexed.push_back(std::move(analyzed));
 
-    // not analyzed field
-    doc.insert(std::make_shared<StringField>(name, data.str));
+    // not analyzed field -- id derived from the raw source field name.
+    auto stringField = std::make_shared<StringField>(name, data.str);
+    stringField->id = tests::FieldIdFor(name);
+    doc.insert(std::move(stringField));
   }
 }
 
@@ -101,7 +109,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // empty phrase
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -115,7 +123,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // equals to term_filter "fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
@@ -184,7 +192,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // prefix_filter "fo*"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByPrefixOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
@@ -283,9 +291,10 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // wildcard_filter "fo%"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
-    q.mutable_options()->push_back<irs::ByWildcardOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
+    *q.mutable_field_id() = kPhraseAnl;
+    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+      irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -382,9 +391,10 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // wildcard_filter "%ox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
-    q.mutable_options()->push_back<irs::ByWildcardOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("%ox"));
+    *q.mutable_field_id() = kPhraseAnl;
+    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+      irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("%ox"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -451,9 +461,10 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // wildcard_filter "f%x"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
-    q.mutable_options()->push_back<irs::ByWildcardOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("_ox"));
+    *q.mutable_field_id() = kPhraseAnl;
+    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+      irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("_ox"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -520,9 +531,10 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // wildcard_filter "f_x"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
-    q.mutable_options()->push_back<irs::ByWildcardOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("f_x"));
+    *q.mutable_field_id() = kPhraseAnl;
+    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+      irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("f_x"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -589,9 +601,10 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // wildcard_filter "fo_"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
-    q.mutable_options()->push_back<irs::ByWildcardOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("fo_"));
+    *q.mutable_field_id() = kPhraseAnl;
+    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+      irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("fo_"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -658,9 +671,10 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // wildcard_filter "fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
-    q.mutable_options()->push_back<irs::ByWildcardOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("fox"));
+    *q.mutable_field_id() = kPhraseAnl;
+    q.mutable_options()->push_back<irs::ByWildcardOptions>() =
+      irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("fox"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -727,7 +741,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // levenshtein_filter "fox" max_distance = 0
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 0;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
@@ -797,7 +811,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // levenshtein_filter "fol"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fol"));
@@ -867,7 +881,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // ByTermsOptions "fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
 
@@ -936,7 +950,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // ByTermsOptions "fox|that"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("that")));
@@ -1016,7 +1030,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // by_range_filter_options "[x0, x0]"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
@@ -1053,7 +1067,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // ByRangeOptions "(x0, x0]"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
@@ -1080,7 +1094,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // ByRangeOptions "[x0, x0)"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
@@ -1107,7 +1121,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // ByRangeOptions "(x0, x0)"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
@@ -1134,7 +1148,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // by_range_filter_options "[x0, x2]"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x2"));
@@ -1191,7 +1205,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // ByRangeOptions "(x0, x2]"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x2"));
@@ -1243,7 +1257,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // ByRangeOptions "[x0, x2)"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x2"));
@@ -1290,7 +1304,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // ByRangeOptions "(x0, x2)"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x2"));
@@ -1333,7 +1347,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which is ok for single word phrases
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase";
+    *q.mutable_field_id() = kPhrase;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
@@ -1365,7 +1379,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which is ok for the first word in phrase
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase";
+    *q.mutable_field_id() = kPhrase;
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
 
@@ -1408,9 +1422,10 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which is ok for first word in phrase
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase";
+    *q.mutable_field_id() = kPhrase;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
     auto prepared = q.prepare({.index = rdr});
     // check single word phrase optimization
@@ -1451,9 +1466,10 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which is ok for first word in phrase
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase";
+    *q.mutable_field_id() = kPhrase;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("f_x%"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("f_x%"))};
 
     auto prepared = q.prepare({.index = rdr});
     // check single word phrase optimization
@@ -1494,7 +1510,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which is ok for single word phrases
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase";
+    *q.mutable_field_id() = kPhrase;
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.with_transpositions = true;
@@ -1529,7 +1545,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which is ok for first word in phrase
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase";
+    *q.mutable_field_id() = kPhrase;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x1"));
@@ -1570,7 +1586,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()
       ->push_back<irs::ByTermOptions>(std::numeric_limits<size_t>::max())
       .term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
@@ -1643,7 +1659,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>(
       std::numeric_limits<size_t>::max());
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
@@ -1747,10 +1763,11 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(
       std::numeric_limits<size_t>::max());
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
     auto prepared = q.prepare({.index = rdr});
     // check single word phrase optimization
@@ -1851,10 +1868,11 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(
       std::numeric_limits<size_t>::max());
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("f%x"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("f%x"))};
 
     auto prepared = q.prepare({.index = rdr});
     // check single word phrase optimization
@@ -1925,7 +1943,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>(
       std::numeric_limits<size_t>::max());
     lt.max_distance = 1;
@@ -2000,7 +2018,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   // which does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>(
       std::numeric_limits<size_t>::max());
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
@@ -2064,7 +2082,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick brown fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -2108,7 +2126,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qui* brown fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -2157,9 +2175,10 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qui% brown fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui%"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -2206,9 +2225,10 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "q%ck brown fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("q%ck"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("q%ck"))};
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -2248,7 +2268,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick brown fox" simple term max_distance = 0
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 0;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("quick"));
@@ -2293,7 +2313,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quck brown fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("quck"));
@@ -2336,7 +2356,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "[x0, x1] x0 x2
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x1"));
@@ -2372,7 +2392,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick bro* fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
@@ -2419,11 +2439,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick bro% fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("bro%"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("bro%"))};
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
@@ -2468,11 +2489,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick b%w_ fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("b%w_"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("b%w_"))};
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
@@ -2510,7 +2532,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick brkln fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
@@ -2555,7 +2577,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "x1 [x0, x1] x2"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("x1"));
     auto& rt = q.mutable_options()->push_back<irs::ByRangeOptions>();
@@ -2591,7 +2613,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick brown fo*"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -2640,13 +2662,14 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick brown fo%"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -2689,13 +2712,14 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick brown f_x"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("f_x"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("f_x"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -2731,7 +2755,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick brown fxo"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -2777,7 +2801,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "x1 x0 [x1, x2]"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("x1"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -2813,7 +2837,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qui* bro* fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt1 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
@@ -2870,11 +2894,13 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qui% bro% fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui%"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("bro%"));
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("bro%"))};
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
@@ -2929,11 +2955,13 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qui% b%o__ fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui%"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("b%o__"));
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("b%o__"))};
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
@@ -2976,7 +3004,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qui bro fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt1 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt1.max_distance = 2;
     lt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
@@ -3027,7 +3055,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "[x0, x1] [x0, x1] x2"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt1 = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt1.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt1.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x1"));
@@ -3064,7 +3092,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qui* brown fo*"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt1 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -3123,13 +3151,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qui% brown fo%"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui%"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -3182,13 +3212,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "q_i% brown f%x"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("q_i%"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("q_i%"))};
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("f%x"));
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("f%x"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -3229,7 +3261,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "[x0, x1] x0 [x1, x2]"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt1 = q.mutable_options()->push_back<irs::ByRangeOptions>();
     rt1.range.min = irs::ViewCast<irs::byte_type>(std::string_view("x0"));
     rt1.range.max = irs::ViewCast<irs::byte_type>(std::string_view("x1"));
@@ -3268,12 +3300,13 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qoick br__nn fix"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt1 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt1.max_distance = 1;
     lt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qoick"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("br__n"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("br__n"))};
     auto& lt2 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt2.max_distance = 1;
     lt2.term = irs::ViewCast<irs::byte_type>(std::string_view("fix"));
@@ -3312,7 +3345,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick bro* fo*"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     auto& pt1 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
@@ -3369,13 +3402,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick bro% fo%"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("bro%"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("bro%"))};
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -3426,13 +3461,15 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick b_o% f_%"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("b_o%"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("b_o%"))};
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("f_%"));
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("f_%"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -3483,7 +3520,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "x1 [x0, x1] [x1, x2]"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("x1"));
     auto& rt1 = q.mutable_options()->push_back<irs::ByRangeOptions>();
@@ -3520,7 +3557,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qui* bro* fo*"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt1 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     auto& pt3 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
@@ -3597,38 +3634,30 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "qui% bro% fo%"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
     auto& wt3 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui%"));
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("bro%"));
-    wt3.term = irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
-
-    size_t collect_field_count = 0;
-    size_t collect_term_count = 0;
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("bro%"))};
+    wt3 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     tests::sort::CustomSort sort;
 
-    sort.collector_collect_field = [&collect_field_count](
-                                     const irs::SubReader&,
-                                     const irs::TermReader&) -> void {
-      ++collect_field_count;
-    };
-    sort.collector_collect_term =
-      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                            const irs::AttributeProvider&) -> void {
-      ++collect_term_count;
-    };
-    sort.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
-    sort.prepare_field_collector = [&sort]() -> irs::FieldCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(sort);
-    };
-    sort.prepare_term_collector = [&sort]() -> irs::TermCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(sort);
+    sort.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
     };
 
     irs::DocIterator* it = nullptr;
@@ -3642,9 +3671,9 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       .index = rdr,
       .scorer = &sort,
     });
-    ASSERT_EQ(1, collect_field_count);  // 1 field in 1 segment
-    ASSERT_EQ(6, collect_term_count);   // 6 different terms
-    ASSERT_EQ(6, finish_count);         // 6 sub-terms in phrase
+    ASSERT_EQ(6, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
 
     auto sub = rdr.begin();
     const auto* column = sub->Column(kName);
@@ -3781,13 +3810,16 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "q%ic_ br_wn _%x"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
     auto& wt3 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("q%ic_"));
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("br_wn"));
-    wt3.term = irs::ViewCast<irs::byte_type>(std::string_view("_%x"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("q%ic_"))};
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("br_wn"))};
+    wt3 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("_%x"))};
 
     auto prepared = q.prepare({.index = rdr});
 
@@ -3824,7 +3856,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick|quilt|hhh brown|brother fox"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& st1 = q.mutable_options()->push_back<irs::ByTermsOptions>();
     st1.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("quick")));
     st1.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("quilt")));
@@ -3885,7 +3917,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "[x0, x1] [x0, x1] [x1, x2]"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& rt1 = q.mutable_options()->push_back<irs::ByRangeOptions>();
     auto& rt2 = q.mutable_options()->push_back<irs::ByRangeOptions>();
     auto& rt3 = q.mutable_options()->push_back<irs::ByRangeOptions>();
@@ -3925,38 +3957,27 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   // "quick brown fox" with order
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
-
-    size_t collect_field_count = 0;
-    size_t collect_term_count = 0;
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     tests::sort::CustomSort sort;
 
-    sort.collector_collect_field = [&collect_field_count](
-                                     const irs::SubReader&,
-                                     const irs::TermReader&) -> void {
-      ++collect_field_count;
-    };
-    sort.collector_collect_term =
-      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                            const irs::AttributeProvider&) -> void {
-      ++collect_term_count;
-    };
-    sort.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
-    sort.prepare_field_collector = [&sort]() -> irs::FieldCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(sort);
-    };
-    sort.prepare_term_collector = [&sort]() -> irs::TermCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(sort);
+    sort.collectors_collect = [&](irs::byte_type*,
+                                  const irs::FieldCollector* field,
+                                  const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
     };
     irs::DocIterator* it = nullptr;
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
@@ -3969,9 +3990,9 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       .index = rdr,
       .scorer = &sort,
     });
-    ASSERT_EQ(1, collect_field_count);  // 1 field in 1 segment
-    ASSERT_EQ(3, collect_term_count);   // 3 different terms
-    ASSERT_EQ(3, finish_count);         // 3 sub-terms in phrase
+    ASSERT_EQ(3, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
     auto sub = rdr.begin();
 
     // no order passed - no frequency
@@ -4050,7 +4071,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fox ... quick"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
@@ -4085,7 +4106,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fo* ... quick"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
@@ -4122,9 +4143,10 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "f_x ... quick"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("f_x"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("f_x"))};
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
@@ -4157,7 +4179,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fpx ... quick"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fpx"));
@@ -4193,7 +4215,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fox ... qui*"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>(1);
@@ -4228,11 +4250,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fox ... qui%ck"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(1);
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui%ck"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("qui%ck"))};
 
     auto prepared = q.prepare({.index = rdr});
 
@@ -4263,7 +4286,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fo* ... qui*"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt1 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>(1);
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
@@ -4298,11 +4321,13 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "f%x ... qui%ck"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>(1);
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("f%x"));
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("qui%ck"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("f%x"))};
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("qui%ck"))};
 
     auto prepared = q.prepare({.index = rdr});
 
@@ -4333,7 +4358,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fx ... quik"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt1 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     auto& lt2 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>(1);
     lt1.max_distance = 1;
@@ -4372,7 +4397,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fx ... quik"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt1 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     auto& lt2 = q.mutable_options()->push_back<irs::ByEditDistanceOptions>(1);
     lt1.max_distance = 1;
@@ -4380,8 +4405,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     lt2.max_distance = 1;
     lt2.term = irs::ViewCast<irs::byte_type>(std::string_view("quik"));
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4441,14 +4465,13 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fo* ... qui*" with scorer
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt1 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>(1);
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4501,7 +4524,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // jumps ... (jumps|hotdog|the) with scorer
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pos0 = q.mutable_options()->push_back<irs::ByTermsOptions>();
     pos0.terms.emplace(
       irs::ViewCast<irs::byte_type>(std::string_view("jumps")));
@@ -4513,8 +4536,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     pos1.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("the")),
                        0.75f);
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4613,13 +4635,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // ByTermsOptions "fox|that" with scorer
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")));
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("that")));
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4760,14 +4781,13 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // ByTermsOptions "fox|that" with scorer and boost
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("fox")),
                      0.5f);
     st.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("that")));
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4940,18 +4960,19 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // test disjunctions (unary, basic, small, disjunction)
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
     auto& pt1 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>();
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("%las"));
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("%nd"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("%las"))};
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("%nd"))};
     pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("go"));
     pt2.term = irs::ViewCast<irs::byte_type>(std::string_view("like"));
 
-    auto scorer = irs::scorers::Get(
-      "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
+    auto scorer = irs::BM25::Make(irs::BM25::Options{.b = 0.0f});
 
     auto prepared = q.prepare({.index = rdr, .scorer = scorer.get()});
 
@@ -4995,7 +5016,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // which is does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()
       ->push_back<irs::ByTermOptions>(std::numeric_limits<size_t>::max())
       .term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
@@ -5032,7 +5053,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // const_max and zero offset
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()
       ->push_back<irs::ByTermOptions>(std::numeric_limits<size_t>::max())
       .term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
@@ -5064,7 +5085,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // const_max and zero offset
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt1 = q.mutable_options()->push_back<irs::ByPrefixOptions>(
       std::numeric_limits<size_t>::max());
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>(0);
@@ -5096,7 +5117,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // which is does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>(
       std::numeric_limits<size_t>::max());
     pt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
@@ -5133,10 +5154,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // which is does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(
       std::numeric_limits<size_t>::max());
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("f_x"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("f_x"))};
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
@@ -5170,7 +5192,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // which is does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()
       ->push_back<irs::ByTermOptions>(std::numeric_limits<size_t>::max())
       .term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
@@ -5207,12 +5229,13 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // which is does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()
       ->push_back<irs::ByTermOptions>(std::numeric_limits<size_t>::max())
       .term = irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(1);
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui%k"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("qui%k"))};
 
     auto prepared = q.prepare({.index = rdr});
 
@@ -5244,7 +5267,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // which is does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& pt1 = q.mutable_options()->push_back<irs::ByPrefixOptions>(
       std::numeric_limits<size_t>::max());
     auto& pt2 = q.mutable_options()->push_back<irs::ByPrefixOptions>(1);
@@ -5281,12 +5304,14 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // which is does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>(
       std::numeric_limits<size_t>::max());
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>(1);
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("qui%"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("qui%"))};
 
     auto prepared = q.prepare({.index = rdr});
 
@@ -5318,11 +5343,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // which is does not matter
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(
       std::numeric_limits<size_t>::max());
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>(1);
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("fo%"))};
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("quik"));
 
@@ -5355,7 +5381,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fox ... ... ... ... ... ... ... ... ... ... quick"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     q.mutable_options()->push_back<irs::ByTermOptions>(10).term =
@@ -5373,7 +5399,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fox ... ... ... ... ... ... ... ... ... ... qui*"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>(10);
@@ -5391,11 +5417,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fox ... ... ... ... ... ... ... ... ... ... qu_ck"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>(10);
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("qu_ck"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("qu_ck"))};
 
     auto prepared = q.prepare({.index = rdr});
 
@@ -5409,7 +5436,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "fox ... ... ... ... ... ... ... ... ... ... quc"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>(10);
@@ -5428,7 +5455,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "eye ... eye"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("eye"));
     q.mutable_options()->push_back<irs::ByTermOptions>(1).term =
@@ -5458,7 +5485,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "as in the past we are looking forward"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("as"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -5499,20 +5526,22 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "as in % past we ___ looking forward"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 2;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("ass"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("in"));
     auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("%"));
+    wt1 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("%"))};
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("past"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("we"));
     auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("___"));
+    wt2 = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("___"))};
     auto& st = q.mutable_options()->push_back<irs::ByTermsOptions>();
     st.terms.emplace(
       irs::ViewCast<irs::byte_type>(std::string_view("looking")));
@@ -5544,7 +5573,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "as in the past we are looking forward" with order
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("as"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -5618,7 +5647,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // "as in the p_st we are look* forward" with order
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("as"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -5626,7 +5655,8 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("the"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("p_st"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("p_st"))};
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("we"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -5692,7 +5722,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // fox quick
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -5726,7 +5756,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // fox quick with order
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -5782,9 +5812,10 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // wildcard_filter "zo\\_%"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("zo\\_%"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("zo\\_%"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -5809,9 +5840,10 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // wildcard_filter "\\_oo"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("\\_oo"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("\\_oo"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -5836,9 +5868,10 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // wildcard_filter "z\\_o"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("z\\_o"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("z\\_o"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -5863,11 +5896,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // wildcard_filter "elephant giraff\\_%"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("elephant"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("giraff\\_%"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("giraff\\_%"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -5892,11 +5926,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // wildcard_filter "elephant \\_iraffe"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("elephant"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("\\_iraffe"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("\\_iraffe"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -5921,11 +5956,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   // wildcard_filter "elephant gira\\_fe"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("elephant"));
     auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("gira\\_fe"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("gira\\_fe"))};
 
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
@@ -5963,7 +5999,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
   // "fox ... quick"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     q.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
@@ -6013,7 +6049,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
   // "fox ... quick ... brown"
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     q.mutable_options()->push_back<irs::ByTermOptions>(4, 5).term =
@@ -6061,7 +6097,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
   // adjustments
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("pox"));
     q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
@@ -6081,7 +6117,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
   // mix interval and single
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
@@ -6116,7 +6152,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
@@ -6125,7 +6161,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     irs::Or disjunction;
     auto add_phrase = [&](size_t off) {
       auto& ph = disjunction.add<irs::ByPhrase>();
-      *ph.mutable_field() = "phrase_anl";
+      *ph.mutable_field_id() = kPhraseAnl;
       ph.mutable_options()->push_back<irs::ByTermOptions>().term =
         irs::ViewCast<irs::byte_type>(std::string_view("fox"));
       ph.mutable_options()->push_back<irs::ByTermOptions>(off).term =
@@ -6267,7 +6303,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
   // mix interval and single
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("long"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -6304,7 +6340,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     auto& wt = q.mutable_options()->push_back<irs::ByPrefixOptions>(3, 4);
@@ -6358,7 +6394,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
   // fixed interval ordered
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     q.mutable_options()->push_back<irs::ByTermOptions>(2, 4).term =
@@ -6369,7 +6405,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     irs::Or disjunction;
     auto add_phrase = [&](size_t off1, size_t off2) {
       auto& ph = disjunction.add<irs::ByPhrase>();
-      *ph.mutable_field() = "phrase_anl";
+      *ph.mutable_field_id() = kPhraseAnl;
       ph.mutable_options()->push_back<irs::ByTermOptions>().term =
         irs::ViewCast<irs::byte_type>(std::string_view("fox"));
       ph.mutable_options()->push_back<irs::ByTermOptions>(off1).term =
@@ -6487,7 +6523,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
   // variadic interval ordered
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByPrefixOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fo"));
     q.mutable_options()->push_back<irs::ByPrefixOptions>(4, 5).term =
@@ -6498,7 +6534,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     irs::Or disjunction;
     auto add_phrase = [&](size_t off1, size_t off2) {
       auto& ph = disjunction.add<irs::ByPhrase>();
-      *ph.mutable_field() = "phrase_anl";
+      *ph.mutable_field_id() = kPhraseAnl;
       ph.mutable_options()->push_back<irs::ByPrefixOptions>().term =
         irs::ViewCast<irs::byte_type>(std::string_view("fo"));
       ph.mutable_options()->push_back<irs::ByPrefixOptions>(off1).term =
@@ -6611,7 +6647,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
   // fixed interval ordered last only repeated
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("zoo"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -6622,7 +6658,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     irs::Or disjunction;
     auto add_phrase = [&](size_t off1, size_t off2) {
       auto& ph = disjunction.add<irs::ByPhrase>();
-      *ph.mutable_field() = "phrase_anl";
+      *ph.mutable_field_id() = kPhraseAnl;
       ph.mutable_options()->push_back<irs::ByTermOptions>().term =
         irs::ViewCast<irs::byte_type>(std::string_view("zoo"));
       ph.mutable_options()->push_back<irs::ByTermOptions>(off1).term =
@@ -6729,7 +6765,7 @@ TEST(by_phrase_test, options_clear) {
 TEST(by_phrase_test, ctor) {
   irs::ByPhrase q;
   ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), q.type());
-  ASSERT_EQ("", q.field());
+  ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
   ASSERT_EQ(irs::ByPhraseOptions{}, q.options());
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 
@@ -6742,7 +6778,7 @@ TEST(by_phrase_test, ctor) {
 TEST(by_phrase_test, boost) {
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = 1;
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
     ASSERT_EQ(irs::kNoBoost, prepared->Boost());
@@ -6751,7 +6787,7 @@ TEST(by_phrase_test, boost) {
   // single term
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = 1;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
@@ -6762,7 +6798,7 @@ TEST(by_phrase_test, boost) {
   // multiple terms
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = 1;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -6780,7 +6816,7 @@ TEST(by_phrase_test, boost) {
     // no terms, return empty query
     {
       irs::ByPhrase q;
-      *q.mutable_field() = "field";
+      *q.mutable_field_id() = 1;
       q.boost(boost);
 
       auto prepared = q.prepare({.index = irs::SubReader::empty()});
@@ -6790,7 +6826,7 @@ TEST(by_phrase_test, boost) {
     // single term
     {
       irs::ByPhrase q;
-      *q.mutable_field() = "field";
+      *q.mutable_field_id() = 1;
       q.mutable_options()->push_back<irs::ByTermOptions>().term =
         irs::ViewCast<irs::byte_type>(std::string_view("quick"));
       q.boost(boost);
@@ -6808,7 +6844,7 @@ TEST(by_phrase_test, boost) {
     // single multiple terms
     {
       irs::ByPhrase q;
-      *q.mutable_field() = "field";
+      *q.mutable_field_id() = 1;
       q.mutable_options()->push_back<irs::ByTermOptions>().term =
         irs::ViewCast<irs::byte_type>(std::string_view("quick"));
       q.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -6822,11 +6858,12 @@ TEST(by_phrase_test, boost) {
     // prefix, wildcard, levenshtein, set, range
     {
       irs::ByPhrase q;
-      *q.mutable_field() = "field";
+      *q.mutable_field_id() = 1;
       auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
       pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
       auto& wt = q.mutable_options()->push_back<irs::ByWildcardOptions>();
-      wt.term = irs::ViewCast<irs::byte_type>(std::string_view("qu__k"));
+      wt = irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("qu__k"))};
       auto& lt = q.mutable_options()->push_back<irs::ByEditDistanceOptions>();
       lt.max_distance = 1;
       lt.term = irs::ViewCast<irs::byte_type>(std::string_view("brwn"));
@@ -6896,7 +6933,8 @@ TEST(by_phrase_test, push_back) {
       ASSERT_EQ(pt1, pt2);
 
       irs::ByWildcardOptions wt1;
-      wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("dog"));
+      wt1 = irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("dog"))};
       q.push_back(wt1);
       const auto& wt2 = std::get<irs::ByWildcardOptions>((--q.end())->part);
       ASSERT_EQ(wt1, wt2);
@@ -6934,14 +6972,14 @@ TEST(by_phrase_test, equal) {
 
   {
     irs::ByPhrase q0;
-    *q0.mutable_field() = "name";
+    *q0.mutable_field_id() = 1;
     q0.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q0.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
 
     irs::ByPhrase q1;
-    *q1.mutable_field() = "name";
+    *q1.mutable_field_id() = 1;
     q1.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q1.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -6952,7 +6990,7 @@ TEST(by_phrase_test, equal) {
   {
     irs::ByPhrase q0;
     {
-      *q0.mutable_field() = "name";
+      *q0.mutable_field_id() = 1;
       auto& pt1 = q0.mutable_options()->push_back<irs::ByPrefixOptions>();
       pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
       auto& ct1 = q0.mutable_options()->push_back<irs::ByTermsOptions>();
@@ -6961,7 +6999,8 @@ TEST(by_phrase_test, equal) {
       ct1.terms.emplace(
         irs::ViewCast<irs::byte_type>(std::string_view("dark")));
       auto& wt1 = q0.mutable_options()->push_back<irs::ByWildcardOptions>();
-      wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("br_wn"));
+      wt1 = irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("br_wn"))};
       auto& lt1 = q0.mutable_options()->push_back<irs::ByEditDistanceOptions>();
       lt1.max_distance = 2;
       lt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
@@ -6976,7 +7015,7 @@ TEST(by_phrase_test, equal) {
 
     irs::ByPhrase q1;
     {
-      *q1.mutable_field() = "name";
+      *q1.mutable_field_id() = 1;
       auto& pt1 = q1.mutable_options()->push_back<irs::ByPrefixOptions>();
       pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
       auto& ct1 = q1.mutable_options()->push_back<irs::ByTermsOptions>();
@@ -6985,7 +7024,8 @@ TEST(by_phrase_test, equal) {
       ct1.terms.emplace(
         irs::ViewCast<irs::byte_type>(std::string_view("dark")));
       auto& wt1 = q1.mutable_options()->push_back<irs::ByWildcardOptions>();
-      wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("br_wn"));
+      wt1 = irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("br_wn"))};
       auto& lt1 = q1.mutable_options()->push_back<irs::ByEditDistanceOptions>();
       lt1.max_distance = 2;
       lt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
@@ -7003,14 +7043,14 @@ TEST(by_phrase_test, equal) {
 
   {
     irs::ByPhrase q0;
-    *q0.mutable_field() = "name";
+    *q0.mutable_field_id() = 1;
     q0.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q0.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("squirrel"));
 
     irs::ByPhrase q1;
-    *q1.mutable_field() = "name";
+    *q1.mutable_field_id() = 1;
     q1.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q1.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -7020,14 +7060,14 @@ TEST(by_phrase_test, equal) {
 
   {
     irs::ByPhrase q0;
-    *q0.mutable_field() = "name1";
+    *q0.mutable_field_id() = 2;
     q0.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q0.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
 
     irs::ByPhrase q1;
-    *q1.mutable_field() = "name";
+    *q1.mutable_field_id() = 1;
     q1.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q1.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -7037,12 +7077,12 @@ TEST(by_phrase_test, equal) {
 
   {
     irs::ByPhrase q0;
-    *q0.mutable_field() = "name";
+    *q0.mutable_field_id() = 1;
     q0.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
     irs::ByPhrase q1;
-    *q1.mutable_field() = "name";
+    *q1.mutable_field_id() = 1;
     q1.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     q1.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -7053,7 +7093,7 @@ TEST(by_phrase_test, equal) {
   {
     irs::ByPhrase q0;
     {
-      *q0.mutable_field() = "name";
+      *q0.mutable_field_id() = 1;
       auto& pt1 = q0.mutable_options()->push_back<irs::ByPrefixOptions>();
       pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("quil"));
       auto& ct1 = q0.mutable_options()->push_back<irs::ByTermsOptions>();
@@ -7062,7 +7102,8 @@ TEST(by_phrase_test, equal) {
       ct1.terms.emplace(
         irs::ViewCast<irs::byte_type>(std::string_view("dark")));
       auto& wt1 = q0.mutable_options()->push_back<irs::ByWildcardOptions>();
-      wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("br_wn"));
+      wt1 = irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("br_wn"))};
       auto& lt1 = q0.mutable_options()->push_back<irs::ByEditDistanceOptions>();
       lt1.max_distance = 2;
       lt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
@@ -7077,7 +7118,7 @@ TEST(by_phrase_test, equal) {
 
     irs::ByPhrase q1;
     {
-      *q1.mutable_field() = "name";
+      *q1.mutable_field_id() = 1;
       auto& pt1 = q1.mutable_options()->push_back<irs::ByPrefixOptions>();
       pt1.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
       auto& ct1 = q1.mutable_options()->push_back<irs::ByTermsOptions>();
@@ -7086,7 +7127,8 @@ TEST(by_phrase_test, equal) {
       ct1.terms.emplace(
         irs::ViewCast<irs::byte_type>(std::string_view("dark")));
       auto& wt1 = q1.mutable_options()->push_back<irs::ByWildcardOptions>();
-      wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("br_wn"));
+      wt1 = irs::ByWildcardOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("br_wn"))};
       auto& lt1 = q1.mutable_options()->push_back<irs::ByEditDistanceOptions>();
       lt1.max_distance = 2;
       lt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
@@ -7113,7 +7155,8 @@ TEST(by_phrase_test, copy_move) {
     ct.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("light")));
     ct.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view("dark")));
     irs::ByWildcardOptions wt;
-    wt.term = irs::ViewCast<irs::byte_type>(std::string_view("br_wn"));
+    wt = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("br_wn"))};
     irs::ByEditDistanceOptions lt;
     lt.max_distance = 2;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("fo"));
@@ -7124,7 +7167,7 @@ TEST(by_phrase_test, copy_move) {
     rt.range.max_type = irs::BoundType::Inclusive;
 
     irs::ByPhrase q0;
-    *q0.mutable_field() = "name";
+    *q0.mutable_field_id() = 1;
     q0.mutable_options()->push_back(st);
     q0.mutable_options()->push_back(pt);
     q0.mutable_options()->push_back(ct);
@@ -7174,7 +7217,7 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
   // "quick [br]+own" in Perl equals plain phrase "quick brown"
   {
     irs::ByPhrase ref;
-    *ref.mutable_field() = "phrase_anl";
+    *ref.mutable_field_id() = kPhraseAnl;
     ref.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     ref.mutable_options()->push_back<irs::ByTermOptions>().term =
@@ -7183,23 +7226,25 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
     ASSERT_FALSE(expected.empty());
 
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByRegexpOptions>().pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view("[br]+own"));
+    q.mutable_options()->push_back<irs::ByRegexpOptions>() =
+      irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("[br]+own"))};
     ASSERT_EQ(expected, execute(q));
   }
 
   // "quick \w+" in POSIX matches nothing - \w+ is a parse error
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    auto& r = q.mutable_options()->push_back<irs::ByRegexpOptions>();
-    r.pattern = irs::ViewCast<irs::byte_type>(std::string_view("\\w+"));
-    r.syntax = irs::RegexpSyntax::PosixEre;
+    q.mutable_options()->push_back<irs::ByRegexpOptions>() =
+      irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("\\w+")),
+        irs::RegexpSyntax::PosixEre};
 
     ASSERT_TRUE(execute(q).empty());
   }
@@ -7207,13 +7252,78 @@ TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
   // sanity: same "quick \w+" in Perl matches something
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
-    q.mutable_options()->push_back<irs::ByRegexpOptions>().pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view("\\w+"));
+    q.mutable_options()->push_back<irs::ByRegexpOptions>() =
+      irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view("\\w+"))};
 
     ASSERT_FALSE(execute(q).empty());
+  }
+}
+
+// Regression: NOT(ByPhrase) used to trip the `target >= value()`
+// assertion in PostingIteratorBase::LazySeek. Not::prepare wraps the
+// phrase as the excl side of an AndQuery over All; Exclusion::converge
+// then re-reads value() from the PhraseIterator (and its inner
+// Conjunction) between LazySeek calls. The bail-out paths in those
+// iterators previously returned the advanced position without
+// updating _doc, so the next LazySeek seeded a target that was
+// behind some leaf's current position.
+TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  irs::ByPhrase phrase;
+  *phrase.mutable_field_id() = kPhraseAnl;
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+
+  auto collect = [&](const irs::Filter& filter) {
+    std::vector<irs::doc_id_t> out;
+    auto prepared = filter.prepare({.index = rdr});
+    for (const auto& sub : rdr) {
+      auto docs = prepared->execute({.segment = sub});
+      while (docs->next()) {
+        out.push_back(docs->value());
+      }
+    }
+    return out;
+  };
+
+  const auto phrase_hits = collect(phrase);
+  ASSERT_FALSE(phrase_hits.empty());
+
+  irs::Not not_phrase;
+  not_phrase.filter<irs::ByPhrase>() = phrase;
+  const auto not_hits = collect(not_phrase);
+
+  // Complement must be non-empty and disjoint from the positive hits.
+  ASSERT_FALSE(not_hits.empty());
+  for (auto doc : phrase_hits) {
+    EXPECT_EQ(not_hits.end(), std::find(not_hits.begin(), not_hits.end(), doc));
+  }
+
+  // Drive seek() across positive hits too -- that's the path that
+  // surfaced the crash from the SQL side via Exclusion::converge.
+  auto prepared = not_phrase.prepare({.index = rdr});
+  for (const auto& sub : rdr) {
+    auto docs = prepared->execute({.segment = sub});
+    for (auto doc : phrase_hits) {
+      const auto target = doc + 1;
+      const auto landed = docs->seek(target);
+      EXPECT_GE(landed, target);
+      if (irs::doc_limits::eof(landed)) {
+        break;
+      }
+    }
   }
 }
 
@@ -7221,7 +7331,7 @@ TEST(by_phrase_test, equal_regexp_part_syntax_differs) {
   // ByRegexpOptions::syntax must propagate through variant equality
   auto make = [](irs::RegexpSyntax syntax) {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
     auto& r = q.mutable_options()->push_back<irs::ByRegexpOptions>();

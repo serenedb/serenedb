@@ -30,7 +30,7 @@ CREATE INDEX ua_idx ON ua_t
   USING inverted(id, a ua_dict, b ua_dict, c ua_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ua_t;
+VACUUM (REFRESH_TABLE) ua_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -58,7 +58,7 @@ SELECT 1;
 
 connection ua_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) ua_t;
+VACUUM (REFRESH_TABLE) ua_t;
 
 connection ua_after
 query
@@ -77,42 +77,42 @@ count
 # === Case A: row 1 still at pk=1 with all new tokens, no old tokens ===
 connection ua_after
 query
-SELECT id FROM ua_t WHERE a @@ ts_phrase('A_NEW');
+SELECT id FROM ua_idx WHERE a @@ ts_phrase('A_NEW');
 ----
 id
 1
 
 connection ua_after
 query
-SELECT id FROM ua_t WHERE b @@ ts_phrase('B_NEW');
+SELECT id FROM ua_idx WHERE b @@ ts_phrase('B_NEW');
 ----
 id
 1
 
 connection ua_after
 query
-SELECT id FROM ua_t WHERE c @@ ts_phrase('C_NEW');
+SELECT id FROM ua_idx WHERE c @@ ts_phrase('C_NEW');
 ----
 id
 1
 
 connection ua_after
 query
-SELECT COUNT(*) FROM ua_t WHERE a @@ ts_phrase('a_one');
+SELECT COUNT(*) FROM ua_idx WHERE a @@ ts_phrase('a_one');
 ----
 count
 0
 
 connection ua_after
 query
-SELECT COUNT(*) FROM ua_t WHERE b @@ ts_phrase('b_one');
+SELECT COUNT(*) FROM ua_idx WHERE b @@ ts_phrase('b_one');
 ----
 count
 0
 
 connection ua_after
 query
-SELECT COUNT(*) FROM ua_t WHERE c @@ ts_phrase('c_one');
+SELECT COUNT(*) FROM ua_idx WHERE c @@ ts_phrase('c_one');
 ----
 count
 0
@@ -134,21 +134,21 @@ id
 
 connection ua_after
 query
-SELECT id FROM ua_t WHERE a @@ ts_phrase('a_pk_new');
+SELECT id FROM ua_idx WHERE a @@ ts_phrase('a_pk_new');
 ----
 id
 20
 
 connection ua_after
 query
-SELECT id FROM ua_t WHERE b @@ ts_phrase('b_pk_new');
+SELECT id FROM ua_idx WHERE b @@ ts_phrase('b_pk_new');
 ----
 id
 20
 
 connection ua_after
 query
-SELECT id FROM ua_t WHERE c @@ ts_phrase('c_pk_new');
+SELECT id FROM ua_idx WHERE c @@ ts_phrase('c_pk_new');
 ----
 id
 20
@@ -156,7 +156,7 @@ id
 # Old pk=2 tokens gone everywhere
 connection ua_after
 query
-SELECT COUNT(*) FROM ua_t WHERE a @@ ts_phrase('a_two');
+SELECT COUNT(*) FROM ua_idx WHERE a @@ ts_phrase('a_two');
 ----
 count
 0
@@ -179,21 +179,21 @@ id	a	b	c
 # Original tokens for row 3 must STILL be searchable (via saved_columns path).
 connection ua_after
 query
-SELECT id FROM ua_t WHERE a @@ ts_phrase('a_three');
+SELECT id FROM ua_idx WHERE a @@ ts_phrase('a_three');
 ----
 id
 30
 
 connection ua_after
 query
-SELECT id FROM ua_t WHERE b @@ ts_phrase('b_three');
+SELECT id FROM ua_idx WHERE b @@ ts_phrase('b_three');
 ----
 id
 30
 
 connection ua_after
 query
-SELECT id FROM ua_t WHERE c @@ ts_phrase('c_three');
+SELECT id FROM ua_idx WHERE c @@ ts_phrase('c_three');
 ----
 id
 30

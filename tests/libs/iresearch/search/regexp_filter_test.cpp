@@ -28,21 +28,70 @@
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {
 
+// Stable per-name field ids for the regexp tests. Values come from the
+// canonical `tests::FieldIdFor` mapping so the shared factories and these
+// tests agree on which id a name maps to.
+[[maybe_unused]] inline constexpr irs::field_id kAltId =
+  tests::FieldIdFor("alt");
+[[maybe_unused]] inline constexpr irs::field_id kClassId =
+  tests::FieldIdFor("class");
+[[maybe_unused]] inline constexpr irs::field_id kDuplicatedId =
+  tests::FieldIdFor("duplicated");
+[[maybe_unused]] inline constexpr irs::field_id kFieldId =
+  tests::FieldIdFor("field");
+[[maybe_unused]] inline constexpr irs::field_id kField1Id =
+  tests::FieldIdFor("field1");
+[[maybe_unused]] inline constexpr irs::field_id kFooId =
+  tests::FieldIdFor("foo");
+[[maybe_unused]] inline constexpr irs::field_id kLongId =
+  tests::FieldIdFor("long");
+[[maybe_unused]] inline constexpr irs::field_id kMetaId =
+  tests::FieldIdFor("meta");
+[[maybe_unused]] inline constexpr irs::field_id kNameId =
+  tests::FieldIdFor("name");
+[[maybe_unused]] inline constexpr irs::field_id kNonexistentId =
+  tests::FieldIdFor("nonexistent");
+[[maybe_unused]] inline constexpr irs::field_id kOptId =
+  tests::FieldIdFor("opt");
+[[maybe_unused]] inline constexpr irs::field_id kPlusId =
+  tests::FieldIdFor("plus");
+[[maybe_unused]] inline constexpr irs::field_id kPrefixId =
+  tests::FieldIdFor("prefix");
+[[maybe_unused]] inline constexpr irs::field_id kRedosId =
+  tests::FieldIdFor("redos");
+[[maybe_unused]] inline constexpr irs::field_id kSameId =
+  tests::FieldIdFor("same");
+[[maybe_unused]] inline constexpr irs::field_id kSame1Id =
+  tests::FieldIdFor("same1");
+[[maybe_unused]] inline constexpr irs::field_id kTermId =
+  tests::FieldIdFor("term");
+[[maybe_unused]] inline constexpr irs::field_id kUtf8Id =
+  tests::FieldIdFor("utf8");
+[[maybe_unused]] inline constexpr irs::field_id kWsId = tests::FieldIdFor("ws");
+
 template<typename Filter = irs::ByRegexp>
-Filter MakeFilter(std::string_view field, std::string_view value) {
+Filter MakeFilter(std::string_view field, std::string_view value,
+                  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
   Filter q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = tests::FieldIdFor(field);
   if constexpr (std::is_same_v<Filter, irs::ByRegexp>) {
-    q.mutable_options()->pattern = irs::ViewCast<irs::byte_type>(value);
+    *q.mutable_options() =
+      irs::ByRegexpOptions{irs::ViewCast<irs::byte_type>(value), syntax};
   } else {
     q.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
   }
   return q;
+}
+
+irs::Filter::ptr MakeRegexp(std::string_view field, std::string_view value) {
+  return irs::CreateByRegexp(tests::FieldIdFor(field),
+                             irs::ViewCast<irs::byte_type>(value));
 }
 
 }  // namespace
@@ -59,7 +108,7 @@ TEST(by_regexp_test, ctor) {
   irs::ByRegexp q;
   ASSERT_EQ(irs::Type<irs::ByRegexp>::id(), q.type());
   ASSERT_EQ(irs::ByRegexpOptions{}, q.options());
-  ASSERT_TRUE(q.field().empty());
+  ASSERT_FALSE(irs::field_limits::valid(q.field_id()));
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 }
 
@@ -104,8 +153,8 @@ TEST(by_regexp_test, type_of_prepared_query) {
       MakeFilter<irs::ByTerm>("foo", "bar")
         .prepare({.index = irs::SubReader::empty(), .memory = counter});
     auto rhs =
-      MakeFilter("foo", "bar")
-        .prepare({.index = irs::SubReader::empty(), .memory = counter});
+      MakeRegexp("foo", "bar")
+        ->prepare({.index = irs::SubReader::empty(), .memory = counter});
     auto& lhs_ref = *lhs;
     auto& rhs_ref = *rhs;
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
@@ -116,8 +165,8 @@ TEST(by_regexp_test, type_of_prepared_query) {
       MakeFilter<irs::ByPrefix>("foo", "bar")
         .prepare({.index = irs::SubReader::empty(), .memory = counter});
     auto rhs =
-      MakeFilter("foo", "bar.*")
-        .prepare({.index = irs::SubReader::empty(), .memory = counter});
+      MakeRegexp("foo", "bar.*")
+        ->prepare({.index = irs::SubReader::empty(), .memory = counter});
     auto& lhs_ref = *lhs;
     auto& rhs_ref = *rhs;
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
@@ -126,7 +175,7 @@ TEST(by_regexp_test, type_of_prepared_query) {
   {
     auto lhs = MakeFilter<irs::ByTerm>("foo", "").prepare(
       {.index = irs::SubReader::empty(), .memory = counter});
-    auto rhs = MakeFilter("foo", "").prepare(
+    auto rhs = MakeRegexp("foo", "")->prepare(
       {.index = irs::SubReader::empty(), .memory = counter});
     auto& lhs_ref = *lhs;
     auto& rhs_ref = *rhs;
@@ -375,7 +424,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_empty_filter) {
     add_segment(gen);
   }
   auto rdr = open_reader();
-  CheckQuery(irs::ByRegexp(), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeRegexp("term", ""), Docs{}, Costs{0}, rdr);
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_no_match) {
@@ -412,31 +461,25 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_custom_sort) {
   auto rdr = open_reader();
   {
     Docs docs{1, 4, 9, 16, 21, 24, 26, 29, 31, 32};
-    size_t collect_field_count = 0, collect_term_count = 0, finish_count = 0;
+    size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
-    scorer.collector_collect_field = [&](const irs::SubReader&,
-                                         const irs::TermReader&) {
-      ++collect_field_count;
-    };
-    scorer.collector_collect_term =
-      [&](const irs::SubReader&, const irs::TermReader&,
-          const irs::AttributeProvider&) { ++collect_term_count; };
-    scorer.collectors_collect = [&](irs::byte_type*, const irs::FieldCollector*,
-                                    const irs::TermCollector*) {
+    scorer.collectors_collect = [&](irs::byte_type*,
+                                    const irs::FieldCollector* field,
+                                    const irs::TermCollector* term) {
       ++finish_count;
-    };
-    scorer.prepare_field_collector = [&]() -> irs::FieldCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(scorer);
-    };
-    scorer.prepare_term_collector = [&]() -> irs::TermCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
     };
     CheckQuery(MakeFilter("prefix", ".*"), order, docs, rdr);
-    ASSERT_EQ(9, collect_field_count);
-    ASSERT_EQ(9, collect_term_count);
     ASSERT_EQ(9, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
   }
 }
 
@@ -473,31 +516,20 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_custom_sort) {
   {
     // ".*c.*" is Complex (not Prefix/Literal), so it goes through FromRegexp
     Docs docs{1, 4, 9, 21, 26, 31, 32};
-    size_t collect_field_count = 0, collect_term_count = 0, finish_count = 0;
+    size_t finish_count = 0, field_docs = 0;
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
-    scorer.collector_collect_field = [&](const irs::SubReader&,
-                                         const irs::TermReader&) {
-      ++collect_field_count;
-    };
-    scorer.collector_collect_term =
-      [&](const irs::SubReader&, const irs::TermReader&,
-          const irs::AttributeProvider&) { ++collect_term_count; };
-    scorer.collectors_collect = [&](irs::byte_type*, const irs::FieldCollector*,
+    scorer.collectors_collect = [&](irs::byte_type*,
+                                    const irs::FieldCollector* field,
                                     const irs::TermCollector*) {
       ++finish_count;
-    };
-    scorer.prepare_field_collector = [&]() -> irs::FieldCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(scorer);
-    };
-    scorer.prepare_term_collector = [&]() -> irs::TermCollector::ptr {
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+      if (field) {
+        field_docs += field->docs_with_field;
+      }
     };
     CheckQuery(MakeFilter("prefix", ".*c.*"), order, docs, rdr);
-    // Verify collectors were called (terms were scored via automaton path)
-    ASSERT_GT(collect_field_count, 0);
-    ASSERT_GT(collect_term_count, 0);
+    ASSERT_GT(field_docs, 0);
     ASSERT_GT(finish_count, 0);
   }
 }
@@ -549,9 +581,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   // scored_terms_limit = 1 -> only 1 term gets scored
   {
     irs::ByRegexp q;
-    *q.mutable_field() = "prefix";
-    q.mutable_options()->pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
+    *q.mutable_field_id() = kPrefixId;
+    *q.mutable_options() = irs::ByRegexpOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
     q.mutable_options()->scored_terms_limit = 1;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -560,9 +592,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   // scored_terms_limit = 0
   {
     irs::ByRegexp q;
-    *q.mutable_field() = "prefix";
-    q.mutable_options()->pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
+    *q.mutable_field_id() = kPrefixId;
+    *q.mutable_options() = irs::ByRegexpOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
     q.mutable_options()->scored_terms_limit = 0;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -571,9 +603,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   // scored_terms_limit very large
   {
     irs::ByRegexp q;
-    *q.mutable_field() = "prefix";
-    q.mutable_options()->pattern =
-      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
+    *q.mutable_field_id() = kPrefixId;
+    *q.mutable_options() = irs::ByRegexpOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"))};
     q.mutable_options()->scored_terms_limit = 1000000;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -890,15 +922,15 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     irs::Or d;
     {
       auto& s = d.add<irs::ByRegexp>();
-      *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
+      *s.mutable_field_id() = kAltId;
+      *s.mutable_options() = irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view{"cat"})};
     }
     {
       auto& s = d.add<irs::ByRegexp>();
-      *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("dog"));
+      *s.mutable_field_id() = kAltId;
+      *s.mutable_options() = irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view{"dog"})};
     }
     CheckQuery(d, Docs{1, 2, 4, 6, 8, 10, 11, 14, 15, 17, 18, 20}, rdr);
   }
@@ -906,15 +938,15 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     irs::And c;
     {
       auto& s = c.add<irs::ByRegexp>();
-      *s.mutable_field() = "term";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("foo.*"));
+      *s.mutable_field_id() = kTermId;
+      *s.mutable_options() = irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"})};
     }
     {
       auto& s = c.add<irs::ByRegexp>();
-      *s.mutable_field() = "alt";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("cat"));
+      *s.mutable_field_id() = kAltId;
+      *s.mutable_options() = irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view{"cat"})};
     }
     CheckQuery(c, Docs{1, 4, 8, 14, 20}, rdr);
   }
@@ -922,13 +954,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
     irs::Or d;
     {
       auto& s = d.add<irs::ByRegexp>();
-      *s.mutable_field() = "term";
-      s.mutable_options()->pattern =
-        irs::ViewCast<irs::byte_type>(std::string_view("foobar"));
+      *s.mutable_field_id() = kTermId;
+      *s.mutable_options() = irs::ByRegexpOptions{
+        irs::ViewCast<irs::byte_type>(std::string_view{"foobar"})};
     }
     {
       auto& s = d.add<irs::ByTerm>();
-      *s.mutable_field() = "term";
+      *s.mutable_field_id() = kTermId;
       s.mutable_options()->term =
         irs::ViewCast<irs::byte_type>(std::string_view("bar"));
     }
@@ -995,9 +1027,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_two_segments) {
   CheckQuery(MakeFilter("nonexistent", ".*"), Docs{}, rdr);
 }
 
-// Consolidation
+// Compaction
 
-TEST_P(RegexpFilterTestCase, by_regexp_consolidation) {
+TEST_P(RegexpFilterTestCase, by_regexp_compaction) {
   auto writer = open_writer();
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
@@ -1018,9 +1050,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_consolidation) {
     }
     CheckQuery(MakeFilter("same", ".*"), all, rdr);
   }
-  ASSERT_TRUE(writer->Consolidate(
-    irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount())));
-  writer->Commit();
+  ASSERT_TRUE(writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  writer->RefreshCommit();
   {
     auto rdr = open_reader();
     ASSERT_EQ(1, rdr.size());
@@ -1062,12 +1094,13 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_literal) {
   }
   auto index = open_reader();
   auto& segment = index[0];
-  const auto* reader = segment.field("prefix");
+  const auto* reader = segment.field(kPrefixId);
   ASSERT_NE(nullptr, reader);
   {
     auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
+    auto automaton = irs::FromRegexp(term);
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(term);
+    auto fv = irs::ByRegexp::visitor(automaton);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1083,11 +1116,12 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_prefix) {
   }
   auto index = open_reader();
   auto& segment = index[0];
-  const auto* reader = segment.field("prefix");
+  const auto* reader = segment.field(kPrefixId);
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("ab.*"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(p);
+    auto automaton = irs::FromRegexp(p);
+    auto fv = irs::ByRegexp::visitor(automaton);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
     ASSERT_EQ(6, v.visit_calls_counter());
@@ -1102,11 +1136,12 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_wildcard_like) {
   }
   auto index = open_reader();
   auto& segment = index[0];
-  const auto* reader = segment.field("prefix");
+  const auto* reader = segment.field(kPrefixId);
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("a.c.*"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(p);
+    auto automaton = irs::FromRegexp(p);
+    auto fv = irs::ByRegexp::visitor(automaton);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1122,11 +1157,12 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   }
   auto index = open_reader();
   auto& segment = index[0];
-  const auto* reader = segment.field("prefix");
+  const auto* reader = segment.field(kPrefixId);
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("(abc"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(p);
+    auto automaton = irs::FromRegexp(p);
+    auto fv = irs::ByRegexp::visitor(automaton);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
@@ -1134,7 +1170,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("[abc"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexp::visitor(p);
+    auto automaton = irs::FromRegexp(p);
+    auto fv = irs::ByRegexp::visitor(automaton);
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
   }
@@ -1501,8 +1538,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_rejects_perl_class) {
     add_segment(gen);
   }
   auto rdr = open_reader();
-  auto q = MakeFilter("class", "\\w+");
-  q.mutable_options()->syntax = irs::RegexpSyntax::PosixEre;
+  auto q = MakeFilter("class", "\\w+", irs::RegexpSyntax::PosixEre);
   CheckQuery(q, Docs{}, Costs{0}, rdr);
 }
 
@@ -1536,8 +1572,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_accepts_posix_class) {
     return out;
   };
 
-  auto q_posix = MakeFilter("class", "[[:alpha:]]+[[:digit:]]+");
-  q_posix.mutable_options()->syntax = irs::RegexpSyntax::PosixEre;
+  auto q_posix = MakeFilter("class", "[[:alpha:]]+[[:digit:]]+",
+                            irs::RegexpSyntax::PosixEre);
   auto q_perl_equiv = MakeFilter("class", "[a-zA-Z]+[0-9]+");
   auto q_perl_same = MakeFilter("class", "[[:alpha:]]+[[:digit:]]+");
 
@@ -1565,8 +1601,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
 
   auto run = [&](std::string_view field, std::string_view pattern,
                  irs::RegexpSyntax syntax) {
-    auto q = MakeFilter(field, pattern);
-    q.mutable_options()->syntax = syntax;
+    auto q = MakeFilter(field, pattern, syntax);
     Docs out;
     auto prepared =
       q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
@@ -1596,40 +1631,27 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_prepare_with_syntax) {
-  // Exercise the static ByRegexp::prepare overload with an explicit
-  // syntax argument, covering the path used by phrase_filter and any
-  // other direct callers.
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
   }
   auto rdr = open_reader();
-  auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("(?:foo)bar"));
-  // Perl: non-capturing group parses, prepared query is non-null.
   {
-    auto prepared = irs::ByRegexp::prepare(
-      {.index = rdr, .memory = irs::IResourceManager::gNoop}, "term", pattern,
-      /*scored_terms_limit=*/1024, irs::RegexpSyntax::Perl);
+    auto q = MakeFilter("term", "(?:foo)bar", irs::RegexpSyntax::Perl);
+    auto prepared =
+      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
     ASSERT_NE(nullptr, prepared);
   }
-  // POSIX: (?:...) is a Perl extension - prepare still returns a valid
-  // non-null pointer (empty query), but matches nothing.  The empty-
-  // match case is anchored end-to-end by
-  // by_regexp_syntax_posix_rejects_perl_class above.
   {
-    auto prepared = irs::ByRegexp::prepare(
-      {.index = rdr, .memory = irs::IResourceManager::gNoop}, "term", pattern,
-      /*scored_terms_limit=*/1024, irs::RegexpSyntax::PosixEre);
+    auto q = MakeFilter("term", "(?:foo)bar", irs::RegexpSyntax::PosixEre);
+    auto prepared =
+      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
     ASSERT_NE(nullptr, prepared);
   }
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
-  // Exercise the static ByRegexp::visitor overload with an explicit
-  // syntax argument.  A Perl-only pattern in POSIX mode must produce
-  // a visitor that never calls Prepare on the underlying
-  // FilterVisitor (the parse failed).
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1637,22 +1659,22 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
   }
   auto index = open_reader();
   auto& segment = index[0];
-  const auto* reader = segment.field("prefix");
+  const auto* reader = segment.field(kPrefixId);
   ASSERT_NE(nullptr, reader);
 
   auto p = irs::ViewCast<irs::byte_type>(std::string_view("\\d+"));
-  // Perl: \d parses; the visitor is non-null and callable.  We do not
-  // assert a specific visit count because the "prefix" field may or
-  // may not contain digit-only terms in the fixture.
   {
-    auto fv = irs::ByRegexp::visitor(p, irs::RegexpSyntax::Perl);
+    auto automaton =
+      irs::FromRegexp(p, irs::kDefaultMaxDfaStates, irs::RegexpSyntax::Perl);
+    auto fv = irs::ByRegexp::visitor(automaton);
     ASSERT_TRUE(fv);
     tests::EmptyFilterVisitor v;
     fv(segment, *reader, v);
   }
-  // POSIX: \d is a parse error -> visitor is a no-op.
   {
-    auto fv = irs::ByRegexp::visitor(p, irs::RegexpSyntax::PosixEre);
+    auto automaton = irs::FromRegexp(p, irs::kDefaultMaxDfaStates,
+                                     irs::RegexpSyntax::PosixEre);
+    auto fv = irs::ByRegexp::visitor(automaton);
     ASSERT_TRUE(fv);
     tests::EmptyFilterVisitor v;
     fv(segment, *reader, v);

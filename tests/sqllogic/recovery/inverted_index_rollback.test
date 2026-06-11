@@ -55,7 +55,7 @@ INSERT INTO doc_rb VALUES (1, 'baseline alpha', 'a', 100)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) doc_rb
+VACUUM (REFRESH_TABLE) doc_rb
 
 
 # Aborted txn: INSERTs go to the cs writer but ROLLBACK must drop the segment
@@ -95,7 +95,7 @@ INSERT INTO doc_rb VALUES (4, 'delta', 'd', 400)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) doc_rb
+VACUUM (REFRESH_TABLE) doc_rb
 
 
 query
@@ -136,7 +136,7 @@ INSERT INTO doc_pre VALUES (1, 'alpha one', 'a', 100)
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) doc_pre
+VACUUM (REFRESH_TABLE) doc_pre
 
 
 # Arm the crash: serened will exit(1) before RocksDB persists the next COMMIT.
@@ -193,7 +193,7 @@ INSERT INTO doc_pre VALUES (4, 'delta four', 'd', 400)
 
 connection pre_after
 statement ok
-VACUUM (UPDATE_INDEXES) doc_pre
+VACUUM (REFRESH_TABLE) doc_pre
 
 
 connection pre_after
@@ -243,7 +243,7 @@ INSERT INTO doc_post VALUES (1, 'alpha one', 'a', 100)
 
 connection pre_after
 statement ok
-VACUUM (UPDATE_INDEXES) doc_post
+VACUUM (REFRESH_TABLE) doc_post
 
 
 # Arm: crash *after* RocksDB commit -- the next COMMIT persists then dies.
@@ -281,7 +281,7 @@ pk	body	label	tag
 # INCLUDE columns).
 connection post_after
 statement ok
-VACUUM (UPDATE_INDEXES) doc_post
+VACUUM (REFRESH_TABLE) doc_post
 
 
 connection post_after

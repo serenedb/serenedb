@@ -21,11 +21,12 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
+#include <deque>
 #include <map>
 #include <mutex>
 
-#include "basics/result.h"
-#include "basics/thread.h"
 #include "general_server/io_context.h"
 #include "general_server/ssl_server_feature.h"
 
@@ -48,8 +49,7 @@ class GeneralServer {
   const GeneralServer& operator=(const GeneralServer&) = delete;
 
  public:
-  explicit GeneralServer(GeneralServerFeature&, uint64_t num_io_threads,
-                         bool allow_early_connections);
+  explicit GeneralServer(GeneralServerFeature&, uint64_t num_io_threads);
   ~GeneralServer();
 
   void registerTask(std::shared_ptr<rest::CommTask>);
@@ -59,22 +59,17 @@ class GeneralServer {
   void stopConnections();                   /// stop connections
   void stopWorking();
 
-  bool allowEarlyConnections() const noexcept;
   IoContext& selectIoContext();
   SslServerFeature::SslContextList sslContexts();
   SSL_CTX* getSSL_CTX(size_t index);
 
-  SerenedServer& server() const;
-
-  Result reloadTLS();
+  app::AppServer& server() const;
 
  protected:
   bool openEndpoint(IoContext& io_context, Endpoint* endpoint);
 
  private:
-  GeneralServerFeature& _feature;
-  std::vector<IoContext> _contexts;
-  const bool _allow_early_connections;
+  std::deque<IoContext> _contexts;
 
   std::recursive_mutex _tasks_lock;
   std::vector<std::unique_ptr<Acceptor>> _acceptors;

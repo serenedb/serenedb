@@ -34,11 +34,11 @@ statement ok
 CREATE INDEX pku_idx ON pku_t USING inverted(id, name pku_dict, data pku_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) pku_t;
+VACUUM (REFRESH_TABLE) pku_t;
 
 # Sanity: pre-PK-update everything findable
 query
-SELECT id FROM pku_t WHERE name @@ ts_phrase('alpha');
+SELECT id FROM pku_idx WHERE name @@ ts_phrase('alpha');
 ----
 id
 1
@@ -65,7 +65,7 @@ SELECT 1;
 
 connection pku_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) pku_t;
+VACUUM (REFRESH_TABLE) pku_t;
 
 # Old pks (1, 2) — gone from index.
 connection pku_after
@@ -109,14 +109,14 @@ id	name	data
 # pk=1 to pk=10 and is still searchable.
 connection pku_after
 query
-SELECT id FROM pku_t WHERE name @@ ts_phrase('alpha');
+SELECT id FROM pku_idx WHERE name @@ ts_phrase('alpha');
 ----
 id
 10
 
 connection pku_after
 query
-SELECT id FROM pku_t WHERE name @@ ts_phrase('bravo');
+SELECT id FROM pku_idx WHERE name @@ ts_phrase('bravo');
 ----
 id
 20
@@ -124,14 +124,14 @@ id
 # data field also preserved/updated correctly.
 connection pku_after
 query
-SELECT id FROM pku_t WHERE data @@ ts_phrase('one_one');
+SELECT id FROM pku_idx WHERE data @@ ts_phrase('one_one');
 ----
 id
 10
 
 connection pku_after
 query
-SELECT id FROM pku_t WHERE data @@ ts_phrase('new_two');
+SELECT id FROM pku_idx WHERE data @@ ts_phrase('new_two');
 ----
 id
 20
@@ -139,7 +139,7 @@ id
 # Old data 'two_two' was overwritten on pk=2 → 20; should be gone.
 connection pku_after
 query
-SELECT COUNT(*) FROM pku_t WHERE data @@ ts_phrase('two_two');
+SELECT COUNT(*) FROM pku_idx WHERE data @@ ts_phrase('two_two');
 ----
 count
 0

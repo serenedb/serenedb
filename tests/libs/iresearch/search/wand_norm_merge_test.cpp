@@ -23,12 +23,12 @@
 // adds the shapes the bench is likely actually hitting:
 //   * multi-row-group norm columns (small `norm_row_group_size`),
 //   * RGs with mixed byte_size on the same column,
-//   * mismatched per-source byte widths during consolidation,
-//   * removals before consolidation (mask-filter on the norm merge),
+//   * mismatched per-source byte widths during compaction,
+//   * removals before compaction (mask-filter on the norm merge),
 //   * multiple norm-bearing fields in one segment.
 //
 // Each test exercises: write -> read-norm -> BM25 wand vs no-wand -> ...
-// optional consolidate -> read-norm -> BM25 wand vs no-wand.
+// optional compact -> read-norm -> BM25 wand vs no-wand.
 
 #include <gtest/gtest.h>
 
@@ -47,9 +47,9 @@
 
 namespace {
 
-constexpr std::string_view kBody = "body";
-constexpr std::string_view kBody2 = "body2";
-constexpr std::string_view kId = "id";
+constexpr irs::field_id kBody = 1;
+constexpr irs::field_id kBody2 = 2;
+constexpr irs::field_id kId = 3;
 constexpr std::string_view kTerm = "x";
 
 // Emits `target_count` copies of "x" (the query term) followed by
@@ -106,14 +106,15 @@ using CountAnalyzer = MixedAnalyzer;
 class NormField final : public tests::Ifield {
  public:
   // Single-term form: tf == dl == count (legacy callers).
-  NormField(std::string_view name, size_t count)
-    : _name{name}, _value{kTerm}, _analyzer{count, 0} {}
+  NormField(irs::field_id id, size_t count)
+    : _id{id}, _value{kTerm}, _analyzer{count, 0} {}
 
   // Two-term form: tf("x") = target_count, dl = target_count + filler_count.
-  NormField(std::string_view name, size_t target_count, size_t filler_count)
-    : _name{name}, _value{kTerm}, _analyzer{target_count, filler_count} {}
+  NormField(irs::field_id id, size_t target_count, size_t filler_count)
+    : _id{id}, _value{kTerm}, _analyzer{target_count, filler_count} {}
 
-  std::string_view Name() const final { return _name; }
+  irs::field_id Id() const final { return _id; }
+  std::string_view Name() const final { return {}; }
   irs::Tokenizer& GetTokens() const final {
     _analyzer.reset(_value);
     return _analyzer;
@@ -127,7 +128,7 @@ class NormField final : public tests::Ifield {
   }
 
  private:
-  std::string _name;
+  irs::field_id _id;
   std::string _value;
   mutable MixedAnalyzer _analyzer;
 };
@@ -138,7 +139,8 @@ class IdField final : public tests::Ifield {
   explicit IdField(std::string value)
     : _value{std::move(value)}, _analyzer{1, 0, _value, ""} {}
 
-  std::string_view Name() const final { return kId; }
+  irs::field_id Id() const final { return kId; }
+  std::string_view Name() const final { return {}; }
   irs::Tokenizer& GetTokens() const final {
     _analyzer.reset(_value);
     return _analyzer;
@@ -156,9 +158,9 @@ class IdField final : public tests::Ifield {
   mutable MixedAnalyzer _analyzer;
 };
 
-auto MakeByTerm(std::string_view field, std::string_view value) {
+auto MakeByTerm(irs::field_id field, std::string_view value) {
   auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field() = field;
+  *filter->mutable_field_id() = field;
   filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
   return filter;
 }
@@ -173,7 +175,7 @@ class WandNormMergeCase : public tests::IndexTestBase {
     opts.reader_options.scorer = scorer;
     opts.norm_column_options =
       [norm_rgs, next = std::make_shared<std::atomic<irs::field_id>>(0)](
-        std::string_view) -> irs::NormColumnOptions {
+        irs::field_id) -> irs::NormColumnOptions {
       return {.id = next->fetch_add(1, std::memory_order_relaxed),
               .row_group_size = norm_rgs};
     };
@@ -181,7 +183,8 @@ class WandNormMergeCase : public tests::IndexTestBase {
   }
 
   irs::IndexReaderOptions MakeReaderOpts(irs::Scorer* scorer) {
-    return irs::IndexReaderOptions{.scorer = scorer, .db = &irs::tests::CsDb()};
+    return irs::IndexReaderOptions{
+      .scorer = scorer, .db = &::sdb::DuckDBEngine::Instance().instance()};
   }
 
   // doc with one NormField "body" of `count` tokens + a unique id.
@@ -215,27 +218,27 @@ class WandNormMergeCase : public tests::IndexTestBase {
     return tests::Insert(writer, p.begin(), p.end());
   }
 
-  // Read the NormColumn for `field_name` on `segment` and assert each
+  // Read the NormColumn for `field_id` on `segment` and assert each
   // (doc, expected) pair. doc_id is 1-based per segment
   // (irs::doc_limits::min()).
-  void AssertNorms(const irs::SubReader& segment, std::string_view field_name,
+  void AssertNorms(const irs::SubReader& segment, irs::field_id field_id,
                    const std::vector<std::pair<irs::doc_id_t, uint32_t>>& exp) {
-    const auto* field = segment.field(field_name);
-    ASSERT_NE(nullptr, field) << "field missing: " << field_name;
+    const auto* field = segment.field(field_id);
+    ASSERT_NE(nullptr, field) << "field missing: " << field_id;
     const auto norm_id = field->meta().norm;
     ASSERT_TRUE(irs::field_limits::valid(norm_id))
-      << "no norm id on " << field_name;
+      << "no norm id on " << field_id;
 
-    const auto* cs = segment.CsReader();
+    const auto* cs = segment.GetColReader();
     ASSERT_NE(nullptr, cs);
     const auto* column = cs->NormColumn(norm_id);
-    ASSERT_NE(nullptr, column) << "norm column missing for " << field_name;
+    ASSERT_NE(nullptr, column) << "norm column missing for " << field_id;
     ASSERT_EQ(norm_id, column->Id());
 
     for (const auto& [doc, value] : exp) {
       const auto row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
       ASSERT_EQ(value, column->Get(row))
-        << field_name << " norm mismatch doc=" << doc;
+        << field_id << " norm mismatch doc=" << doc;
     }
   }
 
@@ -243,9 +246,9 @@ class WandNormMergeCase : public tests::IndexTestBase {
   // wand-off baseline so callers can diff across snapshots.
   std::vector<irs::ScoreDoc> RunBM25(const irs::DirectoryReader& reader,
                                      const irs::Scorer& scorer,
-                                     std::string_view field, size_t k) {
+                                     irs::field_id field, size_t k) {
     irs::ByTerm filter;
-    *filter.mutable_field() = field;
+    *filter.mutable_field_id() = field;
     filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(kTerm);
 
     std::vector<irs::ScoreDoc> hits_no_wand(irs::BlockSize(k));
@@ -294,10 +297,10 @@ class WandNormMergeCase : public tests::IndexTestBase {
 };
 
 // -------------------------------------------------------------------------
-// Baseline that already passed before this round of expansion. Kept to
-// catch regressions on the simplest end of the surface.
+// Simplest baseline: a single BM25 wand round-trip across compact. Kept as
+// a regression guard at the smallest end of the surface.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, BasicBM25WandRoundTripAcrossConsolidate) {
+TEST_P(WandNormMergeCase, BasicBM25WandRoundTripAcrossCompact) {
   static constexpr uint32_t kCountsA[] = {1, 2, 3, 4};
   static constexpr uint32_t kCountsB[] = {5, 6, 7, 8};
 
@@ -309,11 +312,11 @@ TEST_P(WandNormMergeCase, BasicBM25WandRoundTripAcrossConsolidate) {
   for (auto c : kCountsA) {
     ASSERT_TRUE(InsertNormDoc(*writer, "a", c));
   }
-  writer->Commit();
+  writer->RefreshCommit();
   for (auto c : kCountsB) {
     ASSERT_TRUE(InsertNormDoc(*writer, "b", c));
   }
-  writer->Commit();
+  writer->RefreshCommit();
 
   std::vector<irs::score_t> pre_scores;
   {
@@ -328,9 +331,9 @@ TEST_P(WandNormMergeCase, BasicBM25WandRoundTripAcrossConsolidate) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, 8));
   }
 
-  const irs::index_utils::ConsolidateCount all;
-  ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(all)));
-  ASSERT_TRUE(writer->Commit());
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
 
   {
     auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -368,7 +371,7 @@ TEST_P(WandNormMergeCase, NormMultiRgInOneSegment) {
   for (size_t i = 0; i < std::size(kCounts); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("doc_", i), kCounts[i]));
   }
-  writer->Commit();
+  writer->RefreshCommit();
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
   ASSERT_EQ(1, reader.size());
@@ -385,7 +388,7 @@ TEST_P(WandNormMergeCase, NormMultiRgInOneSegment) {
   const auto* field = seg.field(kBody);
   ASSERT_NE(nullptr, field);
   const auto norm_id = field->meta().norm;
-  const auto* col = seg.CsReader()->NormColumn(norm_id);
+  const auto* col = seg.GetColReader()->NormColumn(norm_id);
   ASSERT_NE(nullptr, col);
   ASSERT_EQ(3u, col->RowGroupCount())
     << "expected 4+4+2 layout, got " << col->RowGroupCount();
@@ -397,7 +400,7 @@ TEST_P(WandNormMergeCase, NormMultiRgInOneSegment) {
 }
 
 // -------------------------------------------------------------------------
-// Multi-RG per segment + consolidation. The merge writes a single output
+// Multi-RG per segment + compaction. The merge writes a single output
 // norm column built from per-source byte spans; if the merge mishandles
 // RG boundaries or row offsets, per-doc Get(row) returns stale data.
 // -------------------------------------------------------------------------
@@ -413,11 +416,11 @@ TEST_P(WandNormMergeCase, NormMultiRgAcrossMerge) {
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
-  writer->Commit();
+  writer->RefreshCommit();
   for (size_t i = 0; i < std::size(kB); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("b_", i), kB[i]));
   }
-  writer->Commit();
+  writer->RefreshCommit();
 
   std::vector<irs::score_t> pre_scores;
   {
@@ -426,9 +429,9 @@ TEST_P(WandNormMergeCase, NormMultiRgAcrossMerge) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, 16));
   }
 
-  const irs::index_utils::ConsolidateCount all;
-  ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(all)));
-  ASSERT_TRUE(writer->Commit());
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
   ASSERT_EQ(1, reader.size());
@@ -447,7 +450,7 @@ TEST_P(WandNormMergeCase, NormMultiRgAcrossMerge) {
 
   auto post_scores = Scores(RunBM25(reader, *bm25, kBody, 16));
   ASSERT_EQ(pre_scores, post_scores)
-    << "BM25 score set diverged across multi-RG consolidation";
+    << "BM25 score set diverged across multi-RG compaction";
 }
 
 // -------------------------------------------------------------------------
@@ -468,11 +471,11 @@ TEST_P(WandNormMergeCase, NormMixedByteWidthsMerge) {
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
-  writer->Commit();
+  writer->RefreshCommit();
   for (size_t i = 0; i < std::size(kB); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("b_", i), kB[i]));
   }
-  writer->Commit();
+  writer->RefreshCommit();
 
   // Read pre-merge norms.
   {
@@ -483,9 +486,9 @@ TEST_P(WandNormMergeCase, NormMixedByteWidthsMerge) {
     AssertNorms(reader[1], kBody, {{1, kB[0]}, {2, kB[1]}, {3, kB[2]}});
   }
 
-  const irs::index_utils::ConsolidateCount all;
-  ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(all)));
-  ASSERT_TRUE(writer->Commit());
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
   ASSERT_EQ(1, reader.size());
@@ -502,7 +505,7 @@ TEST_P(WandNormMergeCase, NormMixedByteWidthsMerge) {
 }
 
 // -------------------------------------------------------------------------
-// Deletes before consolidation: MergeNormColumnFromSources's mask filter
+// Deletes before compaction: MergeNormColumnFromSources's mask filter
 // must skip the per-row bytes of removed docs and produce a compacted
 // merged column. If the mask path mis-counts bytes, post-merge norms
 // shift by the wrong offset.
@@ -518,21 +521,21 @@ TEST_P(WandNormMergeCase, NormMergeWithMask) {
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
-  writer->Commit();
+  writer->RefreshCommit();
 
   // Remove "a_1" (count=2) and "a_3" (count=4) from segment A. The
   // filter must outlive Commit() per IndexWriter::Transaction::Remove
   // contract, so keep them as named locals.
   auto rm1 = MakeByTerm(kId, "a_1");
   auto rm2 = MakeByTerm(kId, "a_3");
-  writer->GetBatch().Remove(*rm1);
-  writer->GetBatch().Remove(*rm2);
-  writer->Commit();
+  tests::Remove(*writer, *rm1);
+  tests::Remove(*writer, *rm2);
+  writer->RefreshCommit();
 
   for (size_t i = 0; i < std::size(kB); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("b_", i), kB[i]));
   }
-  writer->Commit();
+  writer->RefreshCommit();
 
   // Pre-merge: segment A still has 5 docs but live_count=3.
   {
@@ -543,9 +546,9 @@ TEST_P(WandNormMergeCase, NormMergeWithMask) {
     ASSERT_EQ(3, reader[1].docs_count());
   }
 
-  const irs::index_utils::ConsolidateCount all;
-  ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(all)));
-  ASSERT_TRUE(writer->Commit());
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
   ASSERT_EQ(1, reader.size());
@@ -579,12 +582,12 @@ TEST_P(WandNormMergeCase, NormTwoFieldsAcrossMerge) {
     ASSERT_TRUE(
       InsertDualNormDoc(*writer, absl::StrCat("a_", i), kBodyA[i], kBody2A[i]));
   }
-  writer->Commit();
+  writer->RefreshCommit();
   for (size_t i = 0; i < std::size(kBodyB); ++i) {
     ASSERT_TRUE(
       InsertDualNormDoc(*writer, absl::StrCat("b_", i), kBodyB[i], kBody2B[i]));
   }
-  writer->Commit();
+  writer->RefreshCommit();
 
   // Pre-merge: each field's norm column is independent per segment.
   {
@@ -598,9 +601,9 @@ TEST_P(WandNormMergeCase, NormTwoFieldsAcrossMerge) {
     AssertNorms(reader[1], kBody2, {{1, kBody2B[0]}, {2, kBody2B[1]}});
   }
 
-  const irs::index_utils::ConsolidateCount all;
-  ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(all)));
-  ASSERT_TRUE(writer->Commit());
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
   ASSERT_EQ(1, reader.size());
@@ -622,14 +625,14 @@ TEST_P(WandNormMergeCase, NormTwoFieldsAcrossMerge) {
 }
 
 // -------------------------------------------------------------------------
-// 16 source segments consolidated in one shot. Mirrors the
+// 16 source segments compacted in one shot. Mirrors the
 // search-benchmark-game ingest pattern: ~15-17 commit-per-batch segments,
-// then a single `ConsolidateCount` merges them all. If any cross-source
+// then a single `CompactionCount` merges them all. If any cross-source
 // state in the norm merge (running merged_row, byte_size promotion,
 // per-source NormColumnReader cache) gets confused with more than 2
 // sources, this is where it surfaces.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, NormMultiSegmentConsolidate) {
+TEST_P(WandNormMergeCase, NormMultiSegmentCompact) {
   static constexpr size_t kSegments = 16;
   static constexpr size_t kDocsPerSeg = 5;
 
@@ -652,7 +655,7 @@ TEST_P(WandNormMergeCase, NormMultiSegmentConsolidate) {
       expected_counts.push_back(count);
       ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("s", s, "_d", d), count));
     }
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
   }
 
   // Pre-merge: kSegments separate segments, each with its own NormColumn.
@@ -671,17 +674,17 @@ TEST_P(WandNormMergeCase, NormMultiSegmentConsolidate) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, kSegments * kDocsPerSeg));
   }
 
-  // Single-shot ConsolidateCount with default max merges everything.
-  const irs::index_utils::ConsolidateCount all;
-  ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(all)));
-  ASSERT_TRUE(writer->Commit());
+  // Single-shot CompactionCount with default max merges everything.
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
 
   // Post-merge: ONE segment, per-doc norms equal to expected_counts in
   // source-iteration order (no deletes -> identity remap, doc ids
   // contiguous 1..N).
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
   ASSERT_EQ(1, reader.size())
-    << "consolidate-all did not produce a single merged segment";
+    << "compact-all did not produce a single merged segment";
   const auto& seg = reader[0];
   ASSERT_EQ(expected_counts.size(), seg.docs_count());
 
@@ -693,15 +696,15 @@ TEST_P(WandNormMergeCase, NormMultiSegmentConsolidate) {
 
   auto post_scores =
     Scores(RunBM25(reader, *bm25, kBody, kSegments * kDocsPerSeg));
-  ASSERT_EQ(pre_scores, post_scores) << "BM25 score multiset diverged after "
-                                     << kSegments << "-way consolidate-all";
+  ASSERT_EQ(pre_scores, post_scores)
+    << "BM25 score multiset diverged after " << kSegments << "-way compact-all";
 }
 
 // -------------------------------------------------------------------------
 // 16 sources, multi-RG per source, AND cross-byte-width: the combination
 // the bench actually drives.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, NormMultiSegmentMultiRgMixedWidthsConsolidate) {
+TEST_P(WandNormMergeCase, NormMultiSegmentMultiRgMixedWidthsCompact) {
   static constexpr size_t kSegments = 16;
   static constexpr size_t kDocsPerSeg = 7;  // multi-RG with RG=3
   static constexpr size_t kRgSize = 3;
@@ -723,7 +726,7 @@ TEST_P(WandNormMergeCase, NormMultiSegmentMultiRgMixedWidthsConsolidate) {
       expected_counts.push_back(count);
       ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("s", s, "_d", d), count));
     }
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
   }
 
   std::vector<irs::score_t> pre_scores;
@@ -741,9 +744,9 @@ TEST_P(WandNormMergeCase, NormMultiSegmentMultiRgMixedWidthsConsolidate) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, kSegments * kDocsPerSeg));
   }
 
-  const irs::index_utils::ConsolidateCount all;
-  ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(all)));
-  ASSERT_TRUE(writer->Commit());
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
   ASSERT_EQ(1, reader.size());
@@ -800,7 +803,7 @@ TEST_P(WandNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
       ASSERT_TRUE(
         InsertMixedDoc(*writer, absl::StrCat("s", s, "_d", d), tf, filler));
     }
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
   }
 
   // Pre-merge: norms match (tf, dl) per doc on each segment.
@@ -820,9 +823,9 @@ TEST_P(WandNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, 50));
   }
 
-  const irs::index_utils::ConsolidateCount all;
-  ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(all)));
-  ASSERT_TRUE(writer->Commit());
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
   ASSERT_EQ(1, reader.size());
@@ -839,7 +842,7 @@ TEST_P(WandNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
 
   auto post_scores = Scores(RunBM25(reader, *bm25, kBody, 50));
   ASSERT_EQ(pre_scores, post_scores)
-    << "BM25 score multiset diverged on bench-shaped consolidation with"
+    << "BM25 score multiset diverged on bench-shaped compaction with"
     << " independent tf/dl";
 }
 

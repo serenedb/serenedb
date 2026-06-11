@@ -76,6 +76,7 @@ DECLARE_PG_TYPE(CID,            Cid,            "cid",             BIGINT)
 DECLARE_PG_TYPE(XID,            Xid,            "xid",             BIGINT)
 DECLARE_PG_TYPE(XID8,           Xid8,           "xid8",            BIGINT)
 DECLARE_PG_TYPE(NAME,           Name,           "name",            VARCHAR)
+DECLARE_PG_TYPE(ACLITEM,        Aclitem,        "aclitem",         VARCHAR)
 DECLARE_PG_TYPE(CHAR,            Char,           "char",            VARCHAR)
 DECLARE_PG_TYPE(CARDINALNUMBER, CardinalNumber, "cardinal_number", INTEGER)
 DECLARE_PG_TYPE(CHARACTERDATA,  CharacterData,  "character_data",  VARCHAR)
@@ -85,6 +86,9 @@ DECLARE_PG_TYPE(YESORNO,        YesOrNo,        "yes_or_no",       VARCHAR)
 DECLARE_PG_TYPE(SERIAL,         Serial,         "serial",          INTEGER)
 DECLARE_PG_TYPE(BIGSERIAL,      Bigserial,      "bigserial",       BIGINT)
 DECLARE_PG_TYPE(SMALLSERIAL,    Smallserial,    "smallserial",     SMALLINT)
+// PG pseudo-type `void`: functions declared RETURNS VOID still need a
+// representable result type. We back it with SQLNULL.
+DECLARE_PG_TYPE(VOID,           Void,           "void",            SQLNULL)
 // clang-format on
 
 // 32-bit OID-family types: backed by BIGINT in DuckDB for storage, but travel

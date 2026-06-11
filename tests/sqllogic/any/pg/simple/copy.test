@@ -1,4 +1,4 @@
-hash-threshold 100
+hash-threshold 200
 
 control substitution on
 
@@ -576,27 +576,27 @@ QUERY PLAN
 │└───────────────────────────────────┘│
 └─────────────────────────────────────┘
 EXPLAIN ANALYZE COPY arelav_consumer FROM '<slt:ignore>_arelav_consuma.csv';
-┌────────────────────────────────────────────────┐
-│┌──────────────────────────────────────────────┐│
-││              Total Time: <slt:ignore>        ││
-│└──────────────────────────────────────────────┘│
-└────────────────────────────────────────────────┘
+<slt:ignore>
 ┌───────────────────────────┐
-│           QUERY           │
+│      RESULT_COLLECTOR     │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │      EXPLAIN_ANALYZE      │
 │    ────────────────────   │
 │                           │
 │           0 rows          │
-│           <slt:ignore>    │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         EXTENSION         │
 │    ────────────────────   │
 │                           │
 │           1 row           │
-│           <slt:ignore>    │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         TABLE_SCAN        │
@@ -607,13 +607,11 @@ EXPLAIN ANALYZE COPY arelav_consumer FROM '<slt:ignore>_arelav_consuma.csv';
 │                           │
 │        Filename(s):       │
 <slt:ignore>
-<slt:ignore>
-<slt:ignore>
 │                           │
 │                           │
 │                           │
 │          10 rows          │
-│           <slt:ignore>    │
+<slt:ignore>
 └───────────────────────────┘
 
 

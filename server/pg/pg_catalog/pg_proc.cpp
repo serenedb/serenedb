@@ -30,7 +30,6 @@
 #include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
-#include "rest_server/serened.h"
 
 namespace sdb::pg {
 namespace {

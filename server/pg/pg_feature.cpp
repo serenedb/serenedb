@@ -24,18 +24,28 @@
 #include "basics/down_cast.h"
 #include "basics/random/random_generator.h"
 #include "pg/system_catalog.h"
-#include "query/duckdb_engine.h"
 #include "rest_server/endpoint_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::pg {
 
-PostgresFeature::PostgresFeature(SerenedServer& server)
-  : SerenedFeature{server, name()} {
-  setOptional(true);
+PostgresFeature::PostgresFeature() {
+  const auto& endpoint_list = Endpoints();
+  const bool has_pgsql = std::ranges::any_of(
+    endpoint_list | std::views::values, [](const auto& endpoint) {
+      return endpoint->transport() == Endpoint::TransportType::PGSQL;
+    });
+  if (!has_pgsql) {
+    SDB_FATAL(GENERAL,
+              "no pgsql endpoint configured; --server_endpoints "
+              "must include a pgsql+tcp:// entry");
+  }
+
+  gInstance = this;
 }
+
+PostgresFeature::~PostgresFeature() { gInstance = nullptr; }
 
 void PostgresFeature::CancelTaskPacket(uint64_t key) {
   auto task = [&] {
@@ -59,40 +69,16 @@ uint64_t PostgresFeature::RegisterTask(PgSQLCommTaskBase& task) {
   }
 }
 
-void PostgresFeature::validateOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  const auto& endpoint_list =
-    server().getFeature<HttpEndpointProvider, EndpointFeature>().endpointList();
-  const bool needs_disable = std::ranges::none_of(
-    endpoint_list | std::views::values, [](const auto& endpoint) {
-      return endpoint->transport() == Endpoint::TransportType::PGSQL;
-    });
-  if (needs_disable) {
-    disable();
-  }
-}
-
 void PostgresFeature::UnregisterTask(uint64_t key) {
   std::lock_guard lock{_mutex};
   [[maybe_unused]] auto count = _tasks.erase(key);
   SDB_ASSERT(count == 1);
 }
 
-void PostgresFeature::prepare() {
-  query::DuckDBEngine::Instance().Initialize();
-}
-
 void PostgresFeature::start() {
-  if (ServerState::instance()->IsDBServer() ||
-      ServerState::instance()->IsSingle()) {
-    auto* cf = RocksDBColumnFamilyManager::get(
-      RocksDBColumnFamilyManager::Family::Default);
-    SDB_ASSERT(cf);
-  }
-}
-
-void PostgresFeature::unprepare() {
-  query::DuckDBEngine::Instance().Shutdown();
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
+  SDB_ASSERT(cf);
 }
 
 }  // namespace sdb::pg

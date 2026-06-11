@@ -33,7 +33,7 @@ namespace {
 // Filter visitor for term queries
 class TermVisitor : private util::Noncopyable {
  public:
-  TermVisitor(const TermCollectors& term_stats, TermQuery::States& states)
+  TermVisitor(TermCollectorsFlat& term_stats, TermQuery::States& states)
     : _term_stats(term_stats), _states(states) {}
 
   void Prepare(const SubReader& segment, const TermReader& field,
@@ -46,7 +46,7 @@ class TermVisitor : private util::Noncopyable {
   void Visit(score_t /*boost*/) {
     // collect statistics
     SDB_ASSERT(_segment && _reader && _terms);
-    _term_stats.collect(*_segment, *_reader, 0, *_terms);
+    _term_stats.Collect(0, *_terms);
 
     // Cache term state in prepared query attributes.
     // Later, using cached state we could easily "jump" to
@@ -57,7 +57,7 @@ class TermVisitor : private util::Noncopyable {
   }
 
  private:
-  const TermCollectors& _term_stats;
+  TermCollectorsFlat& _term_stats;
   TermQuery::States& _states;
   const SubReader* _segment{};
   const TermReader* _reader{};
@@ -92,25 +92,23 @@ void ByTerm::visit(const SubReader& segment, const TermReader& field,
   VisitImpl(segment, field, term, visitor);
 }
 
-Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
-                                   std::string_view field, bytes_view term) {
+Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx, irs::field_id id,
+                                   bytes_view term) {
   TermQuery::States states{ctx.memory, ctx.index.size()};
-  FieldCollectors field_stats{ctx.scorer};
-  TermCollectors term_stats{ctx.scorer, 1};
+  FieldCollector field_stats;
+  TermCollectorsFlat term_stats{ctx.scorer, 1};
 
   TermVisitor visitor(term_stats, states);
 
   // iterate over the segments
   for (const auto& segment : ctx.index) {
-    // get field
-    const auto* reader = segment.field(field);
-
+    const auto* reader = segment.field(id);
     if (!reader) {
       continue;
     }
 
-    field_stats.collect(segment, *reader);
     // collect field statistics once per segment
+    field_stats.Collect(*reader);
 
     VisitImpl(segment, *reader, term, visitor);
   }
@@ -124,7 +122,7 @@ Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
   bstring stats(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats.data();
 
-  term_stats.finish(stats_buf, 0, field_stats, ctx.index);
+  term_stats.Finish(stats_buf, 0, &field_stats);
 
   return memory::make_tracked<TermQuery>(ctx.memory, std::move(states),
                                          std::move(stats), ctx.boost);

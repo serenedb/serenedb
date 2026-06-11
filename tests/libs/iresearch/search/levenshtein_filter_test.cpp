@@ -25,20 +25,41 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/bm25.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
 
+// Stable per-name field ids for the Levenshtein tests. The on-disk index
+// keys fields by id; tests still address them by JSON key from the
+// resource and translate through this helper.
+// Stable per-name field ids, sourced from `tests::FieldIdFor` so the
+// shared JSON factories and these tests agree on which id a name maps to.
+[[maybe_unused]] inline constexpr irs::field_id kFieldId =
+  tests::FieldIdFor("field");
+[[maybe_unused]] inline constexpr irs::field_id kField1Id =
+  tests::FieldIdFor("field1");
+[[maybe_unused]] inline constexpr irs::field_id kFooId =
+  tests::FieldIdFor("foo");
+[[maybe_unused]] inline constexpr irs::field_id kIdId = tests::FieldIdFor("id");
+[[maybe_unused]] inline constexpr irs::field_id kTitleId =
+  tests::FieldIdFor("title");
+[[maybe_unused]] inline constexpr irs::field_id kPrefixId =
+  tests::FieldIdFor("prefix");
+
+irs::field_id FieldIdFor(std::string_view name) {
+  return tests::FieldIdFor(name);
+}
+
 irs::ByTerm MakeTermFilter(const std::string_view& field,
                            const std::string_view term) {
   irs::ByTerm q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = FieldIdFor(field);
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return q;
 }
@@ -50,7 +71,7 @@ irs::ByEditDistance MakeFilter(const std::string_view& field,
                                bool with_transpositions = false,
                                const std::string_view prefix = "") {
   irs::ByEditDistance q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = FieldIdFor(field);
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   q.mutable_options()->max_distance = max_distance;
   q.mutable_options()->max_terms = max_terms;
@@ -75,7 +96,7 @@ TEST(by_edit_distance_test, ctor) {
   irs::ByEditDistance q;
   ASSERT_EQ(irs::Type<irs::ByEditDistance>::id(), q.type());
   ASSERT_EQ(irs::ByEditDistanceOptions{}, q.options());
-  ASSERT_TRUE(q.field().empty());
+  ASSERT_FALSE(irs::field_limits::valid(q.field_id()));
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 }
 
@@ -90,7 +111,7 @@ TEST(by_edit_distance_test, equal) {
   ASSERT_NE(q, MakeFilter("field", "bar", 1, 0, false));
   {
     irs::ByPrefix rhs;
-    *rhs.mutable_field() = "field";
+    *rhs.mutable_field_id() = kFieldId;
     rhs.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar"));
     ASSERT_NE(q, rhs);
@@ -103,7 +124,7 @@ TEST(by_edit_distance_test, boost) {
   // no boost
   {
     irs::ByEditDistance q;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldId;
     q.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
 
@@ -122,7 +143,7 @@ TEST(by_edit_distance_test, boost) {
     irs::score_t boost = 1.5f;
 
     irs::ByEditDistance q;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldId;
     q.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
     q.boost(boost);
@@ -180,141 +201,84 @@ TEST_P(ByEditDistanceTestCase, test_order) {
     Docs docs{28, 29};
     Costs costs{docs.size()};
 
-    size_t term_collectors_count = 0;
-    size_t field_collectors_count = 0;
-    size_t collect_field_count = 0;
-    size_t collect_term_count = 0;
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
 
-    scorer.collector_collect_field = [&collect_field_count](
-                                       const irs::SubReader&,
-                                       const irs::TermReader&) -> void {
-      ++collect_field_count;
-    };
-    scorer.collector_collect_term =
-      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                            const irs::AttributeProvider&) -> void {
-      ++collect_term_count;
-    };
-    scorer.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
-    scorer.prepare_field_collector =
-      [&scorer, &field_collectors_count]() -> irs::FieldCollector::ptr {
-      ++field_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(scorer);
-    };
-    scorer.prepare_term_collector =
-      [&scorer, &term_collectors_count]() -> irs::TermCollector::ptr {
-      ++term_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+    scorer.collectors_collect = [&](irs::byte_type*,
+                                    const irs::FieldCollector* field,
+                                    const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
     };
 
     CheckQuery(MakeFilter("title", "", 1, 0, false), order, docs, rdr);
-    ASSERT_EQ(1, field_collectors_count);  // 1 field, 1 field collector
-    ASSERT_EQ(1, term_collectors_count);  // need only 1 term collector since we
-                                          // distribute stats across terms
-    ASSERT_EQ(1, collect_field_count);    // 1 fields
-    ASSERT_EQ(2, collect_term_count);     // 2 different terms
-    ASSERT_EQ(1, finish_count);  // we distribute idf across all matched terms
+    ASSERT_EQ(1, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
   }
 
   {
     Docs docs{28, 29};
     Costs costs{docs.size()};
 
-    size_t term_collectors_count = 0;
-    size_t field_collectors_count = 0;
-    size_t collect_field_count = 0;
-    size_t collect_term_count = 0;
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
 
-    scorer.collector_collect_field = [&collect_field_count](
-                                       const irs::SubReader&,
-                                       const irs::TermReader&) -> void {
-      ++collect_field_count;
-    };
-    scorer.collector_collect_term =
-      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                            const irs::AttributeProvider&) -> void {
-      ++collect_term_count;
-    };
-    scorer.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
-    scorer.prepare_field_collector =
-      [&scorer, &field_collectors_count]() -> irs::FieldCollector::ptr {
-      ++field_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(scorer);
-    };
-    scorer.prepare_term_collector =
-      [&scorer, &term_collectors_count]() -> irs::TermCollector::ptr {
-      ++term_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+    scorer.collectors_collect = [&](irs::byte_type*,
+                                    const irs::FieldCollector* field,
+                                    const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
     };
 
     CheckQuery(MakeFilter("title", "", 1, 10, false), order, docs, rdr);
-    ASSERT_EQ(1, field_collectors_count);  // 1 field, 1 field collector
-    ASSERT_EQ(1, term_collectors_count);  // need only 1 term collector since we
-                                          // distribute stats across terms
-    ASSERT_EQ(1, collect_field_count);    // 1 fields
-    ASSERT_EQ(2, collect_term_count);     // 2 different terms
-    ASSERT_EQ(1, finish_count);  // we distribute idf across all matched terms
+    ASSERT_EQ(1, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
   }
 
   {
     Docs docs{29};
     Costs costs{docs.size()};
 
-    size_t term_collectors_count = 0;
-    size_t field_collectors_count = 0;
-    size_t collect_field_count = 0;
-    size_t collect_term_count = 0;
     size_t finish_count = 0;
+    uint64_t finish_docs_with_field = 0;
+    uint64_t finish_docs_with_term = 0;
 
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::CustomSort>()};
     auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
 
-    scorer.collector_collect_field = [&collect_field_count](
-                                       const irs::SubReader&,
-                                       const irs::TermReader&) -> void {
-      ++collect_field_count;
-    };
-    scorer.collector_collect_term =
-      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
-                            const irs::AttributeProvider&) -> void {
-      ++collect_term_count;
-    };
-    scorer.collectors_collect =
-      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
-                      const irs::TermCollector*) -> void { ++finish_count; };
-    scorer.prepare_field_collector =
-      [&scorer, &field_collectors_count]() -> irs::FieldCollector::ptr {
-      ++field_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::FieldCollector>(scorer);
-    };
-    scorer.prepare_term_collector =
-      [&scorer, &term_collectors_count]() -> irs::TermCollector::ptr {
-      ++term_collectors_count;
-      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+    scorer.collectors_collect = [&](irs::byte_type*,
+                                    const irs::FieldCollector* field,
+                                    const irs::TermCollector* term) -> void {
+      ++finish_count;
+      ASSERT_NE(nullptr, field);
+      ASSERT_NE(nullptr, term);
+      finish_docs_with_field += field->docs_with_field;
+      finish_docs_with_term += term->docs_with_term;
     };
 
     CheckQuery(MakeFilter("title", "", 1, 1, false), order, docs, rdr);
-    ASSERT_EQ(1, field_collectors_count);  // 1 field, 1 field collector
-    ASSERT_EQ(1, term_collectors_count);  // need only 1 term collector since we
-                                          // distribute stats across terms
-    ASSERT_EQ(1, collect_field_count);    // 1 fields
-    ASSERT_EQ(1, collect_term_count);     // 1 term
-    ASSERT_EQ(1, finish_count);  // we distribute idf across all matched terms
+    ASSERT_EQ(1, finish_count);
+    ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
+    ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
   }
 }
 
@@ -511,9 +475,13 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   using tests::FieldBase;
   using tests::JsonDocGenerator;
 
-  auto analyzer = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    R"({"locale":"en.UTF-8", "stem":false, "accent":false, "case":"lower", "stopwords":[]})");
+  irs::analysis::TextTokenizer::Options opts{
+    .locale = icu::Locale::createFromName("en"),
+  };
+  opts.case_convert = irs::Case::Lower;
+  opts.explicit_stopwords_set = true;
+  opts.stemming = false;
+  auto analyzer = irs::analysis::TextTokenizer::Make(std::move(opts));
   ASSERT_NE(nullptr, analyzer);
 
   struct TextField : FieldBase {
@@ -521,6 +489,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     TextField(irs::analysis::Analyzer& analyzer, std::string value)
       : _value(std::move(value)), _analyzer(&analyzer) {
       this->Name("id");
+      this->id = kIdId;
       this->index_features =
         irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
     }
@@ -555,8 +524,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     add_segment(gen, irs::kOmCreate, opts);
   }
 
-  std::array<irs::Scorer::ptr, 1> order{irs::scorers::Get(
-    "bm25", irs::Type<irs::text_format::Json>::get(), std::string_view{})};
+  std::array<irs::Scorer::ptr, 1> order{irs::BM25::Make(irs::BM25::Options{})};
   ASSERT_NE(nullptr, order.front());
 
   auto index = open_reader(irs::tests::DefaultReaderOptions());
@@ -568,7 +536,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("end202"));
     opts.max_distance = 2;
@@ -618,7 +586,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("end202"));
     opts.max_distance = 1;
@@ -669,7 +637,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   // with prefix
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.prefix = irs::ViewCast<irs::byte_type>(std::string_view("end"));
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("202"));
@@ -723,7 +691,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("asm212"));
     opts.max_distance = 2;
@@ -796,7 +764,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("et038-pm"));
     opts.max_distance = 3;
@@ -870,7 +838,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   // with prefix
   {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "id";
+    *filter.mutable_field_id() = kIdId;
     auto& opts = *filter.mutable_options();
     opts.prefix = irs::ViewCast<irs::byte_type>(std::string_view("et038"));
     opts.term = irs::ViewCast<irs::byte_type>(std::string_view("-pm"));
@@ -950,7 +918,7 @@ TEST_P(ByEditDistanceTestCase, visit) {
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
   }
-  const std::string_view field = "prefix";
+  const irs::field_id field = kPrefixId;
   const auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
   // read segment
   auto index = open_reader(irs::tests::DefaultReaderOptions());

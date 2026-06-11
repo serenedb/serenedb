@@ -30,7 +30,7 @@ statement ok
 INSERT INTO tsq values (4, 'something else entirely', 'bar');
 
 statement ok
-VACUUM (UPDATE_INDEXES) tsq;
+VACUUM (REFRESH_TABLE) tsq;
 
 # ----------------------------------------------------------------------
 # Basic @@ with PHRASE
@@ -903,7 +903,7 @@ QUERY PLAN
 │                           │
 │       Projections: a      │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 # Reject distance < 1 (PG's `<0>` is invalid, `<1>` is adjacent).
@@ -1500,7 +1500,7 @@ statement ok
 INSERT INTO re_idn VALUES (1, 'Foo'), (2, 'foobar'), (3, 'BARFOO'), (4, 'baz');
 
 statement ok
-VACUUM (UPDATE_INDEXES) re_idn;
+VACUUM (REFRESH_TABLE) re_idn;
 
 # `~` -- case-sensitive POSIX regex. The literal-prefix range bound
 # pushed by regex_range_filter is upper bound `foo<F4 BF BF C0>`,
@@ -2054,7 +2054,7 @@ statement ok
 INSERT INTO tsq_ngram values (1, 'hello'), (2, 'help'), (3, 'held');
 
 statement ok
-VACUUM (UPDATE_INDEXES) tsq_ngram;
+VACUUM (REFRESH_TABLE) tsq_ngram;
 
 query
 SELECT a FROM tsq_ngram_idx WHERE ngram_matches(b, 'hello', 0.3) ORDER BY a;
@@ -2199,18 +2199,13 @@ a
 3
 
 # NOT phrase_matches (complement).
-# TODO: re-enable once the pre-existing `NOT (col @@ ts_*(...))` crash
-# against a real inverted index is fixed. Reproduces with the
-# canonical form too (NOT (b @@ ts_phrase('quick brown'))) -- not a
-# sugar-specific issue. The corresponding unit test passes (filter
-# build is correct); the crash is downstream of MakeSearchFilter.
-# query
-# SELECT a FROM tsq_idx WHERE NOT phrase_matches(b, 'quick brown') ORDER BY a;
-# ----
-# a
-# 2
-# 3
-# 4
+query
+SELECT a FROM tsq_idx WHERE NOT phrase_matches(b, 'quick brown') ORDER BY a;
+----
+a
+2
+3
+4
 
 # phrase_matches::boost(K) -- predicates return BOOLEAN, so the SQL
 # boost cast composes through the @@ machinery.
@@ -2309,15 +2304,12 @@ a
 3
 
 # NOT ngram_matches.
-# TODO: re-enable once the pre-existing crash in
-# NGramSimilarityDocIterator under a NOT scope is fixed. Same
-# pre-existing issue as NOT phrase_matches (also blocked).
-# query
-# SELECT a FROM tsq_ngram_idx WHERE NOT ngram_matches(b, 'hello', 0.7) ORDER BY a;
-# ----
-# a
-# 2
-# 3
+query
+SELECT a FROM tsq_ngram_idx WHERE NOT ngram_matches(b, 'hello', 0.7) ORDER BY a;
+----
+a
+2
+3
 
 # ngram_matches::boost(K).
 query
@@ -2476,14 +2468,12 @@ a
 1
 
 # Predicates compose under DeMorgan-style queries.
-# TODO: re-enable once `NOT (col @@ ts_*(...))` against a real index
-# is fixed (same pre-existing crash as NOT phrase_matches above).
-# query
-# SELECT a FROM tsq_idx WHERE NOT (phrase_matches(b, 'quick brown') OR phrase_matches(b, 'red fox')) ORDER BY a;
-# ----
-# a
-# 3
-# 4
+query
+SELECT a FROM tsq_idx WHERE NOT (phrase_matches(b, 'quick brown') OR phrase_matches(b, 'red fox')) ORDER BY a;
+----
+a
+3
+4
 
 # ----------------------------------------------------------------------
 # DuckDB built-in claims (contains / starts_with / ^@ / ends_with /
@@ -2502,7 +2492,7 @@ statement ok
 INSERT INTO tsq_kw VALUES (1, 'foo'), (2, 'foobar'), (3, 'bar'), (4, ''), (5, '50%'), (6, 'abc123');
 
 statement ok
-VACUUM (UPDATE_INDEXES) tsq_kw;
+VACUUM (REFRESH_TABLE) tsq_kw;
 
 # contains
 query

@@ -58,7 +58,7 @@ struct Name {
 
 struct Empty {};
 using PgNodeTree = Empty;
-using Aclitem = Empty;
+struct Aclitem {};
 using Anyarray = Empty;
 using Timestamptz = Empty;
 using PgNdDistinct = Empty;

@@ -197,13 +197,12 @@ void VerifyAppendConstraints(
         VerifyNotNullConstraint(table, chunk.data[phys_idx], chunk.size(),
                                 col_name, chunk, detail);
         catalog_check_idx++;
-        break;
-      }
+      } break;
       case duckdb::ConstraintType::CHECK: {
         auto& bound_check = constraint->Cast<duckdb::BoundCheckConstraint>();
         std::string_view constraint_name;
         if (catalog_check_idx < check_constraints.size()) {
-          constraint_name = check_constraints[catalog_check_idx].name;
+          constraint_name = check_constraints[catalog_check_idx].GetName();
         }
         catalog_check_idx++;
         VerifyCheckConstraint(context, table, *bound_check.expression, chunk,
@@ -277,13 +276,12 @@ void VerifyUpdateConstraints(
           }
         }
         catalog_check_idx++;
-        break;
-      }
+      } break;
       case duckdb::ConstraintType::CHECK: {
         auto& bound_check = constraint->Cast<duckdb::BoundCheckConstraint>();
         std::string constraint_name;
         if (catalog_check_idx < check_constraints.size()) {
-          constraint_name = check_constraints[catalog_check_idx].name;
+          constraint_name = check_constraints[catalog_check_idx].GetName();
         }
         catalog_check_idx++;
         duckdb::DataChunk mock_chunk;

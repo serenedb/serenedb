@@ -20,6 +20,7 @@
 
 #include "connector/view_fast_path.h"
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -57,6 +58,7 @@ TableFunction MakeParquetLookupTableFunction();
 TableFunction MakeCSVLookupTableFunction();
 TableFunction MakeJSONLookupTableFunction();
 TableFunction MakeJSONObjectsLookupTableFunction();
+TableFunction MakeTextLookupTableFunction();
 
 }  // namespace duckdb
 namespace sdb::connector {
@@ -112,6 +114,13 @@ const RegistryEntry kRegistry[] = {
     .single_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
     .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeParquetLookupTableFunction,
+  },
+  // read_text emits one row per file; PK is (file_index, 0) in glob mode.
+  {
+    .function_name = "read_text",
+    .single_pk_spec = catalog::PkSpec::FileRowNumber,
+    .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
+    .make_lookup = duckdb::MakeTextLookupTableFunction,
   },
   // TODO: read_avro, postgres_scan / postgres_query.
 };
@@ -299,7 +308,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       cur = cur->Cast<duckdb::CastExpression>().child.get();
     }
     if (cur->GetExpressionClass() == duckdb::ExpressionClass::CONSTANT) {
-      return cur->Cast<duckdb::ConstantExpression>().value;
+      return cur->Cast<duckdb::ConstantExpression>().GetValue();
     }
     if (cur->GetExpressionType() == duckdb::ExpressionType::FUNCTION) {
       const auto& fn = cur->Cast<duckdb::FunctionExpression>();

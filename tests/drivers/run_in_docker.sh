@@ -31,7 +31,7 @@ if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"
 fi
 
-mkdir -p "$WORKSPACE/logs" "$WORKSPACE/out/drivers-tests"
+mkdir -p "$WORKSPACE/out/logs" "$WORKSPACE/out/drivers-tests"
 
 if test -z "${BUILD_IMAGE:-}"; then
 	BUILD_IMAGE=serenedb/serenedb-build-ubuntu:latest
@@ -54,6 +54,11 @@ if ! test -f "$DRIVERS_DIR/$COMPOSE_FILE"; then
 	echo "Error: Unknown test kind '$TEST_KIND' - file '$COMPOSE_FILE' not found" >&2
 	exit 255
 fi
+
+# Reap orphans from earlier interrupted runs before bringing the stack up.
+# See tests/scripts/reap_stale_docker_orphans.sh for the full rationale.
+source "$DRIVERS_DIR/../scripts/reap_stale_docker_orphans.sh"
+reap_stale_docker_orphans
 
 cleanup() {
 	docker compose -p "${PREFIX}" -f "$COMPOSE_FILE" down --volumes --remove-orphans

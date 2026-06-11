@@ -161,8 +161,7 @@ ALTER VIEW pudge RENAME TO something;
 statement error
 ALTER VIEW deadinside RENAME TO something;
 ----
-db error: ERROR: View with name deadinside does not exist!
-<slt:ignore>
+db error: ERROR: "deadinside" is not a view
 
 
 statement error

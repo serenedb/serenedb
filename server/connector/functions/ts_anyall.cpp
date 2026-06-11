@@ -23,7 +23,6 @@
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search.h"
@@ -38,15 +37,15 @@ bool IsTSQueryType(const duckdb::LogicalType& type) {
 }
 
 bool IsTokenizeListCall(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
   }
   const auto& f = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (f.function.name != kTSQTokenize) {
+  if (f.function.GetName() != kTSQTokenize) {
     return false;
   }
-  return f.return_type.id() == duckdb::LogicalTypeId::LIST &&
-         IsTSQueryType(duckdb::ListType::GetChildType(f.return_type));
+  return f.GetReturnType().id() == duckdb::LogicalTypeId::LIST &&
+         IsTSQueryType(duckdb::ListType::GetChildType(f.GetReturnType()));
 }
 
 void FromTokenizeListInAnyAllOf(
@@ -138,7 +137,8 @@ void FromTokenizeListInAnyAllOf(
   // -- they contribute no terms.
   auto* analyzer = override_wrapper ? override_wrapper.get() : &ctx.tokenizer;
   if (!use_identity &&
-      column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+      column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_tokenize array form requires a VARCHAR-indexed "
                             "column"),
@@ -152,10 +152,11 @@ void FromTokenizeListInAnyAllOf(
     if (elem.IsNull()) {
       continue;
     }
-    if (elem.type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    if (elem.type().id() != duckdb::LogicalTypeId::VARCHAR &&
+        elem.type().id() != duckdb::LogicalTypeId::BLOB) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("ts_tokenize text array elements must be VARCHAR, got ",
+        ERR_MSG("ts_tokenize text array elements must be VARCHAR or BLOB, got ",
                 elem.type().ToString()),
         ERR_HINT(kSyntaxHint));
     }
@@ -182,16 +183,13 @@ void FromTokenizeListInAnyAllOf(
     return;
   }
 
-  std::string field_name;
-  MakeFieldName(column_info, field_name);
-  search::mangling::MangleString(field_name);
-
   // Single-token short-circuit -> ByTerm.
   if (tokens.size() == 1) {
     auto& term = ctx.negated ? Negate<irs::ByTerm>(parent)
                              : AddFilter<irs::ByTerm>(parent);
     term.boost(ctx.boost);
-    *term.mutable_field() = field_name;
+    *term.mutable_field_id() =
+      PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
     term.mutable_options()->term.assign(tokens[0]);
     return;
   }
@@ -209,7 +207,8 @@ void FromTokenizeListInAnyAllOf(
   auto& terms = ctx.negated ? Negate<irs::ByTerms>(parent)
                             : AddFilter<irs::ByTerms>(parent);
   terms.boost(ctx.boost);
-  *terms.mutable_field() = std::move(field_name);
+  *terms.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& opts = *terms.mutable_options();
   opts.min_match = min_match_value;
   for (auto& t : tokens) {
@@ -239,7 +238,7 @@ void ExtractAnyAllOfArgs(
   // synthesised BoundConstantExpression wrappers per child Value in the
   // folded case, raw child expression pointers otherwise.
   const auto& list_expr = *func.children[0];
-  const auto list_type_id = list_expr.return_type.id();
+  const auto list_type_id = list_expr.GetReturnType().id();
   if (list_type_id != duckdb::LogicalTypeId::LIST &&
       list_type_id != duckdb::LogicalTypeId::ARRAY) {
     THROW_SQL_ERROR(
@@ -247,7 +246,8 @@ void ExtractAnyAllOfArgs(
       ERR_MSG("ts_any/ts_all first argument must be a list or array"),
       ERR_HINT(kSyntaxHint));
   }
-  if (list_expr.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (list_expr.GetExpressionClass() ==
+      duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& val = list_expr.Cast<duckdb::BoundConstantExpression>().value;
     if (val.IsNull()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -262,14 +262,14 @@ void ExtractAnyAllOfArgs(
         duckdb::make_uniq<duckdb::BoundConstantExpression>(child_val));
       args.push_back(synthesised.back().get());
     }
-  } else if (list_expr.expression_class ==
+  } else if (list_expr.GetExpressionClass() ==
              duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& list_fn = list_expr.Cast<duckdb::BoundFunctionExpression>();
-    if (list_fn.function.name != "list_value" &&
-        list_fn.function.name != "array_value") {
+    if (list_fn.function.GetName() != "list_value" &&
+        list_fn.function.GetName() != "array_value") {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("list arg must be a literal list or array (got: ",
-                              list_fn.function.name, ")"),
+                              list_fn.function.GetName(), ")"),
                       ERR_HINT(kSyntaxHint));
     }
     for (const auto& e : list_fn.children) {

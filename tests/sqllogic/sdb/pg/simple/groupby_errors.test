@@ -271,16 +271,7 @@ FROM
     (5), (10), (15)
 ) AS superhot_data(kostya_iq);
 ----
-db error: ERROR: No function matches the given name and argument types 'sum(BIGINT[])'. You might need to add explicit type casts.
-	Candidate functions:
-	sum(DECIMAL) -> DECIMAL
-	sum(BOOLEAN) -> HUGEINT
-	sum(SMALLINT) -> HUGEINT
-	sum(INTEGER) -> HUGEINT
-	sum(BIGINT) -> HUGEINT
-	sum(HUGEINT) -> HUGEINT
-	sum(DOUBLE) -> DOUBLE
-	sum(BIGNUM) -> BIGNUM
+db error: ERROR: UNNEST not supported here
 
 
 query error
@@ -301,7 +292,7 @@ SELECT * FROM UNNEST(COUNT(1000 - 7))
 db error: ERROR: Table function cannot contain aggregates!
 
 
-query ?
+query
 SELECT * FROM COUNT(1000 - 7)
 ----
 count

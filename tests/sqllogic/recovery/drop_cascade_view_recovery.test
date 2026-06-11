@@ -1,0 +1,154 @@
+control substitution on
+
+# DROP TABLE ... CASCADE after a restart must not crash when a view
+# depends on the table.
+#
+# Pre-fix, PgSqlView::ReadInternal was invoked without `schema_id` in
+# its ReadContext during catalog restore (server/catalog/catalog.cpp
+# RegisterViews), so the restored view object had a default-
+# initialised parent_id. The same buggy parent_id then fed
+# DropPlan::view_drops via PgSqlView::GetParentId(), and
+# ApplyDropPlan called RemoveFromResolution<Relation> with a
+# parent_id that was never inserted into _relations -- tripping the
+# `(it != outer.end())` assertion in ResolutionTable::RemoveObject.
+#
+# Same shape exists for PgSqlFunction, Tokenizer and PgSqlType
+# (catalog.cpp); fixed together in the same patch.
+
+
+statement ok
+CREATE TABLE pudge_base (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO pudge_base VALUES (1, 'hello world'), (2, 'good evening');
+
+
+statement ok
+CREATE VIEW pudge_view AS SELECT id, body FROM pudge_base;
+
+
+# A view-backed inverted index is the original reproducer; keep it in
+# the test so a future regression takes both code paths down at once.
+statement ok
+CREATE TEXT SEARCH DICTIONARY pudge_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE INDEX pudge_view_idx ON pudge_view USING inverted(id, body pudge_en);
+
+
+# Sanity pre-crash: the view resolves and the index lists.
+query
+SELECT count(*) FROM pudge_view;
+----
+count
+2
+
+
+query
+SELECT relname FROM pg_class WHERE relname = 'pudge_view_idx';
+----
+relname
+pudge_view_idx
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Sanity post-restart: the table and the view are both visible.
+connection after_crash
+query
+SELECT count(*) FROM pudge_base;
+----
+count
+2
+
+
+connection after_crash
+query
+SELECT count(*) FROM pudge_view;
+----
+count
+2
+
+
+# The fix point: DROP TABLE ... CASCADE on a table with a dependent
+# view must NOT crash the server. Without the fix this is SIGABRT in
+# ResolutionTable::RemoveObject<Relation>.
+connection after_crash
+statement ok
+DROP TABLE pudge_base CASCADE;
+
+
+# Server is still alive (otherwise this connection would also drop).
+connection after_crash
+query
+SELECT 1 AS still_alive;
+----
+still_alive
+1
+
+
+# Cascade landed: table, view, view-backed index all gone.
+connection after_crash
+query
+SELECT count(*) FROM pg_class
+  WHERE relname IN ('pudge_base', 'pudge_view', 'pudge_view_idx');
+----
+count
+0
+
+
+# Re-create with the same names to confirm catalog isn't poisoned.
+connection after_crash
+statement ok
+CREATE TABLE pudge_base (id INTEGER PRIMARY KEY, body TEXT);
+
+
+connection after_crash
+statement ok
+CREATE VIEW pudge_view AS SELECT id, body FROM pudge_base;
+
+
+connection after_crash
+statement ok
+INSERT INTO pudge_base VALUES (1, 'reborn');
+
+
+connection after_crash
+query
+SELECT count(*) FROM pudge_view;
+----
+count
+1
+
+
+connection after_crash
+statement ok
+DROP TABLE pudge_base CASCADE;
+
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY pudge_en;

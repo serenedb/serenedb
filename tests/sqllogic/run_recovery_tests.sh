@@ -95,9 +95,6 @@ echo "Parallelism: $JOBS worker(s) for ${#test_files[@]} test(s)"
 
 # --- Serened instance management (local mode only) ---
 
-LOOP_PIDS=()
-DATADIRS=()
-
 # Kill any leftover recovery serenedds from previous runs. The "recovery-worker-"
 # datadir pattern is unique to this script, so we can safely pkill on it.
 # Without this, orphans from prior aborted runs hold test ports and cascade-fail.
@@ -113,20 +110,18 @@ kill_recovery_orphans() {
 
 cleanup() {
 	echo "Cleaning up serened instances..."
-	# Kill children (serened) before parents (bash loop) to avoid orphaning.
-	for pid in "${LOOP_PIDS[@]}"; do
-		pkill -KILL -P "$pid" 2>/dev/null
-		kill -KILL "$pid" 2>/dev/null
-		wait "$pid" 2>/dev/null
-	done
-	# Catch anything we missed (e.g. script was SIGKILLed before trap ran).
+	# Workers run in subshells, so their pids/datadirs aren't visible here.
+	# kill_recovery_orphans pattern-matches the loop + serened processes, and the
+	# recovery-worker-* glob sweeps any datadir a worker didn't rm inline.
 	kill_recovery_orphans
-	for dir in "${DATADIRS[@]}"; do
-		rm -rf "$dir"
-	done
+	rm -rf "${TMPDIR:-/tmp}"/recovery-worker-* 2>/dev/null || true
 }
 
 kill_recovery_orphans
+
+# Kept after the run for post-mortem; its serened-logs-* name is outside the
+# recovery-worker-* sweep in cleanup().
+SERENED_LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/serened-logs-XXXXXX")
 
 if [[ "$EXTERNAL_MODE" == "false" ]]; then
 	: "${BUILD_DIR:=build}"
@@ -139,10 +134,6 @@ if [[ "$EXTERNAL_MODE" == "false" ]]; then
 	fi
 
 	trap cleanup EXIT INT TERM
-
-	# Use tmpfs for serened logs -- always writable, per-run isolation.
-	# Not added to DATADIRS: logs are kept after the run for post-mortem.
-	SERENED_LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/serened-logs-XXXXXX")
 fi
 
 # Pre-build sqllogictest once. Without this, each forked worker would invoke
@@ -170,14 +161,14 @@ start_fresh_serened() {
 
 	local datadir
 	datadir=$(mktemp -d "${TMPDIR:-/tmp}/recovery-worker-${worker_id}-XXXXXX")
-	DATADIRS+=("$datadir")
 	printf -v "$dir_var" '%s' "$datadir"
 
 	PORT=$port "$SCRIPT_DIR/run_serened_loop.sh" "$datadir" >"$log_file" 2>&1 &
 	local pid=$!
-	LOOP_PIDS+=("$pid")
 	printf -v "$pid_var" '%s' "$pid"
 
+	local start_ts
+	start_ts=$(date +%s.%N)
 	local attempt
 	for ((attempt = 0; attempt < 60; attempt++)); do
 		if ! kill -0 "$pid" 2>/dev/null; then
@@ -185,6 +176,7 @@ start_fresh_serened() {
 			return 1
 		fi
 		if python3 -c "import socket,sys; s=socket.socket(); s.settimeout(1); s.connect(('localhost',$port)); s.close()" 2>/dev/null; then
+			echo "  worker $worker_id serened ready in $(awk "BEGIN{printf \"%.1f\", $(date +%s.%N) - $start_ts}")s"
 			return 0
 		fi
 		sleep 1
@@ -196,6 +188,8 @@ start_fresh_serened() {
 stop_serened() {
 	local pid=$1
 	[[ -z "$pid" ]] && return
+	local start_ts
+	start_ts=$(date +%s.%N)
 	# Kill children FIRST (serened) -- once the parent bash dies, its children
 	# are reparented to init and pkill -P can no longer find them, leaving
 	# orphaned serened processes holding the port. Since each test uses a
@@ -203,22 +197,45 @@ stop_serened() {
 	pkill -KILL -P "$pid" 2>/dev/null
 	kill -KILL "$pid" 2>/dev/null
 	wait "$pid" 2>/dev/null
+	echo "  serened stopped in $(awk "BEGIN{printf \"%.1f\", $(date +%s.%N) - $start_ts}")s"
 }
 
-# --- Distribute tests across workers (round-robin) ---
-
-declare -a worker_tests
-for ((i = 0; i < JOBS; i++)); do
-	worker_tests[$i]=""
+declare -a heavy=() light=()
+for tf in "${test_files[@]}"; do
+	case "$tf" in
+	*stress* | *huge* | *_slow* | *loop*) heavy+=("$tf") ;;
+	*) light+=("$tf") ;;
+	esac
 done
+test_files=("${heavy[@]}" "${light[@]}")
 
-for ((t = 0; t < ${#test_files[@]}; t++)); do
-	w=$((t % JOBS))
-	if [[ -n "${worker_tests[$w]}" ]]; then
-		worker_tests[$w]+=$'\n'
+# Slowest-first off the persisted timing cache when warm; the heavy-first split
+# above is the cold-cache fallback (unknown tests keep that order).
+if [[ -n "${SDB_TIMING_CACHE_DIR:-}" ]]; then
+	recovery_cache="$SDB_TIMING_CACHE_DIR/pg-wire-simple${SDB_TIMING_KEY:+.$SDB_TIMING_KEY}.tsv"
+	if ordered=$(printf '%s\n' "${test_files[@]}" | python3 "$SCRIPT_DIR/timing_cache.py" order "$recovery_cache" 2>/dev/null) && [[ -n "$ordered" ]]; then
+		mapfile -t test_files <<<"$ordered"
 	fi
-	worker_tests[$w]+="${test_files[$t]}"
-done
+fi
+
+QUEUE_FILE="$SERENED_LOG_DIR/queue.txt"
+QUEUE_IDX="$SERENED_LOG_DIR/queue.idx"
+QUEUE_LOCK="$SERENED_LOG_DIR/queue.lock"
+QUEUE_TOTAL=${#test_files[@]}
+printf '%s\n' "${test_files[@]}" >"$QUEUE_FILE"
+echo 0 >"$QUEUE_IDX"
+: >"$QUEUE_LOCK"
+
+pop_test() {
+	(
+		flock 200
+		local i
+		i=$(<"$QUEUE_IDX")
+		((i >= QUEUE_TOTAL)) && exit 1
+		echo $((i + 1)) >"$QUEUE_IDX"
+		sed -n "$((i + 1))p" "$QUEUE_FILE"
+	) 200>"$QUEUE_LOCK"
+}
 
 # --- Run test workers in parallel ---
 
@@ -226,13 +243,13 @@ run_worker() {
 	local worker_id=$1
 	local host=$2
 	local port=$3
-	local tests="$4"
 	local worker_exit=0
 	local failures_file="$SERENED_LOG_DIR/failures-w${worker_id}.txt"
 	: >"$failures_file"
 
 	local test_idx=0
-	while IFS= read -r test_file; do
+	local test_file
+	while test_file=$(pop_test); do
 		[[ -z "$test_file" ]] && continue
 
 		# One serened per test: fresh datadir, fresh port, fresh process.
@@ -259,13 +276,16 @@ run_worker() {
 				sed "s/^/[srvd] /" "$serened_log"
 				echo "--- end serened log ---"
 				echo "$test_file" >>"$failures_file"
+				# A partial start still created a loop process + datadir; reap both.
+				stop_serened "$pid"
+				[[ -n "$datadir" ]] && rm -rf "$datadir"
 				worker_exit=1
 				test_idx=$((test_idx + 1))
 				continue
 			fi
 		fi
 
-		./run.sh \
+		SDB_SQLLOGIC_QUIET=1 ./run.sh \
 			--host "$host" \
 			--single-port "$run_port" \
 			--test "$test_file" \
@@ -297,7 +317,7 @@ run_worker() {
 		fi
 
 		test_idx=$((test_idx + 1))
-	done <<<"$tests"
+	done
 
 	return $worker_exit
 }
@@ -313,7 +333,7 @@ for ((i = 0; i < JOBS; i++)); do
 		port=$((BASE_PORT + i))
 	fi
 
-	run_worker "$i" "$host" "$port" "${worker_tests[$i]}" &
+	run_worker "$i" "$host" "$port" &
 	worker_pids+=($!)
 done
 

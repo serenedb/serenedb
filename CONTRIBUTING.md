@@ -47,7 +47,7 @@ Additional build presets are defined in `CMakePresets.json`:
 ### Launch
 
 ```bash
-./build/bin/serened ./build_data --server.endpoint='pgsql+tcp://0.0.0.0:7890'
+./build/bin/serened ./build_data --server_endpoints='pgsql+tcp://0.0.0.0:7890'
 ```
 
 Connect via psql: `psql -h localhost -p 7890 -U postgres`
@@ -62,6 +62,7 @@ The test tree is split by what runs the test and what it covers:
 - `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir.
 - `tests/server/<area>/...`, `tests/libs/<lib>/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
 - `tests/bench/micro/...` -- microbenchmarks for performance claims.
+- `tests/postgres_scanner/`, `tests/avro/`, `tests/httpfs/` -- drivers that run the **vendored DuckDB extension** test suites via DuckDB's own `unittest` binary. Built only when configured with `-DSDB_BUILD_DUCKDB_UNITTESTS=ON`.
 
 When a change needs a test:
 
@@ -88,6 +89,43 @@ C++ unit tests:
 ./build/bin/serenedb-tests_basics "--gtest_filter=*VPackLoadInspectorTest*"
 ./build/bin/serenedb-tests_connector "--gtest_filter=*DataSourceWithSearchTest*"
 ```
+
+### Testing CI workflows locally
+
+Run or dry-run the GitHub Actions workflows locally with
+[`act`](https://github.com/nektos/act), via `scripts/ci/act-local.sh`
+(self-bootstrapping -- installs `act` on first use, shares the host Docker
+socket so the in-container build steps work):
+
+```bash
+./scripts/ci/act-local.sh list                       # list workflows + jobs
+./scripts/ci/act-local.sh validate build-manual.yml  # dry-run: parse + plan, no exec
+./scripts/ci/act-local.sh run build-manual.yml -j perf   # actually run a job
+./scripts/ci/act-local.sh classify                   # run the PR change-classifier alone
+```
+
+`validate` always works and catches YAML / job-graph errors before you push --
+run it whenever you touch `.github/workflows/`. Full `run` needs the build image
+and `/mnt/data` caches for heavy jobs; put fake secrets in `.secrets`
+(gitignored) for workflows that reference them.
+
+### Running vendored DuckDB extension tests
+
+The `postgres_scanner`, `avro`, `httpfs` extensions ship with their own
+sqllogic-style test suites under `third_party/duckdb_<name>/test/`. They
+run through DuckDB's `unittest` binary, which is built by default
+(opt out with `-DSDB_BUILD_DUCKDB_UNITTESTS=OFF` if you want to skip
+its ~1GB output).
+
+```bash
+# postgres_scanner -- postgres fixture comes up via docker
+./tests/postgres_scanner/run.sh
+```
+
+The serened-level postgres_scanner tests
+(`tests/sqllogic/sdb/pg/duckdb_postgres/*_pgscan.test_slow`) ride the regular
+sqllogic runner -- the `_pgscan.` filename suffix triggers
+`launch_postgres()` in `tests/sqllogic/run.sh` automatically.
 
 ## Branching, commits, PRs
 
@@ -166,7 +204,7 @@ Click **Run and Debug** on the left sidebar (Shift+Ctrl+D / Shift+Cmd+D). This a
 
 ## C++ Code Style
 
-Based on common sense, Google C++ style guide, and Abseil best practices. These rules apply to serenedb, iresearch, and vpack code.
+Based on common sense, Google C++ style guide, and Abseil best practices. These rules apply to serenedb and iresearch code.
 
 Style issues shouldn't block PRs -- anything not caught automatically can be fixed later. This is a living document.
 
@@ -285,9 +323,8 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ### Logging
 
-- Use `SDB_LOG(id, level, topic, ...)` macros from `logger/logger.h`
-- Shortcuts: `SDB_ERROR(id, topic, ...)`, `SDB_INFO(id, topic, ...)`
-- Log topics: `Logger::AUTHENTICATION`, `Logger::ENGINES`, `Logger::REQUESTS`, `Logger::STARTUP`, etc.
+- Use `SDB_LOG(level, topic, ...)` macros from `basics/log.h`
+- Shortcuts: `SDB_ERROR(topic, ...)`, `SDB_INFO(topic, ...)`
 
 ### Integer Types
 
@@ -404,6 +441,12 @@ git checkout <your-branch>
 ```
 
 This configures the submodule to fetch all branches (persists for your local clone) and lets you work with it like a normal repo -- `git push`, `git pull`, `git branch`, etc. will all work as expected.
+
+To apply this to every submodule at once, run from the repo root:
+
+```bash
+git submodule foreach --recursive 'git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" && git fetch origin'
+```
 
 ---
 

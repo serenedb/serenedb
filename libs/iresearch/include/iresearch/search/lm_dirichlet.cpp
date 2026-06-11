@@ -20,12 +20,6 @@
 
 #include "lm_dirichlet.hpp"
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
-#include <vpack/vpack.h>
-
 #include <cmath>
 
 #include "basics/down_cast.h"
@@ -36,11 +30,10 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorer_impl.hpp"
-#include "iresearch/search/scorers.hpp"
 
 namespace irs {
 namespace {
@@ -51,85 +44,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 }
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
-
-struct ObjectParams {
-  score_t mu = LMDirichlet::MU();
-};
-
-Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadObjectNothrow(slice, params,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing lm_dirichlet scorer from VPack");
-    return {};
-  }
-  if (!std::isfinite(params.mu) || params.mu < 0.f) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "lm_dirichlet mu must be a non-negative finite value");
-    return {};
-  }
-  return std::make_unique<LMDirichlet>(params.mu);
-}
-
-Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadTupleNothrow(slice, params);
-  if (!r.ok()) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing lm_dirichlet scorer from VPack array");
-    return {};
-  }
-  if (!std::isfinite(params.mu) || params.mu < 0.f) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "lm_dirichlet mu must be a non-negative finite value");
-    return {};
-  }
-  return std::make_unique<LMDirichlet>(params.mu);
-}
-
-Scorer::ptr MakeVPack(const vpack::Slice slice) {
-  switch (slice.type()) {
-    case vpack::ValueType::Object:
-      return MakeFromObject(slice);
-    case vpack::ValueType::Array:
-      return MakeFromArray(slice);
-    default:
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Invalid VPack arguments for lm_dirichlet scorer");
-      return nullptr;
-  }
-}
-
-Scorer::ptr MakeVPack(std::string_view args) {
-  if (IsNull(args)) {
-    return std::make_unique<LMDirichlet>();
-  }
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-Scorer::ptr MakeJson(std::string_view args) {
-  if (IsNull(args)) {
-    return std::make_unique<LMDirichlet>();
-  }
-  try {
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
-              "' while constructing VPack from JSON for lm_dirichlet");
-  } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      "Caught error while constructing VPack from JSON for lm_dirichlet");
-  }
   return nullptr;
 }
 
@@ -227,23 +141,12 @@ void LMDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
                           const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 
-  const auto* field_ptr = sdb::basics::downCast<LMFieldCollector>(field);
-  const auto* term_ptr = sdb::basics::downCast<LMTermCollector>(term);
-
-  const auto ttf_field = field_ptr ? field_ptr->total_term_freq : 0;
-  const auto ttf_term = term_ptr ? term_ptr->total_term_freq : 0;
+  const auto ttf_field = field ? field->total_term_freq : 0;
+  const auto ttf_term = term ? term->total_term_freq : 0;
 
   const double num = static_cast<double>(ttf_term) + 1.0;
   const double den = static_cast<double>(ttf_field) + 1.0;
   stats->collection_prob = static_cast<score_t>(num / den);
-}
-
-FieldCollector::ptr LMDirichlet::PrepareFieldCollector() const {
-  return std::make_unique<LMFieldCollector>();
-}
-
-TermCollector::ptr LMDirichlet::PrepareTermCollector() const {
-  return std::make_unique<LMTermCollector>();
 }
 
 ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
@@ -288,11 +191,6 @@ bool LMDirichlet::equals(const Scorer& other) const noexcept {
   }
   const auto& p = sdb::basics::downCast<LMDirichlet>(other);
   return p._mu == _mu;
-}
-
-void LMDirichlet::init() {
-  REGISTER_SCORER_JSON(LMDirichlet, MakeJson);
-  REGISTER_SCORER_VPACK(LMDirichlet, MakeVPack);
 }
 
 }  // namespace irs

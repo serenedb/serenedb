@@ -1,0 +1,187 @@
+hash-threshold 100
+control substitution on
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY null_writer_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+COPY (
+  SELECT s::INT AS id,
+         CASE WHEN s % 2 = 0 THEN NULL ELSE 'red fox '||s::TEXT END AS body
+  FROM generate_series(1, 2048) AS s
+) TO '/tmp/${__DATABASE__}_null_writer.jsonl' (FORMAT json);
+
+
+query
+SELECT count(*), count(*) FILTER (WHERE body IS NULL)
+FROM read_json('/tmp/${__DATABASE__}_null_writer.jsonl');
+----
+count	count
+2048	1024
+
+
+statement ok
+CREATE TABLE rj_t (id INTEGER, body VARCHAR);
+
+
+statement ok
+CREATE INDEX rj_idx ON rj_t
+  USING inverted(id, body null_writer_en);
+
+
+statement ok
+INSERT INTO rj_t
+SELECT id, body
+FROM read_json('/tmp/${__DATABASE__}_null_writer.jsonl');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rj_t;
+
+
+query
+SELECT count(*) FROM rj_idx;
+----
+count
+2048
+
+
+query
+SELECT
+  count(*) FILTER (WHERE body IS NULL)         AS n_null,
+  count(*) FILTER (WHERE body LIKE 'red fox%') AS n_text
+FROM rj_idx;
+----
+n_null	n_text
+1024	1024
+
+
+query
+SELECT id, body FROM rj_idx WHERE id IN (1, 2, 3, 4) ORDER BY id;
+----
+id	body
+1	red fox 1
+2	NULL
+3	red fox 3
+4	NULL
+
+
+query
+SELECT count(*) FROM rj_idx WHERE body @@ ts_phrase('red');
+----
+count
+1024
+
+
+statement ok
+CREATE TABLE upd_t (id INTEGER, body VARCHAR, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX upd_idx ON upd_t
+  USING inverted(
+    body null_writer_en,
+    emb  hnsw (metric = 'cosine', m = 16, ef_construction = 32)
+  );
+
+
+statement ok
+INSERT INTO upd_t
+SELECT s::INT,
+       'red fox '||s::TEXT,
+       [sin(s*0.1)::FLOAT, cos(s*0.1)::FLOAT, (s*0.001)::FLOAT]::FLOAT[3]
+FROM generate_series(1, 1024) AS s;
+
+
+statement ok
+UPDATE upd_t SET body = NULL WHERE id % 2 = 0;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) upd_t;
+
+
+query
+SELECT count(*) FROM upd_idx;
+----
+count
+1024
+
+
+query
+SELECT
+  count(*) FILTER (WHERE body IS NULL)         AS n_null,
+  count(*) FILTER (WHERE body LIKE 'red fox%') AS n_text
+FROM upd_idx;
+----
+n_null	n_text
+512	512
+
+
+query
+SELECT id, body FROM upd_idx WHERE id IN (1, 2, 3, 4) ORDER BY id;
+----
+id	body
+1	red fox 1
+2	NULL
+3	red fox 3
+4	NULL
+
+
+query
+SELECT count(*) FROM upd_idx WHERE body @@ ts_phrase('red');
+----
+count
+512
+
+
+statement ok
+CREATE TABLE const_t (id INTEGER, body VARCHAR);
+
+
+statement ok
+CREATE INDEX const_idx ON const_t
+  USING inverted(id, body null_writer_en);
+
+
+statement ok
+INSERT INTO const_t
+SELECT s::INT, NULL::VARCHAR FROM generate_series(1, 1024) AS s;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) const_t;
+
+
+query
+SELECT count(*) FROM const_idx;
+----
+count
+1024
+
+
+query
+SELECT count(*) FROM const_idx WHERE body IS NULL;
+----
+count
+1024
+
+
+query
+SELECT id, body FROM const_idx WHERE id IN (1, 512, 1024) ORDER BY id;
+----
+id	body
+1	NULL
+512	NULL
+1024	NULL

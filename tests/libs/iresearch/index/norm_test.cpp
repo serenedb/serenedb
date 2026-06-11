@@ -34,9 +34,15 @@
 
 namespace {
 
-auto MakeByTerm(std::string_view name, std::string_view value) {
+// Stable per-name field ids, sourced from `tests::FieldIdFor` so the
+// shared JSON factories and this test agree on which id a name maps to.
+inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
+
+using tests::FieldIdFor;
+
+auto MakeByTerm(irs::field_id id, std::string_view value) {
   auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field() = name;
+  *filter->mutable_field_id() = id;
   filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
   return filter;
 }
@@ -83,7 +89,12 @@ class Analyzer : public irs::analysis::TypedAnalyzer<Analyzer> {
 class NormField final : public tests::Ifield {
  public:
   NormField(std::string name, std::string value, size_t count)
-    : _name{std::move(name)}, _value{std::move(value)}, _analyzer{count} {}
+    : _name{std::move(name)},
+      _id{FieldIdFor(_name)},
+      _value{std::move(value)},
+      _analyzer{count} {}
+
+  irs::field_id Id() const final { return _id; }
 
   std::string_view Name() const final { return _name; }
 
@@ -103,6 +114,7 @@ class NormField final : public tests::Ifield {
 
  private:
   std::string _name;
+  irs::field_id _id;
   std::string _value;
   mutable Analyzer _analyzer;
 };
@@ -121,24 +133,24 @@ class NormTestCase : public tests::IndexTestBase {
 
   template<typename T>
   void AssertNormColumn(
-    const irs::SubReader& segment, std::string_view name,
+    const irs::SubReader& segment, irs::field_id id,
     const std::vector<std::pair<irs::doc_id_t, uint32_t>>& expected_values);
 };
 
 template<typename T>
 void NormTestCase::AssertNormColumn(
-  const irs::SubReader& segment, std::string_view name,
+  const irs::SubReader& segment, irs::field_id id,
   const std::vector<std::pair<irs::doc_id_t, uint32_t>>& expected_docs) {
   static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> ||
                 std::is_same_v<T, uint32_t>);
 
-  auto* field = segment.field(name);
+  auto* field = segment.field(id);
   ASSERT_NE(nullptr, field);
   auto& meta = field->meta();
-  ASSERT_EQ(name, meta.name);
+  ASSERT_EQ(id, meta.id);
   ASSERT_TRUE(irs::field_limits::valid(meta.norm));
 
-  const auto* cs = segment.CsReader();
+  const auto* cs = segment.GetColReader();
   ASSERT_NE(nullptr, cs);
   const auto* column = cs->NormColumn(meta.norm);
   ASSERT_NE(nullptr, column);
@@ -199,7 +211,7 @@ TEST_P(NormTestCase, CheckNorms) {
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
   // Create expected index
@@ -227,7 +239,7 @@ TEST_P(NormTestCase, CheckNorms) {
     const auto it = seed_mapping.find(kName);
     ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
-    AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+    AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                {{1, seed}, {2, seed * 2}, {3, seed * 3}});
   }
 
@@ -237,7 +249,7 @@ TEST_P(NormTestCase, CheckNorms) {
     ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(
-      segment, {kName.data(), kName.size()},
+      segment, FieldIdFor(kName),
       {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 4}});
   }
 
@@ -247,7 +259,7 @@ TEST_P(NormTestCase, CheckNorms) {
     ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(
-      segment, {kName.data(), kName.size()},
+      segment, FieldIdFor(kName),
       {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 4}});
   }
 
@@ -256,7 +268,7 @@ TEST_P(NormTestCase, CheckNorms) {
     const auto it = seed_mapping.find(kName);
     ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
-    AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+    AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                {{1, seed}, {4, seed * 4}});
   }
 }
@@ -309,7 +321,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
   for (const auto* d : docs) {
     ASSERT_TRUE(Insert(*writer, d->indexed.begin(), d->indexed.end()));
   }
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
   // Create expected index
@@ -337,7 +349,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
     const auto it = seed_mapping.find(kName);
     ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
-    AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+    AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                {{1, seed}, {2, seed * 2}, {3, seed * 3}});
   }
 
@@ -347,7 +359,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
     ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(
-      segment, {kName.data(), kName.size()},
+      segment, FieldIdFor(kName),
       {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 4}});
   }
 
@@ -357,7 +369,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
     ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
     AssertNormColumn<uint32_t>(
-      segment, {kName.data(), kName.size()},
+      segment, FieldIdFor(kName),
       {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 4}});
   }
 
@@ -366,12 +378,12 @@ TEST_P(NormTestCase, CheckNormsBatched) {
     const auto it = seed_mapping.find(kName);
     ASSERT_NE(seed_mapping.end(), it);
     const uint32_t seed{it->second};
-    AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+    AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                {{1, seed}, {4, seed * 4}});
   }
 }
 
-TEST_P(NormTestCase, CheckNormsConsolidation) {
+TEST_P(NormTestCase, CheckNormsCompaction) {
   const absl::flat_hash_map<std::string_view, uint32_t> seed_mapping{
     {"name", uint32_t{1}},
     {"same", uint32_t{1} << 5},
@@ -417,12 +429,12 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   ASSERT_TRUE(Insert(*writer, doc4->indexed.begin(), doc4->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc5->indexed.begin(), doc5->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc6->indexed.begin(), doc6->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
   // Create expected index
@@ -460,7 +472,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                  {{1, seed}, {2, seed * 2}, {3, seed * 3}});
     }
 
@@ -470,7 +482,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(
-        segment, {kName.data(), kName.size()},
+        segment, FieldIdFor(kName),
         {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 4}});
     }
 
@@ -480,7 +492,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(
-        segment, {kName.data(), kName.size()},
+        segment, FieldIdFor(kName),
         {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 4}});
     }
 
@@ -489,7 +501,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                  {{1, seed}, {4, seed * 4}});
     }
   }
@@ -505,8 +517,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
-                                 {{1, seed * 5}});
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName), {{1, seed * 5}});
     }
 
     {
@@ -514,7 +525,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                  {{1, seed * 5}, {2, seed * 6}, {3, seed * 7}});
     }
 
@@ -523,25 +534,24 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                  {{1, seed * 5}, {2, seed * 6}, {3, seed * 7}});
     }
 
     {
       constexpr std::string_view kName = "prefix";
-      ASSERT_EQ(nullptr, segment.field(kName));
+      ASSERT_EQ(nullptr, segment.field(FieldIdFor(kName)));
     }
   }
 
-  // Consolidate segments
+  // Compact segments
   {
-    const irs::index_utils::ConsolidateCount consolidate_all;
-    ASSERT_TRUE(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-    writer->Commit();
+    const irs::index_utils::CompactionCount compact_all;
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
-    // Simulate consolidation
+    // Simulate compaction
     index().clear();
     index().emplace_back();
     expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
@@ -577,7 +587,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint16_t>(
-        segment, {kName.data(), kName.size()},
+        segment, FieldIdFor(kName),
         {{1, seed}, {2, seed * 2}, {3, seed * 3}, {5, seed * 5}});
     }
 
@@ -586,7 +596,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint8_t>(segment, FieldIdFor(kName),
                                 {{1, seed},
                                  {2, seed * 2},
                                  {3, seed * 3},
@@ -601,7 +611,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint8_t>(segment, FieldIdFor(kName),
                                 {{1, seed},
                                  {2, seed * 2},
                                  {3, seed * 3},
@@ -616,13 +626,13 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                  {{1, seed}, {4, seed * 4}});
     }
   }
 }
 
-TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
+TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
   const absl::flat_hash_map<std::string_view, uint32_t> seed_mapping{
     {"name", uint32_t{1}},
     {"same", uint32_t{1} << 5},
@@ -668,12 +678,12 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
   ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   ASSERT_TRUE(Insert(*writer, doc4->indexed.begin(), doc4->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc5->indexed.begin(), doc5->indexed.end()));
   ASSERT_TRUE(Insert(*writer, doc6->indexed.begin(), doc6->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
   // Create expected index
@@ -711,7 +721,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                  {{1, seed}, {2, seed * 2}, {3, seed * 3}});
     }
 
@@ -721,7 +731,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(
-        segment, {kName.data(), kName.size()},
+        segment, FieldIdFor(kName),
         {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 4}});
     }
 
@@ -731,7 +741,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint32_t>(
-        segment, {kName.data(), kName.size()},
+        segment, FieldIdFor(kName),
         {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 4}});
     }
 
@@ -740,7 +750,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                  {{1, seed}, {4, seed * 4}});
     }
   }
@@ -756,8 +766,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
-                                 {{1, seed * 5}});
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName), {{1, seed * 5}});
     }
 
     {
@@ -765,7 +774,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                  {{1, seed * 5}, {2, seed * 6}, {3, seed * 7}});
     }
 
@@ -774,33 +783,32 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName),
                                  {{1, seed * 5}, {2, seed * 6}, {3, seed * 7}});
     }
 
     {
       constexpr std::string_view kName = "prefix";
-      ASSERT_EQ(nullptr, segment.field(kName));
+      ASSERT_EQ(nullptr, segment.field(FieldIdFor(kName)));
     }
   }
 
   // Remove document
   {
-    auto query_doc3 = MakeByTerm("name", "D");
-    writer->GetBatch().Remove(*query_doc3);
-    writer->Commit();
+    auto query_doc3 = MakeByTerm(kNameId, "D");
+    tests::Remove(*writer, *query_doc3);
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 
-  // Consolidate segments
+  // Compact segments
   {
-    const irs::index_utils::ConsolidateCount consolidate_all;
-    ASSERT_TRUE(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-    writer->Commit();
+    const irs::index_utils::CompactionCount compact_all;
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
-    // Simulate consolidation
+    // Simulate compaction
     index().clear();
     index().emplace_back();
     expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
@@ -835,7 +843,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint16_t>(
-        segment, {kName.data(), kName.size()},
+        segment, FieldIdFor(kName),
         {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 5}});
     }
 
@@ -844,7 +852,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint8_t>(segment, FieldIdFor(kName),
                                 {{1, seed},
                                  {2, seed * 2},
                                  {3, seed * 3},
@@ -858,7 +866,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint8_t>(segment, FieldIdFor(kName),
                                 {{1, seed},
                                  {2, seed * 2},
                                  {3, seed * 3},
@@ -872,21 +880,19 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
-                                 {{1, seed}});
+      AssertNormColumn<uint32_t>(segment, FieldIdFor(kName), {{1, seed}});
     }
   }
 
   ASSERT_TRUE(Insert(*writer, doc0->indexed.begin(), doc0->indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
-  // Consolidate segments
+  // Compact segments
   {
-    const irs::index_utils::ConsolidateCount consolidate_all;
-    ASSERT_TRUE(
-      writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-    writer->Commit();
+    const irs::index_utils::CompactionCount compact_all;
+    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 
@@ -905,7 +911,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
       AssertNormColumn<uint16_t>(
-        segment, {kName.data(), kName.size()},
+        segment, FieldIdFor(kName),
         {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 5}, {7, seed}});
     }
 
@@ -914,7 +920,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint8_t>(segment, FieldIdFor(kName),
                                 {{1, seed},
                                  {2, seed * 2},
                                  {3, seed * 3},
@@ -929,7 +935,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint8_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint8_t>(segment, FieldIdFor(kName),
                                 {{1, seed},
                                  {2, seed * 2},
                                  {3, seed * 3},
@@ -944,7 +950,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
       const auto it = seed_mapping.find(kName);
       ASSERT_NE(seed_mapping.end(), it);
       const uint32_t seed{it->second};
-      AssertNormColumn<uint16_t>(segment, {kName.data(), kName.size()},
+      AssertNormColumn<uint16_t>(segment, FieldIdFor(kName),
                                  {{1, seed}, {7, seed}});
     }
   }

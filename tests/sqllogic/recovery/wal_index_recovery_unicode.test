@@ -26,7 +26,7 @@ statement ok
 CREATE INDEX uni_idx ON uni_t USING inverted(id, body uni_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) uni_t;
+VACUUM (REFRESH_TABLE) uni_t;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -51,7 +51,7 @@ SELECT 1;
 
 connection uni_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) uni_t;
+VACUUM (REFRESH_TABLE) uni_t;
 
 connection uni_after
 query
@@ -63,7 +63,7 @@ count
 # Cyrillic — still indexed (was deleted).
 connection uni_after
 query
-SELECT COUNT(*) FROM uni_t WHERE body @@ ts_phrase('мир');
+SELECT COUNT(*) FROM uni_idx WHERE body @@ ts_phrase('мир');
 ----
 count
 0
@@ -71,7 +71,7 @@ count
 # Greek (untouched seed).
 connection uni_after
 query
-SELECT id FROM uni_t WHERE body @@ ts_phrase('κόσμε');
+SELECT id FROM uni_idx WHERE body @@ ts_phrase('κόσμε');
 ----
 id
 2
@@ -79,7 +79,7 @@ id
 # Chinese (added post-fault).
 connection uni_after
 query
-SELECT id FROM uni_t WHERE body @@ ts_phrase('你好世界');
+SELECT id FROM uni_idx WHERE body @@ ts_phrase('你好世界');
 ----
 id
 3
@@ -87,7 +87,7 @@ id
 # Japanese.
 connection uni_after
 query
-SELECT id FROM uni_t WHERE body @@ ts_phrase('こんにちは世界');
+SELECT id FROM uni_idx WHERE body @@ ts_phrase('こんにちは世界');
 ----
 id
 4
@@ -95,7 +95,7 @@ id
 # Arabic.
 connection uni_after
 query
-SELECT id FROM uni_t WHERE body @@ ts_phrase('مرحبا');
+SELECT id FROM uni_idx WHERE body @@ ts_phrase('مرحبا');
 ----
 id
 5
@@ -103,14 +103,14 @@ id
 # Emoji + ascii.
 connection uni_after
 query
-SELECT id FROM uni_t WHERE body @@ ts_phrase('rust');
+SELECT id FROM uni_idx WHERE body @@ ts_phrase('rust');
 ----
 id
 6
 
 connection uni_after
 query
-SELECT id FROM uni_t WHERE body @@ ts_phrase('ferris');
+SELECT id FROM uni_idx WHERE body @@ ts_phrase('ferris');
 ----
 id
 6

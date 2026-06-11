@@ -22,10 +22,6 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <rocksdb/slice.h>
-#include <vpack/builder.h>
-#include <vpack/iterator.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
 
 #include <expected>
 #include <iostream>
@@ -33,15 +29,14 @@
 #include <memory>
 
 #include "app/app_server.h"
-#include "app/options/parameters.h"
-#include "app/options/program_options.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/misc.hpp"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
@@ -52,6 +47,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/local_catalog.h"
 #include "catalog/object.h"
+#include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
 #include "catalog/sequence.h"
@@ -63,46 +59,30 @@
 #include "catalog/view.h"
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
-#include "general_server/state.h"
-#include "query/duckdb_engine.h"
-#include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/secondary_index_shard.h"
-#include "vpack/value.h"
-#include "vpack/value_type.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::catalog {
 namespace {
-
-Result ErrorMeta(ErrorCode code, std::string_view object_type,
-                 std::string_view error, vpack::Slice meta) {
-  return {code,  "Failed to read ", object_type,  " metadata ', error: ",
-          error, " metadata: ",     meta.toJson()};
-}
 
 // In case of recovery the ColumnExpr shouldn't be parsed
 struct DropTableOptions {
   uint64_t columns;
 };
 
-ResultOr<DropTableOptions> GetTableOptionsForDrop(vpack::Slice slice) {
-  struct {
-    vpack::Slice columns;
-  } opts;
-  if (auto r = vpack::ReadObjectNothrow(slice, opts, {.skip_unknown = true});
-      !r.ok()) {
-    return std::unexpected<Result>{std::in_place, std::move(r)};
-  }
-  if (!opts.columns.isArray()) {
+ResultOr<DropTableOptions> GetTableOptionsForDrop(std::string_view bytes,
+                                                  ReadContext ctx) {
+  auto table = catalog::DeserializeObject<Table>(bytes, ctx);
+  if (!table) {
     return std::unexpected<Result>{
       std::in_place, ERROR_SERVER_ILLEGAL_STATE,
-      "\"columns\" variable should be an array in the table definition vpack"};
+      "failed to deserialize table definition during drop recovery"};
   }
-  return DropTableOptions{.columns = opts.columns.length()};
+  return DropTableOptions{.columns = table->Columns().size()};
 }
 
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
@@ -112,7 +92,7 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   auto shard_type = IndexShardType(index_type);
   ObjectId shard_id;
   auto r = engine.VisitDefinitions(index_id, shard_type,
-                                   [&](DefinitionKey key, vpack::Slice) {
+                                   [&](DefinitionKey key, std::string_view) {
                                      SDB_ASSERT(!shard_id.isSet());
                                      shard_id = key.GetObjectId();
                                      return Result{};
@@ -130,25 +110,22 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   ObjectId shard_id;
   uint64_t table_size = std::numeric_limits<uint64_t>::max();
 
-  auto r = engine.VisitDefinitions(
-    table_id, ObjectType::TableShard,
-    [&](DefinitionKey key, vpack::Slice slice) {
-      SDB_ASSERT(!shard_id.isSet());
-      shard_id = key.GetObjectId();
-      TableStats stats;
-      if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
-        return r;
-      }
-      table_size = stats.num_rows * cols;
-      return Result{};
-    });
+  auto r =
+    engine.VisitDefinitions(table_id, ObjectType::TableShard,
+                            [&](DefinitionKey key, std::string_view bytes) {
+                              SDB_ASSERT(!shard_id.isSet());
+                              shard_id = key.GetObjectId();
+                              auto stats = TableShard::DeserializeStats(bytes);
+                              table_size = stats.num_rows * cols;
+                              return Result{};
+                            });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
   std::vector<std::shared_ptr<IndexDrop>> indexes;
   auto collect_indexes = [&](ObjectType type) {
     return engine.VisitDefinitions(
-      table_id, type, [&](DefinitionKey key, vpack::Slice) {
+      table_id, type, [&](DefinitionKey key, std::string_view) {
         auto index_drop = CreateIndexDrop(engine, db_id, schema_id, table_id,
                                           key.GetObjectId(), type);
         if (!index_drop) {
@@ -169,10 +146,11 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   std::vector<ObjectId> owned_sequences;
   r = engine.VisitDefinitions(
     schema_id, ObjectType::Sequence,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto seq = Sequence::ReadInternal(slice, {.id = key.GetObjectId(),
-                                                .database_id = db_id,
-                                                .schema_id = schema_id});
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
+      auto seq =
+        catalog::DeserializeObject<Sequence>(bytes, {.id = key.GetObjectId(),
+                                                     .database_id = db_id,
+                                                     .schema_id = schema_id});
       if (seq && seq->GetOwnerTableId() == table_id) {
         owned_sequences.push_back(key.GetObjectId());
       }
@@ -192,8 +170,10 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
   std::vector<std::shared_ptr<TableDrop>> tables;
   auto r = engine.VisitDefinitions(
     schema_id, ObjectType::Table,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto options = GetTableOptionsForDrop(slice);
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
+      auto options = GetTableOptionsForDrop(bytes, {.id = key.GetObjectId(),
+                                                    .database_id = db_id,
+                                                    .schema_id = schema_id});
       if (!options) {
         return std::move(options.error());
       }
@@ -217,7 +197,7 @@ ResultOr<std::shared_ptr<DatabaseDrop>> CreateDatabaseDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id) {
   std::vector<std::shared_ptr<SchemaDrop>> schemas;
   auto r = engine.VisitDefinitions(
-    db_id, ObjectType::Schema, [&](DefinitionKey key, vpack::Slice) {
+    db_id, ObjectType::Schema, [&](DefinitionKey key, std::string_view) {
       auto schema_drop = CreateSchemaDrop(engine, db_id, key.GetObjectId());
       if (!schema_drop) {
         return std::move(schema_drop.error());
@@ -271,19 +251,14 @@ class OpenDatabase {
   Result RegisterIndexes(ObjectId database_id, ObjectId schema_id,
                          ObjectId table_id);
 
-  Result AddDatabase(ObjectId database_id, vpack::Slice definition);
+  Result AddDatabase(ObjectId database_id, std::string_view bytes);
   Result AddSchema(ObjectId database_id, ObjectId schema_id,
-                   vpack::Slice definition);
+                   std::string_view bytes);
   Result AddTable(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
                   std::shared_ptr<Table> table);
   Result AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
                   ObjectId index_id, ObjectType entry_type,
-                  vpack::Slice definition);
-
-  Result AddTableShard(ObjectId table_id, ObjectId shard_id,
-                       vpack::Slice definition);
-  Result AddIndexShard(ObjectId index_id, ObjectId shard_id,
-                       vpack::Slice definition);
+                  std::string_view bytes);
 
   bool IsDeleted(ObjectId id, DeletedScope scope) {
     return _deleted[magic_enum::enum_integer(scope)].contains(id);
@@ -298,7 +273,7 @@ class OpenDatabase {
     auto& deleted = _deleted[magic_enum::enum_integer(scope)];
     SDB_ASSERT(deleted.empty());
     auto r = engine.VisitDefinitions(id, ObjectType::Tombstone,
-                                     [&](DefinitionKey key, vpack::Slice) {
+                                     [&](DefinitionKey key, std::string_view) {
                                        deleted.insert(key.GetObjectId());
                                        return Result{};
                                      });
@@ -312,9 +287,9 @@ class OpenDatabase {
     _deleted;
 };
 
-Result OpenDatabase::AddDatabase(ObjectId database_id,
-                                 vpack::Slice definition) {
-  auto db = catalog::Database::ReadInternal(definition, {.id = database_id});
+Result OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
+  auto db =
+    catalog::DeserializeObject<catalog::Database>(bytes, {.id = database_id});
   if (!db) {
     return Result{ERROR_INTERNAL, "Failed to read database definition"};
   }
@@ -330,9 +305,9 @@ Result OpenDatabase::AddDatabase(ObjectId database_id,
 Result OpenDatabase::RegisterDatabases() {
   return GetServerEngine().VisitDefinitions(
     id::kInstance, ObjectType::Database,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
       if (!IsDeleted(key.GetObjectId(), DeletedScope::Root)) {
-        return AddDatabase(key.GetObjectId(), slice);
+        return AddDatabase(key.GetObjectId(), bytes);
       }
       auto drop = CreateDatabaseDrop(GetServerEngine(), key.GetObjectId());
       if (!drop) {
@@ -346,10 +321,10 @@ Result OpenDatabase::RegisterDatabases() {
 Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
   return GetServerEngine().VisitDefinitions(
     database_id, ObjectType::Schema,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
       auto schema_id = key.GetObjectId();
       if (!IsDeleted(key.GetObjectId(), DeletedScope::Database)) {
-        return AddSchema(database_id, schema_id, slice);
+        return AddSchema(database_id, schema_id, bytes);
       }
 
       auto drop = CreateSchemaDrop(GetServerEngine(), database_id,
@@ -365,12 +340,15 @@ Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
 Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlFunction,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto function = catalog::PgSqlFunction::ReadInternal(
-        slice, {.id = key.GetObjectId(), .database_id = db_id});
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
+      auto function = catalog::DeserializeObject<catalog::PgSqlFunction>(
+        bytes, {
+                 .id = key.GetObjectId(),
+                 .database_id = db_id,
+                 .schema_id = schema_id,
+               });
       if (!function) {
-        return ErrorMeta(ERROR_INTERNAL, "function",
-                         "Failed to read function definition", slice);
+        return Result{ERROR_INTERNAL, "Failed to read function definition"};
       }
       return _catalog.RegisterFunction(db_id, schema_id, std::move(function));
     });
@@ -379,12 +357,15 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
 Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::Tokenizer,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
       auto tokenizer =
-        Tokenizer::ReadInternal(slice, {.id = key.GetObjectId()});
+        catalog::DeserializeObject<Tokenizer>(bytes, {
+                                                       .id = key.GetObjectId(),
+                                                       .database_id = db_id,
+                                                       .schema_id = schema_id,
+                                                     });
       if (!tokenizer) {
-        return ErrorMeta(ERROR_INTERNAL, "tokenizer",
-                         "Failed to read tokenizer definition", slice);
+        return Result{ERROR_INTERNAL, "Failed to read tokenizer definition"};
       }
       return _catalog.RegisterTokenizer(db_id, schema_id, std::move(tokenizer));
     });
@@ -393,13 +374,12 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
 Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlView,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
       auto view_id = key.GetObjectId();
-      auto view =
-        PgSqlView::ReadInternal(slice, {.id = view_id, .database_id = db_id});
+      auto view = catalog::DeserializeObject<PgSqlView>(
+        bytes, {.id = view_id, .database_id = db_id, .schema_id = schema_id});
       if (!view) {
-        return ErrorMeta(ERROR_INTERNAL, "view",
-                         "Failed to read view definition", slice);
+        return Result{ERROR_INTERNAL, "Failed to read view definition"};
       }
       if (auto r = _catalog.RegisterView(schema_id, std::move(view)); !r.ok()) {
         return r;
@@ -416,13 +396,15 @@ Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
                                        bool owned) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::Sequence,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto seq = Sequence::ReadInternal(slice, {.id = key.GetObjectId(),
-                                                .database_id = db_id,
-                                                .schema_id = schema_id});
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
+      auto seq =
+        catalog::DeserializeObject<Sequence>(bytes, {
+                                                      .id = key.GetObjectId(),
+                                                      .database_id = db_id,
+                                                      .schema_id = schema_id,
+                                                    });
       if (!seq) {
-        return ErrorMeta(ERROR_INTERNAL, "sequence",
-                         "Failed to read sequence definition", slice);
+        return Result{ERROR_INTERNAL, "Failed to read sequence definition"};
       }
       if (seq->GetOwnerTableId().isSet() != owned) {
         return Result{};
@@ -439,12 +421,15 @@ Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
 Result OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlType,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto type = PgSqlType::ReadInternal(
-        slice, {.id = key.GetObjectId(), .database_id = db_id});
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
+      auto type =
+        catalog::DeserializeObject<PgSqlType>(bytes, {
+                                                       .id = key.GetObjectId(),
+                                                       .database_id = db_id,
+                                                       .schema_id = schema_id,
+                                                     });
       if (!type) {
-        return ErrorMeta(ERROR_INTERNAL, "type",
-                         "Failed to read type definition", slice);
+        return Result{ERROR_INTERNAL, "Failed to read type definition"};
       }
       return _catalog.RegisterType(db_id, schema_id, std::move(type));
     });
@@ -454,10 +439,10 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
                                      ObjectId table_id) {
   auto visit = [&](ObjectType type) {
     return GetServerEngine().VisitDefinitions(
-      table_id, type, [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      table_id, type, [&](DefinitionKey key, std::string_view bytes) -> Result {
         auto index_id = key.GetObjectId();
         if (!IsDeleted(index_id, DeletedScope::Relation)) {
-          return AddIndex(db_id, schema_id, table_id, index_id, type, slice);
+          return AddIndex(db_id, schema_id, table_id, index_id, type, bytes);
         }
 
         auto drop = CreateIndexDrop(GetServerEngine(), db_id, schema_id,
@@ -481,13 +466,10 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
 Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
   return GetServerEngine().VisitDefinitions(
     table_id, ObjectType::TableShard,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
       ObjectId shard_id = key.GetObjectId();
       SDB_ASSERT(!IsDeleted(shard_id, DeletedScope::Relation));
-      TableStats stats;
-      if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
-        return r;
-      }
+      auto stats = TableShard::DeserializeStats(bytes);
       auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
       return _catalog.RegisterTableShard(std::move(shard));
     });
@@ -496,7 +478,7 @@ Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
 Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
   return GetServerEngine().VisitDefinitions(
     index->GetId(), IndexShardType(index->GetType()),
-    [&](DefinitionKey key, vpack::Slice /*slice*/) -> Result {
+    [&](DefinitionKey key, std::string_view /*bytes*/) -> Result {
       auto shard = index->CreateIndexShard(false, key.GetObjectId());
       if (!shard) {
         return std::move(shard.error());
@@ -509,18 +491,19 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
 Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::Table,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
       auto table_id = key.GetObjectId();
       if (!IsDeleted(table_id, DeletedScope::Schema)) {
-        auto table = Table::ReadInternal(
-          slice,
+        auto table = catalog::DeserializeObject<Table>(
+          bytes,
           {.id = table_id, .database_id = db_id, .schema_id = schema_id});
         if (!table) {
           return Result{ERROR_INTERNAL, "Failed to read table definition"};
         }
         return AddTable(db_id, schema_id, table_id, std::move(table));
       }
-      auto options = GetTableOptionsForDrop(slice);
+      auto options = GetTableOptionsForDrop(
+        bytes, {.id = table_id, .database_id = db_id, .schema_id = schema_id});
       if (!options) {
         return std::move(options.error());
       }
@@ -538,13 +521,10 @@ Result OpenDatabase::AddRoles() {
   auto& engine = GetServerEngine();
   auto r = engine.VisitDefinitions(
     id::kInstance, ObjectType::Role,
-    [&](DefinitionKey, vpack::Slice slice) -> Result {
-      SDB_ASSERT(!slice.get(StaticStrings::kDataSourceId).isNone());
-
-      auto role = catalog::Role::ReadInternal(slice, {});
+    [&](DefinitionKey, std::string_view bytes) -> Result {
+      auto role = catalog::DeserializeObject<catalog::Role>(bytes, {});
       if (!role) {
-        return ErrorMeta(ERROR_INTERNAL, "role",
-                         "Failed to read role definition", slice);
+        return Result{ERROR_INTERNAL, "Failed to read role definition"};
       }
 
       return _catalog.RegisterRole(std::move(role));
@@ -576,17 +556,16 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
 
 Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
                               ObjectId table_id, ObjectId index_id,
-                              ObjectType entry_type, vpack::Slice slice) {
-  SDB_ASSERT(slice.isObject(), "Index definition is not an object");
+                              ObjectType entry_type, std::string_view bytes) {
   ReadContext ctx{.id = index_id,
                   .database_id = database_id,
                   .schema_id = schema_id,
                   .relation_id = table_id};
   std::shared_ptr<Index> index;
   if (entry_type == ObjectType::SecondaryIndex) {
-    index = SecondaryIndex::ReadInternal(slice, ctx);
+    index = catalog::DeserializeObject<SecondaryIndex>(bytes, ctx);
   } else {
-    index = InvertedIndex::ReadInternal(slice, ctx);
+    index = catalog::DeserializeObject<InvertedIndex>(bytes, ctx);
   }
   if (!index) {
     return Result{ERROR_INTERNAL, "Failed to read index definition"};
@@ -600,7 +579,7 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
   // Check there are no tombstones in index scope
   size_t counter = 0;
   r = GetServerEngine().VisitDefinitions(index_id, ObjectType::Tombstone,
-                                         [&](DefinitionKey, vpack::Slice) {
+                                         [&](DefinitionKey, std::string_view) {
                                            counter++;
                                            return Result{};
                                          });
@@ -615,11 +594,11 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
 }
 
 Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
-                               vpack::Slice slice) {
-  auto schema = catalog::Schema::ReadInternal(slice, {.database_id = db_id});
+                               std::string_view bytes) {
+  auto schema =
+    catalog::DeserializeObject<catalog::Schema>(bytes, {.database_id = db_id});
   if (!schema) {
-    return ErrorMeta(ERROR_INTERNAL, "schema",
-                     "Failed to read schema definition", slice);
+    return Result{ERROR_INTERNAL, "Failed to read schema definition"};
   }
 
   if (auto r = _catalog.RegisterSchema(db_id, std::move(schema)); !r.ok()) {
@@ -659,8 +638,7 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
 
 template<typename T>
 ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto& catalog = catalog::CatalogFeature::instance().Global();
   auto database = catalog.GetCatalogSnapshot()->GetDatabase(key);
   if (!database) [[unlikely]] {
     return std::unexpected<Result>(std::in_place,
@@ -670,73 +648,70 @@ ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   return database;
 }
 
-CatalogFeature::CatalogFeature(Server& server)
-  : SerenedFeature{server, name()} {}
+CatalogFeature::CatalogFeature() { gInstance = this; }
 
-void CatalogFeature::collectOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  options->addOption(
-    "--skip-background-errors",
-    "Whether to attempt to continue in face of errors caused by background "
-    "tasks; may result in inconsistent database state.",
-    std::make_unique<options::BooleanParameter>(&_skip_background_errors));
-}
+CatalogFeature::~CatalogFeature() { gInstance = nullptr; }
 
-void CatalogFeature::prepare() {
+void CatalogFeature::start() {
   auto catalog = std::make_shared<LocalCatalog>();
   _global = catalog;
   _local = std::move(catalog);
-}
 
-void CatalogFeature::start() {
   auto r = Open();
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
 }
 
-void CatalogFeature::unprepare() {
-  SDB_ASSERT(_local);
-  SDB_ASSERT(_global);
+void CatalogFeature::stop() {
   _local.reset();
   _global.reset();
 }
 
 Result CatalogFeature::Open() {
-  if (ServerState::instance()->IsCoordinator()) {
-    return {};
+  OpenDatabase open_db{Local()};
+  if (auto r = open_db.AddRoles(); !r.ok()) {
+    return r;
   }
 
-  OpenDatabase open_db{Local()};
-  if (ServerState::instance()->IsSingle()) {
-    if (auto r = open_db.AddRoles(); !r.ok()) {
-      return r;
+  // Bootstrap the default `postgres` role on first start. AddRoles() has
+  // already loaded any persisted roles; if none exist we mint the root user
+  // and persist it via Local().CreateRole(), which writes it to RocksDB so it
+  // survives across restarts. RBAC isn't implemented yet, so the password is
+  // empty and auth checks are skipped.
+  if (Local().GetCatalogSnapshot()->GetRoles().empty()) {
+    auto root = Role::NewUser(StaticStrings::kDefaultUser, "", id::kRootUser);
+    if (auto br = Local().CreateRole(std::move(root)); !br.ok()) {
+      return br;
     }
   }
 
   auto r = open_db();
 
   if (!r.ok()) {
-    SDB_FATAL("xxxxx", Logger::FIXME, "Failed to open database, ",
-              r.errorMessage());
+    SDB_FATAL(GENERAL, "Failed to open database, ", r.errorMessage());
+  }
+
+  if (auto fr = Local().FinalizeLoad(); !fr.ok()) {
+    SDB_FATAL(GENERAL, "FinalizeLoad failed: ", fr.errorMessage());
   }
 
   if (!catalog::GetDatabase(StaticStrings::kDefaultDatabase)) {
-    SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kDefaultDatabase,
+    SDB_FATAL(GENERAL, "No ", StaticStrings::kDefaultDatabase,
               " database found in database directory");
   }
 
   // Attach all existing databases into DuckDB
   {
     auto snapshot = GetCatalog().GetCatalogSnapshot();
-    auto conn = query::DuckDBEngine::Instance().CreateConnection();
+    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
     for (auto& db : snapshot->GetDatabases()) {
       auto query = absl::StrCat("ATTACH '", db->GetId().id(), "' AS \"",
                                 db->GetName(), "\" (TYPE serenedb)");
       auto result = conn->Query(query);
       if (result->HasError()) {
-        SDB_FATAL("xxxxx", Logger::FIXME, "Failed to attach database ",
-                  db->GetName(), ": ", result->GetError());
+        SDB_FATAL(GENERAL, "Failed to attach database ", db->GetName(), ": ",
+                  result->GetError());
       }
     }
   }
@@ -753,10 +728,7 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
 }
 
 LogicalCatalog& GetCatalog() {
-  auto& catalogs =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  return ServerState::instance()->IsCoordinator() ? catalogs.Global()
-                                                  : catalogs.Local();
+  return catalog::CatalogFeature::instance().Local();
 }
 
 }  // namespace sdb::catalog

@@ -154,7 +154,7 @@ void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       ThrowMaxReached(opts, qualified);
     }
     for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-      out[i] = GetValue(opts, r0 + i * opts.increment);
+      out.WriteValue(GetValue(opts, r0 + i * opts.increment));
     }
     return;
   }
@@ -165,7 +165,7 @@ void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   for (duckdb::idx_t i = 0; i < num_rows; ++i) {
     auto idx = fmt.sel->get_index(i);
     std::string_view seq_name{names[idx].GetData(), names[idx].GetSize()};
-    out[i] = Nextval(context, seq_name);
+    out.WriteValue(Nextval(context, seq_name));
   }
 }
 
@@ -193,7 +193,7 @@ void CurrvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   for (duckdb::idx_t i = 0; i < num_rows; ++i) {
     auto idx = fmt.sel->get_index(i);
     std::string_view seq_name{names[idx].GetData(), names[idx].GetSize()};
-    out[i] = Currval(context, seq_name);
+    out.WriteValue(Currval(context, seq_name));
   }
 }
 
@@ -237,7 +237,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BIGINT,
       NextvalFunction,
     };
-    func.stability = duckdb::FunctionStability::VOLATILE;
+    func.SetVolatile();
     loader.RegisterFunction(func);
   }
   {
@@ -247,7 +247,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BIGINT,
       CurrvalFunction,
     };
-    func.stability = duckdb::FunctionStability::VOLATILE;
+    func.SetVolatile();
     loader.RegisterFunction(func);
   }
   {
@@ -257,7 +257,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BIGINT,
       Setval2Function,
     };
-    func.stability = duckdb::FunctionStability::VOLATILE;
+    func.SetVolatile();
     loader.RegisterFunction(func);
   }
   {
@@ -268,7 +268,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::BIGINT,
       Setval3Function,
     };
-    func.stability = duckdb::FunctionStability::VOLATILE;
+    func.SetVolatile();
     loader.RegisterFunction(func);
   }
 }

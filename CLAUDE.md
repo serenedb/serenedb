@@ -3,6 +3,8 @@
 Read `CONTRIBUTING.md` -- it covers build, tests, branches, commits, PRs, and
 C++ style. This file only flags traps that aren't in there.
 
+Don't write comments until explictly asked.
+
 ## Before writing tests
 
 - Sqllogic: read a sibling `.test` first. Control directives, retry patterns,
@@ -16,9 +18,10 @@ Pick a free `<port>`. You own it for the session -- when you're done, kill the
 process so the next contributor / agent doesn't inherit a stale serened.
 
 ```bash
-# If you background the process (`&`), add --log.foreground-tty=true so
-# logs still print to your terminal -- otherwise serened drops them.
-./build/bin/serened ./build_data --server.endpoint='pgsql+tcp://0.0.0.0:<port>'
+# Backgrounded server logs land in the file you redirect to (>/tmp/sdb.log
+# 2>&1 &). DuckDB's LogManager writes to in-memory storage by default; query
+# `SELECT * FROM duckdb_logs()` or the `sdb_log` catalog view from psql.
+./build/bin/serened ./build_data --server_endpoints='pgsql+tcp://0.0.0.0:<port>'
 
 # Default database is `postgres` (serenedb has no separate default).
 psql -h 127.0.0.1 -p <port> -U postgres -d postgres

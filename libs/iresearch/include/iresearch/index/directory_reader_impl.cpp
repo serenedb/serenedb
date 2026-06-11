@@ -92,13 +92,13 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
       return ref;
     } catch (const std::exception& e) {
       SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
+        IRESEARCH,
         absl::StrCat("Caught exception while reading index meta with codec ''",
                      codec->type()().name(), "', error '", e.what(), "'"));
       return nullptr;
     } catch (...) {
       SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
+        IRESEARCH,
         absl::StrCat("Caught exception while reading index meta with codec ''",
                      codec->type()().name(), "'"));
 
@@ -120,19 +120,20 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
     std::time_t mtime;
     IndexMetaReader::ptr reader;
     IndexFileRefs::ref_t ref;
+    Format::ptr codec;
   } newest;
 
   newest.mtime = (std::numeric_limits<time_t>::min)();
 
   try {
     for (const std::string_view name : codecs) {
-      codec = formats::Get(name);
+      auto candidate = formats::Get(name);
 
-      if (!codec) {
+      if (!candidate) {
         continue;  // try the next codec
       }
 
-      auto reader = codec->get_index_meta_reader();
+      auto reader = candidate->get_index_meta_reader();
 
       if (!reader) {
         continue;  // try the next codec
@@ -160,6 +161,7 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
         newest.mtime = std::move(mtime);
         newest.reader = std::move(reader);
         newest.ref = std::move(ref);
+        newest.codec = std::move(candidate);
       }
     }
 
@@ -167,16 +169,17 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(IndexMeta& meta, const Directory& dir,
       return nullptr;
     }
 
+    codec = std::move(newest.codec);
     newest.reader->read(dir, meta, *(newest.ref));
 
     return newest.ref;
   } catch (const std::exception& e) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat(
                 "Caught exception while loading the newest index meta, error '",
                 e.what(), "'"));
   } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               "Caught exception while loading the newest index meta");
   }
 

@@ -1,0 +1,18 @@
+{
+  "description": "SereneDB test-config for duckdb_postgres' own .test files. Sets a sane default search_path; skips tests that assume upstream-specific test infrastructure.",
+  "on_new_connection": "SET search_path = 'main'",
+  "skip_tests": [
+    {
+      "reason": "Server-side `COPY FROM '<host-path>' (FORMAT binary)` needs the postgres backend process to read a file owned by the test runner uid. Our docker fixture bind-mounts the workspace but file modes are 0600 by default, so the postgres container uid can't read them. Upstream's CI runs postgres natively on the host where /home/runner/work is mode-traversable.",
+      "paths": [
+        "test/sql/misc/postgres_binary.test"
+      ]
+    },
+{
+      "reason": "Test asserts exactly 16 PostgresQueryLog rows after a DESCRIBE, which is deterministic only because upstream's create-postgres-tables.sh loads a fixed-size fixture (tpch + tpcds + all_pg_types) into postgresscanner. Our docker fixture loads only all_pg_types.sql + decimals.sql + other.sql, so DESCRIBE walks a different number of schemas. (Will revisit after we mirror upstream's fixture provisioning.)",
+      "paths": [
+        "test/sql/storage/postgres_execute_transaction.test"
+      ]
+    }
+  ]
+}

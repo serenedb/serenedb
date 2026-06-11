@@ -77,13 +77,13 @@ statement ok
 CREATE INDEX mt_epsilon_inv ON mt_epsilon USING inverted(id, body mt_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) mt_alpha;
+VACUUM (REFRESH_TABLE) mt_alpha;
 
 statement ok
-VACUUM (UPDATE_INDEXES) mt_beta;
+VACUUM (REFRESH_TABLE) mt_beta;
 
 statement ok
-VACUUM (UPDATE_INDEXES) mt_epsilon;
+VACUUM (REFRESH_TABLE) mt_epsilon;
 
 # === Block search commits and start the heavy interleaved workload. ===
 # mt_epsilon must NOT receive any writes — it stays caught up.
@@ -152,15 +152,15 @@ SELECT 1;
 
 connection mt_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) mt_alpha;
+VACUUM (REFRESH_TABLE) mt_alpha;
 
 connection mt_after
 statement ok
-VACUUM (UPDATE_INDEXES) mt_beta;
+VACUUM (REFRESH_TABLE) mt_beta;
 
 connection mt_after
 statement ok
-VACUUM (UPDATE_INDEXES) mt_epsilon;
+VACUUM (REFRESH_TABLE) mt_epsilon;
 
 # === mt_alpha: 5 rows — id ∈ {1, 2, 5, 40} after deletes, plus id=2 modified.
 #   Wait: started with 1,2,3, added 4,5, deleted 3, pk-renamed 4→40.
@@ -182,14 +182,14 @@ count
 
 connection mt_after
 query
-SELECT id FROM mt_alpha WHERE body @@ ts_phrase('CHANGED');
+SELECT id FROM mt_alpha_inv WHERE body @@ ts_phrase('CHANGED');
 ----
 id
 2
 
 connection mt_after
 query
-SELECT COUNT(*) FROM mt_alpha WHERE body @@ ts_phrase('alpha seed two');
+SELECT COUNT(*) FROM mt_alpha_inv WHERE body @@ ts_phrase('alpha seed two');
 ----
 count
 0
@@ -197,7 +197,7 @@ count
 # id=3 deleted.
 connection mt_after
 query
-SELECT COUNT(*) FROM mt_alpha WHERE body @@ ts_phrase('alpha seed three');
+SELECT COUNT(*) FROM mt_alpha_inv WHERE body @@ ts_phrase('alpha seed three');
 ----
 count
 0
@@ -219,14 +219,14 @@ id
 
 connection mt_after
 query
-SELECT id FROM mt_alpha WHERE body @@ ts_phrase('alpha added four');
+SELECT id FROM mt_alpha_inv WHERE body @@ ts_phrase('alpha added four');
 ----
 id
 40
 
 connection mt_after
 query
-SELECT id FROM mt_alpha WHERE body @@ ts_phrase('alpha added five');
+SELECT id FROM mt_alpha_inv WHERE body @@ ts_phrase('alpha added five');
 ----
 id
 5
@@ -234,7 +234,7 @@ id
 # id=1 still there, only score changed.
 connection mt_after
 query
-SELECT id FROM mt_alpha WHERE body @@ ts_phrase('alpha seed one');
+SELECT id FROM mt_alpha_inv WHERE body @@ ts_phrase('alpha seed one');
 ----
 id
 1
@@ -257,35 +257,35 @@ count
 
 connection mt_after
 query
-SELECT COUNT(*) FROM mt_beta WHERE body @@ ts_phrase('beta seed one');
+SELECT COUNT(*) FROM mt_beta_inv WHERE body @@ ts_phrase('beta seed one');
 ----
 count
 0
 
 connection mt_after
 query
-SELECT id FROM mt_beta WHERE body @@ ts_phrase('CHANGED');
+SELECT id FROM mt_beta_inv WHERE body @@ ts_phrase('CHANGED');
 ----
 id
 2
 
 connection mt_after
 query
-SELECT id FROM mt_beta WHERE body @@ ts_phrase('beta added three');
+SELECT id FROM mt_beta_inv WHERE body @@ ts_phrase('beta added three');
 ----
 id
 3
 
 connection mt_after
 query
-SELECT id FROM mt_beta WHERE body @@ ts_phrase('beta added four');
+SELECT id FROM mt_beta_inv WHERE body @@ ts_phrase('beta added four');
 ----
 id
 4
 
 connection mt_after
 query
-SELECT id FROM mt_beta WHERE body @@ ts_phrase('beta added five');
+SELECT id FROM mt_beta_inv WHERE body @@ ts_phrase('beta added five');
 ----
 id
 5
@@ -307,14 +307,14 @@ count
 
 connection mt_after
 query
-SELECT id FROM mt_epsilon WHERE body @@ ts_phrase('epsilon untouched one');
+SELECT id FROM mt_epsilon_inv WHERE body @@ ts_phrase('epsilon untouched one');
 ----
 id
 1
 
 connection mt_after
 query
-SELECT id FROM mt_epsilon WHERE body @@ ts_phrase('epsilon untouched two');
+SELECT id FROM mt_epsilon_inv WHERE body @@ ts_phrase('epsilon untouched two');
 ----
 id
 2

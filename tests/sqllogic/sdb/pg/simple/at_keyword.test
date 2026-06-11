@@ -1,0 +1,210 @@
+# Regression tests for the AT keyword reclassification.
+#
+# Background: `AT` is consumed by two grammar productions —
+#   AT TIME ZONE expr                              (timezone conversion)
+#   AT '(' (VERSION|TIMESTAMP) '=>' expr ')'       (table-version time-travel)
+# Originally `AT` was a TYPE_FUNC_NAME keyword, which kept it out of
+# ColId.  That prevented use as a column name, bare table alias, or
+# alias-with-column-rename.  We moved AT into UNRESERVED_KEYWORD and
+# introduced an AT_LA pseudo-token (emitted by a 3-token lookahead
+# filter in base_yylex) to keep the two AT-prefixed productions
+# unambiguous.  These tests pin the result.
+#
+# Note on column-name case: this codebase's scanner preserves the
+# user-typed case for keyword-derived identifiers (divergence from
+# upstream Postgres).  So `AS at` yields a column named "at" and
+# `AS AT` yields a column named "AT".  Headers below reflect that.
+
+
+# ----------------------------------------------------------------------
+# 1. AT as a column name.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE at_col_test(at INTEGER, x INTEGER);
+
+statement ok
+INSERT INTO at_col_test VALUES (1, 10), (2, 20), (3, 30);
+
+query
+SELECT at, x FROM at_col_test ORDER BY at;
+----
+at	x
+1	10
+2	20
+3	30
+
+query
+SELECT at FROM at_col_test WHERE at > 1 ORDER BY at;
+----
+at
+2
+3
+
+query
+SELECT at AS aliased FROM at_col_test ORDER BY aliased;
+----
+aliased
+1
+2
+3
+
+statement ok
+DROP TABLE at_col_test;
+
+
+# ----------------------------------------------------------------------
+# 2. AT as a SELECT-list alias (was already permitted via other_keyword
+#    → ColLabel; pinning to ensure recategorization didn't regress it).
+# ----------------------------------------------------------------------
+
+query
+SELECT 1 AS at;
+----
+at
+1
+
+query
+SELECT 42 as AT;
+----
+AT
+42
+
+
+query
+SELECT 1 at;
+----
+at
+1
+
+
+# Pin the postfix-operator path that motivates the IDENT-only rule above:
+# `expr Op` must still parse as a postfix operator application.  `!` is
+# the factorial postfix operator; if the AT reclassification had broken
+# target_el → a_expr → `a_expr qual_Op %prec POSTFIXOP`, this would
+# regress to a syntax error.
+query I
+SELECT 5!;
+----
+factorial
+120
+
+
+# ----------------------------------------------------------------------
+# 3. AT as a table alias.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE at_alias_test(a INTEGER, b INTEGER);
+
+statement ok
+INSERT INTO at_alias_test VALUES (1, 100), (2, 200);
+
+# Explicit AS, then bare alias.
+query
+SELECT at.a, at.b FROM at_alias_test AS at ORDER BY at.a;
+----
+a	b
+1	100
+2	200
+
+query
+SELECT at.a, at.b FROM at_alias_test at ORDER BY at.a;
+----
+a	b
+1	100
+2	200
+
+# Quoted alias still works (was unchanged by reclassification).
+query
+SELECT "at".a, "at".b FROM at_alias_test AS "at" ORDER BY "at".a;
+----
+a	b
+1	100
+2	200
+
+
+# ----------------------------------------------------------------------
+# 4. AT as an alias with column-rename list.  This is the corner case
+#    that motivated 3-token lookahead instead of 2-token: the parser
+#    must NOT misclassify `AT (...)` as time-travel here, because the
+#    contents are an identifier list (no '=>'), not an at_specifier.
+# ----------------------------------------------------------------------
+
+query
+SELECT at.c1, at.c2 FROM at_alias_test AS at(c1, c2) ORDER BY at.c1;
+----
+c1	c2
+1	100
+2	200
+
+# The hardest corner: rename a column to literally VERSION or TIMESTAMP
+# using the AT-aliased form.  Distinguishing this from time-travel is
+# exactly what the EQUALS_GREATER check in the lookahead filter does.
+query
+SELECT at.version, at.timestamp FROM at_alias_test AS at(version, timestamp) ORDER BY at.version;
+----
+version	timestamp
+1	100
+2	200
+
+query
+SELECT at.version FROM at_alias_test AS at(version) ORDER BY at.version;
+----
+version
+1
+2
+
+statement ok
+DROP TABLE at_alias_test;
+
+
+# ----------------------------------------------------------------------
+# 5. AT TIME ZONE still parses correctly.  The binder needs the ICU
+#    extension, which is not yet installed in CI; the binder tries to
+#    auto-install it and fails with a known message but NOT parse error.
+# TODO(Dronplane): change to success if we have icu extension pre-installed
+# ----------------------------------------------------------------------
+
+statement error
+SELECT TIMESTAMP '2026-01-01 12:00:00' AT TIME ZONE 'UTC';
+----
+db error: ERROR: An error occurred while trying to automatically install the required extension <slt:ignore>
+
+
+# ----------------------------------------------------------------------
+# 6. AT (VERSION => expr) / AT (TIMESTAMP => expr) still parse as
+#    time-travel productions.  The catalog underlying these tables
+#    does not support time travel, so the binder will reject — but
+#    that's well past parsing, which is what we're verifying.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE at_tt_test(a INTEGER);
+
+statement ok
+INSERT INTO at_tt_test VALUES (1);
+
+query error
+SELECT * FROM at_tt_test AT (VERSION => 1);
+----
+db error: ERROR: Catalog type does not support time travel
+
+
+query error
+SELECT * FROM at_tt_test AT (TIMESTAMP => '2026-01-01'::timestamp);
+----
+db error: ERROR: Catalog type does not support time travel
+
+
+# Combination: aliased as AT *and* time-travel.  This is the scenario
+# that drove the AT_LA filter design — first AT becomes a plain
+# unreserved (alias), second AT becomes AT_LA (time-travel).
+query error
+SELECT * FROM at_tt_test AS at AT (VERSION => 1);
+----
+db error: ERROR: Catalog type does not support time travel
+
+
+statement ok
+DROP TABLE at_tt_test;

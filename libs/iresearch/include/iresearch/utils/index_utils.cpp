@@ -78,11 +78,11 @@ bool operator<(const SegmentStats& lhs, const SegmentStats& rhs) noexcept {
   return lhs.meta->name < rhs.meta->name;
 }
 
-struct ConsolidationCandidate {
+struct CompactionCandidate {
   using Iterator = std::vector<SegmentStats>::const_iterator;
   using Range = std::pair<Iterator, Iterator>;
 
-  explicit ConsolidationCandidate(Iterator i) noexcept : segments{i, i} {}
+  explicit CompactionCandidate(Iterator i) noexcept : segments{i, i} {}
 
   auto begin() const noexcept { return segments.first; }
   auto end() const noexcept { return segments.second; }
@@ -93,24 +93,24 @@ struct ConsolidationCandidate {
   double score = DBL_MIN;  // how good this permutation is
 };
 
-/// @returns score of the consolidation bucket
-double ConsolidationScore(const ConsolidationCandidate& consolidation,
-                          const size_t segments_per_tier,
-                          const size_t floor_segment_bytes) noexcept {
-  // to detect how skewed the consolidation we do the following:
+/// @returns score of the compaction bucket
+double CompactionScore(const CompactionCandidate& compaction,
+                       const size_t segments_per_tier,
+                       const size_t floor_segment_bytes) noexcept {
+  // to detect how skewed the compaction we do the following:
   // 1. evaluate coefficient of variation, less is better
   // 2. good candidates are in range [0;1]
   // 3. favor condidates where number of segments is equal to
   // 'segments_per_tier' approx
-  // 4. prefer smaller consolidations
-  // 5. prefer consolidations which clean removals
+  // 4. prefer smaller compactions
+  // 5. prefer compactions which clean removals
 
-  switch (consolidation.count) {
+  switch (compaction.count) {
     case 0:
-      // empty consolidation makes not sense
+      // empty compaction makes not sense
       return 0;
     case 1: {
-      auto& meta = *consolidation.segments.first->meta;
+      auto& meta = *compaction.segments.first->meta;
 
       if (meta.docs_count == meta.live_docs_count) {
         // singletone without removals makes no sense
@@ -123,48 +123,48 @@ double ConsolidationScore(const ConsolidationCandidate& consolidation,
     }
   }
 
-  size_t size_before_consolidation = 0;
-  size_t size_after_consolidation = 0;
-  size_t size_after_consolidation_floored = 0;
-  for (auto& segment_stat : consolidation) {
-    size_before_consolidation += segment_stat.meta->byte_size;
-    size_after_consolidation += segment_stat.size;
-    size_after_consolidation_floored +=
+  size_t size_before_compaction = 0;
+  size_t size_after_compaction = 0;
+  size_t size_after_compaction_floored = 0;
+  for (auto& segment_stat : compaction) {
+    size_before_compaction += segment_stat.meta->byte_size;
+    size_after_compaction += segment_stat.size;
+    size_after_compaction_floored +=
       std::max(segment_stat.size, floor_segment_bytes);
   }
 
   // evaluate coefficient of variation
   double sum_square_differences = 0;
-  const auto segment_size_after_consolidaton_mean =
-    static_cast<double>(size_after_consolidation_floored) /
-    static_cast<double>(consolidation.count);
-  for (auto& segment_stat : consolidation) {
+  const auto segment_size_after_compaction_mean =
+    static_cast<double>(size_after_compaction_floored) /
+    static_cast<double>(compaction.count);
+  for (auto& segment_stat : compaction) {
     const auto diff =
       static_cast<double>(std::max(segment_stat.size, floor_segment_bytes)) -
-      segment_size_after_consolidaton_mean;
+      segment_size_after_compaction_mean;
     sum_square_differences += diff * diff;
   }
 
-  const auto stdev = std::sqrt(sum_square_differences /
-                               static_cast<double>(consolidation.count));
-  const auto cv = (stdev / segment_size_after_consolidaton_mean);
+  const auto stdev =
+    std::sqrt(sum_square_differences / static_cast<double>(compaction.count));
+  const auto cv = (stdev / segment_size_after_compaction_mean);
 
   // evaluate initial score
   auto score = 1. - cv;
 
-  // favor consolidations that contain approximately the requested number of
+  // favor compactions that contain approximately the requested number of
   // segments
-  score *= std::pow(static_cast<double>(consolidation.count) /
+  score *= std::pow(static_cast<double>(compaction.count) /
                       static_cast<double>(segments_per_tier),
                     1.5);
 
   // FIXME use relative measure, e.g. cosolidation_size/total_size
-  // carefully prefer smaller consolidations over the bigger ones
-  score /= std::pow(size_after_consolidation, 0.5);
+  // carefully prefer smaller compactions over the bigger ones
+  score /= std::pow(size_after_compaction, 0.5);
 
-  // favor consolidations which clean out removals
-  score /= std::pow(static_cast<double>(size_after_consolidation) /
-                      static_cast<double>(size_before_consolidation),
+  // favor compactions which clean out removals
+  score /= std::pow(static_cast<double>(size_after_compaction) /
+                      static_cast<double>(size_before_compaction),
                     2);
 
   return score;
@@ -173,9 +173,9 @@ double ConsolidationScore(const ConsolidationCandidate& consolidation,
 }  // namespace tier
 }  // namespace
 
-ConsolidationPolicy MakePolicy(const ConsolidateBytes& options) {
-  return [options](Consolidation& candidates, const IndexReader& reader,
-                   const ConsolidatingSegments& consolidating_segments) {
+CompactionPolicy MakePolicy(const CompactionBytes& options) {
+  return [options](Compaction& candidates, const IndexReader& reader,
+                   const CompactingSegments& compacting_segments) {
     const auto byte_threshold = options.threshold;
     size_t all_segment_bytes_size = 0;
     const auto segment_count = reader.size();
@@ -193,7 +193,7 @@ ConsolidationPolicy MakePolicy(const ConsolidateBytes& options) {
     // merge segment if: {threshold} > segment_bytes / (all_segment_bytes /
     // #segments)
     for (auto& segment : reader) {
-      if (consolidating_segments.contains(segment.Meta().name)) {
+      if (compacting_segments.contains(segment.Meta().name)) {
         continue;
       }
       const auto segment_bytes_size = segment.Meta().byte_size;
@@ -204,17 +204,17 @@ ConsolidationPolicy MakePolicy(const ConsolidateBytes& options) {
   };
 }
 
-ConsolidationPolicy MakePolicy(const ConsolidateBytesAccum& options) {
-  return [options](Consolidation& candidates, const IndexReader& reader,
-                   const ConsolidatingSegments& consolidating_segments) {
+CompactionPolicy MakePolicy(const CompactionBytesAccum& options) {
+  return [options](Compaction& candidates, const IndexReader& reader,
+                   const CompactingSegments& compacting_segments) {
     auto byte_threshold = options.threshold;
     size_t all_segment_bytes_size = 0;
     std::vector<std::pair<size_t, const SubReader*>> segments;
     segments.reserve(reader.size());
 
     for (auto& segment : reader) {
-      if (consolidating_segments.contains(segment.Meta().name)) {
-        continue;  // segment is already under consolidation
+      if (compacting_segments.contains(segment.Meta().name)) {
+        continue;  // segment is already under compaction
       }
       segments.emplace_back(SizeWithoutRemovals(segment.Meta()), &segment);
       all_segment_bytes_size += segments.back().first;
@@ -224,7 +224,7 @@ ConsolidationPolicy MakePolicy(const ConsolidateBytesAccum& options) {
     const auto threshold_size = static_cast<float>(all_segment_bytes_size) *
                                 std::clamp(byte_threshold, 0.f, 1.f);
 
-    // prefer to consolidate smaller segments
+    // prefer to compact smaller segments
     absl::c_sort(segments, [](const auto& lhs, const auto& rhs) {
       return lhs.first < rhs.first;
     });
@@ -243,9 +243,9 @@ ConsolidationPolicy MakePolicy(const ConsolidateBytesAccum& options) {
   };
 }
 
-ConsolidationPolicy MakePolicy(const ConsolidateCount& options) {
-  return [options](Consolidation& candidates, const IndexReader& reader,
-                   const ConsolidatingSegments& /*consolidating_segments*/) {
+CompactionPolicy MakePolicy(const CompactionCount& options) {
+  return [options](Compaction& candidates, const IndexReader& reader,
+                   const CompactingSegments& /*compacting_segments*/) {
     // merge first 'threshold' segments
     for (size_t i = 0, count = std::min(options.threshold, reader.size());
          i < count; ++i) {
@@ -254,9 +254,9 @@ ConsolidationPolicy MakePolicy(const ConsolidateCount& options) {
   };
 }
 
-ConsolidationPolicy MakePolicy(const ConsolidateDocsFill& options) {
-  return [options](Consolidation& candidates, const IndexReader& reader,
-                   const ConsolidatingSegments& consolidating_segments) {
+CompactionPolicy MakePolicy(const CompactionDocsFill& options) {
+  return [options](Compaction& candidates, const IndexReader& reader,
+                   const CompactingSegments& compacting_segments) {
     auto fill_threshold = options.threshold;
     auto threshold = std::clamp(fill_threshold, 0.f, 1.f);
 
@@ -264,7 +264,7 @@ ConsolidationPolicy MakePolicy(const ConsolidateDocsFill& options) {
     // (#segment_docs{valid} + #segment_docs{removed})
     for (auto& segment : reader) {
       auto& meta = segment.Meta();
-      if (consolidating_segments.contains(meta.name)) {
+      if (compacting_segments.contains(meta.name)) {
         continue;
       }
       if (!meta.live_docs_count  // if no valid doc_ids left in segment
@@ -276,9 +276,9 @@ ConsolidationPolicy MakePolicy(const ConsolidateDocsFill& options) {
   };
 }
 
-ConsolidationPolicy MakePolicy(const ConsolidateDocsLive& options) {
-  return [options](Consolidation& candidates, const IndexReader& meta,
-                   const ConsolidatingSegments& consolidating_segments) {
+CompactionPolicy MakePolicy(const CompactionDocsLive& options) {
+  return [options](Compaction& candidates, const IndexReader& meta,
+                   const CompactingSegments& compacting_segments) {
     const auto docs_threshold = options.threshold;
     const auto all_segment_docs_count = meta.live_docs_count();
     const auto segment_count = meta.size();
@@ -293,7 +293,7 @@ ConsolidationPolicy MakePolicy(const ConsolidateDocsLive& options) {
     // (all_segment_docs{valid} / #segments)
     for (auto& segment : meta) {
       auto& info = segment.Meta();
-      if (consolidating_segments.contains(info.name)) {
+      if (compacting_segments.contains(info.name)) {
         continue;
       }
       if (!info.live_docs_count  // if no valid doc_ids left in segment
@@ -304,7 +304,7 @@ ConsolidationPolicy MakePolicy(const ConsolidateDocsLive& options) {
   };
 }
 
-ConsolidationPolicy MakePolicy(const ConsolidateTier& options) {
+CompactionPolicy MakePolicy(const CompactionTier& options) {
   // can't merge less than 1 segment
   const auto max_segments_per_tier = std::max<size_t>(1, options.max_segments);
   // can't merge less than 1 segment
@@ -315,13 +315,13 @@ ConsolidationPolicy MakePolicy(const ConsolidateTier& options) {
     std::max<size_t>(1, options.max_segments_bytes);
   const auto floor_segment_bytes =
     std::max<size_t>(1, options.floor_segment_bytes);
-  // skip consolidation that have score less than min_score
+  // skip compaction that have score less than min_score
   const auto min_score = options.min_score;
 
   return [max_segments_per_tier, min_segments_per_tier, floor_segment_bytes,
           max_segments_bytes,
-          min_score](Consolidation& candidates, const IndexReader& reader,
-                     const ConsolidatingSegments& consolidating_segments) {
+          min_score](Compaction& candidates, const IndexReader& reader,
+                     const CompactingSegments& compacting_segments) {
     // total number of documents in index
     size_t total_docs_count = 0;
     // total number of live documents in index
@@ -342,7 +342,7 @@ ConsolidationPolicy MakePolicy(const ConsolidateTier& options) {
       }
 
       total_live_docs_count += meta.live_docs_count;
-      if (consolidating_segments.contains(meta.name)) {
+      if (compacting_segments.contains(meta.name)) {
         total_docs_count += meta.live_docs_count;
         continue;
       }
@@ -377,11 +377,11 @@ ConsolidationPolicy MakePolicy(const ConsolidateTier& options) {
 
     /// Stage 4: find proper candidates
 
-    tier::ConsolidationCandidate best(sorted_segments.begin());
+    tier::CompactionCandidate best(sorted_segments.begin());
 
     for (auto i = sorted_segments.begin(), end = sorted_segments.end();
          i != end; ++i) {
-      tier::ConsolidationCandidate candidate(i);
+      tier::CompactionCandidate candidate(i);
 
       while (candidate.segments.second != end &&
              candidate.count < max_segments_per_tier) {
@@ -400,7 +400,7 @@ ConsolidationPolicy MakePolicy(const ConsolidateTier& options) {
           continue;
         }
 
-        candidate.score = tier::ConsolidationScore(
+        candidate.score = tier::CompactionScore(
           candidate, max_segments_per_tier, floor_segment_bytes);
 
         if (candidate.score < min_score) {

@@ -22,6 +22,7 @@
 
 #include <__memory/shared_ptr.h>
 
+#include <cmath>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
@@ -50,15 +51,14 @@ class IndexReader;
 
 namespace sdb::connector {
 
+struct OffsetsBindData;
+
 struct SereneDBScanBindData;
 
 enum class ScanSourceKind : uint8_t {
   FullTable,
   Search,
-  Count,
   SecondaryIndex,
-  Ann,
-  RangeSearch,
   PkPoint,
   PkRange,
   SkPoint,
@@ -76,10 +76,7 @@ struct ScanSource {
   // default FullTableScan.
   virtual std::unique_ptr<ScanSource> Clone() const = 0;
 
-  bool IsSearchLike() const noexcept {
-    return _kind == ScanSourceKind::Search || _kind == ScanSourceKind::Count ||
-           _kind == ScanSourceKind::Ann || _kind == ScanSourceKind::RangeSearch;
-  }
+  bool IsSearchLike() const noexcept { return _kind == ScanSourceKind::Search; }
 
   bool IsSkLike() const noexcept {
     return _kind == ScanSourceKind::SecondaryIndex ||
@@ -113,6 +110,43 @@ struct FullTableScan : ScanSource {
   std::unique_ptr<ScanSource> Clone() const final;
 };
 
+enum class ScoreEmit : uint8_t {
+  Identity,  // stored as-is (l1, l2_sqr, cosine_distance, negative_ip, l1_norm)
+  Sqrt,      // sqrt(stored)        (l2_distance / `<->` / l2_norm)
+  OneMinus,  // 1 - stored          (cosine_similarity)
+  Negate,    // -stored             (inner_product, from NegativeIP storage)
+};
+
+struct VectorScorerOptions {
+  irs::field_id field_id;
+  std::vector<float> query_vector;
+  irs::HNSWMetric metric;
+  ScoreEmit score_emit;
+  duckdb::OrderType natural_order;
+  float radius = std::numeric_limits<float>::max();
+
+  float EffectiveRadius() const {
+    if (radius == std::numeric_limits<float>::max()) {
+      return radius;
+    }
+    return score_emit == ScoreEmit::Sqrt ? radius * radius : radius;
+  }
+
+  float TransformDistance(float stored) const {
+    switch (score_emit) {
+      case ScoreEmit::Identity:
+        return stored;
+      case ScoreEmit::Sqrt:
+        return std::sqrt(stored);
+      case ScoreEmit::OneMinus:
+        return 1.0f - stored;
+      case ScoreEmit::Negate:
+        return -stored;
+    }
+    SDB_UNREACHABLE();
+  }
+};
+
 struct SearchScan : ScanSource {
   SearchScan() : ScanSource(ScanSourceKind::Search) {}
 
@@ -122,31 +156,24 @@ struct SearchScan : ScanSource {
   // `snapshot` and callers reach it via `snapshot->reader`.
   std::shared_ptr<irs::Filter> stored_filter;
   search::InvertedIndexSnapshotPtr snapshot;
-  // Empty when the filter is trivial.
-  std::string filter_summary;
-  // True when stored_filter is the trivial match-all (irs::All). The
-  // bulk-scan shortcut keys on this rather than string-comparing
-  // filter_summary.
-  bool match_all = false;
 
-  // Scorer parsed from `ORDER BY BM25(idx.tableoid, ...)` / `TFIDF(...)`
-  // / etc. Empty when the query has no scoring projection.
-  std::optional<catalog::ScorerOptions> scorer;
+  bool IsMatchAll() const noexcept;
+
+  std::optional<catalog::ScorerOptions> text_scorer;
+  std::optional<VectorScorerOptions> vector_scorer;
   std::optional<size_t> score_top_k;
-
-  // Catalog-side topk scorer carried verbatim from the InvertedIndex. WAND
-  // pruning is engaged at runtime iff this matches `scorer`.
-  std::optional<catalog::ScorerOptions> topk_scorer;
 
   struct OffsetsRequest {
     catalog::Column::Id column_id;
     size_t limit = std::numeric_limits<size_t>::max();
     duckdb::idx_t get_col_idx = 0;
+    OffsetsBindData* bind = nullptr;
   };
   std::vector<OffsetsRequest> offsets;
 
   bool EmitOffsets() const { return !offsets.empty(); }
-  bool WandEnabled() const { return topk_scorer && topk_scorer == scorer; }
+
+  bool count_only = false;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
@@ -154,31 +181,8 @@ struct SearchScan : ScanSource {
   std::unique_ptr<ScanSource> Clone() const final;
 };
 
-// Iresearch row-count scan: emits zero-column rows whose cardinality equals
-// the number of docs matching `query` (or the reader's live_docs_count when
-// `query` is null). Swapped in by the iresearch_plan rule in pass 2 when a
-// LogicalGet has no projected columns and the underlying SearchScan /
-// FullTableScan carries no scorer or offsets. Mirrors the Velox
-// SearchCountDataSource design: the aggregate above (count_star()) just sums
-// chunk cardinalities, so we never materialise PKs or column values.
-struct CountScan : ScanSource {
-  CountScan() : ScanSource(ScanSourceKind::Count) {}
-
-  // Null `stored_filter` => match-all short-circuit via
-  // IndexReader::live_docs_count(). Otherwise the prepared `Query` is
-  // built once in SearchCountScanInitGlobal so every CountScan is
-  // prepared exactly once per execution. The reader lives on `snapshot`
-  // and callers reach it via `snapshot->reader`.
-  std::shared_ptr<irs::Filter> stored_filter;
-  search::InvertedIndexSnapshotPtr snapshot;
-  // Demangled boolean-filter tree for EXPLAIN. Empty when query is null.
-  std::string filter_summary;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
-  std::unique_ptr<ScanSource> Clone() const final;
-};
+bool WandEnabled(const catalog::InvertedIndex* index,
+                 const std::optional<catalog::ScorerOptions>& scorer);
 
 struct SecondaryIndexScan : ScanSource {
   SecondaryIndexScan() : ScanSource(ScanSourceKind::SecondaryIndex) {}
@@ -186,47 +190,6 @@ struct SecondaryIndexScan : ScanSource {
   ObjectId shard_id;
   bool is_unique = false;
 
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-struct VectorSearchScan : ScanSource {
-  VectorSearchScan(ScanSourceKind kind) : ScanSource{kind} {}
-
-  ObjectId index_id;
-  catalog::Column::Id field_id{};
-  std::vector<float> query_vector;
-  duckdb::unique_ptr<duckdb::Expression> filter_expression;
-  std::vector<catalog::Column::Id> filter_column_ids;
-
-  std::unique_ptr<irs::Filter> stored_text_filter;
-  irs::Filter* text_filter_root = nullptr;
-};
-
-struct ANNScan : VectorSearchScan {
-  ANNScan() : VectorSearchScan{ScanSourceKind::Ann} {}
-
-  size_t top_k = 0;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-struct RangeSearchScan : VectorSearchScan {
-  RangeSearchScan() : VectorSearchScan{ScanSourceKind::RangeSearch} {}
-
-  // Radius as the user wrote it (in the unit of the requested distance
-  // function). Displayed in EXPLAIN.
-  float radius = 0.0f;
-  // Radius in the unit the iresearch index actually compares against. Equal
-  // to `radius` for most metrics; squared when the user wrote l2_distance
-  // (`<->`) but the index stores L2-squared distances.
-  float effective_radius = 0.0f;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
   std::unique_ptr<ScanSource> Clone() const final;
 };
 
@@ -295,7 +258,6 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   std::vector<catalog::Column::Id> column_ids;
   std::vector<duckdb::LogicalType> column_types;
-  bool has_rowid = false;
   // Set by BindCreateIndex on the underlying LogicalGet's bind data so the
   // scan-init layer knows it is feeding a CREATE INDEX backfill rather than
   // a user query. Used to relax the read-side check on sdb_indexonly columns
@@ -317,9 +279,6 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   bool IsViewBacked() const noexcept { return _kind == Kind::View; }
   bool IsInvertedIndexEntry() const noexcept {
     return entry_kind == ScanEntryKind::InvertedIndex;
-  }
-  bool IsSecondaryIndexEntry() const noexcept {
-    return entry_kind == ScanEntryKind::SecondaryIndex;
   }
 
   template<typename T>
@@ -343,6 +302,9 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   // Returns an empty view when the id is not on the relation.
   virtual std::string_view ColumnNameById(catalog::Column::Id col_id) const = 0;
+
+  virtual duckdb::LogicalType ColumnTypeById(
+    catalog::Column::Id col_id) const = 0;
 
   using ColumnVisitor =
     std::function<void(catalog::Column::Id, const duckdb::LogicalType&)>;
@@ -369,6 +331,7 @@ struct TableScanBindData final : public SereneDBScanBindData {
   std::string_view RelationName() const final;
   catalog::Column::Id ColumnIdByName(std::string_view name) const final;
   std::string_view ColumnNameById(catalog::Column::Id col_id) const final;
+  duckdb::LogicalType ColumnTypeById(catalog::Column::Id col_id) const final;
   void IterateColumns(const ColumnVisitor& cb) const final;
 };
 
@@ -386,6 +349,7 @@ struct ViewScanBindData final : public SereneDBScanBindData {
   std::string_view RelationName() const final;
   catalog::Column::Id ColumnIdByName(std::string_view name) const final;
   std::string_view ColumnNameById(catalog::Column::Id col_id) const final;
+  duckdb::LogicalType ColumnTypeById(catalog::Column::Id col_id) const final;
   void IterateColumns(const ColumnVisitor& cb) const final;
 };
 
@@ -414,10 +378,75 @@ duckdb::TableFunction CreateSKRangesScanFunction();
 
 duckdb::TableFunction CreateIResearchScanFunction();
 
-duckdb::TableFunction CreateIResearchCountFunction();
-
-duckdb::TableFunction CreateIResearchANNScanFunction();
-
-duckdb::TableFunction CreateIResearchANNRangeScanFunction();
+inline auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
+                                  const catalog::InvertedIndex& index) {
+  return [&bind_data, &index](catalog::Column::Id col_id) -> std::string {
+    const auto fid = static_cast<irs::field_id>(col_id);
+    auto base = std::string{bind_data.ColumnNameById(col_id)};
+    const auto column_type = bind_data.ColumnTypeById(col_id);
+    const bool found_type = column_type.id() != duckdb::LogicalTypeId::INVALID;
+    const auto lookup = index.LookupField(fid);
+    auto entry_base = [&](irs::field_id entry_fid,
+                          const catalog::InvertedIndexEntryInfo& entry) {
+      std::string s;
+      if (const auto* expr = entry.GetExpressionData();
+          expr && !expr->pretty_printed.empty()) {
+        s = expr->pretty_printed;
+      } else {
+        s = bind_data.ColumnNameById(catalog::Column::Id{entry_fid});
+      }
+      if (s.empty()) {
+        s = absl::StrCat("col", entry_fid);
+      }
+      return s;
+    };
+    if (lookup.entry_field_id == catalog::term_dict::kPKFieldId) {
+      const auto name =
+        bind_data.ColumnNameById(catalog::Column::kGeneratedPKId);
+      return std::string{name.empty() ? std::string_view{"sdb_generated_pk"}
+                                      : name} +
+             "(pk)";
+    }
+    if (lookup.entry) {
+      const auto& entry = *lookup.entry;
+      if (fid == lookup.entry_field_id) {
+        const auto* expr = entry.GetExpressionData();
+        if (base.empty() && expr && !expr->pretty_printed.empty()) {
+          base = expr->pretty_printed;
+        }
+        if (base.empty()) {
+          base = absl::StrCat("col", fid);
+        }
+        if (expr) {
+          catalog::InvertedIndex::AppendKindSuffix(base, expr->return_type);
+        } else if (found_type) {
+          catalog::InvertedIndex::AppendKindSuffix(base, column_type);
+        } else if (entry.text_dictionary.isSet()) {
+          base += "(string)";
+        }
+        return base;
+      }
+      if (fid == entry.null_field_id) {
+        return entry_base(lookup.entry_field_id, entry) + "(null)";
+      }
+      if (fid == entry.bool_field_id) {
+        return entry_base(lookup.entry_field_id, entry) + "(bool)";
+      }
+      if (fid == entry.numeric_field_id) {
+        return entry_base(lookup.entry_field_id, entry) + "(numeric)";
+      }
+      if (fid == entry.synthetic_column) {
+        return entry_base(lookup.entry_field_id, entry) + "(synthetic)";
+      }
+    }
+    if (base.empty()) {
+      base = absl::StrCat("col", fid);
+    }
+    if (found_type) {
+      catalog::InvertedIndex::AppendKindSuffix(base, column_type);
+    }
+    return base;
+  };
+}
 
 }  // namespace sdb::connector

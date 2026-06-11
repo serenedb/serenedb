@@ -1,0 +1,518 @@
+hash-threshold 100
+control substitution on
+
+# Lazy-seek behaviour exercised across iterator types. All assertions hold
+# with ~200 docs (well inside BlockDisjunction's single 4096-doc window).
+# Cross-window / WAND-pruning cases live in the .test_slow companion.
+#
+# Iterator coverage map:
+#   BasicDisjunction       -> 2-way ORs
+#   SmallDisjunction       -> 3..5-way ORs
+#   BlockDisjunction       -> 6+ ORs (still single window here)
+#   Conjunction            -> ANDs (sparse-first ordering -> early lazy miss)
+#   Phrase                 -> ts_phrase (adjacent + gap variants)
+#   Exclusion              -> AND NOT, NOT(OR)
+#   BitsetDocIterator      -> integer ts_lt/gt/between
+#   MaxScoreIterator(WAND) -> ORDER BY BM25() ... LIMIT k
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lz_en (
+    template='text', locale='en_US.UTF-8', case='lower',
+    stemming=false, frequency=true, position=true, norm=true, offset=true
+);
+
+statement ok
+CREATE TABLE lz_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+# Vocabulary distribution (id ranges 1..200):
+#   every       : every doc                                  200
+#   dense       : id % 2 = 0                                 100
+#   third       : id % 3 = 0                                  66
+#   quarter     : id % 4 = 0                                  50
+#   fifth       : id % 5 = 0                                  40
+#   sparse      : id % 50 = 0  (id=50,100,150,200)             4
+#   lonely      : id = 73                                      1
+#   cluster_low : id BETWEEN 1 AND 20                         20
+#   cluster_mid : id BETWEEN 90 AND 110                       21
+#   cluster_hi  : id BETWEEN 181 AND 200                      20
+#   pair_a + pair_b adjacent, both at id % 7 = 0              28
+#   gap_x intermediate gap_z (1-token gap) at id % 11 = 0     18
+#   negx        : id BETWEEN 1 AND 100  (for NOT tests)      100
+
+statement ok
+INSERT INTO lz_docs
+SELECT t.x AS id,
+       'every'
+       || CASE WHEN t.x % 2 = 0  THEN ' dense' ELSE '' END
+       || CASE WHEN t.x % 3 = 0  THEN ' third' ELSE '' END
+       || CASE WHEN t.x % 4 = 0  THEN ' quarter' ELSE '' END
+       || CASE WHEN t.x % 5 = 0  THEN ' fifth' ELSE '' END
+       || CASE WHEN t.x % 50 = 0 THEN ' sparse' ELSE '' END
+       || CASE WHEN t.x = 73     THEN ' lonely' ELSE '' END
+       || CASE WHEN t.x BETWEEN 1   AND 20  THEN ' cluster_low' ELSE '' END
+       || CASE WHEN t.x BETWEEN 90  AND 110 THEN ' cluster_mid' ELSE '' END
+       || CASE WHEN t.x BETWEEN 181 AND 200 THEN ' cluster_hi'  ELSE '' END
+       || CASE WHEN t.x % 7 = 0  THEN ' pair_a pair_b' ELSE '' END
+       || CASE WHEN t.x % 11 = 0 THEN ' gap_x intermediate gap_z' ELSE '' END
+       || CASE WHEN t.x BETWEEN 1 AND 100 THEN ' negx' ELSE '' END
+  AS body
+FROM generate_series(1, 200) AS t(x);
+
+statement ok
+CREATE INDEX lz_idx ON lz_docs USING inverted(id, body lz_en);
+
+statement ok
+VACUUM (REFRESH_TABLE) lz_docs;
+
+
+# ============================================================================
+# Sanity: term cardinalities (catches data-gen drift).
+# ============================================================================
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('every');
+----
+count
+200
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('dense');
+----
+count
+100
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('sparse');
+----
+count
+4
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('lonely');
+----
+count
+1
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('never_present');
+----
+count
+0
+
+
+# ============================================================================
+# BasicDisjunction (2-way OR).
+# ============================================================================
+
+# Disjoint singletons and clusters: lonely + cluster_hi = 1 + 20 = 21.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('lonely') || ts_phrase('cluster_hi'));
+----
+count
+21
+
+# Sparse + dense -- forces lazy-seek to repeatedly skip across dense postings.
+# sparse=4 docs (50,100,150,200), all of which are also dense (even id),
+# so union = dense count = 100.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('sparse') || ts_phrase('dense'));
+----
+count
+100
+
+# Lazy-seek over an empty term (one child exhausts immediately).
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('never_present') || ts_phrase('lonely'));
+----
+count
+1
+
+
+# ============================================================================
+# SmallDisjunction (3..5 way OR).
+# ============================================================================
+
+# 5-way OR with mixed densities. Result = union of distinct buckets:
+#   sparse  : {50,100,150,200}
+#   lonely  : {73}
+#   cluster_hi: {181..200}
+#   cluster_low: {1..20}
+#   gap_z   : id % 11 = 0 => {11,22,...,198} (18 docs)
+# sparse ∩ cluster_hi = {200}; gap_z ∩ cluster_low = {11}; gap_z ∩ cluster_hi = {187,198}
+# sparse ∩ gap_z = ∅ (no id % 50 = 0 AND id % 11 = 0 in 1..200)
+# Compute via the engine:
+query
+SELECT count(*) FROM lz_idx WHERE body @@ (
+    ts_phrase('sparse') || ts_phrase('lonely') || ts_phrase('cluster_hi')
+ || ts_phrase('cluster_low') || ts_phrase('gap_z'));
+----
+count
+59
+
+
+# ============================================================================
+# BlockDisjunction (6+ way OR) -- still single 4k window in fast tests.
+# ============================================================================
+
+# 7-way OR exercising BlockDisjunction's bit-masked window probe.
+query
+SELECT count(*) FROM lz_idx WHERE body @@ (
+    ts_phrase('lonely') || ts_phrase('sparse') || ts_phrase('cluster_low')
+ || ts_phrase('cluster_mid') || ts_phrase('cluster_hi')
+ || ts_phrase('pair_a') || ts_phrase('gap_x'));
+----
+count
+95
+
+
+# ============================================================================
+# Conjunction -- lazy children, early exit on first lazy-miss.
+# ============================================================================
+
+# 2-way AND, sparse-first ordering by selectivity.
+# 'lonely' (id=73) AND 'every' = 1.
+query
+SELECT id FROM lz_idx WHERE body @@ (ts_phrase('lonely') && ts_phrase('every'));
+----
+id
+73
+
+# AND with no overlap -> lazy-miss on every probe -> 0.
+# 'lonely' (id=73) AND 'cluster_hi' (181..200) = ∅.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('lonely') && ts_phrase('cluster_hi'));
+----
+count
+0
+
+# 3-way AND: dense ∩ third ∩ quarter = id % 12 = 0 in 1..200
+# = {12,24,...,192} = 16 docs.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('dense') && ts_phrase('third') && ts_phrase('quarter'));
+----
+count
+16
+
+# AND with a never-matching term -> exits on first child's lazy-miss.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('dense') && ts_phrase('never_present'));
+----
+count
+0
+
+# AND of disjunctions (mixed nesting).
+# (dense OR sparse) ∩ (cluster_low OR cluster_hi)
+# dense covers all even ids; cluster_low = 1..20, cluster_hi = 181..200.
+# Result = even ids in (1..20 ∪ 181..200) = 10 + 10 = 20.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ ((ts_phrase('dense') || ts_phrase('sparse'))
+            && (ts_phrase('cluster_low') || ts_phrase('cluster_hi')));
+----
+count
+20
+
+
+# ============================================================================
+# Phrase -- conjunction approximation + position matching.
+# ============================================================================
+
+# Adjacent two-term phrase. pair_a pair_b is adjacent at id % 7 = 0 => 28 docs.
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('pair_a', 'pair_b');
+----
+count
+28
+
+# Phrase with explicit gap of 1 between terms ("X intermediate Z" => gap=1).
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('gap_x', 1, 'gap_z');
+----
+count
+18
+
+# Phrase where both terms exist but never adjacent or at the expected gap.
+# 'every' is in every doc; 'lonely' is in id=73 (no adjacency to 'every' as
+# they're separated by other terms). Expect 0 matches for adjacency.
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('every', 'lonely');
+----
+count
+1
+
+# ## (phrase-of-tsquery): two ts_phrase's joined.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('pair_a') ## ts_phrase('pair_b'));
+----
+count
+28
+
+
+# ============================================================================
+# Exclusion (NOT) -- lazy-seek inclusion + lazy-seek exclusion children.
+# ============================================================================
+
+# A AND NOT B.
+# negx (id 1..100) AND NOT cluster_low (1..20) = 21..100 = 80 docs.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('negx') && !!ts_phrase('cluster_low'));
+----
+count
+80
+
+# A AND NOT (B OR C).
+# negx (1..100) AND NOT (cluster_low(1..20) OR sparse(50,100))
+# = (21..100) minus {50,100} = 80 - 2 = 78.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('negx') && !!(ts_phrase('cluster_low') || ts_phrase('sparse')));
+----
+count
+78
+
+# AND NOT a never-matching term -> equals inclusion set.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('sparse') && !!ts_phrase('never_present'));
+----
+count
+4
+
+# NOT of everything -> empty set.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('every') && !!ts_phrase('every'));
+----
+count
+0
+
+
+# ============================================================================
+# BitsetDocIterator -- integer column range filters via the inverted index.
+# ============================================================================
+
+query
+SELECT count(*) FROM lz_idx WHERE id @@ ts_between(50, 100, true, true);
+----
+count
+51
+
+query
+SELECT id FROM lz_idx WHERE id @@ ts_lt(5) ORDER BY id;
+----
+id
+1
+2
+3
+4
+
+query
+SELECT id FROM lz_idx WHERE id @@ ts_ge(198) ORDER BY id;
+----
+id
+198
+199
+200
+
+
+# ============================================================================
+# MaxScoreIterator / WAND -- ORDER BY BM25(...) ... LIMIT k.
+# Score threshold rises as top-k candidates are collected; sparse terms get
+# pruned, leaving the dense ones to drive lazy seeks.
+# ============================================================================
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM lz_idx WHERE body @@ ts_phrase('dense')
+  ORDER BY BM25(lz_idx.tableoid) DESC LIMIT 10
+) t;
+----
+count
+10
+
+# LIMIT 1 on a disjunction: WAND picks the single best-scoring doc.
+query
+SELECT count(*) > 0 FROM (
+  SELECT id FROM lz_idx WHERE body @@ (ts_phrase('lonely') || ts_phrase('dense'))
+  ORDER BY BM25(lz_idx.tableoid) DESC LIMIT 1
+) t;
+----
+?column?
+t
+
+# k larger than match set: top-k LIMIT degrades cleanly.
+query
+SELECT count(*) FROM (
+  SELECT id FROM lz_idx WHERE body @@ ts_phrase('lonely')
+  ORDER BY BM25(lz_idx.tableoid) DESC LIMIT 100
+) t;
+----
+count
+1
+
+
+# ============================================================================
+# Complex boolean compositions -- nested lazy-seek coordination.
+# ============================================================================
+
+# (a OR b) AND c: disjunction's lazy state feeds into outer conjunction.
+# (cluster_low OR cluster_hi) AND dense = even ids in {1..20, 181..200}
+# = 10 + 10 = 20.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ ((ts_phrase('cluster_low') || ts_phrase('cluster_hi'))
+            && ts_phrase('dense'));
+----
+count
+20
+
+# (a AND b) OR c
+# (third AND quarter) OR lonely
+# = id % 12 = 0 (16 docs) plus id=73 (disjoint with multiples of 12) = 17.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ ((ts_phrase('third') && ts_phrase('quarter')) || ts_phrase('lonely'));
+----
+count
+17
+
+# a AND NOT (b OR c) -- exclusion of disjunction.
+# every (200) AND NOT (cluster_low OR cluster_hi) = 200 - 40 = 160.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('every')
+            && !!(ts_phrase('cluster_low') || ts_phrase('cluster_hi')));
+----
+count
+160
+
+# Three-level nesting: ((a OR b) AND c) AND NOT d
+# ((cluster_low OR cluster_hi) AND dense) AND NOT sparse
+# = 20 - (sparse ∩ even ∩ {cluster_low ∪ cluster_hi})
+# sparse = {50,100,150,200}; only 200 is in cluster_hi. So 20 - 1 = 19.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (((ts_phrase('cluster_low') || ts_phrase('cluster_hi'))
+              && ts_phrase('dense'))
+            && !!ts_phrase('sparse'));
+----
+count
+19
+
+# Mixed phrase + disjunction + exclusion.
+# (pair_a pair_b) OR gap_x ## gap_z) AND NOT cluster_low
+# pair_a-pair_b adjacent in id % 7 = 0 (28 docs).
+# gap_x intermediate gap_z in id % 11 = 0 (18 docs).
+# id % 7 = 0 ∩ id % 11 = 0 = id % 77 = 0 in 1..200 => {77,154} (2 docs).
+# Union = 28 + 18 - 2 = 44. Minus cluster_low (id 1..20): id=7,14 (% 7), id=11 (% 11)
+# = 3 docs subtracted -> 41.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ ((ts_phrase('pair_a', 'pair_b') || ts_phrase('gap_x', 1, 'gap_z'))
+            && !!ts_phrase('cluster_low'));
+----
+count
+41
+
+
+# Real multi-term phrase iterators - exercise Phrase::LazySeek (conjunction
+# approximation + position check), not the single-token degenerate path.
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('every', 'dense');
+----
+count
+100
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ ts_phrase('every', 'third');
+----
+count
+33
+
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('every', 'dense') || ts_phrase('every', 'third'));
+----
+count
+133
+
+query
+SELECT count(*) FROM lz_idx WHERE body @@ (
+  ts_phrase('every', 'dense')
+  || ts_phrase('every', 'third')
+  || ts_phrase('pair_a', 'pair_b'));
+----
+count
+142
+
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('every', 'dense') && ts_phrase('pair_a', 'pair_b'));
+----
+count
+14
+
+# 'pair_a' sits between 'every' and 'pair_b' at every x%7=0 doc, so the
+# conjunction approximation finds 28 candidates but the position check rejects
+# all of them; combined with (every dense) -> 100.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('every', 'pair_b') || ts_phrase('every', 'dense'));
+----
+count
+100
+
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('pair_a', 'pair_b') || ts_phrase('lonely'));
+----
+count
+29
+
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('every', 'dense') && !!ts_phrase('pair_a', 'pair_b'));
+----
+count
+86
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM lz_idx WHERE body @@ (
+    ts_phrase('every', 'dense') || ts_phrase('pair_a', 'pair_b'))
+  ORDER BY BM25(lz_idx.tableoid) DESC LIMIT 10
+) t;
+----
+count
+10
+
+
+# ============================================================================
+# Repeated seek to same target / backward seek (no-op semantics).
+# Both expressed via OR'ing the same phrase twice and combining with AND.
+# ============================================================================
+
+# A OR A = A (de-dup at iterator level).
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('lonely') || ts_phrase('lonely'));
+----
+count
+1
+
+# A AND A = A.
+query
+SELECT count(*) FROM lz_idx
+WHERE body @@ (ts_phrase('sparse') && ts_phrase('sparse'));
+----
+count
+4

@@ -40,7 +40,7 @@ namespace {
 // Write() then persists _store.value verbatim into the stored column so that
 // WildcardIterator can post-filter documents with the RE2 matcher.
 struct WildcardField final {
-  std::string_view Name() const { return field_name; }
+  irs::field_id Id() const { return id; }
 
   irs::Tokenizer& GetTokens() const {
     analyzer->reset(value);
@@ -50,7 +50,7 @@ struct WildcardField final {
   bool Write(irs::DataOutput& out) const {
     const auto* store = irs::get<irs::StoreAttr>(*analyzer);
     if (store && !store->value.empty()) {
-      out.WriteBytes(store->value.data(), store->value.size());
+      out.WriteData(store->value.data(), store->value.size());
     }
     return true;
   }
@@ -61,7 +61,7 @@ struct WildcardField final {
 
   mutable irs::analysis::WildcardAnalyzer* analyzer{};
   std::string_view value;
-  std::string_view field_name{"text"};
+  irs::field_id id{};
 };
 
 // Per-file cs column id for the analyzer's packed-terms STORE bytes.
@@ -70,15 +70,19 @@ struct WildcardField final {
 // constant so writer and filter agree without any name->id mapping.
 inline constexpr irs::field_id kStoreId = 1;
 
+// Stable field ids for unit tests below.
+inline constexpr irs::field_id kTextId = 2;
+inline constexpr irs::field_id kFieldId = 3;
+inline constexpr irs::field_id kOtherId = 4;
+
 // Build a ByWildcardNgram for the given field and SQL LIKE pattern.
 // `store_field_id` is wired to kStoreId so the filter's per-doc point
 // access lands on the cs column written below in the `query` test.
-irs::ByWildcardNgram MakeFilter(std::string_view field,
-                                std::string_view pattern,
+irs::ByWildcardNgram MakeFilter(irs::field_id field, std::string_view pattern,
                                 irs::analysis::WildcardAnalyzer& analyzer,
                                 bool has_positions = true) {
   irs::ByWildcardNgram filter;
-  *filter.mutable_field() = field;
+  *filter.mutable_field_id() = field;
   *filter.mutable_options() =
     irs::ByWildcardNgramOptions{pattern, analyzer, has_positions};
   filter.mutable_options()->store_field_id = kStoreId;
@@ -106,9 +110,7 @@ TEST(WildcardNgramFilterOptionsTest, equality_empty) {
 }
 
 TEST(WildcardNgramFilterOptionsTest, equality_with_matcher) {
-  irs::analysis::WildcardAnalyzer::Options ana_opts;
-  ana_opts.ngram_size = 3;
-  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+  irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   // A middle "%" causes needs_matcher=true, so BuildLikeMatcher is called.
   irs::ByWildcardNgramOptions a{"foo%bar", analyzer, true};
@@ -120,9 +122,7 @@ TEST(WildcardNgramFilterOptionsTest, equality_with_matcher) {
 }
 
 TEST(WildcardNgramFilterOptionsTest, equality_different_has_pos) {
-  irs::analysis::WildcardAnalyzer::Options ana_opts;
-  ana_opts.ngram_size = 3;
-  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+  irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   irs::ByWildcardNgramOptions a{"foo_bar", analyzer, true};
   irs::ByWildcardNgramOptions b{"foo_bar", analyzer, false};
@@ -132,9 +132,7 @@ TEST(WildcardNgramFilterOptionsTest, equality_different_has_pos) {
 TEST(WildcardNgramFilterOptionsTest, one_null_matcher) {
   // One options has a matcher (because of '_'), the other doesn't
   // (pure prefix) -- they must not be equal.
-  irs::analysis::WildcardAnalyzer::Options ana_opts;
-  ana_opts.ngram_size = 3;
-  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+  irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   irs::ByWildcardNgramOptions with_matcher{"a_c", analyzer, true};
   irs::ByWildcardNgramOptions no_matcher{"abc%", analyzer, true};
@@ -152,19 +150,17 @@ TEST(WildcardNgramFilterTest, ctor) {
   irs::ByWildcardNgram q;
   EXPECT_EQ(irs::Type<irs::ByWildcardNgram>::id(), q.type());
   EXPECT_EQ(irs::ByWildcardNgramOptions{}, q.options());
-  EXPECT_TRUE(q.field().empty());
+  EXPECT_EQ(irs::field_limits::invalid(), q.field_id());
   EXPECT_EQ(irs::kNoBoost, q.Boost());
 }
 
 TEST(WildcardNgramFilterTest, equal) {
-  irs::analysis::WildcardAnalyzer::Options ana_opts;
-  ana_opts.ngram_size = 3;
-  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+  irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
-  auto q = MakeFilter("field", "foo_bar", analyzer);
-  auto q_same = MakeFilter("field", "foo_bar", analyzer);
-  auto q_diff_field = MakeFilter("other", "foo_bar", analyzer);
-  auto q_diff_pattern = MakeFilter("field", "foo_baz", analyzer);
+  auto q = MakeFilter(kFieldId, "foo_bar", analyzer);
+  auto q_same = MakeFilter(kFieldId, "foo_bar", analyzer);
+  auto q_diff_field = MakeFilter(kOtherId, "foo_bar", analyzer);
+  auto q_diff_pattern = MakeFilter(kFieldId, "foo_baz", analyzer);
 
   EXPECT_EQ(q, q_same);
   EXPECT_NE(q, q_diff_field);
@@ -182,15 +178,13 @@ TEST(WildcardNgramFilterTest, query) {
   //  doc 3: "xyz123"
   //  doc 4: "hello"
   //  doc 5: "world"
-  static constexpr std::string_view kField = "text";
+  static constexpr irs::field_id kField = kTextId;
   static constexpr std::string_view kValues[] = {
     "foobar", "foobaz", "xyz123", "hello", "world",
   };
   static constexpr irs::doc_id_t kBase = irs::doc_limits::min();
 
-  irs::analysis::WildcardAnalyzer::Options ana_opts;
-  ana_opts.ngram_size = 3;
-  irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
+  irs::analysis::WildcardAnalyzer analyzer{nullptr, 3};
 
   irs::MemoryDirectory dir;
 
@@ -205,7 +199,7 @@ TEST(WildcardNgramFilterTest, query) {
     ASSERT_NE(nullptr, writer);
 
     WildcardField field;
-    field.field_name = kField;
+    field.id = kField;
     field.analyzer = &analyzer;
 
     auto ctx = writer->GetBatch();
@@ -215,12 +209,12 @@ TEST(WildcardNgramFilterTest, query) {
       ASSERT_TRUE(doc.Insert(field));
       // Stored bytes -> cs BLOB column kStoreId; filter reads via the
       // same id (set in MakeFilter / mutable_options()->store_field_id).
-      auto* cs = doc.Columnstore();
+      auto* cs = doc.GetColWriter();
       ASSERT_NE(nullptr, cs);
       irs::tests::StoreFieldAt(*cs, kStoreId, doc.DocId(), field);
     }
     ctx.Commit();
-    writer->Commit();
+    writer->RefreshCommit();
   }
 
   irs::DirectoryReader reader{dir, irs::formats::Get("1_5simd"),

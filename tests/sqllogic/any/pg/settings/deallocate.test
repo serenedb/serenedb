@@ -1,0 +1,98 @@
+# ----------------------------------------------------------------------
+# DEALLOCATE syntax variants accepted by PG. Pooled drivers (psycopg3 in
+# autocommit, pgjdbc pool reset, ...) emit DEALLOCATE ALL between checkouts
+# to drop the server-side prepared statement cache. PG grammar accepts:
+#
+#   DEALLOCATE <name>
+#   DEALLOCATE PREPARE <name>
+#   DEALLOCATE ALL
+#   DEALLOCATE PREPARE ALL
+# ----------------------------------------------------------------------
+
+# Named DEALLOCATE on a fresh connection where nothing was prepared.
+statement error
+DEALLOCATE drv_dealloc_nope;
+----
+db error: ERROR: <slt:ignore>repared statement "drv_dealloc_nope" does not exist<slt:ignore>
+
+
+# DEALLOCATE ALL on a fresh connection is a no-op success.
+statement ok
+DEALLOCATE ALL;
+
+
+statement ok
+DEALLOCATE PREPARE ALL;
+
+
+# Lowercase keywords (PG keywords are case-insensitive).
+statement ok
+deallocate all;
+
+
+# Real lifecycle: PREPARE -> EXECUTE -> DEALLOCATE ALL -> EXECUTE errors.
+statement ok
+PREPARE drv_dealloc_test AS SELECT 1;
+
+
+query
+EXECUTE drv_dealloc_test;
+----
+?column?
+1
+
+
+statement ok
+DEALLOCATE ALL;
+
+
+statement error
+EXECUTE drv_dealloc_test;
+----
+db error: ERROR: <slt:ignore>repared statement "drv_dealloc_test" does not exist<slt:ignore>
+
+
+# DEALLOCATE PREPARE ALL is the alias spelling; same semantics.
+statement ok
+PREPARE drv_dealloc_test AS SELECT 2;
+
+
+statement ok
+DEALLOCATE PREPARE ALL;
+
+
+statement error
+EXECUTE drv_dealloc_test;
+----
+db error: ERROR: <slt:ignore>repared statement "drv_dealloc_test" does not exist<slt:ignore>
+
+
+# Named DEALLOCATE drops only that statement; the other survives.
+statement ok
+PREPARE drv_keep AS SELECT 10;
+
+
+statement ok
+PREPARE drv_drop AS SELECT 20;
+
+
+statement ok
+DEALLOCATE drv_drop;
+
+
+query
+EXECUTE drv_keep;
+----
+?column?
+10
+
+
+statement error
+EXECUTE drv_drop;
+----
+db error: ERROR: <slt:ignore>repared statement "drv_drop" does not exist<slt:ignore>
+
+
+# Cleanup so subsequent tests on the same connection start fresh.
+statement ok
+DEALLOCATE ALL;

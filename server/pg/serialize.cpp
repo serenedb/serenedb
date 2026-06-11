@@ -50,7 +50,7 @@
 
 #include "basics/assert.h"
 #include "basics/dtoa.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/misc.hpp"
 #include "connector/pg_logical_types.h"
 #include "pg/errcodes.h"
@@ -100,13 +100,12 @@ struct ArraySlice {
 
 ArraySlice GetArraySlice(const duckdb::RecursiveUnifiedVectorFormat& vdata,
                          duckdb::idx_t row) {
+  const auto source_row = vdata.unified.sel->get_index(row);
   if (vdata.logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
     auto size = duckdb::ArrayType::GetSize(vdata.logical_type);
-    return {size, row * size};
+    return {size, source_row * size};
   }
-  auto list_data =
-    vdata.unified
-      .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+  auto list_data = vdata.unified.GetData<duckdb::list_entry_t>()[source_row];
   return {list_data.length, list_data.offset};
 }
 
@@ -767,7 +766,7 @@ void SerializeTimestampTz(SerializationContext& context,
     vdata.unified
       .GetData<duckdb::timestamp_tz_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
-    auto str = duckdb::Timestamp::ToString(ts);
+    auto str = duckdb::Timestamp::ToString(duckdb::timestamp_t{ts});
     WithWrapIfNested<InContainer>(context, [&] {
       context.buffer->WriteUncommitted(str);
       context.buffer->WriteUncommitted("+00");
@@ -1138,7 +1137,7 @@ void SerializeOidBinary(SerializationContext& context,
   const auto oid =
     vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
   if (oid != static_cast<int32_t>(oid)) {
-    SDB_WARN("xxxxx", Logger::COMMUNICATION, "reg* OID ", oid,
+    SDB_WARN(HTTP, "reg* OID ", oid,
              " truncated to 32-bit for binary wire protocol");
   }
   absl::big_endian::Store32(context.buffer->GetContiguousData(4),

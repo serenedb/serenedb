@@ -40,7 +40,6 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/types.hpp"
 #include "tests_shared.hpp"
@@ -50,6 +49,8 @@ namespace {
 inline constexpr irs::field_id kTopicId = 1;
 inline constexpr irs::field_id kCategoryId = 2;
 inline constexpr irs::field_id kTagsId = 3;
+inline constexpr irs::field_id kContentId = 4;
+inline constexpr irs::field_id kSeqId = 5;
 
 irs::field_id ColumnIdFor(std::string_view name) {
   if (name == "topic") {
@@ -61,20 +62,26 @@ irs::field_id ColumnIdFor(std::string_view name) {
   if (name == "tags") {
     return kTagsId;
   }
+  if (name == "content") {
+    return kContentId;
+  }
+  if (name == "seq") {
+    return kSeqId;
+  }
   return irs::field_limits::invalid();
 }
 
 void StoreScoringFields(irs::IndexWriter::Document& doc,
                         const tests::Document& src) {
-  auto* cs = doc.Columnstore();
+  auto* cs = doc.GetColWriter();
   if (cs == nullptr) {
     return;
   }
-  for (std::string_view name : {"topic", "category", "tags"}) {
+  for (irs::field_id id : {kTopicId, kCategoryId, kTagsId}) {
     auto* field =
-      dynamic_cast<const tests::StringField*>(src.indexed.get(name));
+      dynamic_cast<const tests::StringField*>(src.indexed.get_by_id(id));
     if (field != nullptr) {
-      irs::tests::StoreFieldAt(*cs, ColumnIdFor(name), doc.DocId(), *field);
+      irs::tests::StoreFieldAt(*cs, id, doc.DocId(), *field);
     }
   }
 }
@@ -151,24 +158,29 @@ void BlockScoringFieldFactory(tests::Document& doc, const std::string& name,
     //      doc.insert(std::move(field));
     //    } else {
     // Use standard string field for other fields
-    doc.insert(std::make_shared<tests::StringField>(name, data.str));
+    auto field = std::make_shared<tests::StringField>(name, data.str);
+    field->id = ColumnIdFor(name);
+    doc.insert(std::move(field));
     //    }
   } else if (JsonDocGenerator::ValueType::NIL == data.vt) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
+    field.id = ColumnIdFor(name);
     field.value(
       irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
+    field.id = ColumnIdFor(name);
     field.value(
       irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
+    field.id = ColumnIdFor(name);
     field.value(
       irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
   } else if (data.is_number()) {
@@ -176,6 +188,7 @@ void BlockScoringFieldFactory(tests::Document& doc, const std::string& name,
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();
     field.Name(name);
+    field.id = ColumnIdFor(name);
     field.value(data.as_number<double_t>());
   }
 }
@@ -246,7 +259,7 @@ class BlockScoringTestCase : public IndexTestBase {
       index.emplace_back();
       write_segment(writer, index.back(), gen, &StoreScoringFields);
     }
-    writer.Commit();
+    writer.RefreshCommit();
   }
 
   // Create single segment from multiple JSON files (420 total docs)
@@ -281,7 +294,7 @@ class BlockScoringTestCase : public IndexTestBase {
                                   &BlockScoringFieldFactory);
       index_ref.emplace_back();
       write_segment(*writer, index_ref.back(), gen, &StoreScoringFields);
-      writer->Commit();
+      writer->RefreshCommit();
     }
 
     // Segment 2
@@ -290,7 +303,7 @@ class BlockScoringTestCase : public IndexTestBase {
                                   &BlockScoringFieldFactory);
       index_ref.emplace_back();
       write_segment(*writer, index_ref.back(), gen, &StoreScoringFields);
-      writer->Commit();
+      writer->RefreshCommit();
     }
 
     // Segment 3
@@ -299,7 +312,7 @@ class BlockScoringTestCase : public IndexTestBase {
                                   &BlockScoringFieldFactory);
       index_ref.emplace_back();
       write_segment(*writer, index_ref.back(), gen, &StoreScoringFields);
-      writer->Commit();
+      writer->RefreshCommit();
     }
 
     auto reader =
@@ -307,19 +320,67 @@ class BlockScoringTestCase : public IndexTestBase {
     ASSERT_EQ(3, reader.size()) << "Expected 3 segments";
   }
 
+  // Minimal whitespace-delimited query parser.
+  //
+  // Each whitespace-separated token may carry an optional `+` (required) or
+  // `-` (negated) modifier, followed by an optional `<field>:` prefix that
+  // names the target column, then the term value. Unlike `sdb::ParseQuery`,
+  // the `<field>:` prefix is honored -- we resolve it to a `field_id` via
+  // `ColumnIdFor`. The grammar parser ignores the prefix and always pins
+  // queries to the default field, which is unsuitable for these tests.
   irs::Filter::ptr ParseQuery(std::string_view query,
-                              std::string_view default_field = "content") {
-    if (!_tokenizer) {
-      _tokenizer = std::make_unique<irs::analysis::DelimitedTokenizer>(" ");
-    }
+                              irs::field_id default_field = kContentId) {
     auto root = std::make_unique<irs::MixedBooleanFilter>();
-    sdb::ParserContext ctx{*root, default_field, *_tokenizer};
-    auto result = sdb::ParseQuery(ctx, query);
-    EXPECT_TRUE(result.ok()) << "Failed to parse query: " << query;
+
+    size_t pos = 0;
+    while (pos < query.size()) {
+      while (pos < query.size() && query[pos] == ' ') {
+        ++pos;
+      }
+      if (pos >= query.size()) {
+        break;
+      }
+      const size_t start = pos;
+      while (pos < query.size() && query[pos] != ' ') {
+        ++pos;
+      }
+      std::string_view token = query.substr(start, pos - start);
+
+      bool required = false;
+      bool negated = false;
+      if (!token.empty() && token.front() == '+') {
+        required = true;
+        token.remove_prefix(1);
+      } else if (!token.empty() && token.front() == '-') {
+        negated = true;
+        token.remove_prefix(1);
+      }
+
+      irs::field_id field_id = default_field;
+      std::string_view term = token;
+      const auto colon = token.find(':');
+      if (colon != std::string_view::npos) {
+        field_id = ColumnIdFor(token.substr(0, colon));
+        term = token.substr(colon + 1);
+      }
+
+      if (required) {
+        auto& by_term = root->GetRequired().add<irs::ByTerm>();
+        *by_term.mutable_field_id() = field_id;
+        by_term.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+      } else if (negated) {
+        auto& neg = root->GetRequired().add<irs::Not>().filter<irs::ByTerm>();
+        *neg.mutable_field_id() = field_id;
+        neg.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+      } else {
+        auto& by_term = root->GetOptional().add<irs::ByTerm>();
+        *by_term.mutable_field_id() = field_id;
+        by_term.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+      }
+    }
+
     return root;
   }
-
-  irs::analysis::Analyzer::ptr _tokenizer;
 };
 
 // Test TFIDF scorer with ByTerm filter using ExecuteTopKWithCount

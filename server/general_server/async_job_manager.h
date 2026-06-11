@@ -25,7 +25,6 @@
 
 #include "basics/common.h"
 #include "basics/containers/node_hash_map.h"
-#include "basics/read_write_lock.h"
 #include "basics/result.h"
 #include "rest/general_response.h"
 #include "utils/exec_context.h"
@@ -95,18 +94,9 @@ class AsyncJobManager {
   void finishAsyncJob(RestHandler*);
   std::pair<uint64_t, uint64_t> getNrPendingAndDone();
 
-  void initiateSoftShutdown() {
-    _soft_shutdown_ongoing.store(true, std::memory_order_relaxed);
-  }
-
  private:
   absl::Mutex _lock;
   JobList _jobs;
-
-  /// flag, if a soft shutdown is ongoing, this is used for the soft
-  /// shutdown feature in coordinators, it is initially `false` and is set
-  /// to true once a soft shutdown has begun.
-  std::atomic_bool _soft_shutdown_ongoing = false;
 };
 
 }  // namespace sdb::rest

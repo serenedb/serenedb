@@ -179,7 +179,7 @@ std::shared_ptr<ImmutableFstImpl<Arc>> ImmutableFstImpl<Arc>::Read(
   }
 
   // read weights
-  stream.ReadBytes(weights.get(), total_weight_size);
+  stream.ReadData(weights.get(), total_weight_size);
 
   // noexcept block
   allocated = 0;
@@ -224,16 +224,6 @@ class ImmutableFst : public ImplToExpandedFst<ImmutableFstImpl<A>> {
                                irs::IResourceManager& rm) {
     auto impl = Impl::Read(strm, rm);
     return impl ? new ImmutableFst<A>(std::move(impl)) : nullptr;
-  }
-
-  // OpenFST API compliance broken. But as only we use it here it is ok.
-  static ImmutableFst<A>* Read(std::istream& strm,
-                               const FstReadOptions& /*opts*/,
-                               irs::IResourceManager& rm) {
-    auto* rdbuf = sdb::basics::downCast<irs::InputBuf>(strm.rdbuf());
-    SDB_ASSERT(rdbuf && rdbuf->Internal());
-
-    return Read(*rdbuf->Internal(), rm);
   }
 
   template<typename FST, typename Stats>
@@ -317,14 +307,14 @@ bool ImmutableFst<A>::Write(const FST& fst, irs::BufferedOutput& stream,
 
     static_assert(std::is_reference_v<decltype(impl->Final(s))>);
     if (const auto& weight = impl->Final(s); !weight.Empty()) {
-      stream.WriteBytes(weight.c_str(), weight.Size());
+      stream.WriteData(weight.c_str(), weight.Size());
     }
 
     for (ArcIterator<FST> aiter(fst, s); !aiter.Done(); aiter.Next()) {
       const auto& weight = aiter.Value().weight;
 
       if (!weight.Empty()) {
-        stream.WriteBytes(weight.c_str(), weight.Size());
+        stream.WriteData(weight.c_str(), weight.Size());
       }
     }
   }

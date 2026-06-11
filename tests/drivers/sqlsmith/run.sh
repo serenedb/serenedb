@@ -3,7 +3,7 @@
 #
 # Local debug:
 #   ninja serened
-#   ./build/bin/serened /tmp/datadir --server.endpoint pgsql+tcp://0.0.0.0:5432 --server.authentication 0
+#   ./build/bin/serened /tmp/datadir --server_endpoints pgsql+tcp://0.0.0.0:5432
 #   bash tests/drivers/sqlsmith/run.sh
 #
 # After Stage B (CI wiring), this script is also invoked from
@@ -19,8 +19,8 @@
 #
 # Tunables via env:
 #   SDB_FUZZ_QUERIES  total queries to generate per sqlsmith instance
-#                     (--max-queries). Default 2000 (~60s on a quiet box).
-#   SDB_FUZZ_PARALLEL number of concurrent sqlsmith instances (default 1).
+#                     (--max-queries). Default 5000.
+#   SDB_FUZZ_PARALLEL number of concurrent sqlsmith instances (default 2).
 #                     Each gets a distinct seed derived from SDB_FUZZ_SEED.
 #                     Total query budget = QUERIES * PARALLEL.
 #   SDB_FUZZ_SEED     fixed RNG base seed for repro; defaults to a random int.
@@ -47,8 +47,8 @@ HOST="${SDB_DRV_HOST:-localhost}"
 PORT="${SDB_DRV_PORT:-7890}"
 DB="${SDB_DRV_DATABASE:-postgres}"
 DB_USER="${SDB_DRV_USER:-postgres}"
-MAX_QUERIES="${SDB_FUZZ_QUERIES:-2000}"
-PARALLEL="${SDB_FUZZ_PARALLEL:-1}"
+MAX_QUERIES="${SDB_FUZZ_QUERIES:-5000}"
+PARALLEL="${SDB_FUZZ_PARALLEL:-2}"
 # sqlsmith parses --seed via std::stoi (signed 32-bit int), so keep the value
 # under INT_MAX (2^31 - 1). $RANDOM is bash's 15-bit RNG; two of them combined
 # with a 15-bit shift give a 30-bit unsigned seed safely below the limit.
@@ -127,10 +127,8 @@ sqlsmith_exit=0
 n_signaled=0
 n_nonzero=0
 for pid in "${PIDS[@]}"; do
-	set +e
 	wait "$pid"
 	rc=$?
-	set -e
 	INSTANCE_EXITS+=("$rc")
 	if [[ "$rc" -ne 0 ]]; then
 		((n_nonzero++))

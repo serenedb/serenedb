@@ -23,25 +23,33 @@
 
 #pragma once
 
-#include "analyzers.hpp"
+#include <tuple>
+
 #include "basics/down_cast.h"
+#include "basics/serializer.h"
 #include "basics/shared.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "token_attributes.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {
 
+struct TokenizerConfig;
+
 // An tokenizer capable of chaining other analyzers
 class PipelineTokenizer final : public TypedAnalyzer<PipelineTokenizer>,
                                 private util::Noncopyable {
  public:
-  using options_t = std::vector<Analyzer::ptr>;
+  struct Options {
+    using Owner = PipelineTokenizer;
+    std::vector<std::unique_ptr<TokenizerConfig>> children;
+  };
+  static Analyzer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "pipeline"; }
-  static void init();  // for triggering registration in a static build
 
-  explicit PipelineTokenizer(options_t&& options);
+  explicit PipelineTokenizer(std::vector<Analyzer::ptr> children);
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     auto* attr = irs::GetMutable(_attrs, id);
     if (!attr) {
@@ -141,5 +149,16 @@ class PipelineTokenizer final : public TypedAnalyzer<PipelineTokenizer>,
   OffsAttr _offs;
   attributes _attrs;
 };
+
+template<typename Context>
+void SerdeWrite(Context ctx, const PipelineTokenizer::Options& o) {
+  sdb::basics::WriteTuple(ctx.io(), std::tie(o.children), ctx.arg());
+}
+
+template<typename Context>
+void SerdeRead(Context ctx, PipelineTokenizer::Options& o) {
+  auto refs = std::tie(o.children);
+  sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
+}
 
 }  // namespace irs::analysis

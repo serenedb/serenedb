@@ -30,9 +30,7 @@
 #include "basics/common.h"
 #include "basics/result_or.h"
 #include "general_server/request_lane.h"
-#include "metrics/gauge_counter_guard.h"
 #include "rest/general_response.h"
-#include "statistics/request_statistics.h"
 
 namespace sdb {
 namespace app {
@@ -45,7 +43,6 @@ class Exception;
 }
 
 class GeneralRequest;
-class RequestStatistics;
 class Result;
 
 enum class RestStatus {
@@ -63,7 +60,7 @@ class RestHandler : public std::enable_shared_from_this<RestHandler> {
   RestHandler& operator=(const RestHandler&) = delete;
 
  public:
-  RestHandler(SerenedServer&, GeneralRequest*, GeneralResponse*);
+  RestHandler(app::AppServer&, GeneralRequest*, GeneralResponse*);
   virtual ~RestHandler();
 
   void assignHandlerId();
@@ -88,15 +85,8 @@ class RestHandler : public std::enable_shared_from_this<RestHandler> {
     return std::move(_response);
   }
 
-  SerenedServer& server() noexcept { return _server; }
-  const SerenedServer& server() const noexcept { return _server; }
-
-  [[nodiscard]] const RequestStatistics::Item& requestStatistics()
-    const noexcept {
-    return _statistics;
-  }
-  [[nodiscard]] RequestStatistics::Item&& StealRequestStatistics();
-  void SetRequestStatistics(RequestStatistics::Item&& stat);
+  app::AppServer& server() noexcept { return _server; }
+  const app::AppServer& server() const noexcept { return _server; }
 
   void setIsAsyncRequest() noexcept { _is_async_request = true; }
 
@@ -188,8 +178,7 @@ class RestHandler : public std::enable_shared_from_this<RestHandler> {
  protected:
   std::unique_ptr<GeneralRequest> _request;
   std::unique_ptr<GeneralResponse> _response;
-  SerenedServer& _server;
-  RequestStatistics::Item _statistics;
+  app::AppServer& _server;
 
  private:
   mutable absl::Mutex _execution_mutex;
@@ -213,8 +202,6 @@ class RestHandler : public std::enable_shared_from_this<RestHandler> {
   RequestLane _lane;
 
  protected:
-  metrics::GaugeCounterGuard<uint64_t> _current_requests_size_tracker;
-
   std::atomic<bool> _canceled;
 };
 

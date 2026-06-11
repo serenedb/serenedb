@@ -10,14 +10,7 @@ EXCEPTIONS = {
     "libs/iresearch/include/iresearch/parser/lucene_lexer.cpp",
     "libs/iresearch/include/iresearch/parser/lucene_parser.cpp",
     "libs/iresearch/include/iresearch/utils/fstext/fst_draw.hpp",
-    "libs/vpack/include/vpack/wyhash.h",
-    "libs/vpack/include/vpack/events_from_slice.h",
-    "libs/vpack/include/vpack/validation_types.h",
-    "libs/vpack/include/vpack/validation.h",
-    "libs/vpack/src/asm-utf8check.cpp",
-    "libs/vpack/src/asm-utf8check.h",
-    "libs/vpack/src/validation.cpp",
-    "libs/basics/logger/syslog_names.h",
+    "libs/basics/wyhash.h",
     "server/pg/protocol.h",
     "server/pg/functions/interval.cpp",
     "tests/bench/micro/call_once.cpp",
@@ -27,9 +20,8 @@ EXCEPTIONS = {
 }
 
 PRAGMA_ONCE_EXCEPTIONS = {
-    "libs/basics/logger/logger.h",       # secondary BSD license block between disclaimer and pragma once
-    "libs/basics/lru_cache.h",           # secondary BSD license block between disclaimer and pragma once
-    "libs/build_id/include/build_id/build_id.h",  # secondary comment block between disclaimer and pragma once
+    "libs/basics/lru_cache.h",
+    "libs/build_id/include/build_id/build_id.h",
 }
 
 

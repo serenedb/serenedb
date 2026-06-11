@@ -38,7 +38,7 @@ INSERT INTO vec_r VALUES (4, [10, 10, 10]::FLOAT[3], 'delta', 400, 'body-four')
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vec_r
+VACUUM (REFRESH_TABLE) vec_r
 
 
 # All-INCLUDE projection: plan should suppress the "Lookup" line --
@@ -50,9 +50,11 @@ EXPLAIN SELECT label, tag FROM vec_r_idx
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  IRESEARCH_ANN_RANGE_SCAN │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│      Index: vec_r_idx     │
+│           Index:          │
+│   vec_r_idx (ANN range)   │
+│                           │
 │      Radius: 1.000000     │
 │          Dims: 3          │
 │                           │
@@ -81,9 +83,11 @@ EXPLAIN SELECT pk, label, body FROM vec_r_idx
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  IRESEARCH_ANN_RANGE_SCAN │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│      Index: vec_r_idx     │
+│           Index:          │
+│   vec_r_idx (ANN range)   │
+│                           │
 │      Lookup: rocksdb      │
 │      Radius: 1.000000     │
 │          Dims: 3          │

@@ -24,8 +24,9 @@
 
 #include <unicode/locid.h>
 
-#include "analyzers.hpp"
+#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/utils/icu_locale_serde.hpp"
 #include "token_attributes.hpp"
 
 namespace irs::analysis {
@@ -36,17 +37,16 @@ namespace irs::analysis {
 class CollationTokenizer final : public TypedAnalyzer<CollationTokenizer>,
                                  private util::Noncopyable {
  public:
-  struct OptionsT {
-    icu::Locale locale;
+  struct Options {
+    using Owner = CollationTokenizer;
+    icu::Locale locale = irs::MakeBogusLocale();
     bool force_utf8 = true;
-
-    OptionsT() : locale{"C"} { locale.setToBogus(); }
   };
+  static ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "collation"; }
-  static void init();  // for trigering registration in a static build
 
-  explicit CollationTokenizer(const OptionsT& options);
+  explicit CollationTokenizer(Options options);
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);

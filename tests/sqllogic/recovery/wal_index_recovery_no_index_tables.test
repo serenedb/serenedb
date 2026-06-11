@@ -44,7 +44,7 @@ statement ok
 CREATE INDEX ni2_main_idx ON ni2_main USING inverted(id, body ni2_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ni2_main;
+VACUUM (REFRESH_TABLE) ni2_main;
 
 statement ok
 SET sdb_faults = 'SearchCommitTask::commitUnsafe';
@@ -94,7 +94,7 @@ SELECT 1;
 
 connection ni2_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) ni2_main;
+VACUUM (REFRESH_TABLE) ni2_main;
 
 # Inverted index counts only the indexed table.
 connection ni2_after
@@ -114,7 +114,7 @@ count
 # Row 1 deleted.
 connection ni2_after
 query
-SELECT COUNT(*) FROM ni2_main WHERE body @@ ts_phrase('main seed one');
+SELECT COUNT(*) FROM ni2_main_idx WHERE body @@ ts_phrase('main seed one');
 ----
 count
 0
@@ -122,14 +122,14 @@ count
 # Row 2 updated — old token gone, new searchable.
 connection ni2_after
 query
-SELECT id FROM ni2_main WHERE body @@ ts_phrase('UPDATED');
+SELECT id FROM ni2_main_idx WHERE body @@ ts_phrase('UPDATED');
 ----
 id
 2
 
 connection ni2_after
 query
-SELECT COUNT(*) FROM ni2_main WHERE body @@ ts_phrase('main seed two');
+SELECT COUNT(*) FROM ni2_main_idx WHERE body @@ ts_phrase('main seed two');
 ----
 count
 0
@@ -137,28 +137,28 @@ count
 # Newly inserted rows are searchable.
 connection ni2_after
 query
-SELECT id FROM ni2_main WHERE body @@ ts_phrase('main added three');
+SELECT id FROM ni2_main_idx WHERE body @@ ts_phrase('main added three');
 ----
 id
 3
 
 connection ni2_after
 query
-SELECT id FROM ni2_main WHERE body @@ ts_phrase('main added four');
+SELECT id FROM ni2_main_idx WHERE body @@ ts_phrase('main added four');
 ----
 id
 4
 
 connection ni2_after
 query
-SELECT id FROM ni2_main WHERE body @@ ts_phrase('main added five');
+SELECT id FROM ni2_main_idx WHERE body @@ ts_phrase('main added five');
 ----
 id
 5
 
 connection ni2_after
 query
-SELECT id FROM ni2_main WHERE body @@ ts_phrase('main added six');
+SELECT id FROM ni2_main_idx WHERE body @@ ts_phrase('main added six');
 ----
 id
 6
@@ -189,14 +189,14 @@ count
 # (defensive — they're in different tables).
 connection ni2_after
 query
-SELECT COUNT(*) FROM ni2_main WHERE body @@ ts_phrase('tail_a');
+SELECT COUNT(*) FROM ni2_main_idx WHERE body @@ ts_phrase('tail_a');
 ----
 count
 0
 
 connection ni2_after
 query
-SELECT COUNT(*) FROM ni2_main WHERE body @@ ts_phrase('updated_5');
+SELECT COUNT(*) FROM ni2_main_idx WHERE body @@ ts_phrase('updated_5');
 ----
 count
 0

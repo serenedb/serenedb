@@ -30,7 +30,7 @@ statement ok
 CREATE INDEX dd_idx ON dd_t USING inverted(id, body dd_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) dd_t;
+VACUUM (REFRESH_TABLE) dd_t;
 
 # Block search commits.
 statement ok
@@ -64,7 +64,7 @@ SELECT 1;
 
 connection dd_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) dd_t;
+VACUUM (REFRESH_TABLE) dd_t;
 
 # Transient database really is gone.
 connection dd_after
@@ -91,35 +91,35 @@ count
 
 connection dd_after
 query
-SELECT id FROM dd_t WHERE body @@ ts_phrase('mid window golf');
+SELECT id FROM dd_idx WHERE body @@ ts_phrase('mid window golf');
 ----
 id
 1
 
 connection dd_after
 query
-SELECT COUNT(*) FROM dd_t WHERE body @@ ts_phrase('seed alpha bravo');
+SELECT COUNT(*) FROM dd_idx WHERE body @@ ts_phrase('seed alpha bravo');
 ----
 count
 0
 
 connection dd_after
 query
-SELECT id FROM dd_t WHERE body @@ ts_phrase('after fault echo');
+SELECT id FROM dd_idx WHERE body @@ ts_phrase('after fault echo');
 ----
 id
 3
 
 connection dd_after
 query
-SELECT id FROM dd_t WHERE body @@ ts_phrase('after fault foxtrot');
+SELECT id FROM dd_idx WHERE body @@ ts_phrase('after fault foxtrot');
 ----
 id
 4
 
 connection dd_after
 query
-SELECT id FROM dd_t WHERE body @@ ts_phrase('post drop hotel');
+SELECT id FROM dd_idx WHERE body @@ ts_phrase('post drop hotel');
 ----
 id
 5

@@ -26,7 +26,7 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
-#include "storage_engine/engine_feature.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::query {
@@ -36,6 +36,7 @@ void Transaction::OnNewStatement() {
   if (level == IsolationLevel::READ_COMMITTED) {
     DropCatalogSnapshot();
     _rocksdb_snapshot = nullptr;
+    _search_snapshots.clear();
   }
 }
 
@@ -149,7 +150,7 @@ Result Transaction::Rollback() {
   return {};
 }
 
-const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
+search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {
@@ -163,7 +164,7 @@ const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
            .emplace(index_id, inverted_index_shard.GetInvertedIndexSnapshot())
            .first;
   }
-  return *it->second;
+  return it->second;
 }
 
 void Transaction::EnsureRocksDBSnapshot() {
@@ -207,9 +208,7 @@ void Transaction::RegisterSearchFlushes() noexcept {
 void Transaction::CommitSearchTransactions(uint64_t post_ingest_seq) noexcept {
   for (auto& [id, trx] : _search_transactions) {
     const auto queries = trx->GetQueries();
-    if (!trx->Commit(post_ingest_seq + queries)) {
-      trx->Abort();
-    }
+    trx->Commit(post_ingest_seq + queries);
   }
 }
 

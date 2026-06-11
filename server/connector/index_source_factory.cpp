@@ -25,11 +25,13 @@
 #include "catalog/pk_spec.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/index_source_rocksdb.h"
 #include "connector/index_source_view_file.h"
 #include "connector/index_source_view_rocksdb.h"
 #include "connector/view_fast_path.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_shard.h"
@@ -55,7 +57,7 @@ std::unique_ptr<IndexSource> MakeIndexSource(
     }
     // Re-bind must target the same manifest as CREATE INDEX did.
     if (vbd.inverted_index) {
-      auto cat_snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+      auto cat_snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
       if (auto shard =
             cat_snapshot->GetIndexShard(vbd.inverted_index->GetId())) {
         if (shard->GetType() == catalog::ObjectType::InvertedIndex) {

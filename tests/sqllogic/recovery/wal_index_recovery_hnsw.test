@@ -24,7 +24,7 @@ CREATE INDEX wal_hnsw_idx ON wal_hnsw_t
   USING inverted(emb hnsw (metric = 'l2'));
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_hnsw_t;
+VACUUM (REFRESH_TABLE) wal_hnsw_t;
 
 # Plan check: ANN top-K served by the HNSW graph in the inverted index.
 query
@@ -32,13 +32,26 @@ EXPLAIN SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] L
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
 │    ────────────────────   │
-│    Index: wal_hnsw_idx    │
+│           Top: 1          │
+│      Order By: #1 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│     wal_hnsw_idx (ANN)    │
+│                           │
 │      Lookup: rocksdb      │
 │          TopK: 1          │
 │          Dims: 3          │
-│      Projections: pk      │
+│                           │
+│        Projections:       │
+│             pk            │
+│  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -71,7 +84,7 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) wal_hnsw_t;
+VACUUM (REFRESH_TABLE) wal_hnsw_t;
 
 # Pre-crash row still queryable.
 connection wal_after

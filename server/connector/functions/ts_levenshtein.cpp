@@ -23,7 +23,6 @@
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -117,21 +116,19 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
     "If distance is omitted (ts_levenshtein('test')), it is picked "
     "automatically from the term length (0 for <=2 chars, 1 for 3-5, "
     "2 for >=6).";
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+      column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_levenshtein field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
   auto args = ParseLevenshteinArgs(func);
 
-  std::string field_name;
-  MakeFieldName(column_info, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& edit_filter = ctx.negated ? Negate<irs::ByEditDistance>(filter)
                                   : AddFilter<irs::ByEditDistance>(filter);
   edit_filter.boost(ctx.boost);
-  *edit_filter.mutable_field() = field_name;
+  *edit_filter.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& edit_opts = *edit_filter.mutable_options();
   FillByEditDistanceOptions(args, edit_opts);
   edit_opts.max_terms = ctx.scored_terms_limit;

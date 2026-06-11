@@ -49,9 +49,8 @@ struct PKPointLookupGlobalState : public CommonScanGlobalState {
 // vector and records which batch indices had a hit.
 class DuckDBPKResultCollector {
  public:
-  void Init(const duckdb::LogicalType& type, size_t capacity,
-            duckdb::Vector& vec) {
-    _type = &type;
+  void Init(duckdb::LogicalType type, size_t capacity, duckdb::Vector& vec) {
+    _type = std::move(type);
     _vec = &vec;
     _found_indices.clear();
     _found_indices.reserve(capacity);
@@ -60,7 +59,7 @@ class DuckDBPKResultCollector {
   void Fill(size_t batch_idx, size_t found_idx,
             const rocksdb::PinnableSlice& val) {
     _found_indices.push_back(batch_idx);
-    DeserializeValueIntoDuckDB(val.ToStringView(), *_vec, *_type, found_idx);
+    DeserializeValueIntoDuckDB(val.ToStringView(), *_vec, _type, found_idx);
   }
 
   void Finish(size_t /*found_count*/) {}
@@ -68,7 +67,7 @@ class DuckDBPKResultCollector {
   std::span<const size_t> PresentRows() const { return _found_indices; }
 
  private:
-  const duckdb::LogicalType* _type = nullptr;
+  duckdb::LogicalType _type;
   duckdb::Vector* _vec = nullptr;
   std::vector<size_t> _found_indices;
 };

@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "basics/shared.hpp"
@@ -29,232 +30,133 @@
 
 namespace irs {
 
-// A convinience base class for collector wrappers
-template<typename Wrapper, typename Collector>
-class CollectorWrapper {
- public:
-  using collector_ptr = typename Collector::ptr;
-  using element_type = typename collector_ptr::element_type;
-  using pointer = typename collector_ptr::pointer;
+struct FieldCollector {
+  void Collect(const TermReader& field) noexcept;
 
-  pointer get() const noexcept { return _collector.get(); }
-  pointer operator->() const noexcept { return get(); }
-  element_type& operator*() const noexcept { return *_collector; }
-  explicit operator bool() const noexcept {
-    return static_cast<bool>(_collector);
-  }
+  uint64_t docs_with_field = 0;
+  uint64_t total_term_freq = 0;
+};
+
+struct TermCollector {
+  uint64_t docs_with_term = 0;
+  uint64_t total_term_freq = 0;
+
+  void Collect(const AttributeProvider& term_attrs) noexcept;
+};
+
+class CollectorBase {
+ public:
+  CollectorBase(const Scorer* scorer) noexcept : _scorer{scorer} {}
 
  protected:
-  CollectorWrapper() noexcept : _collector(&Wrapper::noop()) {}
-
-  ~CollectorWrapper() { reset(nullptr); }
-
-  explicit CollectorWrapper(pointer collector) noexcept
-    : _collector(!collector ? &Wrapper::noop() : collector) {
-    SDB_ASSERT(_collector);
+  void Finish(byte_type* stats_buf, const TermCollector* collector,
+              const FieldCollector* field_data) const {
+    SDB_ASSERT(_scorer);
+    SDB_ASSERT(field_data);
+    SDB_ASSERT(collector);
+    _scorer->collect(stats_buf, field_data, collector);
   }
 
-  CollectorWrapper(CollectorWrapper&& rhs) noexcept
-    : _collector(std::move(rhs._collector)) {
-    rhs._collector.reset(&Wrapper::noop());
-    SDB_ASSERT(_collector);
+  bool HasScorer() const noexcept { return _scorer != nullptr; }
+
+ private:
+  const Scorer* _scorer = nullptr;
+};
+
+class FlatTermBuffer {
+ public:
+  FlatTermBuffer(size_t size) : _collectors{size} {}
+
+  size_t Size() const noexcept { return _collectors.size(); }
+  bool Empty() const noexcept { return _collectors.empty(); }
+
+  size_t PushBack() {
+    _collectors.emplace_back();
+    return _collectors.size() - 1;
   }
 
-  CollectorWrapper& operator=(pointer collector) noexcept {
-    if (!collector) {
-      collector = &Wrapper::noop();
-    }
-
-    if (_collector.get() != collector) {
-      reset(collector);
-    }
-
-    SDB_ASSERT(_collector);
-    return *this;
+  void Collect(size_t term_idx, const AttributeProvider& attrs) {
+    SDB_ASSERT(term_idx < _collectors.size());
+    _collectors[term_idx].Collect(attrs);
   }
 
-  CollectorWrapper& operator=(CollectorWrapper&& rhs) noexcept {
-    if (this != &rhs) {
-      reset(rhs._collector.release());
-      rhs._collector.reset(&Wrapper::noop());
-    }
-    SDB_ASSERT(_collector);
-    return *this;
+  const TermCollector& Get(size_t term_idx) const {
+    SDB_ASSERT(term_idx < _collectors.size());
+    return _collectors[term_idx];
+  }
+
+  TermCollector& Get(size_t term_idx) {
+    SDB_ASSERT(term_idx < _collectors.size());
+    return _collectors[term_idx];
   }
 
  private:
-  void reset(pointer collector) noexcept {
-    if (_collector.get() == &Wrapper::noop()) {
-      _collector.release();
-    }
-    _collector.reset(collector);
-  }
-
-  collector_ptr _collector;
+  std::vector<TermCollector> _collectors;
 };
 
-// A convinience base class for collectors
-template<typename Collector>
-class CollectorsBase {
+class TermCollectorsFlat : public CollectorBase, public FlatTermBuffer {
  public:
-  using iterator_type = typename std::vector<Collector>::const_iterator;
+  TermCollectorsFlat(const Scorer* scorer, size_t size)
+    : CollectorBase{scorer}, FlatTermBuffer{scorer ? size : 0} {}
 
-  explicit CollectorsBase(size_t size, const Scorer* scorer)
-    : _collectors(size), _scorer{scorer} {}
+  size_t PushBack() {
+    if (!HasScorer()) {
+      return 0;
+    }
+    FlatTermBuffer::PushBack();
+    return Size() - 1;
+  }
 
-  CollectorsBase(CollectorsBase&&) = default;
-  CollectorsBase& operator=(CollectorsBase&&) = default;
-
-  iterator_type begin() const noexcept { return _collectors.begin(); }
-
-  iterator_type end() const noexcept { return _collectors.end(); }
-
-  bool empty() const noexcept { return _collectors.empty(); }
-
-  void reset() {
-    for (auto& collector : _collectors) {
-      collector->reset();
+  void Collect(size_t term_idx, const AttributeProvider& attrs) {
+    if (HasScorer()) {
+      SDB_ASSERT(term_idx < Size());
+      Get(term_idx).Collect(attrs);
     }
   }
 
-  typename Collector::pointer front() const noexcept {
-    SDB_ASSERT(!_collectors.empty());
-    return _collectors.front().get();
+  void Finish(byte_type* stats_buf, size_t term_idx,
+              const FieldCollector* field_data) const {
+    if (HasScorer()) {
+      SDB_ASSERT(term_idx < Size());
+      CollectorBase::Finish(stats_buf, &Get(term_idx), field_data);
+    }
   }
-
-  typename Collector::pointer back() const noexcept {
-    SDB_ASSERT(!_collectors.empty());
-    return _collectors.back().get();
-  }
-
-  typename Collector::pointer operator[](size_t i) const noexcept {
-    SDB_ASSERT(i < _collectors.size());
-    return _collectors[i].get();
-  }
-
- protected:
-  std::vector<Collector> _collectors;
-  const Scorer* _scorer{};
 };
 
-// Wrapper around FieldCollector which guarantees collector
-// is not nullptr
-class FieldCollectorWrapper
-  : public CollectorWrapper<FieldCollectorWrapper, FieldCollector> {
+class TermCollectorsVariadic : public CollectorBase {
  public:
-  using collector_type = FieldCollector;
-  using base_type = CollectorWrapper<FieldCollectorWrapper, collector_type>;
+  TermCollectorsVariadic(const Scorer* scorer, size_t phrase_size)
+    : CollectorBase{scorer}, _collectors(phrase_size, FlatTermBuffer{0}) {}
 
-  static collector_type& noop() noexcept;
+  size_t Size() const noexcept { return _collectors.size(); }
 
-  FieldCollectorWrapper() = default;
-  FieldCollectorWrapper(FieldCollectorWrapper&&) = default;
-  FieldCollectorWrapper& operator=(FieldCollectorWrapper&&) = default;
-  explicit FieldCollectorWrapper(collector_type::ptr&& collector) noexcept
-    : base_type(collector.release()) {}
-  FieldCollectorWrapper& operator=(collector_type::ptr&& collector) noexcept {
-    base_type::operator=(collector.release());
-    return *this;
+  FlatTermBuffer* GetCollector(size_t idx) {
+    if (!HasScorer()) {
+      return nullptr;
+    }
+    SDB_ASSERT(idx < _collectors.size());
+    return &_collectors[idx];
   }
-};
 
-static_assert(std::is_nothrow_move_constructible_v<FieldCollectorWrapper>);
-static_assert(std::is_nothrow_move_assignable_v<FieldCollectorWrapper>);
-
-// Create an field level index statistics compound collector for
-// all buckets
-class FieldCollectors : public CollectorsBase<FieldCollectorWrapper> {
- public:
-  explicit FieldCollectors(const Scorer* scorer);
-  FieldCollectors(FieldCollectors&&) = default;
-  FieldCollectors& operator=(FieldCollectors&&) = default;
-
-  size_t size() const noexcept { return _collectors.size(); }
-
-  // Collect field related statistics, i.e. field used in the filter
-  // segment the segment being processed (e.g. for columnstore)
-  // field the field matched by the filter in the 'segment'
-  // Note called once for every field matched by a filter per each segment
-  // Note always called on each matched 'field' irrespective of if it
-  // contains a matching 'term'
-  void collect(const SubReader& segment, const TermReader& field) const;
-
-  // Store collected index statistics into 'stats' of the
-  // current 'filter'
-  // stats out-parameter to store statistics for later use in
-  // calls to score(...)
-  // Note called once on the 'index' for every term matched by a filter
-  //       calling collect(...) on each of its segments
-  // Note if not matched terms then called exactly once
-  void finish(byte_type* stats_buf) const;
-};
-
-static_assert(std::is_nothrow_move_constructible_v<FieldCollectors>);
-static_assert(std::is_nothrow_move_assignable_v<FieldCollectors>);
-
-// Wrapper around TermCollector which guarantees collector
-// is not nullptr
-class TermCollectorWrapper
-  : public CollectorWrapper<TermCollectorWrapper, TermCollector> {
- public:
-  using collector_type = TermCollector;
-  using base_type = CollectorWrapper<TermCollectorWrapper, collector_type>;
-
-  static collector_type& noop() noexcept;
-
-  TermCollectorWrapper() = default;
-  TermCollectorWrapper(TermCollectorWrapper&&) = default;
-  TermCollectorWrapper& operator=(TermCollectorWrapper&&) = default;
-  explicit TermCollectorWrapper(collector_type::ptr&& collector) noexcept
-    : base_type(collector.release()) {}
-  TermCollectorWrapper& operator=(collector_type::ptr&& collector) noexcept {
-    base_type::operator=(collector.release());
-    return *this;
+  void Finish(byte_type* stats_buf, size_t part_idx,
+              const FieldCollector* field_data) const {
+    if (!HasScorer()) {
+      return;
+    }
+    SDB_ASSERT(part_idx < _collectors.size());
+    const auto& part = _collectors[part_idx];
+    for (size_t i = 0, size = part.Size(); i < size; ++i) {
+      CollectorBase::Finish(stats_buf, &part.Get(i), field_data);
+    }
   }
+
+ private:
+  std::vector<FlatTermBuffer> _collectors;
 };
 
-static_assert(std::is_nothrow_move_constructible_v<TermCollectorWrapper>);
-static_assert(std::is_nothrow_move_assignable_v<TermCollectorWrapper>);
-
-// Create an term level index statistics compound collector for
-// all buckets
-class TermCollectors : public CollectorsBase<TermCollectorWrapper> {
- public:
-  TermCollectors(const Scorer* scorer, size_t size);
-  TermCollectors(TermCollectors&&) = default;
-  TermCollectors& operator=(TermCollectors&&) = default;
-
-  size_t size() const noexcept { return _scorer ? _collectors.size() : 0; }
-
-  // Add collectors for another term and return term_offset
-  size_t push_back();
-
-  // Collect term related statistics, i.e. term used in the filter
-  // segment the segment being processed (e.g. for columnstore)
-  // field the field matched by the filter in the 'segment'
-  // term_index index of term, value < constructor 'terms_count'
-  // term_attributes the attributes of the matched term in the field
-  // Note called once for every term matched by a filter in the 'field'
-  //       per each segment
-  // Note only called on a matched 'term' in the 'field' in the 'segment'
-  void collect(const SubReader& segment, const TermReader& field,
-               size_t term_idx, const AttributeProvider& attrs) const;
-
-  // Store collected index statistics into 'stats' of the
-  // current 'filter'
-  // stats - out-parameter to store statistics for later use in
-  // calls to score(...)
-  // term_index - index of term, value < constructor 'terms_count'
-  // index - the full index to collect statistics on
-  // Note called once on the 'index' for every term matched by a filter
-  //       calling collect(...) on each of its segments
-  // Note if not matched terms then called exactly once
-  void finish(byte_type* stats_buf, size_t term_idx,
-              const FieldCollectors& field_collectors,
-              const IndexReader& index) const;
-};
-
-static_assert(std::is_nothrow_move_constructible_v<TermCollectors>);
-static_assert(std::is_nothrow_move_assignable_v<TermCollectors>);
+static_assert(std::is_nothrow_move_constructible_v<TermCollectorsFlat>);
+static_assert(std::is_nothrow_move_assignable_v<TermCollectorsFlat>);
+static_assert(std::is_nothrow_move_constructible_v<TermCollectorsVariadic>);
+static_assert(std::is_nothrow_move_assignable_v<TermCollectorsVariadic>);
 
 }  // namespace irs

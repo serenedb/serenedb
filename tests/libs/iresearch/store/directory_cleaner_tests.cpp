@@ -23,6 +23,7 @@
 
 #include <unordered_set>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -39,9 +40,9 @@ namespace {
 
 using namespace irs;
 
-auto MakeByTerm(std::string_view name, std::string_view value) {
+auto MakeByTerm(irs::field_id field_id, std::string_view value) {
   auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field() = name;
+  *filter->mutable_field_id() = field_id;
   filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
   return filter;
 }
@@ -250,23 +251,25 @@ TEST(directory_cleaner_tests, test_directory_cleaner) {
 }
 
 TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
-  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-  const tests::Document* doc1 = gen.next();
-  const tests::Document* doc2 = gen.next();
-  Filter::ptr query_doc1 = MakeByTerm("name", "A");
+  ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                                &::tests::GenericJsonFieldFactory);
+  const ::tests::Document* doc1 = gen.next();
+  const ::tests::Document* doc2 = gen.next();
+  Filter::ptr query_doc1 = MakeByTerm(irs::field_id{1}, "A");
   irs::MemoryDirectory dir;
   auto codec_ptr = irs::formats::Get("1_5simd");
   ASSERT_NE(nullptr, codec_ptr);
 
   // writer commit tracks files that are in active segments
   {
-    auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-    writer->Commit();
-    tests::AssertSnapshotEquality(writer->GetSnapshot(),
-                                  irs::DirectoryReader(dir, codec_ptr));
+    writer->RefreshCommit();
+    ::tests::AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
 
     std::vector<std::string> files;
     auto list_files = [&files](std::string_view name) {
@@ -278,11 +281,12 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
     ASSERT_FALSE(files.empty());
     file_set.insert(files.begin(), files.end());
 
-    writer->GetBatch().Remove(std::move(query_doc1));
+    ::tests::Remove(*writer, std::move(query_doc1));
     ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
-    writer->Commit();
-    tests::AssertSnapshotEquality(writer->GetSnapshot(),
-                                  irs::DirectoryReader(dir, codec_ptr));
+    writer->RefreshCommit();
+    ::tests::AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions()));
 
     irs::DirectoryCleaner::clean(dir,
                                  RemoveExceptCurrentSegments(dir, *codec_ptr));
@@ -290,10 +294,25 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
     ASSERT_TRUE(dir.visit(list_files));
     ASSERT_FALSE(files.empty());
 
-    // new list should not overlap due to first segment having been removed
-    for (auto& file : files) {
-      ASSERT_TRUE(file_set.find(file) == file_set.end());
+    // With the unified .idx format, the first segment's content files
+    // (`.idx`, `.col`, ...) are not rewritten when the second commit only
+    // adds a new segment and/or bumps the first segment's docs_mask
+    // version; only the `segments_N` index meta is replaced (and, if
+    // docs_mask changed, the per-segment `.sm` is rewritten with a new
+    // version suffix). The old disjointness invariant (which assumed
+    // segment 0 was fully rewritten) no longer holds. Instead, verify
+    // that the obsolete `segments_N` index meta from the first commit
+    // was cleaned up.
+    std::unordered_set<std::string> current_set(files.begin(), files.end());
+    bool obsolete_segments_file_cleaned = false;
+    for (const auto& f : file_set) {
+      if (f.starts_with("segments_") &&
+          current_set.find(f) == current_set.end()) {
+        obsolete_segments_file_cleaned = true;
+        break;
+      }
     }
+    ASSERT_TRUE(obsolete_segments_file_cleaned);
   }
 
   std::unordered_set<std::string> file_set;
@@ -367,7 +386,8 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
       return true;
     };
     std::unordered_set<std::string> current_files(file_set);
-    auto reader = irs::DirectoryReader{dir, codec_ptr};
+    auto reader =
+      irs::DirectoryReader{dir, codec_ptr, irs::tests::DefaultReaderOptions()};
     irs::DirectoryCleaner::clean(dir);
     ASSERT_TRUE(dir.visit(list_files));
     ASSERT_FALSE(files.empty());

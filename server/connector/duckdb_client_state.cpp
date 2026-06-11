@@ -23,15 +23,64 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/prepared_statement_data.hpp>
+#include <utility>
 
 #include "basics/assert.h"
 #include "basics/containers/trivial_map.h"
 #include "basics/system-compiler.h"
+#include "catalog/database.h"
+#include "connector/duckdb_physical_create_index.h"
+#include "connector/duckdb_physical_sst_insert.h"
 #include "pg/connection_context.h"
+#include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"
+#include "pg/progress_tracker.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
+namespace {
+
+std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
+  ObjectId datid, const duckdb::PreparedStatementData& prepared) {
+  if (!prepared.physical_plan) {
+    return nullptr;
+  }
+  const auto& root = prepared.physical_plan->Root();
+
+  if (prepared.statement_type == duckdb::StatementType::COPY_STATEMENT) {
+    const auto* sst = dynamic_cast<const SereneDBPhysicalSSTInsert*>(&root);
+    if (!sst) {
+      return nullptr;
+    }
+    auto reporter = std::make_unique<pg::ProgressReporter>(
+      datid, sst->TargetTableId(), pg::ProgressCommand::Copy);
+    reporter->SetCommand(pg::copy_progress::Command::CopyFrom);
+    reporter->SetType(pg::copy_progress::Type::File);
+    return reporter;
+  }
+
+  if (prepared.statement_type == duckdb::StatementType::CREATE_STATEMENT) {
+    const auto* ci = dynamic_cast<const SereneDBPhysicalCreateIndex*>(&root);
+    if (!ci) {
+      return nullptr;
+    }
+    auto reporter = std::make_unique<pg::ProgressReporter>(
+      ci->DatabaseId(), ci->TargetRelationId(),
+      pg::ProgressCommand::CreateIndex);
+    reporter->SetCommand(pg::create_index_progress::Command::CreateIndex);
+    reporter->SetPhase(pg::create_index_progress::Phase::Initializing);
+    if (ci->estimated_cardinality > 0) {
+      reporter->Set(pg::create_index_progress::Param::TuplesTotal,
+                    static_cast<int64_t>(ci->estimated_cardinality));
+    }
+    return reporter;
+  }
+
+  return nullptr;
+}
+
+}  // namespace
 
 void SereneDBClientState::Register(
   duckdb::ClientContext& client_ctx,
@@ -148,11 +197,23 @@ void SereneDBClientState::TransactionRollback(
   }
 }
 
+duckdb::RebindQueryInfo SereneDBClientState::OnExecutePrepared(
+  duckdb::ClientContext& context, duckdb::PreparedStatementCallbackInfo& info,
+  duckdb::RebindQueryInfo current_rebind) {
+  if (const auto& db = _connection_ctx->GetDatabasePtr()) {
+    progress = MakeProgressReporter(db->GetId(), info.prepared_statement);
+  }
+  return current_rebind;
+}
+
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
-  copy_queue = nullptr;
-  send_buffer = nullptr;
+  if (auto* queue = _connection_ctx->GetCopyQueue()) {
+    queue->CloseListening();
+  }
   copy_stdin_buffer.reset();
   copy_stdin_open_count = 0;
+  copy_stdin_done = false;
+  progress.reset();
   _connection_ctx->OnNewStatement();
 }
 

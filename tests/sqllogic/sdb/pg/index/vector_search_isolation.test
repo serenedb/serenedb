@@ -1,0 +1,99 @@
+statement ok
+CREATE TABLE v (id INT, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX v_idx ON v USING inverted(emb hnsw (metric = 'l2'));
+
+
+statement ok
+INSERT INTO v VALUES (1, [1.0, 0.0, 0.0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) v;
+
+
+connection reader
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+
+connection reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection reader
+query
+SELECT id FROM v_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 5;
+----
+id
+1
+
+
+connection writer
+statement ok
+INSERT INTO v VALUES (2, [0.5, 0.5, 0.0]::FLOAT[3]);
+
+
+connection writer
+statement ok
+VACUUM (REFRESH_TABLE) v;
+
+
+connection reader
+query
+SELECT id FROM v_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 5;
+----
+id
+1
+
+
+connection reader
+statement ok
+COMMIT;
+
+
+connection reader_rc
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+
+connection reader_rc
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+
+connection reader_rc
+query
+SELECT id FROM v_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 5;
+----
+id
+1
+2
+
+
+connection writer
+statement ok
+INSERT INTO v VALUES (3, [0.0, 1.0, 0.0]::FLOAT[3]);
+
+
+connection writer
+statement ok
+VACUUM (REFRESH_TABLE) v;
+
+
+connection reader_rc
+query
+SELECT id FROM v_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 5;
+----
+id
+1
+2
+3
+
+
+connection reader_rc
+statement ok
+COMMIT;

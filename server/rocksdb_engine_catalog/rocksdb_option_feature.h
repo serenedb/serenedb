@@ -29,9 +29,7 @@
 #include <string>
 
 #include "basics/common.h"
-#include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_comparator.h"
 
 namespace sdb {
 namespace options {
@@ -39,14 +37,13 @@ namespace options {
 class ProgramOptions;
 }
 
-class RocksDBOptionFeature final : public SerenedFeature {
+class RocksDBOptionFeature final {
  public:
-  static constexpr std::string_view name() noexcept { return "RocksDBOption"; }
+  inline static RocksDBOptionFeature* gInstance = nullptr;
+  static RocksDBOptionFeature& instance() noexcept { return *gInstance; }
 
-  explicit RocksDBOptionFeature(Server& server);
-
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
+  RocksDBOptionFeature();
+  ~RocksDBOptionFeature();
 
   const rocksdb::Options& getOptions() const;
   const rocksdb::BlockBasedTableOptions& getTableOptions() const;
@@ -189,7 +186,8 @@ class RocksDBOptionFeature final : public SerenedFeature {
   rocksdb::ColumnFamilyOptions getColumnFamilyOptionsDefault(
     RocksDBColumnFamilyManager::Family family) const;
 
-  std::unique_ptr<RocksDBVPackComparator> _vpack_cmp;
+  void validateAndDeriveOptions();
+
   mutable std::optional<rocksdb::Options> _options;
   mutable std::optional<rocksdb::BlockBasedTableOptions> _table_options;
 

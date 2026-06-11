@@ -20,21 +20,23 @@
 
 #pragma once
 
+#include <iresearch/types.hpp>
+#include <iresearch/utils/type_limits.hpp>
+
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/table_options.h"
-#include "rocksdb/slice.h"
 
 namespace sdb::connector {
 
-// Per-column descriptor passed to writers when switching to a new column.
-// Carries both catalog-level attributes (id, store_mode) and per-call runtime
-// facts (type, have_nulls) so SwitchColumn() takes a single argument and
-// future additions don't churn signatures or call sites.
 struct ColumnDescriptor {
   catalog::Column::Id id;
   catalog::ColumnStoreMode store_mode;
   duckdb::LogicalType type;
-  bool have_nulls;
+};
+
+struct ExpressionDescriptor {
+  duckdb::LogicalType type;
+  irs::field_id field_id = irs::field_limits::invalid();
 };
 
 // Base implementation of column centric index writers
@@ -45,7 +47,6 @@ class ColumnSinkWriterImplBase {
     for (auto c : columns) {
       _columns.insert(c);
     }
-    SDB_ASSERT(!_columns.empty());
   }
 
   bool IsIndexed(catalog::Column::Id column_id) const noexcept {

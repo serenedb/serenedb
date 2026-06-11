@@ -21,6 +21,7 @@
 
 #include "auth/common.h"
 
+#include "basics/errors.h"
 #include "basics/exceptions.h"
 
 using namespace sdb;
@@ -28,10 +29,6 @@ using namespace sdb;
 static_assert(auth::Level::Undefined < auth::Level::None, "undefined < none");
 static_assert(auth::Level::None < auth::Level::RO, "none < ro");
 static_assert(auth::Level::RO < auth::Level::RW, "none < ro");
-
-auth::Level sdb::auth::ConvertToAuthLevel(vpack::Slice grants) {
-  return ConvertToAuthLevel(grants.stringView());
-}
 
 auth::Level sdb::auth::ConvertToAuthLevel(std::string_view grants) {
   if (grants == "rw") {

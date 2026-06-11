@@ -24,8 +24,11 @@
 
 #include <absl/functional/any_invocable.h>
 
+#include <span>
+
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/hnsw/hnsw_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/types.hpp"
@@ -34,14 +37,9 @@ namespace irs {
 
 struct SubReader;
 
-namespace columnstore {
-
 class ColumnReader;
-class HNSWReader;
 class ReadContext;
-class Reader;
-
-}  // namespace columnstore
+class ColReader;
 struct SegmentMeta;
 
 // Generic interface for accessing an index
@@ -120,7 +118,7 @@ struct IndexReader {
 };
 
 // Provides per-field norm readers. Implemented by SegmentReaderImpl over
-// the persisted `<seg>.cs` and by SegmentWriter for in-flight reads
+// the persisted `<seg>.col` and by SegmentWriter for in-flight reads
 // during segment flush. Returns nullptr when the field has no norm column.
 struct NormProvider {
   virtual ~NormProvider() = default;
@@ -145,11 +143,11 @@ struct SubReader : public IndexReader, public NormProvider {
   }
 
   void Search(field_id field, HNSWSearchInfo info, HNSWAnnSearchBuffer& buffer,
-              uint32_t segment_id, columnstore::ReadContext& read_ctx) const;
+              uint32_t segment_id, ReadContext& read_ctx) const;
 
   void RangeSearch(field_id field, HNSWRangeSearchInfo info,
                    HNSWRangeSearchBuffer& buffer, uint32_t segment_id,
-                   columnstore::ReadContext& read_ctx) const;
+                   ReadContext& read_ctx) const;
 
   size_t size() const noexcept final { return 1; }
 
@@ -163,25 +161,23 @@ struct SubReader : public IndexReader, public NormProvider {
     return std::move(it);
   }
 
-  virtual FieldIterator::ptr fields() const = 0;
+  virtual std::span<const field_id> field_ids() const = 0;
 
-  virtual const TermReader* field(std::string_view field) const = 0;
+  virtual const TermReader* field(field_id id) const = 0;
 
-  virtual const columnstore::Reader* CsReader() const { return nullptr; }
+  virtual const ColReader* GetColReader() const { return nullptr; }
 
-  virtual const columnstore::ColumnReader* Column(field_id /*field*/) const {
+  virtual const ColumnReader* Column(field_id /*field*/) const {
     return nullptr;
   }
-  virtual const columnstore::HNSWReader* HNSW(field_id /*field*/) const {
-    return nullptr;
-  }
+  virtual const HnswReader* HNSW(field_id /*field*/) const { return nullptr; }
 };
 
 template<typename Visitor, typename FilterVisitor>
-void Visit(const IndexReader& index, std::string_view field,
+void Visit(const IndexReader& index, field_id id,
            const FilterVisitor& field_visitor, Visitor& visitor) {
   for (auto& segment : index) {
-    const auto* reader = segment.field(field);
+    const auto* reader = segment.field(id);
 
     if (reader) [[likely]] {
       field_visitor(segment, *reader, visitor);

@@ -28,46 +28,36 @@
 #include <duckdb/main/database.hpp>
 
 #include "basics/assert.h"
+#include "basics/duckdb_engine.h"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::tests {
 
-duckdb::DatabaseInstance& CsDb() {
-  // C++11 guarantees thread-safe initialization of function-local
-  // statics; DatabaseInstance is the same singleton-style object
-  // serened uses and tolerates concurrent reads/writes. Lazy: we only
-  // pay for DB construction in test binaries that actually touch cs.
-  static std::unique_ptr<duckdb::DuckDB> kDb = []() {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
+std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
+                                        std::string_view segment_name) {
+  return std::make_unique<ColWriter>(
+    dir, segment_name, ::sdb::DuckDBEngine::Instance().instance());
 }
 
-std::unique_ptr<columnstore::Writer> MakeCsWriter(
-  Directory& dir, std::string_view segment_name) {
-  return std::make_unique<columnstore::Writer>(dir, segment_name, CsDb());
-}
-
-std::unique_ptr<columnstore::Reader> MakeCsReader(
-  const Directory& dir, std::string_view segment_name) {
-  // Reader ctor throws on a missing file; for legacy-style "absent
-  // column = empty index" tests, the caller checks Has*() afterwards.
-  // Returning nullptr on a missing .cs file matches the legacy
-  // ColumnstoreReader::prepare behaviour (no exception, empty result).
+std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
+                                        std::string_view segment_name) {
+  // Reader ctor throws on a missing file; tests that pattern an
+  // "absent column = empty index" probe afterwards via Has*(). Return
+  // nullptr on a missing .col file so callers see "no exception, empty
+  // result".
   bool exists = false;
   std::string filename;
-  filename.reserve(segment_name.size() + 3);
+  filename.reserve(segment_name.size() + 4);
   filename.append(segment_name);
-  filename.append(".cs");
+  filename.append(".col");
   if (!dir.exists(exists, filename) || !exists) {
     return nullptr;
   }
-  return std::make_unique<columnstore::Reader>(dir, segment_name, CsDb());
+  return std::make_unique<ColReader>(
+    dir, segment_name, ::sdb::DuckDBEngine::Instance().instance());
 }
 
-columnstore::ColumnWriter& OpenBlobColumn(columnstore::Writer& w, field_id id) {
+ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {
   return w.OpenColumn(id, duckdb::LogicalType::BLOB);
 }
 
@@ -80,8 +70,7 @@ duckdb::Vector MakeOneRowBlobVector() {
 
 }  // namespace
 
-void AppendBlob(columnstore::ColumnWriter& cw, doc_id_t doc,
-                bytes_view payload) {
+void AppendBlob(ColumnWriter& cw, doc_id_t doc, bytes_view payload) {
   SDB_ASSERT(doc_limits::valid(doc));
   duckdb::Vector v = MakeOneRowBlobVector();
   auto* slots = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
@@ -92,7 +81,7 @@ void AppendBlob(columnstore::ColumnWriter& cw, doc_id_t doc,
   cw.Append(row, v, /*count=*/1);
 }
 
-void AppendNullBlob(columnstore::ColumnWriter& cw, doc_id_t doc) {
+void AppendNullBlob(ColumnWriter& cw, doc_id_t doc) {
   SDB_ASSERT(doc_limits::valid(doc));
   duckdb::Vector v = MakeOneRowBlobVector();
   duckdb::FlatVector::SetNull(v, 0, true);
@@ -100,12 +89,11 @@ void AppendNullBlob(columnstore::ColumnWriter& cw, doc_id_t doc) {
   cw.Append(row, v, /*count=*/1);
 }
 
-bool VisitBlobColumn(const columnstore::Reader& cs_reader,
-                     const columnstore::ColumnReader& column,
+bool VisitBlobColumn(const ColReader& cs_reader, const ColumnReader& column,
                      const std::function<bool(doc_id_t, bytes_view)>& visitor) {
   duckdb::Vector batch{duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE};
-  columnstore::RgWindow window{};
-  columnstore::ReadContext ctx{cs_reader};
+  RgWindow window{};
+  ReadContext ctx{cs_reader};
   for (uint64_t row_pos = 0; row_pos < column.RowCount();) {
     window = column.Locate(row_pos, window);
     auto seg = column.OpenSegment(window.rg, ctx);
@@ -142,8 +130,7 @@ bool VisitBlobColumn(const columnstore::Reader& cs_reader,
   return true;
 }
 
-void AssertBlobColumn(const columnstore::Reader& cs_reader,
-                      const columnstore::ColumnReader& column,
+void AssertBlobColumn(const ColReader& cs_reader, const ColumnReader& column,
                       std::span<const ExpectedBlobRow> expected) {
   size_t i = 0;
   VisitBlobColumn(cs_reader, column, [&](doc_id_t doc, bytes_view payload) {

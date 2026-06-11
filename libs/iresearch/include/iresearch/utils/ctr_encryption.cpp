@@ -174,7 +174,7 @@ bool CtrEncryption::create_header(std::string_view filename,
 
   if (!block_size) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat(
         "failed to initialize encryption header with block of size 0, path '",
         filename, "'"));
@@ -185,7 +185,7 @@ bool CtrEncryption::create_header(std::string_view filename,
   const auto header_length = this->header_length();
 
   if (header_length < kMinHeaderLength) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("failed to initialize encryption header of size ",
                            header_length, ", need at least ", kMinHeaderLength,
                            ", path '", filename, "'"));
@@ -194,7 +194,7 @@ bool CtrEncryption::create_header(std::string_view filename,
   }
 
   if (header_length < 2 * block_size) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("failed to initialize encryption header of size ",
                            header_length, ", need at least ", 2 * block_size,
                            ", path '", filename, "'"));
@@ -220,7 +220,7 @@ bool CtrEncryption::create_header(std::string_view filename,
   CtrCipherStream stream(*_cipher, iv, base_counter);
   if (!stream.Encrypt(0, header + 2 * block_size,
                       header_length - 2 * block_size)) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat("failed to encrypt header, path '", filename, "'"));
 
     return false;
@@ -237,7 +237,7 @@ Encryption::Stream::ptr CtrEncryption::create_stream(std::string_view filename,
 
   if (!block_size) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat(
         "failed to instantiate encryption stream with block of size 0, path '",
         filename, "'"));
@@ -248,7 +248,7 @@ Encryption::Stream::ptr CtrEncryption::create_stream(std::string_view filename,
   const auto header_length = this->header_length();
 
   if (header_length < kMinHeaderLength) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat(
                 "failed to instantiate encryption stream with header of size ",
                 header_length, ", need at least ", kMinHeaderLength, ", path '",
@@ -258,7 +258,7 @@ Encryption::Stream::ptr CtrEncryption::create_stream(std::string_view filename,
   }
 
   if (header_length < 2 * block_size) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+    SDB_ERROR(IRESEARCH,
               absl::StrCat(
                 "failed to instantiate encryption stream with header of size ",
                 header_length, ", need at least ", 2 * block_size, ", path '",
@@ -277,7 +277,7 @@ Encryption::Stream::ptr CtrEncryption::create_stream(std::string_view filename,
   if (!stream.Decrypt(0, header + 2 * block_size,
                       header_length - 2 * block_size)) {
     SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
+      IRESEARCH,
       absl::StrCat("failed to decrypt encryption header for instantiation of "
                    "encryption stream, path '",
                    filename, "'"));

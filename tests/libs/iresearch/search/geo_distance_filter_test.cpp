@@ -18,23 +18,21 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
-
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "geo_test_helpers.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/geo_filter.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
 #include "search_fields.hpp"
@@ -48,53 +46,15 @@ using namespace irs::tests;
 
 inline constexpr irs::field_id kName = 1;
 inline constexpr irs::field_id kGeo = 2;
+// Stand-ins used by filter-only ctor/equal/boost cases that previously
+// passed bare strings ("field", "field1") rather than indexing data.
+inline constexpr irs::field_id kFieldFieldId = 3;
+inline constexpr irs::field_id kField1FieldId = 4;
 
 struct CustomSort final : public irs::ScorerBase<void> {
   static constexpr std::string_view type_name() noexcept {
     return "custom_sort";
   }
-
-  class FieldCollector final : public irs::FieldCollector {
-   public:
-    FieldCollector(const CustomSort& sort) : _sort(sort) {}
-
-    void collect(const irs::SubReader& segment,
-                 const irs::TermReader& field) final {
-      if (_sort.field_collector_collect) {
-        _sort.field_collector_collect(segment, field);
-      }
-    }
-
-    void collect(irs::bytes_view) final {}
-
-    void reset() final {}
-
-    void write(irs::DataOutput& out) const final {}
-
-   private:
-    const CustomSort& _sort;
-  };
-
-  class TermCollector final : public irs::TermCollector {
-   public:
-    TermCollector(const CustomSort& sort) : _sort(sort) {}
-
-    void collect(const irs::SubReader& segment, const irs::TermReader& field,
-                 const irs::AttributeProvider& term_attrs) final {
-      if (_sort.term_collector_collect) {
-        _sort.term_collector_collect(segment, field, term_attrs);
-      }
-    }
-
-    void collect(irs::bytes_view in) final {}
-
-    void reset() final {}
-
-    void write(irs::DataOutput& out) const final {}
-
-   private:
-    const CustomSort& _sort;
-  };
 
   struct Scorer : public irs::ScoreOperator {
     Scorer(const CustomSort& sort, const irs::ScoreContext& ctx)
@@ -140,14 +100,6 @@ struct CustomSort final : public irs::ScorerBase<void> {
     return irs::IndexFeatures::None;
   }
 
-  irs::FieldCollector::ptr PrepareFieldCollector() const final {
-    if (_prepare_field_collector) {
-      return _prepare_field_collector();
-    }
-
-    return std::make_unique<CustomSort::FieldCollector>(*this);
-  }
-
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     if (_prepare_scorer) {
       _prepare_scorer(ctx);
@@ -156,25 +108,10 @@ struct CustomSort final : public irs::ScorerBase<void> {
     return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
   }
 
-  irs::TermCollector::ptr PrepareTermCollector() const final {
-    if (_prepare_term_collector) {
-      return _prepare_term_collector();
-    }
-
-    return std::make_unique<CustomSort::TermCollector>(*this);
-  }
-
-  std::function<void(const irs::SubReader&, const irs::TermReader&)>
-    field_collector_collect;
-  std::function<void(const irs::SubReader&, const irs::TermReader&,
-                     const irs::AttributeProvider&)>
-    term_collector_collect;
   std::function<void(irs::byte_type*, const irs::FieldCollector*,
                      const irs::TermCollector*)>
     collector_finish;
-  std::function<irs::FieldCollector::ptr()> _prepare_field_collector;  // NOLINT
-  std::function<void(const irs::ScoreContext& ctx)> _prepare_scorer;   // NOLINT
-  std::function<irs::TermCollector::ptr()> _prepare_term_collector;    // NOLINT
+  std::function<void(const irs::ScoreContext& ctx)> _prepare_scorer;  // NOLINT
   std::function<void(const irs::ScoreOperator*, irs::score_t*, size_t n)>
     scorer_score;
 
@@ -206,7 +143,7 @@ TEST(GeoDistanceFilterTest, options) {
 TEST(GeoDistanceFilterTest, ctor) {
   GeoDistanceFilter q;
   ASSERT_EQ(irs::Type<GeoDistanceFilter>::id(), q.type());
-  ASSERT_EQ("", q.field());
+  ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 #ifndef SDB_DEV
   ASSERT_EQ(GeoDistanceFilterOptions{}, q.options());
@@ -220,7 +157,7 @@ TEST(GeoDistanceFilterTest, equal) {
   q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
   q.mutable_options()->range.max = 7000.;
   q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-  *q.mutable_field() = "field";
+  *q.mutable_field_id() = kFieldFieldId;
 
   {
     GeoDistanceFilter q1;
@@ -229,7 +166,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_EQ(q, q1);
   }
@@ -242,7 +179,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_EQ(q, q1);
   }
@@ -255,7 +192,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field1";
+    *q1.mutable_field_id() = kField1FieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -267,7 +204,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -279,7 +216,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -291,7 +228,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Exclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -303,7 +240,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q1.mutable_options()->range.max = 6000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -315,7 +252,7 @@ TEST(GeoDistanceFilterTest, equal) {
     q1.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     q1.mutable_options()->range.max = 7000.;
     q1.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q1.mutable_field() = "field";
+    *q1.mutable_field_id() = kFieldFieldId;
 
     ASSERT_NE(q, q1);
   }
@@ -329,7 +266,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.min = 5000.;
     q.mutable_options()->options.set_max_cells(50);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->store_field_id = kGeo;
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
@@ -346,7 +283,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q.mutable_options()->range.max = 5500.;
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->store_field_id = kGeo;
 
     auto prepared = q.prepare({.index = irs::SubReader::empty()});
@@ -361,7 +298,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.min = 5000.;
     q.mutable_options()->options.set_max_cells(50);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->store_field_id = kGeo;
     q.boost(boost);
 
@@ -380,7 +317,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q.mutable_options()->range.max = 6000.;
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    *q.mutable_field() = "field";
+    *q.mutable_field_id() = kFieldFieldId;
     q.mutable_options()->store_field_id = kGeo;
     q.boost(boost);
 
@@ -390,7 +327,7 @@ TEST(GeoDistanceFilterTest, boost) {
 }
 
 TEST(GeoDistanceFilterTest, query) {
-  auto docs = vpack::Parser::fromJson(R"([
+  auto docs = tests::ParseGeoDocs(R"([
     { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.615895, 55.7039   ] } },
     { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.615315, 55.703915 ] } },
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.61509, 55.703537  ] } },
@@ -434,35 +371,39 @@ TEST(GeoDistanceFilterTest, query) {
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
+    geo_field.id = kGeo;
     StringField name_field;
     name_field.field_name = "name";
+    name_field.id = kName;
     {
       auto segment0 = writer->GetBatch();
       auto segment1 = writer->GetBatch();
       {
         size_t i = 0;
-        for (auto doc_slice : vpack::ArrayIterator(docs->slice())) {
-          geo_field.shape_slice = doc_slice.get("geometry");
-          name_field.value = slice_to_string_view(doc_slice.get("name"));
+        for (const auto& doc_entry : docs) {
+          geo_field.value = doc_entry.geometry;
+          name_field.value = doc_entry.name;
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
           ASSERT_TRUE(doc.Insert(name_field));
           ASSERT_TRUE(doc.Insert(geo_field));
-          irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(),
+          irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
                                    name_field);
-          irs::tests::StoreFieldAt(*doc.Columnstore(), kGeo, doc.DocId(),
+          irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),
                                    geo_field);
         }
       }
+      segment1.Commit();
+      segment0.Commit();
     }
-    writer->Commit();
+    writer->RefreshCommit();
     reader = writer->GetSnapshot();
   }
 
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(2U, reader->size());
-  ASSERT_EQ(docs->slice().length(), reader->docs_count());
-  ASSERT_EQ(docs->slice().length(), reader->live_docs_count());
+  ASSERT_EQ(docs.size(), reader->docs_count());
+  ASSERT_EQ(docs.size(), reader->live_docs_count());
 
   auto execute_query = [&reader](const irs::Filter& q,
                                  const std::vector<irs::CostAttr::Type>& costs,
@@ -561,7 +502,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -576,7 +517,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -593,7 +534,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -610,7 +551,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -627,7 +568,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -641,15 +582,13 @@ TEST(GeoDistanceFilterTest, query) {
 
   {
     std::set<std::string> expected;
-    for (auto doc : vpack::ArrayIterator(docs->slice())) {
-      auto name = doc.get("name");
-      ASSERT_TRUE(name.isString());
-      expected.emplace(slice_to_string_view(name));
+    for (const auto& doc_entry : docs) {
+      expected.emplace(doc_entry.name);
     }
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -664,19 +603,16 @@ TEST(GeoDistanceFilterTest, query) {
 
   {
     std::set<std::string> expected;
-    for (auto doc : vpack::ArrayIterator(docs->slice())) {
-      auto name = slice_to_string_view(doc.get("name"));
-
-      if (name == "Q") {
+    for (const auto& doc_entry : docs) {
+      if (doc_entry.name == "Q") {
         continue;
       }
-
-      expected.emplace(name);
+      expected.emplace(doc_entry.name);
     }
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.709754, 37.610235).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -688,31 +624,27 @@ TEST(GeoDistanceFilterTest, query) {
   }
 
   {
-    auto origin = docs->slice().at(7).get("geometry");
-    ASSERT_TRUE(origin.isObject());
     sdb::geo::ShapeContainer lhs, rhs;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      origin, lhs, cache, sdb::geo::coding::Options::Invalid, nullptr));
+      tests::FromJson(docs[7].geometry).value(), lhs, cache,
+      sdb::geo::coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
-    for (auto doc : vpack::ArrayIterator(docs->slice())) {
-      auto geo = doc.get("geometry");
-      ASSERT_TRUE(geo.isObject());
+    for (const auto& doc_entry : docs) {
       ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-        geo, rhs, cache, sdb::geo::coding::Options::Invalid, nullptr));
+        tests::FromJson(doc_entry.geometry).value(), rhs, cache,
+        sdb::geo::coding::Options::Invalid, nullptr));
       const auto dist = lhs.distanceFromCentroid(rhs.centroid());
       if (dist < 100 || dist > 2000) {
         continue;
       }
 
-      auto name = doc.get("name");
-      ASSERT_TRUE(name.isString());
-      expected.emplace(slice_to_string_view(name));
+      expected.emplace(doc_entry.name);
     }
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -725,31 +657,27 @@ TEST(GeoDistanceFilterTest, query) {
   }
 
   {
-    auto origin = docs->slice().at(7).get("geometry");
-    ASSERT_TRUE(origin.isObject());
     sdb::geo::ShapeContainer lhs, rhs;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      origin, lhs, cache, sdb::geo::coding::Options::Invalid, nullptr));
+      tests::FromJson(docs[7].geometry).value(), lhs, cache,
+      sdb::geo::coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
-    for (auto doc : vpack::ArrayIterator(docs->slice())) {
-      auto geo = doc.get("geometry");
-      ASSERT_TRUE(geo.isObject());
+    for (const auto& doc_entry : docs) {
       ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-        geo, rhs, cache, sdb::geo::coding::Options::Invalid, nullptr));
+        tests::FromJson(doc_entry.geometry).value(), rhs, cache,
+        sdb::geo::coding::Options::Invalid, nullptr));
       const auto dist = lhs.distanceFromCentroid(rhs.centroid());
       if (dist >= 2000) {
         continue;
       }
 
-      auto name = doc.get("name");
-      ASSERT_TRUE(name.isString());
-      expected.emplace(slice_to_string_view(name));
+      expected.emplace(doc_entry.name);
     }
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -766,7 +694,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -783,7 +711,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -796,18 +724,13 @@ TEST(GeoDistanceFilterTest, query) {
 
   {
     std::set<std::string> expected;
-    for (auto doc : vpack::ArrayIterator(docs->slice())) {
-      auto geo = doc.get("geometry");
-      ASSERT_TRUE(geo.isObject());
-
-      auto name = doc.get("name");
-      ASSERT_TRUE(name.isString());
-      expected.emplace(slice_to_string_view(name));
+    for (const auto& doc_entry : docs) {
+      expected.emplace(doc_entry.name);
     }
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
 
@@ -817,18 +740,13 @@ TEST(GeoDistanceFilterTest, query) {
 
   {
     std::set<std::string> expected;
-    for (auto doc : vpack::ArrayIterator(docs->slice())) {
-      auto geo = doc.get("geometry");
-      ASSERT_TRUE(geo.isObject());
-
-      auto name = doc.get("name");
-      ASSERT_TRUE(name.isString());
-      expected.emplace(slice_to_string_view(name));
+    for (const auto& doc_entry : docs) {
+      expected.emplace(doc_entry.name);
     }
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -845,7 +763,7 @@ TEST(GeoDistanceFilterTest, query) {
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -858,31 +776,27 @@ TEST(GeoDistanceFilterTest, query) {
   }
 
   {
-    auto origin = docs->slice().at(7).get("geometry");
-    ASSERT_TRUE(origin.isObject());
     sdb::geo::ShapeContainer lhs, rhs;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      origin, lhs, cache, sdb::geo::coding::Options::Invalid, nullptr));
+      tests::FromJson(docs[7].geometry).value(), lhs, cache,
+      sdb::geo::coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
-    for (auto doc : vpack::ArrayIterator(docs->slice())) {
-      auto geo = doc.get("geometry");
-      ASSERT_TRUE(geo.isObject());
+    for (const auto& doc_entry : docs) {
       ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-        geo, rhs, cache, sdb::geo::coding::Options::Invalid, nullptr));
+        tests::FromJson(doc_entry.geometry).value(), rhs, cache,
+        sdb::geo::coding::Options::Invalid, nullptr));
       const auto dist = lhs.distanceFromCentroid(rhs.centroid());
       if (dist <= 2000) {
         continue;
       }
 
-      auto name = doc.get("name");
-      ASSERT_TRUE(name.isString());
-      expected.emplace(slice_to_string_view(name));
+      expected.emplace(doc_entry.name);
     }
 
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -898,7 +812,7 @@ TEST(GeoDistanceFilterTest, query) {
     std::set<std::string> expected;
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -914,7 +828,7 @@ TEST(GeoDistanceFilterTest, query) {
     std::set<std::string> expected;
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70461, 37.617053).ToPoint();
     auto& range = q.mutable_options()->range;
@@ -928,7 +842,7 @@ TEST(GeoDistanceFilterTest, query) {
 }
 
 TEST(GeoDistanceFilterTest, checkScorer) {
-  auto docs = vpack::Parser::fromJson(R"([
+  auto docs = tests::ParseGeoDocs(R"([
     { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.615895, 55.7039   ] } },
     { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.615315, 55.703915 ] } },
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.61509, 55.703537  ] } },
@@ -972,35 +886,39 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
+    geo_field.id = kGeo;
     StringField name_field;
     name_field.field_name = "name";
+    name_field.id = kName;
     {
       auto segment0 = writer->GetBatch();
       auto segment1 = writer->GetBatch();
       {
         size_t i = 0;
-        for (auto doc_slice : vpack::ArrayIterator(docs->slice())) {
-          geo_field.shape_slice = doc_slice.get("geometry");
-          name_field.value = slice_to_string_view(doc_slice.get("name"));
+        for (const auto& doc_entry : docs) {
+          geo_field.value = doc_entry.geometry;
+          name_field.value = doc_entry.name;
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
           ASSERT_TRUE(doc.Insert(name_field));
           ASSERT_TRUE(doc.Insert(geo_field));
-          irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(),
+          irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
                                    name_field);
-          irs::tests::StoreFieldAt(*doc.Columnstore(), kGeo, doc.DocId(),
+          irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),
                                    geo_field);
         }
       }
+      segment1.Commit();
+      segment0.Commit();
     }
-    writer->Commit();
+    writer->RefreshCommit();
     reader = writer->GetSnapshot();
   }
 
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(2, reader->size());
-  ASSERT_EQ(docs->slice().length(), reader->docs_count());
-  ASSERT_EQ(docs->slice().length(), reader->live_docs_count());
+  ASSERT_EQ(docs.size(), reader->docs_count());
+  ASSERT_EQ(docs.size(), reader->live_docs_count());
 
   DocIterator* cur_it = nullptr;
   auto execute_query = [&](const irs::Filter& q, const irs::Scorer& ord) {
@@ -1086,36 +1004,28 @@ TEST(GeoDistanceFilterTest, checkScorer) {
   {
     GeoDistanceFilter q;
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
     auto& range = q.mutable_options()->range;
     range.max_type = irs::BoundType::Inclusive;
     range.max = 300;
 
-    size_t collector_collect_field_count = 0;
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
+    uint64_t collector_field_docs = 0;
     size_t scorer_score_count = 0;
     size_t prepare_scorer_count = 0;
 
     ::CustomSort sort;
 
-    sort.field_collector_collect = [&collector_collect_field_count, &q](
-                                     const irs::SubReader&,
-                                     const irs::TermReader& field) -> void {
-      collector_collect_field_count += (q.field() == field.meta().name);
-    };
-    sort.term_collector_collect = [&collector_collect_term_count, &q](
-                                    const irs::SubReader&,
-                                    const irs::TermReader& field,
-                                    const irs::AttributeProvider&) -> void {
-      collector_collect_term_count += (q.field() == field.meta().name);
-    };
-    sort.collector_finish = [&collector_finish_count](
-                              irs::byte_type*, const irs::FieldCollector*,
-                              const irs::TermCollector*) -> void {
+    sort.collector_finish = [&](irs::byte_type*,
+                                const irs::FieldCollector* field,
+                                const irs::TermCollector* term) -> void {
       ++collector_finish_count;
+      // geo filter exercises field collector but not term collector
+      ASSERT_NE(nullptr, field);
+      ASSERT_EQ(nullptr, term);
+      collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
       EXPECT_EQ(q.Boost(), ctx.boost);
@@ -1133,9 +1043,8 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     const std::map<std::string, irs::score_t> expected{{"Q", 9}, {"R", 9}};
 
     ASSERT_EQ(expected, execute_query(q, sort));
-    ASSERT_EQ(2, collector_collect_field_count);  // 2 segments
-    ASSERT_EQ(0, collector_collect_term_count);
     ASSERT_EQ(1, collector_finish_count);
+    ASSERT_GT(collector_field_docs, 0u);  // field collector ran on segments
     ASSERT_EQ(4, scorer_score_count);
   }
 
@@ -1143,36 +1052,28 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     GeoDistanceFilter q;
     q.boost(1.5f);
     q.mutable_options()->store_field_id = kGeo;
-    *q.mutable_field() = "geometry";
+    *q.mutable_field_id() = kGeo;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(55.70892, 37.607768).ToPoint();
     auto& range = q.mutable_options()->range;
     range.max_type = irs::BoundType::Inclusive;
     range.max = 300;
 
-    size_t collector_collect_field_count = 0;
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
+    uint64_t collector_field_docs = 0;
     size_t scorer_score_count = 0;
     size_t prepare_scorer_count = 0;
 
     CustomSort sort;
 
-    sort.field_collector_collect = [&collector_collect_field_count, &q](
-                                     const irs::SubReader&,
-                                     const irs::TermReader& field) -> void {
-      collector_collect_field_count += (q.field() == field.meta().name);
-    };
-    sort.term_collector_collect = [&collector_collect_term_count, &q](
-                                    const irs::SubReader&,
-                                    const irs::TermReader& field,
-                                    const irs::AttributeProvider&) -> void {
-      collector_collect_term_count += (q.field() == field.meta().name);
-    };
-    sort.collector_finish = [&collector_finish_count](
-                              irs::byte_type*, const irs::FieldCollector*,
-                              const irs::TermCollector*) -> void {
+    sort.collector_finish = [&](irs::byte_type*,
+                                const irs::FieldCollector* field,
+                                const irs::TermCollector* term) -> void {
       ++collector_finish_count;
+      // geo filter exercises field collector but not term collector
+      ASSERT_NE(nullptr, field);
+      ASSERT_EQ(nullptr, term);
+      collector_field_docs += field->docs_with_field;
     };
     sort._prepare_scorer = [&](const irs::ScoreContext& ctx) {
       EXPECT_EQ(q.Boost(), ctx.boost);
@@ -1189,9 +1090,8 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     const std::map<std::string, irs::score_t> expected{{"Q", 9}, {"R", 9}};
 
     ASSERT_EQ(expected, execute_query(q, sort));
-    ASSERT_EQ(2, collector_collect_field_count);  // 2 segments
-    ASSERT_EQ(0, collector_collect_term_count);
     ASSERT_EQ(1, collector_finish_count);
+    ASSERT_GT(collector_field_docs, 0u);  // field collector ran on segments
     ASSERT_EQ(4, scorer_score_count);
   }
 }

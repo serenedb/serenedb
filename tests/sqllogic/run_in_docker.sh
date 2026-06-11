@@ -32,10 +32,11 @@ if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"
 fi
 
-mkdir -p "$WORKSPACE/sanitizers"
-mkdir -p "$WORKSPACE/$BUILD_DIR/coverage"
-mkdir -p "$WORKSPACE/logs"
+mkdir -p "$WORKSPACE"/out/sanitizers/{leak,undefined,address,memory,thread}
+mkdir -p "$WORKSPACE/out/coverage/profiles"
+mkdir -p "$WORKSPACE/out/logs"
 mkdir -p "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}"
+mkdir -p "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}"
 
 if test -z "$BUILD_IMAGE"; then
 	export BUILD_IMAGE=serenedb/serenedb-build-ubuntu:latest
@@ -58,6 +59,11 @@ if ! test -f "$SQLLOGIC_DIR/$COMPOSE_FILE"; then
 	echo "Error: Unknown test kind '$TEST_KIND' - file '$COMPOSE_FILE' not found" >&2
 	exit 255
 fi
+
+# Reap orphans from earlier interrupted runs before bringing the stack up.
+# See tests/scripts/reap_stale_docker_orphans.sh for the full rationale.
+source "$SQLLOGIC_DIR/../scripts/reap_stale_docker_orphans.sh"
+reap_stale_docker_orphans
 
 cleanup() {
 	docker compose -p "${PREFIX}" -f "$COMPOSE_FILE" down --volumes --remove-orphans

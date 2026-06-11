@@ -31,24 +31,28 @@
 
 namespace {
 
-inline constexpr irs::field_id kNameId = 1;
+inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
+inline constexpr irs::field_id kSameId = tests::FieldIdFor("same");
 
 using tests::FormatTestCase;
 using tests::FormatTestCaseWithEncryption;
 
 bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   auto ctx = writer.GetBatch();
-  auto d = ctx.Insert();
-  if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
-    return false;
-  }
-  const auto* name =
-    dynamic_cast<const tests::StringField*>(doc.indexed.get("name"));
-  if (name != nullptr) {
-    if (auto* cs = d.Columnstore(); cs != nullptr) {
-      irs::tests::StoreFieldAt(*cs, kNameId, d.DocId(), *name);
+  {
+    auto d = ctx.Insert();
+    if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
+      return false;
+    }
+    const auto* name =
+      dynamic_cast<const tests::StringField*>(doc.indexed.get_by_id(kNameId));
+    if (name != nullptr) {
+      if (auto* cs = d.GetColWriter(); cs != nullptr) {
+        irs::tests::StoreFieldAt(*cs, kNameId, d.DocId(), *name);
+      }
     }
   }
+  ctx.Commit();
   return true;
 }
 
@@ -70,7 +74,7 @@ TEST_P(Format11TestCase, open_10_with_11) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     AssertSnapshotEquality(*writer);
   }
 
@@ -97,7 +101,7 @@ TEST_P(Format11TestCase, open_10_with_11) {
     irs::tests::BlobPointReader values{segment, *column};
     ASSERT_EQ(expected_name.size(),
               segment.docs_count());  // total count of documents
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -130,7 +134,7 @@ TEST_P(Format11TestCase, formats_11) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     AssertSnapshotEquality(*writer);
   }
 
@@ -144,7 +148,7 @@ TEST_P(Format11TestCase, formats_11) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
-    ASSERT_TRUE(writer->Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
     AssertSnapshotEquality(*writer);
   }
 
@@ -169,7 +173,7 @@ TEST_P(Format11TestCase, formats_11) {
     irs::tests::BlobPointReader values{segment, *column};
     ASSERT_EQ(expected_name.size(),
               segment.docs_count());  // total count of documents
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -197,7 +201,7 @@ TEST_P(Format11TestCase, formats_11) {
     irs::tests::BlobPointReader values{segment, *column};
     ASSERT_EQ(expected_name.size(),
               segment.docs_count());  // total count of documents
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());

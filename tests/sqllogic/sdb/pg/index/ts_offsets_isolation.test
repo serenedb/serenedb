@@ -1,0 +1,66 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY offs_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE t (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX t_idx ON t USING inverted(id, body offs_en);
+
+
+statement ok
+INSERT INTO t VALUES (1, 'the quick brown fox');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+connection reader
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+
+connection reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection reader
+query
+SELECT id, length(ts_offsets(body)) FROM t_idx WHERE body @@ ts_phrase('quick') ORDER BY id;
+----
+id	length
+1	2
+
+
+connection writer
+statement ok
+DROP INDEX t_idx;
+
+
+connection writer
+statement ok
+DROP TEXT SEARCH DICTIONARY offs_en;
+
+
+connection reader
+query
+SELECT id, length(ts_offsets(body)) FROM t_idx WHERE body @@ ts_phrase('quick') ORDER BY id;
+----
+id	length
+1	2
+
+
+connection reader
+statement ok
+COMMIT;

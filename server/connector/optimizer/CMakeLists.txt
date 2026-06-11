@@ -1,4 +1,4 @@
 target_sources(
     serene_connector
-    PRIVATE flatten_projection_ids.cpp iresearch_plan.cpp rocksdb_plan.cpp
+    PRIVATE iresearch_plan.cpp rocksdb_plan.cpp wrap_unsupported_types.cpp
 )

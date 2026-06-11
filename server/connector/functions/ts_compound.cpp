@@ -44,7 +44,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
       if (const auto* val = TryGetConstant(arg); val && val->IsNull()) {
         return;
       }
-      const auto type_id = arg.return_type.id();
+      const auto type_id = arg.GetReturnType().id();
       if (type_id != duckdb::LogicalTypeId::LIST &&
           type_id != duckdb::LogicalTypeId::ARRAY) {
         out.push_back(&arg);
@@ -53,7 +53,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
       // List/array shape: NULL-list -> empty bucket; folded constant
       // -> children values; list_value/array_value call -> children
       // expressions. Mirrors FromAnyAllOf's extraction.
-      if (arg.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
+      if (arg.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
         const auto& val = arg.Cast<duckdb::BoundConstantExpression>().value;
         if (val.IsNull()) {
           return;
@@ -68,15 +68,15 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
         }
         return;
       }
-      if (arg.expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
+      if (arg.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
         const auto& fn = arg.Cast<duckdb::BoundFunctionExpression>();
-        if (fn.function.name != "list_value" &&
-            fn.function.name != "array_value") {
+        if (fn.function.GetName() != "list_value" &&
+            fn.function.GetName() != "array_value") {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
             ERR_MSG("ts_compound ", label,
                     " list arg must be a literal list or array (got: ",
-                    fn.function.name, ")"),
+                    fn.function.GetName(), ")"),
             ERR_HINT("Pass a literal list/array, e.g. ['a', 'b'], or NULL "
                      "for an empty bucket."));
         }

@@ -27,9 +27,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/dfi.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -39,8 +37,7 @@ using namespace tests;
 TEST(dfi_test, consts) { static_assert("dfi" == irs::Type<irs::DFI>::name()); }
 
 TEST(dfi_test, load_default) {
-  auto scorer = irs::scorers::Get(
-    "dfi", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+  auto scorer = irs::DFI::Make(irs::DFI::Options{});
   ASSERT_NE(nullptr, scorer);
   auto& dfi = dynamic_cast<irs::DFI&>(*scorer);
   ASSERT_EQ(irs::DFIMeasure::Standardized, dfi.measure());
@@ -50,22 +47,22 @@ TEST(dfi_test, load_default) {
 
 TEST(dfi_test, load_measures) {
   {
-    auto s = irs::scorers::Get("dfi", irs::Type<irs::text_format::Json>::get(),
-                               "{ \"measure\": \"standardized\" }");
+    auto s = irs::DFI::Make(
+      irs::DFI::Options{.measure = irs::DFIMeasure::Standardized});
     ASSERT_NE(nullptr, s);
     ASSERT_EQ(irs::DFIMeasure::Standardized,
               dynamic_cast<irs::DFI&>(*s).measure());
   }
   {
-    auto s = irs::scorers::Get("dfi", irs::Type<irs::text_format::Json>::get(),
-                               "{ \"measure\": \"saturated\" }");
+    auto s =
+      irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::Saturated});
     ASSERT_NE(nullptr, s);
     ASSERT_EQ(irs::DFIMeasure::Saturated,
               dynamic_cast<irs::DFI&>(*s).measure());
   }
   {
-    auto s = irs::scorers::Get("dfi", irs::Type<irs::text_format::Json>::get(),
-                               "{ \"measure\": \"chi_squared\" }");
+    auto s =
+      irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::ChiSquared});
     ASSERT_NE(nullptr, s);
     ASSERT_EQ(irs::DFIMeasure::ChiSquared,
               dynamic_cast<irs::DFI&>(*s).measure());
@@ -73,9 +70,19 @@ TEST(dfi_test, load_measures) {
 }
 
 TEST(dfi_test, load_invalid) {
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("dfi", irs::Type<irs::text_format::Json>::get(),
-                              "{ \"measure\": \"bogus\" }"));
+  EXPECT_ANY_THROW(irs::DFI::Make(
+    irs::DFI::Options{.measure = static_cast<irs::DFIMeasure>(99)}));
+  EXPECT_ANY_THROW(irs::DFI::Make(
+    irs::DFI::Options{.measure = static_cast<irs::DFIMeasure>(3)}));
+  // Each named value is accepted.
+  EXPECT_NE(nullptr, irs::DFI::Make(irs::DFI::Options{
+                       .measure = irs::DFIMeasure::Standardized}));
+  EXPECT_NE(
+    nullptr,
+    irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::Saturated}));
+  EXPECT_NE(
+    nullptr,
+    irs::DFI::Make(irs::DFI::Options{.measure = irs::DFIMeasure::ChiSquared}));
 }
 
 TEST(dfi_test, equals) {
@@ -85,6 +92,8 @@ TEST(dfi_test, equals) {
   ASSERT_TRUE(a->equals(*b));
   ASSERT_FALSE(a->equals(*c));
 }
+
+constexpr irs::field_id kBodyFieldId = 1;
 
 class DFIIndexTest : public IndexTestBase {
  protected:
@@ -97,18 +106,19 @@ void DFIIndexTest::BuildFixture() {
   using TextField = tests::TextField<std::string>;
   const auto extra = irs::IndexFeatures::Norm;
 
+  auto make_body = [&](std::string value) {
+    auto f =
+      std::make_shared<TextField>("body", std::move(value), false, extra);
+    f->id = kBodyFieldId;
+    return f;
+  };
+
   tests::Document doc1;
-  doc1.insert(std::make_shared<TextField>(
-                "body", std::string{"fox fox fox dog cat"}, false, extra),
-              true, false);
+  doc1.insert(make_body(std::string{"fox fox fox dog cat"}), true, false);
   tests::Document doc2;
-  doc2.insert(
-    std::make_shared<TextField>("body", std::string{"fox cat"}, false, extra),
-    true, false);
+  doc2.insert(make_body(std::string{"fox cat"}), true, false);
   tests::Document doc3;
-  doc3.insert(std::make_shared<TextField>("body", std::string{"dog rabbit fox"},
-                                          false, extra),
-              true, false);
+  doc3.insert(make_body(std::string{"dog rabbit fox"}), true, false);
 
   auto opts = irs::tests::DefaultWriterOptions();
 
@@ -117,7 +127,7 @@ void DFIIndexTest::BuildFixture() {
   ASSERT_TRUE(tests::Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc3.indexed.begin(), doc3.indexed.end()));
-  writer->Commit();
+  writer->RefreshCommit();
 }
 
 TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
@@ -130,7 +140,7 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
   auto& segment = *(index.begin());
 
   irs::ByTerm filter;
-  *filter.mutable_field() = "body";
+  *filter.mutable_field_id() = kBodyFieldId;
   filter.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 

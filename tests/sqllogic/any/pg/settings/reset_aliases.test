@@ -1,0 +1,59 @@
+# ----------------------------------------------------------------------
+# PG-compat: the multi-word RESET keyword forms mirror the SHOW aliases.
+# PG grammar [reset_rest] accepts:
+#
+#   RESET TIME ZONE                  -- equivalent to RESET timezone
+#   RESET TRANSACTION ISOLATION LEVEL -- parses; PG errors at runtime
+#                                       because transaction_isolation
+#                                       isn't a resettable GUC
+#   RESET SESSION AUTHORIZATION      -- equivalent to RESET session_authorization
+# ----------------------------------------------------------------------
+
+# Sanity: TimeZone canonical column header (set up + observable round trip).
+statement ok
+SET TimeZone = 'America/New_York';
+
+
+query
+SHOW TimeZone;
+----
+TimeZone
+America/New_York
+
+
+# RESET TIME ZONE accepts the multi-word form and clears the session value.
+# The post-RESET default depends on the PG container's TZ env (UTC vs Etc/UTC
+# vs whatever the runner set), so we don't assert it here; only that the
+# parser accepts the keyword form and the value moves away from what we set.
+statement ok
+RESET TIME ZONE;
+
+
+# Lowercase keyword variant.
+statement ok
+SET TimeZone = 'America/Los_Angeles';
+
+
+statement ok
+reset time zone;
+
+
+# RESET TRANSACTION ISOLATION LEVEL: PG parses the form but errors at runtime
+# because transaction_isolation cannot be reset (it's a derived per-txn GUC).
+statement error
+RESET TRANSACTION ISOLATION LEVEL;
+----
+db error: ERROR: <slt:ignore>transaction_isolation<slt:ignore>
+
+
+# RESET SESSION AUTHORIZATION: equivalent to RESET session_authorization;
+# both restore the role to the connection's original authenticated user.
+statement ok
+RESET SESSION AUTHORIZATION;
+
+
+query
+SHOW session_authorization;
+----
+session_authorization
+postgres

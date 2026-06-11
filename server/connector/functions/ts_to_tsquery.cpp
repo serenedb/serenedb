@@ -24,7 +24,6 @@
 #include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -241,13 +240,12 @@ void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
-  std::string field_name;
-  MakeFieldName(column_info, field_name);
-  search::mangling::MangleString(field_name);
   auto& mixed = ctx.negated ? Negate<irs::MixedBooleanFilter>(parent)
                             : AddFilter<irs::MixedBooleanFilter>(parent);
   mixed.boost(ctx.boost);
-  sdb::ParserContext parser_ctx{mixed, field_name, ctx.tokenizer};
+  sdb::ParserContext parser_ctx{
+    mixed, PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
+    ctx.tokenizer};
   parser_ctx.strict_field = true;
   if (auto r = sdb::ParseQuery(parser_ctx, text); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

@@ -40,7 +40,7 @@ QUERY PLAN
 │             42            │
 │          column1          │
 │                           │
-│           ~1 row          │
+│          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │  ROCKSDB_PK_POINTS_LOOKUP │

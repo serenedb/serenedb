@@ -29,7 +29,6 @@
 #include "catalog/table.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
-#include "rest_server/serened.h"
 
 namespace sdb::pg {
 namespace {

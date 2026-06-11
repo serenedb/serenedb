@@ -44,19 +44,43 @@
 
 namespace {
 
+// Field-id constants used across this file. The on-disk index is now keyed
+// by field_id (not by name); these IDs are arbitrary stable values used by
+// both the writer-side fixture (to assign per-field IDs) and the filter
+// builders (to address those fields).
+inline constexpr irs::field_id kFieldName = tests::FieldIdFor("name");
+inline constexpr irs::field_id kFieldSame = tests::FieldIdFor("same");
+inline constexpr irs::field_id kFieldDuplicated =
+  tests::FieldIdFor("duplicated");
+inline constexpr irs::field_id kFieldPrefix = tests::FieldIdFor("prefix");
+inline constexpr irs::field_id kFieldTestField =
+  tests::FieldIdFor("test-field");
+inline constexpr irs::field_id kFieldField = tests::FieldIdFor("field");
+inline constexpr irs::field_id kFieldField1 = tests::FieldIdFor("field1");
+inline constexpr irs::field_id kFieldField123 = tests::FieldIdFor("field123");
+inline constexpr irs::field_id kFieldFieasfdld1 =
+  tests::FieldIdFor("fieasfdld1");
+inline constexpr irs::field_id kFieldSource = tests::FieldIdFor("source");
+inline constexpr irs::field_id kFieldNameUpper =
+  tests::FieldIdFor("name_upper");
+inline constexpr irs::field_id kFieldAbc = tests::FieldIdFor("abc");
+inline constexpr irs::field_id kFieldAbcd = tests::FieldIdFor("abcd");
+// Deliberately-bad ids used by tests that expect a no-match.
+inline constexpr irs::field_id kFieldInvalid = irs::field_limits::invalid();
+
 template<typename Filter>
-Filter MakeFilter(const std::string_view& field, const std::string_view term) {
+Filter MakeFilter(irs::field_id field, const std::string_view term) {
   Filter q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = field;
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return q;
 }
 
 template<typename Filter>
-Filter& Append(irs::BooleanFilter& root, const std::string_view& name,
+Filter& Append(irs::BooleanFilter& root, irs::field_id field,
                const std::string_view& term) {
   auto& sub = root.add<Filter>();
-  *sub.mutable_field() = name;
+  *sub.mutable_field_id() = field;
   sub.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return sub;
 }
@@ -90,6 +114,22 @@ class BasicDocIterator : public irs::DocIterator {
  public:
   typedef std::vector<irs::doc_id_t> DocidsT;
 
+  // Owning ctor: copies the doc list so callers can hand us a temp range
+  // (`{1, 5, 10}` etc.) without lifetime worries.
+  BasicDocIterator(DocidsT docs, const irs::byte_type* stats = nullptr,
+                   irs::score_t boost = irs::kNoBoost)
+    : _docs(std::move(docs)),
+      _first(_docs.begin()),
+      _last(_docs.end()),
+      _stats(stats),
+      _boost{boost} {
+    _est.reset(std::distance(_first, _last));
+    _attrs[irs::Type<irs::CostAttr>::id()] = &_est;
+  }
+
+  // Backward-compatible iterator-pair ctor: same dangling-prone behavior
+  // as before -- caller must keep the underlying range alive. Existing
+  // call sites that pass `docs.begin()/end()` still compile.
   BasicDocIterator(const DocidsT::const_iterator& first,
                    const DocidsT::const_iterator& last,
                    const irs::byte_type* stats = nullptr,
@@ -141,6 +181,10 @@ class BasicDocIterator : public irs::DocIterator {
  private:
   std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
   irs::CostAttr _est;
+  // Owned doc storage for the value-taking ctor. Empty when the
+  // iterator-pair ctor is used; the iterators then reference an
+  // externally-owned range and the caller must keep it alive.
+  DocidsT _docs;
   DocidsT::const_iterator _first;
   DocidsT::const_iterator _last;
   const irs::byte_type* _stats;
@@ -164,8 +208,11 @@ std::vector<DocIteratorImpl> ExecuteAll(
   std::vector<DocIteratorImpl> itrs;
   itrs.reserve(docs.size());
   for (const auto& doc : docs) {
+    // BasicDocIterator takes ownership of a copy so it no longer carries
+    // dangling iterators into the caller's `docs` range. Callers used to
+    // need a named local for `docs`; this lifts that constraint.
     itrs.emplace_back(irs::memory::make_managed<detail::BasicDocIterator>(
-      doc.begin(), doc.end()));
+      detail::BasicDocIterator::DocidsT{doc}));
   }
 
   return itrs;
@@ -1074,10 +1121,8 @@ struct SegmentReaderMock final : irs::SubReader {
   irs::DocIterator::ptr docs_iterator() const final {
     return irs::DocIterator::empty();
   }
-  const irs::TermReader* field(std::string_view) const final { return nullptr; }
-  irs::FieldIterator::ptr fields() const final {
-    return irs::FieldIterator::empty();
-  }
+  const irs::TermReader* field(irs::field_id) const final { return nullptr; }
+  std::span<const irs::field_id> field_ids() const final { return {}; }
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
   irs::SegmentInfo _meta;
 };
@@ -7369,6 +7414,580 @@ TEST(block_disjunction_test, seek_no_readahead) {
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     ASSERT_EQ(expected, result);
   }
+}
+
+TEST(block_disjunction_test, lazy_seek) {
+  // BlockDisjunction::LazySeek is a "is target a match?" probe.
+  // Contract:
+  //   - target <= value(): stay, return value().
+  //   - target is a disjunction match: state advances to target,
+  //     return target, value() == target.
+  //   - target is NOT a match: state unchanged, return target + 1
+  //     (the "advance past" hint used across iresearch).
+  using Disjunction = irs::BlockDisjunction<
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+    irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
+
+  // (i) In-buffer hit: bit set at target -> returns target.
+  // (ii) In-buffer miss: bit unset at target -> returns target+1,
+  //      value() unchanged.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 2, 5, 7, 9, 11, 12, 29, 45},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+
+    // Hit at 1 (OOB on first call -> refills, but the second hit
+    // is the in-buffer one).
+    ASSERT_EQ(1, it.LazySeek(1));
+    ASSERT_EQ(1, it.value());
+
+    // After hit, _max is advanced past target. In-buffer hits.
+    ASSERT_EQ(9, it.LazySeek(9));
+    ASSERT_EQ(9, it.value());
+    ASSERT_EQ(12, it.LazySeek(12));
+    ASSERT_EQ(12, it.value());
+
+    // In-buffer miss: 13 is not in the disjunction; value() stays
+    // at 12, return is 14.
+    ASSERT_EQ(14, it.LazySeek(13));
+    ASSERT_EQ(12, it.value());
+
+    // A second miss in a row: state still unchanged.
+    ASSERT_EQ(15, it.LazySeek(14));
+    ASSERT_EQ(12, it.value());
+
+    // Next real match: 29 -> still in-buffer hit.
+    ASSERT_EQ(29, it.LazySeek(29));
+    ASSERT_EQ(29, it.value());
+
+    // 45 hit, then 46 is past all docs.
+    ASSERT_EQ(45, it.LazySeek(45));
+    ASSERT_EQ(45, it.value());
+  }
+
+  // (iii) Stay clause: target <= value() returns value() without
+  //       touching subs.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 9, 45},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+    ASSERT_EQ(1, it.LazySeek(1));
+    ASSERT_EQ(1, it.LazySeek(1));  // target == value(): stay.
+    ASSERT_EQ(9, it.LazySeek(9));
+    ASSERT_EQ(9, it.LazySeek(9));  // stay.
+    ASSERT_EQ(45, it.LazySeek(45));
+    ASSERT_EQ(45, it.LazySeek(45));  // stay.
+  }
+
+  // (iv) OOB hit: target jumps past _max into a new sub window.
+  // (v)  OOB miss: target in a "gap" between subs' values returns
+  //      target+1, state unchanged.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 5, 9, 65, 1145, 111165},
+      {2, 7, 12, 78, 1111178},
+      {11, 29, 45, 127, 111111127},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+
+    ASSERT_EQ(1, it.LazySeek(1));
+    ASSERT_EQ(1, it.value());
+
+    // OOB hit: 78 lives in sub 1 (window past initial refill).
+    ASSERT_EQ(78, it.LazySeek(78));
+    ASSERT_EQ(78, it.value());
+
+    // OOB miss: 1146 isn't in any sub (next docs are 111165, 1111178,
+    // 111111127). Return 1147, value unchanged at 78.
+    ASSERT_EQ(1147, it.LazySeek(1146));
+    ASSERT_EQ(78, it.value());
+
+    // Hit again at the next real doc.
+    ASSERT_EQ(111165, it.LazySeek(111165));
+    ASSERT_EQ(111165, it.value());
+
+    // OOB hit at the tail.
+    ASSERT_EQ(111111127, it.LazySeek(111111127));
+    ASSERT_EQ(111111127, it.value());
+  }
+
+  // (vi) Hit + advance(): after a hit, next() walks to the next bit
+  //      (in-buffer follow-up).
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 2, 5, 7, 9, 11, 12, 29, 45},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+    ASSERT_EQ(7, it.LazySeek(7));
+    ASSERT_EQ(7, it.value());
+    ASSERT_EQ(9, it.advance());  // popped bit 7; next set bit is 9.
+    ASSERT_EQ(11, it.advance());
+    ASSERT_EQ(12, it.advance());
+    ASSERT_EQ(29, it.advance());
+    ASSERT_EQ(45, it.advance());
+    ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+  }
+
+  // (vii) Miss + seek(): seek() recovers the real next-doc that
+  //       LazySeek's bit-probe deliberately skipped.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 2, 5, 7, 9, 11, 12, 29, 45},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+    ASSERT_EQ(5, it.LazySeek(5));    // hit, refills the buffer.
+    ASSERT_EQ(14, it.LazySeek(13));  // miss; value() stays at 5.
+    ASSERT_EQ(5, it.value());
+    ASSERT_EQ(29, it.seek(13));  // seek finds the real next.
+    ASSERT_EQ(29, it.value());
+  }
+
+  // (viii) Exhausted-sub purge: a sub that hits eof during the OOB
+  //        sub-probe is dropped from _itrs. Caller-visible signal:
+  //        after the LazySeek the remaining matches still come from
+  //        live subs only.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 5},  // exhausted past 5.
+      {3, 9, 100},
+      {7, 200},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+
+    ASSERT_EQ(1, it.LazySeek(1));
+    // Jump past sub 0's last doc (5). Sub 0 will return eof on
+    // LazySeek(100) and be purged.
+    ASSERT_EQ(100, it.LazySeek(100));
+    ASSERT_EQ(100, it.value());
+    // Continue: sub 1 just hit 100, sub 2 still has 200 ahead.
+    ASSERT_EQ(200, it.LazySeek(200));
+    ASSERT_EQ(200, it.value());
+  }
+
+  // (ix) All-subs-exhausted: after every sub is purged, LazySeek
+  //      collapses to value() == eof(), and subsequent calls
+  //      short-circuit via the stay clause.
+  {
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {1, 5},
+      {3, 7},
+    };
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                   irs::doc_limits::eof());
+    ASSERT_EQ(1, it.LazySeek(1));
+    ASSERT_EQ(7, it.LazySeek(7));
+    // Past every sub; both purged -> _doc = eof.
+    ASSERT_EQ(irs::doc_limits::eof(), it.LazySeek(100));
+    ASSERT_TRUE(irs::doc_limits::eof(it.value()));
+    // Subsequent call short-circuits via stay clause.
+    ASSERT_EQ(irs::doc_limits::eof(), it.LazySeek(200));
+  }
+}
+
+// Extra LazySeek coverage: interleaving with seek/advance, word- and
+// window-boundary edges, MinMatch + MinMatchFast, scored cross-product.
+namespace {
+
+using LSDisjunction = irs::BlockDisjunction<
+  irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+  irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
+
+using LSMinMatchDisjunction = irs::BlockDisjunction<
+  irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+  irs::BlockDisjunctionTraits<irs::MatchType::MinMatch, false, 1>>;
+
+using LSMinMatchFastDisjunction = irs::BlockDisjunction<
+  irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+  irs::BlockDisjunctionTraits<irs::MatchType::MinMatchFast, false, 1>>;
+
+LSDisjunction MakeLS(const std::vector<std::vector<irs::doc_id_t>>& docs) {
+  return LSDisjunction(detail::ExecuteAll<irs::ScoreAdapter>(docs),
+                       irs::doc_limits::eof());
+}
+
+}  // namespace
+
+// LazySeek hit, then seek() forward within the same 64-bit word.
+TEST(block_disjunction_test, lazy_seek_then_seek_same_word) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 13, 20, 45, 63}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(13, it.LazySeek(13));
+  ASSERT_EQ(13, it.value());
+  ASSERT_EQ(20, it.seek(20));
+  ASSERT_EQ(45, it.advance());
+  ASSERT_EQ(63, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// LazySeek hit, then seek() across the window boundary (forces a Refill).
+TEST(block_disjunction_test, lazy_seek_then_seek_different_window) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{2, 5, 10},
+                                                     {100, 130, 200}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(5, it.LazySeek(5));
+  ASSERT_EQ(100, it.seek(50));  // crosses into the next refill
+  ASSERT_EQ(130, it.advance());
+  ASSERT_EQ(200, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// seek() to position the cursor, then LazySeek probes ahead.
+TEST(block_disjunction_test, seek_then_lazy_seek) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 3, 7, 11, 15, 30}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(7, it.seek(7));
+  ASSERT_EQ(11, it.LazySeek(11));
+  ASSERT_EQ(11, it.value());
+  ASSERT_EQ(13, it.LazySeek(12));  // miss -> target+1; value() stays
+  ASSERT_EQ(11, it.value());
+  ASSERT_EQ(30, it.LazySeek(30));
+  ASSERT_EQ(30, it.value());
+}
+
+// 4. LazySeek miss followed by advance(). advance() must walk from the
+//    current value, not from the miss target.
+TEST(block_disjunction_test, lazy_seek_miss_then_advance) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 7, 13, 30}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(7, it.LazySeek(7));
+  ASSERT_EQ(9, it.LazySeek(8));  // miss; bit 8 unset -> target + 1
+  ASSERT_EQ(7, it.value());
+  ASSERT_EQ(13, it.advance());  // walks from 7's _cur, not from 8
+  ASSERT_EQ(30, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// Interleaved hits and advances.
+TEST(block_disjunction_test, lazy_seek_interleaved_advance) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 3, 7, 11, 15, 19, 23, 31, 50, 55}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(3, it.LazySeek(3));
+  ASSERT_EQ(7, it.advance());
+  ASSERT_EQ(11, it.LazySeek(11));
+  ASSERT_EQ(15, it.advance());
+  ASSERT_EQ(19, it.advance());
+  ASSERT_EQ(31, it.LazySeek(31));
+  ASSERT_EQ(50, it.advance());
+  ASSERT_EQ(55, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// LazySeek target at bit 0 of a word -- widest possible cursor mask.
+TEST(block_disjunction_test, lazy_seek_bit_zero) {
+  // Second window starts at doc 64 -> bit_offset 0.
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1}, {64, 65, 70, 90}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(64, it.LazySeek(64));
+  ASSERT_EQ(65, it.advance());
+  ASSERT_EQ(70, it.advance());
+  ASSERT_EQ(90, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// LazySeek target at bit 63 -- _cur ends up empty, advance() must cross.
+TEST(block_disjunction_test, lazy_seek_bit_63) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 63}, {64, 65}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(63, it.LazySeek(63));
+  ASSERT_EQ(64, it.advance());
+  ASSERT_EQ(65, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// Consecutive LazySeek hits in the same word -- XOR-no-store regression.
+TEST(block_disjunction_test, lazy_seek_consecutive_hits_same_word) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{5, 12, 13, 25}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(5, it.LazySeek(5));
+  ASSERT_EQ(12, it.LazySeek(12));
+  ASSERT_EQ(13, it.LazySeek(13));
+  ASSERT_EQ(25, it.LazySeek(25));
+  ASSERT_EQ(25, it.value());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// Consecutive LazySeek misses leave state untouched.
+TEST(block_disjunction_test, lazy_seek_consecutive_misses_same_word) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 10, 50}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(21, it.LazySeek(20));  // miss
+  ASSERT_EQ(31, it.LazySeek(30));  // miss
+  ASSERT_EQ(1, it.value());        // still at 1
+  ASSERT_EQ(50, it.LazySeek(50));
+  ASSERT_EQ(50, it.value());
+}
+
+// Miss then hit at the adjacent bit.
+TEST(block_disjunction_test, lazy_seek_miss_then_hit_adjacent_bit) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 6, 50}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(5, it.LazySeek(4));  // miss at bit 4 -> target+1
+  ASSERT_EQ(1, it.value());
+  ASSERT_EQ(5, it.LazySeek(5));  // hit at 5
+  ASSERT_EQ(6, it.LazySeek(6));  // hit at adjacent bit 6
+  ASSERT_EQ(6, it.value());
+  ASSERT_EQ(50, it.LazySeek(50));
+}
+
+// LazySeek hit then drain via advance() until eof.
+TEST(block_disjunction_test, lazy_seek_then_drain_via_advance) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(3, it.LazySeek(3));
+  std::vector<irs::doc_id_t> seen;
+  while (!irs::doc_limits::eof(it.advance())) {
+    seen.push_back(it.value());
+  }
+  ASSERT_EQ((std::vector<irs::doc_id_t>{4, 5, 6, 7, 8, 9, 10}), seen);
+}
+
+// Forward walk via LazySeek+advance never re-emits a returned doc.
+TEST(block_disjunction_test, lazy_seek_no_duplicate_emit) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 9, 13, 17, 21, 25, 29, 33, 50}};
+  auto it = MakeLS(docs);
+  std::vector<irs::doc_id_t> seen;
+  irs::doc_id_t r = it.LazySeek(1);
+  while (!irs::doc_limits::eof(r)) {
+    seen.push_back(it.value());
+    r = it.advance();
+  }
+  ASSERT_EQ((std::vector<irs::doc_id_t>{1, 5, 9, 13, 17, 21, 25, 29, 33, 50}),
+            seen);
+}
+
+// MinMatch -- doc meets the threshold, LazySeek hits.
+TEST(block_disjunction_test, lazy_seek_min_match_threshold_passed) {
+  std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 10},
+    {3, 10},
+    {7, 10, 20},
+  };
+  LSMinMatchDisjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2,
+                           irs::doc_limits::eof());
+  ASSERT_EQ(10, it.LazySeek(10));
+  ASSERT_EQ(10, it.value());
+  ASSERT_GE(it.MatchCount(), 2u);
+}
+
+// MinMatch -- only one sub hits target, LazySeek must reject.
+TEST(block_disjunction_test, lazy_seek_min_match_threshold_failed) {
+  std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 10},
+    {3, 10},
+    {7, 10, 20},
+  };
+  LSMinMatchDisjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2,
+                           irs::doc_limits::eof());
+  ASSERT_EQ(2, it.LazySeek(1));  // matches < 2 -> target+1
+  ASSERT_EQ(10, it.advance());   // first qualifying doc
+}
+
+// MinMatch hit then advance() -- buffer-refill match-count semantics.
+TEST(block_disjunction_test, lazy_seek_min_match_then_advance) {
+  std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 3, 5, 7},
+    {1, 5, 7, 9},
+    {3, 5, 9},
+  };
+  LSMinMatchDisjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2,
+                           irs::doc_limits::eof());
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(3, it.advance());
+  ASSERT_EQ(5, it.advance());
+  ASSERT_EQ(7, it.advance());
+  ASSERT_EQ(9, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// MinMatchFast -- LazySeek over a sparse sub set; some targets fail.
+TEST(block_disjunction_test, lazy_seek_min_match_fast_pruning) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 9},
+    {1, 9, 15},
+    {5, 9, 30},
+  };
+  LSMinMatchFastDisjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2,
+                               irs::doc_limits::eof());
+  ASSERT_EQ(1, it.LazySeek(1));
+  ASSERT_EQ(5, it.LazySeek(5));
+  ASSERT_EQ(9, it.LazySeek(9));
+  // 15 only hits sub 1 -> threshold fails. Either target+1 or eof is
+  // acceptable depending on whether subs were purged.
+  const auto r = it.LazySeek(15);
+  if (!irs::doc_limits::eof(r)) {
+    ASSERT_EQ(16, r);
+    ASSERT_EQ(9, it.value());
+  }
+}
+
+// Stay clause: repeated / lower / zero targets short-circuit after a hit.
+TEST(block_disjunction_test, lazy_seek_stay_clause_idempotent) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 17}};
+  auto it = MakeLS(docs);
+  ASSERT_EQ(5, it.LazySeek(5));
+  for (int i = 0; i < 8; ++i) {
+    ASSERT_EQ(5, it.LazySeek(5));
+    ASSERT_EQ(5, it.value());
+  }
+  ASSERT_EQ(5, it.LazySeek(3));
+  ASSERT_EQ(5, it.LazySeek(0));
+  ASSERT_EQ(5, it.value());
+  ASSERT_EQ(17, it.LazySeek(17));
+}
+
+// Scored LazySeek across Match / MinMatch / MinMatchFast.
+namespace {
+
+template<irs::MatchType M>
+using LSScoredDisjunction =
+  irs::BlockDisjunction<irs::ScoreAdapter, irs::ScoreMergeType::Sum,
+                        irs::BlockDisjunctionTraits<M, false, 1>>;
+
+}  // namespace
+
+// Match + Sum, single sub: LazySeek hit produces the sub's constant.
+TEST(block_disjunction_test, lazy_seek_scored_match_single_sub) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 10, 17, 30}};
+  detail::CompoundSort sort{{7}};
+  LSScoredDisjunction<irs::MatchType::Match> it(
+    detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(10, it.LazySeek(10));
+  ASSERT_EQ(10, it.value());
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(7.f, score.Score());
+}
+
+// Match + Sum, two subs both hit: window score = sum.
+TEST(block_disjunction_test, lazy_seek_scored_match_two_subs_sum) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 10}, {2, 10, 30}};
+  detail::CompoundSort sort{{3, 4}};
+  LSScoredDisjunction<irs::MatchType::Match> it(
+    detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(10, it.LazySeek(10));  // both subs hit
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(7.f, score.Score());  // 3 + 4 from Sum
+}
+
+// Match + Sum: a miss between two hits must not leave stale score state.
+TEST(block_disjunction_test, lazy_seek_scored_match_miss_clears_score) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{{1, 5, 10}, {3, 10, 20}};
+  detail::CompoundSort sort{{2, 5}};
+  LSScoredDisjunction<irs::MatchType::Match> it(
+    detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(5, it.LazySeek(5));  // only sub 0 hits
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(2.f, score.Score());
+
+  ASSERT_EQ(7, it.LazySeek(6));  // miss, value() stays at 5
+  ASSERT_EQ(5, it.value());
+
+  ASSERT_EQ(10, it.LazySeek(10));  // both subs hit
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(7.f, score.Score());  // 2 + 5
+}
+
+// MinMatch + Sum, threshold passed: deferred sweep sums all contributing subs.
+TEST(block_disjunction_test, lazy_seek_scored_min_match_threshold_passed) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 10},
+    {3, 10},
+    {7, 10, 20},
+  };
+  detail::CompoundSort sort{{1, 2, 4}};
+  LSScoredDisjunction<irs::MatchType::MinMatch> it(
+    detail::ExecuteAll<irs::ScoreAdapter>(docs), size_t{2},
+    irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(10, it.LazySeek(10));  // all three hit -> 1 + 2 + 4
+  ASSERT_GE(it.MatchCount(), 2u);
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(7.f, score.Score());
+}
+
+// MinMatch + Sum, only two subs hit -- deferred sweep skips the non-hit.
+// Note: ctor sorts subs by cost ascending; with the data below the
+// post-sort scorer order is sub 2 -> 1, sub 0 -> 2, sub 1 -> 4.
+TEST(block_disjunction_test, lazy_seek_scored_min_match_partial_subs) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 7, 10},
+    {3, 7, 9},
+    {5, 20},
+  };
+  detail::CompoundSort sort{{1, 2, 4}};
+  LSScoredDisjunction<irs::MatchType::MinMatch> it(
+    detail::ExecuteAll<irs::ScoreAdapter>(docs), size_t{2},
+    irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(7, it.LazySeek(7));
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(6.f, score.Score());  // sub 0 (2) + sub 1 (4); sub 2 skipped
+}
+
+// MinMatchFast + Sum -- LazySeek-OOB deferred scoring with early pruning.
+TEST(block_disjunction_test, lazy_seek_scored_min_match_fast) {
+  const std::vector<std::vector<irs::doc_id_t>> docs{
+    {1, 5, 10},
+    {3, 5, 10},
+    {7, 10, 20},
+  };
+  detail::CompoundSort sort{{2, 3, 5}};
+  using DisjFast = irs::BlockDisjunction<
+    irs::ScoreAdapter, irs::ScoreMergeType::Sum,
+    irs::BlockDisjunctionTraits<irs::MatchType::MinMatchFast, false, 1>>;
+  DisjFast it(detail::ExecuteAll<irs::ScoreAdapter>(docs), size_t{2},
+              irs::doc_limits::eof());
+  auto score = it.PrepareScore({
+    .scorer = &sort,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(score.IsDefault());
+
+  ASSERT_EQ(5, it.LazySeek(5));
+  it.FetchScoreArgs(0);
+  ASSERT_FLOAT_EQ(5.f, score.Score());  // 2 + 3
 }
 
 TEST(block_disjunction_test, seek_scored_no_readahead) {
@@ -14485,7 +15104,7 @@ TEST_P(BooleanFilterTestCase, or_sequential_multiple_segments) {
       Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));  // C
     ASSERT_TRUE(
       Insert(*writer, doc4->indexed.begin(), doc4->indexed.end()));  // D
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(
       Insert(*writer, doc5->indexed.begin(), doc5->indexed.end()));  // E
@@ -14493,22 +15112,22 @@ TEST_P(BooleanFilterTestCase, or_sequential_multiple_segments) {
       Insert(*writer, doc6->indexed.begin(), doc6->indexed.end()));  // F
     ASSERT_TRUE(
       Insert(*writer, doc7->indexed.begin(), doc7->indexed.end()));  // G
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(
       Insert(*writer, doc8->indexed.begin(), doc8->indexed.end()));  // H
     ASSERT_TRUE(
       Insert(*writer, doc9->indexed.begin(), doc9->indexed.end()));  // I
-    writer->Commit();
+    writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
 
   auto rdr = open_reader();
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "B");
-    Append<irs::ByTerm>(root, "name", "F");
-    Append<irs::ByTerm>(root, "name", "I");
+    Append<irs::ByTerm>(root, kFieldName, "B");
+    Append<irs::ByTerm>(root, kFieldName, "F");
+    Append<irs::ByTerm>(root, kFieldName, "I");
 
     auto prep = root.prepare({.index = rdr});
     auto segment = rdr.begin();
@@ -14554,7 +15173,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
 
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "V");  // 22
+    Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
     CheckQuery(root, Docs{22}, rdr);
   }
@@ -14562,8 +15181,8 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name=W OR name=Z
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "W");  // 23
-    Append<irs::ByTerm>(root, "name", "C");  // 3
+    Append<irs::ByTerm>(root, kFieldName, "W");  // 23
+    Append<irs::ByTerm>(root, kFieldName, "C");  // 3
 
     CheckQuery(root, Docs{3, 23}, rdr);
   }
@@ -14571,9 +15190,9 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name=A OR name=Q OR name=Z
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");  // 1
-    Append<irs::ByTerm>(root, "name", "Q");  // 17
-    Append<irs::ByTerm>(root, "name", "Z");  // 26
+    Append<irs::ByTerm>(root, kFieldName, "A");  // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
+    Append<irs::ByTerm>(root, kFieldName, "Z");  // 26
 
     CheckQuery(root, Docs{1, 17, 26}, rdr);
   }
@@ -14581,10 +15200,10 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name=A OR name=Q OR same!=xyz
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");  // 1
-    Append<irs::ByTerm>(root, "name", "Q");  // 17
+    Append<irs::ByTerm>(root, kFieldName, "A");  // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
     root.add<irs::Or>().add<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("same",
+      MakeFilter<irs::ByTerm>(kFieldSame,
                               "xyz");  // none (not within an OR must be
                                        // wrapped inside a single-branch OR)
 
@@ -14594,10 +15213,10 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // (name=A OR name=Q) OR same!=xyz
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");  // 1
-    Append<irs::ByTerm>(root, "name", "Q");  // 17
+    Append<irs::ByTerm>(root, kFieldName, "A");  // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
     root.add<irs::Or>().add<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("same",
+      MakeFilter<irs::ByTerm>(kFieldSame,
                               "xyz");  // none (not within an OR must be
                                        // wrapped inside a single-branch OR)
 
@@ -14607,11 +15226,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name=A OR name=Q OR name=Z OR same=invalid_term OR invalid_field=V
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");  // 1
-    Append<irs::ByTerm>(root, "name", "Q");  // 17
-    Append<irs::ByTerm>(root, "name", "Z");  // 26
-    Append<irs::ByTerm>(root, "same", "invalid_term");
-    Append<irs::ByTerm>(root, "invalid_field", "V");
+    Append<irs::ByTerm>(root, kFieldName, "A");  // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
+    Append<irs::ByTerm>(root, kFieldName, "Z");  // 26
+    Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
+    Append<irs::ByTerm>(root, kFieldInvalid, "V");
 
     CheckQuery(root, Docs{1, 17, 26}, rdr);
   }
@@ -14619,11 +15238,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // search : all terms
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");    // 1
-    Append<irs::ByTerm>(root, "name", "Q");    // 17
-    Append<irs::ByTerm>(root, "name", "Z");    // 26
-    Append<irs::ByTerm>(root, "same", "xyz");  // 1..32
-    Append<irs::ByTerm>(root, "same", "invalid_term");
+    Append<irs::ByTerm>(root, kFieldName, "A");    // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");    // 17
+    Append<irs::ByTerm>(root, kFieldName, "Z");    // 26
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");  // 1..32
+    Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
 
     CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
                           12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -14635,7 +15254,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   {
     irs::Or root;
     root.min_match_count(0);
-    Append<irs::ByTerm>(root, "name", "V");  // 22
+    Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
     CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
                           12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -14657,11 +15276,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // min match count is geater than a number of conditions
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");    // 1
-    Append<irs::ByTerm>(root, "name", "Q");    // 17
-    Append<irs::ByTerm>(root, "name", "Z");    // 26
-    Append<irs::ByTerm>(root, "same", "xyz");  // 1..32
-    Append<irs::ByTerm>(root, "same", "invalid_term");
+    Append<irs::ByTerm>(root, kFieldName, "A");    // 1
+    Append<irs::ByTerm>(root, kFieldName, "Q");    // 17
+    Append<irs::ByTerm>(root, kFieldName, "Z");    // 26
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");  // 1..32
+    Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
     root.min_match_count(root.size() + 1);
 
     CheckQuery(root, Docs{}, rdr);
@@ -14670,7 +15289,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // name=A OR false
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");  // 1
+    Append<irs::ByTerm>(root, kFieldName, "A");  // 1
     root.add<irs::Empty>();
 
     CheckQuery(root, Docs{1}, rdr);
@@ -14680,7 +15299,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   {
     irs::Or root;
     root.add<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("name", "A");  // 1
+      MakeFilter<irs::ByTerm>(kFieldName, "A");  // 1
     root.add<irs::Empty>();
 
     CheckQuery(
@@ -14693,8 +15312,8 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   {
     irs::Or root;
     root.add<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("name", "A");  // 1
-    Append<irs::ByTerm>(root, "same", "NOT POSSIBLE");
+      MakeFilter<irs::ByTerm>(kFieldName, "A");  // 1
+    Append<irs::ByTerm>(root, kFieldSame, "NOT POSSIBLE");
     CheckQuery(
       root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
                  18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
@@ -14704,11 +15323,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // optimization should adjust min_match
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");
+    Append<irs::ByTerm>(root, kFieldName, "A");
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
-    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(5);
     CheckQuery(root, Docs{1}, rdr);
   }
@@ -14717,11 +15336,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // optimization
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");
+    Append<irs::ByTerm>(root, kFieldName, "A");
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
-    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(5);
     irs::Scorer::ptr sort{std::make_unique<sort::CustomSort>()};
     CheckQuery(root, std::span{&sort, 1}, Docs{1}, rdr);
@@ -14733,7 +15352,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // unscored
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "name", "A");
+    Append<irs::ByTerm>(root, kFieldName, "A");
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
@@ -14742,7 +15361,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
-    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(3);
     CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
                           12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -14754,7 +15373,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   {
     irs::Or root;
     root.merge_type(irs::ScoreMergeType::Max);
-    Append<irs::ByTerm>(root, "name", "A");
+    Append<irs::ByTerm>(root, kFieldName, "A");
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
@@ -14763,7 +15382,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     root.add<irs::All>();
     root.add<irs::All>();
     root.add<irs::All>();
-    Append<irs::ByTerm>(root, "duplicated", "abcd");
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(3);
     irs::Scorer::ptr sort{std::make_unique<sort::CustomSort>()};
 
@@ -14800,8 +15419,8 @@ TEST_P(BooleanFilterTestCase, and_schemas) {
   // Name = Product AND source=AdventureWor3ks2014
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "Name", "Product");
-    Append<irs::ByTerm>(root, "source", "AdventureWor3ks2014");
+    Append<irs::ByTerm>(root, kFieldNameUpper, "Product");
+    Append<irs::ByTerm>(root, kFieldSource, "AdventureWor3ks2014");
     CheckQuery(root, Docs{}, rdr);
   }
 }
@@ -14824,7 +15443,7 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
   // name=V
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "name", "V");  // 22
+    Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
     CheckQuery(root, Docs{22}, rdr);
   }
@@ -14832,26 +15451,26 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
   // duplicated=abcd AND same=xyz
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "duplicated", "abcd");  // 1,5,11,21,27,31
-    Append<irs::ByTerm>(root, "same", "xyz");         // 1..32
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
     CheckQuery(root, Docs{1, 5, 11, 21, 27, 31}, rdr);
   }
 
   // duplicated=abcd AND same=xyz AND name=A
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "duplicated", "abcd");  // 1,5,11,21,27,31
-    Append<irs::ByTerm>(root, "same", "xyz");         // 1..32
-    Append<irs::ByTerm>(root, "name", "A");           // 1
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
+    Append<irs::ByTerm>(root, kFieldName, "A");           // 1
     CheckQuery(root, Docs{1}, rdr);
   }
 
   // duplicated=abcd AND same=xyz AND name=B
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "duplicated", "abcd");  // 1,5,11,21,27,31
-    Append<irs::ByTerm>(root, "same", "xyz");         // 1..32
-    Append<irs::ByTerm>(root, "name", "B");           // 2
+    Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
+    Append<irs::ByTerm>(root, kFieldName, "B");           // 2
     CheckQuery(root, Docs{}, rdr);
   }
 }
@@ -14868,7 +15487,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
 
   // reverse order
   {
-    const std::string column_name = "duplicated";
+    const auto column_name = kFieldDuplicated;
 
     std::vector<irs::doc_id_t> expected = {32, 30, 29, 28, 26, 25, 24, 23, 22,
                                            20, 19, 18, 17, 16, 15, 14, 13, 12,
@@ -14878,29 +15497,20 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
     not_node.filter<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(column_name, "abcd");
 
-    size_t collector_collect_field_count = 0;
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
     irs::doc_id_t cur_doc = 0;
 
     sort::CustomSort sort;
 
-    sort.collector_collect_field = [&collector_collect_field_count](
-                                     const irs::SubReader&,
-                                     const irs::TermReader&) -> void {
-      ++collector_collect_field_count;
-    };
-    sort.collector_collect_term = [&collector_collect_term_count](
-                                    const irs::SubReader&,
-                                    const irs::TermReader&,
-                                    const irs::AttributeProvider&) -> void {
-      ++collector_collect_term_count;
-    };
     sort.collectors_collect = [&collector_finish_count](
-                                irs::byte_type*, const irs::FieldCollector*,
-                                const irs::TermCollector*) -> void {
+                                irs::byte_type*,
+                                const irs::FieldCollector* field,
+                                const irs::TermCollector* term) -> void {
       ++collector_finish_count;
+      // negated branch must not feed field/term collectors
+      ASSERT_EQ(nullptr, field);
+      ASSERT_EQ(nullptr, term);
     };
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
@@ -14937,11 +15547,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
 
     ASSERT_EQ(expected.size(), docs_count);
 
-    ASSERT_EQ(
-      0, collector_collect_field_count);  // should not be executed (a negated
-                                          // possibly complex filter)
-    ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-    ASSERT_EQ(1, collector_finish_count);        // from "all" query
+    ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(expected.size(), scorer_score_count);
 
     std::vector<irs::doc_id_t> actual;
@@ -14966,7 +15572,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
 
   // reverse order
   {
-    const std::string column_name = "duplicated";
+    const auto column_name = kFieldDuplicated;
 
     std::vector<irs::doc_id_t> expected = {32, 30, 29, 28, 26, 25, 24, 23, 22,
                                            20, 19, 18, 17, 16, 15, 14, 13, 12,
@@ -14976,29 +15582,20 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
     root.add<irs::Not>().filter<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(column_name, "abcd");
 
-    size_t collector_collect_field_count = 0;
-    size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
     irs::doc_id_t cur_doc = 0;
 
     sort::CustomSort sort;
 
-    sort.collector_collect_field = [&collector_collect_field_count](
-                                     const irs::SubReader&,
-                                     const irs::TermReader&) -> void {
-      ++collector_collect_field_count;
-    };
-    sort.collector_collect_term = [&collector_collect_term_count](
-                                    const irs::SubReader&,
-                                    const irs::TermReader&,
-                                    const irs::AttributeProvider&) -> void {
-      ++collector_collect_term_count;
-    };
     sort.collectors_collect = [&collector_finish_count](
-                                irs::byte_type*, const irs::FieldCollector*,
-                                const irs::TermCollector*) -> void {
+                                irs::byte_type*,
+                                const irs::FieldCollector* field,
+                                const irs::TermCollector* term) -> void {
       ++collector_finish_count;
+      // negated branch must not feed field/term collectors
+      ASSERT_EQ(nullptr, field);
+      ASSERT_EQ(nullptr, term);
     };
     sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
                             size_t n) {
@@ -15035,11 +15632,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
 
     ASSERT_EQ(expected.size(), docs_count);
 
-    ASSERT_EQ(
-      0, collector_collect_field_count);  // should not be executed (a negated
-                                          // possibly complex filter)
-    ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-    ASSERT_EQ(1, collector_finish_count);        // from "all" query
+    ASSERT_EQ(1, collector_finish_count);
     ASSERT_EQ(expected.size(), scorer_score_count);
 
     std::vector<irs::doc_id_t> actual;
@@ -15070,7 +15663,7 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   // single not statement - empty result
   {
     irs::Not root;
-    root.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("same", "xyz");
+    root.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
 
     CheckQuery(root, Docs{}, rdr);
   }
@@ -15078,22 +15671,22 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   // duplicated=abcd AND (NOT ( NOT name=A ))
   {
     irs::And root;
-    root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+    root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
     root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("name", "A");
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(root, Docs{1}, rdr);
   }
 
   // duplicated=abcd AND (NOT ( NOT (NOT (NOT ( NOT name=A )))))
   {
     irs::And root;
-    root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+    root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
     root.add<irs::Not>()
       .filter<irs::Not>()
       .filter<irs::Not>()
       .filter<irs::Not>()
       .filter<irs::Not>()
-      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("name", "A");
+      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
   }
 
@@ -15119,17 +15712,19 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   {
     {
       irs::And root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
     }
 
     {
       irs::Or root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
                             13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
                             24, 25, 26, 27, 28, 29, 30, 31, 32},
@@ -15140,20 +15735,20 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::Or root;
       auto& left_branch = root.add<irs::And>();
       // this three filters fire at same doc so it will get score = 3
-      Append<irs::ByTerm>(left_branch, "name", "A");
-      Append<irs::ByTerm>(left_branch, "duplicated", "abcd");
-      Append<irs::ByTerm>(left_branch, "same", "xyz");
+      Append<irs::ByTerm>(left_branch, kFieldName, "A");
+      Append<irs::ByTerm>(left_branch, kFieldDuplicated, "abcd");
+      Append<irs::ByTerm>(left_branch, kFieldSame, "xyz");
 
       auto& right_branch = root.add<irs::And>();
-      Append<irs::ByTerm>(right_branch, "name", "B");  // +1 score
-      auto& sub = right_branch.add<irs::Or>();  // this OR we actually test
-      Append<irs::ByTerm>(sub, "name", "B");    // +1 score
+      Append<irs::ByTerm>(right_branch, kFieldName, "B");  // +1 score
+      auto& sub = right_branch.add<irs::Or>();    // this OR we actually test
+      Append<irs::ByTerm>(sub, kFieldName, "B");  // +1 score
       // will exclude some docs (but A will stay) and produce 'all'
       sub.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("prefix", "abcde");
+        MakeFilter<irs::ByTerm>(kFieldPrefix, "abcde");
       // will exclude some docs (but A will stay) and produce another 'all'
       sub.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("duplicated", "abcd");
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       // if 'all' will add at least 1 to score totals score will be 3 and
       // expected order will break
       irs::Scorer::ptr sort{std::make_unique<tests::sort::Boost>()};
@@ -15165,21 +15760,23 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   {
     {
       irs::And root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
     }
 
     {
       irs::Or root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
                             13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
                             24, 25, 26, 27, 28, 29, 30, 31, 32},
@@ -15191,25 +15788,72 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
   {
     {
       irs::And root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "E");
+        MakeFilter<irs::ByTerm>(kFieldName, "E");
       CheckQuery(root, Docs{11, 21, 27, 31}, rdr);
     }
 
     {
       irs::Or root;
-      root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>("duplicated", "abcd");
+      root.add<irs::ByTerm>() =
+        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("name", "A");
+        MakeFilter<irs::ByTerm>(kFieldName, "A");
       root.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>("prefix", "abcd");
+        MakeFilter<irs::ByTerm>(kFieldPrefix, "abcd");
       CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
                             13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
                             24, 25, 26, 27, 28, 29, 30, 31, 32},
                  rdr);
+    }
+  }
+}
+
+// Regression: Conjunction::LazySeek used to leave _doc unchanged on
+// the partial-converge bail-out path, so when wrapped on the excl
+// side of Not (Not(And(...)) -> Exclusion -> Conjunction), the next
+// Exclusion::converge call re-read a stale value() and seeded a
+// LazySeek with target < some leaf's current position, tripping the
+// posting leaf's `target >= value()` assertion. Exercises that same
+// composition end-to-end via `Not(And(same=xyz, duplicated=abcd))`,
+// where the conjunction's two leaves have very different match
+// densities (32 docs vs 6 docs) so the bail-out path runs on every
+// gap between abcd matches.
+TEST_P(BooleanFilterTestCase, not_and_conjunction_regression) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  irs::Not root;
+  auto& conj = root.filter<irs::And>();
+  conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
+  conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
+
+  // duplicated=abcd matches {1, 5, 11, 21, 27, 31}; same=xyz matches
+  // all 32 docs; the And matches the abcd set; Not is the complement.
+  CheckQuery(root, Docs{2,  3,  4,  6,  7,  8,  9,  10, 12, 13, 14, 15, 16,
+                        17, 18, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 32},
+             rdr);
+
+  // Also exercise seek() across the result set -- this is the path
+  // that drove the SQL-side crash, since the table scan repeatedly
+  // re-enters Exclusion::converge with the next incl doc.
+  auto prepared = root.prepare({.index = rdr});
+  for (const auto& sub : rdr) {
+    auto docs = prepared->execute({.segment = sub});
+    for (irs::doc_id_t target : {2, 5, 6, 11, 12, 21, 22, 27, 28, 31, 32}) {
+      const auto landed = docs->seek(target);
+      EXPECT_GE(landed, target);
+      if (irs::doc_limits::eof(landed)) {
+        break;
+      }
     }
   }
 }
@@ -15232,7 +15876,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
   // single not statement - empty result
   {
     irs::Not not_node;
-    not_node.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("same", "xyz"),
+    not_node.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz"),
 
     CheckQuery(not_node, Docs{}, rdr);
   }
@@ -15241,7 +15885,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
   {
     irs::Not not_node;
     not_node.filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("same", "invalid_term"),
+      MakeFilter<irs::ByTerm>(kFieldSame, "invalid_term"),
 
     CheckQuery(not_node, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
                               12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -15253,7 +15897,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
   {
     irs::Not not_node;
     not_node.filter<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("name", "A");
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(not_node, Docs{1}, rdr);
   }
 
@@ -15264,7 +15908,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
       .filter<irs::Not>()
       .filter<irs::Not>()
       .filter<irs::Not>()
-      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("name", "A");
+      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
 
     CheckQuery(not_node, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
                               13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
@@ -15291,15 +15935,15 @@ TEST_P(BooleanFilterTestCase, mixed) {
       // same=xyz AND duplicated=abcd
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "abcd");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "abcd");
       }
 
       // same=xyz AND duplicated=vczc
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "vczc");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
       CheckQuery(root, Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31},
@@ -15310,7 +15954,7 @@ TEST_P(BooleanFilterTestCase, mixed) {
     // name=X
     {
       irs::And root;
-      Append<irs::ByTerm>(root, "name", "X");
+      Append<irs::ByTerm>(root, kFieldName, "X");
 
       // ( same = xyz AND duplicated = abcd ) OR( same = xyz AND duplicated =
       // vczc )
@@ -15320,15 +15964,15 @@ TEST_P(BooleanFilterTestCase, mixed) {
         // same=xyz AND duplicated=abcd
         {
           irs::And& subchild = child.add<irs::And>();
-          Append<irs::ByTerm>(subchild, "same", "xyz");
-          Append<irs::ByTerm>(subchild, "duplicated", "abcd");
+          Append<irs::ByTerm>(subchild, kFieldSame, "xyz");
+          Append<irs::ByTerm>(subchild, kFieldDuplicated, "abcd");
         }
 
         // same=xyz AND duplicated=vczc
         {
           irs::And& subchild = child.add<irs::And>();
-          Append<irs::ByTerm>(subchild, "same", "xyz");
-          Append<irs::ByTerm>(subchild, "duplicated", "vczc");
+          Append<irs::ByTerm>(subchild, kFieldSame, "xyz");
+          Append<irs::ByTerm>(subchild, kFieldDuplicated, "vczc");
         }
       }
 
@@ -15350,35 +15994,35 @@ TEST_P(BooleanFilterTestCase, mixed) {
         // ( same = xyz AND duplicated = abcd )
         {
           irs::And& subchild = root.add<irs::And>();
-          Append<irs::ByTerm>(subchild, "same", "xyz");
-          Append<irs::ByTerm>(subchild, "duplicated", "abcd");
+          Append<irs::ByTerm>(subchild, kFieldSame, "xyz");
+          Append<irs::ByTerm>(subchild, kFieldDuplicated, "abcd");
         }
 
-        Append<irs::ByTerm>(child, "name", "A");
-        Append<irs::ByTerm>(child, "name", "C");
-        Append<irs::ByTerm>(child, "name", "P");
-        Append<irs::ByTerm>(child, "name", "X");
+        Append<irs::ByTerm>(child, kFieldName, "A");
+        Append<irs::ByTerm>(child, kFieldName, "C");
+        Append<irs::ByTerm>(child, kFieldName, "P");
+        Append<irs::ByTerm>(child, kFieldName, "X");
       }
 
       // (same=xyz AND (duplicated=vczc OR (name=A OR name=C OR NAME=P OR
       // name=U OR name=X)) 1, 2, 3, 8, 14, 16, 17, 19, 21, 24
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
 
         // (duplicated=vczc OR (name=A OR name=C OR NAME=P OR name=U OR
         // name=X)
         {
           irs::Or& subchild = child.add<irs::Or>();
-          Append<irs::ByTerm>(subchild, "duplicated", "vczc");
+          Append<irs::ByTerm>(subchild, kFieldDuplicated, "vczc");
 
           // name=A OR name=C OR NAME=P OR name=U OR name=X
           {
             irs::Or& subsubchild = subchild.add<irs::Or>();
-            Append<irs::ByTerm>(subsubchild, "name", "A");
-            Append<irs::ByTerm>(subsubchild, "name", "C");
-            Append<irs::ByTerm>(subsubchild, "name", "P");
-            Append<irs::ByTerm>(subsubchild, "name", "X");
+            Append<irs::ByTerm>(subsubchild, kFieldName, "A");
+            Append<irs::ByTerm>(subsubchild, kFieldName, "C");
+            Append<irs::ByTerm>(subsubchild, kFieldName, "P");
+            Append<irs::ByTerm>(subsubchild, kFieldName, "X");
           }
         }
       }
@@ -15397,15 +16041,15 @@ TEST_P(BooleanFilterTestCase, mixed) {
       // same=xyz AND duplicated=abcd
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "abcd");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "abcd");
       }
 
       // same=xyz AND duplicated=vczc
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "vczc");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
       CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
@@ -15425,15 +16069,15 @@ TEST_P(BooleanFilterTestCase, mixed) {
       // same=xyz AND duplicated=abcd
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "abcd");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "abcd");
       }
 
       // same=xyz AND duplicated=vczc
       {
         irs::And& child = root.add<irs::And>();
-        Append<irs::ByTerm>(child, "same", "xyz");
-        Append<irs::ByTerm>(child, "duplicated", "vczc");
+        Append<irs::ByTerm>(child, kFieldSame, "xyz");
+        Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
       CheckQuery(root, Docs{}, rdr);
@@ -15457,14 +16101,14 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
     auto& sub = root.add<irs::And>();
     {
       auto& filter = sub.add<irs::ByRange>();
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kFieldName;
       filter.mutable_options()->range.min =
         irs::ViewCast<irs::byte_type>(std::string_view("!"));
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     }
     {
       auto& filter = sub.add<irs::ByRange>();
-      *filter.mutable_field() = "name";
+      *filter.mutable_field_id() = kFieldName;
       filter.mutable_options()->range.max =
         irs::ViewCast<irs::byte_type>(std::string_view("~"));
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
@@ -15519,19 +16163,19 @@ TEST(Not_test, equal) {
 
   {
     irs::Not lhs;
-    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("abc", "def");
+    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
 
     irs::Not rhs;
-    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("abc", "def");
+    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
     ASSERT_EQ(lhs, rhs);
   }
 
   {
     irs::Not lhs;
-    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("abc", "def");
+    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
 
     irs::Not rhs;
-    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>("abcd", "def");
+    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbcd, "def");
     ASSERT_NE(lhs, rhs);
   }
 }
@@ -15557,22 +16201,22 @@ TEST(And_test, add_clear) {
 
 TEST(And_test, equal) {
   irs::And lhs;
-  Append<irs::ByTerm>(lhs, "field", "term");
-  Append<irs::ByTerm>(lhs, "field1", "term1");
+  Append<irs::ByTerm>(lhs, kFieldField, "term");
+  Append<irs::ByTerm>(lhs, kFieldField1, "term1");
   {
     irs::And& subq = lhs.add<irs::And>();
-    Append<irs::ByTerm>(subq, "field123", "dfterm");
-    Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+    Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+    Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
   }
 
   {
     irs::And rhs;
-    Append<irs::ByTerm>(rhs, "field", "term");
-    Append<irs::ByTerm>(rhs, "field1", "term1");
+    Append<irs::ByTerm>(rhs, kFieldField, "term");
+    Append<irs::ByTerm>(rhs, kFieldField1, "term1");
     {
       irs::And& subq = rhs.add<irs::And>();
-      Append<irs::ByTerm>(subq, "field123", "dfterm");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+      Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
     }
 
     ASSERT_EQ(lhs, rhs);
@@ -15580,13 +16224,13 @@ TEST(And_test, equal) {
 
   {
     irs::And rhs;
-    Append<irs::ByTerm>(rhs, "field", "term");
-    Append<irs::ByTerm>(rhs, "field1", "term1");
+    Append<irs::ByTerm>(rhs, kFieldField, "term");
+    Append<irs::ByTerm>(rhs, kFieldField1, "term1");
     {
       irs::And& subq = rhs.add<irs::And>();
-      Append<irs::ByTerm>(subq, "field123", "dfterm");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+      Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
     }
 
     ASSERT_NE(lhs, rhs);
@@ -15596,7 +16240,7 @@ TEST(And_test, equal) {
 TEST(And_test, optimize_double_negation) {
   irs::And root;
   root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
-    MakeFilter<irs::ByTerm>("test_field", "test_term");
+    MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
   auto prepared = root.prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -15613,7 +16257,7 @@ TEST(And_test, optimize_single_node) {
   // simple hierarchy
   {
     irs::And root;
-    Append<irs::ByTerm>(root, "test_field", "test_term");
+    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
 
     auto prepared = root.prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -15623,7 +16267,7 @@ TEST(And_test, optimize_single_node) {
   {
     irs::And root;
     root.add<irs::And>().add<irs::And>().add<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("test_field", "test_term");
+      MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
     auto prepared = root.prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -15662,7 +16306,7 @@ TEST(And_test, optimize_all_filters) {
     irs::And root;
     root.add<irs::All>().boost(5.f);
     root.add<irs::All>().boost(2.f);
-    Append<irs::ByTerm>(root, "test_field", "test_term");
+    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
 
     tests::sort::Boost sort{};
     auto prepared =
@@ -15675,7 +16319,7 @@ TEST(And_test, optimize_all_filters) {
   {
     tests::sort::Boost sort{};
     irs::And root;
-    Append<irs::ByTerm>(root, "test_field", "test_term");
+    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
     root.add<irs::All>().boost(5.f);
     auto prepared =
       root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
@@ -15738,22 +16382,22 @@ TEST(Or_test, add_clear) {
 
 TEST(Or_test, equal) {
   irs::Or lhs;
-  Append<irs::ByTerm>(lhs, "field", "term");
-  Append<irs::ByTerm>(lhs, "field1", "term1");
+  Append<irs::ByTerm>(lhs, kFieldField, "term");
+  Append<irs::ByTerm>(lhs, kFieldField1, "term1");
   {
     irs::And& subq = lhs.add<irs::And>();
-    Append<irs::ByTerm>(subq, "field123", "dfterm");
-    Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+    Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+    Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
   }
 
   {
     irs::Or rhs;
-    Append<irs::ByTerm>(rhs, "field", "term");
-    Append<irs::ByTerm>(rhs, "field1", "term1");
+    Append<irs::ByTerm>(rhs, kFieldField, "term");
+    Append<irs::ByTerm>(rhs, kFieldField1, "term1");
     {
       irs::And& subq = rhs.add<irs::And>();
-      Append<irs::ByTerm>(subq, "field123", "dfterm");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+      Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
     }
 
     ASSERT_EQ(lhs, rhs);
@@ -15761,13 +16405,13 @@ TEST(Or_test, equal) {
 
   {
     irs::Or rhs;
-    Append<irs::ByTerm>(rhs, "field", "term");
-    Append<irs::ByTerm>(rhs, "field1", "term1");
+    Append<irs::ByTerm>(rhs, kFieldField, "term");
+    Append<irs::ByTerm>(rhs, kFieldField1, "term1");
     {
       irs::And& subq = rhs.add<irs::And>();
-      Append<irs::ByTerm>(subq, "field123", "dfterm");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
-      Append<irs::ByTerm>(subq, "fieasfdld1", "term1");
+      Append<irs::ByTerm>(subq, kFieldField123, "dfterm");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
+      Append<irs::ByTerm>(subq, kFieldFieasfdld1, "term1");
     }
 
     ASSERT_NE(lhs, rhs);
@@ -15777,7 +16421,7 @@ TEST(Or_test, equal) {
 TEST(Or_test, optimize_double_negation) {
   irs::Or root;
   root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
-    MakeFilter<irs::ByTerm>("test_field", "test_term");
+    MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
   auto prepared = root.prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -15787,7 +16431,7 @@ TEST(Or_test, optimize_single_node) {
   // simple hierarchy
   {
     irs::Or root;
-    Append<irs::ByTerm>(root, "test_field", "test_term");
+    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
 
     auto prepared = root.prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -15797,7 +16441,7 @@ TEST(Or_test, optimize_single_node) {
   {
     irs::Or root;
     root.add<irs::Or>().add<irs::Or>().add<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>("test_field", "test_term");
+      MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
     auto prepared = root.prepare({.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));

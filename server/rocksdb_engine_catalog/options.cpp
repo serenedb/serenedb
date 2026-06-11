@@ -21,9 +21,6 @@
 
 #include "options.h"
 
-#include <vpack/builder.h>
-#include <vpack/slice.h>
-
 #include "basics/debugging.h"
 #include "basics/static_strings.h"
 #include "general_server/state.h"
@@ -40,19 +37,6 @@ uint64_t Options::gDefaultIntermediateCommitSize =
 uint64_t Options::gDefaultIntermediateCommitCount = 1'000'000;
 
 Options::Options() {
-  // if we are a coordinator, fill in our own server id/reboot id.
-  // the data is passed to DB servers when the transaction is started
-  // there. the DB servers use this data to abort the transaction
-  // timely should the coordinator die or be rebooted.
-  // in the DB server case, we leave the origin empty in the beginning,
-  // because the coordinator id will be sent via JSON and thus will be
-  // picked up inside fromVPack()
-  if (ServerState::instance()->IsCoordinator()) {
-    // cluster transactions always originate on a coordinator
-    origin.server_id = ServerState::instance()->GetId();
-    origin.reboot_id = ServerState::instance()->GetRebootId();
-  }
-
 #ifdef SDB_FAULT_INJECTION
   // patch intermediateCommitCount for testing
   adjustIntermediateCommitCount(*this);
@@ -79,98 +63,6 @@ void Options::setLimits(uint64_t max_transaction_size,
 bool Options::isIntermediateCommitEnabled() const noexcept {
   return intermediate_commit_size != UINT64_MAX ||
          intermediate_commit_count != UINT64_MAX;
-}
-
-void Options::fromVPack(vpack::Slice slice) {
-  if (auto value = slice.get("lockTimeout"); value.isNumber()) {
-    lock_timeout = value.getNumber<double>();
-  }
-  if (auto value = slice.get("maxTransactionSize"); value.isNumber()) {
-    max_transaction_size = value.getNumber<uint64_t>();
-  }
-  if (auto value = slice.get("intermediateCommitSize"); value.isNumber()) {
-    intermediate_commit_size = value.getNumber<uint64_t>();
-  }
-  if (auto value = slice.get("intermediateCommitCount"); value.isNumber()) {
-    intermediate_commit_count = value.getNumber<uint64_t>();
-  }
-  // simon: 'allowImplicit' is due to naming in 'db._execute_transaction(...)'
-  if (auto value = slice.get("allowImplicit"); value.isBool()) {
-    allow_implicit_collections_for_read = value.isTrue();
-  }
-  if (auto value = slice.get(StaticStrings::kWaitForSyncString);
-      value.isBool()) {
-    wait_for_sync = value.isTrue();
-  }
-  if (auto value = slice.get("fillBlockCache"); value.isBool()) {
-    fill_block_cache = value.isTrue();
-  }
-  if (auto value = slice.get("allowDirtyReads"); value.isBool()) {
-    allow_dirty_reads = value.isTrue();
-  } else {
-    SDB_IF_FAILURE("TransactionState::dirtyReadsAreDefault") {
-      allow_dirty_reads = true;
-    }
-  }
-  if (auto value = slice.get("skipFastLockRound"); value.isBool()) {
-    skip_fast_lock_round = value.isTrue();
-  }
-
-  if (!ServerState::instance()->IsSingle()) {
-    if (auto value = slice.get("isFollowerTransaction"); value.isBool()) {
-      is_follower_transaction = value.isTrue();
-    }
-
-    // pick up the originating coordinator's id.
-    if (auto value = slice.get("origin"); value.isObject()) {
-      origin.server_id =
-        value.get(StaticStrings::kAttrCoordinatorId).stringView();
-      origin.reboot_id =
-        RebootId{value.get(StaticStrings::kAttrCoordinatorRebootId)
-                   .getNumber<uint64_t>()};
-    }
-  }
-  // we are intentionally *not* reading allowImplicitCollectionForWrite here.
-  // this is an internal option only used in replication
-
-#ifdef SDB_FAULT_INJECTION
-  // patch intermediateCommitCount for testing
-  adjustIntermediateCommitCount(*this);
-#endif
-}
-
-/// add the options to an opened vpack builder
-void Options::toVPack(vpack::Builder& builder) const {
-  SDB_ASSERT(builder.isOpenObject());
-
-  builder.add("lockTimeout", lock_timeout);
-  builder.add("maxTransactionSize", max_transaction_size);
-  builder.add("intermediateCommitSize", intermediate_commit_size);
-  builder.add("intermediateCommitCount", intermediate_commit_count);
-  builder.add("allowImplicit", allow_implicit_collections_for_read);
-  builder.add(StaticStrings::kWaitForSyncString, wait_for_sync);
-  builder.add("fillBlockCache", fill_block_cache);
-  // we are intentionally *not* writing allowImplicitCollectionForWrite here.
-  // this is an internal option only used in replication
-  builder.add("allowDirtyReads", allow_dirty_reads);
-
-  builder.add("skipFastLockRound", skip_fast_lock_round);
-
-  // serialize data for cluster-wide collections
-  if (!ServerState::instance()->IsSingle()) {
-    builder.add("isFollowerTransaction", is_follower_transaction);
-
-    // serialize the server id/reboot id of the originating server (which must
-    // be a coordinator id if set)
-    if (!origin.server_id.empty()) {
-      builder.add("origin");
-      builder.openObject();
-      builder.add(StaticStrings::kAttrCoordinatorId, origin.server_id);
-      builder.add(StaticStrings::kAttrCoordinatorRebootId,
-                  origin.reboot_id.value());
-      builder.close();
-    }
-  }
 }
 
 #ifdef SDB_FAULT_INJECTION

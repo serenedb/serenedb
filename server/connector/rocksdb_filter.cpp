@@ -91,7 +91,7 @@ ComparisonOp NegateOp(ComparisonOp op) {
 // our scan.
 catalog::Column::Id TryResolveColumn(const duckdb::Expression& expr,
                                      const ColumnResolver& resolver) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return kInvalidId;
   }
   return resolver.Resolve(expr.Cast<duckdb::BoundColumnRefExpression>());
@@ -100,7 +100,7 @@ catalog::Column::Id TryResolveColumn(const duckdb::Expression& expr,
 // Returns the constant Value if expr is a BoundConstantExpression, nullopt
 // otherwise.
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
   }
   return &expr.Cast<duckdb::BoundConstantExpression>().value;
@@ -129,13 +129,15 @@ std::vector<KeyBounds> MakeNeqConstraints(
 // ── Comparison expression dispatch ──────────────────────────────────────────
 
 std::vector<KeyBounds> ExtractFilterEq(
-  const duckdb::BoundComparisonExpression& cmp, const FilterExtractCtx& ctx) {
+  const duckdb::BoundFunctionExpression& cmp, const FilterExtractCtx& ctx) {
+  const auto& left = duckdb::BoundComparisonExpression::Left(cmp);
+  const auto& right = duckdb::BoundComparisonExpression::Right(cmp);
   // Either side can be the column.
-  catalog::Column::Id col_id = TryResolveColumn(*cmp.left, ctx.resolver);
-  const duckdb::Value* const_val = TryGetConstant(*cmp.right);
+  catalog::Column::Id col_id = TryResolveColumn(left, ctx.resolver);
+  const duckdb::Value* const_val = TryGetConstant(right);
   if (col_id == kInvalidId || !const_val) {
-    col_id = TryResolveColumn(*cmp.right, ctx.resolver);
-    const_val = TryGetConstant(*cmp.left);
+    col_id = TryResolveColumn(right, ctx.resolver);
+    const_val = TryGetConstant(left);
   }
   if (col_id == kInvalidId || !const_val) {
     return AnyKeyConstraint(ctx.key_ids);
@@ -153,12 +155,14 @@ std::vector<KeyBounds> ExtractFilterEq(
 }
 
 std::vector<KeyBounds> ExtractFilterNeq(
-  const duckdb::BoundComparisonExpression& cmp, const FilterExtractCtx& ctx) {
-  catalog::Column::Id col_id = TryResolveColumn(*cmp.left, ctx.resolver);
-  const duckdb::Value* const_val = TryGetConstant(*cmp.right);
+  const duckdb::BoundFunctionExpression& cmp, const FilterExtractCtx& ctx) {
+  const auto& left = duckdb::BoundComparisonExpression::Left(cmp);
+  const auto& right = duckdb::BoundComparisonExpression::Right(cmp);
+  catalog::Column::Id col_id = TryResolveColumn(left, ctx.resolver);
+  const duckdb::Value* const_val = TryGetConstant(right);
   if (col_id == kInvalidId || !const_val) {
-    col_id = TryResolveColumn(*cmp.right, ctx.resolver);
-    const_val = TryGetConstant(*cmp.left);
+    col_id = TryResolveColumn(right, ctx.resolver);
+    const_val = TryGetConstant(left);
   }
   if (col_id == kInvalidId || !const_val) {
     return AnyKeyConstraint(ctx.key_ids);
@@ -176,19 +180,20 @@ std::vector<KeyBounds> ExtractFilterNeq(
 }
 
 std::vector<KeyBounds> ExtractFilterComparison(
-  const duckdb::BoundComparisonExpression& cmp, const FilterExtractCtx& ctx) {
-  const bool field_left =
-    TryResolveColumn(*cmp.left, ctx.resolver) != kInvalidId &&
-    TryGetConstant(*cmp.right) != nullptr;
+  const duckdb::BoundFunctionExpression& cmp, const FilterExtractCtx& ctx) {
+  const auto& left = duckdb::BoundComparisonExpression::Left(cmp);
+  const auto& right = duckdb::BoundComparisonExpression::Right(cmp);
+  const bool field_left = TryResolveColumn(left, ctx.resolver) != kInvalidId &&
+                          TryGetConstant(right) != nullptr;
   const bool field_right =
-    TryResolveColumn(*cmp.right, ctx.resolver) != kInvalidId &&
-    TryGetConstant(*cmp.left) != nullptr;
+    TryResolveColumn(right, ctx.resolver) != kInvalidId &&
+    TryGetConstant(left) != nullptr;
   if (!field_left && !field_right) {
     return AnyKeyConstraint(ctx.key_ids);
   }
 
-  const auto& field_expr = field_left ? *cmp.left : *cmp.right;
-  const auto& const_expr = field_left ? *cmp.right : *cmp.left;
+  const auto& field_expr = field_left ? left : right;
+  const auto& const_expr = field_left ? right : left;
   auto col_id = TryResolveColumn(field_expr, ctx.resolver);
   const auto* const_val = TryGetConstant(const_expr);
 
@@ -216,7 +221,7 @@ std::vector<KeyBounds> ExtractFilterComparison(
   };
 
   ComparisonOp op;
-  switch (cmp.type) {
+  switch (cmp.GetExpressionType()) {
     case duckdb::ExpressionType::COMPARE_GREATERTHAN:
       op = ComparisonOp::Gt;
       break;
@@ -353,23 +358,28 @@ std::vector<KeyBounds> ExtractFilterIn(
 // ── BETWEEN ─────────────────────────────────────────────────────────────────
 
 std::vector<KeyBounds> ExtractFilterBetween(
-  const duckdb::BoundBetweenExpression& between, const FilterExtractCtx& ctx) {
-  auto col_id = TryResolveColumn(*between.input, ctx.resolver);
+  const duckdb::BoundFunctionExpression& between, const FilterExtractCtx& ctx) {
+  auto col_id = TryResolveColumn(duckdb::BoundBetweenExpression::Input(between),
+                                 ctx.resolver);
   if (col_id == kInvalidId || !IsKeyColumn(col_id, ctx.key_ids)) {
     return AnyKeyConstraint(ctx.key_ids);
   }
-  const auto* lower_val = TryGetConstant(*between.lower);
-  const auto* upper_val = TryGetConstant(*between.upper);
+  const auto* lower_val =
+    TryGetConstant(duckdb::BoundBetweenExpression::LowerBound(between));
+  const auto* upper_val =
+    TryGetConstant(duckdb::BoundBetweenExpression::UpperBound(between));
   if (!lower_val || !upper_val) {
     return AnyKeyConstraint(ctx.key_ids);
   }
+  const bool lower_inclusive =
+    duckdb::BoundBetweenExpression::LowerInclusive(between);
+  const bool upper_inclusive =
+    duckdb::BoundBetweenExpression::UpperInclusive(between);
 
   if (!ctx.negated) {
     // a BETWEEN lower AND upper -> lower_op(a, lower) AND upper_op(a, upper)
-    auto lower_op =
-      between.lower_inclusive ? ComparisonOp::Ge : ComparisonOp::Gt;
-    auto upper_op =
-      between.upper_inclusive ? ComparisonOp::Le : ComparisonOp::Lt;
+    auto lower_op = lower_inclusive ? ComparisonOp::Ge : ComparisonOp::Gt;
+    auto upper_op = upper_inclusive ? ComparisonOp::Le : ComparisonOp::Lt;
 
     auto lower_kc = KeyBounds::MakeAny(ctx.key_ids);
     lower_kc.AddComparisonFilter(col_id, *lower_val, lower_op, &between);
@@ -385,8 +395,8 @@ std::vector<KeyBounds> ExtractFilterBetween(
   }
 
   // NOT BETWEEN: De Morgan -> a < lower OR a > upper
-  auto lower_op = between.lower_inclusive ? ComparisonOp::Lt : ComparisonOp::Le;
-  auto upper_op = between.upper_inclusive ? ComparisonOp::Gt : ComparisonOp::Ge;
+  auto lower_op = lower_inclusive ? ComparisonOp::Lt : ComparisonOp::Le;
+  auto upper_op = upper_inclusive ? ComparisonOp::Gt : ComparisonOp::Ge;
 
   auto lt_constraint = KeyBounds::MakeAny(ctx.key_ids);
   lt_constraint.AddComparisonFilter(col_id, *lower_val, lower_op, &between);
@@ -488,7 +498,7 @@ duckdb::unique_ptr<duckdb::Expression> RewriteExpr(
     return nullptr;
   }
 
-  if (expr.expression_class == duckdb::ExpressionClass::BOUND_CONJUNCTION) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONJUNCTION) {
     const auto& conj = expr.Cast<duckdb::BoundConjunctionExpression>();
     std::vector<duckdb::unique_ptr<duckdb::Expression>> new_children;
     bool changed = false;
@@ -505,7 +515,7 @@ duckdb::unique_ptr<duckdb::Expression> RewriteExpr(
       return expr.Copy();
     }
 
-    if (expr.type == duckdb::ExpressionType::CONJUNCTION_AND) {
+    if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
       std::erase_if(new_children, [](const auto& e) { return !e; });
       if (new_children.empty()) {
         return nullptr;
@@ -519,7 +529,7 @@ duckdb::unique_ptr<duckdb::Expression> RewriteExpr(
       return result;
     }
 
-    if (expr.type == duckdb::ExpressionType::CONJUNCTION_OR) {
+    if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_OR) {
       // If ALL branches became true (null), the whole OR is trivially true.
       if (absl::c_all_of(new_children, [](const auto& e) { return !e; })) {
         return nullptr;
@@ -533,7 +543,7 @@ duckdb::unique_ptr<duckdb::Expression> RewriteExpr(
     }
   }
 
-  if (expr.expression_class == duckdb::ExpressionClass::BOUND_OPERATOR) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_OPERATOR) {
     const auto& op = expr.Cast<duckdb::BoundOperatorExpression>();
     std::vector<duckdb::unique_ptr<duckdb::Expression>> new_children;
     bool changed = false;
@@ -556,29 +566,31 @@ duckdb::unique_ptr<duckdb::Expression> RewriteExpr(
     }
     // Rebuild operator with new children.
     auto result = duckdb::make_uniq<duckdb::BoundOperatorExpression>(
-      op.type, op.return_type);
+      op.GetExpressionType(), op.GetReturnType());
     result->children = std::move(new_children);
     return result;
   }
 
-  if (expr.expression_class == duckdb::ExpressionClass::BOUND_COMPARISON) {
-    const auto& cmp = expr.Cast<duckdb::BoundComparisonExpression>();
-    auto new_left = RewriteExpr(*cmp.left, sources);
-    auto new_right = RewriteExpr(*cmp.right, sources);
-    bool left_changed = !new_left || (new_left.get() != cmp.left.get());
-    bool right_changed = !new_right || (new_right.get() != cmp.right.get());
+  if (duckdb::BoundComparisonExpression::IsComparison(expr)) {
+    const auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
+    const auto& cmp_left = duckdb::BoundComparisonExpression::Left(cmp);
+    const auto& cmp_right = duckdb::BoundComparisonExpression::Right(cmp);
+    auto new_left = RewriteExpr(cmp_left, sources);
+    auto new_right = RewriteExpr(cmp_right, sources);
+    bool left_changed = !new_left || (new_left.get() != &cmp_left);
+    bool right_changed = !new_right || (new_right.get() != &cmp_right);
     if (!left_changed && !right_changed) {
       return expr.Copy();
     }
     if (!new_left || !new_right) {
       return nullptr;
     }
-    return duckdb::make_uniq<duckdb::BoundComparisonExpression>(
-      cmp.type, std::move(new_left), std::move(new_right));
+    return duckdb::BoundComparisonExpression::Create(
+      cmp.GetExpressionType(), std::move(new_left), std::move(new_right));
   }
 
-  if (expr.expression_class == duckdb::ExpressionClass::BOUND_BETWEEN) {
-    // BoundBetweenExpression: if claimed, return nullptr.
+  if (expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN) {
+    // BETWEEN function expression: if claimed, return nullptr.
     // Otherwise return a copy.
     return expr.Copy();
   }
@@ -938,36 +950,37 @@ std::vector<KeyBounds> ExtractFilterExprImpl(const duckdb::Expression& expr,
                                              const FilterExtractCtx& ctx) {
   std::vector<KeyBounds> key_bounds;
 
-  switch (expr.expression_class) {
-    case duckdb::ExpressionClass::BOUND_COMPARISON: {
-      const auto& cmp = expr.Cast<duckdb::BoundComparisonExpression>();
-      switch (cmp.type) {
-        case duckdb::ExpressionType::COMPARE_EQUAL:
-          key_bounds = ExtractFilterEq(cmp, ctx);
-          break;
-        case duckdb::ExpressionType::COMPARE_NOTEQUAL:
-          key_bounds = ExtractFilterNeq(cmp, ctx);
-          break;
-        case duckdb::ExpressionType::COMPARE_GREATERTHAN:
-        case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
-        case duckdb::ExpressionType::COMPARE_LESSTHAN:
-        case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
-          key_bounds = ExtractFilterComparison(cmp, ctx);
-          break;
-        default:
-          key_bounds = AnyKeyConstraint(ctx.key_ids);
-          break;
-      }
-      break;
+  if (duckdb::BoundComparisonExpression::IsComparison(expr)) {
+    const auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
+    switch (cmp.GetExpressionType()) {
+      case duckdb::ExpressionType::COMPARE_EQUAL:
+        return ExtractFilterEq(cmp, ctx);
+      case duckdb::ExpressionType::COMPARE_NOTEQUAL:
+        return ExtractFilterNeq(cmp, ctx);
+      case duckdb::ExpressionType::COMPARE_GREATERTHAN:
+      case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
+      case duckdb::ExpressionType::COMPARE_LESSTHAN:
+      case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
+        return ExtractFilterComparison(cmp, ctx);
+      default:
+        return AnyKeyConstraint(ctx.key_ids);
     }
+  }
 
+  if (expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN) {
+    const auto& between = expr.Cast<duckdb::BoundFunctionExpression>();
+    return ExtractFilterBetween(between, ctx);
+  }
+
+  switch (expr.GetExpressionClass()) {
     case duckdb::ExpressionClass::BOUND_CONJUNCTION: {
       const auto& conj = expr.Cast<duckdb::BoundConjunctionExpression>();
-      if (conj.type == duckdb::ExpressionType::CONJUNCTION_AND) {
+      if (conj.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
         // De Morgan: NOT(A AND B) = NOT(A) OR NOT(B)
         key_bounds = ctx.negated ? ExtractFilterOr(conj, ctx)
                                  : ExtractFilterAnd(conj, ctx);
-      } else if (conj.type == duckdb::ExpressionType::CONJUNCTION_OR) {
+      } else if (conj.GetExpressionType() ==
+                 duckdb::ExpressionType::CONJUNCTION_OR) {
         // De Morgan: NOT(A OR B) = NOT(A) AND NOT(B)
         key_bounds = ctx.negated ? ExtractFilterAnd(conj, ctx)
                                  : ExtractFilterOr(conj, ctx);
@@ -979,14 +992,13 @@ std::vector<KeyBounds> ExtractFilterExprImpl(const duckdb::Expression& expr,
 
     case duckdb::ExpressionClass::BOUND_OPERATOR: {
       const auto& op_expr = expr.Cast<duckdb::BoundOperatorExpression>();
-      switch (op_expr.type) {
+      switch (op_expr.GetExpressionType()) {
         case duckdb::ExpressionType::OPERATOR_NOT: {
           SDB_ASSERT(op_expr.children.size() == 1);
           auto negated_ctx = ctx;
           negated_ctx.negated = !ctx.negated;
           key_bounds = ExtractFilterExprImpl(*op_expr.children[0], negated_ctx);
-          break;
-        }
+        } break;
         case duckdb::ExpressionType::OPERATOR_IS_NULL:
           key_bounds = ExtractFilterIsNull(op_expr, ctx);
           break;
@@ -994,8 +1006,7 @@ std::vector<KeyBounds> ExtractFilterExprImpl(const duckdb::Expression& expr,
           auto negated_ctx = ctx;
           negated_ctx.negated = !ctx.negated;
           key_bounds = ExtractFilterIsNull(op_expr, negated_ctx);
-          break;
-        }
+        } break;
         case duckdb::ExpressionType::COMPARE_IN:
           key_bounds = ExtractFilterIn(op_expr, ctx);
           break;
@@ -1009,12 +1020,6 @@ std::vector<KeyBounds> ExtractFilterExprImpl(const duckdb::Expression& expr,
           key_bounds = AnyKeyConstraint(ctx.key_ids);
           break;
       }
-      break;
-    }
-
-    case duckdb::ExpressionClass::BOUND_BETWEEN: {
-      const auto& between = expr.Cast<duckdb::BoundBetweenExpression>();
-      key_bounds = ExtractFilterBetween(between, ctx);
       break;
     }
 

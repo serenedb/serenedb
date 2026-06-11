@@ -15,7 +15,7 @@ TasksMax=131072
 # '+' prefix runs these as root (needed for chown/install -o)
 ExecStartPre=+/usr/bin/env chown -R serenedb:serenedb /var/lib/serenedb /var/log/serenedb
 
-ExecStart=/usr/bin/serened --log.foreground-tty true
+ExecStart=/usr/bin/serened
 
 TimeoutSec=3600
 Restart=on-failure

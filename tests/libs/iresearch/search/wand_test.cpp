@@ -23,6 +23,8 @@
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/search/scorer.hpp>
 
+#include "basics/duckdb_engine.h"
+#include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
@@ -88,7 +90,7 @@ class WandTestCase : public tests::IndexTestBase {
   void GenerateSegment(irs::ScorerPtr scorer, bool write_norms,
                        bool append_data = false);
   void GenerateSegmentMinNorm(irs::ScorerPtr scorer);
-  void ConsolidateAll(irs::ScorerPtr scorer, bool write_norms);
+  void CompactAll(irs::ScorerPtr scorer, bool write_norms);
 
   void AssertFilters(irs::ScorerPtr scorer, bool disjunction = true) {
     auto apply = [&](auto assert_filter) {
@@ -211,13 +213,12 @@ void WandTestCase::AssertResults(const irs::DirectoryReader& index,
   ASSERT_EQ(result, wand_result);
 }
 
-void WandTestCase::ConsolidateAll(irs::ScorerPtr scorer, bool write_norms) {
-  const irs::index_utils::ConsolidateCount consolidate_all;
+void WandTestCase::CompactAll(irs::ScorerPtr scorer, bool write_norms) {
+  const irs::index_utils::CompactionCount compact_all;
   auto writer =
     open_writer(irs::kOmAppend, GetWriterOptions(scorer, write_norms));
-  ASSERT_TRUE(
-    writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
-  ASSERT_TRUE(writer->Commit());
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  ASSERT_TRUE(writer->RefreshCommit());
   ASSERT_EQ(1, writer->GetSnapshot().size());
 }
 
@@ -241,6 +242,7 @@ void WandTestCase::GenerateSegment(irs::ScorerPtr scorer, bool write_norms,
       if (tests::JsonDocGenerator::ValueType::STRING == data.vt) {
         auto f =
           std::make_shared<TextField>(std::string{name}, data.str, false);
+        f->id = tests::FieldIdFor(name);
         f->index_features |= irs::IndexFeatures::Norm;
         doc.indexed.push_back(f);
       }
@@ -264,6 +266,7 @@ void WandTestCase::GenerateSegmentMinNorm(irs::ScorerPtr scorer) {
       if (tests::JsonDocGenerator::ValueType::STRING == data.vt) {
         auto f =
           std::make_shared<TextField>(std::string{name}, data.str, false);
+        f->id = tests::FieldIdFor(name);
         f->index_features |= irs::IndexFeatures::Norm;
         doc.indexed.push_back(f);
       }
@@ -279,17 +282,19 @@ void WandTestCase::GenerateSegmentMinNorm(irs::ScorerPtr scorer) {
 
 void WandTestCase::AssertTermFilter(const irs::Scorer& scorer,
                                     bool wand_enabled) {
-  static constexpr std::string_view kFieldName = "name";
+  static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
   irs::ByTerm filter;
-  *filter.mutable_field() = kFieldName;
+  *filter.mutable_field_id() = kFieldId;
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
+    dir(), codec(),
+    irs::IndexReaderOptions{.scorer = &scorer,
+                            .db = &::sdb::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
-    const auto* field = segment.field(kFieldName);
+    const auto* field = segment.field(kFieldId);
     ASSERT_NE(nullptr, field);
 
     const auto can_use_wand = CanUseWand(scorer, *field);
@@ -307,20 +312,22 @@ void WandTestCase::AssertTermFilter(const irs::Scorer& scorer,
 
 void WandTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
                                            bool wand_enabled) {
-  static constexpr std::string_view kFieldName = "name";
+  static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
   irs::And conjunction;
   irs::ByTerm& filter1 = conjunction.add<irs::ByTerm>();
-  *filter1.mutable_field() = kFieldName;
+  *filter1.mutable_field_id() = kFieldId;
   irs::ByTerm& filter2 = conjunction.add<irs::ByTerm>();
-  *filter2.mutable_field() = kFieldName;
+  *filter2.mutable_field_id() = kFieldId;
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
+    dir(), codec(),
+    irs::IndexReaderOptions{.scorer = &scorer,
+                            .db = &::sdb::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
-    const auto* field = segment.field(kFieldName);
+    const auto* field = segment.field(kFieldId);
     ASSERT_NE(nullptr, field);
 
     const auto can_use_wand = CanUseWand(scorer, *field);
@@ -341,22 +348,24 @@ void WandTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
 
 void WandTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
                                            bool wand_enabled) {
-  static constexpr std::string_view kFieldName = "name";
+  static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
   irs::Or disjunction;
   irs::ByTerm& filter1 = disjunction.add<irs::ByTerm>();
-  *filter1.mutable_field() = kFieldName;
+  *filter1.mutable_field_id() = kFieldId;
   irs::ByTerm& filter2 = disjunction.add<irs::ByTerm>();
-  *filter2.mutable_field() = kFieldName;
+  *filter2.mutable_field_id() = kFieldId;
   irs::ByTerm& filter3 = disjunction.add<irs::ByTerm>();
-  *filter3.mutable_field() = kFieldName;
+  *filter3.mutable_field_id() = kFieldId;
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
+    dir(), codec(),
+    irs::IndexReaderOptions{.scorer = &scorer,
+                            .db = &::sdb::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
-    const auto* field = segment.field(kFieldName);
+    const auto* field = segment.field(kFieldId);
     ASSERT_NE(nullptr, field);
 
     const auto can_use_wand = CanUseWand(scorer, *field);
@@ -382,7 +391,7 @@ void WandTestCase::AssertWithNewSegmentsDense(irs::Scorer* scorer) {
   AssertFilters(scorer, false);
 
   GenerateSegment(scorer, true, true);  // Add another segment
-  ConsolidateAll(scorer, true);
+  CompactAll(scorer, true);
   AssertFilters(scorer, false);
 
   GenerateSegment(scorer, true, true);  // Add another segment
@@ -394,7 +403,7 @@ void WandTestCase::AssertWithNewSegmentsDense(irs::Scorer* scorer) {
   GenerateSegment(scorer, true, true);  // Add another segment
   AssertFilters(scorer, false);
 
-  ConsolidateAll(scorer, true);
+  CompactAll(scorer, true);
   AssertFilters(scorer, false);
 }
 
@@ -405,7 +414,7 @@ void WandTestCase::AssertWithNewSegmentsSparse(irs::Scorer* scorer) {
   GenerateSegment(scorer, false, true);  // Add another segment
   AssertFilters(scorer, false);
 
-  ConsolidateAll(scorer, false);
+  CompactAll(scorer, false);
   AssertFilters(scorer, false);
 }
 

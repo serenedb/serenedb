@@ -32,26 +32,30 @@
 #include <chrono>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
+#include <ranges>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "basics/errors.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_rocksdb_reader.h"
+#include "connector/duckdb_rocksdb_writer.h"
+#include "connector/duckdb_search_sink_writer.h"
 #include "connector/indexonly_marker.h"
+#include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
-#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::search {
 namespace {
@@ -63,7 +67,7 @@ constexpr size_t kKeyPrefixSize =
 
 constexpr std::string_view kSkipHint =
   ". To skip WAL recovery and proceed with stale index content, restart "
-  "with --search.skip-wal-recovery (data loss for the unreplayed delta).";
+  "with --server_skip_search_recovery (data loss for the unreplayed delta).";
 
 enum class RowOp : uint8_t {
   Invalid,
@@ -130,7 +134,7 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
     return false;
   }
 
-  auto column_ids = inverted->GetColumnIds();
+  auto column_ids = inverted->GetReferencedColumnIds();
   if (column_ids.empty()) {
     return false;
   }
@@ -189,20 +193,26 @@ void FlushShard(ShardState& s,
   auto trx = s.shard->GetTransaction();
   auto tokenizer_provider =
     connector::MakeTokenizerProvider(snapshot, *s.index);
-  auto json_paths_provider =
-    connector::MakeJsonPathsProvider(snapshot, *s.index);
-  auto store_values_provider = connector::MakeStoreValuesProvider(*s.index);
-  auto is_text_indexed_provider =
-    connector::MakeIsTextIndexedProvider(*s.index);
-  auto hnsw_info_provider = connector::MakeHNSWInfoProvider(*s.index);
-  connector::SearchSinkInsertBaseImpl insert_sink{
+  auto entry_info_provider = connector::MakeEntryInfoProvider(*s.index);
+  // Private read-only txn: expression deserialise + execute need one.
+  auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
+  conn->BeginTransaction();
+  irs::Finally rollback_on_exit = [&]() noexcept {
+    try {
+      conn->Rollback();
+    } catch (...) {  // NOLINT(bugprone-empty-catch)
+    }
+  };
+  auto& client_context = *conn->context;
+  auto indexed_exprs =
+    connector::MakeIndexedExpressions(*s.index, client_context);
+  auto direct_column_ids = s.index->GetColumnIds();
+  connector::DuckDBSearchSinkInsertWriter insert_sink{
     trx,
     std::move(tokenizer_provider),
-    std::move(json_paths_provider),
-    std::move(store_values_provider),
-    std::move(is_text_indexed_provider),
-    std::move(hnsw_info_provider),
-    s.indexed_column_ids,
+    direct_column_ids,
+    std::move(entry_info_provider),
+    std::move(indexed_exprs),
   };
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
@@ -216,6 +226,9 @@ void FlushShard(ShardState& s,
   if (!insert_entries.empty()) {
     auto& sink = insert_sink;
     sink.InitImpl(insert_entries.size());
+    auto column_row_keys = insert_entries |
+                           std::views::transform(&Row::full_key) |
+                           std::ranges::to<std::vector>();
     auto& get_key_buffer = s.full_key_prefix;
     rocksdb::ReadOptions read_opts;
     rocksdb::PinnableSlice value_buffer;
@@ -230,56 +243,68 @@ void FlushShard(ShardState& s,
       get_key_buffer.append(pk.data(), pk.size());
       value_buffer.Reset();
       auto status = db.Get(read_opts, &cf, get_key_buffer, &value_buffer);
-      SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
-                   "WAL recovery: rocksdb Get failed for index '",
-                   s.shard->GetId().id(),
-                   "' col=", s.indexed_columns[col_idx].id, ": ",
-                   status.ToString(), kSkipHint);
+      SDB_FATAL_IF(
+        SEARCH, !status.ok(), "WAL recovery: rocksdb Get failed for index '",
+        s.shard->GetId().id(), "' col=", s.indexed_columns[col_idx].id, ": ",
+        status.ToString(), kSkipHint);
       return std::string_view{value_buffer.data(), value_buffer.size()};
     };
     for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
       const auto& col = s.indexed_columns[col_idx];
       absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId), col.id);
-      const connector::ColumnDescriptor desc{col.id, col.store_mode, col.type,
-                                             /*have_nulls=*/true};
-      const auto* info = s.index->FindColumnInfo(col.id);
-      const bool wants_cs = info != nullptr && info->store_values;
-      const bool has_hnsw = info && info->hnsw_config;
-      // HNSW columns have wants_cs=false in the catalog (the hnsw opclass
-      // setter does both); still feed cs via the typed-batch path.
-      const bool wants_cs_batch = wants_cs || has_hnsw;
+      const connector::ColumnDescriptor desc{col.id, col.store_mode, col.type};
       const auto count = static_cast<duckdb::idx_t>(insert_entries.size());
-      if (wants_cs_batch) {
-        bool switched_for_inverted = false;
-        for (duckdb::idx_t emitted = 0; emitted < count;) {
-          const auto chunk =
-            std::min<duckdb::idx_t>(count - emitted, STANDARD_VECTOR_SIZE);
-          duckdb::Vector vec{col.type, chunk};
-          duckdb::FlatVector::ValidityMutable(vec).SetAllValid(chunk);
-          for (duckdb::idx_t i = 0; i < chunk; ++i) {
-            connector::DeserializeValueIntoDuckDB(
-              resolve_cell(*insert_entries[emitted + i], col_idx), vec,
-              col.type, i);
-          }
-          if (emitted == 0) {
-            switched_for_inverted = sink.SwitchColumnImpl(desc, vec, chunk);
-          } else {
-            sink.AppendCsContinuation(vec, chunk, emitted);
-          }
-          emitted += chunk;
-        }
-        if (!switched_for_inverted) {
-          continue;
-        }
-      } else {
-        duckdb::Vector unused{col.type, nullptr, 0};
-        const bool switched = sink.SwitchColumnImpl(desc, unused, /*count=*/0);
-        SDB_ASSERT(switched);
+      duckdb::Vector vec{col.type, count};
+      duckdb::FlatVector::ValidityMutable(vec).SetAllValid(count);
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        connector::DeserializeValueIntoDuckDB(
+          resolve_cell(*insert_entries[i], col_idx), vec, col.type, i);
       }
-      for (const auto* row : insert_entries) {
-        std::string_view cell = resolve_cell(*row, col_idx);
-        rocksdb::Slice slice{cell.data(), cell.size()};
-        sink.WriteImpl(std::span{&slice, 1}, row->full_key);
+      if (sink.IsIndexed(desc.id)) {
+        sink.SwitchFieldImpl(static_cast<irs::field_id>(desc.id), desc.type,
+                             vec, column_row_keys, count);
+      }
+    }
+
+    auto indexed_exprs = insert_sink.IndexedExpressions();
+    if (!indexed_exprs.empty()) {
+      duckdb::vector<duckdb::LogicalType> types;
+      std::vector<catalog::Column::Id> slot_to_col_id;
+      types.reserve(s.indexed_columns.size());
+      slot_to_col_id.reserve(s.indexed_columns.size());
+      for (const auto& col : s.indexed_columns) {
+        types.push_back(col.type);
+        slot_to_col_id.push_back(col.id);
+      }
+      connector::DuckDBColumnSerializer serializer{
+        duckdb::Allocator::DefaultAllocator()};
+      std::vector<std::string> row_keys;
+      const size_t total = insert_entries.size();
+      for (size_t off = 0; off < total;) {
+        const auto count = std::min<size_t>(total - off, STANDARD_VECTOR_SIZE);
+        duckdb::DataChunk chunk;
+        chunk.Initialize(duckdb::Allocator::DefaultAllocator(), types, count);
+        chunk.SetCardinality(count);
+        for (size_t slot = 0; slot < s.indexed_columns.size(); ++slot) {
+          const auto& col = s.indexed_columns[slot];
+          absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId),
+                                  col.id);
+          auto& vec = chunk.data[slot];
+          duckdb::FlatVector::ValidityMutable(vec).SetAllValid(count);
+          for (size_t i = 0; i < count; ++i) {
+            connector::DeserializeValueIntoDuckDB(
+              resolve_cell(*insert_entries[off + i], slot), vec, col.type, i);
+          }
+        }
+        row_keys.clear();
+        row_keys.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+          row_keys.emplace_back(insert_entries[off + i]->full_key);
+        }
+        connector::EvaluateAndWriteIndexedExpressions(
+          insert_sink, indexed_exprs, chunk, s.table_object_id, slot_to_col_id,
+          client_context, count, row_keys);
+        off += count;
       }
     }
     sink.FinishImpl();
@@ -289,7 +314,7 @@ void FlushShard(ShardState& s,
 
   SDB_ASSERT(last_tick != 0);
   const bool committed = trx.Commit(last_tick);
-  SDB_FATAL_IF("xxxxx", Logger::SEARCH, !committed,
+  SDB_FATAL_IF(SEARCH, !committed,
                "WAL recovery: iresearch trx Commit failed for index '",
                s.shard->GetId().id(), "' last_tick=", last_tick, kSkipHint);
 }
@@ -520,14 +545,14 @@ void RunWalRecovery(std::vector<ShardState>& shards,
   SDB_ASSERT(default_cf);
   const uint32_t default_cf_id = default_cf->GetID();
 
-  SDB_INFO("xxxxx", Logger::SEARCH,
+  SDB_INFO(SEARCH,
            "Starting WAL recovery, to skip it use the flag: "
-           "\"--search.skip-wal-recovery\"");
+           "\"--server_skip_search_recovery\"");
 
   std::unique_ptr<rocksdb::TransactionLogIterator> iter;
   rocksdb::TransactionLogIterator::ReadOptions opts{true};
   auto s = db.GetUpdatesSince(min_start_tick, &iter, opts);
-  SDB_FATAL_IF("xxxxx", Logger::SEARCH, !s.ok(),
+  SDB_FATAL_IF(SEARCH, !s.ok(),
                "WAL recovery: failed to open WAL iterator from tick ",
                min_start_tick, ": ", s.ToString(), kSkipHint);
   SDB_ASSERT(iter);
@@ -543,7 +568,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
 
   while (iter->Valid()) {
     auto status = iter->status();
-    SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+    SDB_FATAL_IF(SEARCH, !status.ok(),
                  "WAL recovery: iterator error: ", status.ToString(),
                  kSkipHint);
 
@@ -552,7 +577,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
     WalBatchReplay handler{table2shards, default_cf_id, batch.sequence,
                            kFlushThreshold};
     status = batch.writeBatchPtr->Iterate(&handler);
-    SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+    SDB_FATAL_IF(SEARCH, !status.ok(),
                  "WAL recovery: batch iterate failed at seq ", batch.sequence,
                  ": ", status.ToString(), kSkipHint);
 
@@ -566,7 +591,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
   }
 
   auto status = iter->status();
-  SDB_FATAL_IF("xxxxx", Logger::SEARCH, !iter->status().ok(),
+  SDB_FATAL_IF(SEARCH, !iter->status().ok(),
                "WAL recovery: iterator error after last batch: ",
                status.ToString(), kSkipHint);
 
@@ -581,8 +606,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
   yaclib::Wait(commits.begin(), commits.end());
 
   for (auto& shard : shards) {
-    SDB_INFO_IF("xxxxx", Logger::SEARCH,
-                shard.total_deleted > 0 || shard.total_inserted > 0,
+    SDB_INFO_IF(SEARCH, shard.total_deleted > 0 || shard.total_inserted > 0,
                 "WAL recovery: index '", shard.shard->GetId().id(),
                 "' replayed (", shard.start_tick, ", ", end_tick,
                 "], inserted=", shard.total_inserted,
@@ -595,13 +619,12 @@ void RunWalRecovery(std::vector<ShardState>& shards,
 void InitInvertedIndexes(bool skip_wal_recovery) {
   auto begin = std::chrono::steady_clock::now();
 
-  auto& server = SerenedServer::Instance();
-  auto& engine = server.getFeature<EngineFeature>().engine();
+  auto& engine = GetServerEngine();
   auto& rdb = basics::downCast<RocksDBEngineCatalog>(engine);
   SDB_ASSERT(!rdb.inRecovery());
   const Tick end_tick = rdb.recoveryTick();
 
-  auto& catalog_feature = server.getFeature<catalog::CatalogFeature>();
+  auto& catalog_feature = catalog::CatalogFeature::instance();
   auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
   SDB_ASSERT(snapshot);
 
@@ -619,9 +642,9 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         SDB_ASSERT(inv_shard);
         const Tick persisted = inv_shard->GetRecoveryTick();
         if (persisted > end_tick) {
-          SDB_WARN("xxxxx", Logger::SEARCH, "Inverted index '",
-                   inv_shard->GetId().id(), "' is recovered at tick ",
-                   persisted, " greater than storage engine tick ", end_tick,
+          SDB_WARN(SEARCH, "Inverted index '", inv_shard->GetId().id(),
+                   "' is recovered at tick ", persisted,
+                   " greater than storage engine tick ", end_tick,
                    ", it seems WAL tail was lost and index is out of sync");
         }
         inv_shard->StartTasks();
@@ -641,8 +664,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         ShardState state;
         state.shard = std::move(inv_shard);
         state.start_tick = persisted;
-        SDB_FATAL_IF("xxxxx", Logger::SEARCH,
-                     !ResolveShardMetadata(state, *snapshot),
+        SDB_FATAL_IF(SEARCH, !ResolveShardMetadata(state, *snapshot),
                      "WAL recovery: could not resolve catalog metadata for "
                      "inverted index '",
                      state.shard->GetId().id(), "'", kSkipHint);
@@ -668,7 +690,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
 
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);
-  SDB_INFO("xxxxx", Logger::SEARCH, "WAL recovery: completed in ",
+  SDB_INFO(SEARCH, "WAL recovery: completed in ",
            absl::FormatDuration(duration),
            ", indexes=", recovery_shards.size());
 }

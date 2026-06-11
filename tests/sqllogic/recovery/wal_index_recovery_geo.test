@@ -19,7 +19,8 @@ control substitution on
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY wal_geo_dict(
-    template = 'geojson'
+    template = 'geojson',
+    coding = 's2point'
 );
 
 statement ok
@@ -35,7 +36,7 @@ CREATE INDEX wal_geo_idx ON wal_geo_t
   INCLUDE (geo);
 
 statement ok
-VACUUM (UPDATE_INDEXES) wal_geo_t;
+VACUUM (REFRESH_TABLE) wal_geo_t;
 
 # Plan check: geo distance + projection both served by the inverted index.
 query
@@ -98,7 +99,7 @@ SELECT 1;
 
 connection wal_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) wal_geo_t;
+VACUUM (REFRESH_TABLE) wal_geo_t;
 
 # Pre-crash row still queryable.
 connection wal_after

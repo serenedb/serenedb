@@ -1,0 +1,392 @@
+control substitution on
+
+
+let dim
+SELECT NULL AS "8" WHERE false;
+
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_s3(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE vecs (id INT, body VARCHAR, emb FLOAT[${dim}]);
+
+
+statement ok
+INSERT INTO vecs
+SELECT
+  s AS id,
+  CASE s % 4
+    WHEN 0 THEN 'red fox'
+    WHEN 1 THEN 'blue cat'
+    WHEN 2 THEN 'green bird'
+    ELSE 'yellow dog'
+  END AS body,
+  [sin((s * 0.1 + i * 0.01))::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}] AS emb
+FROM generate_series(1, 10000) AS s;
+
+
+statement ok
+CREATE TABLE correct(id INT);
+
+
+statement ok
+INSERT INTO correct
+SELECT id FROM vecs
+ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+LIMIT 256;
+
+
+statement ok
+CREATE TABLE correct_filtered(id INT);
+
+
+statement ok
+INSERT INTO correct_filtered
+SELECT id FROM vecs
+WHERE id > 5000
+ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+LIMIT 256;
+
+
+statement ok
+CREATE TABLE correct_text_phrase(id INT);
+
+
+statement ok
+INSERT INTO correct_text_phrase
+SELECT id FROM vecs WHERE body = 'red fox'
+ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+LIMIT 256;
+
+
+statement ok
+CREATE TABLE correct_text_any(id INT);
+
+
+statement ok
+INSERT INTO correct_text_any
+SELECT id FROM vecs WHERE body IN ('red fox', 'blue cat')
+ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+LIMIT 256;
+
+
+statement ok
+CREATE TABLE correct_text_hybrid(id INT);
+
+
+statement ok
+INSERT INTO correct_text_hybrid
+SELECT id FROM vecs WHERE body IN ('red fox', 'blue cat') AND id > 2000
+ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+LIMIT 256;
+
+
+statement ok
+SET sdb_ef_search TO 512;
+
+
+statement count 10000
+COPY (SELECT id, emb FROM vecs)
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_vecs_single.jsonl' (FORMAT json);
+
+
+statement ok
+CREATE VIEW vecs_json AS
+SELECT id, emb::FLOAT[${dim}] AS emb
+FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_single.jsonl');
+
+
+statement ok
+CREATE INDEX vecs_json_hnsw ON vecs_json
+USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+
+
+query
+SELECT count(*) FROM vecs_json_hnsw;
+----
+count
+10000
+
+
+query
+WITH
+  result AS (
+    SELECT id FROM vecs_json_hnsw
+    ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+    LIMIT 256
+  )
+SELECT COUNT(*)::FLOAT / 256 > 0.9 FROM correct WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+statement ok
+SET sdb_ef_search TO 2048;
+
+
+query
+WITH
+  result AS (
+    SELECT id FROM vecs_json_hnsw
+    WHERE id > 5000
+    ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+    LIMIT 256
+  )
+SELECT COUNT(*)::FLOAT / 256 > 0.9 FROM correct_filtered WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+statement ok
+SET sdb_ef_search TO 512;
+
+
+statement ok
+CREATE VIEW vecs_json_cols AS
+SELECT id, emb::FLOAT[${dim}] AS emb
+FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_single.jsonl',
+               columns={id: 'INT', emb: 'VARCHAR'});
+
+
+statement ok
+CREATE INDEX vecs_json_cols_hnsw ON vecs_json_cols
+USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+
+
+query
+SELECT count(*) FROM vecs_json_cols_hnsw;
+----
+count
+10000
+
+
+query
+WITH
+  result AS (
+    SELECT id FROM vecs_json_cols_hnsw
+    ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+    LIMIT 256
+  )
+SELECT COUNT(*)::FLOAT / 256 > 0.9 FROM correct WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+statement count 3334
+COPY (SELECT id, emb FROM vecs WHERE id <= 3334)
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_vecs_glob_a.jsonl' (FORMAT json);
+
+statement count 3333
+COPY (SELECT id, emb FROM vecs WHERE id BETWEEN 3335 AND 6667)
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_vecs_glob_b.jsonl' (FORMAT json);
+
+statement count 3333
+COPY (SELECT id, emb FROM vecs WHERE id >= 6668)
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_vecs_glob_c.jsonl' (FORMAT json);
+
+
+statement ok
+CREATE VIEW vecs_json_glob AS
+SELECT id, emb::FLOAT[${dim}] AS emb
+FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_glob_*.jsonl');
+
+
+statement ok
+CREATE INDEX vecs_json_glob_hnsw ON vecs_json_glob
+USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+
+
+query
+SELECT count(*) FROM vecs_json_glob_hnsw;
+----
+count
+10000
+
+
+query
+WITH
+  result AS (
+    SELECT id FROM vecs_json_glob_hnsw
+    ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+    LIMIT 256
+  )
+SELECT COUNT(*)::FLOAT / 256 > 0.9 FROM correct WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+statement count 10000
+COPY (SELECT id, body, emb FROM vecs)
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_vecs_text.jsonl' (FORMAT json);
+
+
+statement ok
+CREATE VIEW vecs_text_json AS
+SELECT id, body, emb::FLOAT[${dim}] AS emb
+FROM read_json('s3://${MINIO_BUCKET}/${__DATABASE__}_vecs_text.jsonl');
+
+
+statement ok
+CREATE INDEX vecs_text_json_idx ON vecs_text_json
+USING inverted(id, body en_s3, emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+
+
+statement ok
+SET sdb_ef_search TO 2048;
+
+
+query
+WITH
+  result AS (
+    SELECT id FROM vecs_text_json_idx
+    WHERE body @@ ts_phrase('red')
+    ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+    LIMIT 256
+  )
+SELECT COUNT(*)::FLOAT / 256 > 0.9 FROM correct_text_phrase WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (
+    SELECT id FROM vecs_text_json_idx
+    WHERE body @@ ts_any(['red', 'blue'])
+    ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+    LIMIT 256
+  )
+SELECT COUNT(*)::FLOAT / 256 > 0.9 FROM correct_text_any WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (
+    SELECT id FROM vecs_text_json_idx
+    WHERE body @@ ts_any(['red', 'blue']) AND id > 2000
+    ORDER BY emb <-> [CASE i % 2 WHEN 0 THEN 0.0 ELSE 1.0 END::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+    LIMIT 256
+  )
+SELECT COUNT(*)::FLOAT / 256 > 0.9 FROM correct_text_hybrid WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+statement ok
+SET sdb_ef_search TO 512;
+
+
+statement ok
+CREATE TABLE vecs_hd (id INT, label VARCHAR, body VARCHAR, vec FLOAT[${dim}]);
+
+
+statement ok
+INSERT INTO vecs_hd
+SELECT
+  s AS id,
+  'lbl_' || s::TEXT,
+  CASE s % 4
+    WHEN 0 THEN 'red fox'
+    WHEN 1 THEN 'blue cat'
+    WHEN 2 THEN 'green bird'
+    ELSE 'yellow dog'
+  END,
+  [sin((s * 0.001 + i * 0.0001))::FLOAT FOR i IN range(${dim})]::FLOAT[${dim}]
+FROM generate_series(1, 500) AS s;
+
+
+statement count 500
+COPY (SELECT label, body, vec FROM vecs_hd)
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_hd_arr.json' (FORMAT JSON, ARRAY);
+
+
+statement ok
+CREATE VIEW vecs_hd_arr_json AS
+  SELECT * FROM read_json(
+    's3://${MINIO_BUCKET}/${__DATABASE__}_hd_arr.json',
+    format='array',
+    columns={label: 'VARCHAR', body: 'VARCHAR', vec: 'FLOAT[${dim}]'}
+  );
+
+
+statement ok
+CREATE INDEX vecs_hd_arr_json_idx ON vecs_hd_arr_json
+  USING inverted(body en_s3, vec hnsw (metric = 'cosine'));
+
+
+statement ok
+SET sdb_ef_search TO 2048;
+
+
+query
+SELECT count(*) FROM (
+  SELECT label FROM vecs_hd_arr_json_idx
+  ORDER BY vec <=> (SELECT vec FROM vecs_hd WHERE id = 1)
+  LIMIT 32
+) t;
+----
+count
+32
+
+
+query
+SELECT count(*) FROM (
+  SELECT label, body FROM vecs_hd_arr_json_idx
+  WHERE body @@ ts_any(['red', 'blue'])
+  ORDER BY vec <=> (SELECT vec FROM vecs_hd WHERE id = 1)
+  LIMIT 64
+) t;
+----
+count
+64
+
+
+query
+SELECT count(*) FROM (
+  SELECT label, body FROM vecs_hd_arr_json_idx
+  WHERE body @@ ts_phrase('red')
+  ORDER BY vec <=> (SELECT vec FROM vecs_hd WHERE id = 1)
+  LIMIT 32
+) t;
+----
+count
+32
+
+
+statement ok
+SET sdb_ef_search TO 512;

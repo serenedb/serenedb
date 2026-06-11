@@ -22,9 +22,12 @@
 
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <span>
+#include <string>
 
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/table_options.h"
+#include "connector/index_expression.hpp"
 #include "connector/sink_writer_base.hpp"
 #include "rocksdb/slice.h"
 
@@ -42,24 +45,23 @@ class DuckDBSinkIndexWriter {
   virtual void Finish() = 0;
   virtual void Abort() = 0;
 
-  // Switches the active column AND hands the implementation the typed
-  // batch up front (e.g. for columnstore Append). Returns true if the
-  // writer is interested in per-cell Write() calls for the column;
-  // callers gate the per-cell loop on that. Per-cell-only paths (WAL
-  // recovery, test fixtures) pass count == 0 and any Vector of the
-  // matching type; the batch Append is a no-op at count == 0.
   virtual bool SwitchColumn(const ColumnDescriptor& col,
-                            const duckdb::Vector& vec, duckdb::idx_t count) {
+                            const duckdb::Vector& vec,
+                            std::span<const std::string_view> row_keys,
+                            duckdb::idx_t count) {
     SDB_ASSERT(false, "SwitchColumn call not implemented");
     return false;
   }
 
-  // Writes a value of cell in column switched to by previous call to
-  // SwitchColumn. Particular writer would not be called for cell values if
-  // returned false from SwitchColumn.
-  virtual void Write(std::span<const rocksdb::Slice> cell_slices,
-                     std::string_view full_key) {
-    SDB_ASSERT(false, "Write call not implemented");
+  virtual bool SwitchExpression(const ExpressionDescriptor& expr_desc,
+                                const duckdb::Vector& /*vec*/,
+                                std::span<const std::string_view> /*row_keys*/,
+                                duckdb::idx_t /*count*/) {
+    return false;
+  }
+
+  virtual std::span<const IndexedExpression> IndexedExpressions() const {
+    return {};
   }
 
   // deletes row denoted by row_key. It is up to concrete writer to perform all
@@ -67,6 +69,12 @@ class DuckDBSinkIndexWriter {
   virtual void DeleteRow(std::string_view row_key) {
     SDB_ASSERT(false, "DeleteRow call not implemented");
   }
+};
+
+class DuckDBSinkColumnWriter : public DuckDBSinkIndexWriter {
+ public:
+  virtual void Write(std::span<const rocksdb::Slice> /*cell_slices*/,
+                     std::string_view /*full_key*/) {}
 };
 
 // Base implementation of column centric index writers (same as Velox version)

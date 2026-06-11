@@ -1,0 +1,302 @@
+control substitution on
+
+# JSON-path inverted index WAL-recovery: a row whose rocksdb txn committed
+# (durable in WAL) but whose iresearch txn never committed (lost on crash)
+# must be replayed into the inverted index on restart.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY json_crash_vd(template = 'keyword');
+
+statement ok
+CREATE TABLE jc_t(id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX jc_idx ON jc_t USING inverted(id, (content->>'host') json_crash_vd);
+
+# Seed row, inserted before the fault is armed.
+statement ok
+INSERT INTO jc_t VALUES (1, '{"host":"server-01"}'::json);
+
+statement ok
+VACUUM (REFRESH_TABLE) jc_t;
+
+query
+SELECT id FROM jc_idx WHERE content->>'host' @@ ts_like('server-01');
+----
+id
+1
+
+# Failpoint: rocksdb commit succeeds (WAL fsynced), then the process aborts
+# before iresearch picks up the write.
+statement ok
+SET sdb_faults = 'crash_after_rocksdb_commit';
+
+statement error connection closed
+INSERT INTO jc_t VALUES (2, '{"host":"server-02"}'::json);
+
+# --- server restarts here. WAL recovery replays row 2 into iresearch. ---
+
+connection jc_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection jc_after
+statement ok
+VACUUM (REFRESH_TABLE) jc_t;
+
+# Seed row still indexed.
+connection jc_after
+query
+SELECT id FROM jc_idx WHERE content->>'host' @@ ts_like('server-01');
+----
+id
+1
+
+# Row 2 survived in rocksdb...
+connection jc_after
+query
+SELECT id FROM jc_t ORDER BY id;
+----
+id
+1
+2
+
+# ...and was replayed into the inverted index by WAL recovery.
+connection jc_after
+query
+SELECT id FROM jc_idx WHERE content->>'host' @@ ts_like('server-02');
+----
+id
+2
+
+
+# Index covers a plain column and a JSON-extract path. UPDATE writes only
+# the plain column to the WAL; replay must fetch the JSON cell from rocksdb
+# to re-emit the indexed JSON-path field (FlushShard's PATCH branch).
+
+connection jc_after
+statement ok
+CREATE TABLE jc_patch_t (
+  id INTEGER PRIMARY KEY,
+  k VARCHAR,
+  content JSON
+);
+
+connection jc_after
+statement ok
+CREATE INDEX jc_patch_idx ON jc_patch_t USING inverted(
+  id,
+  k json_crash_vd,
+  (content->>'host') json_crash_vd
+);
+
+connection jc_after
+statement ok
+INSERT INTO jc_patch_t VALUES (1, 'alpha', '{"host":"hp1"}'::json);
+
+connection jc_after
+statement ok
+VACUUM (REFRESH_TABLE) jc_patch_t;
+
+connection jc_after
+statement ok
+SET sdb_faults = 'crash_after_rocksdb_commit';
+
+connection jc_after
+statement error connection closed
+UPDATE jc_patch_t SET k = 'beta' WHERE id = 1;
+
+connection jc_patch_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection jc_patch_after
+statement ok
+VACUUM (REFRESH_TABLE) jc_patch_t;
+
+# UPDATE took effect on the plain indexed column.
+connection jc_patch_after
+query
+SELECT id FROM jc_patch_idx WHERE k @@ ts_like('beta');
+----
+id
+1
+
+connection jc_patch_after
+query
+SELECT id FROM jc_patch_idx WHERE k @@ ts_like('alpha');
+----
+id
+
+# JSON path is still indexed -- replay fetched the cell from rocksdb.
+connection jc_patch_after
+query
+SELECT id FROM jc_patch_idx WHERE content->>'host' @@ ts_like('hp1');
+----
+id
+1
+
+
+# Replay loops over `evals` and emits one field per configured
+# JSON-extract expression; with one path only the loop body runs once.
+
+connection jc_patch_after
+statement ok
+CREATE TABLE jc_multi_t (id INTEGER PRIMARY KEY, content JSON);
+
+connection jc_patch_after
+statement ok
+CREATE INDEX jc_multi_idx ON jc_multi_t USING inverted(
+  id,
+  (content->>'host') json_crash_vd,
+  (content->>'status') json_crash_vd
+);
+
+connection jc_patch_after
+statement ok
+SET sdb_faults = 'crash_after_rocksdb_commit';
+
+connection jc_patch_after
+statement error connection closed
+INSERT INTO jc_multi_t VALUES (1, '{"host":"hm1","status":"ok"}'::json);
+
+connection jc_multi_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection jc_multi_after
+statement ok
+VACUUM (REFRESH_TABLE) jc_multi_t;
+
+connection jc_multi_after
+query
+SELECT id FROM jc_multi_idx WHERE content->>'host' @@ ts_like('hm1');
+----
+id
+1
+
+connection jc_multi_after
+query
+SELECT id FROM jc_multi_idx WHERE content->>'status' @@ ts_like('ok');
+----
+id
+1
+
+
+# `is_operator=false` normalization in NormalizeBoundExpression must survive
+# the deserialize/resolve round-trip so the replay-side field-name bytes
+# match what the writer wrote.
+
+connection jc_multi_after
+statement ok
+CREATE TABLE jc_hash_t (id INTEGER PRIMARY KEY, content JSON);
+
+connection jc_multi_after
+statement ok
+CREATE INDEX jc_hash_idx ON jc_hash_t
+USING inverted(id, (content #>> '{user, name}') json_crash_vd);
+
+connection jc_multi_after
+statement ok
+SET sdb_faults = 'crash_after_rocksdb_commit';
+
+connection jc_multi_after
+statement error connection closed
+INSERT INTO jc_hash_t VALUES (1, '{"user":{"name":"hashy"}}'::json);
+
+connection jc_hash_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection jc_hash_after
+statement ok
+VACUUM (REFRESH_TABLE) jc_hash_t;
+
+connection jc_hash_after
+query
+SELECT id FROM jc_hash_idx WHERE content #>> '{user, name}' @@ ts_like('hashy');
+----
+id
+1
+
+
+# Replay coalesces the three ops in `pk2row` and applies the final state
+# (deleted -> row absent from the index).
+
+connection jc_hash_after
+statement ok
+CREATE TABLE jc_seq_t (id INTEGER PRIMARY KEY, content JSON);
+
+connection jc_hash_after
+statement ok
+CREATE INDEX jc_seq_idx ON jc_seq_t USING inverted(id, (content->>'host') json_crash_vd);
+
+connection jc_hash_after
+statement ok
+INSERT INTO jc_seq_t VALUES (1, '{"host":"orig"}'::json);
+
+connection jc_hash_after
+statement ok
+VACUUM (REFRESH_TABLE) jc_seq_t;
+
+connection jc_hash_after
+statement ok
+SET sdb_faults = 'crash_after_rocksdb_commit';
+
+connection jc_hash_after
+statement ok
+BEGIN;
+
+connection jc_hash_after
+statement ok
+INSERT INTO jc_seq_t VALUES (2, '{"host":"new"}'::json);
+
+connection jc_hash_after
+statement ok
+UPDATE jc_seq_t SET content = '{"host":"upd"}'::json WHERE id = 2;
+
+connection jc_hash_after
+statement ok
+DELETE FROM jc_seq_t WHERE id = 2;
+
+connection jc_hash_after
+statement error connection closed
+COMMIT;
+
+connection jc_seq_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection jc_seq_after
+statement ok
+VACUUM (REFRESH_TABLE) jc_seq_t;
+
+# Seed row survived (it was sealed pre-crash).
+connection jc_seq_after
+query
+SELECT id FROM jc_seq_idx WHERE content->>'host' @@ ts_like('orig');
+----
+id
+1
+
+# Neither the INSERT nor the UPDATE value should be indexed -- the DELETE
+# wins after coalescing.
+connection jc_seq_after
+query
+SELECT id FROM jc_seq_idx WHERE content->>'host' @@ ts_like('new');
+----
+id
+
+connection jc_seq_after
+query
+SELECT id FROM jc_seq_idx WHERE content->>'host' @@ ts_like('upd');
+----
+id
+
+# Storage agrees: rocksdb-side coalescing also leaves id=2 gone.
+connection jc_seq_after
+query
+SELECT id FROM jc_seq_t ORDER BY id;
+----
+id
+1

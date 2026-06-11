@@ -1,0 +1,65 @@
+control substitution on
+
+
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga'
+      UNION ALL SELECT 3, 'pudge plays again')
+TO '/tmp/${__DATABASE__}_view_iso.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_iso_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE VIEW pq_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_iso.parquet');
+
+
+statement ok
+CREATE INDEX pq_idx ON pq_v USING inverted(id, body view_iso_en);
+
+connection reader
+statement ok
+SET sdb_read_your_own_writes = 0;
+
+
+connection reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection reader
+query
+SELECT id, body FROM pq_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+
+connection writer
+statement ok
+DROP VIEW pq_v;
+
+
+connection reader
+query
+SELECT id, body FROM pq_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+
+connection reader
+statement ok
+COMMIT;

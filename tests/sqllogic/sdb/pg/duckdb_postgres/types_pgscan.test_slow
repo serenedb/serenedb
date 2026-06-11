@@ -1,0 +1,54 @@
+control substitution on
+
+# Type roundtrip through the postgres_scanner ATTACH. A small subset of
+# the postgres types that duckdb_postgres advertises support for — this
+# is a smoke check, not exhaustive coverage (which lives upstream in
+# third_party/duckdb_postgres/test/all_pg_types.sql).
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_types;
+
+
+statement ok
+CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_types.assorted (
+  i32     INTEGER,
+  i64     BIGINT,
+  txt     TEXT,
+  flag    BOOLEAN,
+  amount  NUMERIC(12,3),
+  big     DOUBLE
+);
+
+
+statement count 3
+INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_types.assorted VALUES
+  (1,  9223372036854775806, 'alpha', true,  123.456,   3.141592653589793),
+  (-2, -1,                   '',      false, -0.001,    0.0),
+  (NULL, NULL,                NULL,    NULL,  NULL,     NULL);
+
+
+query
+SELECT i32, i64, txt, flag, amount, big
+FROM pg_${__DATABASE__}.${__DATABASE__}_types.assorted
+ORDER BY i32 NULLS LAST;
+----
+i32	i64	txt	flag	amount	big
+-2	-1	(empty)	f	-0.001	0
+1	9223372036854775806	alpha	t	123.456	3.141592653589793
+NULL	NULL	NULL	NULL	NULL	NULL
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_types.assorted;
+
+
+statement ok
+DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_types;
+
+
+statement ok
+DETACH pg_${__DATABASE__};

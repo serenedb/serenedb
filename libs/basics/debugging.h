@@ -43,13 +43,6 @@ namespace sdb {
 
 inline constexpr std::string_view kFailPointPrefix = "sdb_fault";
 
-/// intentionally cause a segmentation violation or other failures
-#ifdef SDB_FAULT_INJECTION
-void TerminateDebugging(std::string_view value);
-#else
-inline void TerminateDebugging(std::string_view) {}
-#endif
-
 #ifdef SDB_FAULT_INJECTION
 bool ShouldFailDebugging(std::string_view value) noexcept;
 #else
@@ -82,6 +75,15 @@ constexpr void ClearFailurePointsDebugging() noexcept {}
 std::vector<std::string> GetFailurePointsDebugging();
 #else
 constexpr std::vector<std::string> GetFailurePointsDebugging() { return {}; }
+#endif
+
+/// Block the calling thread while the named failure point is set, returning as
+/// soon as it is removed. Lets a test park execution at a fault and release it
+/// deterministically, without polling or a timeout.
+#ifdef SDB_FAULT_INJECTION
+void WaitWhileFailurePointDebugging(std::string_view value);
+#else
+constexpr void WaitWhileFailurePointDebugging(std::string_view) noexcept {}
 #endif
 
 constexpr bool CanUseFailurePointsDebugging() {

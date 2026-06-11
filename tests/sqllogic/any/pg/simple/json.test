@@ -97,6 +97,13 @@ SELECT '[{"b" : 0, "A": [  " a", "aba"]}]'::json -> -1 ->> 'A'
 
 
 query
+SELECT '{"val":null}'::json->>'val' IS NULL;
+----
+?column?
+t
+
+
+query
 SELECT concat('[{"b" : 0, "A": [  " a", "aba"]}]'::json -> -1 ->> 'A', '[{"b" : 0, "A": [  " a", "aba"]}]'::json -> -1 ->> 'A');
 ----
 concat

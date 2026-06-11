@@ -23,24 +23,11 @@
 
 #include "app/app_server.h"
 #include "basics/debugging.h"
-#include "basics/logger/logger.h"
-#include "metrics/counter_builder.h"
-#include "metrics/metrics_feature.h"
-
-DECLARE_COUNTER(
-  serenedb_rocksdb_write_stalls_total,
-  "Number of times RocksDB has entered a stalled (slowed) write state");
-DECLARE_COUNTER(serenedb_rocksdb_write_stops_total,
-                "Number of times RocksDB has entered a stopped write state");
+#include "basics/log.h"
 
 namespace sdb {
 
-/// Setup the object, clearing variables, but do no real work
-RocksDBMetricsListener::RocksDBMetricsListener(SerenedServer& server)
-  : _write_stalls(server.getFeature<metrics::MetricsFeature>().add(
-      serenedb_rocksdb_write_stalls_total{})),
-    _write_stops(server.getFeature<metrics::MetricsFeature>().add(
-      serenedb_rocksdb_write_stops_total{})) {}
+RocksDBMetricsListener::RocksDBMetricsListener(app::AppServer&) {}
 
 void RocksDBMetricsListener::OnFlushBegin(rocksdb::DB*,
                                           const rocksdb::FlushJobInfo& info) {
@@ -72,25 +59,21 @@ void RocksDBMetricsListener::OnStallConditionsChanged(
   // state
 
   if (info.condition.cur == rocksdb::WriteStallCondition::kDelayed) {
-    _write_stalls.count();
-    SDB_DEBUG("xxxxx", Logger::ENGINES,
-              "rocksdb is slowing incoming writes to column family '",
+    SDB_DEBUG(STORAGE, "rocksdb is slowing incoming writes to column family '",
               info.cf_name, "' to let background writes catch up");
   } else if (info.condition.cur == rocksdb::WriteStallCondition::kStopped) {
-    _write_stops.count();
-    SDB_WARN("xxxxx", Logger::ENGINES,
-             "rocksdb has stopped incoming writes to column family '",
+    SDB_WARN(STORAGE, "rocksdb has stopped incoming writes to column family '",
              info.cf_name, "' to let background writes catch up");
   } else {
     SDB_ASSERT(info.condition.cur == rocksdb::WriteStallCondition::kNormal);
     if (info.condition.prev == rocksdb::WriteStallCondition::kStopped) {
       SDB_INFO(
-        "xxxxx", Logger::ENGINES,
+        STORAGE,
         "rocksdb is resuming normal writes from stop for column family '",
         info.cf_name, "'");
     } else {
       SDB_DEBUG(
-        "xxxxx", Logger::ENGINES,
+        STORAGE,
         "rocksdb is resuming normal writes from stall for column family '",
         info.cf_name, "'");
     }
@@ -99,19 +82,19 @@ void RocksDBMetricsListener::OnStallConditionsChanged(
 
 void RocksDBMetricsListener::handleFlush(
   std::string_view phase, const rocksdb::FlushJobInfo& info) const {
-  SDB_DEBUG("xxxxx", Logger::ENGINES, "rocksdb flush ", phase,
-            " in column family ", info.cf_name,
+  SDB_DEBUG(STORAGE, "rocksdb flush ", phase, " in column family ",
+            info.cf_name,
             ", reason: ", rocksdb::GetFlushReasonString(info.flush_reason));
 }
 
 void RocksDBMetricsListener::handleCompaction(
   std::string_view phase, const rocksdb::CompactionJobInfo& info) const {
-  SDB_DEBUG("xxxxx", Logger::ENGINES, "rocksdb compaction ", phase,
-            " in column family ", info.cf_name, " from base input level ",
-            info.base_input_level, " to output level ", info.output_level,
-            ", input files: ", info.input_files.size(),
-            ", output files: ", info.output_files.size(), ", reason: ",
-            rocksdb::GetCompactionReasonString(info.compaction_reason));
+  SDB_DEBUG(
+    STORAGE, "rocksdb compaction ", phase, " in column family ", info.cf_name,
+    " from base input level ", info.base_input_level, " to output level ",
+    info.output_level, ", input files: ", info.input_files.size(),
+    ", output files: ", info.output_files.size(),
+    ", reason: ", rocksdb::GetCompactionReasonString(info.compaction_reason));
 }
 
 }  // namespace sdb

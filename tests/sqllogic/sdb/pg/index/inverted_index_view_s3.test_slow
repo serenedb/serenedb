@@ -1,9 +1,5 @@
 control substitution on
 
-# View-backed inverted index over S3, single-file + glob (parquet, csv,
-# json). Set ops / joins / aggregates fall through to the unwired
-# generic materialisation path; an example sits at the bottom of the
-# JSON-glob block.
 
 
 statement ok
@@ -35,7 +31,6 @@ CREATE TEXT SEARCH DICTIONARY view_s3_en(
 );
 
 
-# --- seed: a rocksdb table we'll dump to S3 in multiple files/formats ---
 
 
 statement ok
@@ -54,7 +49,6 @@ INSERT INTO company_src VALUES
   (8, 'pavelvi',     'pushes to main at 3am and calls it a feature deadinside');
 
 
-# Three glob shards so per-file dispatch has multiple groups.
 statement count 3
 COPY (SELECT id, who, what FROM company_src WHERE id <= 3)
 TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_a.parquet' (FORMAT parquet);
@@ -68,7 +62,6 @@ COPY (SELECT id, who, what FROM company_src WHERE id >= 7)
 TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_c.parquet' (FORMAT parquet);
 
 
-# Same content as csv -- byte-offset PK.
 statement count 3
 COPY (SELECT id, who, what FROM company_src WHERE id <= 3)
 TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_a.csv' (FORMAT csv, HEADER true);
@@ -82,23 +75,28 @@ COPY (SELECT id, who, what FROM company_src WHERE id >= 7)
 TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_c.csv' (FORMAT csv, HEADER true);
 
 
-# JSON glob (newline-delimited).
 statement count 3
-COPY (SELECT id, who, what FROM company_src WHERE id <= 3)
+COPY (SELECT id,
+             CASE WHEN id = 2 THEN NULL ELSE who END AS who,
+             what
+      FROM company_src WHERE id <= 3)
 TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_a.jsonl' (FORMAT json);
 
 statement count 3
-COPY (SELECT id, who, what FROM company_src WHERE id BETWEEN 4 AND 6)
+COPY (SELECT id,
+             who,
+             CASE WHEN id = 5 THEN NULL ELSE what END AS what
+      FROM company_src WHERE id BETWEEN 4 AND 6)
 TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_b.jsonl' (FORMAT json);
 
 statement count 2
-COPY (SELECT id, who, what FROM company_src WHERE id >= 7)
+COPY (SELECT id,
+             CASE WHEN id = 8 THEN NULL ELSE who END AS who,
+             CASE WHEN id = 7 THEN NULL ELSE what END AS what
+      FROM company_src WHERE id >= 7)
 TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_c.jsonl' (FORMAT json);
 
 
-# ============================================================================
-# Single-file PARQUET fast path (FileRowNumber)
-# ============================================================================
 
 
 statement count 8
@@ -116,7 +114,6 @@ CREATE INDEX pq_single_idx ON pq_single
   USING inverted(id, who view_s3_en, what view_s3_en);
 
 
-# All 8 source rows present in the index (row count via count(*)).
 query
 SELECT count(*) FROM pq_single_idx;
 ----
@@ -124,7 +121,6 @@ count
 8
 
 
-# Index-side full scan via the fast-path streams the underlying parquet 1:1.
 query
 SELECT id, who FROM pq_single_idx ORDER BY id;
 ----
@@ -139,7 +135,6 @@ id	who
 8	pavelvi
 
 
-# Single-row PHRASE match.
 query
 SELECT id, who FROM pq_single_idx
 WHERE what @@ ts_phrase('mass effect')
@@ -149,7 +144,6 @@ id	who
 6	gayazov
 
 
-# Phrase common to all rows.
 query
 SELECT count(*) FROM pq_single_idx WHERE what @@ ts_phrase('deadinside');
 ----
@@ -157,7 +151,6 @@ count
 8
 
 
-# OR across two phrases.
 query
 SELECT id, who FROM pq_single_idx
 WHERE what @@ ts_phrase('at night') OR what @@ ts_phrase('at 3am')
@@ -168,7 +161,6 @@ id	who
 8	pavelvi
 
 
-# AND across two columns.
 query
 SELECT id, who FROM pq_single_idx
 WHERE who @@ ts_phrase('babsky') AND what @@ ts_phrase('parquet')
@@ -178,7 +170,6 @@ id	who
 2	babsky
 
 
-# BM25 returns positive scores for matching rows.
 query
 SELECT id, BM25(pq_single_idx.tableoid) > 0 AS has_score
 FROM pq_single_idx
@@ -196,7 +187,6 @@ id	has_score
 8	t
 
 
-# top-K via BM25 -- iresearch-side scoring, no source materialisation needed.
 query
 SELECT id FROM pq_single_idx
 WHERE what @@ ts_phrase('sql') OR what @@ ts_phrase('parquet') OR what @@ ts_phrase('mass')
@@ -209,7 +199,6 @@ id
 4
 
 
-# Cross-check against direct view: same rowset for an equivalent LIKE.
 query
 SELECT id, who FROM pq_single
 WHERE what LIKE '%mass effect%'
@@ -219,9 +208,6 @@ id	who
 6	gayazov
 
 
-# ============================================================================
-# Single-file CSV fast path (FileOffset = byte-offset PK)
-# ============================================================================
 
 
 statement count 8
@@ -271,8 +257,6 @@ id	what
 3	goes mid every game and blames the jungler deadinside
 
 
-# CSV byte-offset PK behaves correctly when the row contains a long string
-# (verifies the offset-based lookup, not just leading-row positions).
 query
 SELECT id, who FROM csv_single_idx
 WHERE what @@ ts_phrase('main') AND what @@ ts_phrase('3am')
@@ -282,15 +266,6 @@ id	who
 8	pavelvi
 
 
-# ============================================================================
-# Glob PARQUET fast path (FileIndexPlusRowNumber)
-# Three files: a (3 rows, ids 1-3), b (3 rows, ids 4-6), c (2 rows, ids 7-8).
-# Per-file dispatch must:
-#   1. Decode 16-byte (file_index, file_row_number) PK pairs.
-#   2. Group entries by file_index.
-#   3. Re-bind read_parquet on each file's single-file path.
-#   4. Drive parquet's lookup TF with row_number positions per file.
-# ============================================================================
 
 
 statement ok
@@ -303,7 +278,6 @@ CREATE INDEX pq_glob_idx ON pq_glob
   USING inverted(id, who view_s3_en, what view_s3_en);
 
 
-# Total row count matches the source.
 query
 SELECT count(*) FROM pq_glob_idx;
 ----
@@ -311,7 +285,6 @@ count
 8
 
 
-# Bare scan via fast-path streams the union 1:1.
 query
 SELECT id, who FROM pq_glob_idx ORDER BY id;
 ----
@@ -326,7 +299,6 @@ id	who
 8	pavelvi
 
 
-# Phrase that hits exactly one row in file 'a' (file_index 0).
 query
 SELECT id, who FROM pq_glob_idx
 WHERE what @@ ts_phrase('parquet')
@@ -336,7 +308,6 @@ id	who
 2	babsky
 
 
-# Phrase that hits exactly one row in file 'b' (file_index 1).
 query
 SELECT id, who FROM pq_glob_idx
 WHERE what @@ ts_phrase('mass effect')
@@ -346,7 +317,6 @@ id	who
 6	gayazov
 
 
-# Phrase that hits exactly one row in file 'c' (file_index 2).
 query
 SELECT id, who FROM pq_glob_idx
 WHERE what @@ ts_phrase('3am')
@@ -356,9 +326,6 @@ id	who
 8	pavelvi
 
 
-# Phrase that spans MULTIPLE files (file_index 1 + 2): file 'b' has krivda?
-# no -- 'sql' appears in id=4 (file b, anchin-chan) and id=7 (file c, krivda).
-# Dispatch must produce two file groups and combine their results in order.
 query
 SELECT id, who FROM pq_glob_idx
 WHERE what @@ ts_phrase('sql')
@@ -369,7 +336,6 @@ id	who
 7	krivda
 
 
-# Phrase that hits ALL rows -- exercises the full per-file fan-out.
 query
 SELECT id, who FROM pq_glob_idx
 WHERE what @@ ts_phrase('deadinside')
@@ -386,7 +352,6 @@ id	who
 8	pavelvi
 
 
-# AND across columns (different files): who in file b, what in file b.
 query
 SELECT id, who, what FROM pq_glob_idx
 WHERE who @@ ts_phrase('kostya') AND what @@ ts_phrase('clickclack')
@@ -396,7 +361,6 @@ id	who	what
 5	kostya	types on a clickclack keyboard all night long deadinside
 
 
-# OR across files (krivda in file c, anchin-chan in file b).
 query
 SELECT id, who FROM pq_glob_idx
 WHERE who @@ ts_phrase('krivda') OR who @@ ts_phrase('anchin-chan')
@@ -407,7 +371,6 @@ id	who
 7	krivda
 
 
-# IN-style OR over many ids spanning all three files.
 query
 SELECT id, who FROM pq_glob_idx
 WHERE who @@ ts_phrase('vedernikoff')
@@ -421,7 +384,6 @@ id	who
 8	pavelvi
 
 
-# BM25 across file boundaries.
 query
 SELECT id, BM25(pq_glob_idx.tableoid) > 0 AS has_score
 FROM pq_glob_idx
@@ -439,7 +401,6 @@ id	has_score
 8	t
 
 
-# Phrase with no matches -- empty result, no per-file dispatch should fail.
 query
 SELECT id FROM pq_glob_idx
 WHERE what @@ ts_phrase('nothingmatcheshere');
@@ -447,7 +408,6 @@ WHERE what @@ ts_phrase('nothingmatcheshere');
 id
 
 
-# Cross-check against direct view scan.
 query
 SELECT count(*) FROM pq_glob_idx
 WHERE what @@ ts_phrase('sql');
@@ -463,10 +423,6 @@ count
 2
 
 
-# ============================================================================
-# Glob CSV fast path (FileIndexPlusOffset)
-# Same per-file dispatch contract; the lookup TF differs (byte-offset based).
-# ============================================================================
 
 
 statement ok
@@ -518,7 +474,6 @@ id	who
 8	pavelvi
 
 
-# Cross-file phrase (file b + file c).
 query
 SELECT id, who FROM csv_glob_idx
 WHERE what @@ ts_phrase('sql')
@@ -529,7 +484,6 @@ id	who
 7	krivda
 
 
-# Phrase hitting all files.
 query
 SELECT count(*) FROM csv_glob_idx
 WHERE what @@ ts_phrase('deadinside');
@@ -554,7 +508,6 @@ id	who
 8	pavelvi
 
 
-# OR across non-adjacent files.
 query
 SELECT id, who FROM csv_glob_idx
 WHERE who @@ ts_phrase('vedernikoff') OR who @@ ts_phrase('pavelvi')
@@ -565,10 +518,6 @@ id	who
 8	pavelvi
 
 
-# PHRASE + range filter: the secondary filter (id >= 5) gets pushed into
-# get.table_filters by DuckDB's filter pushdown; iresearch_plan reclaims
-# it back into the search-scan filter_summary so the materialised hits
-# are filtered both ways.
 query
 SELECT id, who FROM csv_glob_idx
 WHERE what @@ ts_phrase('deadinside') AND id >= 5
@@ -581,7 +530,6 @@ id	who
 8	pavelvi
 
 
-# PHRASE + IN list: same reclaim path on a different filter shape.
 query
 SELECT id, who FROM csv_glob_idx
 WHERE what @@ ts_phrase('deadinside') AND id IN (1, 4, 7)
@@ -593,7 +541,6 @@ id	who
 7	krivda
 
 
-# JSON glob.
 
 statement ok
 CREATE VIEW json_glob AS
@@ -617,7 +564,7 @@ SELECT count(*) FROM json_glob_idx
 WHERE what @@ ts_phrase('deadinside');
 ----
 count
-8
+6
 
 
 query
@@ -633,18 +580,121 @@ SELECT id, who FROM json_glob_idx WHERE what @@ ts_phrase('deadinside') ORDER BY
 ----
 id	who
 1	vedernikoff
-2	babsky
+2	NULL
 3	pudge
 4	anchin-chan
-5	kostya
 6	gayazov
-7	krivda
-8	pavelvi
+8	NULL
 
 
-# Non-fast-path body: UNION ALL is rejected at classification. count /
-# PHRASE work via iresearch; real-column reads surface the "not yet
-# supported" error.
+statement ok
+CREATE VIEW json_objects_glob AS
+  SELECT json FROM read_json_objects('s3://${MINIO_BUCKET}/${__DATABASE__}_glob_*.jsonl');
+
+
+statement ok
+CREATE INDEX json_objects_glob_idx ON json_objects_glob
+  USING inverted((json::VARCHAR) view_s3_en);
+
+
+query
+SELECT count(*) FROM json_objects_glob_idx;
+----
+count
+8
+
+
+query
+SELECT count(*) FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('deadinside');
+----
+count
+6
+
+
+query
+SELECT count(*) FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('vedernikoff');
+----
+count
+1
+
+
+query
+SELECT count(*) FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('mass effect') OR (json::VARCHAR) @@ ts_phrase('clickclack');
+----
+count
+1
+
+
+query
+SELECT json FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('vedernikoff');
+----
+json
+{"id":1,"who":"vedernikoff","what":"want a lot of money but not want to work deadinside"}
+
+
+query
+SELECT length(json) > 0 AS has_body FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('mass effect');
+----
+has_body
+t
+
+
+query
+SELECT count(*) FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('deadinside') AND (json::VARCHAR) @@ ts_phrase('parquet');
+----
+count
+1
+
+
+query
+SELECT count(*) FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('nothingmatcheshere');
+----
+count
+0
+
+
+query
+SELECT count(*) FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('null');
+----
+count
+4
+
+
+query
+SELECT json FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('krivda')
+ORDER BY json;
+----
+json
+{"id":7,"who":"krivda","what":null}
+
+
+query
+SELECT json FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('kostya')
+ORDER BY json;
+----
+json
+{"id":5,"who":"kostya","what":null}
+
+
+query
+SELECT json FROM json_objects_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('3am')
+ORDER BY json;
+----
+json
+{"id":8,"who":null,"what":"pushes to main at 3am and calls it a feature deadinside"}
+
+
 statement ok
 CREATE VIEW union_glob AS
   SELECT id, who, what
@@ -672,10 +722,6 @@ SELECT id, who FROM union_glob_idx WHERE what @@ ts_phrase('deadinside') ORDER B
 db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
 
 
-# ============================================================================
-# Cross-format consistency: parquet glob and csv glob index over the same
-# logical data return the same answers.
-# ============================================================================
 
 
 query
@@ -711,10 +757,6 @@ id	who
 8	pavelvi
 
 
-# ============================================================================
-# JOIN: combine an iresearch-index hit set with the rocksdb seed table by id.
-# Verifies the index-entry returns proper row schemas for downstream joins.
-# ============================================================================
 
 
 query
@@ -740,10 +782,6 @@ id	who	what
 6	gayazov	plays mass effect and skips every stand up deadinside
 
 
-# ============================================================================
-# Larger-row glob: 1000 rows distributed across 3 files via id ranges.
-# Exercises per-file dispatch with substantially more groups + row positions.
-# ============================================================================
 
 
 statement ok
@@ -784,7 +822,6 @@ statement ok
 CREATE INDEX pq_big_idx ON pq_big USING inverted(id, body view_s3_en);
 
 
-# 1000 rows across all three files.
 query
 SELECT count(*) FROM pq_big_idx;
 ----
@@ -792,7 +829,6 @@ count
 1000
 
 
-# Tokens per phrase (via PHRASE), match the source counts.
 query
 SELECT count(*) FROM pq_big_idx WHERE body @@ ts_phrase('lucky_seven');
 ----
@@ -842,9 +878,6 @@ count
 457
 
 
-# Materialise via PHRASE -- per-file dispatch must round-trip the right
-# row positions and merge in id order. Spot-check a handful of ids
-# distributed across all three files.
 query
 SELECT id FROM pq_big_idx WHERE body @@ ts_phrase('lucky_seven') AND id IN (7, 350, 700, 994) ORDER BY id;
 ----
@@ -897,7 +930,6 @@ id	body
 1000	row 1000 midfile fast
 
 
-# Phrase combined with explicit IN-list spanning files.
 query
 SELECT id FROM pq_big_idx
 WHERE body @@ ts_phrase('lucky_seven') AND id IN (7, 350, 700)
@@ -909,8 +941,6 @@ id
 700
 
 
-# PHRASE + range -- DuckDB pushes the range into get.table_filters;
-# iresearch_plan reclaims it back into the search-scan filter_summary.
 query
 SELECT count(*) FROM pq_big_idx
 WHERE body @@ ts_phrase('lucky_seven') AND id BETWEEN 300 AND 700;
@@ -935,7 +965,6 @@ count
 14
 
 
-# IN-list across all 3 files, mixed kappa/lambda/triplet/filler tokens.
 query
 SELECT id FROM pq_big_idx WHERE id IN (1, 333, 334, 666, 667, 1000) ORDER BY id;
 ----
@@ -948,8 +977,6 @@ id
 1000
 
 
-# Bare-scan id-range filter -- the count-scan rewrite bails out for table
-# filter pushdown and the regular AGGREGATE+GET path applies the filter.
 query
 SELECT count(*) FROM pq_big_idx WHERE id BETWEEN 300 AND 700;
 ----
@@ -964,7 +991,6 @@ count
 401
 
 
-# IN-list bare-scan: returns rows with id in the list, regardless of PHRASE.
 query
 SELECT id FROM pq_big_idx WHERE id IN (7, 333, 334, 666, 667, 1000) ORDER BY id;
 ----
@@ -977,9 +1003,6 @@ id
 1000
 
 
-# ============================================================================
-# Cleanup
-# ============================================================================
 
 
 statement ok

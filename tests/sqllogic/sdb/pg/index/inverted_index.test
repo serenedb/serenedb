@@ -1,4 +1,4 @@
-hash-threshold 100
+hash-threshold 200
 
 statement ok
 CREATE TABLE foo (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
@@ -30,7 +30,7 @@ statement ok
 INSERT INTO foo values (2, 'quick red fox jumps over lazy dog', 'value a');
 
 statement ok
-VACUUM (UPDATE_INDEXES) foo;
+VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('over lazy dog') ORDER BY a;
@@ -43,7 +43,7 @@ statement ok
 UPDATE foo SET c = 'value abc' WHERE a = 1;
 
 statement ok
-VACUUM (UPDATE_INDEXES) foo;
+VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT a, b, c FROM foo_idx WHERE c @@ ts_phrase('value abc') AND b @@ ts_phrase('over lazy dog');
@@ -58,7 +58,7 @@ statement ok
 INSERT INTO foo values (4, 'quick brown fox jumps over big dog', 'value b');
 
 statement ok
-VACUUM (UPDATE_INDEXES) foo;
+VACUUM (REFRESH_TABLE) foo;
 
 query
 SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('over big dog') OR b @@ ts_phrase('red fox') ORDER BY a;
@@ -89,7 +89,7 @@ statement ok
 INSERT INTO foo values (6, 'quick fox over big dog', 'value c');
 
 statement ok
-VACUUM (UPDATE_INDEXES) foo;
+VACUUM (REFRESH_TABLE) foo;
 
 # Exact gap: 1 word between 'quick' and 'fox' -- matches rows with 'quick brown fox' and 'quick red fox'
 query
@@ -251,7 +251,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│      IRESEARCH_COUNT      │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
 │      vedernikoff_idx      │
@@ -264,10 +264,7 @@ QUERY PLAN
 │  PHRASE[b(string) = <Term │
 │      :game(0, 0); >]]     │
 │                           │
-│          Output:          │
-│       row-count only      │
-│                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -302,7 +299,7 @@ UPDATE vedernikoff SET c = 'deadinside' WHERE a = 3;
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) vedernikoff;
+VACUUM (REFRESH_TABLE) vedernikoff;
 
 
 query
@@ -400,27 +397,27 @@ QUERY PLAN
 │└───────────────────────────────────┘│
 └─────────────────────────────────────┘
 EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
-┌────────────────────────────────────────────────┐
-│┌──────────────────────────────────────────────┐│
-││              Total Time: <slt:ignore>        ││
-│└──────────────────────────────────────────────┘│
-└────────────────────────────────────────────────┘
+<slt:ignore>
 ┌───────────────────────────┐
-│           QUERY           │
+│      RESULT_COLLECTOR     │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │      EXPLAIN_ANALYZE      │
 │    ────────────────────   │
 │                           │
 │           0 rows          │
-│           <slt:ignore>    │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         EXTENSION         │
 │    ────────────────────   │
 │                           │
 │           1 row           │
-│           <slt:ignore>    │
+<slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         TABLE_SCAN        │
@@ -435,7 +432,7 @@ EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b tes
 │                           │
 │                           │
 │           3 rows          │
-│           <slt:ignore>    │
+<slt:ignore>
 └───────────────────────────┘
 
 
@@ -664,7 +661,7 @@ QUERY PLAN
 │    ────────────────────   │
 │  score_parquet_idx.a ASC  │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -693,7 +690,7 @@ QUERY PLAN
 │             a             │
 │  sdb_inverted_index_score │
 │                           │
-│          ~3 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -772,13 +769,13 @@ statement ok
 CREATE INDEX multi_seg_idx ON multi_seg USING inverted(a, b score_en);
 
 statement ok
-VACUUM (UPDATE_INDEXES) multi_seg;
+VACUUM (REFRESH_TABLE) multi_seg;
 
 statement ok
 INSERT INTO multi_seg VALUES (3, 'gamma fox'), (4, 'delta fox');
 
 statement ok
-VACUUM (UPDATE_INDEXES) multi_seg;
+VACUUM (REFRESH_TABLE) multi_seg;
 
 query
 SELECT a, BM25(multi_seg_idx.tableoid) > 0 AS has_score FROM multi_seg_idx WHERE b @@ ts_phrase('fox') ORDER BY a;
@@ -981,7 +978,7 @@ QUERY PLAN
 │    ────────────────────   │
 │    dense_csv_idx.a ASC    │
 │                           │
-│          ~0 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -1006,7 +1003,7 @@ QUERY PLAN
 │             b             │
 │             a             │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -1129,7 +1126,7 @@ statement ok
 CREATE INDEX dense_multi_idx ON dense_multi USING inverted(a, b test_english);
 
 statement ok
-VACUUM (UPDATE_INDEXES) dense_multi;
+VACUUM (REFRESH_TABLE) dense_multi;
 
 statement ok
 INSERT INTO dense_multi VALUES
@@ -1139,7 +1136,7 @@ INSERT INTO dense_multi VALUES
   (8, 'universal token theta');
 
 statement ok
-VACUUM (UPDATE_INDEXES) dense_multi;
+VACUUM (REFRESH_TABLE) dense_multi;
 
 query
 SELECT a, b FROM dense_multi_idx WHERE b @@ ts_phrase('universal token') ORDER BY a;
@@ -1180,7 +1177,7 @@ INSERT INTO dense_multi VALUES
   (10, 'universal token kappa');
 
 statement ok
-VACUUM (UPDATE_INDEXES) dense_multi;
+VACUUM (REFRESH_TABLE) dense_multi;
 
 query
 SELECT a, b FROM dense_multi_idx WHERE b @@ ts_phrase('universal token') ORDER BY a;
@@ -1281,3 +1278,71 @@ SELECT * FROM no_pk_index WHERE word @@ ts_phrase('bad') LIMIT 1;
 ----
 word
 word is bad: 1
+
+
+# --- Same column listed twice with different tokenizers is rejected.
+# Without an explicit check, the second `ApplyOpclassToEntry` call would
+# silently overwrite the first tokenizer's settings on the shared entry
+# slot, leaving stored data unsearchable by the dropped tokenizer.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_kw(template = 'keyword');
+
+statement ok
+CREATE TABLE dup_tok (id INTEGER PRIMARY KEY, txt VARCHAR);
+
+statement error
+CREATE INDEX dup_tok_idx ON dup_tok USING inverted(id, txt tok_kw, txt test_english);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+# Same column listed twice with the same tokenizer is also rejected --
+# nothing to merge, just user mistake.
+statement error
+CREATE INDEX dup_tok_same_idx ON dup_tok USING inverted(id, txt tok_kw, txt tok_kw);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+# A bare column (no opclass) implicitly binds the default tokenizer, so it
+# counts as a tokenizer entry too. Listing the same bare column twice or a
+# bare column alongside an explicit tokenizer opclass on the same column must
+# also be rejected by the dedup path in `IsTokenizerOpclass`.
+statement error
+CREATE INDEX dup_tok_bare_idx ON dup_tok USING inverted(id, txt, txt);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+statement error
+CREATE INDEX dup_tok_bare_mix_idx ON dup_tok USING inverted(id, txt, txt tok_kw);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+# Stacking a tokenizer with `included()` on the same column stays legal:
+# `included()` attaches columnstore-storage to the entry without binding a
+# tokenizer, so it composes with one tokenizer cleanly.
+statement ok
+CREATE INDEX dup_tok_stack_idx ON dup_tok USING inverted(id, txt tok_kw, txt included());
+
+# The stacked index must serve both the tokenizer-driven filter path and the
+# columnstore-fetch path that `included(...)` enables.
+statement ok
+INSERT INTO dup_tok VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+
+statement ok
+VACUUM (REFRESH_TABLE) dup_tok;
+
+query
+SELECT id, txt FROM dup_tok_stack_idx WHERE txt @@ 'alpha';
+----
+id	txt
+1	alpha
+
+query
+SELECT id, txt FROM dup_tok_stack_idx WHERE txt @@ 'gamma';
+----
+id	txt
+3	gamma

@@ -19,7 +19,7 @@
 #pragma once
 
 // Test-only helpers that let legacy-shape iresearch tests work against
-// the new cs (`irs::columnstore::*`). The legacy ColumnstoreWriter /
+// the new cs (`irs::*`). The legacy ColumnstoreWriter /
 // ColumnReader / ColumnOutput interfaces are gone from production; ported
 // tests use BLOB-typed cs columns through this thin layer.
 
@@ -30,10 +30,11 @@
 #include <string>
 #include <string_view>
 
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/column_writer.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/read_context.hpp"
+#include "basics/duckdb_engine.h"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/column_writer.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/index_writer.hpp"
@@ -43,25 +44,14 @@
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-}
-
 namespace irs::tests {
-
-// Process-wide DuckDB DatabaseInstance for cs codec lookups / buffer
-// manager. Lazy first-use. Safe to call concurrently (static-local
-// initialization is C++11 thread-safe, and DatabaseInstance is the same
-// shape used by production code -- it tolerates parallel access).
-duckdb::DatabaseInstance& CsDb();
 
 // Production code reserves norm ids on the catalog side and the writer
 // asserts `norm_column_options` returned a valid id; iresearch gtests have
 // no catalog, so this builds a fresh monotonic allocator per call.
 inline NormColumnOptionsProvider MakeNormColumnOptionsProvider() {
   return [next = std::make_shared<std::atomic<field_id>>(0)](
-           std::string_view /*name*/) -> NormColumnOptions {
+           field_id /*id*/) -> NormColumnOptions {
     return {
       .id = next->fetch_add(1, std::memory_order_relaxed),
       .row_group_size = DEFAULT_ROW_GROUP_SIZE,
@@ -69,50 +59,53 @@ inline NormColumnOptionsProvider MakeNormColumnOptionsProvider() {
   };
 }
 
-// Default IndexWriterOptions / IndexReaderOptions wired to CsDb(). Legacy
+// Default IndexWriterOptions / IndexReaderOptions wired to the process-wide
+// DuckDB DatabaseInstance held by sdb::DuckDBEngine. tests_main brings
+// the engine up before RUN_ALL_TESTS and tears it down afterwards. Legacy
 // tests that just called `IndexWriter::Make(dir, codec, mode)` would skip
-// opening a cs writer because `opts.db == nullptr`. Tests ported off
-// legacy STORE -> column(name) need a cs writer to keep the same write/
-// read-back behaviour; using these defaults plumbs CsDb() in without
+// opening a cs writer because `opts.db == nullptr`. Tests ported off legacy
+// STORE -> column(name) need a cs writer to keep the same write / read-back
+// behaviour; using these defaults plumbs the engine instance in without
 // every call site re-typing it.
 inline IndexWriterOptions DefaultWriterOptions() {
+  auto* db = &::sdb::DuckDBEngine::Instance().instance();
   IndexWriterOptions opts;
-  opts.db = &CsDb();
-  opts.reader_options.db = &CsDb();
+  opts.db = db;
+  opts.reader_options.db = db;
   opts.norm_column_options = MakeNormColumnOptionsProvider();
   return opts;
 }
 inline IndexReaderOptions DefaultReaderOptions() {
   IndexReaderOptions opts;
-  opts.db = &CsDb();
+  opts.db = &::sdb::DuckDBEngine::Instance().instance();
   return opts;
 }
 
-// Convenience: construct a new-cs Writer over `dir`/`segment_name`,
-// using the shared CsDb(). Matches the production constructor.
-std::unique_ptr<columnstore::Writer> MakeCsWriter(
-  Directory& dir, std::string_view segment_name);
+// Convenience: construct a new-cs Writer over `dir`/`segment_name`, wired
+// to the process-wide DuckDBEngine instance. Matches the production
+// constructor.
+std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
+                                        std::string_view segment_name);
 
-// Convenience: construct a new-cs Reader. Returns nullptr if the `.cs`
+// Convenience: construct a new-cs Reader. Returns nullptr if the `.col`
 // file does not exist (test still needs to react -- the production
 // SegmentReader does the same check via `Has*` on the result).
-std::unique_ptr<columnstore::Reader> MakeCsReader(
-  const Directory& dir, std::string_view segment_name);
+std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
+                                        std::string_view segment_name);
 
 // Open a BLOB column on the given writer; convenience wrapper around
 // Writer::OpenColumn(id, BLOB, ...). Most legacy tests stored bytes per
 // doc -- BLOB matches that shape exactly.
-columnstore::ColumnWriter& OpenBlobColumn(columnstore::Writer& w, field_id id);
+ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id);
 
 // Append one BLOB row at `doc - doc_limits::min()`. Wraps the
 // per-row-at-a-time append pattern legacy tests use (one Insert per
 // doc). For tests that already have a typed Vector available, call
 // ColumnWriter::Append directly.
-void AppendBlob(columnstore::ColumnWriter& cw, doc_id_t doc,
-                bytes_view payload);
+void AppendBlob(ColumnWriter& cw, doc_id_t doc, bytes_view payload);
 
 // Append a null entry at `doc`. Same caveat as AppendBlob.
-void AppendNullBlob(columnstore::ColumnWriter& cw, doc_id_t doc);
+void AppendNullBlob(ColumnWriter& cw, doc_id_t doc);
 
 // DataOutput that appends bytes to an `irs::bstring`. Used by tests to
 // capture a field's serialised STORE bytes for forwarding to a cs blob
@@ -122,7 +115,7 @@ class BstringDataOutput final : public DataOutput {
   explicit BstringDataOutput(bstring& buf) noexcept : _buf{&buf} {}
 
   void WriteByte(byte_type b) final { _buf->push_back(b); }
-  void WriteBytes(const byte_type* b, size_t len) final {
+  void WriteData(const byte_type* b, uint64_t len) final {
     _buf->append(b, len);
   }
 
@@ -135,7 +128,7 @@ class BstringDataOutput final : public DataOutput {
 // it on subsequent calls. The field type only needs a
 // `bool Write(irs::DataOutput&) const` method.
 template<typename Field>
-void StoreFieldAt(columnstore::Writer& cs, field_id id, doc_id_t doc,
+void StoreFieldAt(ColWriter& cs, field_id id, doc_id_t doc,
                   const Field& field) {
   auto& cw = OpenBlobColumn(cs, id);
   bstring buf;
@@ -146,8 +139,7 @@ void StoreFieldAt(columnstore::Writer& cs, field_id id, doc_id_t doc,
 
 // Visit a cs BLOB column doc-by-doc, calling visitor(doc_id, payload) for
 // each row that is not null. Returns false if the visitor short-circuits.
-bool VisitBlobColumn(const columnstore::Reader& cs_reader,
-                     const columnstore::ColumnReader& column,
+bool VisitBlobColumn(const ColReader& cs_reader, const ColumnReader& column,
                      const std::function<bool(doc_id_t, bytes_view)>& visitor);
 
 struct ExpectedBlobRow {
@@ -159,19 +151,17 @@ struct ExpectedBlobRow {
 // reports the same total `RowCount`. Rows in `expected` correspond to the
 // non-null doc_ids the test wrote. Use `BlobPointReader` for per-doc lookups
 // when the test only cares about specific rows.
-void AssertBlobColumn(const columnstore::Reader& cs_reader,
-                      const columnstore::ColumnReader& column,
+void AssertBlobColumn(const ColReader& cs_reader, const ColumnReader& column,
                       std::span<const ExpectedBlobRow> expected);
 
 // Thin wrapper used by ported scoring / filter tests. Constructs a
-// `columnstore::ColumnReader::BlobPointReader` from a `SubReader` +
+// `ColumnReader::BlobPointReader` from a `SubReader` +
 // `ColumnReader` pair (the segment supplies the cs `Reader`). Exposes the
 // legacy `Get(doc) -> bytes_view` shape callers were using.
 class BlobPointReader {
  public:
-  BlobPointReader(const SubReader& segment,
-                  const columnstore::ColumnReader& column)
-    : _impl(*segment.CsReader(), column) {}
+  BlobPointReader(const SubReader& segment, const ColumnReader& column)
+    : _impl(*segment.GetColReader(), column) {}
 
   BlobPointReader(const BlobPointReader&) = delete;
   BlobPointReader& operator=(const BlobPointReader&) = delete;
@@ -180,15 +170,14 @@ class BlobPointReader {
   bool IsNull(doc_id_t doc) { return _impl.IsNullDoc(doc); }
 
  private:
-  columnstore::ColumnReader::BlobPointReader _impl;
+  ColumnReader::BlobPointReader _impl;
 };
 
 // Convenience: read a length-prefixed string (irs::WriteStr layout) from
 // `column` at `doc` via a BlobPointReader. Accepts both the wrapper above
-// and the underlying `columnstore::ColumnReader::BlobPointReader`.
+// and the underlying `ColumnReader::BlobPointReader`.
 template<typename StringType>
-StringType ReadStoredStr(columnstore::ColumnReader::BlobPointReader& reader,
-                         doc_id_t doc) {
+StringType ReadStoredStr(ColumnReader::BlobPointReader& reader, doc_id_t doc) {
   return ToString<StringType>(reader.FetchDoc(doc).data());
 }
 template<typename StringType>

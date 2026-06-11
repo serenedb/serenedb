@@ -22,9 +22,9 @@
 
 #include <cstdint>
 
+#include "basics/exceptions.h"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 
 namespace irs {
 
@@ -54,32 +54,6 @@ struct DFIStats {
   score_t ratio;
 };
 
-struct DFIFieldCollector final : FieldCollector {
-  uint64_t total_term_freq = 0;  // sum of tf across all docs in the field
-
-  void collect(const SubReader& /*segment*/,
-               const TermReader& field) noexcept final;
-
-  void reset() noexcept final { total_term_freq = 0; }
-
-  void collect(bytes_view in) final;
-
-  void write(DataOutput& out) const final;
-};
-
-struct DFITermCollector final : TermCollector {
-  uint64_t total_term_freq = 0;  // ttf of the term across the collection
-
-  void collect(const SubReader& /*segment*/, const TermReader& /*field*/,
-               const AttributeProvider& term_attrs) final;
-
-  void reset() noexcept final { total_term_freq = 0; }
-
-  void collect(bytes_view in) final;
-
-  void write(DataOutput& out) const final;
-};
-
 class DFI final : public irs::ScorerBase<DFI, DFIStats> {
  public:
   static constexpr std::string_view type_name() noexcept { return "dfi"; }
@@ -88,7 +62,18 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
     return DFIMeasure::Standardized;
   }
 
-  static void init();
+  struct Options {
+    using Owner = DFI;
+    DFIMeasure measure = MEASURE();
+    bool operator==(const Options&) const = default;
+  };
+
+  static std::unique_ptr<DFI> Make(const Options& opts) {
+    if (opts.measure > DFIMeasure::ChiSquared) {
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "dfi: invalid measure");
+    }
+    return std::make_unique<DFI>(opts.measure);
+  }
 
   explicit DFI(DFIMeasure measure = MEASURE()) noexcept : _measure{measure} {}
 
@@ -98,10 +83,6 @@ class DFI final : public irs::ScorerBase<DFI, DFIStats> {
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
-
-  FieldCollector::ptr PrepareFieldCollector() const final;
-
-  TermCollector::ptr PrepareTermCollector() const final;
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 

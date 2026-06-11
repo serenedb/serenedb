@@ -32,7 +32,7 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "basics/log.h"
 #include "basics/result.h"
 #include "geo/shape_container.h"
 #include "geo_json.h"
@@ -132,20 +132,20 @@ void ReadRawPoint(Decoder& dec, S2Point& out) {
 }  // namespace
 
 template<Parsing P>
-bool ParseShape(vpack::Slice vpack, ShapeContainer& region,
+bool ParseShape(simdjson::ondemand::value json, ShapeContainer& region,
                 std::vector<S2LatLng>& cache, coding::Options options,
                 Encoder* encoder) {
   SDB_ASSERT(encoder == nullptr || encoder->length() == 0);
 
   Result r;
-  if (vpack.isArray()) {
-    r = geo::json::ParseCoordinates<P != Parsing::FromIndex>(vpack, region,
+  if (json.type() == simdjson::ondemand::json_type::array) {
+    r = geo::json::ParseCoordinates<P != Parsing::FromIndex>(json, region,
                                                              /*geoJson=*/true,
                                                              options, encoder);
   } else if constexpr (P == Parsing::OnlyPoint) {
     auto handle_point = [&] {
       S2LatLng ll;
-      r = geo::json::ParsePoint(vpack, ll);
+      r = geo::json::ParsePoint(json, ll);
       if (r.ok() && encoder) {
         SDB_ASSERT(options != geo::coding::Options::Invalid);
         SDB_ASSERT(encoder->avail() >= sizeof(uint8_t));
@@ -167,7 +167,7 @@ bool ParseShape(vpack::Slice vpack, ShapeContainer& region,
       region.reset(handle_point(), options);
     }
   } else {
-    r = geo::json::ParseRegion<P != Parsing::FromIndex>(vpack, region, cache,
+    r = geo::json::ParseRegion<P != Parsing::FromIndex>(json, region, cache,
                                                         options, encoder);
   }
   if constexpr (P != Parsing::FromIndex) {
@@ -365,16 +365,6 @@ bool DecodePolygon(Decoder& decoder, S2Polygon& polygon, uint8_t tag,
   return true;
 }
 
-void PointToVPack(vpack::Builder& builder, S2LatLng point) {
-  SDB_ASSERT(point.is_valid());
-  builder.openArray(false);
-  builder.add(point.lng().degrees());
-  builder.add(point.lat().degrees());
-  builder.close();
-  SDB_ASSERT(builder.slice().isArray());
-  SDB_ASSERT(builder.slice().head() == 0x02);
-}
-
 Result GeoOptions::Validate() const noexcept {
   auto check_bounds = [&]<typename T>(auto name, auto min, auto max,
                                       const T& value) -> Result {
@@ -417,17 +407,17 @@ Result GeoOptions::Validate() const noexcept {
   return {};
 }
 
-template bool ParseShape<Parsing::FromIndex>(vpack::Slice slice,
+template bool ParseShape<Parsing::FromIndex>(simdjson::ondemand::value json,
                                              ShapeContainer& shape,
                                              std::vector<S2LatLng>& cache,
                                              coding::Options options,
                                              Encoder* encoder);
-template bool ParseShape<Parsing::OnlyPoint>(vpack::Slice slice,
+template bool ParseShape<Parsing::OnlyPoint>(simdjson::ondemand::value json,
                                              ShapeContainer& shape,
                                              std::vector<S2LatLng>& cache,
                                              coding::Options options,
                                              Encoder* encoder);
-template bool ParseShape<Parsing::GeoJson>(vpack::Slice slice,
+template bool ParseShape<Parsing::GeoJson>(simdjson::ondemand::value json,
                                            ShapeContainer& shape,
                                            std::vector<S2LatLng>& cache,
                                            coding::Options options,

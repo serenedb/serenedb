@@ -118,10 +118,7 @@ std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
   if (_snapshot) {
     return _snapshot;
   }
-  _snapshot = SerenedServer::Instance()
-                .getFeature<catalog::CatalogFeature>()
-                .Global()
-                .GetCatalogSnapshot();
+  _snapshot = catalog::CatalogFeature::instance().Global().GetCatalogSnapshot();
   SDB_ASSERT(_snapshot);
   return _snapshot;
 }

@@ -21,18 +21,19 @@
 
 #include "general_comm_task.h"
 
+#include <simdjson.h>
+
 #include "app/app_server.h"
 #include "auth/role_utils.h"
-#include "basics/dtrace-wrapper.h"
+#include "basics/buffer.h"
 #include "basics/encoding_utils.h"
-#include "basics/hybrid_logical_clock.h"
-#include "basics/logger/logger.h"
+#include "basics/lifecycle.h"
+#include "basics/log.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "database/ticks.h"
-#include "general_server/authentication_feature.h"
 #include "general_server/general_server.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/rest_handler.h"
@@ -45,9 +46,6 @@ namespace sdb::rest {
 namespace {
 
 // some static URL path prefixes
-constexpr std::string_view kPathPrefixApiUser = "/_api/user/";
-constexpr std::string_view kPathPrefixOpen = "/_open/";
-
 bool QueueTimeViolated(const GeneralRequest& req) {
   // check if the client sent the "x-serene-queue-time-seconds" header
   bool found = false;
@@ -69,13 +67,8 @@ bool QueueTimeViolated(const GeneralRequest& req) {
         1000.0;
 
       if (last_dequeue_time > requested_queue_time) {
-        // the log topic should actually be REQUESTS here, but the default log
-        // level for the REQUESTS log topic is FATAL, so if we logged here in
-        // INFO level, it would effectively be suppressed. thus we are using the
-        // Scheduler's log topic here, which is somewhat related.
-        SchedulerFeature::gScheduler->trackQueueTimeViolation();
         SDB_WARN(
-          "xxxxx", Logger::THREADS,
+          GENERAL,
           "dropping incoming request because the client-specified maximum "
           "queue time requirement (",
           requested_queue_time, "s) would be violated by current queue time (",
@@ -88,21 +81,21 @@ bool QueueTimeViolated(const GeneralRequest& req) {
 }
 
 std::shared_ptr<catalog::Database> LookupDatabaseFromRequest(
-  SerenedServer& server, GeneralRequest& req) {
+  app::AppServer& server, GeneralRequest& req) {
   // get database name from request
-  if (ServerState::instance()->IsDBServer() || req.databaseName().empty()) {
+  if (req.databaseName().empty()) {
     // if no database name was specified in the request, use system database
     // name as a fallback
     req.setDatabaseName(StaticStrings::kDefaultDatabase);
   }
 
-  return server.getFeature<catalog::CatalogFeature>()
+  return catalog::CatalogFeature::instance()
     .Global()
     .GetCatalogSnapshot()
     ->GetDatabase(req.databaseName());
 }
 
-bool ResolveRequestContext(SerenedServer& server, GeneralRequest& req) {
+bool ResolveRequestContext(app::AppServer& server, GeneralRequest& req) {
   auto database = LookupDatabaseFromRequest(server, req);
   // invalid database name specified, database not found etc.
   if (!database) {
@@ -126,12 +119,7 @@ template<SocketType T>
 GeneralCommTask<T>::GeneralCommTask(GeneralServer& server, ConnectionInfo info,
                                     std::shared_ptr<AsioSocket<T>> socket)
   : GenericCommTask<T, CommTask>(server, std::move(info), socket),
-    _auth(AuthenticationFeature::instance()),
-    _writing(false),
-    _connection_statistics(AcquireConnectionStatistics()) {
-  SDB_ASSERT(_auth != nullptr);
-  _connection_statistics.SET_START();
-}
+    _writing(false) {}
 
 template<SocketType T>
 void GeneralCommTask<T>::LogRequestHeaders(
@@ -139,7 +127,7 @@ void GeneralCommTask<T>::LogRequestHeaders(
   const containers::FlatHashMap<std::string, std::string>& headers) const {
   std::string headers_for_logging =
     basics::string_utils::HeadersToString(headers);
-  SDB_TRACE("xxxxx", Logger::REQUESTS, "\"", protocol, "-request-headers\",\"",
+  SDB_TRACE(HTTP, "\"", protocol, "-request-headers\",\"",
             std::bit_cast<size_t>(this), "\",\"", headers_for_logging, "\"");
 }
 
@@ -148,28 +136,10 @@ void GeneralCommTask<T>::LogRequestBody(std::string_view protocol,
                                         ContentType content_type,
                                         std::string_view body,
                                         bool is_response) const {
-  std::string body_for_logging;
-  if (content_type != ContentType::VPack) {
-    body_for_logging = basics::string_utils::EscapeUnicode(body);
-  } else {
-    try {
-      vpack::Slice s{reinterpret_cast<const uint8_t*>(body.data())};
-      if (!s.isNone()) {
-        // "none" can happen if the content-type is neither JSON nor vpack
-        body_for_logging = basics::string_utils::EscapeUnicode(s.toJson());
-      }
-    } catch (...) {
-      // cannot stringify request body
-    }
+  std::string body_for_logging = basics::string_utils::EscapeUnicode(body);
 
-    if (body_for_logging.empty() && !body.empty()) {
-      body_for_logging = "potential binary data";
-    }
-  }
-
-  SDB_TRACE("xxxxx", Logger::REQUESTS, "\"", protocol,
-            (is_response ? "-response" : "-request"), "-body\",\"",
-            std::bit_cast<size_t>(this), "\",\"",
+  SDB_TRACE(HTTP, "\"", protocol, (is_response ? "-response" : "-request"),
+            "-body\",\"", std::bit_cast<size_t>(this), "\",\"",
             ContentTypeToString(content_type), "\",\"", body.size(), "\",\"",
             body_for_logging, "\"");
 }
@@ -180,7 +150,7 @@ void GeneralCommTask<T>::LogResponseHeaders(
   const containers::FlatHashMap<std::string, std::string>& headers) const {
   std::string headers_for_logging =
     basics::string_utils::HeadersToString(headers);
-  SDB_TRACE("xxxxx", Logger::REQUESTS, "\"", protocol, "-response-headers\",\"",
+  SDB_TRACE(HTTP, "\"", protocol, "-response-headers\",\"",
             std::bit_cast<size_t>(this), "\",\"", headers_for_logging, "\"");
 }
 
@@ -190,19 +160,11 @@ Result GeneralCommTask<T>::HandleContentEncoding(GeneralRequest& req) {
   // TODO consider doing the decoding on the fly
   auto decode = [&](const std::string& header,
                     const std::string& encoding) -> Result {
-    if (this->_auth->isActive() && !req.authenticated() &&
-        !this->_general_server_feature
-           .handleContentEncodingForUnauthenticatedRequests()) {
-      return {ERROR_FORBIDDEN,
-              "support for handling Content-Encoding headers is turned off for "
-              "unauthenticated requests"};
-    }
-
     std::string_view raw = req.rawPayload();
     uint8_t* src = reinterpret_cast<uint8_t*>(const_cast<char*>(raw.data()));
     size_t len = raw.size();
     if (encoding == StaticStrings::kEncodingGzip) {
-      vpack::BufferUInt8 dst;
+      basics::BufferUInt8 dst;
       if (ErrorCode error = encoding::GZipUncompress(src, len, dst);
           error != ERROR_OK) {
         return {
@@ -215,7 +177,7 @@ Result GeneralCommTask<T>::HandleContentEncoding(GeneralRequest& req) {
       req.removeHeader(header);
       return {};
     } else if (encoding == StaticStrings::kEncodingDeflate) {
-      vpack::BufferUInt8 dst;
+      basics::BufferUInt8 dst;
       if (ErrorCode error = encoding::ZLibInflate(src, len, dst);
           error != ERROR_OK) {
         return {error,
@@ -228,7 +190,7 @@ Result GeneralCommTask<T>::HandleContentEncoding(GeneralRequest& req) {
       req.removeHeader(header);
       return {};
     } else if (encoding == StaticStrings::kEncodingSereneLz4) {
-      vpack::BufferUInt8 dst;
+      basics::BufferUInt8 dst;
       if (ErrorCode r = encoding::Lz4Uncompress(src, len, dst); r != ERROR_OK) {
         return {
           r, "a decoding error occurred while handling Content-Encoding: lz4"};
@@ -260,60 +222,14 @@ Result GeneralCommTask<T>::HandleContentEncoding(GeneralRequest& req) {
 
 template<SocketType T>
 auth::TokenCache::Entry GeneralCommTask<T>::CheckAuthHeader(
-  GeneralRequest& req, ServerState::Mode mode) {
-  bool found;
-  const std::string& auth_str =
-    req.header(StaticStrings::kAuthorization, found);
-  if (!found) {
-    if (_auth->isActive()) {
-      return auth::TokenCache::Entry::Unauthenticated();
-    }
-    return auth::TokenCache::Entry::Superuser();
-  }
-
-  std::string::size_type method_pos = auth_str.find(' ');
-  if (method_pos == std::string::npos) {
-    return auth::TokenCache::Entry::Unauthenticated();
-  }
-
-  // skip over authentication method and following whitespace
-  const char* auth = auth_str.c_str() + method_pos;
-  while (*auth == ' ') {
-    ++auth;
-  }
-
-  SDB_DEBUG_IF("xxxxx", Logger::REQUESTS, log::GetLogRequestParameters(),
-               "\"authorization-header\",\"", reinterpret_cast<size_t>(this),
-               "\",SENSITIVE_DETAILS_HIDDEN");
-
-  AuthenticationMethod auth_method = AuthenticationMethod::None;
-  if (auth_str.size() >= 6) {
-    if (strncasecmp(auth_str.c_str(), "basic ", 6) == 0) {
-      auth_method = AuthenticationMethod::Basic;
-    } else if (strncasecmp(auth_str.c_str(), "bearer ", 7) == 0) {
-      auth_method = AuthenticationMethod::Jwt;
-    }
-  }
-
-  req.setAuthenticationMethod(auth_method);
-  if (auth_method == AuthenticationMethod::None) {
-    return auth::TokenCache::Entry::Unauthenticated();
-  }
-
-  if (auth_method != AuthenticationMethod::Jwt &&
-      mode == ServerState::Mode::Startup) {
-    // during startup, the normal authentication is not available
-    // yet. so we have to refuse all requests that do not use
-    // a JWT.
-    return auth::TokenCache::Entry::Unauthenticated();
-  }
-
-  auto auth_token =
-    _auth->tokenCache().checkAuthentication(auth_method, mode, auth);
-  req.setAuthenticated(auth_token.authenticated());
-  req.setTokenExpiry(auth_token.expiry());
-  req.setUser(auth_token.username());  // do copy here, so that we do not
-  return auth_token;
+  GeneralRequest& req, ServerState::Mode /*mode*/) {
+  // Auth is intentionally absent until post-RBAC. Every HTTP request
+  // is treated as Superuser; the Authorization header (if any) is
+  // ignored.
+  auto entry = auth::TokenCache::Entry::Superuser();
+  req.setAuthenticated(true);
+  req.setUser(entry.username());
+  return entry;
 }
 
 /// Must be called from sendResponse, before response is rendered
@@ -326,8 +242,7 @@ void GeneralCommTask<T>::FinishExecution(GeneralResponse& res,
     if (!origin.empty()) {
       // the request contained an Origin header. We have to send back the
       // access-control-allow-origin header now
-      SDB_DEBUG("xxxxx", Logger::REQUESTS,
-                "handling CORS response for origin '", origin, "'");
+      SDB_DEBUG(HTTP, "handling CORS response for origin '", origin, "'");
 
       // send back original value of "Origin" header
       res.setHeaderNCIfNotSet(StaticStrings::kAccessControlAllowOrigin, origin);
@@ -383,9 +298,6 @@ void GeneralCommTask<T>::ExecuteRequest(
     SDB_THROW(ERROR_INTERNAL, "invalid object setup for ExecuteRequest");
   }
 
-  DTRACE_PROBE1(serened, CommTaskExecuteRequest, this);
-
-  response->setContentTypeRequested(request->contentTypeResponse());
   response->setGenerateBody(request->requestType() != RequestType::Head);
 
   // store the message id for error handling
@@ -407,21 +319,17 @@ void GeneralCommTask<T>::ExecuteRequest(
 
   // create a handler, this takes ownership of request and response
   auto& server = this->_server.server();
-  auto factory =
-    server.template getFeature<GeneralServerFeature>().handlerFactory();
+  auto factory = GeneralServerFeature::instance().handlerFactory();
   auto handler =
     factory->createHandler(server, std::move(request), std::move(response));
 
   // give up, if we cannot find a handler
   if (handler == nullptr) {
-    SendSimpleResponse(ResponseCode::NotFound, resp_type, message_id,
-                       vpack::BufferUInt8());
+    SendSimpleResponse(ResponseCode::NotFound, resp_type, message_id, {});
     return;
   }
 
   if (mode == ServerState::Mode::Startup) {
-    // request during startup phase
-    handler->SetRequestStatistics(StealRequestStatistics(message_id));
     HandleRequestStartup(std::move(handler));
     return;
   }
@@ -430,13 +338,11 @@ void GeneralCommTask<T>::ExecuteRequest(
   bool forwarded;
   auto res = handler->forwardRequest(forwarded);
   if (forwarded) {
-    GetRequestStatistics(message_id).SET_SUPERUSER();
     std::move(res).DetachInline(
-      [self(this->shared_from_this()), h(std::move(handler)),
-       message_id](yaclib::Result<Result>&& /*ignored*/) -> void {
+      [self(this->shared_from_this()),
+       h(std::move(handler))](yaclib::Result<Result>&& /*ignored*/) -> void {
         auto gct = static_cast<GeneralCommTask<T>*>(self.get());
-        gct->SendResponse(h->stealResponse(),
-                          gct->StealRequestStatistics(message_id));
+        gct->SendResponse(h->stealResponse());
       });
     return;
   }
@@ -449,13 +355,9 @@ void GeneralCommTask<T>::ExecuteRequest(
   }
 
   SDB_ASSERT(SchedulerFeature::gScheduler != nullptr);
-  SchedulerFeature::gScheduler->trackCreateHandlerTask();
 
   // asynchronous request
   if (found && (async_exec == "true" || async_exec == "store")) {
-    RequestStatistics::Item stats = StealRequestStatistics(message_id);
-    stats.SET_ASYNC();
-    handler->SetRequestStatistics(std::move(stats));
     handler->setIsAsyncRequest();
 
     uint64_t job_id = 0;
@@ -482,15 +384,13 @@ void GeneralCommTask<T>::ExecuteRequest(
         resp->setHeaderNC(StaticStrings::kAsyncId,
                           basics::string_utils::Itoa(job_id));
       }
-      SendResponse(std::move(resp), RequestStatistics::Item());
+      SendResponse(std::move(resp));
     } else {
       SendErrorResponse(ResponseCode::ServiceUnavailable, resp_type, message_id,
                         ERROR_QUEUE_FULL);
     }
   } else {
-    // synchronous request
-    handler->SetRequestStatistics(StealRequestStatistics(message_id));
-    // HandleRequestSync adds an error response
+    // synchronous request -- HandleRequestSync adds an error response
     HandleRequestSync(std::move(handler));
   }
 }
@@ -499,166 +399,22 @@ void GeneralCommTask<T>::ExecuteRequest(
 /// response if execution is supposed to be aborted
 template<SocketType T>
 Flow GeneralCommTask<T>::PrepareExecution(
-  const auth::TokenCache::Entry& auth_token, GeneralRequest& req,
-  ServerState::Mode mode) {
-  DTRACE_PROBE1(serened, CommTaskPrepareExecution, this);
-
-  // Step 1: In the shutdown phase we simply return 503:
-  if (this->_server.server().isStopping()) {
+  const auth::TokenCache::Entry& /*auth_token*/, GeneralRequest& req,
+  ServerState::Mode /*mode*/) {
+  if (lifecycle::IsStopping()) {
     this->SendErrorResponse(ResponseCode::ServiceUnavailable,
                             req.contentTypeResponse(), req.messageId(),
                             ERROR_SHUTTING_DOWN);
     return Flow::Abort;
   }
+  this->_is_user_request = true;  // single-node: every request is user-facing
 
-  this->_request_source = req.header(StaticStrings::kClusterCommSource);
-  SDB_DEBUG_IF("xxxxx", Logger::REQUESTS, !this->_request_source.empty(),
-               "\"request-source\",\"", reinterpret_cast<size_t>(this), "\",\"",
-               this->_request_source, "\"");
-
-  this->_is_user_request = std::invoke([&]() {
-    auto role = ServerState::instance()->GetRole();
-    if (ServerState::IsSingle(role)) {
-      // single server is always user-facing
-      return true;
-    }
-    if (ServerState::IsAgent(role) || ServerState::IsDBServer(role)) {
-      // agents and DB servers are never user-facing
-      return false;
-    }
-
-    SDB_ASSERT(ServerState::IsCoordinator(role));
-    // coordinators are only user-facing if the request is not a
-    // cluster-internal request
-    return !ServerState::IsCoordinatorId(this->_request_source) &&
-           !ServerState::IsDBServerId(this->_request_source);
-  });
-
-  // Step 2: Handle server-modes, i.e. bootstrap / DC2DC stunts
-  const std::string& path = req.requestPath();
-
-  bool allow_early_connections = this->_server.allowEarlyConnections();
-
-  switch (mode) {
-    case ServerState::Mode::Startup: {
-      if (!allow_early_connections ||
-          (_auth->isActive() && !req.authenticated())) {
-        if (req.authenticationMethod() == AuthenticationMethod::Basic) {
-          // HTTP basic authentication is not supported during the startup
-          // phase, as we do not have any access to the database data. However,
-          // we must return HTTP 503 because we cannot even verify the
-          // credentials, and let the caller can try again later when the
-          // authentication may be available.
-          SendErrorResponse(ResponseCode::ServiceUnavailable,
-                            req.contentTypeResponse(), req.messageId(),
-                            ERROR_HTTP_SERVICE_UNAVAILABLE,
-                            "service unavailable due to startup");
-        } else {
-          SendErrorResponse(ResponseCode::Unauthorized,
-                            req.contentTypeResponse(), req.messageId(),
-                            ERROR_FORBIDDEN);
-        }
-        return Flow::Abort;
-      }
-
-      // passed authentication!
-      SDB_ASSERT(allow_early_connections);
-      if (path == "/_api/version" || path == "/_admin/version" ||
-#ifdef SDB_FAULT_INJECTION
-          path.starts_with("/_admin/debug/") ||
-#endif
-          path == "/_admin/status") {
-        return Flow::Continue;
-      }
-      // most routes are disallowed during startup, except the ones above.
-      SendErrorResponse(ResponseCode::ServiceUnavailable,
-                        req.contentTypeResponse(), req.messageId(),
-                        ERROR_HTTP_SERVICE_UNAVAILABLE,
-                        "service unavailable due to startup");
-      return Flow::Abort;
-    }
-
-    case ServerState::Mode::Maintenance: {
-      if (allow_early_connections &&
-          (path == "/_api/version" || path == "/_admin/version" ||
-#ifdef SDB_FAULT_INJECTION
-           path.starts_with("/_admin/debug/") ||
-#endif
-           path == "/_admin/status")) {
-        return Flow::Continue;
-      }
-
-      // In the bootstrap phase, we would like that coordinators answer the
-      // following endpoints, but not yet others:
-      if (!ServerState::instance()->IsCoordinator() ||
-          !path.starts_with("/_api/aql")) {
-        SendErrorResponse(
-          ResponseCode::ServiceUnavailable, req.contentTypeResponse(),
-          req.messageId(), ERROR_HTTP_SERVICE_UNAVAILABLE,
-          "service unavailable due to startup or maintenance mode");
-        return Flow::Abort;
-      }
-      break;
-    }
-    case ServerState::Mode::Default:
-    case ServerState::Mode::Invalid:
-      // no special handling required
-      break;
-  }
-
-  // Step 3: Try to resolve database and use
-  if (!ResolveRequestContext(this->_server.server(),
-                             req)) {  // false if db not found
-    if (_auth->isActive()) {
-      // prevent guessing database names (issue #5030)
-      auth::Level lvl = auth::Level::None;
-      if (req.authenticated()) {
-        // If we are authenticated and the user name is empty, then we must
-        // have been authenticated with a superuser JWT token. In this case,
-        // we must not check the databaseAuthLevel here.
-        if (!req.user().empty()) {
-          lvl = auth::DatabaseAuthLevel(req.user(), req.databaseName());
-        } else {
-          lvl = auth::Level::RW;
-        }
-      }
-      if (lvl == auth::Level::None) {
-        SendErrorResponse(ResponseCode::Unauthorized, req.contentTypeResponse(),
-                          req.messageId(), ERROR_FORBIDDEN,
-                          "not authorized to execute this request");
-        return Flow::Abort;
-      }
-    }
+  if (!ResolveRequestContext(this->_server.server(), req)) {
     SendErrorResponse(ResponseCode::NotFound, req.contentTypeResponse(),
                       req.messageId(), ERROR_SERVER_DATABASE_NOT_FOUND);
     return Flow::Abort;
   }
   SDB_ASSERT(req.requestContext() != nullptr);
-
-  // Step 4: Check the authentication. Will determine if the user can access
-  // this path checks db permissions and contains exceptions for the
-  // users API to allow logins
-  if (CanAccessPath(auth_token, req) != Flow::Continue) {
-    SendErrorResponse(ResponseCode::Unauthorized, req.contentTypeResponse(),
-                      req.messageId(), ERROR_FORBIDDEN,
-                      "not authorized to execute this request");
-    return Flow::Abort;
-  }
-
-  // Step 5: Update global HLC timestamp from authenticated requests
-  if (req.authenticated()) {  // TODO only from superuser ??
-    // check for an HLC time stamp only with auth
-    bool found;
-    const std::string& time_stamp =
-      req.header(StaticStrings::kHlcHeader, found);
-    if (found) {
-      uint64_t parsed = basics::HybridLogicalClock::decodeTimeStamp(time_stamp);
-      if (parsed != 0 && parsed != UINT64_MAX) {
-        NewTickHybridLogicalClock(parsed);
-      }
-    }
-  }
-
   return Flow::Continue;
 }
 
@@ -666,16 +422,16 @@ Flow GeneralCommTask<T>::PrepareExecution(
 template<SocketType T>
 void GeneralCommTask<T>::SendSimpleResponse(ResponseCode code,
                                             ContentType resp_type, uint64_t mid,
-                                            vpack::BufferUInt8&& buffer) {
+                                            std::string buffer) {
   try {
     auto resp = CreateResponse(code, mid);
     resp->setContentType(resp_type);
     if (!buffer.empty()) {
-      resp->setPayload(std::move(buffer), vpack::Options::gDefaults);
+      resp->addRawPayload(buffer);
     }
-    SendResponse(std::move(resp), StealRequestStatistics(mid));
+    SendResponse(std::move(resp));
   } catch (...) {
-    SDB_WARN("xxxxx", Logger::REQUESTS,
+    SDB_WARN(HTTP,
              "addSimpleResponse received an exception, closing connection");
     this->Stop();
   }
@@ -686,22 +442,36 @@ template<SocketType T>
 void GeneralCommTask<T>::SendErrorResponse(
   ResponseCode code, ContentType resp_type, uint64_t message_id,
   ErrorCode error_num, std::string_view error_message /* = {} */) {
-  vpack::BufferUInt8 buffer;
-  vpack::Builder builder(buffer);
-  builder.openObject();
-  builder.add(StaticStrings::kError, error_num != ERROR_OK);
-  builder.add(StaticStrings::kErrorNum, error_num.value());
+  simdjson::builder::string_builder builder;
+  builder.start_object();
+  builder.escape_and_append_with_quotes(StaticStrings::kError);
+  builder.append_colon();
+  builder.append_raw(error_num != ERROR_OK ? "true" : "false");
+  builder.append_comma();
+  builder.escape_and_append_with_quotes(StaticStrings::kErrorNum);
+  builder.append_colon();
+  builder.append(static_cast<int64_t>(error_num.value()));
   if (error_num != ERROR_OK) {
     if (error_message.data() == nullptr) {
       error_message = GetErrorStr(error_num);
     }
     SDB_ASSERT(error_message.data() != nullptr);
-    builder.add(StaticStrings::kErrorMessage, error_message);
+    builder.append_comma();
+    builder.escape_and_append_with_quotes(StaticStrings::kErrorMessage);
+    builder.append_colon();
+    builder.escape_and_append_with_quotes(error_message);
   }
-  builder.add(StaticStrings::kCode, static_cast<int>(code));
-  builder.close();
+  builder.append_comma();
+  builder.escape_and_append_with_quotes(StaticStrings::kCode);
+  builder.append_colon();
+  builder.append(static_cast<int64_t>(static_cast<int>(code)));
+  builder.end_object();
 
-  SendSimpleResponse(code, resp_type, message_id, std::move(buffer));
+  std::string_view view;
+  if (builder.view().get(view) != simdjson::SUCCESS) {
+    return;
+  }
+  SendSimpleResponse(code, resp_type, message_id, std::string{view});
 }
 
 /// deny credentialed requests or not (only CORS)
@@ -715,8 +485,7 @@ bool GeneralCommTask<T>::AllowCorsCredentials(const std::string& origin) const {
 
   // if the request asks to allow credentials, we'll check against the
   // configured allowed list of origins
-  const auto& gs =
-    this->_server.server().template getFeature<GeneralServerFeature>();
+  const auto& gs = GeneralServerFeature::instance();
   const std::vector<std::string>& access_control_allow_origins =
     gs.accessControlAllowOrigins();
 
@@ -770,9 +539,8 @@ void GeneralCommTask<T>::HandleRequestStartup(
   // requests to any other handlers will be responded to with HTTP 503.
 
   handler->trackQueueStart();
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "Handling startup request ",
-            std::bit_cast<size_t>(this), " on path ",
-            handler->request()->requestPath(), " on lane ", lane);
+  SDB_DEBUG(HTTP, "Handling startup request ", std::bit_cast<size_t>(this),
+            " on path ", handler->request()->requestPath(), " on lane ", lane);
 
   handler->trackQueueEnd();
   handler->trackTaskStart();
@@ -782,10 +550,9 @@ void GeneralCommTask<T>::HandleRequestStartup(
     try {
       // Pass the response to the io context
       static_cast<GeneralCommTask<T>*>(self.get())
-        ->SendResponse(handler->stealResponse(),
-                       handler->StealRequestStatistics());
+        ->SendResponse(handler->stealResponse());
     } catch (...) {
-      SDB_WARN("xxxxx", Logger::REQUESTS,
+      SDB_WARN(HTTP,
                "got an exception while sending response, closing connection");
       self->Stop();
     }
@@ -797,14 +564,11 @@ void GeneralCommTask<T>::HandleRequestStartup(
 template<SocketType T>
 void GeneralCommTask<T>::HandleRequestSync(
   std::shared_ptr<RestHandler> handler) {
-  DTRACE_PROBE2(serened, CommTaskHandleRequestSync, this, handler.get());
-
   RequestLane lane = handler->determineRequestLane();
   handler->trackQueueStart();
   // We just injected the request pointer before calling this method
   SDB_ASSERT(handler->request() != nullptr);
-  SDB_DEBUG("xxxxx", Logger::REQUESTS, "Handling request ",
-            std::bit_cast<size_t>(this), " on path ",
+  SDB_DEBUG(HTTP, "Handling request ", std::bit_cast<size_t>(this), " on path ",
             handler->request()->requestPath(), " on lane ", lane);
 
   ContentType resp_type = handler->request()->contentTypeResponse();
@@ -821,10 +585,9 @@ void GeneralCommTask<T>::HandleRequestSync(
       try {
         // Pass the response to the io context
         static_cast<GeneralCommTask<T>*>(self.get())
-          ->SendResponse(handler->stealResponse(),
-                         handler->StealRequestStatistics());
+          ->SendResponse(handler->stealResponse());
       } catch (...) {
-        SDB_WARN("xxxxx", Logger::REQUESTS,
+        SDB_WARN(HTTP,
                  "got an exception while sending response, closing connection");
         self->Stop();
       }
@@ -844,7 +607,7 @@ void GeneralCommTask<T>::HandleRequestSync(
 template<SocketType T>
 bool GeneralCommTask<T>::HandleRequestAsync(
   std::shared_ptr<RestHandler> handler, uint64_t* job_id) {
-  if (this->_server.server().isStopping()) {
+  if (lifecycle::IsStopping()) {
     return false;
   }
 
@@ -854,17 +617,14 @@ bool GeneralCommTask<T>::HandleRequestAsync(
   SDB_ASSERT(SchedulerFeature::gScheduler != nullptr);
 
   if (job_id != nullptr) {
-    auto& job_manager = this->_server.server()
-                          .template getFeature<GeneralServerFeature>()
-                          .jobManager();
+    auto& job_manager = GeneralServerFeature::instance().jobManager();
     try {
       // This will throw if a soft shutdown is already going on on a
       // coordinator. But this can also throw if we have an
       // out of memory situation, so we better handle this anyway.
       job_manager.initAsyncJob(handler);
     } catch (const std::exception& exc) {
-      SDB_INFO("xxxxx", Logger::STARTUP,
-               "Async job rejected, exception: ", exc.what());
+      SDB_INFO(STARTUP, "Async job rejected, exception: ", exc.what());
       return false;
     }
     *job_id = handler->handlerId();
@@ -894,83 +654,10 @@ bool GeneralCommTask<T>::HandleRequestAsync(
 
 /// checks the access rights for a specified path
 template<SocketType T>
-Flow GeneralCommTask<T>::CanAccessPath(const auth::TokenCache::Entry& token,
-                                       GeneralRequest& req) const {
-  if (!_auth->isActive()) {
-    // no authentication required at all
-    return Flow::Continue;
-  }
-
-  const auto& path = req.requestPath();
-
-  const auto& ap = token.allowedPaths();
-  if (!ap.empty() && !absl::c_linear_search(ap, path)) {
-    return Flow::Abort;
-  }
-
-  const bool user_authenticated = req.authenticated();
-  Flow result = user_authenticated ? Flow::Continue : Flow::Abort;
-
-  auto vc = basics::downCast<DatabaseContext>(req.requestContext());
-  SDB_ASSERT(vc != nullptr);
-  // deny access to database with NONE
-  if (result == Flow::Continue &&
-      vc->databaseAuthLevel() == auth::Level::None) {
-    result = Flow::Abort;
-    SDB_TRACE("xxxxx", Logger::AUTHORIZATION, "Access forbidden to ", path);
-  }
-
-  // we need to check for some special cases, where users may be allowed
-  // to proceed even unauthorized
-  if (result == Flow::Abort) {
-#ifdef SERENEDB_HAVE_DOMAIN_SOCKETS
-    // check if we need to run authentication for this type of endpoint
-    const auto& ci = req.connectionInfo();
-    if (ci.endpoint_type == Endpoint::DomainType::UNIX &&
-        !_auth->authenticationUnixSockets()) {
-      // no authentication required for unix domain socket connections
-      result = Flow::Continue;
-    }
-#endif
-
-    if (result == Flow::Abort && _auth->authenticationSystemOnly()) {
-      // authentication required, but only for /_api, /_admin etc.
-      if ((!path.empty() && path[0] != '/') ||
-          (path.size() > 1 && path[1] != '_')) {
-        result = Flow::Continue;
-        vc->forceSuperuser();
-        SDB_TRACE("xxxxx", Logger::AUTHORIZATION, "Upgrading rights for ",
-                  path);
-      }
-    }
-
-    if (result == Flow::Abort) {
-      const std::string& username = req.user();
-
-      if (path == "/" || path.starts_with(kPathPrefixOpen) ||
-          path == "/_admin/server/availability") {
-        // mop: these paths are always callable...they will be able to check
-        // req.user when it could be validated
-        result = Flow::Continue;
-        vc->forceSuperuser();
-      } else if (user_authenticated && path == "/_api/cluster/endpoints") {
-        // allow authenticated users to access cluster/endpoints
-        result = Flow::Continue;
-        // vc->forceReadOnly();
-      } else if (req.requestType() == RequestType::Post && !username.empty() &&
-                 path.starts_with(
-                   absl::StrCat(kPathPrefixApiUser, username, "/"))) {
-        // simon: unauthorized users should be able to call
-        // `/_api/user/<name>` to check their passwords
-        result = Flow::Continue;
-        vc->forceReadOnly();
-      } else if (user_authenticated && path.starts_with(kPathPrefixApiUser)) {
-        result = Flow::Continue;
-      }
-    }
-  }
-
-  return result;
+Flow GeneralCommTask<T>::CanAccessPath(const auth::TokenCache::Entry& /*token*/,
+                                       GeneralRequest& /*req*/) const {
+  // Auth is intentionally absent until post-RBAC; every path is reachable.
+  return Flow::Continue;
 }
 
 /// handle an OPTIONS request
@@ -981,7 +668,7 @@ void GeneralCommTask<T>::ProcessCorsOptions(std::unique_ptr<GeneralRequest> req,
   resp->setHeaderNCIfNotSet(StaticStrings::kAllow, StaticStrings::kCorsMethods);
 
   if (!origin.empty()) {
-    SDB_DEBUG("xxxxx", Logger::REQUESTS, "got CORS preflight request");
+    SDB_DEBUG(HTTP, "got CORS preflight request");
     const std::string_view allow_headers = basics::string_utils::Trim(
       req->header(StaticStrings::kAccessControlRequestHeaders));
 
@@ -998,74 +685,16 @@ void GeneralCommTask<T>::ProcessCorsOptions(std::unique_ptr<GeneralRequest> req,
       resp->setHeaderNCIfNotSet(StaticStrings::kAccessControlAllowHeaders,
                                 allow_headers);
 
-      SDB_TRACE("xxxxx", Logger::REQUESTS,
-                "client requested validation of the following headers: ",
+      SDB_TRACE(HTTP, "client requested validation of the following headers: ",
                 allow_headers);
     }
 
     // set caching time (hard-coded value)
-    resp->setHeaderNCIfNotSet(StaticStrings::kAccessControlMaxAge,
-                              StaticStrings::kN1800);
+    resp->setHeaderNCIfNotSet(StaticStrings::kAccessControlMaxAge, "1800");
   }
 
   // discard request and send response
-  SendResponse(std::move(resp), StealRequestStatistics(req->messageId()));
-}
-
-template<SocketType T>
-void GeneralCommTask<T>::SetRequestStatistics(uint64_t id,
-                                              RequestStatistics::Item&& stat) {
-  std::lock_guard guard{_statistics_mutex};
-  _statistics_map.insert_or_assign(id, std::move(stat));
-}
-
-template<SocketType T>
-ConnectionStatistics::Item GeneralCommTask<T>::AcquireConnectionStatistics() {
-  ConnectionStatistics::Item stat;
-  if (this->_server.server()
-        .template getFeature<StatisticsFeature>()
-        .isEnabled()) {
-    // only acquire a new item if the statistics are enabled.
-    stat = ConnectionStatistics::acquire();
-  }
-  return stat;
-}
-
-template<SocketType T>
-RequestStatistics::ItemView GeneralCommTask<T>::AcquireRequestStatistics(
-  uint64_t id) {
-  RequestStatistics::Item stat;
-  if (this->_server.server()
-        .template getFeature<StatisticsFeature>()
-        .isEnabled()) {
-    // only acquire a new item if the statistics are enabled.
-    stat = RequestStatistics::acquire();
-  }
-
-  std::lock_guard guard(_statistics_mutex);
-  return _statistics_map.insert_or_assign(id, std::move(stat)).first->second;
-}
-
-template<SocketType T>
-RequestStatistics::ItemView GeneralCommTask<T>::GetRequestStatistics(
-  uint64_t id) {
-  std::lock_guard guard(_statistics_mutex);
-  return _statistics_map[id];
-}
-
-template<SocketType T>
-RequestStatistics::Item GeneralCommTask<T>::StealRequestStatistics(
-  uint64_t id) {
-  RequestStatistics::Item result;
-  std::lock_guard guard(_statistics_mutex);
-
-  auto iter = _statistics_map.find(id);
-  if (iter != _statistics_map.end()) {
-    result = std::move(iter->second);
-    _statistics_map.erase(iter);
-  }
-
-  return result;
+  SendResponse(std::move(resp));
 }
 
 template class GeneralCommTask<SocketType::Tcp>;

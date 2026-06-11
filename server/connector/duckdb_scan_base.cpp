@@ -26,7 +26,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
-#include <iresearch/columnstore/format.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -36,6 +36,7 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "basics/string_utils.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table_options.h"
@@ -49,10 +50,8 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "query/duckdb_engine.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 
@@ -139,18 +138,6 @@ void InitCommonState(CommonScanGlobalState& state,
         state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
         state.projected_types.push_back(catalog::Column::MakeOffsetsType());
       } else {
-        // Real column read. For view-backed indexes the materialisation
-        // path is wired in a follow-up; the projected_columns entry is
-        // recorded here, but the actual projection-time check (and error)
-        // happens in the search-scan operators where we know whether the
-        // optimizer actually swapped the function to one that bypasses
-        // materialisation (e.g. IRESEARCH_COUNT for count(*)).
-        //
-        // An IndexOnly column reaching the materialisation path means one
-        // of: (1) a query asks for its value -- reject, no main-storage
-        // source exists; (2) CREATE INDEX backfill -- mark finished so
-        // pre-existing rows are skipped honestly (future INSERTs will
-        // index normally).
         if (!bind_data.IsViewBacked()) {
           const auto& tbd = bind_data.As<TableScanBindData>();
           for (const auto& col : tbd.table->Columns()) {
@@ -186,6 +173,11 @@ void InitCommonState(CommonScanGlobalState& state,
       : bind_data.As<TableScanBindData>().table->PKColumns().empty();
 
   state.external_projected_columns = state.projected_columns;
+
+  state.client_context = &context;
+  state.projected_column_indexes = input.column_indexes;
+  SDB_ASSERT(state.projected_column_indexes.size() ==
+             state.projected_columns.size());
 }
 
 void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
@@ -206,115 +198,60 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
     const bool is_blob_synthetic_pk =
       col_id == catalog::Column::kGeneratedPKId &&
       state.projected_types[proj].id() == duckdb::LogicalTypeId::BLOB;
-    if ((info && info->store_values) || is_blob_synthetic_pk) {
-      state.cs_projections.push_back({proj, col_id});
+    if ((info && info->IsStored()) || is_blob_synthetic_pk) {
+      ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id};
+      if (info && info->store_values &&
+          proj < state.projected_column_indexes.size()) {
+        const auto& column_index = state.projected_column_indexes[proj];
+        if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
+          std::vector<std::string> path;
+          const duckdb::ColumnIndex* node = &column_index.GetChildIndex(0);
+          bool by_key_only = true;
+          while (true) {
+            if (node->HasPrimaryIndex()) {
+              by_key_only = false;
+              break;
+            }
+            path.emplace_back(node->GetFieldName());
+            if (!node->HasChildren()) {
+              break;
+            }
+            node = &node->GetChildIndex(0);
+          }
+          if (by_key_only && !path.empty()) {
+            cp.extract_path = std::move(path);
+            cp.extract_scan_type = column_index.GetScanType();
+          }
+        }
+      }
+      state.cs_projections.emplace_back(std::move(cp));
       state.external_projected_columns[proj] =
         duckdb::DConstants::INVALID_INDEX;
       continue;
     }
     state.has_external_projections = true;
   }
-  state.cs_field_ids.reserve(state.cs_projections.size());
-  state.cs_output_slots.reserve(state.cs_projections.size());
-  for (const auto& cp : state.cs_projections) {
-    state.cs_field_ids.push_back(static_cast<irs::field_id>(cp.column_id));
-    state.cs_output_slots.push_back(cp.output_slot);
-  }
 }
 
 ColumnstoreMaterializer* GetOrOpenSegmentMaterializer(
-  CommonScanGlobalState& gstate, const irs::IndexReader& reader,
-  size_t seg_idx) {
-  if (gstate.cs_field_ids.empty() || seg_idx >= reader.size()) {
+  CommonScanLocalState& lstate, const CommonScanGlobalState& gstate,
+  const irs::IndexReader& reader, size_t seg_idx) {
+  if (gstate.cs_projections.empty() || seg_idx >= reader.size()) {
     return nullptr;
   }
-  if (gstate.cs_materializers.size() < reader.size()) {
-    gstate.cs_materializers.resize(reader.size());
+  if (lstate.cs_materializers.size() < reader.size()) {
+    lstate.cs_materializers.resize(reader.size());
   }
-  auto& slot = gstate.cs_materializers[seg_idx];
+  auto& slot = lstate.cs_materializers[seg_idx];
   if (!slot) {
-    const auto* cs_reader = reader[seg_idx].CsReader();
-    if (!cs_reader) {
+    const auto* col_reader = reader[seg_idx].GetColReader();
+    if (!col_reader) {
       return nullptr;
     }
     slot = std::make_unique<ColumnstoreMaterializer>(
-      *cs_reader, gstate.cs_field_ids, gstate.cs_output_slots);
+      *col_reader, gstate.cs_projections, gstate.client_context);
   }
   return slot.get();
-}
-
-void MaterializeIncludeColumnsScoreOrder(
-  CommonScanGlobalState& gstate, const irs::IndexReader& reader,
-  std::span<const SegDoc> seg_doc_score_order, duckdb::DataChunk& output) {
-  const auto num_rows = seg_doc_score_order.size();
-  if (num_rows == 0 || gstate.cs_projections.empty()) {
-    return;
-  }
-
-  std::vector<uint32_t> perm(num_rows);
-  absl::c_iota(perm, uint32_t{0});
-  std::ranges::sort(perm, {}, [&](uint32_t i) {
-    return std::pair{seg_doc_score_order[i].segment_idx,
-                     seg_doc_score_order[i].doc_pos};
-  });
-  duckdb::SelectionVector dict_sel(num_rows);
-  for (duckdb::idx_t k = 0; k < num_rows; ++k) {
-    dict_sel.set_index(perm[k], k);
-  }
-
-  const size_t n_bindings = gstate.cs_projections.size();
-  std::vector<duckdb::Vector> seg_vecs;
-  seg_vecs.reserve(n_bindings);
-  for (const auto& cp : gstate.cs_projections) {
-    seg_vecs.emplace_back(gstate.projected_types[cp.output_slot],
-                          static_cast<duckdb::idx_t>(num_rows));
-    duckdb::FlatVector::ValidityMutable(seg_vecs.back()).SetAllValid(num_rows);
-  }
-
-  struct PermDocIds {
-    std::span<const SegDoc> hits;
-    const uint32_t* perm_run;
-    size_t count;
-    size_t size() const noexcept { return count; }
-    irs::doc_id_t operator[](size_t k) const noexcept {
-      return hits[perm_run[k]].doc_pos;
-    }
-  };
-
-  size_t i = 0;
-  while (i < num_rows) {
-    const uint32_t seg_id = seg_doc_score_order[perm[i]].segment_idx;
-    const size_t seg_start = i;
-    do {
-      ++i;
-    } while (i < num_rows &&
-             seg_doc_score_order[perm[i]].segment_idx == seg_id);
-    auto* mat = GetOrOpenSegmentMaterializer(gstate, reader, seg_id);
-    if (!mat || !mat->HasAny()) {
-      continue;
-    }
-    const PermDocIds seg_docs{.hits = seg_doc_score_order,
-                              .perm_run = perm.data() + seg_start,
-                              .count = i - seg_start};
-    // Materializer bindings are a subsequence of cs_projections (filtered to
-    // columns present in this segment), in the same order. Step b_mat
-    // whenever its output_slot matches the next cs_projection.
-    size_t b_mat = 0;
-    for (size_t b_proj = 0; b_proj < n_bindings; ++b_proj) {
-      if (b_mat < mat->BindingCount() &&
-          mat->BindingOutputSlot(b_mat) ==
-            gstate.cs_projections[b_proj].output_slot) {
-        mat->MaterializeBinding(b_mat, seg_docs, seg_vecs[b_proj],
-                                static_cast<duckdb::idx_t>(seg_start));
-        ++b_mat;
-      }
-    }
-  }
-
-  for (size_t b = 0; b < n_bindings; ++b) {
-    output.data[gstate.cs_projections[b].output_slot].Slice(seg_vecs[b],
-                                                            dict_sel, num_rows);
-  }
 }
 
 constexpr size_t kScanKeyPrefixSize =
@@ -337,16 +274,15 @@ duckdb::idx_t ReadGeneratedPKFromKeys(rocksdb::Iterator& it,
   return count;
 }
 
-duckdb::idx_t CommonScanRowsScanned(duckdb::GlobalTableFunctionState& gstate_p,
-                                    duckdb::LocalTableFunctionState&) {
-  auto& gstate = gstate_p.Cast<CommonScanGlobalState>();
-  return gstate.produced_rows.load(std::memory_order_relaxed);
+void CommonScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
+  auto& gstate = input.global_state->Cast<CommonScanGlobalState>();
+  input.operator_metrics.rows_scanned =
+    gstate.produced_rows.load(std::memory_order_relaxed);
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
-  duckdb::ExecutionContext& /*context*/,
-  duckdb::TableFunctionInitInput& /*input*/,
-  duckdb::GlobalTableFunctionState* /*global_state*/) {
+  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
+  duckdb::GlobalTableFunctionState* global_state) {
   return duckdb::make_uniq<CommonScanLocalState>();
 }
 
@@ -408,7 +344,7 @@ void PKScanFunctionImpl(
   std::vector<std::unique_ptr<rocksdb::Iterator>>& iterators,
   duckdb::DataChunk& output) {
   if (gstate.finished || iterators.empty()) {
-    output.SetCardinality(0);
+    output.SetChildCardinality(0);
     gstate.finished = true;
     return;
   }
@@ -445,7 +381,7 @@ void PKScanFunctionImpl(
 
   if (count == 0) {
     gstate.finished = true;
-    output.SetCardinality(0);
+    output.SetChildCardinality(0);
     return;
   }
 
@@ -481,10 +417,10 @@ void PKScanFunctionImpl(
 
   if (gstate.scan_tableoid) {
     output.data[gstate.tableoid_output_idx].Reference(
-      duckdb::Value::BIGINT(gstate.tableoid_value));
+      duckdb::Value::BIGINT(gstate.tableoid_value), duckdb::count_t(count));
   }
 
-  output.SetCardinality(count);
+  output.SetChildCardinality(count);
   if (count > 0) {
     gstate.produced_rows.fetch_add(count, std::memory_order_relaxed);
   }

@@ -23,39 +23,34 @@
 #include <atomic>
 #include <duckdb/main/database.hpp>
 #include <iostream>
+#include <iresearch/search/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
 
-namespace bench {
+#include "basics/duckdb_engine.h"
 
-duckdb::DatabaseInstance& CsDb() {
-  static std::unique_ptr<duckdb::DuckDB> kDb = [] {
-    duckdb::DBConfig cfg;
-    cfg.options.access_mode = duckdb::AccessMode::AUTOMATIC;
-    return std::make_unique<duckdb::DuckDB>(":memory:", &cfg);
-  }();
-  return *kDb->instance;
-}
+namespace bench {
 
 static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
                                                  size_t segment_pool_size,
                                                  size_t segment_mem_max,
                                                  uint32_t row_group_size,
                                                  uint32_t norm_row_group_size) {
+  auto* db = &::sdb::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.reader_options.scorer = scorer_ptr;
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
-  writer_opts.db = &CsDb();
-  writer_opts.reader_options.db = &CsDb();
+  writer_opts.db = db;
+  writer_opts.reader_options.db = db;
   writer_opts.column_options =
     [row_group_size](irs::field_id id) -> irs::ColumnOptions {
     return {.row_group_size = row_group_size};
   };
   writer_opts.norm_column_options =
     [norm_row_group_size, next = std::make_shared<std::atomic<irs::field_id>>(
-                            0)](std::string_view) -> irs::NormColumnOptions {
+                            0)](irs::field_id) -> irs::NormColumnOptions {
     return {
       .id = next->fetch_add(1, std::memory_order_relaxed),
       .row_group_size = norm_row_group_size,
@@ -68,9 +63,7 @@ IndexBuilder::IndexBuilder(std::string_view path,
                            const IndexBuilderOptions& opts,
                            const BenchConfig& config)
   : _opts{opts},
-    _scorer{irs::scorers::Get(config.scorer,
-                              irs::Type<irs::text_format::Json>::get(),
-                              config.scorer_options)},
+    _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _dir{path},
     _format{irs::formats::Get(config.format_name)},
     _writer{irs::IndexWriter::Make(
@@ -82,7 +75,7 @@ IndexBuilder::IndexBuilder(std::string_view path,
 void IndexBuilder::IndexFromStream(std::istream& input,
                                    BatchHandlerFactory factory) {
   irs::async_utils::ThreadPool<> thread_pool{_opts.indexer_threads +
-                                             _opts.consolidation_threads + 1};
+                                             _opts.compaction_threads + 1};
 
   struct {
     absl::CondVar cond;
@@ -139,54 +132,53 @@ void IndexBuilder::IndexFromStream(std::istream& input,
     batch_provider.eof = true;
   });
 
-  absl::Mutex consolidation_mutex;
-  absl::CondVar consolidation_cv;
+  absl::Mutex compaction_mutex;
+  absl::CondVar compaction_cv;
 
   // commiter thread
-  if (_opts.commit_interval_ms) {
-    thread_pool.run(
-      [&consolidation_cv, &consolidation_mutex, &batch_provider, this] {
-        irs::SetThreadName(IR_NATIVE_STRING("committer"));
-
-        while (!batch_provider.done.load()) {
-          {
-            std::cout << "[COMMIT]" << std::endl;
-            _writer->Commit();
-          }
-
-          // notify consolidation threads
-          if (_opts.consolidation_threads) {
-            absl::MutexLock lock{&consolidation_mutex};
-            consolidation_cv.notify_all();
-          }
-
-          std::this_thread::sleep_for(
-            std::chrono::milliseconds(_opts.commit_interval_ms));
-        }
-      });
-  }
-
-  // consolidation threads
-  const irs::index_utils::ConsolidateTier consolidation_options;
-  auto policy = irs::index_utils::MakePolicy(consolidation_options);
-
-  for (size_t i = _opts.consolidation_threads; i; --i) {
-    thread_pool.run([&] {
-      irs::SetThreadName(IR_NATIVE_STRING("consolidater"));
+  if (_opts.refresh_interval_ms) {
+    thread_pool.run([&compaction_cv, &compaction_mutex, &batch_provider, this] {
+      irs::SetThreadName(IR_NATIVE_STRING("committer"));
 
       while (!batch_provider.done.load()) {
         {
-          absl::MutexLock lock{&consolidation_mutex};
-          if (consolidation_cv.WaitWithTimeout(
-                &consolidation_mutex,
-                absl::Milliseconds(_opts.consolidation_interval_ms))) {
+          std::cout << "[COMMIT]" << std::endl;
+          _writer->RefreshCommit();
+        }
+
+        // notify compaction threads
+        if (_opts.compaction_threads) {
+          absl::MutexLock lock{&compaction_mutex};
+          compaction_cv.notify_all();
+        }
+
+        std::this_thread::sleep_for(
+          std::chrono::milliseconds(_opts.refresh_interval_ms));
+      }
+    });
+  }
+
+  // compaction threads
+  const irs::index_utils::CompactionTier compaction_options;
+  auto policy = irs::index_utils::MakePolicy(compaction_options);
+
+  for (size_t i = _opts.compaction_threads; i; --i) {
+    thread_pool.run([&] {
+      irs::SetThreadName(IR_NATIVE_STRING("compactr"));
+
+      while (!batch_provider.done.load()) {
+        {
+          absl::MutexLock lock{&compaction_mutex};
+          if (compaction_cv.WaitWithTimeout(
+                &compaction_mutex,
+                absl::Milliseconds(_opts.compaction_interval_ms))) {
             continue;
           }
         }
 
         {
-          std::cout << "[CONSOLIDATE]" << std::flush;
-          _writer->Consolidate(policy);
+          std::cout << "[COMPACT]" << std::flush;
+          _writer->Compact(policy);
         }
 
         irs::directory_utils::RemoveAllUnreferenced(_dir);
@@ -206,6 +198,7 @@ void IndexBuilder::IndexFromStream(std::istream& input,
       while (batch_provider.Swap(buf)) {
         auto ctx = _writer->GetBatch();
         (*handler)(buf, ctx);
+        ctx.Commit();
         std::cout << "." << std::flush;
       }
     });
@@ -214,20 +207,20 @@ void IndexBuilder::IndexFromStream(std::istream& input,
   thread_pool.stop();
 
   std::cout << "[COMMIT]" << std::endl;
-  _writer->Commit();
+  _writer->RefreshCommit();
 
-  if (_opts.consolidate_all) {
-    std::cout << "Consolidating all segments:" << std::endl;
-    ConsolidateAll();
-  } else if (_opts.consolidation_threads) {
+  if (_opts.compact_all) {
+    std::cout << "Compacting all segments:" << std::endl;
+    CompactAll();
+  } else if (_opts.compaction_threads) {
     irs::directory_utils::RemoveAllUnreferenced(_dir);
   }
 }
 
-void IndexBuilder::ConsolidateAll() {
-  _writer->Consolidate(
-    irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount()));
-  _writer->Commit();
+void IndexBuilder::CompactAll() {
+  _writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+  _writer->RefreshCommit();
   irs::directory_utils::RemoveAllUnreferenced(_dir);
 }
 

@@ -27,6 +27,15 @@ if [ "$#" -eq 0 ]; then
 fi
 
 TARGETS=("$@")
+
+# Integration tests run DuckDB's `unittest` binary against the vendored
+# extensions' test suites. It's gated on SDB_BUILD_DUCKDB_UNITTESTS=On in
+# third_party/CMakeLists.txt, and only requested when the caller plumbed
+# the flag through (extension test path).
+if [[ "${SDB_BUILD_DUCKDB_UNITTESTS:-Off}" == "On" ]]; then
+	TARGETS+=(unittest)
+fi
+
 LOG_SUFFIX="${TARGETS[*]}"
 LOG_SUFFIX="${LOG_SUFFIX// /_}"
 
@@ -42,6 +51,9 @@ LOG_SUFFIX="${LOG_SUFFIX// /_}"
 
 cd /serenedb
 git config --global --add safe.directory '*'
+
+# Build steps tee into out/logs; not every caller pre-creates it (make-package).
+mkdir -p /serenedb/out/logs
 
 mkdir -p $BUILD_DIR
 cd $BUILD_DIR
@@ -73,18 +85,18 @@ if [[ -n "${EXTRA_CMAKE_FLAGS:-}" ]]; then
 fi
 
 if [[ "$SANITIZERS" == "None" || -z "$SANITIZERS" ]]; then
-	CMAKE_FLAGS+=("-DSTATIC_EXECUTABLES=$STATIC_EXECUTABLES" "-DSDB_ALLOC=$SDB_ALLOC")
+	CMAKE_FLAGS+=("-DSTATIC_EXECUTABLES=$STATIC_EXECUTABLES" "-DSDB_ALLOC=$SDB_ALLOC" "-DSDB_IOURING=On" "-DSDB_SANITIZE=")
 else
 	CMAKE_FLAGS+=("-DSTATIC_EXECUTABLES=Off" "-DSDB_ALLOC=SYS" "-DSDB_IOURING=Off" "-DSDB_SANITIZE=$SANITIZERS")
 fi
 
 print_banner "CMAKE CONFIGURATION" "${TARGETS[*]}"
-echo "nproc=$(nproc) cmake ${CMAKE_FLAGS[*]} .." | tee /serenedb/cmake_${LOG_SUFFIX}.log
-cmake "${CMAKE_FLAGS[@]}" .. 2>&1 | tee -a /serenedb/cmake_${LOG_SUFFIX}.log || exit 1
+echo "nproc=$(nproc) cmake ${CMAKE_FLAGS[*]} .." | tee /serenedb/out/logs/cmake_${LOG_SUFFIX}.log
+cmake "${CMAKE_FLAGS[@]}" .. 2>&1 | tee -a /serenedb/out/logs/cmake_${LOG_SUFFIX}.log || exit 1
 
 export CC=/usr/local/bin/clang
 export CXX=/usr/local/bin/clang++
 
 print_banner "BUILDING TARGETS" "${TARGETS[*]}"
-ninja "${TARGETS[@]}" 2>&1 | tee -a /serenedb/make_${LOG_SUFFIX}.log || exit 1
-ccache -s | tee -a /serenedb/ccache_${LOG_SUFFIX}.log
+ninja "${TARGETS[@]}" 2>&1 | tee -a /serenedb/out/logs/make_${LOG_SUFFIX}.log || exit 1
+ccache -s | tee -a /serenedb/out/logs/ccache_${LOG_SUFFIX}.log

@@ -22,26 +22,29 @@
 
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 
+#include "catalog/column_expr.h"
 #include "catalog/object.h"
 
 namespace sdb::catalog {
 
-// A SQL function stored in the catalog.
-// Stores the full DuckDB CreateMacroInfo -- preserves all function metadata.
-// Serialized to/from RocksDB via DuckDB's BinarySerializer.
+// A SQL function stored in the catalog. CreateMacroInfo is carried inside
+// the reflection-serialized PgSqlFunctionData wrapper as a duckdb-binary
+// blob -- same shape as PgSqlView.
 class PgSqlFunction final : public Object {
  public:
   PgSqlFunction(ObjectId schema_id, ObjectId id, std::string_view name,
                 duckdb::unique_ptr<duckdb::CreateMacroInfo> info);
 
-  static std::shared_ptr<PgSqlFunction> ReadInternal(vpack::Slice slice,
-                                                     ReadContext ctx);
+  static std::shared_ptr<PgSqlFunction> Deserialize(duckdb::Deserializer& src,
+                                                    ReadContext ctx);
 
-  void WriteInternal(vpack::Builder& build) const final;
+  void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 
   const duckdb::CreateMacroInfo& GetInfo() const noexcept { return *_info; }
   duckdb::CreateMacroInfo& GetInfo() noexcept { return *_info; }
+
+  Refs GetRefs(RefKinds kinds) const;
 
  private:
   duckdb::unique_ptr<duckdb::CreateMacroInfo> _info;

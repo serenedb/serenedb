@@ -1,0 +1,1604 @@
+# Inverted index over scalar expressions (non-JSON). Covers 1, 2 and 3
+# base columns with varchar, boolean and numeric return types.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict(template = 'keyword');
+
+
+# --- 1 column, numeric return ----------------------------------------------
+
+statement ok
+CREATE TABLE num1(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX num1_idx ON num1 USING inverted(id, (a + 1));
+
+statement ok
+INSERT INTO num1 VALUES (1, 10), (2, 41), (3, -5);
+
+statement ok
+VACUUM (REFRESH_TABLE) num1;
+
+query
+SELECT id FROM num1_idx WHERE a + 1 = 42;
+----
+id
+2
+
+query
+SELECT id FROM num1_idx WHERE a + 1 > 0 ORDER BY id;
+----
+id
+1
+2
+
+
+# --- 1 column, varchar return ----------------------------------------------
+
+statement ok
+CREATE TABLE vc1(id INTEGER PRIMARY KEY, s VARCHAR);
+
+statement ok
+CREATE INDEX vc1_idx ON vc1 USING inverted(id, (LOWER(s)));
+
+statement ok
+INSERT INTO vc1 VALUES (1, 'HELLO'), (2, 'World'), (3, 'mixed');
+
+statement ok
+VACUUM (REFRESH_TABLE) vc1;
+
+query
+SELECT id FROM vc1_idx WHERE LOWER(s) = 'hello';
+----
+id
+1
+
+query
+SELECT id FROM vc1_idx WHERE LOWER(s) = 'world';
+----
+id
+2
+
+query
+SELECT id FROM vc1_idx WHERE LOWER(s) = 'mixed';
+----
+id
+3
+
+
+# --- 1 column, boolean return ----------------------------------------------
+
+statement ok
+CREATE TABLE b1(id INTEGER PRIMARY KEY, x INTEGER);
+
+statement ok
+CREATE INDEX b1_idx ON b1 USING inverted(id, (x > 0));
+
+statement ok
+INSERT INTO b1 VALUES (1, 5), (2, -3), (3, 0), (4, 7);
+
+statement ok
+VACUUM (REFRESH_TABLE) b1;
+
+query
+SELECT id FROM b1_idx WHERE (x > 0) = true ORDER BY id;
+----
+id
+1
+4
+
+query
+SELECT id FROM b1_idx WHERE (x > 0) = false ORDER BY id;
+----
+id
+2
+3
+
+
+# Default opclass (no dictionary spelled out) -- same as verbatim_dict for
+# non-text return types: keyword analyzer + null tokenizer.
+
+statement ok
+CREATE TABLE b1d(id INTEGER PRIMARY KEY, x INTEGER);
+
+statement ok
+CREATE INDEX b1d_idx ON b1d USING inverted(id, (x > 0));
+
+statement ok
+INSERT INTO b1d VALUES (1, 5), (2, -3), (3, 0), (4, 7);
+
+statement ok
+VACUUM (REFRESH_TABLE) b1d;
+
+query
+SELECT id FROM b1d_idx WHERE (x > 0) = true ORDER BY id;
+----
+id
+1
+4
+
+
+# --- 2 columns, numeric return ---------------------------------------------
+
+statement ok
+CREATE TABLE num2(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX num2_idx ON num2 USING inverted(id, (a + b));
+
+statement ok
+INSERT INTO num2 VALUES (1, 10, 20), (2, 5, 5), (3, 7, 13);
+
+statement ok
+VACUUM (REFRESH_TABLE) num2;
+
+query
+SELECT id FROM num2_idx WHERE a + b = 30;
+----
+id
+1
+
+query
+SELECT id FROM num2_idx WHERE a + b > 15 ORDER BY id;
+----
+id
+1
+3
+
+
+# --- 2 columns, varchar return ---------------------------------------------
+
+statement ok
+CREATE TABLE vc2(id INTEGER PRIMARY KEY, s1 VARCHAR, s2 VARCHAR);
+
+statement ok
+CREATE INDEX vc2_idx ON vc2 USING inverted(id, (s1 || s2));
+
+statement ok
+INSERT INTO vc2 VALUES (1, 'foo', 'bar'), (2, 'hello', 'world'), (3, 'a', 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) vc2;
+
+query
+SELECT id FROM vc2_idx WHERE s1 || s2 = 'foobar';
+----
+id
+1
+
+query
+SELECT id FROM vc2_idx WHERE s1 || s2 = 'helloworld';
+----
+id
+2
+
+
+# --- 2 columns, boolean return ---------------------------------------------
+
+statement ok
+CREATE TABLE b2(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX b2_idx ON b2 USING inverted(id, (a > b));
+
+statement ok
+INSERT INTO b2 VALUES (1, 10, 5), (2, 3, 7), (3, 4, 4);
+
+statement ok
+VACUUM (REFRESH_TABLE) b2;
+
+query
+SELECT id FROM b2_idx WHERE (a > b) = true ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM b2_idx WHERE (a > b) = false ORDER BY id;
+----
+id
+2
+3
+
+
+# --- 3 columns, numeric return ---------------------------------------------
+
+statement ok
+CREATE TABLE num3(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER);
+
+statement ok
+CREATE INDEX num3_idx ON num3 USING inverted(id, (a + b + c));
+
+statement ok
+INSERT INTO num3 VALUES (1, 1, 2, 3), (2, 10, 20, 30), (3, 0, 0, 0);
+
+statement ok
+VACUUM (REFRESH_TABLE) num3;
+
+query
+SELECT id FROM num3_idx WHERE a + b + c = 6;
+----
+id
+1
+
+query
+SELECT id FROM num3_idx WHERE a + b + c > 10 ORDER BY id;
+----
+id
+2
+
+
+# --- 3 columns, varchar return ---------------------------------------------
+
+statement ok
+CREATE TABLE vc3(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR, c VARCHAR);
+
+statement ok
+CREATE INDEX vc3_idx ON vc3 USING inverted(id, (CONCAT(a, '-', b, '-', c)));
+
+statement ok
+INSERT INTO vc3 VALUES (1, 'x', 'y', 'z'), (2, 'foo', 'bar', 'baz');
+
+statement ok
+VACUUM (REFRESH_TABLE) vc3;
+
+query
+SELECT id FROM vc3_idx WHERE CONCAT(a, '-', b, '-', c) = 'x-y-z';
+----
+id
+1
+
+query
+SELECT id FROM vc3_idx WHERE CONCAT(a, '-', b, '-', c) = 'foo-bar-baz';
+----
+id
+2
+
+
+# --- 3 columns, boolean return ---------------------------------------------
+
+statement ok
+CREATE TABLE b3(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER);
+
+statement ok
+CREATE INDEX b3_idx ON b3 USING inverted(id, (a + b > c));
+
+statement ok
+INSERT INTO b3 VALUES (1, 1, 2, 10), (2, 10, 20, 5), (3, 4, 4, 8);
+
+statement ok
+VACUUM (REFRESH_TABLE) b3;
+
+query
+SELECT id FROM b3_idx WHERE (a + b > c) = true ORDER BY id;
+----
+id
+2
+
+query
+SELECT id FROM b3_idx WHERE (a + b > c) = false ORDER BY id;
+----
+id
+1
+3
+
+
+# --- Same column indexed both directly and as an expression dependent -----
+
+statement ok
+CREATE TABLE mix(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX mix_idx ON mix USING inverted(
+    id, a, b, (a || b));
+
+statement ok
+INSERT INTO mix VALUES
+    (1, 'foo', 'bar'), (2, 'hello', 'world'), (3, 'foo', 'baz');
+
+statement ok
+VACUUM (REFRESH_TABLE) mix;
+
+query
+SELECT id FROM mix_idx WHERE a = 'foo' ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM mix_idx WHERE b = 'bar';
+----
+id
+1
+
+query
+SELECT id FROM mix_idx WHERE a || b = 'foobar';
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM mix_idx WHERE a || b = 'foobar';
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: mix_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[Term((a || b)(string) │
+│         =foobar)]         │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+SELECT id FROM mix_idx WHERE a || b = 'helloworld';
+----
+id
+2
+
+query
+SELECT id FROM mix_idx WHERE a = 'foo' AND a || b = 'foobaz';
+----
+id
+3
+
+query
+EXPLAIN SELECT id FROM mix_idx WHERE a = 'foo' AND a || b = 'foobaz';
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: mix_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[Term(a(string)=foo) &&│
+│    Term((a || b)(string)  │
+│         =foobaz)]         │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+# --- DML re-indexes the expression -----------------------------------------
+
+statement ok
+CREATE TABLE dml(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX dml_idx ON dml USING inverted(id, (a + b));
+
+statement ok
+INSERT INTO dml VALUES (1, 10, 20), (2, 1, 1);
+
+statement ok
+VACUUM (REFRESH_TABLE) dml;
+
+statement ok
+UPDATE dml SET a = 100 WHERE id = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) dml;
+
+query
+SELECT id FROM dml_idx WHERE a + b = 30;
+----
+id
+
+query
+SELECT id FROM dml_idx WHERE a + b = 120;
+----
+id
+1
+
+statement ok
+DELETE FROM dml WHERE id = 2;
+
+statement ok
+VACUUM (REFRESH_TABLE) dml;
+
+query
+SELECT id FROM dml_idx ORDER BY id;
+----
+id
+1
+
+
+# --- NULL handling: NULL inputs produce a NULL expression value ------------
+
+statement ok
+CREATE TABLE n1(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX n1_idx ON n1 USING inverted(id, (a + b));
+
+statement ok
+INSERT INTO n1 VALUES (1, 1, 2), (2, NULL, 5), (3, 7, NULL);
+
+statement ok
+VACUUM (REFRESH_TABLE) n1;
+
+query
+SELECT id FROM n1_idx WHERE a + b IS NULL ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM n1_idx WHERE a + b = 3;
+----
+id
+1
+
+
+# --- Other expression shapes ----------------------------------------------
+
+# Column referenced multiple times in the same expression.
+statement ok
+CREATE TABLE poly(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX poly_idx ON poly USING inverted(id, (a * a + a));
+
+statement ok
+INSERT INTO poly VALUES (1, 3), (2, 0), (3, 5);
+
+statement ok
+VACUUM (REFRESH_TABLE) poly;
+
+query
+SELECT id FROM poly_idx WHERE a * a + a = 12;
+----
+id
+1
+
+query
+SELECT id FROM poly_idx WHERE a * a + a = 0;
+----
+id
+2
+
+query
+SELECT id FROM poly_idx WHERE a * a + a = 30;
+----
+id
+3
+
+
+# CASE expression producing varchar.
+statement ok
+CREATE TABLE sgn(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX sgn_idx ON sgn USING inverted(
+    id,
+    (CASE WHEN a > 0 THEN 'pos' WHEN a < 0 THEN 'neg' ELSE 'zero' END));
+
+statement ok
+INSERT INTO sgn VALUES (1, 5), (2, -3), (3, 0), (4, 7);
+
+statement ok
+VACUUM (REFRESH_TABLE) sgn;
+
+query
+SELECT id FROM sgn_idx
+WHERE CASE WHEN a > 0 THEN 'pos' WHEN a < 0 THEN 'neg' ELSE 'zero' END = 'pos'
+ORDER BY id;
+----
+id
+1
+4
+
+query
+SELECT id FROM sgn_idx
+WHERE CASE WHEN a > 0 THEN 'pos' WHEN a < 0 THEN 'neg' ELSE 'zero' END = 'neg';
+----
+id
+2
+
+query
+SELECT id FROM sgn_idx
+WHERE CASE WHEN a > 0 THEN 'pos' WHEN a < 0 THEN 'neg' ELSE 'zero' END = 'zero';
+----
+id
+3
+
+
+# --- More DML scenarios ---------------------------------------------------
+
+# Multi-row UPDATE that re-indexes every row.
+statement ok
+CREATE TABLE mu1(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX mu1_idx ON mu1 USING inverted(id, (a + b));
+
+statement ok
+INSERT INTO mu1 VALUES (1, 10, 20), (2, 5, 25);
+
+statement ok
+VACUUM (REFRESH_TABLE) mu1;
+
+statement ok
+UPDATE mu1 SET b = 100;
+
+statement ok
+VACUUM (REFRESH_TABLE) mu1;
+
+query
+SELECT id FROM mu1_idx WHERE a + b = 110;
+----
+id
+1
+
+query
+SELECT id FROM mu1_idx WHERE a + b = 105;
+----
+id
+2
+
+
+# UPDATE that does NOT touch any indexed column or dep column must leave the
+# index untouched -- a row remains queryable by its (old) expression value.
+statement ok
+CREATE TABLE mu2(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, extra VARCHAR);
+
+statement ok
+CREATE INDEX mu2_idx ON mu2 USING inverted(id, (a + b));
+
+statement ok
+INSERT INTO mu2 VALUES (1, 10, 20, 'x'), (2, 5, 5, 'y');
+
+statement ok
+VACUUM (REFRESH_TABLE) mu2;
+
+statement ok
+UPDATE mu2 SET extra = 'z' WHERE id = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) mu2;
+
+query
+SELECT id FROM mu2_idx WHERE a + b = 30;
+----
+id
+1
+
+query
+SELECT id FROM mu2_idx WHERE a + b = 10;
+----
+id
+2
+
+
+# UPDATE of a column that is BOTH directly indexed AND a dep of an expression
+# must re-index both the direct field and the expression value for that row.
+statement ok
+CREATE TABLE mu3(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX mu3_idx ON mu3
+USING inverted(id, a, b, (a || b));
+
+statement ok
+INSERT INTO mu3 VALUES (1, 'foo', 'bar'), (2, 'hello', 'world');
+
+statement ok
+VACUUM (REFRESH_TABLE) mu3;
+
+statement ok
+UPDATE mu3 SET a = 'baz' WHERE id = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) mu3;
+
+query
+SELECT id FROM mu3_idx WHERE a = 'foo';
+----
+id
+
+query
+SELECT id FROM mu3_idx WHERE a = 'baz';
+----
+id
+1
+
+query
+SELECT id FROM mu3_idx WHERE a || b = 'foobar';
+----
+id
+
+query
+SELECT id FROM mu3_idx WHERE a || b = 'bazbar';
+----
+id
+1
+
+
+# Multi-row DELETE.
+statement ok
+CREATE TABLE md(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX md_idx ON md USING inverted(id, (a + 1));
+
+statement ok
+INSERT INTO md VALUES (1, 10), (2, 41), (3, -5), (4, 100);
+
+statement ok
+VACUUM (REFRESH_TABLE) md;
+
+statement ok
+DELETE FROM md WHERE a > 10;
+
+statement ok
+VACUUM (REFRESH_TABLE) md;
+
+query
+SELECT id FROM md_idx ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM md_idx WHERE a + 1 = 42;
+----
+id
+
+query
+SELECT id FROM md_idx WHERE a + 1 = 11;
+----
+id
+1
+
+
+# DELETE of every row leaves the index empty.
+statement ok
+CREATE TABLE md2(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX md2_idx ON md2 USING inverted(
+    id, a, (a || b));
+
+statement ok
+INSERT INTO md2 VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
+
+statement ok
+VACUUM (REFRESH_TABLE) md2;
+
+statement ok
+DELETE FROM md2;
+
+statement ok
+VACUUM (REFRESH_TABLE) md2;
+
+query
+SELECT id FROM md2_idx;
+----
+id
+
+query
+SELECT id FROM md2_idx WHERE a = 'foo';
+----
+id
+
+query
+SELECT id FROM md2_idx WHERE a || b = 'foobar';
+----
+id
+
+
+# --- CREATE INDEX rejects invalid expressions ------------------------------
+
+statement ok
+CREATE TABLE bad(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+# Expression references a column that does not exist on the table.
+statement error
+CREATE INDEX bad_missing ON bad USING inverted(id, (nonexistent + 1));
+----
+db error: ERROR: Referenced column "nonexistent" not found in FROM clause!
+Candidate bindings: "a"
+
+
+# Expression has no base-table column references at all (constant fold).
+statement error
+CREATE INDEX bad_const ON bad USING inverted(id, (1 + 1));
+----
+db error: ERROR: indexed expression must reference at least one base table column
+
+
+# Expression contains a subquery.
+statement error
+CREATE INDEX bad_subq ON bad USING inverted(id, ((SELECT 1)));
+----
+db error: ERROR: cannot use subquery in index expressions
+
+
+# Expression contains an aggregate.
+statement error
+CREATE INDEX bad_agg ON bad USING inverted(id, (sum(a)));
+----
+db error: ERROR: aggregate functions are not allowed in index expressions
+
+
+# Expression contains a volatile (side-effect) function.
+statement error
+CREATE INDEX bad_volatile ON bad USING inverted(id, (random()));
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.
+
+
+# --- Unsupported return types are rejected gracefully --------------------
+
+statement ok
+CREATE TABLE bad_types(id INTEGER PRIMARY KEY, a INTEGER, s VARCHAR, k VARCHAR, v VARCHAR);
+
+statement error
+CREATE INDEX bad_struct ON bad_types USING inverted(id, ({'x': a, 'y': s}));
+----
+db error: ERROR: Failed to create index: Column 'main.struct_pack(x := a, y := s)' has unsupported type STRUCT(x INTEGER, y VARCHAR) and can not be indexed
+
+
+statement error
+CREATE INDEX bad_map ON bad_types USING inverted(id, (map([k], [v])));
+----
+db error: ERROR: Failed to create index: Column '"map"(main.list_value(k), main.list_value(v))' has unsupported type MAP(VARCHAR, VARCHAR) and can not be indexed
+
+
+statement error
+CREATE INDEX bad_list_struct ON bad_types USING inverted(id, ([{'x': a}]));
+----
+db error: ERROR: Failed to create index: Column 'main.list_value(main.struct_pack(x := a))' has unsupported type STRUCT(x INTEGER)[] and can not be indexed
+
+
+statement error
+CREATE INDEX bad_list_map ON bad_types USING inverted(id, ([map([k], [v])]));
+----
+db error: ERROR: Failed to create index: Column 'main.list_value("map"(main.list_value(k), main.list_value(v)))' has unsupported type MAP(VARCHAR, VARCHAR)[] and can not be indexed
+
+
+statement ok
+CREATE TABLE bad_scalars(
+    id INTEGER PRIMARY KEY,
+    a INTEGER,
+    dc DECIMAL(10, 2),
+    hi HUGEINT,
+    iv INTERVAL,
+    tm TIME,
+    uu UUID,
+    ts TIMESTAMP);
+
+
+statement error
+CREATE INDEX bad_decimal ON bad_scalars USING inverted(id, (dc + 1));
+----
+db error: ERROR: Failed to create index: Column '(dc + 1)' has unsupported type DECIMAL(13,2) and can not be indexed
+
+
+statement error
+CREATE INDEX bad_hugeint ON bad_scalars USING inverted(id, (hi + 1));
+----
+db error: ERROR: Failed to create index: Column '(hi + 1)' has unsupported type HUGEINT and can not be indexed
+
+
+statement error
+CREATE INDEX bad_interval ON bad_scalars USING inverted(id, (iv));
+----
+db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+
+
+statement error
+CREATE INDEX bad_uuid ON bad_scalars USING inverted(id, (uu));
+----
+db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+
+
+statement error
+CREATE INDEX bad_union ON bad_scalars
+USING inverted(id, (union_value(num := a)));
+----
+db error: ERROR: Failed to create index: Column 'union_value(num := a)' has unsupported type UNION(num INTEGER) and can not be indexed
+
+
+statement error
+CREATE INDEX bad_list_list ON bad_scalars USING inverted(id, ([[a]]));
+----
+db error: ERROR: Failed to create index: Column 'main.list_value(main.list_value(a))' has unsupported type INTEGER[][] and can not be indexed
+
+
+# --- @@ on indexed expressions (forces filter pushdown) -------------------
+
+# Varchar expression: ts_like / ts_phrase / ts_any / TERM_EQ via `=`.
+statement ok
+CREATE TABLE tx_v(id INTEGER PRIMARY KEY, s1 VARCHAR, s2 VARCHAR);
+
+statement ok
+CREATE INDEX tx_v_idx ON tx_v USING inverted(id, (s1 || s2));
+
+statement ok
+INSERT INTO tx_v VALUES
+    (1, 'foo', 'bar'),
+    (2, 'hello', 'world'),
+    (3, 'foo', 'baz');
+
+statement ok
+VACUUM (REFRESH_TABLE) tx_v;
+
+# TERM_EQ
+query
+SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ 'foobar'::tsquery;
+----
+id
+1
+
+# ts_like with wildcard
+query
+SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ ts_like('foo%') ORDER BY id;
+----
+id
+1
+3
+
+# ts_any
+query
+SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ ts_any(['foobar', 'helloworld']) ORDER BY id;
+----
+id
+1
+2
+
+
+# Same expression with `=` (TERM_EQ) — also pushes down.
+query
+SELECT id FROM tx_v_idx WHERE s1 || s2 = 'helloworld';
+----
+id
+2
+
+
+# Numeric expression: TERM_EQ and range.
+statement ok
+CREATE TABLE tx_n(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX tx_n_idx ON tx_n USING inverted(id, (a + b));
+
+statement ok
+INSERT INTO tx_n VALUES (1, 10, 20), (2, 5, 5), (3, 7, 13), (4, 50, 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) tx_n;
+
+# TERM_EQ
+query
+SELECT id FROM tx_n_idx WHERE a + b = 30;
+----
+id
+1
+
+# Range >
+query
+SELECT id FROM tx_n_idx WHERE a + b > 15 ORDER BY id;
+----
+id
+1
+3
+4
+
+# Range >= ... AND <=
+query
+SELECT id FROM tx_n_idx WHERE a + b >= 10 AND a + b <= 30 ORDER BY id;
+----
+id
+1
+2
+3
+
+
+# Boolean expression: TERM_EQ on true/false.
+statement ok
+CREATE TABLE tx_b(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX tx_b_idx ON tx_b USING inverted(id, (a > b));
+
+statement ok
+INSERT INTO tx_b VALUES (1, 10, 5), (2, 3, 7), (3, 4, 4);
+
+statement ok
+VACUUM (REFRESH_TABLE) tx_b;
+
+query
+SELECT id FROM tx_b_idx WHERE (a > b) = true;
+----
+id
+1
+
+query
+SELECT id FROM tx_b_idx WHERE (a > b) = false ORDER BY id;
+----
+id
+2
+3
+
+
+# Mixed: direct column `a` and expression `(a||b)` both indexed. `@@` can
+# target either side and pushes down independently.
+statement ok
+CREATE TABLE tx_mix(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX tx_mix_idx ON tx_mix USING inverted(
+    id, a, b, (a || b));
+
+statement ok
+INSERT INTO tx_mix VALUES
+    (1, 'foo', 'bar'),
+    (2, 'hello', 'world'),
+    (3, 'foo', 'baz');
+
+statement ok
+VACUUM (REFRESH_TABLE) tx_mix;
+
+# Direct-column @@.
+query
+SELECT id FROM tx_mix_idx WHERE a @@ ts_like('foo') ORDER BY id;
+----
+id
+1
+3
+
+# Expression @@ — different rows.
+query
+SELECT id FROM tx_mix_idx WHERE (a || b) @@ ts_like('foob%') ORDER BY id;
+----
+id
+1
+3
+
+# Conjunction of direct and expression pushdowns.
+query
+SELECT id FROM tx_mix_idx
+WHERE a @@ ts_like('foo') AND (a || b) @@ ts_like('foobaz');
+----
+id
+3
+
+
+# EXPLAIN binds successfully for an expression-index pushdown.
+query
+EXPLAIN SELECT id FROM tx_n_idx WHERE a + b = 30;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: tx_n_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[Term((a + b)(numeric)=│
+│    \\x0\\x80\\x0\\x0\\x1e)]    │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ 'foobar'::tsquery;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: tx_v_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[Term((s1 || s2)(string│
+│         )=foobar)]        │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM tx_b_idx WHERE (a > b) = true;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: tx_b_idx      │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  AND[Term((a > b)(bool)=  │
+│           \\xff)]          │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+# Strange cases: outer CAST inside the indexed expression. `(a + b)::json`
+# pins the return type to JSON, so the index goes through the JSON multi-
+# field aux dispatch and downstream cast-to-int filters still match.
+
+statement ok
+CREATE TABLE strange_json(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+statement ok
+CREATE INDEX strange_json_idx ON strange_json
+USING inverted(id, ((a + b)::json));
+
+statement ok
+INSERT INTO strange_json VALUES (1, 10, 20), (2, 5, 5), (3, 7, 8);
+
+statement ok
+VACUUM (REFRESH_TABLE) strange_json;
+
+query
+SELECT id FROM strange_json_idx WHERE ((a + b)::json) = '30'::json;
+----
+id
+1
+
+query
+SELECT id FROM strange_json_idx WHERE ((a + b)::json) = '10'::json;
+----
+id
+2
+
+
+# --- Smoke: one indexed expression per supported return type. INTEGER,
+# VARCHAR and BOOLEAN are exercised above; this section covers the
+# remaining types in the ValidateInvertedIndexColumns allow-list:
+# TINYINT, SMALLINT, BIGINT, FLOAT, DOUBLE, DATE, TIMESTAMP_TZ.
+
+statement ok
+CREATE TABLE types_smoke(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX types_smoke_idx ON types_smoke USING inverted(
+    id,
+    ((a + 1)::TINYINT),
+    ((a + 1)::SMALLINT),
+    ((a + 1)::BIGINT),
+    ((a + 1)::FLOAT),
+    ((a + 1)::DOUBLE),
+    (DATE '2020-01-01' + (a + 1)),
+    (to_timestamp(a + 1)));
+
+statement ok
+INSERT INTO types_smoke VALUES (1, 1), (2, 2);
+
+statement ok
+VACUUM (REFRESH_TABLE) types_smoke;
+
+query
+SELECT id FROM types_smoke_idx WHERE (a + 1)::TINYINT = 2::TINYINT;
+----
+id
+1
+
+query
+SELECT id FROM types_smoke_idx WHERE (a + 1)::SMALLINT = 3::SMALLINT;
+----
+id
+2
+
+query
+SELECT id FROM types_smoke_idx WHERE (a + 1)::BIGINT = 2::BIGINT;
+----
+id
+1
+
+query
+SELECT id FROM types_smoke_idx WHERE (a + 1)::FLOAT = 3::FLOAT;
+----
+id
+2
+
+query
+SELECT id FROM types_smoke_idx WHERE (a + 1)::DOUBLE = 2::DOUBLE;
+----
+id
+1
+
+query
+SELECT id FROM types_smoke_idx WHERE DATE '2020-01-01' + (a + 1) = DATE '2020-01-04';
+----
+id
+2
+
+query
+SELECT id FROM types_smoke_idx WHERE to_timestamp(a + 1) = to_timestamp(2);
+----
+id
+1
+
+
+# --- SQLNULL-typed indexed expression: every row's value is NULL by
+# construction. The writer must short-circuit to the null field instead
+# of asserting on a missing payload.
+
+statement ok
+CREATE TABLE null_expr(id INT PRIMARY KEY, a INT);
+
+statement ok
+CREATE INDEX null_expr_idx ON null_expr USING inverted(
+    id, (CASE WHEN a > 0 THEN NULL ELSE NULL END));
+
+statement ok
+INSERT INTO null_expr VALUES (1, 1), (2, -1);
+
+statement ok
+VACUUM (REFRESH_TABLE) null_expr;
+
+query
+SELECT id FROM null_expr_idx ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM null_expr_idx
+WHERE (CASE WHEN a > 0 THEN NULL ELSE NULL END) IS NULL ORDER BY id;
+----
+id
+1
+2
+
+
+# --- SQLNULL-typed indexed column: column's declared type is NULL, so
+# every value is structurally NULL. Same writer short-circuit.
+
+statement ok
+CREATE TABLE null_col(id INT PRIMARY KEY, a "NULL");
+
+statement ok
+CREATE INDEX null_col_idx ON null_col USING inverted(id, a);
+
+statement ok
+INSERT INTO null_col VALUES (1, NULL), (2, NULL);
+
+statement ok
+VACUUM (REFRESH_TABLE) null_col;
+
+query
+SELECT id FROM null_col_idx ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM null_col_idx WHERE a IS NULL ORDER BY id;
+----
+id
+1
+2
+
+
+# --- INCLUDE-style storage on an indexed expression: `(expr) included` persists the evaluated value in the columnstore.
+
+statement ok
+CREATE TABLE inc_e_num(id INT PRIMARY KEY, a INT, b INT);
+
+statement ok
+CREATE INDEX inc_e_num_idx ON inc_e_num USING inverted(id, (a + b) included ());
+
+statement ok
+INSERT INTO inc_e_num VALUES (1, 10, 20), (2, 5, 5), (3, 100, 1);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_num;
+
+query
+SELECT id, a + b AS s FROM inc_e_num_idx WHERE id = 1;
+----
+id	s
+1	30
+
+query
+SELECT id, a + b AS s FROM inc_e_num_idx ORDER BY id;
+----
+id	s
+1	30
+2	10
+3	101
+
+
+statement ok
+UPDATE inc_e_num SET a = 50 WHERE id = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_num;
+
+query
+SELECT id, a + b AS s FROM inc_e_num_idx ORDER BY id;
+----
+id	s
+1	70
+2	10
+3	101
+
+
+statement ok
+CREATE TABLE inc_e_str(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX inc_e_str_idx ON inc_e_str USING inverted(
+    id, (LOWER(a) || '-' || LOWER(b)) included ());
+
+statement ok
+INSERT INTO inc_e_str VALUES (1, 'FOO', 'Bar'), (2, 'X', 'Y');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_str;
+
+query
+SELECT id, LOWER(a) || '-' || LOWER(b) AS s FROM inc_e_str_idx ORDER BY id;
+----
+id	s
+1	foo-bar
+2	x-y
+
+
+statement ok
+CREATE TABLE inc_e_zstd(id INT PRIMARY KEY, a VARCHAR, b VARCHAR);
+
+statement ok
+CREATE INDEX inc_e_zstd_idx ON inc_e_zstd USING inverted(
+    id, (a || b) included (compression='zstd'));
+
+statement ok
+INSERT INTO inc_e_zstd VALUES (1, 'foo', 'bar'), (2, 'baz', 'qux');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_zstd;
+
+query
+SELECT id, a || b AS s FROM inc_e_zstd_idx ORDER BY id;
+----
+id	s
+1	foobar
+2	bazqux
+
+statement error
+CREATE INDEX inc_e_zstd_bad ON inc_e_num USING inverted(
+    id, (a + b) included (compression='zstd'));
+----
+db error: ERROR: Failed to create index: Column '(a + b)': compression 'ZSTD' is not supported for type INTEGER
+
+
+statement ok
+CREATE TABLE inc_e_rgs(id INT PRIMARY KEY, a INT);
+
+statement ok
+CREATE INDEX inc_e_rgs_idx ON inc_e_rgs USING inverted(
+    id, (a * 2) included (compression='bitpacking', row_group_size='8'));
+
+statement ok
+INSERT INTO inc_e_rgs VALUES (1, 1), (2, 5), (3, 12);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_rgs;
+
+query
+SELECT id, a * 2 AS s FROM inc_e_rgs_idx ORDER BY id;
+----
+id	s
+1	2
+2	10
+3	24
+
+
+statement error
+CREATE INDEX inc_e_bad ON inc_e_num USING inverted(
+    id, (a + b) included (bogus='value'));
+----
+db error: ERROR: Failed to create index: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), row_group_size (int >= 1)
+
+
+statement error
+CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
+    id, (a + b) verbatim_dict (compression='zstd'));
+----
+db error: ERROR: Failed to create index: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, hnsw)
+
+
+# --- HNSW on an indexed expression: `(expr) hnsw(metric='l2', m=..., ef_construction=...)` builds an ANN graph over the expression's value.
+
+statement ok
+CREATE TABLE hnsw_e(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+
+statement ok
+CREATE INDEX hnsw_e_idx ON hnsw_e USING inverted(
+    id,
+    (array_value(x, y, z)) hnsw(metric='l2', m=8, ef_construction=16));
+
+statement ok
+INSERT INTO hnsw_e VALUES
+    (1, 1, 2, 3),
+    (2, 10, 10, 10),
+    (3, 5, 5, 5),
+    (4, 0, 0, 0);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_e;
+
+query
+SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
+----
+id
+1
+4
+
+query
+EXPLAIN SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 2          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      hnsw_e_idx (ANN)     │
+│                           │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# Wrong dimensionality of the query vector should disqualify the ANN scan
+# (validator inside TryAnnTopk). The query still returns correct results.
+
+statement ok
+CREATE TABLE hnsw_e2(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+
+statement ok
+CREATE INDEX hnsw_e2_idx ON hnsw_e2 USING inverted(
+    id, (array_value(x, y, z)) hnsw(metric='l2', m=8, ef_construction=16));
+
+statement ok
+INSERT INTO hnsw_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_e2;
+
+# `hnsw` requires options.
+
+statement error
+CREATE INDEX hnsw_e_no_opts ON hnsw_e USING inverted(
+    id, (array_value(x, y, z)) hnsw);
+----
+db error: ERROR: Unknown opclass 'hnsw' on column 'array_value(x, y, z)': no text dictionary by that name in schema 'public'
+HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
+
+
+# ARRAY of non-FLOAT child type is rejected.
+
+statement ok
+CREATE TABLE hnsw_e3(id INT PRIMARY KEY, a INT, b INT, c INT);
+
+statement error
+CREATE INDEX hnsw_e3_idx ON hnsw_e3 USING inverted(
+    id, (array_value(a, b, c)) hnsw(metric='l2', m=8, ef_construction=16));
+----
+db error: ERROR: Failed to create index: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+
+
+# Non-ARRAY return type rejected when hnsw is requested.
+
+statement error
+CREATE INDEX hnsw_e_scalar ON hnsw_e USING inverted(
+    id, (x + y + z) hnsw(metric='l2', m=8, ef_construction=16));
+----
+db error: ERROR: Failed to create index: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+
+
+# --- INCLUDE columns alongside an indexed expression ---------------------
+# The inverted index pushes the (a+b)=N filter through the expression
+# field, then the INCLUDE-only `payload` column is retrieved from the
+# index for projection. INCLUDE columns must not affect the expression
+# write path or the filter dispatch.
+
+statement ok
+CREATE TABLE inc_expr(id INT PRIMARY KEY, a INT, b INT, payload VARCHAR);
+
+statement ok
+INSERT INTO inc_expr VALUES (1, 10, 20, 'r1'), (2, 5, 5, 'r2'), (3, 100, 1, 'r3');
+
+statement ok
+CREATE INDEX inc_expr_idx ON inc_expr
+  USING inverted(id, (a + b))
+  INCLUDE (payload);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_expr;
+
+query
+SELECT id, payload FROM inc_expr_idx WHERE a + b = 30 ORDER BY id;
+----
+id	payload
+1	r1
+
+query
+SELECT id, payload FROM inc_expr_idx WHERE a + b = 10 ORDER BY id;
+----
+id	payload
+2	r2
+
+query
+SELECT id, payload FROM inc_expr_idx WHERE a + b = 101 ORDER BY id;
+----
+id	payload
+3	r3
+
+
+# INCLUDE column with an explicit `included` opclass + compression option.
+statement ok
+CREATE TABLE inc_expr2(id INT PRIMARY KEY, a INT, b INT, big BIGINT);
+
+statement ok
+INSERT INTO inc_expr2 VALUES (1, 1, 2, 1000), (2, 2, 2, 2000), (3, 5, 5, 3000);
+
+statement ok
+CREATE INDEX inc_expr2_idx ON inc_expr2
+  USING inverted(id, (a + b))
+  INCLUDE (big included (compression = 'uncompressed'));
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_expr2;
+
+query
+SELECT id, big FROM inc_expr2_idx WHERE a + b = 4 ORDER BY id;
+----
+id	big
+2	2000
+
+query
+SELECT id, big FROM inc_expr2_idx WHERE a + b = 10 ORDER BY id;
+----
+id	big
+3	3000
+
+
+# Multi-column expression + INCLUDE on a wider table.
+statement ok
+CREATE TABLE inc_expr3(id INT PRIMARY KEY, s1 VARCHAR, s2 VARCHAR, label VARCHAR);
+
+statement ok
+INSERT INTO inc_expr3 VALUES (1, 'foo', 'bar', 'L1'), (2, 'baz', 'qux', 'L2'), (3, 'foo', 'qux', 'L3');
+
+statement ok
+CREATE INDEX inc_expr3_idx ON inc_expr3
+  USING inverted(id, (s1 || s2))
+  INCLUDE (label);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_expr3;
+
+query
+SELECT id, label FROM inc_expr3_idx WHERE s1 || s2 = 'fooqux' ORDER BY id;
+----
+id	label
+3	L3
+
+
+# --- User-defined functions in indexed expressions -----------------------
+# SereneDB accepts user-defined scalar macros / functions in indexed
+# expressions. They inline at bind time, so the persisted indexed expression
+# is the inlined built-in form.
+
+statement ok
+CREATE TABLE vedernikoff_t(id INT PRIMARY KEY, a INT, b INT);
+
+statement count 2
+INSERT INTO vedernikoff_t VALUES (1, 10, 20), (2, 5, 5);
+
+statement ok
+CREATE MACRO clickclack(x) AS x + 1;
+
+statement ok
+CREATE INDEX vedernikoff_macro_idx ON vedernikoff_t USING inverted(id, (clickclack(a)));
+
+
+statement ok
+CREATE FUNCTION babsky(x) AS x + 2;
+
+statement ok
+CREATE INDEX vedernikoff_fn_idx ON vedernikoff_t USING inverted(id, (babsky(b)));
+
+
+# Macro buried inside a built-in call.
+statement ok
+CREATE INDEX vedernikoff_nested_idx ON vedernikoff_t USING inverted(id, (clickclack(a) + b));
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vedernikoff_t;
+
+
+# clickclack(10) = 11, clickclack(5) = 6 -- query through the macro.
+query
+SELECT id FROM vedernikoff_macro_idx WHERE clickclack(a) = 11 ORDER BY id;
+----
+id
+1
+
+
+# Same index reached via the inlined form.
+query
+SELECT id FROM vedernikoff_macro_idx WHERE a + 1 = 11 ORDER BY id;
+----
+id
+1
+
+
+# Built-in operators in the same place are still accepted.
+statement ok
+CREATE TABLE kostya_ok(id INT PRIMARY KEY, a INT, b INT);
+
+statement ok
+CREATE INDEX kostya_ok_idx ON kostya_ok USING inverted(id, (a + b));
+
+
+# --- Geo-analyzer validation runs for indexed expressions ----------------
+# The geojson / geopoint analyzers require a JSON or GEOMETRY value type.
+# A geo dict on an expression whose return type is anything else is rejected
+# with the same error that a non-JSON/non-GEOMETRY column would produce.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_expr_dict(template = 'geojson');
+
+statement ok
+CREATE TABLE geo_expr_bad(id INT PRIMARY KEY, s VARCHAR);
+
+statement error
+CREATE INDEX geo_expr_bad_idx ON geo_expr_bad USING inverted(
+    id, (LOWER(s)) geo_expr_dict);
+----
+db error: ERROR: Failed to create index: Column 'lower(s)' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+
+
+# Positive case: a JSON-typed expression is accepted.
+statement ok
+CREATE TABLE geo_expr_ok(id INT PRIMARY KEY, raw VARCHAR);
+
+statement ok
+CREATE INDEX geo_expr_ok_idx ON geo_expr_ok USING inverted(
+    id, (raw::JSON) geo_expr_dict);

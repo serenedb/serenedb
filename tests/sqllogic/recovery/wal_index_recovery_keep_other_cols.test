@@ -33,23 +33,23 @@ CREATE INDEX ko_idx ON ko_t
   USING inverted(id, a ko_dict, b ko_dict, c ko_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) ko_t;
+VACUUM (REFRESH_TABLE) ko_t;
 
 # Pre-crash: every token searchable.
 query
-SELECT id FROM ko_t WHERE a @@ ts_phrase('apple');
+SELECT id FROM ko_idx WHERE a @@ ts_phrase('apple');
 ----
 id
 1
 
 query
-SELECT id FROM ko_t WHERE b @@ ts_phrase('banana');
+SELECT id FROM ko_idx WHERE b @@ ts_phrase('banana');
 ----
 id
 1
 
 query
-SELECT id FROM ko_t WHERE c @@ ts_phrase('grape');
+SELECT id FROM ko_idx WHERE c @@ ts_phrase('grape');
 ----
 id
 1
@@ -75,34 +75,34 @@ SELECT 1;
 
 connection ko_after
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-VACUUM (UPDATE_INDEXES) ko_t;
+VACUUM (REFRESH_TABLE) ko_t;
 
 # Updated columns: new tokens findable, old gone.
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE b @@ ts_phrase('blueberry');
+SELECT id FROM ko_idx WHERE b @@ ts_phrase('blueberry');
 ----
 id
 1
 
 connection ko_after
 query
-SELECT COUNT(*) FROM ko_t WHERE b @@ ts_phrase('banana');
+SELECT COUNT(*) FROM ko_idx WHERE b @@ ts_phrase('banana');
 ----
 count
 0
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE c @@ ts_phrase('watermelon');
+SELECT id FROM ko_idx WHERE c @@ ts_phrase('watermelon');
 ----
 id
 2
 
 connection ko_after
 query
-SELECT COUNT(*) FROM ko_t WHERE c @@ ts_phrase('zucchini');
+SELECT COUNT(*) FROM ko_idx WHERE c @@ ts_phrase('zucchini');
 ----
 count
 0
@@ -113,42 +113,42 @@ count
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE a @@ ts_phrase('apple');
+SELECT id FROM ko_idx WHERE a @@ ts_phrase('apple');
 ----
 id
 1
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE a @@ ts_phrase('alpha');
+SELECT id FROM ko_idx WHERE a @@ ts_phrase('alpha');
 ----
 id
 1
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE c @@ ts_phrase('grape');
+SELECT id FROM ko_idx WHERE c @@ ts_phrase('grape');
 ----
 id
 1
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE a @@ ts_phrase('delta');
+SELECT id FROM ko_idx WHERE a @@ ts_phrase('delta');
 ----
 id
 2
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE b @@ ts_phrase('epsilon');
+SELECT id FROM ko_idx WHERE b @@ ts_phrase('epsilon');
 ----
 id
 2
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE b @@ ts_phrase('elder');
+SELECT id FROM ko_idx WHERE b @@ ts_phrase('elder');
 ----
 id
 2

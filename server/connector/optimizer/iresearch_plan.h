@@ -20,40 +20,24 @@
 
 #pragma once
 
+#include <duckdb/common/vector.hpp>
+#include <duckdb/planner/expression.hpp>
+
 namespace duckdb {
 
+class ClientContext;
 class DatabaseInstance;
-}
+class LogicalGet;
+class FunctionData;
 
+}  // namespace duckdb
 namespace sdb::optimizer {
 
-// Registers the iresearch_plan optimizer rule with DuckDB.
-//
-// Consolidates all iresearch-backed strategy selection in one place:
-//
-//   case 1: filter (+ optional scoring) (+ optional offsets)
-//             -> SearchScan with filter_summary, scorer, emit_offsets
-//   case 2: filter + topk-on-score (+ optional offsets)
-//             -> SearchScan with score_top_k set
-//   case 3: WHERE distance_func(col, const_vec) < radius
-//             -> RangeSearchScan
-//   case 4: ORDER BY distance_func(col, const_vec) ASC LIMIT k
-//             -> ANNScan
-//   case 5: row-count-only consumer (LogicalGet with zero projected
-//           columns -- COUNT(*) / COUNT(1) / EXISTS(SELECT 1 ...))
-//             -> CountScan (pass 2, after scorer/offsets attachment)
-//
-// Runs BEFORE rocksdb_plan so iresearch-only predicates (TSQUERY
-// `@@`, distance, BM25, ...) always win when present. Rocksdb-side
-// predicates that the iresearch rule doesn't claim flow through to
-// rocksdb_plan unchanged.
-//
-// Mutation-context guard: if the scan we're optimising lives inside a
-// LOGICAL_DELETE / LOGICAL_UPDATE / LOGICAL_MERGE_INTO subtree, the
-// iresearch rule does NOT fire (eventual-consistency constraint -- the
-// inverted index lags row writes by one commit cycle, so DML must read
-// straight from the rocksdb layer). The rocksdb_plan rule still applies
-// in mutation subtrees.
-void RegisterIresearchPlanOptimizer(duckdb::DatabaseInstance& db);
+void IResearchPushdownComplexFilter(
+  duckdb::ClientContext& context, duckdb::LogicalGet& get,
+  duckdb::FunctionData* bind_data,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters);
+
+void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::optimizer

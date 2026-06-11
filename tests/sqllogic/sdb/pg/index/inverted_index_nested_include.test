@@ -52,7 +52,7 @@ INSERT INTO n1 VALUES (4, 'four',  [])
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) n1
+VACUUM (REFRESH_TABLE) n1
 
 
 query
@@ -73,7 +73,7 @@ QUERY PLAN
 │           pk (l)          │
 │           v (i)           │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -119,7 +119,7 @@ INSERT INTO n2 VALUES (3, 'three', [['x','y','z'],[]])
 
 skipif pg-wire-extended
 statement ok
-VACUUM (UPDATE_INDEXES) n2
+VACUUM (REFRESH_TABLE) n2
 
 
 skipif pg-wire-extended
@@ -141,7 +141,7 @@ QUERY PLAN
 │           pk (l)          │
 │           v (i)           │
 │                           │
-│          ~3 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -195,7 +195,7 @@ INSERT INTO n3 VALUES (4, 'four',  ROW(NULL, NULL, [10.0, 20.0, 30.0]))
 
 skipif pg-wire-extended
 statement ok
-VACUUM (UPDATE_INDEXES) n3
+VACUUM (REFRESH_TABLE) n3
 
 
 skipif pg-wire-extended
@@ -217,7 +217,7 @@ QUERY PLAN
 │           pk (l)          │
 │           v (i)           │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -273,7 +273,7 @@ INSERT INTO n4 VALUES (4, 'four',  MAP {'p': NULL})
 
 skipif pg-wire-extended
 statement ok
-VACUUM (UPDATE_INDEXES) n4
+VACUUM (REFRESH_TABLE) n4
 
 
 skipif pg-wire-extended
@@ -295,7 +295,7 @@ QUERY PLAN
 │           pk (l)          │
 │           v (i)           │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -359,7 +359,7 @@ INSERT INTO n5 VALUES (5, 'five',  ROW(ROW('h5', NULL), [ROW(NULL, [7,8]), ROW('
 
 skipif pg-wire-extended
 statement ok
-VACUUM (UPDATE_INDEXES) n5
+VACUUM (REFRESH_TABLE) n5
 
 
 skipif pg-wire-extended
@@ -381,7 +381,7 @@ QUERY PLAN
 │           pk (l)          │
 │           v (i)           │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -450,7 +450,7 @@ INSERT INTO n6 VALUES (4, 'four',  [
 
 skipif pg-wire-extended
 statement ok
-VACUUM (UPDATE_INDEXES) n6
+VACUUM (REFRESH_TABLE) n6
 
 
 skipif pg-wire-extended
@@ -472,7 +472,7 @@ QUERY PLAN
 │           pk (l)          │
 │           v (i)           │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 

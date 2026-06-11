@@ -155,7 +155,7 @@ class Format10TestCase : public tests::FormatTestCase {
       reader->prepare(*in, state, field.index_features);
 
       irs::bstring in_data(in->Length() - in->Position(), 0);
-      in->ReadBytes(&in_data[0], in_data.size());
+      in->ReadData(&in_data[0], in_data.size());
       const auto* begin = in_data.c_str();
 
       // read term attributes
@@ -378,7 +378,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     reader->prepare(*in, state, field.index_features);
 
     irs::bstring in_data(in->Length() - in->Position(), 0);
-    in->ReadBytes(&in_data[0], in_data.size());
+    in->ReadData(&in_data[0], in_data.size());
     const auto* begin = in_data.c_str();
 
     // read term0 attributes & postings
@@ -516,7 +516,7 @@ TEST_P(Format10TestCase, postings_read_write) {
     reader->prepare(*in, state, field.index_features);
 
     irs::bstring in_data(in->Length() - in->Position(), 0);
-    in->ReadBytes(&in_data[0], in_data.size());
+    in->ReadData(&in_data[0], in_data.size());
     const auto* begin = in_data.c_str();
 
     // cumulative attribute
@@ -1022,7 +1022,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         reader->prepare(*in, state, field.index_features);
 
         irs::bstring in_data(in->Length() - in->Position(), 0);
-        in->ReadBytes(&in_data[0], in_data.size());
+        in->ReadData(&in_data[0], in_data.size());
         const auto* begin = in_data.c_str();
 
         irs::CookieImpl read_meta;

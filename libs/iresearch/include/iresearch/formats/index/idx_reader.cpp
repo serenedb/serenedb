@@ -35,7 +35,6 @@
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"  // ReadHNSW
-#include "iresearch/formats/serializer_stream.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
@@ -117,24 +116,15 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
     _impl->body_start = body_start;
   }
 
-  std::vector<byte_type> footer_storage;
   const uint64_t body_len =
     _impl->cipher ? _impl->in->Length() : raw_len - kTrailerLen;
   SDB_ENSURE(footer_offset <= body_len, sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
              "idx: corrupted `.idx` file ", filename, ": footer offset ",
              footer_offset, " is out of body range [0, ", body_len, "]");
-  const uint64_t footer_size = body_len - footer_offset;
-  std::span<const byte_type> footer_view;
-  if (const auto* view = _impl->in->ReadData(footer_offset, footer_size)) {
-    footer_view = {view, static_cast<size_t>(footer_size)};
-  } else {
-    footer_storage.resize(footer_size);
-    _impl->in->ReadBytes(footer_offset, footer_storage.data(), footer_size);
-    footer_view = {footer_storage.data(), footer_storage.size()};
-  }
+  const auto footer_in = _impl->in->Dup();
+  footer_in->Seek(footer_offset);
 
-  MemoryReadStream stream{footer_view.data(), footer_view.size()};
-  duckdb::BinaryDeserializer deserializer{stream};
+  duckdb::BinaryDeserializer deserializer{*footer_in};
   deserializer.Begin();
   deserializer.ReadList(
     kFooterSlotTermDict, "term_dict",

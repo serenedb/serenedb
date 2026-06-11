@@ -214,7 +214,7 @@ struct Block : private util::Noncopyable {
 
     void WriteByte(byte_type b) final { weight.PushBack(b); }
 
-    void WriteBytes(const byte_type* b, size_t len) final {
+    void WriteData(const byte_type* b, uint64_t len) final {
       weight.PushBack(b, b + len);
     }
 
@@ -580,7 +580,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
 
     _suffix.stream.WriteV32(
       leaf ? suf_size : ((suf_size << 1) | static_cast<uint32_t>(type)));
-    _suffix.stream.WriteBytes(data.data() + prefix, suf_size);
+    _suffix.stream.WriteData(data.data() + prefix, suf_size);
 
     if (EntryType::Term == type) {
       _pw->Encode(_stats.stream, e.Term());
@@ -602,7 +602,7 @@ void FieldWriter::Impl::WriteBlock(size_t prefix, size_t begin, size_t end,
   _blocks_out->WriteV64(ShiftPack64(block_size, leaf));
 
   auto copy = [this](const byte_type* b, size_t len) {
-    _blocks_out->WriteBytes(b, len);
+    _blocks_out->WriteData(b, len);
     return true;
   };
 
@@ -1178,14 +1178,12 @@ void BlockIterator::Load(IndexInput& in, Encryption::Stream* cipher) {
   _leaf = ShiftUnpack64(in.ReadV64(), block_size);
 
   // for non-encrypted index try direct buffer access first
-  _suffix.begin = cipher ? nullptr : in.ReadData(block_size);
+  _suffix.begin = cipher ? nullptr : in.ReadStable(block_size);
   _suffix.block.clear();
 
   if (!_suffix.begin) {
     _suffix.block.resize(block_size);
-    [[maybe_unused]] const auto read =
-      in.ReadBytes(_suffix.block.data(), block_size);
-    SDB_ASSERT(read == block_size);
+    in.ReadData(_suffix.block.data(), block_size);
     _suffix.begin = _suffix.block.c_str();
 
     if (cipher) {
@@ -1201,14 +1199,12 @@ void BlockIterator::Load(IndexInput& in, Encryption::Stream* cipher) {
   block_size = in.ReadV64();
 
   // try direct buffer access first
-  _stats.begin = in.ReadData(block_size);
+  _stats.begin = in.ReadStable(block_size);
   _stats.block.clear();
 
   if (!_stats.begin) {
     _stats.block.resize(block_size);
-    [[maybe_unused]] const auto read =
-      in.ReadBytes(_stats.block.data(), block_size);
-    SDB_ASSERT(read == block_size);
+    in.ReadData(_stats.block.data(), block_size);
     _stats.begin = _stats.block.c_str();
   }
 #ifdef SDB_DEV

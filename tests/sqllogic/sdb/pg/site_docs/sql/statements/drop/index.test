@@ -153,3 +153,13 @@ DROP SCHEMA myschema CASCADE;
 
 statement ok
 PRAGMA database_size;
+
+# DOCS_TEST: example_014
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dict (template = 'text', locale = 'en_US.UTF-8');
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP TEXT SEARCH DICTIONARY dict;

@@ -1,0 +1,9 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY collation_dict (
+    template = 'collation',
+    locale = 'en_US.UTF-8'
+);

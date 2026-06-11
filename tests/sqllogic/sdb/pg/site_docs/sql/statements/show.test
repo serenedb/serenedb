@@ -1,34 +1,12 @@
 # DOCS_TEST: example_001
 
-# DOCS_TEST_RAW
-#| ATTACH 'my.duckdb' AS my_database;
-#|
-#| SHOW DATABASES;
-
-# DOCS_TEST_BODY
-
 statement ok
 DETACH IF EXISTS my_database;
 
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_show_example_001_my.duckdb' AS my_database;
 
-statement ok
-SHOW DATABASES;
-
-# DOCS_TEST: example_002
-
-statement ok
-DETACH IF EXISTS my_database;
-
-statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_show_example_002_my.duckdb' AS my_database;
-
 # DOCS_TEST_BODY
-
-statement ok
-DETACH my_database;
-
 
 statement ok
 SHOW DATABASES;
@@ -39,3 +17,36 @@ SHOW DATABASES;
 
 statement ok
 SHOW SCHEMAS;
+
+# DOCS_TEST: example_004
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE products (id INTEGER, name VARCHAR);
+
+# DOCS_TEST_BODY
+
+query
+SHOW TABLES;
+----
+name
+products
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+SHOW ALL;

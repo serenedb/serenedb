@@ -40,9 +40,9 @@ bool WildcardLowerRule::Apply(Filter::ptr& slot,
 
 bool RegexpLowerRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   auto& node = sdb::basics::downCast<ByRegexp>(*slot);
-  slot = LowerRegexp(node.field_id(), node.options().pattern,
-                     node.options().syntax, node.options().scored_terms_limit,
-                     node.Boost());
+  slot =
+    LowerRegexp(node.field_id(), node.options().pattern, node.options().syntax,
+                node.options().scored_terms_limit, node.Boost());
   return true;
 }
 

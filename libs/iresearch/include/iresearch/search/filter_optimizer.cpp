@@ -62,35 +62,18 @@ void EnumerateChildSlots(Filter& node, Visitor&& visit) {
     visit(mixed.OptionalSlot());
   }
 }
-constexpr auto kDefaultRulesStorage = std::to_array({
-  MakeRule<optimizer::ExclusionRule>(),
-  MakeRule<optimizer::NotSimplifyRule>(),
-  MakeRule<optimizer::AndEmptyRule>(),
-  MakeRule<optimizer::OrEmptyRule>(),
-  MakeRule<optimizer::OrMinMatchZeroRule>(),
-  MakeRule<optimizer::OrUnsatRule>(),
-  MakeRule<optimizer::AndAllFoldRule>(),
-  MakeRule<optimizer::OrAllFoldRule>(),
-  MakeRule<optimizer::FlattenAnd>(),
-  MakeRule<optimizer::FlattenOr>(),
-  MakeRule<optimizer::AndExclusionCoalesceRule>(),
-  MakeRule<optimizer::OrAllRequiredRule>(),
-  MakeRule<optimizer::ByTermsRule>(),
-  MakeRule<optimizer::ByTermsMinMatchZeroRule>(),
-  MakeRule<optimizer::ByTermsDegenerateRule>(),
-  MakeRule<optimizer::SingleChildRule>(),
-  MakeRule<optimizer::EmptyAndRule>(),
-  MakeRule<optimizer::MixedDegenerateRule>(),
-  MakeRule<optimizer::RangeDegenerateRule>(),
-  MakeRule<optimizer::GranularRangeDegenerateRule>(),
-  MakeRule<optimizer::NGramSimilarityLowerRule>(),
-  MakeRule<optimizer::WildcardLowerRule>(),
-  MakeRule<optimizer::RegexpLowerRule>(),
-  MakeRule<optimizer::EditDistanceLowerRule>(),
-  MakeRule<optimizer::PhraseLowerRule>(),
-  MakeRule<optimizer::ExclusionDoubleNegationRule>(),
-  MakeRule<optimizer::NotLowerRule>(),
-});
+using namespace optimizer;
+
+constexpr auto kDefaultRulesStorage =
+  MakeRuleSet<ExclusionRule, NotSimplifyRule, AndEmptyRule, OrEmptyRule,
+              OrMinMatchZeroRule, OrUnsatRule, AndAllFoldRule, OrAllFoldRule,
+              FlattenAnd, FlattenOr, AndExclusionCoalesceRule,
+              OrAllRequiredRule, ByTermsRule, ByTermsMinMatchZeroRule,
+              ByTermsDegenerateRule, SingleChildRule, EmptyAndRule,
+              MixedDegenerateRule, RangeDegenerateRule,
+              GranularRangeDegenerateRule, NGramSimilarityLowerRule,
+              WildcardLowerRule, RegexpLowerRule, EditDistanceLowerRule,
+              PhraseLowerRule, ExclusionDoubleNegationRule, NotLowerRule>();
 
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
               std::span<const RuleDesc> rules) {

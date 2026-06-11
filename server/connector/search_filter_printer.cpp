@@ -35,6 +35,7 @@
 #include <iresearch/search/geo_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
+#include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/search/nested_filter.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
@@ -50,6 +51,7 @@
 #include <sstream>
 
 #include "basics/down_cast.h"
+#include "basics/exceptions.h"
 
 namespace irs {
 namespace {
@@ -118,17 +120,23 @@ struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByPrefixOptions& opts) const {
     absl::StrAppend(out, "Prefix:", TermToString(opts.term));
   }
-  auto operator()(const ByWildcardOptions& opts) const {
-    absl::StrAppend(out, "Wildcard:", TermToString(opts.term));
+  auto operator()(const ByWildcardOptions&) const {
+    SDB_THROW(sdb::ERROR_INTERNAL,
+              "Wildcard phrase part must be lowered by the optimizer before "
+              "printing");
   }
-  auto operator()(const ByEditDistanceOptions& opts) const {
-    absl::StrAppend(out, "Levenshtein:", TermToString(opts.term));
+  auto operator()(const ByEditDistanceOptions&) const {
+    SDB_THROW(sdb::ERROR_INTERNAL,
+              "Levenshtein phrase part must be lowered by the optimizer before "
+              "printing");
   }
   auto operator()(const LevenshteinAutomatonOptions& opts) const {
     absl::StrAppend(out, "LevenshteinAutomaton:", TermToString(opts.target));
   }
-  auto operator()(const ByRegexpOptions& opts) const {
-    absl::StrAppend(out, "Regexp:", TermToString(opts.pattern));
+  auto operator()(const ByRegexpOptions&) const {
+    SDB_THROW(sdb::ERROR_INTERNAL,
+              "Regexp phrase part must be lowered by the optimizer before "
+              "printing");
   }
   auto operator()(const AutomatonOptions& opts) const {
     absl::StrAppend(out, "Automaton:", TermToString(opts.pattern));
@@ -279,10 +287,34 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
     return node;
   }
   if (type == Type<Not>::id()) {
-    FilterNode node{.label = "NOT"};
-    if (const auto* inner = downCast<const Not>(filter).filter()) {
-      node.children.push_back(BuildNode(*inner, field));
+    SDB_THROW(sdb::ERROR_INTERNAL,
+              "Not filter must be lowered to Exclusion by the optimizer before "
+              "printing");
+  }
+  if (type == Type<Exclusion>::id()) {
+    const auto& f = downCast<const Exclusion>(filter);
+    const auto* incl = f.include();
+    const auto* excl = f.exclude();
+    // A pure negation (implicit all-docs include) reads better as NOT[X].
+    if (incl == nullptr) {
+      FilterNode node{.label = "NOT"};
+      if (excl != nullptr) {
+        node.children.push_back(BuildNode(*excl, field));
+      }
+      return node;
     }
+    FilterNode node{.label = "EXCLUSION"};
+    node.children.push_back(BuildNode(*incl, field));
+    if (excl != nullptr) {
+      node.children.push_back(BuildNode(*excl, field));
+    }
+    return node;
+  }
+  if (type == Type<MixedBooleanFilter>::id()) {
+    const auto& f = downCast<const MixedBooleanFilter>(filter);
+    FilterNode node{.label = "MIXED"};
+    node.children.push_back(BuildNode(f.GetRequired(), field));
+    node.children.push_back(BuildNode(f.GetOptional(), field));
     return node;
   }
   if (type == Type<ByTerm>::id()) {
@@ -318,14 +350,17 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
                            " threshold=", f.options().threshold)};
   }
   if (type == Type<ByEditDistance>::id()) {
-    const auto& f = downCast<const ByEditDistance>(filter);
+    SDB_THROW(sdb::ERROR_INTERNAL,
+              "ByEditDistance filter must be lowered to "
+              "LevenshteinAutomatonFilter by the optimizer before printing");
+  }
+  if (type == Type<LevenshteinAutomatonFilter>::id()) {
+    const auto& f = downCast<const LevenshteinAutomatonFilter>(filter);
     const auto& o = f.options();
-    return {.label = "LEVENSHTEIN_MATCH",
-            .detail = absl::StrCat(
-              field(f.field_id()), " '", TermToString(o.term),
-              "' dist=", static_cast<int>(o.max_distance),
-              " trans=", o.with_transpositions, " max_terms=", o.max_terms,
-              " prefix='", TermToString(o.prefix), "'")};
+    return {
+      .label = "LEVENSHTEIN_AUTOMATON",
+      .detail = absl::StrCat(field(f.field_id()), " '", TermToString(o.target),
+                             "' max_terms=", o.max_terms)};
   }
   if (type == Type<ByPrefix>::id()) {
     const auto& f = downCast<const ByPrefix>(filter);
@@ -352,10 +387,22 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
             .detail = field(downCast<const ByColumnExistence>(filter).id())};
   }
   if (type == Type<ByWildcard>::id()) {
-    const auto& f = downCast<const ByWildcard>(filter);
-    return {.label = "WILDCARD",
+    SDB_THROW(sdb::ERROR_INTERNAL,
+              "ByWildcard filter must be lowered to "
+              "ByTerm/ByPrefix/AutomatonFilter by the optimizer before "
+              "printing");
+  }
+  if (type == Type<ByRegexp>::id()) {
+    SDB_THROW(sdb::ERROR_INTERNAL,
+              "ByRegexp filter must be lowered to "
+              "ByTerm/ByPrefix/AutomatonFilter by the optimizer before "
+              "printing");
+  }
+  if (type == Type<AutomatonFilter>::id()) {
+    const auto& f = downCast<const AutomatonFilter>(filter);
+    return {.label = "AUTOMATON",
             .detail = absl::StrCat(field(f.field_id()), " ",
-                                   TermToString(f.options().term))};
+                                   TermToString(f.options().pattern))};
   }
   if (type == Type<ByWildcardNgram>::id()) {
     const auto& f = downCast<const ByWildcardNgram>(filter);

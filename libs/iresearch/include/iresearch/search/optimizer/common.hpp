@@ -40,7 +40,8 @@ std::unique_ptr<T> MakeBoolean(std::vector<Filter::ptr> children,
   return node;
 }
 
-inline bool TryFoldBoost(Filter& survivor, score_t boost, const Scorer* scorer) {
+inline bool TryFoldBoost(Filter& survivor, score_t boost,
+                         const Scorer* scorer) {
   if (boost == kNoBoost || scorer == nullptr) {
     return true;
   }

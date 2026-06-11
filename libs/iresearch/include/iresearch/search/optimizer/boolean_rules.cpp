@@ -127,10 +127,9 @@ bool AndExclusionCoalesceRule::Apply(Filter::ptr& slot,
            !(child->BoostImpl() != kNoBoost && ctx.scorer != nullptr);
   };
 
-  const size_t coalescable =
-    absl::c_count_if(children, [&](const auto& child) {
-      return is_not(child) || is_coalescable_exclusion(child);
-    });
+  const size_t coalescable = absl::c_count_if(children, [&](const auto& child) {
+    return is_not(child) || is_coalescable_exclusion(child);
+  });
   if (coalescable == 0 || children.size() == 1) {
     return false;
   }
@@ -167,9 +166,9 @@ bool AndExclusionCoalesceRule::Apply(Filter::ptr& slot,
     }
   }
 
-  auto exclude = excludes.size() == 1 ? std::move(excludes.front())
-                                      : MakeBoolean<Or>(std::move(excludes),
-                                                        ScoreMergeType::Sum);
+  auto exclude = excludes.size() == 1
+                   ? std::move(excludes.front())
+                   : MakeBoolean<Or>(std::move(excludes), ScoreMergeType::Sum);
 
   if (includes.empty()) {
     auto not_node = std::make_unique<Not>(std::move(exclude));
@@ -192,9 +191,8 @@ bool AndExclusionCoalesceRule::Apply(Filter::ptr& slot,
 
 bool AndEmptyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   const auto& node = sdb::basics::downCast<And>(*slot);
-  const bool has_empty = absl::c_any_of(node, [](const auto& child) {
-    return child->type() == Type<Empty>::id();
-  });
+  const bool has_empty = absl::c_any_of(
+    node, [](const auto& child) { return child->type() == Type<Empty>::id(); });
   if (!has_empty) {
     return false;
   }

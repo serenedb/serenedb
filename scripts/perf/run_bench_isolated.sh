@@ -53,7 +53,7 @@ for v in $(compgen -e | grep -E '^PERF_'); do fwd+=("$v=${!v}"); done
 # They CANNOT schedule inside the exclusive partition -- so each selected engine is
 # measured + cached OUTSIDE, pinned to the reserved cores, and the in-partition run
 # below reuses the cache. Keep this list in sync with EXT_ORDER in the bench script.
-ALL_ENGINES=(pg crdb cedar risingwave clickhouse)
+ALL_ENGINES=(pg crdb cedar risingwave)
 BASELINES="${ROOT}/scripts/perf/results/baselines"
 
 # Resolve PERF_DB (+ the legacy PERF_PG=1) into a list of engine names.

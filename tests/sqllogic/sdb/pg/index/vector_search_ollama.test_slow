@@ -111,7 +111,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: docs_ann (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 3          │
+│           Top: 3          │
 │         Dims: 384         │
 │                           │
 │        Projections:       │

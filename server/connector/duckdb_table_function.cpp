@@ -486,7 +486,7 @@ void SearchScan::AppendSummary(
     if (WandEnabled(bind.inverted_index.get(), text_scorer)) {
       absl::StrAppend(&topk_val, ", optimized");
     }
-    out.insert("TopK", std::move(topk_val));
+    out.insert("Top", std::move(topk_val));
   }
   if (vector_scorer) {
     if (vector_scorer->radius != std::numeric_limits<float>::max()) {
@@ -609,9 +609,11 @@ std::vector<ProjectionEntry> BuildProjectionEntries(
     if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY) {
       continue;
     }
-    entries.push_back({.name = ProjectionDisplayName(bind, column_index, names),
-                       .from_index = ProjectionIsFromIndex(bind, column_index),
-                       .is_virtual = ProjectionIsVirtual(bind, column_index)});
+    entries.push_back({
+      .name = ProjectionDisplayName(bind, column_index, names),
+      .from_index = ProjectionIsFromIndex(bind, column_index),
+      .is_virtual = ProjectionIsVirtual(bind, column_index),
+    });
   }
   return entries;
 }
@@ -676,12 +678,23 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
       has_lookup = true;
     }
   }
+  const bool count_only =
+    bind.scan_source && bind.scan_source->Kind() == ScanSourceKind::Search &&
+    input.projected_column_ids &&
+    absl::c_all_of(
+      *input.projected_column_ids, [](const duckdb::ColumnIndex& ci) {
+        return ci.GetPrimaryIndex() == duckdb::COLUMN_IDENTIFIER_EMPTY;
+      });
   const bool suppress_lookup =
-    bind.IsInvertedIndexEntry() && !entries.empty() && !has_lookup;
+    bind.IsInvertedIndexEntry() &&
+    (count_only || (!entries.empty() && !has_lookup));
   if (!bind.lookup_label.empty() && !suppress_lookup) {
     result.insert("Lookup", bind.lookup_label);
   }
   bind.scan_source->AppendSummary(bind, result);
+  if (count_only) {
+    result.insert("Output", "row-count only");
+  }
   if (!entries.empty()) {
     const bool annotate = has_index && has_lookup;
     result.insert("Projections", FormatProjections(entries, annotate));

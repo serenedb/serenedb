@@ -42,7 +42,6 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
-#include "iresearch/formats/serializer_stream.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -300,8 +299,8 @@ void ColWriter::Commit(uint64_t target_row) {
 
   const uint64_t footer_offset = _impl->out->Position();
 
-  IndexOutputWriteStream stream{*_impl->out};
-  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
+  duckdb::BinarySerializer serializer{*_impl->out,
+                                      duckdb::VersionStorageOptions()};
   serializer.Begin();
   serializer.WriteList(
     kFooterSlotColumns, "columns", _impl->column_entries.size(),

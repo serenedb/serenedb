@@ -188,7 +188,7 @@ void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
     SDB_ASSERT(segment_size <= std::numeric_limits<uint32_t>::max(),
                ".col writer segment > 4GB; offset field too narrow");
     const uint64_t file_offset = out.Position();
-    out.WriteBytes(bytes, segment_size);
+    out.WriteData(bytes, segment_size);
     ptr.block_pointer.block_id = static_cast<duckdb::block_id_t>(file_offset);
     ptr.block_pointer.offset = static_cast<uint32_t>(segment_size);
   }

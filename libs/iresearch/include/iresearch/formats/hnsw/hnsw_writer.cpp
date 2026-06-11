@@ -44,8 +44,8 @@ template<typename T>
 void WriteVector(DataOutput& out, const T& vec) {
   out.WriteU32(vec.size());
   SDB_ASSERT(vec.size() != 0);
-  out.WriteBytes(reinterpret_cast<const byte_type*>(vec.data()),
-                 sizeof(*vec.data()) * vec.size());
+  out.WriteData(reinterpret_cast<const byte_type*>(vec.data()),
+                sizeof(*vec.data()) * vec.size());
 }
 
 float ComputeNegativeInnerProduct(const byte_type* l, const byte_type* r,

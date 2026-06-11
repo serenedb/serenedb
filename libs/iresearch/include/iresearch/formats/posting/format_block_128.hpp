@@ -158,7 +158,7 @@ struct FormatTraits128 {
     switch (best_encoding) {
       case de_values: {
         static_assert(std::endian::native == std::endian::little);
-        out.WriteBytes(reinterpret_cast<byte_type*>(in), best_size);
+        out.WriteData(reinterpret_cast<byte_type*>(in), best_size);
       } break;
 
       case de_delta_all_same_08: {
@@ -182,21 +182,21 @@ struct FormatTraits128 {
           streamvbyte_encode(in, len, reinterpret_cast<uint8_t*>(buf));
         SDB_ASSERT(2 + size == best_size);
         out.WriteU16(size);
-        out.WriteBytes(reinterpret_cast<byte_type*>(buf), size);
+        out.WriteData(reinterpret_cast<byte_type*>(buf), size);
       } break;
       // case de_for_streamvbyte1234: {
       //   const auto size = streamvbyte_for_encode(
       //     in, len, reinterpret_cast<uint8_t*>(buf), prev);
       //   SDB_ASSERT(2 + size == best_size);
       //   out.WriteU16(size);
-      //   out.WriteBytes(reinterpret_cast<byte_type*>(buf), size);
+      //   out.WriteData(reinterpret_cast<byte_type*>(buf), size);
       // } break;
       case de_delta_streamvbyte1234: {
         const auto size = streamvbyte_delta_encode(
           in, len, reinterpret_cast<uint8_t*>(buf), prev);
         SDB_ASSERT(2 + size == best_size);
         out.WriteU16(size);
-        out.WriteBytes(reinterpret_cast<byte_type*>(buf), size);
+        out.WriteData(reinterpret_cast<byte_type*>(buf), size);
       } break;
 
       case de_delta_bitpack_02:
@@ -233,7 +233,7 @@ struct FormatTraits128 {
         const auto bits = (best_encoding - de_delta_bitpack_02) + 2;
         // TODO: Avoid additional switch
         simdpackwithoutmaskd1(prev, in, reinterpret_cast<__m128i*>(buf), bits);
-        out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size);
+        out.WriteData(reinterpret_cast<byte_type*>(buf), best_size);
       } break;
 
       default:
@@ -312,7 +312,7 @@ struct FormatTraits128 {
     switch (best_encoding) {
       case e_values: {
         static_assert(std::endian::native == std::endian::little);
-        out.WriteBytes(reinterpret_cast<byte_type*>(in), best_size);
+        out.WriteData(reinterpret_cast<byte_type*>(in), best_size);
       } break;
 
       case e_all_same_08: {
@@ -332,7 +332,7 @@ struct FormatTraits128 {
           streamvbyte_encode(in, len, reinterpret_cast<uint8_t*>(buf));
         SDB_ASSERT(2 + size == best_size);
         out.WriteU16(size);
-        out.WriteBytes(reinterpret_cast<byte_type*>(buf), size);
+        out.WriteData(reinterpret_cast<byte_type*>(buf), size);
       } break;
 
       case e_bitpack_01:
@@ -370,7 +370,7 @@ struct FormatTraits128 {
         const auto bits = (best_encoding - e_bitpack_01) + 1;
         // TODO: Avoid additional switch
         simdpackwithoutmask(in, reinterpret_cast<__m128i*>(buf), bits);
-        out.WriteBytes(reinterpret_cast<byte_type*>(buf), best_size);
+        out.WriteData(reinterpret_cast<byte_type*>(buf), best_size);
       } break;
 
       default:
@@ -482,8 +482,8 @@ struct FormatTraits128 {
     auto* const begin = out + (doc_limits::kBlockSize - len);
     switch (type) {
       case de_values: {
-        in.ReadBytes(reinterpret_cast<byte_type*>(begin),
-                     len * sizeof(uint32_t));
+        in.ReadData(reinterpret_cast<byte_type*>(begin),
+                    len * sizeof(uint32_t));
         static_assert(std::endian::native == std::endian::little);
       } break;
 
@@ -573,8 +573,8 @@ struct FormatTraits128 {
     auto* const begin = out + (doc_limits::kBlockSize - len);
     switch (type) {
       case e_values: {
-        in.ReadBytes(reinterpret_cast<byte_type*>(begin),
-                     len * sizeof(uint32_t));
+        in.ReadData(reinterpret_cast<byte_type*>(begin),
+                    len * sizeof(uint32_t));
         static_assert(std::endian::native == std::endian::little);
       } break;
 
@@ -835,7 +835,7 @@ struct FormatTraits128 {
     SDB_ASSERT(words <= std::numeric_limits<byte_type>::max());
     out.WriteByte(words);
     static_assert(std::endian::native == std::endian::little);
-    out.WriteBytes(reinterpret_cast<byte_type*>(buf), bytes);
+    out.WriteData(reinterpret_cast<byte_type*>(buf), bytes);
   }
 
   IRS_FORCE_INLINE static void MakeBlockFromTail(uint32_t* IRS_RESTRICT in,
@@ -966,12 +966,10 @@ struct FormatTraits128 {
   template<typename InputType>
   IRS_FORCE_INLINE static const byte_type* ReadDataImpl(
     uint32_t size, InputType& in, uint32_t* IRS_RESTRICT buf) {
-    if (const auto* data = in.ReadView(size)) {
+    if (const auto* data = in.ReadVolatile(size)) {
       return data;
     }
-    [[maybe_unused]] const auto read =
-      in.ReadBytes(reinterpret_cast<byte_type*>(buf), size);
-    SDB_ASSERT(read == size);
+    in.ReadData(reinterpret_cast<byte_type*>(buf), size);
     return reinterpret_cast<byte_type*>(buf);
   }
 

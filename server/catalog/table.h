@@ -39,7 +39,8 @@ class Table final : public Object {
         std::vector<CheckConstraint> check_constraints,
         ObjectId generated_pk_seq_id,
         TableEngine engine = TableEngine::Transactional,
-        std::vector<std::vector<Column::Id>> unique_constraints = {});
+        std::vector<std::vector<Column::Id>> unique_constraints = {},
+        std::vector<TableForeignKey> foreign_keys = {});
 
   static std::shared_ptr<Table> Deserialize(duckdb::Deserializer& src,
                                             ReadContext ctx);
@@ -51,6 +52,7 @@ class Table final : public Object {
   const auto& CheckConstraints() const noexcept { return _check_constraints; }
   TableEngine GetEngine() const noexcept { return _engine; }
   const auto& UniqueConstraints() const noexcept { return _unique_constraints; }
+  const auto& ForeignKeys() const noexcept { return _foreign_keys; }
 
   // Id of the auto-generated PK sequence (created when the table has no
   // explicit PK). Unset for tables with an explicit PK. Look it up via
@@ -75,6 +77,7 @@ class Table final : public Object {
   ObjectId _generated_pk_seq_id;
   TableEngine _engine = TableEngine::Transactional;
   std::vector<std::vector<Column::Id>> _unique_constraints;
+  std::vector<TableForeignKey> _foreign_keys;
 };
 
 }  // namespace sdb::catalog

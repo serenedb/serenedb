@@ -24,6 +24,7 @@
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
+#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
@@ -331,6 +332,59 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
         options.check_constraints.push_back(catalog::CheckConstraint{
           ObjectId{}, catalog::NextId(), std::move(name),
           std::make_shared<ColumnExpr>(check.expression->Copy())});
+        break;
+      }
+      case duckdb::ConstraintType::FOREIGN_KEY: {
+        auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+        if (fk.info.type != duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
+          break;
+        }
+        catalog::TableForeignKey out;
+        for (auto& col_name : fk.fk_columns) {
+          auto it = absl::c_find_if(options.columns, [&](const auto& col) {
+            return col.GetName() == col_name;
+          });
+          if (it == options.columns.end()) {
+            throw duckdb::CatalogException(
+              "column \"%s\" named in foreign key does not exist", col_name);
+          }
+          out.columns.push_back(it->GetId());
+        }
+        const bool self_reference = fk.info.table == table_info.table;
+        if (self_reference) {
+          for (auto& col_name : fk.pk_columns) {
+            auto it = absl::c_find_if(options.columns, [&](const auto& col) {
+              return col.GetName() == col_name;
+            });
+            SDB_ASSERT(it != options.columns.end());
+            out.referenced_columns.push_back(it->GetId());
+          }
+        } else {
+          auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
+          auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+          auto referenced = snapshot->GetRelation(
+            GetDatabaseId(), fk.info.schema.empty() ? name : fk.info.schema,
+            fk.info.table);
+          if (!referenced ||
+              referenced->GetType() != catalog::ObjectType::Table) {
+            throw duckdb::CatalogException(
+              "referenced table \"%s\" does not exist", fk.info.table);
+          }
+          auto& ref_table = basics::downCast<catalog::Table>(*referenced);
+          out.referenced_table = ref_table.GetId();
+          for (auto& col_name : fk.pk_columns) {
+            auto it = absl::c_find_if(
+              ref_table.Columns(),
+              [&](const auto& col) { return col.GetName() == col_name; });
+            if (it == ref_table.Columns().end()) {
+              throw duckdb::CatalogException(
+                "column \"%s\" named in foreign key does not exist",
+                col_name);
+            }
+            out.referenced_columns.push_back(it->GetId());
+          }
+        }
+        options.foreign_keys.push_back(std::move(out));
         break;
       }
       default:

@@ -145,6 +145,14 @@ enum class TableEngine : uint8_t {
   Fast = 1,
 };
 
+// One FOREIGN KEY of a table: `columns` (on the owning table) reference
+// `referenced_columns` of `referenced_table`, which must be its PRIMARY KEY.
+struct TableForeignKey {
+  std::vector<Column::Id> columns;
+  ObjectId referenced_table;
+  std::vector<Column::Id> referenced_columns;
+};
+
 struct CreateTableOptions {
   // LocalCatalog resolves the sequence name (mangling on collision), stamps
   // owner_table_id, and installs the column's nextval default.
@@ -159,6 +167,7 @@ struct CreateTableOptions {
   std::vector<CheckConstraint> check_constraints;
   std::vector<SerialSequenceOption> sequences;
   std::vector<std::vector<Column::Id>> unique_constraints;
+  std::vector<TableForeignKey> foreign_keys;
   TableEngine engine = TableEngine::Transactional;
 };
 // NOLINTEND

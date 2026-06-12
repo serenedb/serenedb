@@ -977,7 +977,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   }
 
   std::vector<std::pair<std::string, duckdb::LogicalType>> rel_columns;
-  bool use_generated_pk_rowid_col = false;
   // Populated for base-table indexes; used below to drive the narrow
   // projection that BuildCreateIndexProjection computes. Stays null for
   // view-backed indexes (whose projection comes from the view body).
@@ -1010,7 +1009,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                                return std::pair{std::string{c.GetName()},
                                                 c.type};
                              }));
-    use_generated_pk_rowid_col = sdb_table->PKColumns().empty();
   }
 
   containers::FlatHashSet<duckdb::column_t> seen_columns;
@@ -1068,10 +1066,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       for (auto pos : projection) {
         get.types.push_back(rel_columns[pos].second);
       }
-      if (use_generated_pk_rowid_col) {
-        get.AddColumnId(kColumnIdentifierGeneratedPk);
-        get.types.push_back(duckdb::LogicalType::BIGINT);
-      }
+      get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+      get.types.push_back(duckdb::LogicalType::ROW_TYPE);
     }
     SDB_ASSERT(get.bind_data,
                "base-table LogicalGet missing SereneDB bind_data");

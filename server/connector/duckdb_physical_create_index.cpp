@@ -452,19 +452,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
   }
   if (table_ptr) {
-    state->has_generated_pk_col = table_ptr->PKColumns().empty();
+    // Store-table postings are keyed by the native rowid the scan appends
+    // after the projection, regardless of the declared PK.
+    state->has_generated_pk_col = true;
     state->is_view_synth_pk = false;
-    // PK chunk positions: each PK column's chunk index is its position in
-    // the projection. BuildCreateIndexProjection guarantees PK columns are
-    // present in the projection when there's an explicit PK.
-    if (!state->has_generated_pk_col) {
-      auto projected =
-        projection |
-        std::views::transform(
-          [&](size_t pos) -> const catalog::Column& { return columns[pos]; });
-      state->pk_columns =
-        duckdb_primary_key::BuildPKColumns(projected, table_ptr->PKColumns());
-    }
   } else if (state->is_view_rocksdb_pk) {
     auto& view = basics::downCast<const catalog::PgSqlView>(*_relation);
     auto fp = ResolveViewFastPath(context, view);
@@ -570,7 +561,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   if (!gstate.created) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;

@@ -84,9 +84,11 @@ void Buffer::CommitWrite(size_t size) {
 // are final (the producer moved past them -- GetEnd is stable); the watermark
 // chunk is bounded by the snapshot offset, never its live _end.
 namespace {
+
 size_t ReadableEndOf(const Chunk* chunk, const BufferOffset& readable) {
   return chunk == readable.chunk ? readable.in_chunk : chunk->GetEnd();
 }
+
 }  // namespace
 
 std::string_view Buffer::Front() noexcept {

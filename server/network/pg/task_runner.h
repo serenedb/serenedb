@@ -136,8 +136,7 @@ class TaskRunner final : public duckdb::Task {
     uint8_t s = _run.load(std::memory_order_acquire);
     for (;;) {
       if (s == kParked) {
-        if (_run.compare_exchange_weak(s, kQueued,
-                                       std::memory_order_acq_rel)) {
+        if (_run.compare_exchange_weak(s, kQueued, std::memory_order_acq_rel)) {
           Enqueue();
           return;
         }

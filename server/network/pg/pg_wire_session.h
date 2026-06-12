@@ -1731,10 +1731,9 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
   // which stays byte-for-byte unchanged (zero added per-row overhead).
   if (max_rows == 0 ||
       return_type != duckdb::StatementReturnType::QUERY_RESULT) {
-    co_await SerializeResult(*portal->stmt->prepared, *portal->result,
-                             return_type,
-                             /*with_row_description=*/false,
-                             portal->bind_info.output_formats);
+    co_await SerializeResult(
+      *portal->stmt->prepared, *portal->result, return_type,
+      /*with_row_description=*/false, portal->bind_info.output_formats);
     portal->exhausted = true;
     co_return {};
   }
@@ -1946,9 +1945,9 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
     if (_cancel) {
       _cancel_key = _cancel->Register(_cancel_token);
     }
-    _task.emplace(duckdb::TaskScheduler::GetScheduler(
-                    DuckDBEngine::Instance().instance()),
-                  *_ioexec);
+    _task.emplace(
+      duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance()),
+      *_ioexec);
     SessionMain().Detach();
     _task_spawned = true;
 
@@ -2019,8 +2018,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
                              "54000");
           break;
         }
-        if (frame.status != FrameStatus::Ok ||
-            frame.type == PQ_MSG_TERMINATE) {
+        if (frame.status != FrameStatus::Ok || frame.type == PQ_MSG_TERMINATE) {
           break;
         }
         const char type = frame.type;

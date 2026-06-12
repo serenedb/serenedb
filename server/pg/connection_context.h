@@ -68,9 +68,8 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
   void AddNotice(pg::SqlErrorData notice) {
     auto* node = new NoticeNode{std::move(notice), nullptr};
     node->next = _notices.load(std::memory_order_relaxed);
-    while (!_notices.compare_exchange_weak(node->next, node,
-                                           std::memory_order_release,
-                                           std::memory_order_relaxed)) {
+    while (!_notices.compare_exchange_weak(
+      node->next, node, std::memory_order_release, std::memory_order_relaxed)) {
     }
   }
 

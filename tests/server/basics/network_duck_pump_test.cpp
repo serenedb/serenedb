@@ -44,8 +44,7 @@ namespace {
 // external RequestRun releases it.
 yaclib::Future<> HostedBody(network::pg::TaskRunner& task,
                             duckdb::PendingQueryResult& pending,
-                            std::atomic<int>& phase,
-                            std::thread::id test_tid) {
+                            std::atomic<int>& phase, std::thread::id test_tid) {
   co_await task.Begin();
   EXPECT_NE(std::this_thread::get_id(), test_tid);
 
@@ -89,8 +88,7 @@ TEST(NetworkTaskRunner, DrivesQueryAndParksOffTestThread) {
   network::pg::TaskRunner task{scheduler, pool.Next()};
 
   std::atomic<int> phase{0};
-  auto future =
-    HostedBody(task, *pending, phase, std::this_thread::get_id());
+  auto future = HostedBody(task, *pending, phase, std::this_thread::get_id());
 
   while (phase.load(std::memory_order_acquire) != 1) {
     std::this_thread::yield();

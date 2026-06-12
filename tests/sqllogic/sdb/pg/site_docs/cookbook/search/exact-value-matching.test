@@ -35,83 +35,83 @@ CREATE TEXT SEARCH DICTIONARY basic_dict (
 );
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY exact_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = true,
-    frequency = true,
-    position = true
-);
-
-statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
 
 statement ok
-CREATE INDEX movies_exact_idx ON movies
-    USING inverted (id, title exact_dict, description exact_dict);
+VACUUM (REFRESH_TABLE) movies;
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_EQ(genre, 'sci-fi')
+WHERE genre @@ 'sci-fi'
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_eq does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+1	The Matrix	sci-fi
+2	The Matrix Reloaded	sci-fi
+3	The Matrix Revolutions	sci-fi
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_IN(genre, 'comedy', 'drama')
+WHERE genre @@ ts_any(['comedy', 'drama'])
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_in does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+6	Scary Movie	comedy
+9	Café Society	drama
+10	The Grand Budapest Hotel	comedy
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE NOT TERM_EQ(genre, 'sci-fi')
+WHERE NOT (genre @@ 'sci-fi')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_eq does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+4	Jurassic Park	adventure
+5	Harry Potter and the Order of the Phoenix	fantasy
+6	Scary Movie	comedy
+9	Café Society	drama
+10	The Grand Budapest Hotel	comedy
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title
 FROM movies_idx
-WHERE TERM_EQ(genre, 'sci-fi') AND PHRASE(description, 'alien spacecraft')
+WHERE genre @@ 'sci-fi' AND description @@ ts_phrase('alien spacecraft')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_eq does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+7	Star Trek: The Motion Picture
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT genre, COUNT(*) AS count, AVG(runtime) AS avg_runtime
 FROM movies_idx
-WHERE PHRASE(description, 'biggest blockbuster')
-GROUP BY genre;
+WHERE description @@ ts_phrase('biggest blockbuster')
+GROUP BY genre
+ORDER BY genre;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+genre	count	avg_runtime
+adventure	1	127
+comedy	1	88

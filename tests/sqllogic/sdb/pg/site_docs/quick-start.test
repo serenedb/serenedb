@@ -1,84 +1,110 @@
 # DOCS_TEST: example_001
 
+# DOCS_TEST_RAW
+#| CREATE TABLE movies AS
+#|     SELECT id, title, overview,
+#|            split_part(genres, '-', 1) AS genre,
+#|            vote_average, vote_count
+#|     FROM read_parquet('hf://datasets/wykonos/movies@~parquet/default/train/*.parquet')
+#|     WHERE overview IS NOT NULL AND vote_count > 1000;
+
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE articles (
+CREATE TABLE movies (
     id INTEGER PRIMARY KEY,
     title VARCHAR,
-    body VARCHAR,
-    category VARCHAR,
-    published_at DATE,
-    views INTEGER
+    overview VARCHAR,
+    genre VARCHAR,
+    vote_average DOUBLE,
+    vote_count INTEGER
 );
+
+statement ok
+INSERT INTO movies VALUES
+ (1,  'Interstellar',   'A team of explorers travel through a wormhole in space in an attempt to ensure humanity survival.',              'Science Fiction', 8.4, 30708),
+ (2,  'The Martian',    'An astronaut becomes stranded on Mars and must science the hell out of surviving alone.',                       'Science Fiction', 8.0, 24000),
+ (3,  'Gravity',        'Two scientists are left adrift in space after debris destroys their shuttle during a routine spacewalk.',       'Science Fiction', 7.7, 21000),
+ (4,  'Inception',      'A thief who steals corporate secrets through dream-sharing technology is given a chance to erase his past.',    'Science Fiction', 8.4, 35000),
+ (5,  'Apollo 13',      'NASA must devise a strategy to return the crew safely to Earth after the spacecraft undergoes disaster.',        'Drama',           7.6, 12000),
+ (6,  'Hidden Figures', 'The untold story of the brilliant women who served as the brains behind the early space race at NASA.',         'Drama',           8.1, 8456),
+ (7,  'WALL-E',         'In a distant future a small waste-collecting robot embarks on a journey across space that decides humanity fate.','Animation',      8.1, 16908),
+ (8,  'Toy Story',      'A cowboy doll is profoundly threatened when a new spaceman action figure supplants him as top toy.',            'Animation',       8.0, 17000),
+ (9,  'The Notebook',   'A poor young man falls in love with a rich young woman giving her a sense of freedom.',                          'Romance',         7.8, 15000),
+ (10, 'Titanic',        'A seventeen-year-old aristocrat falls in love with a kind but poor artist aboard the ill-fated Titanic.',        'Romance',         7.9, 25000),
+ (11, 'Alien',          'During its return to Earth a commercial spaceship intercepts a distress signal and is stalked by a deadly creature.','Horror',     8.1, 12576),
+ (12, 'Gladiator',      'A former Roman general sets out to exact vengeance against the emperor who murdered his family.',                'Action',          8.2, 18000);
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
-statement ok
-INSERT INTO articles VALUES
-(1, 'Introduction to Vector Search', 'Vector search enables finding similar items by comparing embeddings in high-dimensional space. It powers recommendation systems and semantic search.', 'engineering', '2025-01-15', 4200),
-(2, 'Scaling Analytics Pipelines', 'Modern analytics pipelines must handle billions of rows with sub-second latency. Columnar storage and vectorized execution are key techniques.', 'engineering', '2025-02-20', 3800),
-(3, 'Why Unified Search and Analytics Matter', 'Running search and analytics in separate systems creates data silos and synchronization lag. A unified engine eliminates these problems entirely.', 'product', '2025-03-01', 5100),
-(4, 'Full-Text Search Best Practices', 'Effective full-text search requires proper analyzers, stemming, and relevance scoring. Position-aware indexing improves phrase matching accuracy.', 'engineering', '2025-03-10', 2900),
-(5, 'Real-Time Data Processing at Scale', 'Real-time ingestion combined with instant query availability means dashboards and search results always reflect the latest data without refresh delays.', 'product', '2025-03-15', 6200);
+query
+SELECT genre, COUNT(*) AS films, ROUND(AVG(vote_average), 2) AS avg_rating
+FROM movies
+GROUP BY genre
+ORDER BY avg_rating DESC, genre;
+----
+genre	films	avg_rating
+Action	1	8.2
+Science Fiction	4	8.13
+Horror	1	8.1
+Animation	2	8.05
+Drama	2	7.85
+Romance	2	7.85
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-query
-SELECT category, COUNT(*) AS articles, AVG(views) AS avg_views
-FROM articles
-GROUP BY category
-ORDER BY avg_views DESC;
-----
-category	articles	avg_views
-product	2	5650
-engineering	3	3633.3333333333335
+statement ok
+CREATE TEXT SEARCH DICTIONARY english (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement ok
+CREATE INDEX movies_idx ON movies
+    USING inverted(id, title english, overview english);
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY english_dict(
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
-
-statement ok
-CREATE INDEX articles_search_idx ON articles
-    USING inverted(id, title english_dict, body english_dict);
+VACUUM (REFRESH_TABLE) movies;
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-query error
-SELECT id, title, views
-FROM articles_search_idx
-WHERE PHRASE(body, 'search and analytics')
-ORDER BY views DESC;
+query
+SELECT title, genre, ROUND(BM25(movies_idx.tableoid)::NUMERIC, 3) AS score
+FROM movies_idx
+WHERE overview @@ ts_phrase('falls in love')
+ORDER BY score DESC, title;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+title	genre	score
+The Notebook	Romance	6.768
+Titanic	Romance	6.768
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
-query error
-SELECT category, COUNT(*) AS matches
-FROM articles_search_idx
-WHERE PHRASE(body, 'search')
-GROUP BY category;
+query
+SELECT genre, COUNT(*) AS matches, ROUND(AVG(vote_average), 2) AS avg_rating
+FROM movies_idx
+WHERE overview @@ 'space'
+GROUP BY genre
+ORDER BY matches DESC, genre;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+genre	matches	avg_rating
+Science Fiction	2	8.05
+Animation	1	8.1
+Drama	1	8.1

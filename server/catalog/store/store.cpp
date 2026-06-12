@@ -39,6 +39,8 @@
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <exception>
 #include <filesystem>
@@ -242,6 +244,13 @@ void CatalogStore::WriteContext::DropStoreColumn(std::string table,
                       .name_a = std::move(name)});
 }
 
+void CatalogStore::WriteContext::DropStoreForeignKey(std::string table,
+                                                     std::string other) {
+  _entries.push_back({.op = Op::DropStoreForeignKey,
+                      .store_table = {.name = std::move(table)},
+                      .name_a = std::move(other)});
+}
+
 void CatalogStore::WriteContext::WriteTombstone(ObjectId parent_id,
                                                 ObjectId id) {
   PutDefinition(parent_id, ObjectType::Tombstone, id, {});
@@ -427,6 +436,30 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           }
           break;
         }
+        case WriteContext::Op::DropStoreForeignKey: {
+          auto r = basics::SafeCall([&]() -> Result {
+            auto& context = *_conn->context;
+            duckdb::AlterEntryData data{
+              std::string{kStoreAlias}, "main", entry.store_table.name,
+              duckdb::OnEntryNotFound::RETURN_NULL};
+            duckdb::AlterForeignKeyInfo info{
+              std::move(data),
+              entry.name_a,
+              {},
+              {},
+              {},
+              {},
+              duckdb::AlterForeignKeyType::AFT_DELETE};
+            auto& catalog =
+              duckdb::Catalog::GetCatalog(context, std::string{kStoreAlias});
+            catalog.Alter(context, info);
+            return {};
+          });
+          if (r.fail()) {
+            return r;
+          }
+          break;
+        }
         case WriteContext::Op::DropStoreColumn: {
           auto res = _conn->Query(absl::StrCat(
             "ALTER TABLE \"", kStoreAlias, "\".main.",
@@ -471,6 +504,22 @@ Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
       }
       info->constraints.push_back(
         duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(names), false));
+    }
+    for (const auto& fk : def.foreign_keys) {
+      duckdb::vector<std::string> fk_cols;
+      duckdb::vector<std::string> pk_cols;
+      for (const auto& name : fk.columns) {
+        fk_cols.push_back(name);
+      }
+      for (const auto& name : fk.referenced_columns) {
+        pk_cols.push_back(name);
+      }
+      duckdb::ForeignKeyInfo fk_info;
+      fk_info.type = duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE;
+      fk_info.table = fk.referenced_table;
+      info->constraints.push_back(
+        duckdb::make_uniq<duckdb::ForeignKeyConstraint>(
+          std::move(pk_cols), std::move(fk_cols), std::move(fk_info)));
     }
     auto& context = *_conn->context;
     auto& catalog =

@@ -179,6 +179,28 @@ class SnapshotImpl : public Snapshot {
     return drop_task;
   }
 
+  // Store-table name of `table_id` ("db.schema.table"), or nullopt when
+  // the id is unset (self-referencing FK) or not resolvable.
+  std::optional<std::string> ComposeStoreTableName(ObjectId table_id) const {
+    if (!table_id.isSet()) {
+      return std::nullopt;
+    }
+    auto table = GetObject<Table>(table_id);
+    if (!table) {
+      return std::nullopt;
+    }
+    auto schema_obj = GetObject<Schema>(table->GetParentId());
+    if (!schema_obj) {
+      return std::nullopt;
+    }
+    auto db = GetObject<Database>(schema_obj->GetParentId());
+    if (!db) {
+      return std::nullopt;
+    }
+    return StoreTableName(db->GetName(), schema_obj->GetName(),
+                          table->GetName());
+  }
+
   std::shared_ptr<TableDrop> CreateTableDrop(
     ObjectId db_id, ObjectId schema_id, const std::shared_ptr<Table>& table,
     bool is_root) {
@@ -195,18 +217,24 @@ class SnapshotImpl : public Snapshot {
     auto owned_sequences =
       table_deps->owned_sequences | std::ranges::to<std::vector>();
 
-    std::string store_rename_from;
+    std::string store_name;
+    std::vector<std::string> fk_referenced;
     if (table->GetEngine() == TableEngine::Transactional &&
         !table->Tombstoned()) {
       auto db = GetObject<Database>(db_id);
       auto schema_obj = GetObject<Schema>(schema_id);
       SDB_ASSERT(db && schema_obj);
-      store_rename_from = StoreTableName(db->GetName(), schema_obj->GetName(),
-                                         table->GetName());
+      store_name = StoreTableName(db->GetName(), schema_obj->GetName(),
+                                  table->GetName());
+      for (const auto& fk : table->ForeignKeys()) {
+        if (auto name = ComposeStoreTableName(fk.referenced_table)) {
+          fk_referenced.push_back(std::move(*name));
+        }
+      }
     }
-    return std::make_shared<TableDrop>(table, shard, std::move(indexes),
-                                       std::move(owned_sequences), schema_id,
-                                       std::move(store_rename_from), is_root);
+    return std::make_shared<TableDrop>(
+      table, shard, std::move(indexes), std::move(owned_sequences), schema_id,
+      std::move(store_name), std::move(fk_referenced), is_root);
   }
 
   std::shared_ptr<IndexDrop> CreateIndexDrop(
@@ -1243,6 +1271,20 @@ class SnapshotImpl : public Snapshot {
       SDB_ASSERT(database);
       auto store_name = StoreTableName(
         database->GetName(), schema_obj->GetName(), old_table->GetName());
+      for (const auto& fk : old_table->ForeignKeys()) {
+        auto kept =
+          std::ranges::any_of(rw.table->ForeignKeys(), [&](const auto& f) {
+            return f.referenced_table == fk.referenced_table &&
+                   f.columns == fk.columns;
+          });
+        if (kept) {
+          continue;
+        }
+        if (auto referenced = ComposeStoreTableName(fk.referenced_table)) {
+          ctx.DropStoreForeignKey(*referenced, store_name);
+          ctx.DropStoreForeignKey(store_name, *referenced);
+        }
+      }
       auto rewritten = MakeStoreTableDef(database->GetName(),
                                          schema_obj->GetName(), *rw.table);
       if (rewritten.columns.empty()) {
@@ -2185,6 +2227,42 @@ Result LocalCatalog::CreateTable(
     auto database = _snapshot->GetObject<Database>(database_id);
     SDB_ASSERT(database);
     store_table = MakeStoreTableDef(database->GetName(), schema, *table);
+    for (const auto& fk : table->ForeignKeys()) {
+      StoreForeignKey out;
+      const Table* referenced = nullptr;
+      if (!fk.referenced_table.isSet()) {
+        referenced = table.get();
+        out.referenced_table = store_table->name;
+      } else {
+        auto ref_obj = _snapshot->GetObject<Table>(fk.referenced_table);
+        if (!ref_obj || ref_obj->GetEngine() != TableEngine::Transactional) {
+          continue;
+        }
+        auto ref_schema = _snapshot->GetObject<Schema>(ref_obj->GetParentId());
+        SDB_ASSERT(ref_schema);
+        out.referenced_table = StoreTableName(
+          database->GetName(), ref_schema->GetName(), ref_obj->GetName());
+        referenced = ref_obj.get();
+      }
+      auto names_for = [](const Table& t, std::span<const Column::Id> ids,
+                          std::vector<std::string>& out_names) {
+        for (auto col_id : ids) {
+          auto it = std::ranges::find_if(t.Columns(), [&](const auto& c) {
+            return c.GetId() == col_id;
+          });
+          if (it == t.Columns().end() || it->type.IsNested()) {
+            out_names.clear();
+            return;
+          }
+          out_names.emplace_back(it->GetName());
+        }
+      };
+      names_for(*table, fk.columns, out.columns);
+      names_for(*referenced, fk.referenced_columns, out.referenced_columns);
+      if (!out.columns.empty() && !out.referenced_columns.empty()) {
+        store_table->foreign_keys.push_back(std::move(out));
+      }
+    }
     if (operation_options.create_with_tombstone) {
       // Not-yet-committed (CTAS) tables live under the dropped name; commit
       // renames to the public name (RemoveTombstone), failure drops by id.
@@ -2673,7 +2751,8 @@ Result LocalCatalog::DropDatabase(std::string_view name,
       auto wr = _engine->Write([&](auto& ctx) {
         ctx.WriteTombstone(id::kInstance, *database_id);
         clone->CommitDropPlan(ctx, plan);
-        task->EmitStoreRenames(ctx);
+        task->EmitStoreFkCleanups(ctx);
+        task->EmitStoreDrops(ctx);
       });
       if (!wr.ok()) {
         return wr;
@@ -2717,7 +2796,8 @@ Result LocalCatalog::DropSchema(std::string_view database,
       auto wr = _engine->Write([&](auto& ctx) {
         ctx.WriteTombstone(*database_id, *schema_id);
         clone->CommitDropPlan(ctx, plan);
-        task->EmitStoreRenames(ctx);
+        task->EmitStoreFkCleanups(ctx);
+        task->EmitStoreDrops(ctx);
       });
       if (!wr.ok()) {
         return wr;
@@ -2773,7 +2853,8 @@ Result LocalCatalog::DropTable(std::string_view database,
       auto wr = _engine->Write([&](auto& ctx) {
         ctx.WriteTombstone(*schema_id, *table_id);
         clone->CommitDropPlan(ctx, plan);
-        task->EmitStoreRenames(ctx);
+        task->EmitStoreFkCleanups(ctx);
+        task->EmitStoreDrops(ctx);
       });
       if (!wr.ok()) {
         return wr;

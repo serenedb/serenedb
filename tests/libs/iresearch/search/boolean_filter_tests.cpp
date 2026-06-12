@@ -16414,11 +16414,14 @@ TEST(And_test, equal) {
 }
 
 TEST(And_test, optimize_double_negation) {
-  irs::And root;
-  root.add<irs::Exclusion>().exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
+  auto root = std::make_unique<irs::And>();
+  root->add<irs::Exclusion>().exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
     MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  auto prepared = filter->prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
 }
 
@@ -16604,11 +16607,14 @@ TEST(Or_test, equal) {
 }
 
 TEST(Or_test, optimize_double_negation) {
-  irs::Or root;
-  root.add<irs::Exclusion>().exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
+  auto root = std::make_unique<irs::Or>();
+  root->add<irs::Exclusion>().exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
     MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  auto prepared = filter->prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
 }
 

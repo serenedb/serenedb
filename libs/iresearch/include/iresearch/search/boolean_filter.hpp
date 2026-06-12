@@ -78,8 +78,6 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
 
   std::vector<Filter::ptr>& mutable_filters() noexcept { return _filters; }
 
-  Query::ptr PrepareImpl(const PrepareContext& ctx) const;
-
  protected:
   bool equals(const Filter& rhs) const noexcept final;
 

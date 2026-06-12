@@ -80,29 +80,17 @@ bool NotSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   const bool odd = (negations % 2) != 0;
 
   if (base->type() == Type<Empty>::id()) {
-    if (odd) {
-      slot = AllDocsProvider::Default(kNoBoost);
-    } else {
-      slot = std::move(base);
-    }
+    slot = odd ? AllDocsProvider::Default(kNoBoost) : std::move(base);
     return true;
   }
   if (IsAllDocs(*base)) {
-    if (odd) {
-      slot = std::make_unique<Empty>();
-    } else {
-      slot = std::move(base);
-    }
+    slot = odd ? std::make_unique<Empty>() : std::move(base);
     return true;
   }
   if (negations < 2) {
     return false;
   }
-  if (odd) {
-    slot = std::make_unique<Not>(std::move(base));
-  } else {
-    slot = std::move(base);
-  }
+  slot = odd ? std::make_unique<Not>(std::move(base)) : std::move(base);
   return true;
 }
 

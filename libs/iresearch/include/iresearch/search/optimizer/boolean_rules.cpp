@@ -172,9 +172,11 @@ bool Flatten(T& node) {
 
   std::vector<bool> splice(children.size(), false);
   size_t spliced = 0;
+  size_t spliced_count = 0;
   for (size_t i = 0; i < children.size(); ++i) {
     if (CanSplice(node, *children[i])) {
       splice[i] = true;
+      spliced_count++;
       spliced += sdb::basics::downCast<T>(*children[i]).size();
     }
   }
@@ -183,7 +185,7 @@ bool Flatten(T& node) {
   }
 
   std::vector<Filter::ptr> flat;
-  flat.reserve(children.size() + spliced);
+  flat.reserve(children.size() - spliced_count + spliced);
   for (size_t i = 0; i < children.size(); ++i) {
     if (splice[i]) {
       for (auto& grandchild :
@@ -351,6 +353,7 @@ bool AndAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     auto& children = node.mutable_filters();
     const auto it = absl::c_find_if(
       children, [](const auto& child) { return !IsAllDocs(*child); });
+    SDB_ASSERT(it != children.end());
     if (auto* boostable = dynamic_cast<FilterWithBoost*>(it->get())) {
       boostable->boost(boostable->Boost() + all_boost);
       EraseAllDocs(node);
@@ -387,8 +390,7 @@ bool OrAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   EraseAllDocs(node);
   auto& children = node.mutable_filters();
   children.emplace_back(node.MakeAllDocsFilter(all_boost));
-  const size_t new_min_match =
-    min_match > all_count - 1 ? min_match - (all_count - 1) : 1;
+  const size_t new_min_match = std::max(min_match - (all_count - 1), 1UL);
   auto replacement = MakeBoolean<Or>(std::move(children), node.merge_type());
   replacement->min_match_count(new_min_match);
   replacement->boost(node.Boost());
@@ -414,7 +416,10 @@ bool SingleChildRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   return true;
 }
 
-bool ByTermsRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+bool ByTermsRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
+  if (ctx.scorer != nullptr) {
+    return false;
+  }
   auto& node = sdb::basics::downCast<BooleanFilter>(*slot);
   if (node.size() < 2) {
     return false;

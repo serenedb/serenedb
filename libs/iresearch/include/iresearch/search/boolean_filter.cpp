@@ -40,22 +40,12 @@ bool BooleanFilter::equals(const Filter& rhs) const noexcept {
   });
 }
 
-Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx) const {
-  SDB_ASSERT(!_filters.empty());
-
-  return PrepareBoolean(_filters, ctx);
-}
-
 Filter::Query::ptr And::PrepareBoolean(std::span<const Filter::ptr> filters,
                                        const PrepareContext& ctx) const {
-  SDB_ASSERT(!filters.empty());
+  SDB_ASSERT(filters.size() > 1);
 
   PrepareContext sub_ctx = ctx;
   sub_ctx.boost *= Boost();
-
-  if (1 == filters.size()) {
-    return filters.front()->prepare(sub_ctx);
-  }
 
   BooleanQuery::queries_t queries{{sub_ctx.memory}};
   queries.reserve(filters.size());
@@ -68,25 +58,21 @@ Filter::Query::ptr And::PrepareBoolean(std::span<const Filter::ptr> filters,
 }
 
 Filter::Query::ptr And::prepare(const PrepareContext& ctx) const {
-  return BooleanFilter::PrepareImpl(ctx);
+  return PrepareBoolean(_filters, ctx);
 }
 
 Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
   SDB_ASSERT(_min_match_count != 0);
-  return BooleanFilter::PrepareImpl(ctx);
+  return PrepareBoolean(_filters, ctx);
 }
 
 Filter::Query::ptr Or::PrepareBoolean(std::span<const Filter::ptr> filters,
                                       const PrepareContext& ctx) const {
-  SDB_ASSERT(!filters.empty());
   SDB_ASSERT(_min_match_count != 0);
   SDB_ASSERT(_min_match_count <= filters.size());
+  SDB_ASSERT(filters.size() > 1);
 
   const PrepareContext sub_ctx = ctx.Boost(Boost());
-
-  if (filters.size() == 1) {
-    return filters.front()->prepare(sub_ctx);
-  }
 
   BooleanQuery::queries_t queries{{sub_ctx.memory}};
   queries.reserve(filters.size());
@@ -108,11 +94,7 @@ Filter::Query::ptr Or::PrepareBoolean(std::span<const Filter::ptr> filters,
 
 Filter::Query::ptr Exclusion::prepare(const PrepareContext& ctx) const {
   const PrepareContext sub_ctx = ctx.Boost(Boost());
-
-  if (_exclude == nullptr) {
-    SDB_ASSERT(_include != nullptr);
-    return _include->prepare(sub_ctx);
-  }
+  SDB_ASSERT(_exclude != nullptr);
 
   return PrepareExclusion(sub_ctx, _include.get(), _exclude.get());
 }

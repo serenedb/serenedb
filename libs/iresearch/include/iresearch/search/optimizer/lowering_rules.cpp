@@ -103,9 +103,7 @@ bool EditDistanceLowerRule::Apply(Filter::ptr& slot,
 }
 
 bool PhraseLowerRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
-  return sdb::basics::downCast<ByPhrase>(*slot)
-    .mutable_options()
-    ->LowerWildcardParts();
+  return sdb::basics::downCast<ByPhrase>(*slot).mutable_options()->LowerParts();
 }
 
 bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,

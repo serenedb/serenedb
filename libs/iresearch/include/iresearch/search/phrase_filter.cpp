@@ -493,7 +493,7 @@ Filter::Query::ptr ByPhrase::Prepare(const PrepareContext& ctx,
   return VariadicPrepareCollect(ctx, id, options);
 }
 
-bool ByPhraseOptions::LowerWildcardParts() {
+bool ByPhraseOptions::LowerParts() {
   bool changed = false;
   for (auto& info : _phrase) {
     if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {

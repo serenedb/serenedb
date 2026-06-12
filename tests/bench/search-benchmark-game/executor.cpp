@@ -26,6 +26,7 @@
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/store/store_utils.hpp>
 
 #include "basics/duckdb_engine.h"
@@ -95,18 +96,12 @@ irs::Filter::ptr Executor::ParseFilter(std::string_view str) {
   if (!r.ok()) {
     return {};
   }
-  auto& opt = root->GetOptional();
-  auto& req = root->GetRequired();
-  if (req.empty() && opt.empty()) {
+  if (root->empty()) {
     return {};
   }
-  if (opt.empty()) {
-    return req.size() == 1 ? req.PopBack() : std::move(root->RequiredSlot());
-  }
-  if (req.empty()) {
-    return opt.size() == 1 ? opt.PopBack() : std::move(root->OptionalSlot());
-  }
-  return root;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scorer = _scorer_ptr});
+  return filter;
 }
 
 }  // namespace bench

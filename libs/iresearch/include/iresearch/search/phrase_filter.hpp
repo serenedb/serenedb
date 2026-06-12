@@ -93,7 +93,7 @@ class ByPhraseOptions {
     return _phrase == rhs._phrase;
   }
 
-  bool LowerWildcardParts();
+  bool LowerParts();
 
   // Clear phrase contents
   void clear() noexcept {

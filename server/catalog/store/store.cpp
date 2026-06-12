@@ -36,6 +36,7 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/column_definition.hpp>
+#include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
@@ -154,9 +155,12 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
     def.columns.push_back({std::string{col.GetName()}, col.type});
   }
   for (const auto& constraint : table.CheckConstraints()) {
-    if (auto idx = constraint.IsNotNull(cols);
-        idx && mirror_pos[*idx] != SIZE_MAX) {
-      def.not_null.push_back(mirror_pos[*idx]);
+    if (auto idx = constraint.IsNotNull(cols)) {
+      if (mirror_pos[*idx] != SIZE_MAX) {
+        def.not_null.push_back(mirror_pos[*idx]);
+      }
+    } else if (constraint.expr && constraint.expr->HasExpr()) {
+      def.checks.push_back(constraint.expr->GetExpr().Copy());
     }
   }
   auto names_for = [&](std::span<const Column::Id> ids,
@@ -471,6 +475,10 @@ Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
       }
       info->constraints.push_back(
         duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(names), false));
+    }
+    for (const auto& check : def.checks) {
+      info->constraints.push_back(
+        duckdb::make_uniq<duckdb::CheckConstraint>(check->Copy()));
     }
     auto& context = *_conn->context;
     auto& catalog =

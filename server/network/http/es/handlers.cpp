@@ -98,16 +98,52 @@ int64_t TookMs(std::chrono::steady_clock::time_point start) {
     .count();
 }
 
-// POST|PUT /{index}/_bulk; bare /_bulk has no default index and is rejected
-// (per-line _index routing is not supported).
+// The official clients post to bare /_bulk and route via per-line _index;
+// peek the FIRST action line for it (es_bulk enforces that every line names
+// the same index — multi-index bulks are not supported).
+std::string FirstActionIndex(std::string_view body) {
+  const auto line = body.substr(0, body.find('\n'));
+  try {
+    simdjson::padded_string padded{line};
+    simdjson::ondemand::parser parser;
+    simdjson::ondemand::document doc;
+    if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+      return {};
+    }
+    for (auto action : doc.get_object()) {
+      for (auto param : action.value().get_object()) {
+        std::string_view key;
+        if (param.unescaped_key().get(key) != simdjson::SUCCESS) {
+          return {};
+        }
+        if (key == "_index") {
+          std::string_view index;
+          if (param.value().get_string().get(index) == simdjson::SUCCESS) {
+            return std::string{index};
+          }
+          return {};
+        }
+      }
+    }
+  } catch (const std::exception&) {
+  }
+  return {};
+}
+
+// POST|PUT [/{index}]/_bulk
 class BulkHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
                           http::HttpResponseWriter& writer) override {
-    const auto index = request.Param("index");
+    auto body = FlattenBody(request.body);
+    std::string index{request.Param("index")};
+    if (index.empty()) {
+      index = FirstActionIndex(body);
+    }
     if (index.empty()) {
       WriteError(writer, 400, "illegal_argument_exception",
-                 "an index is required in the request URL");
+                 "an index is required in the request URL or in the action "
+                 "metadata");
       return yaclib::MakeFuture();
     }
     const auto start = std::chrono::steady_clock::now();
@@ -122,7 +158,7 @@ class BulkHandler final : public HttpHandler {
 
     const auto sql = absl::StrCat(
       "INSERT INTO \"es\".", SqlIdentifier(index), " SELECT * FROM es_bulk(",
-      SqlLiteral(index), ", ", SqlLiteral(FlattenBody(request.body)), ")");
+      SqlLiteral(index), ", ", SqlLiteral(body), ")");
     auto result = conn.Query(sql);
     if (result->HasError()) {
       WriteSqlError(writer, result->GetErrorObject(), index);
@@ -310,6 +346,9 @@ class SearchHandler final : public HttpHandler {
     }
 
     const auto relation = SearchRelation(index, spec);
+    // Relevance order: real BM25 over the index scan (pushes TopK down);
+    // explicit field sorts render null scores like ES.
+    const bool relevance = spec.uses_match && spec.order_by.empty();
     std::string sql = "SELECT \"_id\"";
     if (spec.include_source) {
       absl::StrAppend(&sql, ", \"_source\"");
@@ -318,11 +357,16 @@ class SearchHandler final : public HttpHandler {
     for (const auto& field : spec.sort_fields) {
       absl::StrAppend(&sql, ", ", SqlIdentifier(field));
     }
-    absl::StrAppend(&sql, " FROM ", relation);
+    if (relevance) {
+      absl::StrAppend(&sql, ", BM25(t.tableoid) AS \"_score\"");
+    }
+    absl::StrAppend(&sql, " FROM ", relation, " AS t");
     if (!spec.where.empty()) {
       absl::StrAppend(&sql, " WHERE ", spec.where);
     }
-    if (!spec.order_by.empty()) {
+    if (relevance) {
+      absl::StrAppend(&sql, " ORDER BY \"_score\" DESC, \"_id\"");
+    } else if (!spec.order_by.empty()) {
       absl::StrAppend(&sql, " ORDER BY ", spec.order_by);
     }
     absl::StrAppend(&sql, " LIMIT ", spec.size, " OFFSET ", spec.from);
@@ -349,9 +393,13 @@ class SearchHandler final : public HttpHandler {
       total = count_result->GetValue(0, 0).GetValue<int64_t>();
     }
 
-    // Scores are constant 1.0 until a scorer is wired; field sorts render
-    // null scores like ES.
+    // Filter-only queries score a constant 1.0; field sorts render null
+    // scores like ES.
     const bool scored = spec.order_by.empty();
+    const duckdb::idx_t score_column = sort_base + spec.sort_fields.size();
+    auto score_of = [&](duckdb::idx_t row) {
+      return result->GetValue(score_column, row).GetValue<double>();
+    };
     simdjson::builder::string_builder sb;
     sb.append_raw("{\"took\":");
     sb.append(TookMs(start));
@@ -366,7 +414,13 @@ class SearchHandler final : public HttpHandler {
       sb.append_raw(R"(,"relation":"eq"})");
     }
     sb.append_raw(",\"max_score\":");
-    sb.append_raw(scored && rows > 0 ? "1.0" : "null");
+    if (rows == 0 || !scored) {
+      sb.append_raw("null");
+    } else if (relevance) {
+      sb.append(score_of(0));
+    } else {
+      sb.append_raw("1.0");
+    }
     sb.append_raw(",\"hits\":[");
     for (duckdb::idx_t row = 0; row < rows; ++row) {
       if (row > 0) {
@@ -378,7 +432,13 @@ class SearchHandler final : public HttpHandler {
       sb.escape_and_append_with_quotes(
         std::string_view{duckdb::StringValue::Get(result->GetValue(0, row))});
       sb.append_raw(",\"_score\":");
-      sb.append_raw(scored ? "1.0" : "null");
+      if (!scored) {
+        sb.append_raw("null");
+      } else if (relevance) {
+        sb.append(score_of(row));
+      } else {
+        sb.append_raw("1.0");
+      }
       if (spec.include_source) {
         sb.append_raw(",\"_source\":");
         sb.append_raw(

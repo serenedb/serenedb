@@ -270,6 +270,26 @@ def test_bulk_missing_index(conn):
     assert body["error"]["type"] == "index_not_found_exception"
 
 
+def test_bulk_bare_url_with_line_index(conn, index):
+    """helpers.bulk posts to bare /_bulk and routes via per-line _index."""
+    payload = (
+        '{"index":{"_index":"%s","_id":"li1"}}\n{"year":1}\n'
+        '{"index":{"_index":"%s","_id":"li2"}}\n{"year":2}\n'
+    ) % (index, index)
+    conn.request("POST", "/_bulk", body=payload,
+                 headers={"Content-Type": "application/x-ndjson"})
+    response = conn.getresponse()
+    body = json.loads(response.read())
+    assert response.status == 200, body
+    assert len(body["items"]) == 2
+
+    conn.request("POST", "/_bulk", body='{"index":{}}\n{"f":1}\n')
+    response = conn.getresponse()
+    body = json.loads(response.read())
+    assert response.status == 400
+    assert body["error"]["type"] == "illegal_argument_exception"
+
+
 def test_doc_lifecycle(conn, index):
     doc = {"title": "The Client", "year": 1993, "rating": None}
     status, body = _request(conn, "PUT", f"/{index}/_doc/4", doc)
@@ -419,11 +439,16 @@ def test_search_match_all_defaults(conn, corpus):
 
 
 def test_search_match(conn, corpus):
-    # operator=or, analysis is case-insensitive
+    # operator=or, analysis is case-insensitive; hits carry real BM25 scores
+    # in descending order
     status, body = _search(conn, corpus,
                            {"query": {"match": {"title": "QUICK dog"}}})
     assert status == 200
     assert body["hits"]["total"]["value"] == 3
+    scores = [h["_score"] for h in body["hits"]["hits"]]
+    assert all(s > 0 for s in scores)
+    assert scores == sorted(scores, reverse=True)
+    assert body["hits"]["max_score"] == scores[0]
 
     status, body = _search(
         conn, corpus,

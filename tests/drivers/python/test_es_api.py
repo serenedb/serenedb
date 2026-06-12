@@ -404,11 +404,13 @@ def test_product_header(conn, index):
 SEARCH_DOCS = (
     '{"index":{"_id":"1"}}\n'
     '{"title":"The Quick Brown Fox","author":"aesop","year":1900,'
-    '"rating":4.5}\n'
+    '"rating":4.5,"published":"1992-02-01T00:00:00Z"}\n'
     '{"index":{"_id":"2"}}\n'
-    '{"title":"The lazy dog sleeps","author":"aesop","year":1950}\n'
+    '{"title":"The lazy dog sleeps","author":"aesop","year":1950,'
+    '"published":"1992-02-15T00:00:00Z"}\n'
     '{"index":{"_id":"3"}}\n'
-    '{"title":"quick thinking saves the day","author":"verne","year":1950}\n'
+    '{"title":"quick thinking saves the day","author":"verne","year":1950,'
+    '"published":"1993-05-01T00:00:00Z"}\n'
 )
 
 
@@ -534,7 +536,7 @@ def test_search_errors(conn, corpus):
                                         {"term": {"author": "aesop"}}]}}},
          "illegal_argument_exception"),
         ({"size": 20000}, "illegal_argument_exception"),
-        ({"aggs": {}}, "illegal_argument_exception"),
+        ({"highlight": {}}, "illegal_argument_exception"),
         ({"query": {"term": {"missing_field": "x"}}},
          "query_shard_exception"),
     ]
@@ -580,3 +582,82 @@ def test_search_match_phrase(conn, corpus):
     status, body = _search(
         conn, corpus, {"query": {"match_phrase": {"title": "brown quick"}}})
     assert body["hits"]["total"]["value"] == 0
+
+
+# --- aggregations + scroll ---------------------------------------------------
+
+
+def test_aggregations(conn, corpus):
+    status, body = _search(conn, corpus, {"size": 0, "aggs": {
+        "by_author": {"terms": {"field": "author", "size": 1}},
+        "by_month": {"date_histogram": {"field": "published",
+                                        "calendar_interval": "month"}},
+        "min_year": {"min": {"field": "year"}},
+        "avg_year": {"avg": {"field": "year"}},
+        "authors": {"cardinality": {"field": "author"}},
+    }})
+    assert status == 200
+    assert body["hits"]["hits"] == []
+    aggs = body["aggregations"]
+    assert aggs["by_author"]["buckets"] == [{"key": "aesop", "doc_count": 2}]
+    assert aggs["by_author"]["sum_other_doc_count"] == 1
+    months = aggs["by_month"]["buckets"]
+    assert [(m["key_as_string"], m["doc_count"]) for m in months] == [
+        ("1992-02-01T00:00:00.000Z", 2),
+        ("1993-05-01T00:00:00.000Z", 1),
+    ]
+    assert aggs["min_year"]["value"] == 1900
+    assert aggs["avg_year"]["value"] == (1900 + 1950 + 1950) / 3
+    assert aggs["authors"]["value"] == 2
+
+    # aggs scoped by the query
+    status, body = _search(conn, corpus, {
+        "size": 0, "query": {"match": {"title": "quick"}},
+        "aggs": {"by_author": {"terms": {"field": "author"}}}})
+    buckets = body["aggregations"]["by_author"]["buckets"]
+    assert {b["key"]: b["doc_count"] for b in buckets} == \
+        {"aesop": 1, "verne": 1}
+
+    status, body = _search(conn, corpus, {"size": 0, "aggs": {
+        "nested": {"terms": {"field": "author"},
+                   "aggs": {"x": {"avg": {"field": "year"}}}}}})
+    assert status == 400
+    assert body["error"]["type"] == "illegal_argument_exception"
+
+
+def test_scroll(conn, corpus):
+    status, body = _request(
+        conn, "GET", f"/{corpus}/_search?scroll=10s&sort=_doc&size=2")
+    assert status == 200
+    assert body["hits"]["total"] == {"value": 3, "relation": "eq"}
+    assert body["hits"]["max_score"] is None
+    ids = [h["_id"] for h in body["hits"]["hits"]]
+    scroll_id = body["_scroll_id"]
+
+    while True:
+        status, body = _request(conn, "POST", "/_search/scroll",
+                                {"scroll": "10s", "scroll_id": scroll_id})
+        assert status == 200
+        page = [h["_id"] for h in body["hits"]["hits"]]
+        if not page:
+            break
+        ids += page
+        scroll_id = body["_scroll_id"]
+    assert sorted(ids) == ["1", "2", "3"]
+
+    status, body = _request(conn, "DELETE", "/_search/scroll",
+                            {"scroll_id": [scroll_id]})
+    assert status == 200
+    assert body["succeeded"] is True
+
+    status, body = _request(conn, "POST", "/_search/scroll",
+                            {"scroll_id": "bogus"})
+    assert status == 404
+    assert body["error"]["type"] == "search_context_missing_exception"
+
+    # scroll with a query only pages the matching docs
+    status, body = _request(
+        conn, "POST", f"/{corpus}/_search?scroll=10s&size=1",
+        {"query": {"match": {"title": "quick"}}})
+    assert body["hits"]["total"]["value"] == 2
+    assert len(body["hits"]["hits"]) == 1

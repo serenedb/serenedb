@@ -22,6 +22,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/escaping.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
@@ -330,6 +331,300 @@ bool IsIndexPattern(std::string_view index) {
   return index.find('*') != std::string_view::npos;
 }
 
+// --- scroll: a stateless keyset cursor -------------------------------------
+// The scroll id is base64url of {index, raw query JSON, last "_id", size,
+// exact total, flags}. Pages re-translate the embedded DSL (the id never
+// carries SQL) and continue WHERE "_id" > cursor ORDER BY "_id". Unlike a
+// real ES scroll context there is no frozen snapshot: rows written behind
+// the cursor are skipped, ahead of it become visible.
+struct ScrollState {
+  std::string index;
+  std::string query;
+  std::string last_id;
+  int64_t size = 0;
+  int64_t total = 0;
+  bool include_source = true;
+  bool done = false;
+};
+
+std::string EncodeScrollId(const ScrollState& state) {
+  simdjson::builder::string_builder sb;
+  sb.append_raw(R"({"i":)");
+  sb.escape_and_append_with_quotes(std::string_view{state.index});
+  sb.append_raw(R"(,"q":)");
+  sb.escape_and_append_with_quotes(std::string_view{state.query});
+  sb.append_raw(R"(,"a":)");
+  sb.escape_and_append_with_quotes(std::string_view{state.last_id});
+  sb.append_raw(R"(,"s":)");
+  sb.append(state.size);
+  sb.append_raw(R"(,"t":)");
+  sb.append(state.total);
+  sb.append_raw(R"(,"src":)");
+  sb.append_raw(state.include_source ? "true" : "false");
+  sb.append_raw(R"(,"d":)");
+  sb.append_raw(state.done ? "true" : "false");
+  sb.append_raw("}");
+  return absl::WebSafeBase64Escape(std::string_view{sb.view().value()});
+}
+
+bool DecodeScrollId(std::string_view id, ScrollState& state) {
+  std::string json;
+  if (!absl::WebSafeBase64Unescape(id, &json)) {
+    return false;
+  }
+  try {
+    simdjson::padded_string padded{json};
+    simdjson::ondemand::parser parser;
+    simdjson::ondemand::document doc;
+    if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+      return false;
+    }
+    simdjson::ondemand::object object;
+    if (doc.get_object().get(object) != simdjson::SUCCESS) {
+      return false;
+    }
+    for (auto field : object) {
+      std::string_view key;
+      if (field.unescaped_key().get(key) != simdjson::SUCCESS) {
+        return false;
+      }
+      auto value = field.value();
+      bool ok = true;
+      if (key == "i") {
+        std::string_view v;
+        ok = value.get_string().get(v) == simdjson::SUCCESS;
+        state.index = v;
+      } else if (key == "q") {
+        std::string_view v;
+        ok = value.get_string().get(v) == simdjson::SUCCESS;
+        state.query = v;
+      } else if (key == "a") {
+        std::string_view v;
+        ok = value.get_string().get(v) == simdjson::SUCCESS;
+        state.last_id = v;
+      } else if (key == "s") {
+        ok = value.get_int64().get(state.size) == simdjson::SUCCESS;
+      } else if (key == "t") {
+        ok = value.get_int64().get(state.total) == simdjson::SUCCESS;
+      } else if (key == "src") {
+        ok = value.get_bool().get(state.include_source) == simdjson::SUCCESS;
+      } else if (key == "d") {
+        ok = value.get_bool().get(state.done) == simdjson::SUCCESS;
+      }
+      if (!ok) {
+        return false;
+      }
+    }
+  } catch (const std::exception&) {
+    return false;
+  }
+  return !state.index.empty() && state.size >= 0;
+}
+
+// One scroll page; rows == nullptr renders the empty terminal page. Advances
+// the cursor and embeds the refreshed id.
+void WriteScrollPage(http::HttpResponseWriter& writer, ScrollState& state,
+                     duckdb::MaterializedQueryResult* result, int64_t took) {
+  const auto rows = result ? result->RowCount() : 0;
+  if (result) {
+    if (static_cast<int64_t>(rows) < state.size) {
+      state.done = true;
+    }
+    if (rows > 0) {
+      state.last_id =
+        duckdb::StringValue::Get(result->GetValue(0, rows - 1));
+    }
+  }
+  simdjson::builder::string_builder sb;
+  sb.append_raw("{\"_scroll_id\":");
+  sb.escape_and_append_with_quotes(std::string_view{EncodeScrollId(state)});
+  sb.append_raw(",\"took\":");
+  sb.append(took);
+  sb.append_raw(R"(,"timed_out":false,"_shards":{"total":1,"successful":1,)"
+                R"("skipped":0,"failed":0},"hits":{"total":{"value":)");
+  sb.append(state.total);
+  sb.append_raw(R"(,"relation":"eq"},"max_score":null,"hits":[)");
+  for (duckdb::idx_t row = 0; row < rows; ++row) {
+    if (row > 0) {
+      sb.append_raw(",");
+    }
+    sb.append_raw(R"({"_index":)");
+    sb.escape_and_append_with_quotes(std::string_view{state.index});
+    sb.append_raw(R"(,"_id":)");
+    sb.escape_and_append_with_quotes(
+      std::string_view{duckdb::StringValue::Get(result->GetValue(0, row))});
+    sb.append_raw(",\"_score\":null");
+    if (state.include_source) {
+      sb.append_raw(",\"_source\":");
+      sb.append_raw(
+        std::string_view{duckdb::StringValue::Get(result->GetValue(1, row))});
+    }
+    sb.append_raw("}");
+  }
+  sb.append_raw("]}}");
+  WriteJson(writer, 200, std::string_view{sb.view().value()});
+}
+
+// The keyset page statement shared by the initial scroll search and
+// continuations.
+std::string ScrollPageSql(const std::string& relation,
+                          const SearchRequest& spec,
+                          const ScrollState& state) {
+  std::string sql = "SELECT \"_id\"";
+  if (state.include_source) {
+    absl::StrAppend(&sql, ", \"_source\"");
+  }
+  absl::StrAppend(&sql, " FROM ", relation, " WHERE ",
+                  spec.where.empty() ? "TRUE" : spec.where);
+  if (!state.last_id.empty()) {
+    absl::StrAppend(&sql, " AND \"_id\" > ", SqlLiteral(state.last_id));
+  }
+  absl::StrAppend(&sql, " ORDER BY \"_id\" LIMIT ", state.size);
+  return sql;
+}
+
+// Appends `"name":{...}` to the aggregations fragment; each aggregation is
+// one GROUP-BY/aggregate statement over the query's relation and WHERE.
+// false = the error response is already written.
+bool RunAggregation(RequestContext& ctx, const Aggregation& agg,
+                    const std::string& relation, const std::string& where,
+                    std::string_view index,
+                    simdjson::builder::string_builder& sb,
+                    http::HttpResponseWriter& writer) {
+  const auto field = SqlIdentifier(agg.field);
+  const std::string_view filter =
+    where.empty() ? std::string_view{"TRUE"} : std::string_view{where};
+  std::string sql;
+  switch (agg.kind) {
+    case Aggregation::Kind::kTerms:
+      sql = absl::StrCat("SELECT ", field,
+                         " AS k, count(*) AS c, sum(count(*)) OVER () AS t "
+                         "FROM ",
+                         relation, " WHERE (", filter, ") AND ", field,
+                         " IS NOT NULL GROUP BY 1 ORDER BY c DESC, k ASC "
+                         "LIMIT ",
+                         agg.size);
+      break;
+    case Aggregation::Kind::kDateHistogram:
+      // agg.interval comes from the calendar_interval whitelist.
+      sql = absl::StrCat(
+        "SELECT epoch_ms(date_trunc('", agg.interval, "', ", field,
+        ")) AS k, strftime(date_trunc('", agg.interval, "', ", field,
+        "), '%Y-%m-%dT%H:%M:%S.000Z') AS ks, count(*) AS c FROM ", relation,
+        " WHERE (", filter, ") AND ", field,
+        " IS NOT NULL GROUP BY 1, 2 ORDER BY 1");
+      break;
+    default: {
+      std::string_view fn;
+      switch (agg.kind) {
+        case Aggregation::Kind::kMin:
+          fn = "min";
+          break;
+        case Aggregation::Kind::kMax:
+          fn = "max";
+          break;
+        case Aggregation::Kind::kAvg:
+          fn = "avg";
+          break;
+        case Aggregation::Kind::kSum:
+          fn = "sum";
+          break;
+        case Aggregation::Kind::kValueCount:
+          fn = "count";
+          break;
+        default:
+          fn = "approx_count_distinct";
+          break;
+      }
+      sql = absl::StrCat("SELECT ", fn, "(", field, ") FROM ", relation,
+                         " WHERE ", filter);
+      break;
+    }
+  }
+
+  auto result = RunSql(ctx, sql, writer, index);
+  if (!result) {
+    return false;
+  }
+  sb.escape_and_append_with_quotes(std::string_view{agg.name});
+  sb.append_raw(":");
+  switch (agg.kind) {
+    case Aggregation::Kind::kTerms: {
+      const auto rows = result->RowCount();
+      int64_t shown = 0;
+      const int64_t all =
+        rows > 0 ? result->GetValue(2, 0).GetValue<int64_t>() : 0;
+      std::string buckets;
+      simdjson::builder::string_builder bucket_sb;
+      for (duckdb::idx_t row = 0; row < rows; ++row) {
+        if (row > 0) {
+          bucket_sb.append_raw(",");
+        }
+        bucket_sb.append_raw(R"({"key":)");
+        AppendSortValue(bucket_sb, result->GetValue(0, row));
+        bucket_sb.append_raw(R"(,"doc_count":)");
+        const auto count = result->GetValue(1, row).GetValue<int64_t>();
+        shown += count;
+        bucket_sb.append(count);
+        bucket_sb.append_raw("}");
+      }
+      sb.append_raw(R"({"doc_count_error_upper_bound":0,)"
+                    R"("sum_other_doc_count":)");
+      sb.append(all - shown);
+      sb.append_raw(R"(,"buckets":[)");
+      sb.append_raw(std::string_view{bucket_sb.view().value()});
+      sb.append_raw("]}");
+      return true;
+    }
+    case Aggregation::Kind::kDateHistogram: {
+      sb.append_raw(R"({"buckets":[)");
+      for (duckdb::idx_t row = 0; row < result->RowCount(); ++row) {
+        if (row > 0) {
+          sb.append_raw(",");
+        }
+        sb.append_raw(R"({"key_as_string":)");
+        sb.escape_and_append_with_quotes(std::string_view{
+          duckdb::StringValue::Get(result->GetValue(1, row))});
+        sb.append_raw(R"(,"key":)");
+        sb.append(result->GetValue(0, row).GetValue<int64_t>());
+        sb.append_raw(R"(,"doc_count":)");
+        sb.append(result->GetValue(2, row).GetValue<int64_t>());
+        sb.append_raw("}");
+      }
+      sb.append_raw("]}");
+      return true;
+    }
+    default: {
+      const auto value = result->GetValue(0, 0);
+      sb.append_raw(R"({"value":)");
+      if (value.IsNull()) {
+        sb.append_raw("null");
+      } else if (agg.kind == Aggregation::Kind::kValueCount ||
+                 agg.kind == Aggregation::Kind::kCardinality) {
+        sb.append(value.GetValue<int64_t>());
+      } else if (agg.kind == Aggregation::Kind::kAvg ||
+                 agg.kind == Aggregation::Kind::kSum) {
+        sb.append(value.GetValue<double>());
+      } else {
+        AppendSortValue(sb, value);
+      }
+      sb.append_raw("}");
+      return true;
+    }
+  }
+}
+
+// ES sends scroll/sort as URL params on the initial scroll search; only the
+// _doc order is supported (the cursor is the "_id" keyset).
+bool WantsScroll(const HttpRequest& request) {
+  for (const auto& [key, value] : request.query) {
+    if (key == "scroll") {
+      return true;
+    }
+  }
+  return false;
+}
+
 // GET|POST /{index}/_search
 class SearchHandler final : public HttpHandler {
  public:
@@ -358,6 +653,10 @@ class SearchHandler final : public HttpHandler {
     // The body overrides URL params; no body = match_all.
     if (!ParseSearchBody(FlattenBody(request.body), spec, writer)) {
       return yaclib::MakeFuture();
+    }
+
+    if (WantsScroll(request)) {
+      return HandleScroll(ctx, request, writer, index, spec, start);
     }
 
     const auto relation = SearchRelation(index, spec);
@@ -471,8 +770,155 @@ class SearchHandler final : public HttpHandler {
       }
       sb.append_raw("}");
     }
-    sb.append_raw("]}}");
+    sb.append_raw("]}");
+    if (!spec.aggs.empty()) {
+      sb.append_raw(",\"aggregations\":{");
+      for (size_t i = 0; i < spec.aggs.size(); ++i) {
+        if (i > 0) {
+          sb.append_raw(",");
+        }
+        if (!RunAggregation(ctx, spec.aggs[i], relation, spec.where, index,
+                            sb, writer)) {
+          return yaclib::MakeFuture();
+        }
+      }
+      sb.append_raw("}");
+    }
+    sb.append_raw("}");
     WriteJson(writer, 200, std::string_view{sb.view().value()});
+    return yaclib::MakeFuture();
+  }
+
+ private:
+  // Initial scroll page: exact total once (it rides in the scroll id), then
+  // the first keyset page.
+  yaclib::Future<> HandleScroll(RequestContext& ctx,
+                                const HttpRequest& request,
+                                http::HttpResponseWriter& writer,
+                                std::string_view index, SearchRequest& spec,
+                                std::chrono::steady_clock::time_point start) {
+    for (const auto& [key, value] : request.query) {
+      if (key == "sort" && value != "_doc" && value != "_doc:asc") {
+        WriteError(writer, 400, "illegal_argument_exception",
+                   "scroll supports only the _doc sort order yet");
+        return yaclib::MakeFuture();
+      }
+    }
+    if (!spec.sort_fields.empty() || !spec.aggs.empty() || spec.from != 0) {
+      WriteError(writer, 400, "illegal_argument_exception",
+                 "scroll supports only plain _doc-ordered requests yet");
+      return yaclib::MakeFuture();
+    }
+
+    const auto relation = SearchRelation(index, spec);
+    std::string count_sql = absl::StrCat("SELECT count(*) FROM ", relation);
+    if (!spec.where.empty()) {
+      absl::StrAppend(&count_sql, " WHERE ", spec.where);
+    }
+    auto count_result = RunSql(ctx, count_sql, writer, index);
+    if (!count_result) {
+      return yaclib::MakeFuture();
+    }
+
+    ScrollState state{
+      .index = std::string{index},
+      .query = std::move(spec.query_raw),
+      .size = spec.size,
+      .total = count_result->GetValue(0, 0).GetValue<int64_t>(),
+      .include_source = spec.include_source,
+    };
+    auto result = RunSql(ctx, ScrollPageSql(relation, spec, state), writer,
+                         index);
+    if (!result) {
+      return yaclib::MakeFuture();
+    }
+    WriteScrollPage(writer, state, result.get(), TookMs(start));
+    return yaclib::MakeFuture();
+  }
+};
+
+// GET|POST /_search/scroll: decode the cursor, re-translate the embedded
+// query, fetch the next keyset page.
+class ScrollHandler final : public HttpHandler {
+ public:
+  yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
+                          http::HttpResponseWriter& writer) override {
+    const auto start = std::chrono::steady_clock::now();
+    std::string scroll_id{request.Query("scroll_id")};
+    if (scroll_id.empty() &&
+        !ParseScrollIdBody(FlattenBody(request.body), scroll_id)) {
+      WriteError(writer, 400, "illegal_argument_exception",
+                 "scroll_id is required");
+      return yaclib::MakeFuture();
+    }
+    ScrollState state;
+    if (!DecodeScrollId(scroll_id, state)) {
+      WriteError(writer, 404, "search_context_missing_exception",
+                 "No search context found for the given scroll id");
+      return yaclib::MakeFuture();
+    }
+    if (state.done) {
+      WriteScrollPage(writer, state, nullptr, TookMs(start));
+      return yaclib::MakeFuture();
+    }
+    SearchRequest spec;
+    if (!TranslateStoredQuery(state.query, spec, writer)) {
+      return yaclib::MakeFuture();
+    }
+    spec.include_source = state.include_source;
+    auto result = RunSql(
+      ctx, ScrollPageSql(SearchRelation(state.index, spec), spec, state),
+      writer, state.index);
+    if (!result) {
+      return yaclib::MakeFuture();
+    }
+    WriteScrollPage(writer, state, result.get(), TookMs(start));
+    return yaclib::MakeFuture();
+  }
+
+ private:
+  static bool ParseScrollIdBody(const std::string& body,
+                                std::string& scroll_id) {
+    if (body.empty()) {
+      return false;
+    }
+    try {
+      simdjson::padded_string padded{body};
+      simdjson::ondemand::parser parser;
+      simdjson::ondemand::document doc;
+      if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+        return false;
+      }
+      simdjson::ondemand::object object;
+      if (doc.get_object().get(object) != simdjson::SUCCESS) {
+        return false;
+      }
+      for (auto field : object) {
+        std::string_view key;
+        if (field.unescaped_key().get(key) != simdjson::SUCCESS) {
+          return false;
+        }
+        if (key == "scroll_id") {
+          std::string_view value;
+          if (field.value().get_string().get(value) != simdjson::SUCCESS) {
+            return false;
+          }
+          scroll_id = value;
+        }
+      }
+    } catch (const std::exception&) {
+      return false;
+    }
+    return !scroll_id.empty();
+  }
+};
+
+// DELETE /_search/scroll: nothing server-side to free.
+class ClearScrollHandler final : public HttpHandler {
+ public:
+  yaclib::Future<> Handle(RequestContext&, const HttpRequest&,
+                          http::HttpResponseWriter& writer) override {
+    WriteJson(writer, 200, R"({"succeeded":true,"num_freed":1})");
     return yaclib::MakeFuture();
   }
 };
@@ -772,6 +1218,12 @@ void Register(HttpRouter& router) {
              std::make_unique<SearchHandler>());
   router.Add(HttpMethod::Post, "/:index/_search",
              std::make_unique<SearchHandler>());
+  router.Add(HttpMethod::Get, "/_search/scroll",
+             std::make_unique<ScrollHandler>());
+  router.Add(HttpMethod::Post, "/_search/scroll",
+             std::make_unique<ScrollHandler>());
+  router.Add(HttpMethod::Delete, "/_search/scroll",
+             std::make_unique<ClearScrollHandler>());
 }
 
 }  // namespace sdb::network::http::es

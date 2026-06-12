@@ -28,10 +28,32 @@
 
 namespace sdb::network::http::es {
 
+// One aggregation request; sub-aggregations are not supported.
+struct Aggregation {
+  enum class Kind {
+    kTerms,
+    kDateHistogram,
+    kMin,
+    kMax,
+    kAvg,
+    kSum,
+    kValueCount,
+    kCardinality,
+  };
+  std::string name;
+  Kind kind;
+  std::string field;
+  // date_histogram: the date_trunc unit resolved from calendar_interval.
+  std::string interval;
+  // terms only.
+  int64_t size = 10;
+};
+
 // A parsed _search/_count request body, translated to SQL fragments. The
-// query subset: match_all, match (operator and/or), term, range, bool
-// (must/filter/should/must_not, minimum_should_match 0/1); plus size, from,
-// sort and boolean _source.
+// query subset: match_all, match (operator and/or), match_phrase, term,
+// range, bool (must/filter/should/must_not, minimum_should_match 0/1); plus
+// size, from, sort, boolean _source and flat aggs (terms, date_histogram,
+// min/max/avg/sum/value_count/cardinality).
 //
 // match clauses become @@ ts_tokenize/plainto_tsquery predicates, which only
 // plan on a relation with the inverted index — the caller must target
@@ -41,9 +63,13 @@ namespace sdb::network::http::es {
 struct SearchRequest {
   std::string where;     // translated query, empty = match_all
   std::string order_by;  // full ORDER BY clause, empty = none
+  // The raw "query" JSON, byte-exact; a scroll id carries it so every page
+  // re-translates instead of round-tripping SQL through the client.
+  std::string query_raw;
   // Sort columns, in order; also appended to the SELECT list so the handler
   // can emit per-hit "sort" arrays.
   std::vector<std::string> sort_fields;
+  std::vector<Aggregation> aggs;
   int64_t size = 10;
   int64_t from = 0;
   bool include_source = true;
@@ -54,6 +80,11 @@ struct SearchRequest {
 // envelope and returns false.
 bool ParseSearchBody(std::string_view body, SearchRequest& out,
                      HttpResponseWriter& writer);
+
+// Translates a query container captured in query_raw (scroll continuation);
+// '' = match_all. Fills where/uses_match only.
+bool TranslateStoredQuery(std::string_view query_json, SearchRequest& out,
+                          HttpResponseWriter& writer);
 
 // Parses a _count body: only {"query": {...}} (or nothing) is legal; fills
 // where/uses_match. On failure writes the error envelope and returns false.

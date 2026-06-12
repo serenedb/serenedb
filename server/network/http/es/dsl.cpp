@@ -443,6 +443,99 @@ void TranslateSort(JsonValue value, SearchRequest& out) {
   }
 }
 
+// ES calendar_interval (long and short forms) -> date_trunc unit.
+std::string_view TruncUnit(std::string_view interval) {
+  if (interval == "minute" || interval == "1m") {
+    return "minute";
+  }
+  if (interval == "hour" || interval == "1h") {
+    return "hour";
+  }
+  if (interval == "day" || interval == "1d") {
+    return "day";
+  }
+  if (interval == "week" || interval == "1w") {
+    return "week";
+  }
+  if (interval == "month" || interval == "1M") {
+    return "month";
+  }
+  if (interval == "quarter" || interval == "1q") {
+    return "quarter";
+  }
+  if (interval == "year" || interval == "1y") {
+    return "year";
+  }
+  Fail(absl::StrCat("calendar_interval [", interval,
+                    "] is not supported yet"));
+}
+
+Aggregation TranslateAggregation(std::string_view name, JsonValue value) {
+  Aggregation agg;
+  agg.name = name;
+  bool has_kind = false;
+  for (auto entry : Object(value, "aggs")) {
+    const auto key = Key(entry);
+    if (key == "aggs" || key == "aggregations") {
+      Fail("sub-aggregations are not supported yet");
+    }
+    if (has_kind) {
+      Fail(absl::StrCat("aggregation [", name,
+                        "] must have exactly one type"));
+    }
+    has_kind = true;
+    if (key == "terms") {
+      agg.kind = Aggregation::Kind::kTerms;
+    } else if (key == "date_histogram") {
+      agg.kind = Aggregation::Kind::kDateHistogram;
+    } else if (key == "min") {
+      agg.kind = Aggregation::Kind::kMin;
+    } else if (key == "max") {
+      agg.kind = Aggregation::Kind::kMax;
+    } else if (key == "avg") {
+      agg.kind = Aggregation::Kind::kAvg;
+    } else if (key == "sum") {
+      agg.kind = Aggregation::Kind::kSum;
+    } else if (key == "value_count") {
+      agg.kind = Aggregation::Kind::kValueCount;
+    } else if (key == "cardinality") {
+      agg.kind = Aggregation::Kind::kCardinality;
+    } else {
+      Fail(absl::StrCat("aggregation type [", key, "] is not supported yet"));
+    }
+    for (auto param : Object(Value(entry), key)) {
+      const auto param_key = Key(param);
+      if (param_key == "field") {
+        agg.field = String(Value(param), "field");
+      } else if (param_key == "calendar_interval" &&
+                 agg.kind == Aggregation::Kind::kDateHistogram) {
+        agg.interval =
+          TruncUnit(String(Value(param), "calendar_interval"));
+      } else if (param_key == "size" &&
+                 agg.kind == Aggregation::Kind::kTerms) {
+        agg.size = Int(Value(param), "size");
+        if (agg.size < 0 || agg.size > 10000) {
+          Fail("[size] must be between 0 and 10000");
+        }
+      } else {
+        Fail(absl::StrCat("[", key, "] parameter [", param_key,
+                          "] is not supported yet"));
+      }
+    }
+  }
+  if (!has_kind) {
+    Fail(absl::StrCat("aggregation [", name, "] must have exactly one type"));
+  }
+  if (agg.field.empty()) {
+    Fail(absl::StrCat("aggregation [", name, "] requires a field"));
+  }
+  if (agg.kind == Aggregation::Kind::kDateHistogram && agg.interval.empty()) {
+    Fail(absl::StrCat("aggregation [", name,
+                      "] requires calendar_interval"));
+  }
+  return agg;
+}
+
 template<typename F>
 bool ParseBody(std::string_view body, HttpResponseWriter& writer, F&& fill) {
   try {
@@ -477,9 +570,29 @@ bool ParseSearchBody(std::string_view body, SearchRequest& out,
     for (auto entry : object) {
       const auto key = Key(entry);
       if (key == "query") {
-        auto clause = TranslateQuery(Value(entry));
+        // Capture the raw container first (for scroll ids), then translate
+        // from the copy: raw_json() consumes the value.
+        auto value = Value(entry);
+        std::string_view raw;
+        if (value.raw_json().get(raw) != simdjson::SUCCESS) {
+          Fail("malformed query");
+        }
+        out.query_raw = raw;
+        simdjson::padded_string padded{out.query_raw};
+        simdjson::ondemand::parser parser;
+        simdjson::ondemand::document doc;
+        JsonValue query;
+        if (parser.iterate(padded).get(doc) != simdjson::SUCCESS ||
+            doc.get_value().get(query) != simdjson::SUCCESS) {
+          Fail("malformed query");
+        }
+        auto clause = TranslateQuery(query);
         out.where = std::move(clause.sql);
         out.uses_match = clause.uses_match;
+      } else if (key == "aggs" || key == "aggregations") {
+        for (auto agg : Object(Value(entry), key)) {
+          out.aggs.push_back(TranslateAggregation(Key(agg), Value(agg)));
+        }
       } else if (key == "size") {
         out.size = Int(Value(entry), "size");
       } else if (key == "from") {
@@ -520,6 +633,35 @@ bool ParseSearchBody(std::string_view body, SearchRequest& out,
     out.where.clear();
   }
   return true;
+}
+
+bool TranslateStoredQuery(std::string_view query_json, SearchRequest& out,
+                          HttpResponseWriter& writer) {
+  if (query_json.empty()) {
+    return true;
+  }
+  try {
+    simdjson::padded_string padded{query_json};
+    simdjson::ondemand::parser parser;
+    simdjson::ondemand::document doc;
+    JsonValue query;
+    if (parser.iterate(padded).get(doc) != simdjson::SUCCESS ||
+        doc.get_value().get(query) != simdjson::SUCCESS) {
+      Fail("malformed scroll id", "search_context_missing_exception");
+    }
+    auto clause = TranslateQuery(query);
+    if (clause.sql != "TRUE") {
+      out.where = std::move(clause.sql);
+    }
+    out.uses_match = clause.uses_match;
+    return true;
+  } catch (const DslError& e) {
+    WriteError(writer, 400, e.type, e.reason);
+    return false;
+  } catch (const std::exception& e) {
+    WriteError(writer, 400, "parsing_exception", e.what());
+    return false;
+  }
 }
 
 bool ParseCountBody(std::string_view body, SearchRequest& out,

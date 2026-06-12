@@ -33,6 +33,8 @@
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -77,6 +79,12 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto& create_info = _info->Base();
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
 
+  if (!table_info.options.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("unrecognized parameter \"",
+                            table_info.options.begin()->first, "\""));
+  }
+
   catalog::CreateTableOptions options;
   options.name = table_info.table;
 
@@ -94,8 +102,6 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   // CTAS has no PK/UNIQUE constraints -- pkColumns stays empty, so the
   // Table constructor wires up a generated PK sequence.
-
-  ApplyColumnModes(options.columns, table_info.options);
 
   auto& catalog_impl = catalog::CatalogFeature::instance().Global();
 

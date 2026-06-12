@@ -69,7 +69,6 @@ namespace {
 void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.column_ids = src.column_ids;
   dst.column_types = src.column_types;
-  dst.is_create_index = src.is_create_index;
   dst.table_entry = src.table_entry;
   dst.entry_kind = src.entry_kind;
   dst.inverted_index = src.inverted_index;

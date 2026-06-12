@@ -1224,8 +1224,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     // Project only what the backfill actually needs: index columns + PK
     // columns (or ROW_ID for generated PK). Replaces the previous
     // "every non-PK column" default which made every CREATE INDEX scan
-    // redundantly read the whole table -- and broke when any of those
-    // columns were sdb_indexonly (no main-storage data to read).
+    // redundantly read the whole table.
     auto projection =
       BuildCreateIndexProjection(sdb_table->Columns(), sdb_table->PKColumns(),
                                  create_index_info->column_ids);
@@ -1243,13 +1242,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         get.types.push_back(duckdb::LogicalType::BIGINT);
       }
     }
-    // Mark the scan as a CREATE INDEX backfill so InitCommonState relaxes
-    // the read-side check on sdb_indexonly columns (the inverted index may
-    // include them as indexed columns, and the backfill is the legitimate
-    // path that consumes their values).
     SDB_ASSERT(get.bind_data,
                "base-table LogicalGet missing SereneDB bind_data");
-    get.bind_data->Cast<SereneDBScanBindData>().is_create_index = true;
     create_index_info->names = get.names;
     create_index_info->schema = resolved_table->schema.name;
     create_index_info->catalog = resolved_table->catalog.GetName();

@@ -6,7 +6,7 @@ CREATE TABLE variant_inc (
   body TEXT NOT NULL,
   payload VARIANT NOT NULL,
   PRIMARY KEY (id)
-) WITH (sdb_indexonly = [payload]);
+);
 
 
 statement ok
@@ -63,7 +63,11 @@ id
 4
 
 
-statement error
-SELECT payload FROM variant_inc;
+query
+SELECT payload FROM variant_inc ORDER BY id;
 ----
-db error: ERROR: column "payload" has sdb_indexonly storage and cannot be read directly; it is only accessible through an inverted-index search predicate
+payload
+42
+"hello"
+true
+{"a":42}

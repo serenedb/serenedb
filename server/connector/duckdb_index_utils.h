@@ -91,12 +91,6 @@ CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
   std::span<const catalog::Column::Id> updated_col_ids,
   const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
-// True iff some inverted index in `indexes` is built exclusively over
-// IndexOnly columns -- such an index has no main-storage cells to feed the
-// normal WAL row-delete replay, so DML must emit per-row marker on deletes.
-bool NeedsRowDeleteMarkers(
-  std::span<const std::shared_ptr<catalog::Index>> indexes,
-  std::span<const catalog::Column> columns);
 
 // Catalog column positions to project for a CREATE INDEX backfill scan:
 // union of index-key columns and PK columns, sorted+deduped (== catalog

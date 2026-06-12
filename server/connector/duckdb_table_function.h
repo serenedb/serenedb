@@ -256,12 +256,6 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   std::vector<catalog::Column::Id> column_ids;
   std::vector<duckdb::LogicalType> column_types;
-  // Set by BindCreateIndex on the underlying LogicalGet's bind data so the
-  // scan-init layer knows it is feeding a CREATE INDEX backfill rather than
-  // a user query. Used to relax the read-side check on sdb_indexonly columns
-  // (the backfill is allowed to project them; for empty/lossless cases it
-  // simply finds no data, which is the intended outcome).
-  bool is_create_index = false;
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
   ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
 

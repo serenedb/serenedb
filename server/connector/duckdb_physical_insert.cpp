@@ -50,7 +50,6 @@ struct InsertColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   size_t input_col_idx;
-  catalog::ColumnStoreMode store_mode;
 };
 
 struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
@@ -67,7 +66,7 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   // RocksDB handles
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
-  // sdb-side transaction; the IndexOnly writer registers markers on it.
+
   query::Transaction* sdb_txn = nullptr;
 
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
@@ -136,7 +135,6 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
       .id = columns[i].GetId(),
       .duckdb_type = columns[i].type,
       .input_col_idx = input_idx++,
-      .store_mode = columns[i].store_mode,
     });
   }
 
@@ -261,7 +259,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     }
 
     auto& vec = chunk.data[col.input_col_idx];
-    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type};
+    const ColumnDescriptor desc{col.id, col.duckdb_type};
 
     duckdb::Vector cs_vec{vec.GetType(), affected_rows};
     if (need_filter) {

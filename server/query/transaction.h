@@ -90,13 +90,6 @@ class Transaction : public Config {
     return *_rocksdb_transaction;
   }
 
-  // Counts PutLogData blobs (marker-only writes) so the commit gate sees
-  // them as work -- rocksdb's own counters ignore PutLogData.
-  void RegisterLogDataMarker() noexcept { ++_num_log_data_markers; }
-  uint64_t GetNumLogDataMarkers() const noexcept {
-    return _num_log_data_markers;
-  }
-
   const rocksdb::Snapshot& GetRocksDBSnapshot() const noexcept {
     SDB_ASSERT(_rocksdb_snapshot);
     return *_rocksdb_snapshot;
@@ -172,7 +165,6 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
-  uint64_t _num_log_data_markers = 0;
 };
 
 }  // namespace sdb::query

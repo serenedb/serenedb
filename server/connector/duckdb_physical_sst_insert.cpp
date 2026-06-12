@@ -80,7 +80,6 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
       .id = col.GetId(),
       .duckdb_type = col.type,
       .input_col_idx = input_idx,
-      .store_mode = col.store_mode,
     });
     ++input_idx;
   }
@@ -202,7 +201,7 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   for (size_t col = 0; col < gstate.columns.size(); ++col) {
     const auto& meta = gstate.columns[col];
     auto& vec = chunk.data[meta.input_col_idx];
-    const ColumnDescriptor desc{meta.id, meta.store_mode, meta.duckdb_type};
+    const ColumnDescriptor desc{meta.id, meta.duckdb_type};
 
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {

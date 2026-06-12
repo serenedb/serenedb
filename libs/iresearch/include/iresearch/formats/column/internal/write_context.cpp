@@ -74,8 +74,8 @@ void WriteContext::Write(duckdb::QueryContext /*context*/,
   SDB_ENSURE(cursor == block_id, sdb::ERROR_INTERNAL,
              "WriteContext::Write out-of-order: cursor=", cursor,
              " expected=", block_id);
-  _out->WriteBytes(reinterpret_cast<const byte_type*>(block.InternalBuffer()),
-                   block.AllocSize());
+  _out->WriteData(reinterpret_cast<const byte_type*>(block.InternalBuffer()),
+                  block.AllocSize());
 }
 
 duckdb::unique_ptr<duckdb::Block> WriteContext::ConvertBlock(

@@ -56,11 +56,9 @@ namespace sdb::connector {
 
 struct SereneDBScanBindData;
 
-struct ColumnstoreProjection {
-  duckdb::idx_t output_slot;
-  catalog::Column::Id column_id;
-};
-
+// Common state inherited by all per-scan global states.
+// Holds the fields shared across every scan strategy: isolation context,
+// projection mapping, virtual column metadata, and the termination flag.
 struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // Isolation: exactly one of txn / snapshot is set.
   rocksdb::Transaction* txn = nullptr;
@@ -70,6 +68,8 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // INVALID_INDEX marks virtual columns (rowid, tableoid, score).
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;
+  std::vector<duckdb::ColumnIndex> projected_column_indexes;
+  duckdb::ClientContext* client_context = nullptr;
 
   // Same shape as `projected_columns` but with INCLUDE'd columnstore
   // slots reset to INVALID_INDEX. Pass this (not `projected_columns`)
@@ -81,11 +81,6 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // INCLUDE'd projections served by the columnstore overlay.
   // Populated by `ClassifyColumnstoreProjections`.
   std::vector<ColumnstoreProjection> cs_projections;
-  // Parallel arrays derived from `cs_projections` once at init time --
-  // bulk + streaming + score-ordered materializer paths all want them
-  // in this shape and would otherwise rebuild per batch.
-  std::vector<irs::field_id> cs_field_ids;
-  std::vector<duckdb::idx_t> cs_output_slots;
   // True iff at least one projected real column is NOT an INCLUDE
   // column (i.e. IndexSource still has work to do).
   bool has_external_projections = false;

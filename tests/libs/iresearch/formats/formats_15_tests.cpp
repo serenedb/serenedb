@@ -359,7 +359,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
   reader->prepare(*in, state, features);
 
   irs::bstring in_data(in->Length() - in->Position(), 0);
-  in->ReadBytes(&in_data[0], in_data.size());
+  in->ReadData(&in_data[0], in_data.size());
   const auto* begin = in_data.c_str();
 
   irs::TermMetaImpl read_meta;

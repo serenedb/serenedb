@@ -133,6 +133,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
                             duckdb::DataChunk& output);
 
 void IResearchSetScanOrder(
+  duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::RowGroupOrderOptions> options,
   duckdb::optional_ptr<duckdb::FunctionData> bind_data);
 

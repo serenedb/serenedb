@@ -32,7 +32,7 @@ class OutputBuf final : public std::streambuf {
   explicit OutputBuf(IndexOutput& out) noexcept : _out{out} {}
 
   std::streamsize xsputn(const char_type* c, std::streamsize size) final {
-    _out.WriteBytes(reinterpret_cast<const byte_type*>(c), size);
+    _out.WriteData(reinterpret_cast<const byte_type*>(c), size);
     return size;
   }
 

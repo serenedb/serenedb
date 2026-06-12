@@ -1765,11 +1765,18 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
 Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
-  const ColumnGetter& column_getter, const SearchFilterOptions& options,
+  const ColumnGetter& column_getter, duckdb::ClientContext& context,
   const ExpressionGetter& expr_getter) {
   irs::StringTokenizer identity;
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
+
+  size_t scored_terms_limit = 1024;
+  duckdb::Value v;
+  if (context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
+      !v.IsNull()) {
+    scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
+  }
 
   FilterContext ctx{
     .negated = false,
@@ -1779,8 +1786,8 @@ Result MakeSearchFilter(
     .expr_cache = expr_cache,
     .identity = identity,
     .tokenizer = identity,
-    .client_context = options.client_context,
-    .scored_terms_limit = options.scored_terms_limit,
+    .client_context = context,
+    .scored_terms_limit = scored_terms_limit,
   };
 
   for (const auto& expr : conjuncts) {

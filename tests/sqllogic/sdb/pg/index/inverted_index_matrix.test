@@ -949,7 +949,7 @@ QUERY PLAN
 │    m_vec_hnsw_st (ANN)    │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 1          │
+│           Top: 1          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -979,7 +979,7 @@ QUERY PLAN
 │  m_vec_hnsw_expr_ns (ANN) │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 1          │
+│           Top: 1          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │

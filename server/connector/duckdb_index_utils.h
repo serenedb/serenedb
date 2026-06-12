@@ -74,7 +74,8 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
 // inverted index of `table_id` (e.g. concurrently dropped).
 template<DuckDBWriteKind Kind>
 std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
-  ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx);
+  ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
+  duckdb::optional_ptr<duckdb::ClientContext> expr_context = nullptr);
 
 // Explicit instantiation declarations
 extern template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>

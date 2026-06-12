@@ -58,6 +58,7 @@
 #include "catalog/schema.h"
 #include "basics/down_cast.h"
 #include "catalog/index.h"
+#include "catalog/inverted_index.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"
 
@@ -161,11 +162,11 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
     def.kind = StoreIndexDef::Kind::Plain;
     def.unique = basics::downCast<const SecondaryIndex>(index).IsUnique();
   }
-  for (auto col_id : index.GetColumnIds()) {
+  auto add_column = [&](Column::Id col_id) -> bool {
     auto it = std::ranges::find_if(
       table.Columns(), [&](const auto& c) { return c.GetId() == col_id; });
     if (it == table.Columns().end()) {
-      return std::nullopt;
+      return false;
     }
     if (def.kind == StoreIndexDef::Kind::Plain &&
         (it->type.HasAlias() ||
@@ -173,9 +174,31 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
       // Catalog-named types (enums, composites, JSON) cannot be re-parsed
       // by the store connection during the ART build; such keys stay
       // unenforced like nested types.
+      return false;
+    }
+    if (std::ranges::find(def.columns, it->GetName()) == def.columns.end()) {
+      def.columns.emplace_back(it->GetName());
+    }
+    return true;
+  };
+  for (auto col_id : index.GetColumnIds()) {
+    if (!add_column(col_id)) {
       return std::nullopt;
     }
-    def.columns.emplace_back(it->GetName());
+  }
+  if (index.GetType() == ObjectType::InvertedIndex) {
+    // Indexed-expression dependencies must be in the index's column set so
+    // duckdb initializes their chunk vectors for the BoundIndex appends.
+    const auto& inverted = basics::downCast<const InvertedIndex>(index);
+    for (const auto& [field_id, entry] : inverted.GetEntries()) {
+      if (const auto* expr = entry.GetExpressionData()) {
+        for (auto col_id : expr->dependent_columns) {
+          if (!add_column(col_id)) {
+            return std::nullopt;
+          }
+        }
+      }
+    }
   }
   if (def.columns.empty()) {
     return std::nullopt;

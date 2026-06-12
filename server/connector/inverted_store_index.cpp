@@ -23,6 +23,9 @@
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/append_state.hpp>
+#include <absl/cleanup/cleanup.h>
+#include <duckdb/main/connection.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
 #include <string>
 #include <vector>
@@ -90,14 +93,16 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
   if (count == 0) {
     return {};
   }
+  // Commit-time appends run after the duckdb transaction context detached;
+  // indexed-expression deserialization and evaluation ride a scratch
+  // transaction that must stay alive until the writer finishes.
+  duckdb::Connection expr_conn(*conn.GetClientContext().db);
+  expr_conn.BeginTransaction();
+  absl::Cleanup rollback_expr_conn = [&] { expr_conn.Rollback(); };
   auto writer = CreateInvertedIndexWriter<DuckDBWriteKind::Insert>(
-    _table_id, _index_id, conn);
+    _table_id, _index_id, conn, expr_conn.context.get());
   if (!writer) {
     return {};
-  }
-  if (!writer->IndexedExpressions().empty()) {
-    return duckdb::ErrorData(duckdb::NotImplementedException(
-      "store inverted index expressions are not wired yet"));
   }
   auto snapshot = conn.EnsureCatalogSnapshot();
   auto table = snapshot->GetObject<catalog::Table>(_table_id);
@@ -129,6 +134,12 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
     }
     const ColumnDescriptor desc{col_id, it->type};
     writer->SwitchColumn(desc, chunk.data[pos], key_views, count);
+  }
+  if (auto indexed_exprs = writer->IndexedExpressions();
+      !indexed_exprs.empty()) {
+    EvaluateAndWriteIndexedExpressions(*writer, indexed_exprs, chunk,
+                                       _table_id, chunk_column_ids,
+                                       *expr_conn.context, count, keys);
   }
   writer->Finish();
   return {};

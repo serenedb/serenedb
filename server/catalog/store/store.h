@@ -29,7 +29,6 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/prepared_statement.hpp>
-#include <duckdb/parser/parsed_expression.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -57,7 +56,6 @@ struct StoreTableDef {
   std::vector<size_t> not_null;
   std::vector<std::string> pk_columns;
   std::vector<std::vector<std::string>> unique_constraints;
-  std::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> checks;
 };
 
 std::string StoreTableName(std::string_view database, std::string_view schema,

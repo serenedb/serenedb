@@ -183,8 +183,10 @@ id
 
 # BM25 RANKING OVER GRAMS
 # frequency/norm on the index dictionary make bm25() rank by gram overlap:
-# a document sharing every covering gram of the query outranks one sharing
-# only a tail fragment, and unrelated code does not match at all.
+# similarity to the query decreases monotonically down the expected output.
+# Documents are arranged so the matched gram sets are nested (1 > 2 > 3) and
+# each weaker match is also longer, so term frequency and length norms agree
+# on the order; the unrelated document must not match at all.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY code_grams_ranked(
@@ -201,8 +203,9 @@ CREATE TABLE ranked(id INT, code TEXT);
 statement ok
 INSERT INTO ranked VALUES
     (1, 'while l < r: m = (l + r) // 2'),
-    (2, 'padding that matches nothing; r) // 2'),
-    (3, 'completely unrelated text');
+    (2, 'some noise prefix; m = (l + r) // 2'),
+    (3, 'much longer noise that matches nothing at all; r) // 2'),
+    (4, 'completely unrelated text');
 
 
 statement ok
@@ -217,6 +220,7 @@ ORDER BY bm25(ranked_idx.tableoid) DESC;
 id
 1
 2
+3
 
 
 statement ok

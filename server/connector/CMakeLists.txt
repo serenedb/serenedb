@@ -37,6 +37,7 @@ add_library(
     index_source_factory.cpp
     index_source_rocksdb.cpp
     index_source_view.cpp
+    inverted_store_index.cpp
     index_source_view_file.cpp
     index_source_view_rocksdb.cpp
     index_source_view_table.cpp

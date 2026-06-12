@@ -204,6 +204,43 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
   return writers;
 }
 
+template<DuckDBWriteKind Kind>
+std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
+  ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx) {
+  std::unique_ptr<DuckDBSinkIndexWriter> writer;
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  conn_ctx.EnsureIndexesTransactions(
+    table_id, [&](auto& index_txn, const catalog::Index& index) {
+      using TxnType = std::decay_t<decltype(index_txn)>;
+      if constexpr (!std::is_same_v<TxnType, rocksdb::Transaction>) {
+        if (index.GetId() != index_id) {
+          return;
+        }
+        auto& inverted_index =
+          basics::downCast<const catalog::InvertedIndex>(index);
+        auto tokenizer_provider =
+          MakeTokenizerProvider(snapshot, inverted_index);
+        auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
+        auto indexed_exprs =
+          MakeIndexedExpressions(inverted_index, conn_ctx.GetClientContext());
+        writer = MakeDuckDBSearchWriter(
+          Kind, index_txn, std::move(tokenizer_provider),
+          std::move(entry_info_provider), index.GetColumnIds(),
+          std::move(indexed_exprs));
+      }
+    });
+  return writer;
+}
+
+template std::unique_ptr<DuckDBSinkIndexWriter>
+CreateInvertedIndexWriter<DuckDBWriteKind::Insert>(ObjectId table_id,
+                                                   ObjectId index_id,
+                                                   ConnectionContext& conn_ctx);
+template std::unique_ptr<DuckDBSinkIndexWriter>
+CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(ObjectId table_id,
+                                                   ObjectId index_id,
+                                                   ConnectionContext& conn_ctx);
+
 // Explicit instantiations
 template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
 CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(

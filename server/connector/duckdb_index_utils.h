@@ -69,6 +69,13 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
   std::span<const catalog::Column::Id> updated_col_ids = {},
   const ColumnChunkMapping& old_col_id_to_chunk_pos = {});
 
+// Writer for ONE inverted index, identified by id -- the store-side
+// BoundIndex feeds exactly its own index. nullptr when the index is not an
+// inverted index of `table_id` (e.g. concurrently dropped).
+template<DuckDBWriteKind Kind>
+std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
+  ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx);
+
 // Explicit instantiation declarations
 extern template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
 CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(

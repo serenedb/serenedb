@@ -1582,7 +1582,12 @@ void PgSQLCommTaskBase::SendCommandComplete(duckdb::StatementType stmt_type,
       return static_cast<size_t>(ptr - buf);
     });
   } else if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
-    _send.WriteUncommitted({" ", 1});
+    // INSERT ... RETURNING still reports "INSERT 0 N" in PG.
+    if (tag.effective_type == duckdb::StatementType::INSERT_STATEMENT) {
+      _send.WriteUncommitted({" 0 ", 3});
+    } else {
+      _send.WriteUncommitted({" ", 1});
+    }
     _send.WriteContiguousData(basics::kIntStrMaxLen, [&](auto* data) {
       char* buf = reinterpret_cast<char*>(data);
       char* ptr = absl::numbers_internal::FastIntToBuffer(rows, buf);

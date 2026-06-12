@@ -195,9 +195,18 @@ class SnapshotImpl : public Snapshot {
     auto owned_sequences =
       table_deps->owned_sequences | std::ranges::to<std::vector>();
 
+    std::string store_rename_from;
+    if (table->GetEngine() == TableEngine::Transactional &&
+        !table->Tombstoned()) {
+      auto db = GetObject<Database>(db_id);
+      auto schema_obj = GetObject<Schema>(schema_id);
+      SDB_ASSERT(db && schema_obj);
+      store_rename_from = StoreTableName(db->GetName(), schema_obj->GetName(),
+                                         table->GetName());
+    }
     return std::make_shared<TableDrop>(table, shard, std::move(indexes),
                                        std::move(owned_sequences), schema_id,
-                                       is_root);
+                                       std::move(store_rename_from), is_root);
   }
 
   std::shared_ptr<IndexDrop> CreateIndexDrop(
@@ -1211,6 +1220,44 @@ class SnapshotImpl : public Snapshot {
     for (const auto& [tid, rw] : plan.table_rewrites) {
       ctx.PutDefinition(rw.schema_id, ObjectType::Table, tid,
                         catalog::SerializeObject(*rw.table, stream));
+      // Cascades can drop columns of surviving tables (e.g. a column whose
+      // dependency lived in the dropped schema) -- the store table follows.
+      if (rw.table->GetEngine() != TableEngine::Transactional ||
+          rw.table->Tombstoned()) {
+        continue;
+      }
+      auto old_table = GetObject<Table>(tid);
+      if (!old_table) {
+        continue;
+      }
+      auto schema_obj = GetObject<Schema>(rw.schema_id);
+      SDB_ASSERT(schema_obj);
+      auto database = GetObject<Database>(schema_obj->GetParentId());
+      SDB_ASSERT(database);
+      auto store_name = StoreTableName(
+        database->GetName(), schema_obj->GetName(), old_table->GetName());
+      auto rewritten = MakeStoreTableDef(database->GetName(),
+                                         schema_obj->GetName(), *rw.table);
+      if (rewritten.columns.empty()) {
+        // Dropping the last column is refused by ALTER; recreate instead
+        // (PG keeps the zero-column table). TODO(M2): rows must survive
+        // this once the store tables hold the data.
+        ctx.DropStoreTable(store_name);
+        ctx.CreateStoreTable(std::move(rewritten));
+        continue;
+      }
+      for (const auto& old_col : old_table->Columns()) {
+        if (old_col.GetId() == Column::kGeneratedPKId) {
+          continue;
+        }
+        auto it =
+          std::ranges::find_if(rw.table->Columns(), [&](const auto& c) {
+            return c.GetId() == old_col.GetId();
+          });
+        if (it == rw.table->Columns().end()) {
+          ctx.DropStoreColumn(store_name, std::string{old_col.GetName()});
+        }
+      }
     }
     for (const auto& [schema_id, view_id] : plan.view_drops) {
       ctx.DropDefinition(schema_id, ObjectType::PgSqlView, view_id);
@@ -2119,11 +2166,23 @@ Result LocalCatalog::CreateTable(
   auto table = std::make_shared<Table>(
     *schema_id, table_id, options.name, std::move(options.columns),
     std::move(options.pk_columns), std::move(options.check_constraints),
-    generated_pk_seq_id);
+    generated_pk_seq_id, options.engine);
   if (operation_options.create_with_tombstone) {
     table->SetTombstoned(true);
   }
   auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
+
+  std::optional<StoreTableDef> store_table;
+  if (table->GetEngine() == TableEngine::Transactional) {
+    auto database = _snapshot->GetObject<Database>(database_id);
+    SDB_ASSERT(database);
+    store_table = MakeStoreTableDef(database->GetName(), schema, *table);
+    if (operation_options.create_with_tombstone) {
+      // Not-yet-committed (CTAS) tables live under the dropped name; commit
+      // renames to the public name (RemoveTombstone), failure drops by id.
+      store_table->name = DroppedStoreTableName(table->GetId());
+    }
+  }
 
   return Apply(
     _snapshot, _snapshot_mutex,
@@ -2161,6 +2220,9 @@ Result LocalCatalog::CreateTable(
           ctx.PutDefinition(*schema_id, ObjectType::Sequence, seq->GetId(),
                             catalog::SerializeObject(*seq, stream));
           ctx.PutSequence(seq->GetId(), seq->Options().Seed());
+        }
+        if (store_table) {
+          ctx.CreateStoreTable(std::move(*store_table));
         }
       });
     },
@@ -2223,7 +2285,10 @@ Result LocalCatalog::CreateType(ObjectId database_id, std::string_view schema,
 }
 
 template<typename T>
-Result LocalCatalog::RenameObjectImpl(ObjectId schema_id, std::string_view name,
+Result LocalCatalog::RenameObjectImpl(ObjectId schema_id,
+                                      std::string_view database_name,
+                                      std::string_view schema_name,
+                                      std::string_view name,
                                       std::string_view new_name,
                                       std::shared_ptr<T> object) {
   constexpr auto kResolveType = std::is_same_v<T, PgSqlFunction>
@@ -2260,6 +2325,18 @@ Result LocalCatalog::RenameObjectImpl(ObjectId schema_id, std::string_view name,
         parent_id = schema_id;
       }
 
+      if constexpr (std::is_same_v<T, Table>) {
+        if (new_object->GetEngine() == TableEngine::Transactional &&
+            !new_object->Tombstoned()) {
+          return _engine->Write([&](auto& ctx) {
+            ctx.PutDefinition(parent_id, new_object->GetType(),
+                              new_object->GetId(), bytes);
+            ctx.RenameStoreTable(
+              StoreTableName(database_name, schema_name, name),
+              StoreTableName(database_name, schema_name, new_name));
+          });
+        }
+      }
       return _engine->CreateDefinition(parent_id, new_object->GetType(),
                                        new_object->GetId(), bytes);
     },
@@ -2306,7 +2383,10 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
                   pg::ToPgObjectTypeName(type)};
   }
 
-  return RenameObjectImpl<T>(*schema_id, name, new_name, std::move(typed));
+  auto database = _snapshot->GetObject<Database>(database_id);
+  SDB_ASSERT(database);
+  return RenameObjectImpl<T>(*schema_id, database->GetName(), schema, name,
+                             new_name, std::move(typed));
 }
 
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
@@ -2350,17 +2430,21 @@ Result LocalCatalog::RenameRelation(ObjectId database_id,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
+  auto database = _snapshot->GetObject<Database>(database_id);
+  SDB_ASSERT(database);
   switch (object->GetType()) {
     case ObjectType::Table:
-      return RenameObjectImpl<Table>(*schema_id, name, new_name,
+      return RenameObjectImpl<Table>(*schema_id, database->GetName(), schema,
+                                     name, new_name,
                                      std::static_pointer_cast<Table>(object));
     case ObjectType::PgSqlView:
       return RenameObjectImpl<PgSqlView>(
-        *schema_id, name, new_name,
+        *schema_id, database->GetName(), schema, name, new_name,
         std::static_pointer_cast<PgSqlView>(object));
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
-      return RenameObjectImpl<Index>(*schema_id, name, new_name,
+      return RenameObjectImpl<Index>(*schema_id, database->GetName(), schema,
+                                     name, new_name,
                                      std::static_pointer_cast<Index>(object));
     default:
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
@@ -2495,6 +2579,14 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
     return {};
   }
 
+  std::string store_name;
+  if (updated->GetEngine() == TableEngine::Transactional &&
+      !updated->Tombstoned()) {
+    auto database = _snapshot->GetObject<Database>(database_id);
+    SDB_ASSERT(database);
+    store_name = StoreTableName(database->GetName(), schema, name);
+  }
+
   return Apply(_snapshot, _snapshot_mutex,
                [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
                  auto r = clone->ReplaceObject<ResolveType::Relation>(
@@ -2506,8 +2598,28 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
                  return basics::SafeCall([&] {
                    duckdb::MemoryStream stream;
                    auto bytes = catalog::SerializeObject(*updated, stream);
-                   return _engine->CreateDefinition(
-                     *schema_id, ObjectType::Table, updated->GetId(), bytes);
+                   return _engine->Write([&](auto& ctx) {
+                     ctx.PutDefinition(*schema_id, ObjectType::Table,
+                                       updated->GetId(), bytes);
+                     if (store_name.empty()) {
+                       return;
+                     }
+                     for (const auto& old_col : table->Columns()) {
+                       if (old_col.GetId() == Column::kGeneratedPKId) {
+                         continue;
+                       }
+                       auto it = std::ranges::find_if(
+                         updated->Columns(), [&](const auto& c) {
+                           return c.GetId() == old_col.GetId();
+                         });
+                       if (it != updated->Columns().end() &&
+                           it->GetName() != old_col.GetName()) {
+                         ctx.RenameStoreColumn(store_name,
+                                               std::string{old_col.GetName()},
+                                               std::string{it->GetName()});
+                       }
+                     }
+                   });
                  });
                });
 }
@@ -2553,6 +2665,7 @@ Result LocalCatalog::DropDatabase(std::string_view name,
       auto wr = _engine->Write([&](auto& ctx) {
         ctx.WriteTombstone(id::kInstance, *database_id);
         clone->CommitDropPlan(ctx, plan);
+        task->EmitStoreRenames(ctx);
       });
       if (!wr.ok()) {
         return wr;
@@ -2596,6 +2709,7 @@ Result LocalCatalog::DropSchema(std::string_view database,
       auto wr = _engine->Write([&](auto& ctx) {
         ctx.WriteTombstone(*database_id, *schema_id);
         clone->CommitDropPlan(ctx, plan);
+        task->EmitStoreRenames(ctx);
       });
       if (!wr.ok()) {
         return wr;
@@ -2651,6 +2765,7 @@ Result LocalCatalog::DropTable(std::string_view database,
       auto wr = _engine->Write([&](auto& ctx) {
         ctx.WriteTombstone(*schema_id, *table_id);
         clone->CommitDropPlan(ctx, plan);
+        task->EmitStoreRenames(ctx);
       });
       if (!wr.ok()) {
         return wr;
@@ -2693,8 +2808,19 @@ Result LocalCatalog::RemoveTombstone(ObjectId database_id,
     tombstone_parent = *schema_id;
   }
 
-  auto r = _engine->DropDefinition(tombstone_parent, ObjectType::Tombstone,
-                                   *object_id);
+  auto r = _engine->Write([&](auto& ctx) {
+    ctx.DropDefinition(tombstone_parent, ObjectType::Tombstone, *object_id);
+    if (object->GetType() == ObjectType::Table) {
+      auto& table = basics::downCast<Table>(*object);
+      if (table.GetEngine() == TableEngine::Transactional) {
+        auto database = _snapshot->GetObject<Database>(database_id);
+        SDB_ASSERT(database);
+        ctx.RenameStoreTable(
+          DroppedStoreTableName(*object_id),
+          StoreTableName(database->GetName(), schema, name));
+      }
+    }
+  });
 
   // Unlike most catalog operations that clone the snapshot, here we modify the
   // object in-place because the tombstone flag is simple in-memory state.

@@ -157,7 +157,8 @@ class LocalCatalog final : public LogicalCatalog,
                           std::string_view name, std::string_view new_name);
 
   template<typename T>
-  Result RenameObjectImpl(ObjectId schema_id, std::string_view name,
+  Result RenameObjectImpl(ObjectId schema_id, std::string_view database_name,
+                          std::string_view schema_name, std::string_view name,
                           std::string_view new_name, std::shared_ptr<T> object);
 
   mutable absl::Mutex _mutex;

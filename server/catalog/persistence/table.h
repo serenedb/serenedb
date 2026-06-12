@@ -33,6 +33,7 @@ struct TableData {
   std::vector<Column::Id> pk_columns;
   std::vector<CheckConstraint> check_constraints;
   ObjectId generated_pk_seq_id;
+  TableEngine engine = TableEngine::Transactional;
 };
 
 }  // namespace sdb::catalog::persistence

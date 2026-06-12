@@ -59,11 +59,8 @@ namespace sdb::connector {
 namespace {
 
 const irs::Filter& MatchAllFilter() {
-  static const std::shared_ptr<irs::Filter> kInstance = [] {
-    auto root = std::make_shared<irs::And>();
-    root->add<irs::All>();
-    return root;
-  }();
+  static const std::shared_ptr<irs::Filter> kInstance =
+    std::make_shared<irs::All>();
   return *kInstance;
 }
 

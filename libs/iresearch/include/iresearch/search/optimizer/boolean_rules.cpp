@@ -416,10 +416,7 @@ bool SingleChildRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   return true;
 }
 
-bool ByTermsRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
-  if (ctx.scorer != nullptr) {
-    return false;
-  }
+bool ByTermsRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   auto& node = sdb::basics::downCast<BooleanFilter>(*slot);
   if (node.size() < 2) {
     return false;

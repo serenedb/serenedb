@@ -20,6 +20,10 @@
 
 #include "connector/duckdb_index_scan_entry.h"
 
+#include <duckdb/function/table/table_scan.hpp>
+
+#include "catalog/store/store.h"
+
 #include <duckdb/storage/table_storage_info.hpp>
 
 #include "basics/assert.h"
@@ -198,41 +202,28 @@ TableSecondaryIndexScanEntry::TableSecondaryIndexScanEntry(
 duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  auto data = duckdb::make_uniq<TableScanBindData>();
-  data->table = _sdb_table;
-  for (const auto& col : _sdb_table->Columns()) {
-    if (col.GetId() == catalog::Column::kGeneratedPKId) {
-      continue;
+  // Scanning a secondary index by name reads the table: the index itself
+  // is a native ART on the store table.
+  auto store_name = catalog::StoreTableName(
+    ParentCatalog().GetName(), ParentSchema().name, _sdb_table->GetName());
+  auto& store_entry =
+    duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
+                              std::string{catalog::kStoreDatabaseName}, "main",
+                              store_name)
+      .Cast<duckdb::TableCatalogEntry>();
+  auto function = store_entry.GetScanFunction(context, bind_data);
+  if (bind_data) {
+    if (auto* table_bind =
+          dynamic_cast<duckdb::TableScanBindData*>(bind_data.get())) {
+      table_bind->display_name = name;
     }
-    data->column_ids.push_back(col.GetId());
-    data->column_types.push_back(col.type);
   }
-  data->table_entry = this;
-  data->entry_kind = ScanEntryKind::SecondaryIndex;
-  data->lookup_label = "rocksdb";
-  auto sk = std::make_unique<SecondaryIndexScan>();
-  sk->shard_id = _sk_shard_id;
-  sk->is_unique = _sk_unique;
-  data->scan_source = std::move(sk);
-  bind_data = std::move(data);
-  return CreateSKFullscanFunction();
+  return function;
 }
 
 duckdb::TableStorageInfo TableSecondaryIndexScanEntry::GetStorageInfo(
   duckdb::ClientContext& /*context*/) {
   return SereneDBTableEntry::BuildStorageInfo(*_sdb_table);
-}
-
-duckdb::vector<duckdb::column_t> TableSecondaryIndexScanEntry::GetRowIdColumns()
-  const {
-  return SereneDBTableEntry::BuildRowIdColumns(*_sdb_table,
-                                               _indexed_col_indices);
-}
-
-duckdb::virtual_column_map_t TableSecondaryIndexScanEntry::GetVirtualColumns()
-  const {
-  return SereneDBTableEntry::BuildVirtualColumns(*_sdb_table,
-                                                 _indexed_col_indices);
 }
 
 ViewSecondaryIndexScanEntry::ViewSecondaryIndexScanEntry(

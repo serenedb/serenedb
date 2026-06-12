@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_table_entry.h"
 
+#include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/constraints/bound_check_constraint.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -84,7 +85,14 @@ duckdb::TableCatalogEntry& SereneDBTableEntry::ResolveStoreEntry(
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  return ResolveStoreEntry(context).GetScanFunction(context, bind_data);
+  auto function = ResolveStoreEntry(context).GetScanFunction(context, bind_data);
+  if (bind_data) {
+    if (auto* table_bind =
+          dynamic_cast<duckdb::TableScanBindData*>(bind_data.get())) {
+      table_bind->display_name = name;
+    }
+  }
+  return function;
 }
 
 duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(

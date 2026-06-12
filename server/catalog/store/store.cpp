@@ -36,6 +36,7 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/column_definition.hpp>
+#include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
@@ -55,6 +56,9 @@
 #include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/schema.h"
+#include "basics/down_cast.h"
+#include "catalog/index.h"
+#include "catalog/secondary_index.h"
 #include "catalog/table.h"
 
 namespace sdb::catalog {
@@ -139,6 +143,47 @@ std::string DroppedStoreTableName(ObjectId table_id) {
   return absl::StrCat("sdb_dropped$", table_id.id());
 }
 
+std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
+                                               std::string_view schema,
+                                               const Table& table,
+                                               const Index& index) {
+  if (index.GetType() != ObjectType::InvertedIndex &&
+      index.GetType() != ObjectType::SecondaryIndex) {
+    return std::nullopt;
+  }
+  if (table.GetEngine() != TableEngine::Transactional || table.Tombstoned()) {
+    return std::nullopt;
+  }
+  StoreIndexDef def;
+  def.table_id = table.GetId();
+  def.index_id = index.GetId();
+  if (index.GetType() == ObjectType::SecondaryIndex) {
+    def.kind = StoreIndexDef::Kind::Plain;
+    def.unique = basics::downCast<const SecondaryIndex>(index).IsUnique();
+  }
+  for (auto col_id : index.GetColumnIds()) {
+    auto it = std::ranges::find_if(
+      table.Columns(), [&](const auto& c) { return c.GetId() == col_id; });
+    if (it == table.Columns().end()) {
+      return std::nullopt;
+    }
+    if (def.kind == StoreIndexDef::Kind::Plain &&
+        (it->type.HasAlias() ||
+         it->type.id() == duckdb::LogicalTypeId::ENUM)) {
+      // Catalog-named types (enums, composites, JSON) cannot be re-parsed
+      // by the store connection during the ART build; such keys stay
+      // unenforced like nested types.
+      return std::nullopt;
+    }
+    def.columns.emplace_back(it->GetName());
+  }
+  if (def.columns.empty()) {
+    return std::nullopt;
+  }
+  def.table = StoreTableName(database, schema, table.GetName());
+  return def;
+}
+
 std::string StoreIndexName(ObjectId index_id) {
   return absl::StrCat("sdb_idx_", index_id.id());
 }
@@ -160,9 +205,12 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
     def.columns.push_back({std::string{col.GetName()}, col.type});
   }
   for (const auto& constraint : table.CheckConstraints()) {
-    if (auto idx = constraint.IsNotNull(cols);
-        idx && mirror_pos[*idx] != SIZE_MAX) {
-      def.not_null.push_back(mirror_pos[*idx]);
+    if (auto idx = constraint.IsNotNull(cols)) {
+      if (mirror_pos[*idx] != SIZE_MAX) {
+        def.not_null.push_back(mirror_pos[*idx]);
+      }
+    } else if (constraint.expr && constraint.expr->HasExpr()) {
+      def.checks.push_back(constraint.expr->GetExpr().Copy());
     }
   }
   auto names_for = [&](std::span<const Column::Id> ids,
@@ -253,6 +301,20 @@ void CatalogStore::WriteContext::DropStoreForeignKey(std::string table,
   _entries.push_back({.op = Op::DropStoreForeignKey,
                       .store_table = {.name = std::move(table)},
                       .name_a = std::move(other)});
+}
+
+void CatalogStore::WriteContext::DropStoreCheck(std::string table,
+                                                std::string expr) {
+  _entries.push_back({.op = Op::DropStoreCheck,
+                      .store_table = {.name = std::move(table)},
+                      .name_a = std::move(expr)});
+}
+
+void CatalogStore::WriteContext::DropStoreNotNull(std::string table,
+                                                  std::string column) {
+  _entries.push_back({.op = Op::DropStoreNotNull,
+                      .store_table = {.name = std::move(table)},
+                      .name_a = std::move(column)});
 }
 
 void CatalogStore::WriteContext::CreateStoreIndex(StoreIndexDef def) {
@@ -450,6 +512,34 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           }
           break;
         }
+        case WriteContext::Op::DropStoreCheck: {
+          auto r = basics::SafeCall([&]() -> Result {
+            auto& context = *_conn->context;
+            duckdb::AlterEntryData data{
+              std::string{kStoreAlias}, "main", entry.store_table.name,
+              duckdb::OnEntryNotFound::RETURN_NULL};
+            duckdb::DropConstraintInfo info{std::move(data), entry.name_a,
+                                            true, false};
+            auto& catalog =
+              duckdb::Catalog::GetCatalog(context, std::string{kStoreAlias});
+            catalog.Alter(context, info);
+            return {};
+          });
+          if (r.fail()) {
+            return r;
+          }
+          break;
+        }
+        case WriteContext::Op::DropStoreNotNull: {
+          auto res = _conn->Query(absl::StrCat(
+            "ALTER TABLE \"", kStoreAlias, "\".main.",
+            QuotedIdent(entry.store_table.name), " ALTER COLUMN ",
+            QuotedIdent(entry.name_a), " DROP NOT NULL"));
+          if (res->HasError()) {
+            return {ERROR_INTERNAL, res->GetError()};
+          }
+          break;
+        }
         case WriteContext::Op::CreateStoreIndex: {
           const auto& def = entry.store_index;
           std::string cols;
@@ -571,6 +661,10 @@ Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
       info->constraints.push_back(
         duckdb::make_uniq<duckdb::ForeignKeyConstraint>(
           std::move(pk_cols), std::move(fk_cols), std::move(fk_info)));
+    }
+    for (const auto& check : def.checks) {
+      info->constraints.push_back(
+        duckdb::make_uniq<duckdb::CheckConstraint>(check->Copy()));
     }
     auto& context = *_conn->context;
     auto& catalog =

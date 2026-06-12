@@ -891,6 +891,7 @@ SELECT pid FROM clickclack_ryow WHERE score = 10 ORDER BY pid;
 pid
 1
 3
+4
 
 
 statement ok
@@ -932,19 +933,22 @@ EXPLAIN SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_SK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │           Table:          │
 │      babsky_composite     │
 │                           │
-│          Filter:          │
-│  {city=berlin, level=10}  │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            pid            │
 │            tag            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│     (city = 'berlin')     │
+│        (level = 10)       │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 query
@@ -1125,18 +1129,21 @@ EXPLAIN SELECT pid, nickname FROM vedernikoff_csv_crew WHERE stocks = 30;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_SK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │           Table:          │
 │    vedernikoff_csv_crew   │
 │                           │
-│    Filter: {stocks=30}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            pid            │
 │          nickname         │
 │                           │
-│          ~3 rows          │
+│          Filters:         │
+│       (stocks = 30)       │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 statement ok
@@ -1290,18 +1297,21 @@ EXPLAIN SELECT pid, nickname FROM vedernikoff_pq_crew WHERE stocks = 30;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_SK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │           Table:          │
 │    vedernikoff_pq_crew    │
 │                           │
-│    Filter: {stocks=30}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            pid            │
 │          nickname         │
 │                           │
-│          ~3 rows          │
+│          Filters:         │
+│       (stocks = 30)       │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 statement ok
@@ -1432,12 +1442,12 @@ EXPLAIN SELECT * FROM babsky_from_idx_val_idx;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│    ROCKSDB_SK_FULLSCAN    │
+│          SEQ_SCAN         │
 │    ────────────────────   │
-│           Index:          │
+│           Table:          │
 │  babsky_from_idx_val_idx  │
 │                           │
-│      Lookup: rocksdb      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            pid            │
@@ -3063,11 +3073,11 @@ query
 SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
 ----
 pid	score	name
-5	NULL	e
+1	30	c
 2	10	a
 3	10	b
 4	20	d
-1	30	c
+5	NULL	e
 
 onlyif serenedb
 query
@@ -3095,10 +3105,10 @@ query
 SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
 ----
 pid	score	name
-5	NULL	e
-1	5	c
 2	10	a
 3	10	b
+5	NULL	e
+1	5	c
 
 onlyif serenedb
 query
@@ -3127,14 +3137,14 @@ query
 SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
 ----
 pid	score	name
-5	NULL	e
-8	NULL	h
-1	5	c
-9	5	i
 2	10	a
 3	10	b
+5	NULL	e
+1	5	c
 6	10	f
 7	40	g
+8	NULL	h
+9	5	i
 10	50	j
 
 onlyif serenedb
@@ -3142,11 +3152,11 @@ query
 SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10);
 ----
 pid	score	name
-1	5	c
-9	5	i
 2	10	a
 3	10	b
+1	5	c
 6	10	f
+9	5	i
 
 onlyif serenedb
 query
@@ -3154,19 +3164,19 @@ SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 5 OR s
 ----
 pid	score	name
 1	5	c
-9	5	i
 7	40	g
+9	5	i
 
 onlyif serenedb
 query
 SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (10, 10, 5);
 ----
 pid	score	name
-1	5	c
-9	5	i
 2	10	a
 3	10	b
+1	5	c
 6	10	f
+9	5	i
 
 onlyif serenedb
 query
@@ -3206,8 +3216,8 @@ SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 1
 ----
 pid	score	name
 1	5	c
-9	5	i
 6	10	f
+9	5	i
 
 onlyif serenedb
 query
@@ -3258,11 +3268,11 @@ query
 SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx;
 ----
 pid	a	b	c
-4	NULL	foo	40
-5	1	NULL	50
+1	2	foo	10
 2	1	bar	20
 3	1	foo	30
-1	2	foo	10
+4	NULL	foo	40
+5	1	NULL	50
 
 onlyif serenedb
 query
@@ -3283,8 +3293,8 @@ query
 SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx WHERE a IN (1, 2) AND b = 'foo';
 ----
 pid	a	b	c
-3	1	foo	30
 1	2	foo	10
+3	1	foo	30
 
 onlyif serenedb
 query
@@ -3292,8 +3302,8 @@ SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx
 WHERE (a = 1 AND b = 'foo') OR (a = 2 AND b = 'foo');
 ----
 pid	a	b	c
-3	1	foo	30
 1	2	foo	10
+3	1	foo	30
 
 onlyif serenedb
 query
@@ -3323,8 +3333,8 @@ SELECT pid, a, b, c FROM babsky_idx_scan_comp_ab_idx
 WHERE (a IS NULL AND b = 'foo') OR (a = 1 AND b = 'bar');
 ----
 pid	a	b	c
-4	NULL	foo	40
 2	1	bar	20
+4	NULL	foo	40
 
 onlyif serenedb
 query
@@ -3412,43 +3422,25 @@ QUERY PLAN
 │    ────────────────────   │
 │             #5            │
 │                           │
-│          ~2 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│  (((e = 50) OR ((e = 100) │
-│  OR (e = 500))) AND (((e =│
-│  100) OR (e = 500)) OR ((a│
-│  = 10) AND (b = 20) AND (c│
-│  = 30) AND (d = 40) AND (e│
-│          = 50))))         │
+│ (((e = 100) OR (e = 500)) │
+│  OR ((a = 10) AND (b = 20)│
+│  AND (c = 30) AND (d = 40)│
+│       AND (e = 50)))      │
 │                           │
-│          ~2 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_SK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │           Table:          │
 │     mbkkt_or_suffix_in    │
 │                           │
-│          Filter:          │
-│       {a=(-inf, 10)}      │
-│    {a=10, b=(-inf, 20)}   │
-│ {a=10, b=20, c=(-inf, 30)}│
-│ {a=10, b=20, c=30, d=(-inf│
-│           , 40)}          │
-│ {a=10, b=20, c=30, d=40, e│
-│            =50}           │
-│ {a=10, b=20, c=30, d=40, e│
-│           =100}           │
-│ {a=10, b=20, c=30, d=40, e│
-│           =500}           │
-│ {a=10, b=20, c=30, d=(40, │
-│           +inf)}          │
-│ {a=10, b=20, c=(30, +inf)}│
-│    {a=10, b=(20, +inf)}   │
-│       {a=(10, +inf)}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3458,7 +3450,11 @@ QUERY PLAN
 │             e             │
 │            pid            │
 │                           │
-│          ~10 rows         │
+│          Filters:         │
+│  ((e = 50) OR (e IN (100, │
+│           500)))          │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 # Positive case: OR where *every* branch constrains the leading column IS
@@ -3481,19 +3477,38 @@ EXPLAIN SELECT pid FROM mbkkt_or_suffix_in
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_SK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│             #2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((a = 10) OR (a = 12)) OR│
+│  ((a = 14) AND (b = 24))) │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │           Table:          │
 │     mbkkt_or_suffix_in    │
 │                           │
-│          Filter:          │
-│           {a=10}          │
-│           {a=12}          │
-│        {a=14, b=24}       │
+│   Type: Sequential Scan   │
 │                           │
-│      Projections: pid     │
+│        Projections:       │
+│             a             │
+│             b             │
+│            pid            │
 │                           │
-│          ~10 rows         │
+│          Filters:         │
+│  ((a IN (10, 12)) OR (a = │
+│            14))           │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 statement ok

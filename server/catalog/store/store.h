@@ -29,6 +29,8 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/prepared_statement.hpp>
+#include <duckdb/parser/parsed_expression.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -63,6 +65,7 @@ struct StoreTableDef {
   std::vector<std::string> pk_columns;
   std::vector<std::vector<std::string>> unique_constraints;
   std::vector<StoreForeignKey> foreign_keys;
+  std::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> checks;
 };
 
 inline constexpr std::string_view kStoreDatabaseName = "__sdb_store";
@@ -97,9 +100,18 @@ struct StoreIndexDef {
 };
 
 class Table;
+class Index;
 
 StoreTableDef MakeStoreTableDef(std::string_view database,
                                   std::string_view schema, const Table& table);
+
+// Store mirror of an index, or nullopt when the index is not mirrored
+// (non-Transactional table, expression/INCLUDE columns, or ART-unfriendly
+// key types).
+std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
+                                               std::string_view schema,
+                                               const Table& table,
+                                               const Index& index);
 
 // Catalog persistence: definitions and sequence counters stored as rows in
 // tables of the engine's single-file database, attached as "__sdb_store".
@@ -139,6 +151,9 @@ class CatalogStore {
     // Removes the FK linkage entry on `table` that references/backs
     // `other` (symmetric: PK-side back-reference or the FK itself).
     void DropStoreForeignKey(std::string table, std::string other);
+    // Removes the CHECK constraint with this expression text.
+    void DropStoreCheck(std::string table, std::string expr);
+    void DropStoreNotNull(std::string table, std::string column);
     void CreateStoreIndex(StoreIndexDef def);
     void DropStoreIndex(ObjectId index_id);
 
@@ -156,6 +171,8 @@ class CatalogStore {
       RenameStoreColumn,
       DropStoreColumn,
       DropStoreForeignKey,
+      DropStoreCheck,
+      DropStoreNotNull,
       CreateStoreIndex,
       DropStoreIndex,
     };

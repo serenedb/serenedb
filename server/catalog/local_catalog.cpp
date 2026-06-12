@@ -1252,6 +1252,16 @@ class SnapshotImpl : public Snapshot {
   void CommitDropPlan(CatalogStore::WriteContext& ctx,
                       const DropPlan& plan) const {
     duckdb::MemoryStream stream;
+    // Store-side index drops precede the column ALTERs below: a covering
+    // index must be gone before its column can be dropped, and enforcement
+    // (UNIQUE) must stop the moment the drop commits. The async task only
+    // sweeps shards and definitions.
+    for (auto idx_id : plan.index_drops) {
+      if (auto idx = GetObject<Index>(idx_id)) {
+        ctx.WriteTombstone(idx->GetRelationId(), idx_id);
+        ctx.DropStoreIndex(idx_id);
+      }
+    }
     for (const auto& [tid, rw] : plan.table_rewrites) {
       ctx.PutDefinition(rw.schema_id, ObjectType::Table, tid,
                         catalog::SerializeObject(*rw.table, stream));
@@ -1295,6 +1305,7 @@ class SnapshotImpl : public Snapshot {
         ctx.CreateStoreTable(std::move(rewritten));
         continue;
       }
+      std::vector<std::string> dropped_columns;
       for (const auto& old_col : old_table->Columns()) {
         if (old_col.GetId() == Column::kGeneratedPKId) {
           continue;
@@ -1304,7 +1315,39 @@ class SnapshotImpl : public Snapshot {
             return c.GetId() == old_col.GetId();
           });
         if (it == rw.table->Columns().end()) {
-          ctx.DropStoreColumn(store_name, std::string{old_col.GetName()});
+          dropped_columns.emplace_back(old_col.GetName());
+        }
+      }
+      if (dropped_columns.empty()) {
+        continue;
+      }
+      // Surviving store indexes block the ALTER whenever they cover a
+      // column positioned after the dropped one; recreate them around the
+      // drop (data lives in the rows / iresearch, so rebuilds are cheap
+      // and inverted instances carry no state of their own).
+      std::vector<std::shared_ptr<Index>> surviving;
+      if (auto table_deps = GetDependency<TableDependency>(tid)) {
+        for (auto idx_id : table_deps->indexes) {
+          if (std::ranges::find(plan.index_drops, idx_id) !=
+              plan.index_drops.end()) {
+            continue;
+          }
+          if (auto idx = GetObject<Index>(idx_id)) {
+            surviving.push_back(std::move(idx));
+          }
+        }
+      }
+      for (const auto& idx : surviving) {
+        ctx.DropStoreIndex(idx->GetId());
+      }
+      for (auto& name : dropped_columns) {
+        ctx.DropStoreColumn(store_name, std::move(name));
+      }
+      for (const auto& idx : surviving) {
+        if (auto def = MakeStoreIndexDef(database->GetName(),
+                                         schema_obj->GetName(), *rw.table,
+                                         *idx)) {
+          ctx.CreateStoreIndex(std::move(*def));
         }
       }
     }
@@ -1313,16 +1356,6 @@ class SnapshotImpl : public Snapshot {
     }
     for (const auto& [schema_id, fn_id] : plan.function_drops) {
       ctx.DropDefinition(schema_id, ObjectType::PgSqlFunction, fn_id);
-    }
-    // Recovery anchor for cascade-dropped indexes (column->index cascade).
-    // The store-side index goes synchronously: enforcement (UNIQUE) must
-    // stop the moment the drop commits; the async task only sweeps shards
-    // and definitions.
-    for (auto idx_id : plan.index_drops) {
-      if (auto idx = GetObject<Index>(idx_id)) {
-        ctx.WriteTombstone(idx->GetRelationId(), idx_id);
-        ctx.DropStoreIndex(idx_id);
-      }
     }
   }
 
@@ -1849,40 +1882,20 @@ Result LocalCatalog::CreateIndexImpl(
           return r;
         }
       }
-      if (index->GetType() == ObjectType::InvertedIndex ||
-          index->GetType() == ObjectType::SecondaryIndex) {
+      {
         auto table = clone->template GetObject<Table>(index->GetRelationId());
-        if (table && table->GetEngine() == TableEngine::Transactional) {
-          auto schema_obj =
-            clone->template GetObject<Schema>(table->GetParentId());
-          auto database = schema_obj ? clone->template GetObject<Database>(
-                                         schema_obj->GetParentId())
-                                     : nullptr;
-          StoreIndexDef def;
-          def.table_id = table->GetId();
-          def.index_id = index->GetId();
-          if (index->GetType() == ObjectType::SecondaryIndex) {
-            def.kind = StoreIndexDef::Kind::Plain;
-            def.unique =
-              basics::downCast<const SecondaryIndex>(*index).IsUnique();
-          }
-          bool plain_columns = true;
-          for (auto col_id : index->GetColumnIds()) {
-            auto it = std::ranges::find_if(
-              table->Columns(),
-              [&](const auto& c) { return c.GetId() == col_id; });
-            if (it == table->Columns().end()) {
-              plain_columns = false;
-              break;
-            }
-            def.columns.emplace_back(it->GetName());
-          }
-          if (database && plain_columns && !def.columns.empty()) {
-            def.table = StoreTableName(database->GetName(),
-                                       schema_obj->GetName(),
-                                       table->GetName());
+        auto schema_obj = table ? clone->template GetObject<Schema>(
+                                    table->GetParentId())
+                                : nullptr;
+        auto database = schema_obj ? clone->template GetObject<Database>(
+                                       schema_obj->GetParentId())
+                                   : nullptr;
+        if (database) {
+          if (auto def = MakeStoreIndexDef(database->GetName(),
+                                           schema_obj->GetName(), *table,
+                                           *index)) {
             r = _engine->Write(
-              [&](auto& ctx) { ctx.CreateStoreIndex(std::move(def)); });
+              [&](auto& ctx) { ctx.CreateStoreIndex(std::move(*def)); });
             if (!r.ok()) {
               return r;
             }
@@ -2747,6 +2760,25 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
                          ctx.RenameStoreColumn(store_name,
                                                std::string{old_col.GetName()},
                                                std::string{it->GetName()});
+                       }
+                     }
+                     for (const auto& oc : table->CheckConstraints()) {
+                       bool survives = std::ranges::any_of(
+                         updated->CheckConstraints(), [&](const auto& nc) {
+                           return nc.GetId() == oc.GetId();
+                         });
+                       if (survives) {
+                         continue;
+                       }
+                       if (auto idx = oc.IsNotNull(table->Columns())) {
+                         const auto& col = table->Columns()[*idx];
+                         if (col.GetId() != Column::kGeneratedPKId) {
+                           ctx.DropStoreNotNull(store_name,
+                                                std::string{col.GetName()});
+                         }
+                       } else if (oc.expr && oc.expr->HasExpr()) {
+                         ctx.DropStoreCheck(store_name,
+                                            oc.expr->GetExpr().ToString());
                        }
                      }
                    });

@@ -46,6 +46,7 @@
 
 #include "catalog/table.h"
 #include "catalog/view.h"
+#include "catalog/store/store.h"
 #include "connector/duckdb_table_entry.h"
 #include "core/metadata/snapshot/iceberg_snapshot.hpp"
 #include "pg/errcodes.h"
@@ -298,10 +299,16 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       if (!sdb_table) {
         return std::nullopt;
       }
+      // The table's rows live in the hidden store table; views over it ride
+      // the same rowid-keyed machinery as views over attached databases.
       ViewFastPath out;
-      out.pk_spec = sdb_table->PKColumns().empty()
-                      ? catalog::PkSpec::RocksDBGeneratedRowId
-                      : catalog::PkSpec::RocksDBExplicitPK;
+      out.catalog_ref = CatalogTableRef{
+        .catalog = std::string{catalog::kStoreDatabaseName},
+        .schema = "main",
+        .table = catalog::StoreTableName(entry.ParentCatalog().GetName(),
+                                         entry.ParentSchema().name,
+                                         entry.name)};
+      out.pk_spec = catalog::PkSpec::DuckDBRowId;
       out.base_table = std::move(sdb_table);
       out.projection_columns = std::move(projection_columns);
       return out;

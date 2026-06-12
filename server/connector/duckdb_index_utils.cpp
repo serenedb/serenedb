@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include "basics/assert.h"
+#include "basics/log.h"
 #include "basics/string_utils.h"
 #include "catalog/inverted_index.h"
 #include "catalog/secondary_index.h"
@@ -206,7 +207,8 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
 
 template<DuckDBWriteKind Kind>
 std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
-  ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx) {
+  ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
+  duckdb::optional_ptr<duckdb::ClientContext> expr_context) {
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   conn_ctx.EnsureIndexesTransactions(
@@ -221,8 +223,9 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
         auto tokenizer_provider =
           MakeTokenizerProvider(snapshot, inverted_index);
         auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
-        auto indexed_exprs =
-          MakeIndexedExpressions(inverted_index, conn_ctx.GetClientContext());
+        auto indexed_exprs = MakeIndexedExpressions(
+          inverted_index,
+          expr_context ? *expr_context : conn_ctx.GetClientContext());
         writer = MakeDuckDBSearchWriter(
           Kind, index_txn, std::move(tokenizer_provider),
           std::move(entry_info_provider), index.GetColumnIds(),
@@ -233,13 +236,13 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
 }
 
 template std::unique_ptr<DuckDBSinkIndexWriter>
-CreateInvertedIndexWriter<DuckDBWriteKind::Insert>(ObjectId table_id,
-                                                   ObjectId index_id,
-                                                   ConnectionContext& conn_ctx);
+CreateInvertedIndexWriter<DuckDBWriteKind::Insert>(
+  ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
+  duckdb::optional_ptr<duckdb::ClientContext> expr_context);
 template std::unique_ptr<DuckDBSinkIndexWriter>
-CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(ObjectId table_id,
-                                                   ObjectId index_id,
-                                                   ConnectionContext& conn_ctx);
+CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(
+  ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
+  duckdb::optional_ptr<duckdb::ClientContext> expr_context);
 
 // Explicit instantiations
 template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>

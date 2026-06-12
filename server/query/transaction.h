@@ -148,6 +148,12 @@ class Transaction : public Config {
         }
         visit(*transaction, *index);
       } else {
+        if (!_rocksdb_transaction) {
+          // Store-table commits have no rocksdb transaction; their
+          // secondary indexes are native ART on the store table, nothing
+          // to feed here.
+          continue;
+        }
         visit(GetRocksDBTransaction(), *index);
       }
     }

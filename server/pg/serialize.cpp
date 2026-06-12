@@ -1373,7 +1373,11 @@ bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
 template<VarFormat Format>
 const RecordSerializers& GetSerializersCache(
   SerializationContext& context, const duckdb::LogicalType& struct_type) {
-  SDB_ASSERT(context.types_cache != nullptr);
+  // Lazy: only record-typed results pay for the cache; flat-typed queries
+  // (the overwhelming majority) skip a per-query map allocation.
+  if (context.types_cache == nullptr) {
+    context.types_cache = std::make_unique<TypesSerializationCache>();
+  }
   auto [it, inserted] = context.types_cache->try_emplace(&struct_type);
   auto& cached = it->second;
   if (inserted) {
@@ -1802,7 +1806,8 @@ void FillContext(const Config& config, SerializationContext& context) {
   context.extra_float_digits = config.GetExtraFloatDigits();
   context.bytea_output = config.GetByteaOutput();
   context.snapshot = config.EnsureCatalogSnapshot().get();
-  context.types_cache = std::make_unique<TypesSerializationCache>();
+  // types_cache stays lazy (GetSerializersCache); record results only.
+  context.types_cache.reset();
 }
 
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,

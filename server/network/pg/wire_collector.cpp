@@ -36,8 +36,8 @@ namespace {
 
 // The settings template is cloned per lstate (SerializationContext owns a
 // per-lstate types cache and buffer pointer, so it is not copyable as-is).
-// Each lstate gets its own types cache: record serialization (structs/nested)
-// dereferences it at runtime, not only via GetSerialization.
+// The types cache stays null: record serialization lazily creates it
+// (GetSerializersCache), so flat-typed results skip the allocation.
 sdb::pg::SerializationContext CloneProto(
   const sdb::pg::SerializationContext& proto) {
   sdb::pg::SerializationContext context;
@@ -46,7 +46,6 @@ sdb::pg::SerializationContext CloneProto(
   context.snapshot = proto.snapshot;
   context.quote_seq = proto.quote_seq;
   context.backslash_count = proto.backslash_count;
-  context.types_cache = std::make_unique<sdb::pg::TypesSerializationCache>();
   return context;
 }
 

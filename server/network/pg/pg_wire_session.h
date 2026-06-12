@@ -74,6 +74,7 @@
 #include "network/pg/cancel_registry.h"
 #include "network/pg/pg_frame_codec.h"
 #include "network/pg/task_runner.h"
+#include "network/pg/wire_collector.h"
 #include "network/pg/wire_frames.h"
 #include "network/socket.h"
 #include "pg/command_tag.h"
@@ -181,14 +182,6 @@ inline bool IsBinaryCopy(const duckdb::SQLStatement& statement) {
   return copy.info && copy.info->format == "binary";
 }
 
-inline sdb::pg::VarFormat FormatFor(std::span<const sdb::pg::VarFormat> formats,
-                                    size_t column) {
-  if (formats.empty()) {
-    return sdb::pg::VarFormat::Text;
-  }
-  return formats.size() == 1 ? formats.front() : formats[column];
-}
-
 // The GUCs reported to the client via ParameterStatus: once at startup
 // (SendStartupBurst) and again whenever a command changes one
 // (ReportChangedParameters), matching postgres's GUC_REPORT set.
@@ -275,9 +268,19 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
            _send_written.load(std::memory_order_acquire);
   }
   bool SendBroken() const { return _io_broken.load(std::memory_order_acquire); }
+  // Session-side producer check: only valid when the session owns the _send
+  // producer role (always, except during a direct-mode wire drive -- there
+  // the sink publishes wire->direct_committed instead).
+  bool OverSendHighWater() const {
+    return _send.TotalCommitted() -
+             _send_written.load(std::memory_order_acquire) >
+           kSendHighWater;
+  }
   // Duck-side parks of the SessionTask: pause while the client is slower than
   // the serializer / until everything committed reached the socket. Woken by
   // SendWriter's RequestRun; spurious wakes re-check the condition.
+  void ArmSendWaiter();
+  void DisarmSendWaiter();
   yaclib::Future<> AwaitSendBelowHighWater();
   yaclib::Future<> DrainSendOnTask();
   // io-pinned writer: parked until a committed flush arms a view, then drives
@@ -340,7 +343,21 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   bool SetupConnection();
   void SendStartupBurst();
   duckdb::unique_ptr<duckdb::PendingQueryResult> PendingQueryEnsured(
-    duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values);
+    duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
+    std::shared_ptr<WireSinkContext> wire = nullptr);
+  // Builds an armed per-execution wire-sink contract (see wire_collector.h).
+  std::shared_ptr<WireSinkContext> MakeWireContext(
+    std::span<const sdb::pg::VarFormat> formats);
+  // Splices emittable chains onto _send (parallel modes), respecting the send
+  // high-water, and reschedules blocked sinks. Returns true while the wire
+  // path is healthy (false = client gone).
+  bool DrainWire(WireSinkContext& wire, bool finished);
+  // Drive a wire-collected query: DriveQuery plus per-wake DrainWire.
+  yaclib::Future<duckdb::PendingExecutionResult> DriveQueryWire(
+    duckdb::PendingQueryResult& pending, WireSinkContext& wire);
+  // After the drive: splice everything left, parking for the writer when the
+  // send buffer is over the cap.
+  yaclib::Future<> FinishWireDrain(WireSinkContext& wire);
   // SessionTask coroutines: between chunks they park for send-side
   // backpressure and bail early when the client is gone.
   yaclib::Future<> SerializeResult(const duckdb::PreparedStatement& prepared,
@@ -381,6 +398,11 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   Gate _write_gate;
   Gate _producer_gate;
   std::atomic<size_t> _send_written{0};
+  // Writer-progress wake handshake: the _send_written value the SessionTask
+  // had seen when it armed interest, kSendWaiterIdle = not interested (the
+  // default; recv-parked sessions then never pay a wake per flush).
+  static constexpr size_t kSendWaiterIdle = std::numeric_limits<size_t>::max();
+  std::atomic<size_t> _send_waiter{kSendWaiterIdle};
   std::atomic<bool> _io_broken{false};
   bool _writer_stop = false;
   std::string _scratch;
@@ -395,6 +417,8 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   uint64_t _reported_settings_version = 0;
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _connection_ctx;
+  // Reused across queries (Reset per query); see MakeWireContext.
+  std::shared_ptr<WireSinkContext> _wire_ctx;
   // Hosts SessionMain as a duckdb::Task on the scheduler. Emplaced by RecvLoop
   // right before spawning; by value -- no per-connection heap alloc.
   std::optional<TaskRunner> _task;
@@ -423,23 +447,42 @@ yaclib::Future<> PgWireSession<Kind>::Flush() {
   co_return {};
 }
 
+// The fence orders the waiter-store before the caller's condition re-check
+// loads (the writer fences between its progress-store and the waiter-load);
+// one side always sees the other, so parking after a final re-check is safe.
+template<SocketKind Kind>
+void PgWireSession<Kind>::ArmSendWaiter() {
+  _send_waiter.store(_send_written.load(std::memory_order_relaxed),
+                     std::memory_order_relaxed);
+  std::atomic_thread_fence(std::memory_order_seq_cst);
+}
+
+template<SocketKind Kind>
+void PgWireSession<Kind>::DisarmSendWaiter() {
+  _send_waiter.store(kSendWaiterIdle, std::memory_order_relaxed);
+}
+
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::AwaitSendBelowHighWater() {
+  ArmSendWaiter();
   while (_send.TotalCommitted() -
              _send_written.load(std::memory_order_acquire) >
            kSendHighWater &&
          !SendBroken()) {
     co_await _task->Park();
   }
+  DisarmSendWaiter();
   co_return {};
 }
 
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::DrainSendOnTask() {
   KickSend();
+  ArmSendWaiter();
   while (HasUnsentBytes() && !SendBroken()) {
     co_await _task->Park();
   }
+  DisarmSendWaiter();
   co_return {};
 }
 
@@ -474,9 +517,17 @@ yaclib::Future<> PgWireSession<Kind>::SendWriter() {
       // pending kick is consumed by the next Wait.
       _send.FlushDone();
       // Wake whichever side waits on drain: RecvLoop's startup-phase Flush
-      // (gate) or the SessionTask's WAIT_SEND park (RequestRun).
+      // (gate) or the SessionTask (RequestRun) -- but only when the session
+      // declared interest in writer progress (ArmSendWaiter): the common
+      // request/response flow parks on recv and an unconditional wake here
+      // costs a full no-op session frame on a worker per flush. Dekker pair
+      // with ArmSendWaiter: progress-store then waiter-load here, waiter-store
+      // then progress-load there, so a wake is never lost.
       _producer_gate.Kick();
-      if (_task_spawned) {
+      std::atomic_thread_fence(std::memory_order_seq_cst);
+      const auto seen = _send_waiter.load(std::memory_order_relaxed);
+      if (seen != kSendWaiterIdle && _task_spawned &&
+          _send_written.load(std::memory_order_relaxed) > seen) {
         _task->RequestRun();
       }
       continue;
@@ -657,6 +708,8 @@ bool PgWireSession<Kind>::SetupConnection() {
     *_conn->context, UserName(), DatabaseName(), database_id,
     std::move(database), &_send, nullptr);
   connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
+  duckdb::ClientConfig::GetConfig(*_conn->context).get_result_collector =
+    MakeWireCollector;
 
   _conn->context->session_user = std::string{UserName()};
   std::vector<duckdb::CatalogSearchEntry> default_paths{
@@ -720,7 +773,8 @@ void PgWireSession<Kind>::SendStartupBurst() {
 template<SocketKind Kind>
 duckdb::unique_ptr<duckdb::PendingQueryResult>
 PgWireSession<Kind>::PendingQueryEnsured(
-  duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values) {
+  duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
+  std::shared_ptr<WireSinkContext> wire) {
   const auto& props = prepared.GetStatementProperties();
   const auto db_name = DatabaseName();
   _connection_ctx->EnsureCatalogSnapshot();
@@ -733,7 +787,122 @@ PgWireSession<Kind>::PendingQueryEnsured(
     }
     _connection_ctx->EnsureRocksDBSnapshot();
   }
-  return prepared.PendingQuery(values, /*allow_stream_result=*/true);
+  if (!wire) {
+    return prepared.PendingQuery(values, /*allow_stream_result=*/true);
+  }
+  // Arm the collector hook for this execution. allow_stream_result=false
+  // routes through the get_result_collector hook (only consulted when not
+  // streaming) and gives the eager-cleanup materialized fetch path; the wire
+  // collector streams the bytes itself. Snapshot must be set before sinks can
+  // run (workers may pick tasks up during PendingQuery), so fill the
+  // serialization template here, after EnsureCatalogSnapshot.
+  FillContext(*_connection_ctx, wire->proto);
+  auto& client_state = *_conn->context->registered_state
+                          ->template Get<connector::SereneDBClientState>(
+                            connector::kSereneDBClientStateKey);
+  client_state.wire_sink = std::move(wire);
+  auto pending = prepared.PendingQuery(values, /*allow_stream_result=*/false);
+  client_state.wire_sink.reset();
+  return pending;
+}
+
+template<SocketKind Kind>
+std::shared_ptr<WireSinkContext> PgWireSession<Kind>::MakeWireContext(
+  std::span<const sdb::pg::VarFormat> formats) {
+  // The collector's gstate co-owns the context, so a previous query torn down
+  // late (error paths) may still hold a reference -- allocate fresh then.
+  if (_wire_ctx && _wire_ctx.use_count() == 1) {
+    _wire_ctx->Reset();
+  } else {
+    _wire_ctx = std::make_shared<WireSinkContext>();
+    _wire_ctx->send = &_send;
+    _wire_ctx->send_written = &_send_written;
+    _wire_ctx->high_water = kSendHighWater;
+    _wire_ctx->task = &*_task;
+  }
+  _wire_ctx->formats.assign(formats.begin(), formats.end());
+  return _wire_ctx;
+}
+
+template<SocketKind Kind>
+bool PgWireSession<Kind>::DrainWire(WireSinkContext& wire, bool finished) {
+  if (SendBroken()) {
+    // The client is gone: discard chains so blocked sinks can finish and the
+    // query unwinds instead of wedging on backpressure.
+    while (auto chain = wire.PopChain(true)) {
+    }
+    wire.UnblockSinks(true, true);
+    return false;
+  }
+  if (wire.mode != WireSinkContext::Mode::Direct) {
+    while (!OverSendHighWater()) {
+      auto chain = wire.PopChain(finished);
+      if (!chain) {
+        break;
+      }
+      _send.SpliceCommitted(std::move(*chain), false);
+    }
+    // Sinks gate on the chain queue, not the send buffer (they encode into
+    // their own lstate buffers); the send cap only stops splicing. Ordered
+    // mode ignores the flag and applies window admission internally.
+    wire.UnblockSinks(wire.queued_bytes.load(std::memory_order_relaxed) <=
+                      kWireQueuedHighWater);
+    return true;
+  }
+  // Direct mode: the sink owns the _send producer role, so judge fullness by
+  // its published progress, not the plain producer counter.
+  const auto committed =
+    wire.direct_committed.load(std::memory_order_acquire);
+  const auto written = _send_written.load(std::memory_order_acquire);
+  if (committed - written <= kSendHighWater) {
+    wire.UnblockSinks(true, true);
+  }
+  return true;
+}
+
+template<SocketKind Kind>
+yaclib::Future<duckdb::PendingExecutionResult>
+PgWireSession<Kind>::DriveQueryWire(duckdb::PendingQueryResult& pending,
+                                    WireSinkContext& wire) {
+  static constexpr int kInlineSliceBudget = 8;
+  int inline_slices = 0;
+  // Direct-mode backpressure unblocks ride writer progress, so the parks
+  // below must receive FlushDone wakes.
+  ArmSendWaiter();
+  absl::Cleanup disarm{[this] { DisarmSendWaiter(); }};
+  for (;;) {
+    DrainWire(wire, false);
+    const auto status = pending.ExecuteTask([this] { _task->RequestRun(); });
+    if (duckdb::PendingQueryResult::IsResultReady(status)) {
+      co_return status;
+    }
+    if (status == duckdb::PendingExecutionResult::RESULT_NOT_READY) {
+      if (++inline_slices < kInlineSliceBudget) {
+        continue;
+      }
+      inline_slices = 0;
+      co_await _task->Yield();
+    } else {
+      inline_slices = 0;
+      co_await _task->Park();
+    }
+  }
+}
+
+template<SocketKind Kind>
+yaclib::Future<> PgWireSession<Kind>::FinishWireDrain(WireSinkContext& wire) {
+  ArmSendWaiter();
+  absl::Cleanup disarm{[this] { DisarmSendWaiter(); }};
+  for (;;) {
+    if (!DrainWire(wire, true)) {
+      co_return {};
+    }
+    if (wire.queued_bytes.load(std::memory_order_relaxed) == 0) {
+      co_return {};
+    }
+    // Send buffer over the cap with chains still queued: wait for the writer.
+    co_await _task->Park();
+  }
 }
 
 template<SocketKind Kind>
@@ -1120,6 +1289,39 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     }
     const auto return_type = prepared->GetStatementProperties().return_type;
     duckdb::vector<duckdb::Value> params;
+    if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
+      // Rows go to the wire straight from the executor (wire_collector.h):
+      // encoded in Sink on the workers, spliced here in plan order.
+      // RowDescription MUST be committed before PendingQuery: arming hands
+      // the _send producer role to the direct-mode sink, and workers can run
+      // it inside PendingQuery -- writing T afterwards interleaves with the
+      // first DataRows (a plan error then lands after T, which is postgres's
+      // mid-stream error behavior).
+      WriteRowDescription(_send, prepared->GetTypes(), prepared->GetNames(),
+                          {});
+      auto wire = MakeWireContext({});
+      auto pending = PendingQueryEnsured(*prepared, params, wire);
+      if (pending->HasError()) {
+        ThrowDuck(pending->GetErrorObject());
+      }
+      const auto status = co_await DriveQueryWire(*pending, *wire);
+      if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
+          pending->HasError()) {
+        // Partial rows may already be out; the error response after them is
+        // exactly postgres's mid-stream error behavior.
+        ThrowDuck(pending->GetErrorObject());
+      }
+      co_await FinishWireDrain(*wire);
+      auto result = pending->Execute();
+      if (result->HasError()) {
+        ThrowDuck(result->GetErrorObject());
+      }
+      WriteCommandComplete(
+        _send, sdb::pg::FormatCommandTag(
+                 *prepared, return_type,
+                 wire->rows.load(std::memory_order_relaxed)));
+      continue;
+    }
     auto pending = PendingQueryEnsured(*prepared, params);
     if (pending->HasError()) {
       ThrowDuck(pending->GetErrorObject());
@@ -1523,13 +1725,11 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
   // A deferred COPY FROM STDIN or an empty statement has no prepared
   // statement, no parameters, and no result columns; just record the (empty)
   // bind. ParseBindVars would otherwise dereference the null prepared.
+  // Planning (PendingQuery) is deferred to Execute: only there is max_rows
+  // known, which decides between the wire collector (full drain) and the
+  // streaming path (cursor paging). Plan-time errors surface at Execute.
   if (statement->prepared) {
     portal.bind_info = ParseBindVars(payload, *statement);
-    portal.pending =
-      PendingQueryEnsured(*statement->prepared, portal.bind_info.param_values);
-    if (portal.pending->HasError()) {
-      ThrowDuck(portal.pending->GetErrorObject());
-    }
   }
 
   if (portal_name.empty()) {
@@ -1612,7 +1812,8 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
     WriteEmptyFrame(_send, PQ_MSG_NO_DATA);
     return;
   }
-  WriteRowDescription(_send, portal.pending->types, portal.pending->names,
+  WriteRowDescription(_send, portal.stmt->prepared->GetTypes(),
+                      portal.stmt->prepared->GetNames(),
                       portal.bind_info.output_formats);
 }
 
@@ -1693,7 +1894,7 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     WriteEmptyFrame(_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
     co_return {};
   }
-  if (!portal->stmt || !portal->pending) {
+  if (!portal->stmt || !portal->stmt->prepared) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
                     ERR_MSG("portal is not bound"));
   }
@@ -1701,10 +1902,44 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
   const auto return_type =
     portal->stmt->prepared->GetStatementProperties().return_type;
 
-  // Drive + Execute exactly once per portal; a re-Execute (cursor paging)
-  // resumes the retained result. PendingQueryResult::Execute() closes the
-  // pending, so calling it twice would throw.
+  // Plan + drive exactly once per portal (planning was deferred from Bind so
+  // max_rows can pick the path); a re-Execute (cursor paging) resumes the
+  // retained result. PendingQueryResult::Execute() closes the pending, so
+  // calling it twice would throw.
   if (!portal->started) {
+    if (max_rows == 0 &&
+        return_type == duckdb::StatementReturnType::QUERY_RESULT) {
+      // Full drain: rows flow executor -> _send via the wire collector; the
+      // portal completes within this Execute.
+      auto wire = MakeWireContext(portal->bind_info.output_formats);
+      portal->pending = PendingQueryEnsured(
+        *portal->stmt->prepared, portal->bind_info.param_values, wire);
+      if (portal->pending->HasError()) {
+        ThrowDuck(portal->pending->GetErrorObject());
+      }
+      const auto status = co_await DriveQueryWire(*portal->pending, *wire);
+      if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
+          portal->pending->HasError()) {
+        ThrowDuck(portal->pending->GetErrorObject());
+      }
+      co_await FinishWireDrain(*wire);
+      portal->result = portal->pending->Execute();
+      if (portal->result->HasError()) {
+        ThrowDuck(portal->result->GetErrorObject());
+      }
+      portal->started = true;
+      portal->exhausted = true;
+      WriteCommandComplete(
+        _send, sdb::pg::FormatCommandTag(
+                 *portal->stmt->prepared, return_type,
+                 wire->rows.load(std::memory_order_relaxed)));
+      co_return {};
+    }
+    portal->pending = PendingQueryEnsured(*portal->stmt->prepared,
+                                          portal->bind_info.param_values);
+    if (portal->pending->HasError()) {
+      ThrowDuck(portal->pending->GetErrorObject());
+    }
     const auto status = co_await DriveQuery(*portal->pending);
     if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
         portal->pending->HasError()) {

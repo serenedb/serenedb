@@ -102,6 +102,18 @@ SDB_DOCKER="${PERF_SDB_DOCKER:-1}"
 SDB_IMAGE="${PERF_SDB_IMAGE:-ubuntu:24.04}"
 SDB_CONTAINER="${PERF_SDB_CONTAINER:-sdb_wire_serened}"
 
+# Host networking for ALL containers (serened + engines). docker's default
+# published-port path goes through the userland docker-proxy, which (a) caps
+# connect-per-second around ~5k for every engine (the connect_select1 ceiling)
+# and (b) holds one host ephemeral port per inbound connection in TIME_WAIT --
+# a -C storm burns the whole 28k range in seconds and resets everything for
+# ~60s. With --network host every engine binds the bench port directly, so
+# connect numbers measure the engines, not the proxy. Still fair: all engines
+# share the mode. PERF_DOCKER_HOSTNET=0 restores proxy networking. Engine
+# baselines are NOT comparable across modes -- refresh with
+# PERF_REMEASURE_DB=all after switching.
+DOCKER_HOSTNET="${PERF_DOCKER_HOSTNET:-1}"
+
 # --- external pg-wire engine registry --------------------------------------
 # Real PostgreSQL and the other servers (CockroachDB / CedarDB / RisingWave /
 # ClickHouse) all speak the Postgres wire protocol and all run in docker, so they
@@ -123,6 +135,13 @@ SDB_CONTAINER="${PERF_SDB_CONTAINER:-sdb_wire_serened}"
 EXT_ORDER=(pg crdb cedar risingwave clickhouse) # display + iteration order; pg stays leftmost
 declare -A ENG_IMAGE ENG_HPORT ENG_CPORT ENG_CONTAINER ENG_USER ENG_DB ENG_PASS
 declare -A ENG_PREARGS ENG_CARGS # docker args before the image / container start args after it
+# Host-networking variants: full REPLACEMENT start/env args that make the
+# engine listen on ENG_HPORT directly (no -p mapping exists under --network
+# host). An engine with no ENG_CARGS_HOST entry keeps its base ENG_CARGS and
+# its NATIVE port (the bench then connects to ENG_CPORT). Auxiliary listeners
+# are moved to 1<hport> / 2<hport> so well-known ports (8080, 8123, 9000)
+# don't collide with co-tenants on the shared host.
+declare -A ENG_CARGS_HOST ENG_PREARGS_HOST
 
 # Real PostgreSQL: trust auth, pg wire on 5432.
 ENG_IMAGE[pg]="${PERF_PG_IMAGE:-postgres:latest}"
@@ -134,6 +153,7 @@ ENG_DB[pg]=postgres
 ENG_PASS[pg]=""
 ENG_PREARGS[pg]="-e POSTGRES_HOST_AUTH_METHOD=trust"
 ENG_CARGS[pg]="-c max_connections=300 -c shared_buffers=512MB"
+ENG_CARGS_HOST[pg]="${ENG_CARGS[pg]} -c port=${ENG_HPORT[pg]}"
 
 # CockroachDB: insecure single-node, SQL on 26257, user root / db defaultdb / no pw.
 ENG_IMAGE[crdb]="${PERF_CRDB_IMAGE:-cockroachdb/cockroach:latest}"
@@ -145,6 +165,7 @@ ENG_DB[crdb]=defaultdb
 ENG_PASS[crdb]=""
 ENG_PREARGS[crdb]=""
 ENG_CARGS[crdb]="start-single-node --insecure"
+ENG_CARGS_HOST[crdb]="${ENG_CARGS[crdb]} --listen-addr=0.0.0.0:${ENG_HPORT[crdb]} --http-addr=127.0.0.1:1${ENG_HPORT[crdb]}"
 
 # CedarDB: pg wire on 5432, user postgres / db postgres, but no trust-auth mode --
 # a password is mandatory, passed to psql/pgbench via PGPASSWORD.
@@ -157,6 +178,8 @@ ENG_DB[cedar]=postgres
 ENG_PASS[cedar]="${PERF_CEDAR_PASSWORD:-bench}"
 ENG_PREARGS[cedar]="-e CEDAR_PASSWORD=${PERF_CEDAR_PASSWORD:-bench}"
 ENG_CARGS[cedar]=""
+ENG_PREARGS_HOST[cedar]="${ENG_PREARGS[cedar]} -e CEDARDB_PORT=${ENG_HPORT[cedar]}"
+ENG_CARGS_HOST[cedar]=""
 
 # RisingWave: a Rust streaming DB, natively pg-wire. single_node mode listens on
 # 4566, user root / db dev / no password. (Replaces GlareDB, whose current 25.x line
@@ -170,6 +193,7 @@ ENG_DB[risingwave]=dev
 ENG_PASS[risingwave]=""
 ENG_PREARGS[risingwave]=""
 ENG_CARGS[risingwave]="single_node"
+ENG_CARGS_HOST[risingwave]="single_node --listen-addr 0.0.0.0:${ENG_HPORT[risingwave]}"
 
 # ClickHouse: enable its pg-wire listener (postgresql_port) via a server config
 # override arg; the pg interface requires a password, so set one and create the
@@ -186,6 +210,7 @@ ENG_DB[clickhouse]="${PERF_CLICKHOUSE_DB:-default}"
 ENG_PASS[clickhouse]="${PERF_CLICKHOUSE_PASSWORD:-bench}"
 ENG_PREARGS[clickhouse]="-e CLICKHOUSE_PASSWORD=${PERF_CLICKHOUSE_PASSWORD:-bench} -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 --ulimit nofile=262144:262144"
 ENG_CARGS[clickhouse]="--postgresql_port=9005"
+ENG_CARGS_HOST[clickhouse]="--postgresql_port=${ENG_HPORT[clickhouse]} --http_port=1${ENG_HPORT[clickhouse]} --tcp_port=2${ENG_HPORT[clickhouse]}"
 
 # Expand a comma list (or "all") of engine names into a deduped, registry-ordered,
 # validated set. Used for PERF_DB / PERF_REMEASURE_DB / PERF_REUSE_ONLY_DB.
@@ -460,12 +485,15 @@ start_serened() {
 	[[ -n "${CPU_THREADS}" ]] && cmd+=(--server_cpu_threads "${CPU_THREADS}")
 	cmd+=("$@")
 	if [[ "${SDB_DOCKER}" != 0 ]]; then
-		local cpuset=()
+		local cpuset=() netargs=(-p "${port}:${port}")
 		[[ -n "${ENG_CPUSET}" ]] && cpuset=(--cpuset-cpus "${ENG_CPUSET}")
+		# serened binds the bench port itself, so host networking needs no
+		# listen-port translation.
+		[[ "${DOCKER_HOSTNET}" != 0 ]] && netargs=(--network host)
 		docker rm -f "${SDB_CONTAINER}" >/dev/null 2>&1 || true
 		docker run -d --name "${SDB_CONTAINER}" "${cpuset[@]}" \
 			--user "$(id -u):$(id -g)" -e HOME=/tmp \
-			-p "${port}:${port}" \
+			"${netargs[@]}" \
 			-v "${SERENED_BIN}:${SERENED_BIN}:ro" \
 			-v "${datadir}:${datadir}" \
 			"${SDB_IMAGE}" "${cmd[@]}" >/dev/null
@@ -511,9 +539,6 @@ bench_server() {
 	run_one "${srv}_wide_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_wide.sql" prepared
 	run_one "${srv}_rows_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_rows.sql" prepared
 	run_one "${srv}_analytical_prepared" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_analytical.sql" prepared
-	# Connection lifecycle: -C reconnects per transaction (simple protocol), so this
-	# measures connect+startup+auth+teardown throughput rather than steady-state query cost.
-	run_one "${srv}_connect_select1" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_connect.sql" simple -C
 	if [[ "${SERIALIZE}" != 0 ]]; then
 		echo "  -- serialization matrix (type x text/binary, raw drain)"
 		run_serialize "${srv}" "${port}" "${datadir}"
@@ -531,7 +556,12 @@ bench_server() {
 		# (reused-connection) load and has no -C path, so a profile here would not reflect
 		# the connect/teardown cost the workload measures.
 	fi
-	stop_serened "${srv}"
+	# Connection lifecycle (-C, reconnect per transaction) runs LAST: in docker
+	# mode the connect storm exhausts the host's ephemeral ports toward the
+	# container (docker-proxy opens one backend connection per inbound; ~28k
+	# TIME_WAIT pile up in seconds and need ~60s to expire), so any workload
+	# scheduled after it gets connection resets for up to a minute.
+	run_one "${srv}_connect_select1" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_connect.sql" simple -C
 	sleep 1
 }
 
@@ -555,13 +585,30 @@ bench_engine() {
 	[[ -n "${ENG_CPUSET}" ]] && cpuset=(--cpuset-cpus "${ENG_CPUSET}")
 	# Word-split the per-engine docker pre-image args and container start args.
 	# (read returns non-zero on the empty/no-trailing-newline here-string; harmless.)
-	local preargs=() cargs=()
-	read -r -a preargs <<<"${ENG_PREARGS[$name]}" || true
-	read -r -a cargs <<<"${ENG_CARGS[$name]}" || true
-	echo "-- ${name} ${image} (host :${hport} -> container :${cport}) [docker${ENG_CPUSET:+, cpuset ${ENG_CPUSET}}]"
+	local preargs=() cargs=() netargs=()
+	if [[ "${DOCKER_HOSTNET}" != 0 && -n "${ENG_PREARGS_HOST[$name]+x}" ]]; then
+		read -r -a preargs <<<"${ENG_PREARGS_HOST[$name]}" || true
+	else
+		read -r -a preargs <<<"${ENG_PREARGS[$name]}" || true
+	fi
+	if [[ "${DOCKER_HOSTNET}" != 0 ]]; then
+		netargs=(--network host)
+		if [[ -n "${ENG_CARGS_HOST[$name]+x}" ]]; then
+			read -r -a cargs <<<"${ENG_CARGS_HOST[$name]}" || true
+		else
+			# No listen-port knob: the engine binds its NATIVE port on the host.
+			read -r -a cargs <<<"${ENG_CARGS[$name]}" || true
+			hport="${cport}"
+		fi
+		echo "-- ${name} ${image} (host network, :${hport}) [docker${ENG_CPUSET:+, cpuset ${ENG_CPUSET}}]"
+	else
+		netargs=(-p "${hport}:${cport}")
+		read -r -a cargs <<<"${ENG_CARGS[$name]}" || true
+		echo "-- ${name} ${image} (host :${hport} -> container :${cport}) [docker${ENG_CPUSET:+, cpuset ${ENG_CPUSET}}]"
+	fi
 	docker rm -f "${container}" >/dev/null 2>&1 || true
 	if ! docker run -d --name "${container}" "${cpuset[@]}" \
-		-p "${hport}:${cport}" "${preargs[@]}" "${image}" "${cargs[@]}" >/dev/null; then
+		"${netargs[@]}" "${preargs[@]}" "${image}" "${cargs[@]}" >/dev/null; then
 		echo "  ${name}: docker run failed -- skipping" >&2
 		return 1
 	fi

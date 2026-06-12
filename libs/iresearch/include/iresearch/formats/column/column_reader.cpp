@@ -342,6 +342,9 @@ ColumnReader::ColumnReader(
   }
   _data_blocks = WrapMmapPointers(source, _data_pointers);
   _validity_blocks = WrapMmapPointers(source, _validity_pointers);
+  _data_advised = std::make_unique<std::atomic<bool>[]>(_data_blocks.size());
+  _validity_advised =
+    std::make_unique<std::atomic<bool>[]>(_validity_blocks.size());
 }
 
 ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
@@ -377,6 +380,8 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
   _row_count = total;
   _data_offsets.push_back(0);
   _validity_blocks = WrapMmapPointers(source, _validity_pointers);
+  _validity_advised =
+    std::make_unique<std::atomic<bool>[]>(_validity_blocks.size());
 }
 
 RgWindow ColumnReader::Locate(uint64_t row_pos, RgWindow hint) const noexcept {
@@ -460,8 +465,8 @@ void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
 
 duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   const duckdb::DataPointer& p, const duckdb::LogicalType& type,
-  ReadContext& ctx,
-  const duckdb::shared_ptr<duckdb::BlockHandle>& prebuilt) const {
+  ReadContext& ctx, const duckdb::shared_ptr<duckdb::BlockHandle>& prebuilt,
+  std::atomic<bool>* advise_once) const {
   auto& db = ctx.Database();
   auto& cfg = duckdb::DBConfig::GetConfig(db);
   auto codec =
@@ -491,9 +496,13 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   if (prebuilt) {
     // Zero-copy: the block was wrapped around the mmap'd .col file when the
     // reader was built (see WrapMmapPointer); reuse costs one shared_ptr
-    // copy.
-    if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size)) {
-      PrefetchMmapRange(direct, byte_size);
+    // copy. Readahead only pays off on the first open per block (cold page
+    // cache) -- see _data_advised.
+    if (advise_once && !advise_once->load(std::memory_order_relaxed)) {
+      advise_once->store(true, std::memory_order_relaxed);
+      if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size)) {
+        PrefetchMmapRange(direct, byte_size);
+      }
     }
     handle = prebuilt;
   } else if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size);
@@ -537,15 +546,16 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegment(
   if (_type.id() == duckdb::LogicalTypeId::LIST ||
       _type.id() == duckdb::LogicalTypeId::MAP) {
     return OpenSegmentImpl(_data_pointers[rg], kLengthsType, ctx,
-                           _data_blocks[rg]);
+                           _data_blocks[rg], &_data_advised[rg]);
   }
-  return OpenSegmentImpl(_data_pointers[rg], _type, ctx, _data_blocks[rg]);
+  return OpenSegmentImpl(_data_pointers[rg], _type, ctx, _data_blocks[rg],
+                         &_data_advised[rg]);
 }
 
 duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenValiditySegment(
   size_t vrg, ReadContext& ctx) const {
   return OpenSegmentImpl(_validity_pointers[vrg], kValidityType, ctx,
-                         _validity_blocks[vrg]);
+                         _validity_blocks[vrg], &_validity_advised[vrg]);
 }
 
 void ColumnReader::ListOffsetState::Read(size_t rg, uint64_t in_rg,

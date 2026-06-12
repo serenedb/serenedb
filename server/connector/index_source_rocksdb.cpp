@@ -80,15 +80,16 @@ RocksDBIndexSource::RocksDBIndexSource(
   SDB_ASSERT(_cf);
 }
 
-void RocksDBIndexSource::Materialize(duckdb::ClientContext& /*context*/,
-                                     PrimaryKeyBatch& batch,
-                                     duckdb::idx_t start, duckdb::idx_t count,
-                                     duckdb::DataChunk& output) {
+duckdb::idx_t RocksDBIndexSource::Materialize(duckdb::ClientContext&,
+                                              PrimaryKeyBatch& batch,
+                                              duckdb::idx_t start,
+                                              duckdb::idx_t count,
+                                              duckdb::DataChunk& output) {
   auto& arena = std::get<PrimaryKeysBytes>(batch);
   SDB_ASSERT(start + count <= arena.views.size());
   std::span<const std::string_view> pk_bytes{arena.views.data() + start, count};
   if (pk_bytes.empty()) {
-    return;
+    return count;
   }
 
   _new_batch = true;
@@ -117,6 +118,7 @@ void RocksDBIndexSource::Materialize(duckdb::ClientContext& /*context*/,
                            static_cast<duckdb::idx_t>(original_idx));
                        });
   }
+  return count;
 }
 
 void RocksDBIndexSource::LookupInto(

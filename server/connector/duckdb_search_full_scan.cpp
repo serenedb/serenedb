@@ -297,9 +297,9 @@ bool SearchFullScanTopKLocalState::OnSegmentsExhausted(
   const auto take = std::min<size_t>(remaining, STANDARD_VECTOR_SIZE);
   const ScoreDocsView view{top_hits.subspan(current_idx, take)};
   const auto emitted = MaterializeChunk(ctx, g, *this, view, output, 0);
-  FinalizeBatch(ctx, g, *this, output, emitted);
+  const auto visible = FinalizeBatch(ctx, g, *this, output, emitted);
   current_idx += take;
-  output.SetChildCardinality(emitted);
+  output.SetChildCardinality(visible);
   return emitted > 0;
 }
 

@@ -231,8 +231,8 @@ void SKRangeScanFunction(duckdb::ClientContext& context,
     gstate.finished = true;
   }
 
-  gstate.index_source->Materialize(context, gstate.pk_batch, 0, num_rows,
-                                   output);
+  std::ignore = gstate.index_source->Materialize(context, gstate.pk_batch, 0,
+                                                 num_rows, output);
 
   if (gstate.scan_rowid) {
     const auto row_base = gstate.produced_rows.load(std::memory_order_relaxed);

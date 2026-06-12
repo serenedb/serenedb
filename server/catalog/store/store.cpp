@@ -159,17 +159,28 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
       def.not_null.push_back(mirror_pos[*idx]);
     }
   }
-  for (auto pk_id : table.PKColumns()) {
-    auto it = std::ranges::find_if(
-      cols, [&](const auto& c) { return c.GetId() == pk_id; });
-    SDB_ASSERT(it != cols.end());
-    if (it->type.IsNested()) {
-      // ART cannot index nested types; such PKs stay unenforced in the
-      // store table.
-      def.pk_columns.clear();
-      return def;
+  auto names_for = [&](std::span<const Column::Id> ids,
+                       std::vector<std::string>& out) {
+    for (auto col_id : ids) {
+      auto it = std::ranges::find_if(
+        cols, [&](const auto& c) { return c.GetId() == col_id; });
+      SDB_ASSERT(it != cols.end());
+      if (it->type.IsNested()) {
+        // ART cannot index nested types; such keys stay unenforced in the
+        // store table until the encoded-key indexes land.
+        out.clear();
+        return;
+      }
+      out.emplace_back(it->GetName());
     }
-    def.pk_columns.emplace_back(it->GetName());
+  };
+  names_for(table.PKColumns(), def.pk_columns);
+  for (const auto& unique : table.UniqueConstraints()) {
+    std::vector<std::string> names;
+    names_for(unique, names);
+    if (!names.empty()) {
+      def.unique_constraints.push_back(std::move(names));
+    }
   }
   return def;
 }
@@ -451,6 +462,15 @@ Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
       }
       info->constraints.push_back(
         duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(pk), true));
+    }
+    for (const auto& unique : def.unique_constraints) {
+      duckdb::vector<std::string> names;
+      names.reserve(unique.size());
+      for (const auto& name : unique) {
+        names.push_back(name);
+      }
+      info->constraints.push_back(
+        duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(names), false));
     }
     auto& context = *_conn->context;
     auto& catalog =

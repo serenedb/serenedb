@@ -55,6 +55,7 @@ struct StoreTableDef {
   // Indices into `columns`.
   std::vector<size_t> not_null;
   std::vector<std::string> pk_columns;
+  std::vector<std::vector<std::string>> unique_constraints;
 };
 
 std::string StoreTableName(std::string_view database, std::string_view schema,

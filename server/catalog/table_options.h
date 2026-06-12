@@ -158,6 +158,7 @@ struct CreateTableOptions {
   std::vector<Column::Id> pk_columns;
   std::vector<CheckConstraint> check_constraints;
   std::vector<SerialSequenceOption> sequences;
+  std::vector<std::vector<Column::Id>> unique_constraints;
   TableEngine engine = TableEngine::Transactional;
 };
 // NOLINTEND

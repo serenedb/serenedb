@@ -15,7 +15,12 @@
 # captures cycles/instructions for the same window, so we report cycles-per-query
 # (thread-count independent) alongside tps and latency.
 #
-# Pre-reqs: build_perf binary, pgbench, perf. No other serened on the ports.
+# By default serened itself runs in docker (PERF_SDB_DOCKER=1) so it pays the same
+# container networking/cgroup overhead as the external engines it is compared to;
+# PERF_SDB_DOCKER=0 restores the bare-host-process behavior.
+#
+# Pre-reqs: build_perf binary, pgbench, perf, docker (unless PERF_SDB_DOCKER=0).
+# No other serened on the ports.
 
 set -euo pipefail
 
@@ -37,11 +42,30 @@ DURATION="${PERF_WIRE_DURATION:-15}"
 IO_THREADS="${PERF_WIRE_IO_THREADS:-8}"
 # Cap DuckDB's worker pool to the reserved CPU count. DuckDB sizes its pool from
 # the HOST core count regardless of the cgroup cpuset, so without this it spawns
-# ~32 workers oversubscribed onto the reserved cores. `nproc` honors the cpuset
-# (this runs inside the partition), so it is exactly the reserved logical CPUs
-# (16 for 8 physical cores, 24 for 12, ...). Set PERF_WIRE_CPU_THREADS to 0/""
-# to leave DuckDB's default.
-CPU_THREADS="${PERF_WIRE_CPU_THREADS-$(nproc)}"
+# ~32 workers oversubscribed onto the reserved cores. When run_bench_isolated.sh
+# exports PERF_BENCH_CORES, its cpu count is authoritative: `nproc` only matches it
+# for the bare-process run inside the partition, not in docker mode where this
+# shell is unpinned and only the container gets the cpuset. Set
+# PERF_WIRE_CPU_THREADS to 0/"" to leave DuckDB's default.
+cpuset_count() {
+	local n=0 part
+	local IFS=','
+	for part in $1; do
+		if [[ "${part}" == *-* ]]; then
+			n=$((n + ${part#*-} - ${part%-*} + 1))
+		else
+			n=$((n + 1))
+		fi
+	done
+	echo "${n}"
+}
+if [[ -n "${PERF_WIRE_CPU_THREADS+x}" ]]; then
+	CPU_THREADS="${PERF_WIRE_CPU_THREADS}"
+elif [[ -n "${PERF_BENCH_CORES:-}" ]]; then
+	CPU_THREADS="$(cpuset_count "${PERF_BENCH_CORES}")"
+else
+	CPU_THREADS="$(nproc)"
+fi
 # Post-measurement profiling: after the timed runs, while the server is still the
 # only serened alive, perf-record call-graphs per workload so we can see WHERE the
 # cycles go (stat counters only say how many). Set PERF_WIRE_PROFILE=0 to skip.
@@ -66,6 +90,17 @@ REMEASURE_OLD="${PERF_REMEASURE_OLD:-0}"
 # Cores to pin the external (docker) engines to, so they race on the same CPUs as
 # serened. run_bench_isolated.sh exports the reserved set here; empty = all cores.
 ENG_CPUSET="${PERF_BENCH_CORES:-}"
+# Serened-in-docker (the default): the external engines all run as containers, so a
+# bare-host serened would skip the container bridge-networking + cgroup cost they
+# all pay. Run serened the same way -- same --cpuset-cpus pinning, same bridge +
+# published-port networking -- reusing the already-built binary (statically linked,
+# host is ubuntu 24.04 like the image) via bind mount; nothing is compiled into an
+# image. PERF_SDB_DOCKER=0 = bare host process (required inside the exclusive
+# cgroup partition, where containers are denied the cores; run_bench_isolated.sh
+# handles that split).
+SDB_DOCKER="${PERF_SDB_DOCKER:-1}"
+SDB_IMAGE="${PERF_SDB_IMAGE:-ubuntu:24.04}"
+SDB_CONTAINER="${PERF_SDB_CONTAINER:-sdb_wire_serened}"
 
 # --- external pg-wire engine registry --------------------------------------
 # Real PostgreSQL and the other servers (CockroachDB / CedarDB / RisingWave /
@@ -208,14 +243,24 @@ for tool in pgbench perf; do
 		exit 1
 	}
 done
+if [[ "${SDB_DOCKER}" != 0 ]]; then
+	command -v docker >/dev/null 2>&1 || {
+		echo "docker not found (PERF_SDB_DOCKER=0 runs serened as a bare process)" >&2
+		exit 1
+	}
+	docker image inspect "${SDB_IMAGE}" >/dev/null 2>&1 ||
+		docker pull "${SDB_IMAGE}" >/dev/null
+fi
 
 mkdir -p "${OUT_DIR}"
 DATA_OLD="$(mktemp -d /tmp/sdb_wire_old.XXXXXX)"
 DATA_NEW="$(mktemp -d /tmp/sdb_wire_new.XXXXXX)"
 CUR_PID=""
+CUR_CONTAINER=""
 
 cleanup() {
-	[[ -n "${CUR_PID}" ]] && kill -9 "${CUR_PID}" 2>/dev/null || true
+	[[ -n "${CUR_CONTAINER}" ]] && docker rm -f "${CUR_CONTAINER}" >/dev/null 2>&1 || true
+	[[ -n "${CUR_PID}" && -z "${CUR_CONTAINER}" ]] && kill -9 "${CUR_PID}" 2>/dev/null || true
 	rm -rf "${DATA_OLD}" "${DATA_NEW}"
 }
 trap cleanup EXIT
@@ -230,6 +275,8 @@ wait_up() {
 		sleep 0.5
 	done
 	echo "server on :${port} did not come up:" >&2
+	# In docker mode the log file is only materialized on stop; pull it now.
+	[[ -n "${CUR_CONTAINER}" ]] && docker logs "${CUR_CONTAINER}" >"${log}" 2>&1 || true
 	tail -40 "${log}" >&2
 	return 1
 }
@@ -341,20 +388,65 @@ profile_one() {
 
 : >"${OUT_DIR}/results.tsv"
 
+# Start one serened (old- or new-wire flags alike). Docker mode mirrors
+# bench_engine's conventions: --cpuset-cpus pinning to ENG_CPUSET, default bridge
+# network with the port published, so the pgbench path through docker-proxy/NAT is
+# identical to the external engines'. No image is built -- the host-compiled
+# (statically linked) binary and the fresh datadir are bind-mounted at their HOST
+# paths, so perf-record'ed mmap paths resolve to the real binary at report time.
+# serened is the container's entrypoint (its init), so docker inspect .State.Pid is
+# its pid in the HOST pid namespace; with --user it runs as the invoking uid, so
+# perf stat/record attach to CUR_PID exactly as in the bare case and profiling
+# stays fully functional in both modes.
+start_serened() {
+	local srv="$1" port="$2" datadir="$3"
+	shift 3
+	local cmd=("${SERENED_BIN}" "${datadir}" --server_io_threads "${IO_THREADS}")
+	[[ -n "${CPU_THREADS}" ]] && cmd+=(--server_cpu_threads "${CPU_THREADS}")
+	cmd+=("$@")
+	if [[ "${SDB_DOCKER}" != 0 ]]; then
+		local cpuset=()
+		[[ -n "${ENG_CPUSET}" ]] && cpuset=(--cpuset-cpus "${ENG_CPUSET}")
+		docker rm -f "${SDB_CONTAINER}" >/dev/null 2>&1 || true
+		docker run -d --name "${SDB_CONTAINER}" "${cpuset[@]}" \
+			--user "$(id -u):$(id -g)" -e HOME=/tmp \
+			-p "${port}:${port}" \
+			-v "${SERENED_BIN}:${SERENED_BIN}:ro" \
+			-v "${datadir}:${datadir}" \
+			"${SDB_IMAGE}" "${cmd[@]}" >/dev/null
+		CUR_CONTAINER="${SDB_CONTAINER}"
+		CUR_PID="$(docker inspect -f '{{.State.Pid}}' "${SDB_CONTAINER}")"
+	else
+		"${cmd[@]}" >"${OUT_DIR}/serened_${srv}.log" 2>&1 &
+		CUR_PID=$!
+	fi
+}
+
+# Kill the server started by start_serened; docker captured its output, so persist
+# it to the same serened_<srv>.log the bare path writes directly.
+stop_serened() {
+	local srv="$1"
+	if [[ -n "${CUR_CONTAINER}" ]]; then
+		docker logs "${CUR_CONTAINER}" >"${OUT_DIR}/serened_${srv}.log" 2>&1 || true
+		docker rm -f "${CUR_CONTAINER}" >/dev/null 2>&1 || true
+		CUR_CONTAINER=""
+	else
+		kill -9 "${CUR_PID}" 2>/dev/null || true
+		wait "${CUR_PID}" 2>/dev/null || true
+	fi
+	CUR_PID=""
+}
+
 # Benchmark ONE server fully, then kill it before the other is ever started, so
 # the two never co-reside and an idle server's worker threads cannot pollute the
 # measured one. This is the whole point of using separate processes.
 bench_server() {
 	local srv="$1" port="$2" datadir="$3"
 	shift 3
-	local start_args=("$@")
-	local cpu_args=()
-	[[ -n "${CPU_THREADS}" ]] && cpu_args=(--server_cpu_threads "${CPU_THREADS}")
-	echo "-- ${srv} server (:${port}) [isolated; no other serened alive]${CPU_THREADS:+; cpu_threads=${CPU_THREADS}}"
-	"${SERENED_BIN}" "${datadir}" \
-		--server_io_threads "${IO_THREADS}" "${cpu_args[@]}" "${start_args[@]}" \
-		>"${OUT_DIR}/serened_${srv}.log" 2>&1 &
-	CUR_PID=$!
+	local how=bare
+	[[ "${SDB_DOCKER}" != 0 ]] && how="docker${ENG_CPUSET:+, cpuset ${ENG_CPUSET}}"
+	echo "-- ${srv} server (:${port}) [${how}; isolated; no other serened alive]${CPU_THREADS:+; cpu_threads=${CPU_THREADS}}"
+	start_serened "${srv}" "${port}" "${datadir}" "$@"
 	wait_up "${port}" "${OUT_DIR}/serened_${srv}.log"
 	run_one "${srv}_select1_simple" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_select1.sql" simple
 	run_one "${srv}_select1_extended" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_select1.sql" extended
@@ -380,9 +472,7 @@ bench_server() {
 		# (reused-connection) load and has no -C path, so a profile here would not reflect
 		# the connect/teardown cost the workload measures.
 	fi
-	kill -9 "${CUR_PID}" 2>/dev/null || true
-	wait "${CUR_PID}" 2>/dev/null || true
-	CUR_PID=""
+	stop_serened "${srv}"
 	sleep 1
 }
 

@@ -11,6 +11,13 @@
 # PERF_DB selects which external pg-wire engines to include as columns (comma list
 # of pg/crdb/cedar/risingwave/clickhouse, or "all"); PERF_REMEASURE_DB refreshes
 # their cached baselines. Default (no PERF_DB) is the plain old-vs-new run.
+#
+# PERF_SDB_DOCKER=1 (the default) runs serened itself in docker for fairness with
+# the engine containers. A container cannot schedule inside the exclusive partition
+# (the same reason the engines are seeded outside it), so in docker mode NO
+# partition is reserved: the bench runs exactly like the engine seeding does --
+# unpartitioned, every container pinned to the chosen cores via --cpuset-cpus.
+# PERF_SDB_DOCKER=0 keeps the original exclusive-partition bare-process run.
 set -euo pipefail
 
 # Reserve WHOLE physical cores (both SMT siblings) -- otherwise a co-tenant on the
@@ -98,6 +105,19 @@ for eng in "${SELECTED[@]}"; do
 		echo "${eng} seeding failed; continuing without a ${eng} column" >&2
 done
 
+# Docker mode: serened runs as a container and is denied the reserved cores by an
+# exclusive partition, so don't create one -- run the bench the way the engine
+# baselines are seeded above (containers --cpuset-cpus-pinned to ${CORES}, the
+# pgbench/perf side unpinned). This matches the conditions the cached engine
+# numbers were taken under, which is the fairness the docker mode is for.
+if [[ "${PERF_SDB_DOCKER:-1}" != 0 ]]; then
+	echo "PERF_SDB_DOCKER=${PERF_SDB_DOCKER:-1}: no partition (containers can't use one);"
+	echo "running bench unpartitioned as ${RUN_USER}, containers pinned to ${CORES}"
+	exec sudo -H -u "$RUN_USER" --preserve-env=PATH "${fwd[@]}" \
+		PERF_BENCH_CORES="${CORES}" PERF_REUSE_ONLY_DB=all \
+		bash "$ROOT/scripts/perf/bench_wire_old_vs_new.sh"
+fi
+
 cleanup() {
 	echo $$ >/sys/fs/cgroup/cgroup.procs 2>/dev/null || true
 	if [[ -d "$CG" ]]; then
@@ -132,8 +152,9 @@ echo "reserved cores ${CORES}; running bench as ${RUN_USER}"
 # container inside the exclusive partition is denied the reserved cores and would
 # produce a bogus number. So always reuse the caches, even if a refresh was
 # requested (the seeding already honored it). reuse-only is a no-op for engines
-# PERF_DB didn't select, so passing "all" is safe.
+# PERF_DB didn't select, so passing "all" is safe. PERF_SDB_DOCKER=0 is forced:
+# only a bare serened can schedule inside the partition.
 sudo -H -u "$RUN_USER" --preserve-env=PATH "${fwd[@]}" \
-	PERF_BENCH_CORES="${CORES}" PERF_REUSE_ONLY_DB=all \
+	PERF_BENCH_CORES="${CORES}" PERF_REUSE_ONLY_DB=all PERF_SDB_DOCKER=0 \
 	bash "$ROOT/scripts/perf/bench_wire_old_vs_new.sh"
 # trap cleanup releases the partition

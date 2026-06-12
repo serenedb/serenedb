@@ -45,6 +45,7 @@
 #include "connector/functions/sequence.h"
 #include "connector/functions/string.h"
 #include "connector/functions/encode_key.h"
+#include "connector/inverted_store_index.h"
 #include "connector/functions/system.h"
 #include "connector/functions/vector.h"
 #include "connector/pg_logical_types.h"
@@ -262,10 +263,13 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   // PhysicalCreateIndex (which requires DuckTableEntry).
   auto& index_types = db.config.GetIndexTypes();
   for (auto& name : {"secondary", "btree", "inverted"}) {
-    index_types.RegisterIndexType({
-      .name = name,
-      .create_plan = &connector::SereneDBCreateIndexPlan,
-    });
+    duckdb::IndexType type;
+    type.name = name;
+    type.create_plan = &connector::SereneDBCreateIndexPlan;
+    if (std::string_view{name} == "inverted") {
+      connector::AttachInvertedStoreIndexCallbacks(type);
+    }
+    index_types.RegisterIndexType(type);
   }
 
   // Register filesystem for COPY FROM STDIN support.

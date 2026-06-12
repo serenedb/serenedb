@@ -73,6 +73,18 @@ std::string StoreTableName(std::string_view database, std::string_view schema,
 // original names; cannot collide with StoreTableName output (no dots).
 std::string DroppedStoreTableName(ObjectId table_id);
 
+// Store-side name of an index: id-based ("sdb_idx_<id>"), so drops and
+// recovery never need the user-facing name and facade renames are
+// metadata-only.
+std::string StoreIndexName(ObjectId index_id);
+
+struct StoreIndexDef {
+  std::string table;
+  ObjectId table_id;
+  ObjectId index_id;
+  std::vector<std::string> columns;
+};
+
 class Table;
 
 StoreTableDef MakeStoreTableDef(std::string_view database,
@@ -116,6 +128,8 @@ class CatalogStore {
     // Removes the FK linkage entry on `table` that references/backs
     // `other` (symmetric: PK-side back-reference or the FK itself).
     void DropStoreForeignKey(std::string table, std::string other);
+    void CreateStoreIndex(StoreIndexDef def);
+    void DropStoreIndex(ObjectId index_id);
 
    private:
     friend class CatalogStore;
@@ -131,6 +145,8 @@ class CatalogStore {
       RenameStoreColumn,
       DropStoreColumn,
       DropStoreForeignKey,
+      CreateStoreIndex,
+      DropStoreIndex,
     };
 
     struct Entry {
@@ -141,6 +157,7 @@ class CatalogStore {
       // CreateStoreTable: the full definition; other store-table ops use
       // only `store_table.name` (+ `name_a`/`name_b` rename arguments).
       StoreTableDef store_table;
+      StoreIndexDef store_index;
       std::string name_a;
       std::string name_b;
     };

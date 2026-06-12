@@ -153,6 +153,7 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   }
   duckdb::UnifiedVectorFormat row_fmt;
   row_ids.ToUnifiedFormat(count, row_fmt);
+  writer->Init(count, chunk);
   std::string key;
   for (duckdb::idx_t i = 0; i < count; ++i) {
     auto row = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(

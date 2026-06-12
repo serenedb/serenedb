@@ -132,6 +132,13 @@ AsyncResult TableShardDrop::Execute() {
 }
 
 Result IndexDrop::Finalize() {
+  if (_type == catalog::ObjectType::InvertedIndex) {
+    auto r = GetCatalogStore().Write(
+      [&](auto& ctx) { ctx.DropStoreIndex(_id); });
+    if (!r.ok()) {
+      return r;
+    }
+  }
   auto& server = GetCatalogStore();
   auto shard_type = catalog::IndexShardType(_type);
   auto r = server.DropEntry(_id, shard_type);

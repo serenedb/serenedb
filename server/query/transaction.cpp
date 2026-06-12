@@ -57,7 +57,24 @@ Result Transaction::Commit() {
                        : 0;
   SDB_ASSERT(!_rocksdb_transaction || _rocksdb_transaction->GetNumMerges() == 0,
              "We do not expect merges for now");
-  if (num_ops > 0) [[likely]] {
+  // GetQueries() counts tick consumers (Remove/Replace), not inserts; a
+  // registered transaction means an index writer ran.
+  const bool has_search_writes = !_search_transactions.empty();
+  if (num_ops == 0 && has_search_writes) {
+    // Store-table DML feeds search indexes without any rocksdb writes; the
+    // tick domain is still rocksdb seqnos pre-flip, so mint enough of them
+    // to satisfy the GetQueries() < num_ops invariant below.
+    EnsureRocksDBTransaction();
+    uint64_t max_queries = 0;
+    for (const auto& [id, trx] : _search_transactions) {
+      max_queries = std::max<uint64_t>(max_queries, trx->GetQueries());
+    }
+    for (uint64_t i = 0; i <= max_queries; ++i) {
+      _rocksdb_transaction->Delete(rocksdb::Slice{});
+    }
+    num_ops = max_queries + 1;
+  }
+  if (num_ops > 0 || has_search_writes) {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
       // writer and let IndexWriter know that he need to wait for this

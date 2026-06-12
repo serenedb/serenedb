@@ -181,6 +181,44 @@ SELECT id FROM snippets_idx WHERE code @@ ts_all(ts_tokenize(ARRAY['nonexistent 
 id
 
 
+# BM25 RANKING OVER GRAMS
+# frequency/norm on the index dictionary make bm25() rank by gram overlap:
+# a document sharing every covering gram of the query outranks one sharing
+# only a tail fragment, and unrelated code does not match at all.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams_ranked(
+    template = 'sparse_ngram',
+    frequency = true,
+    norm = true
+)
+
+
+statement ok
+CREATE TABLE ranked(id INT, code TEXT);
+
+
+statement ok
+INSERT INTO ranked VALUES
+    (1, 'while l < r: m = (l + r) // 2'),
+    (2, 'padding that matches nothing; r) // 2'),
+    (3, 'completely unrelated text');
+
+
+statement ok
+CREATE INDEX ranked_idx ON ranked USING inverted(id, code code_grams_ranked);
+
+
+query
+SELECT id FROM ranked_idx
+WHERE code @@ ts_any(ts_tokenize(ARRAY['while l < r: m = (l + r) // 2'], 'code_grams_covering'), 1)
+ORDER BY bm25(ranked_idx.tableoid) DESC;
+----
+id
+1
+2
+
+
 statement ok
 DROP TABLE snippets;
 
@@ -195,3 +233,9 @@ DROP TEXT SEARCH DICTIONARY code_grams_covering;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY code_grams;
+
+statement ok
+DROP TABLE ranked;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY code_grams_ranked;

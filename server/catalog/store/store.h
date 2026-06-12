@@ -65,6 +65,8 @@ struct StoreTableDef {
   std::vector<StoreForeignKey> foreign_keys;
 };
 
+inline constexpr std::string_view kStoreDatabaseName = "__sdb_store";
+
 std::string StoreTableName(std::string_view database, std::string_view schema,
                            std::string_view table);
 

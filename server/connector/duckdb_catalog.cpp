@@ -491,6 +491,37 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
 
 namespace {
 
+// Pass-through operator feeding the session progress reporter (COPY FROM
+// progress) with per-chunk tuple/byte counts on the way into the insert.
+class SereneDBPhysicalProgress final : public duckdb::PhysicalOperator {
+ public:
+  SereneDBPhysicalProgress(duckdb::PhysicalPlan& plan,
+                           duckdb::PhysicalOperator& child,
+                           pg::ProgressReporter& progress)
+    : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
+                               child.types, child.estimated_cardinality),
+      _progress(progress) {
+    children.push_back(child);
+  }
+
+  duckdb::OperatorResultType Execute(
+    duckdb::ExecutionContext&, duckdb::DataChunk& input,
+    duckdb::DataChunk& chunk, duckdb::GlobalOperatorState&,
+    duckdb::OperatorState&) const final {
+    _progress.Add(pg::copy_progress::Param::TuplesProcessed, input.size());
+    _progress.Add(pg::copy_progress::Param::BytesProcessed,
+                  input.GetAllocationSize());
+    chunk.Reference(input);
+    return duckdb::OperatorResultType::NEED_MORE_INPUT;
+  }
+  bool ParallelOperator() const final { return true; }
+
+  std::string GetName() const final { return "SDB_PROGRESS"; }
+
+ private:
+  pg::ProgressReporter& _progress;
+};
+
 // Defaults / generated-column projection for INSERT.
 //
 // Two passes so gen-col exprs can resolve their BoundRef(dep.storage_oid)
@@ -629,6 +660,15 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   // we don't reuse upstream's single-pass ResolveDefaultsProjection here.
   if (!op.column_index_map.empty() && plan) {
     plan = &ResolveDefaultsWithGenerated(planner, op, *plan);
+  }
+
+  if (plan) {
+    if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
+          kSereneDBClientStateKey);
+        sdb_state && sdb_state->progress) {
+      plan = &planner.Make<SereneDBPhysicalProgress>(*plan,
+                                                     *sdb_state->progress);
+    }
   }
 
   // The session-level sdb_write_conflict_policy is applied by the binder

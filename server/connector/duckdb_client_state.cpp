@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/debugging.h"
 #include "basics/containers/trivial_map.h"
 #include "basics/system-compiler.h"
 #include "catalog/database.h"
@@ -181,6 +182,9 @@ ConnectionContext* CurrentCommittingContext() noexcept {
 
 void SereneDBClientState::TransactionPreCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
+  // Pre-durability crash point: fires before the engine commit, so the
+  // transaction must be absent after restart. The name is historical.
+  SDB_IF_FAILURE("crash_before_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
   // Revert SET LOCAL variables while the DuckDB transaction is still active
   // so catalog lookups performed by custom-impl settings (e.g. search_path)
   // can succeed via their normal set_local path.
@@ -196,6 +200,9 @@ void SereneDBClientState::TransactionPreRollback(
 
 void SereneDBClientState::TransactionCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
+  // Post-durability crash point: the engine commit is durable, search
+  // ticks are not yet -- recovery must rebuild the shard. Name historical.
+  SDB_IF_FAILURE("crash_after_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
   tls_committing_ctx = nullptr;
   auto r = _connection_ctx->Commit();
   if (!r.ok()) {

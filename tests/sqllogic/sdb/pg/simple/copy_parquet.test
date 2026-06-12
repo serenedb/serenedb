@@ -23,11 +23,11 @@ INSERT INTO tindex VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky');
 
 
 statement count 3
-COPY tindex TO '/tmp/${__DATABASE__}_quit_low_salary.parquet' (FORMAT PARQUET);
+COPY tindex TO '${__TEST_DIR__}/quit_low_salary.parquet' (FORMAT PARQUET);
 
 
 statement count 3
-COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.parquet' (FORMAT PARQUET);
+COPY clickclack FROM '${__TEST_DIR__}/quit_low_salary.parquet' (FORMAT PARQUET);
 
 
 query
@@ -44,7 +44,7 @@ DELETE FROM clickclack;
 
 
 statement count 2
-COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.parquet' (FORMAT PARQUET) WHERE id != 2;
+COPY clickclack FROM '${__TEST_DIR__}/quit_low_salary.parquet' (FORMAT PARQUET) WHERE id != 2;
 
 
 query
@@ -60,11 +60,11 @@ DELETE FROM clickclack;
 
 
 statement count 1
-COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '/tmp/${__DATABASE__}_quit_low_salary.parquet' (FORMAT PARQUET);
+COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '${__TEST_DIR__}/quit_low_salary.parquet' (FORMAT PARQUET);
 
 
 statement count 1
-COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.parquet' (FORMAT PARQUET);
+COPY clickclack FROM '${__TEST_DIR__}/quit_low_salary.parquet' (FORMAT PARQUET);
 
 
 query
@@ -87,11 +87,11 @@ CREATE TABLE reversed
 
 
 statement count 3
-COPY tindex TO '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+COPY tindex TO '${__TEST_DIR__}/lmao.parquet' (FORMAT PARQUET);
 
 
 query
-EXPLAIN COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao.parquet' WITH (FORMAT PARQUET);
+EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao.parquet' WITH (FORMAT PARQUET);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -116,7 +116,7 @@ QUERY PLAN
 
 
 statement count 3
-COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao.parquet' (FORMAT PARQUET);
 
 
 query
@@ -133,11 +133,11 @@ DELETE FROM reversed;
 
 
 statement count 3
-COPY tindex(name, id) TO '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+COPY tindex(name, id) TO '${__TEST_DIR__}/lmao.parquet' (FORMAT PARQUET);
 
 
 statement count 3
-COPY reversed FROM '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+COPY reversed FROM '${__TEST_DIR__}/lmao.parquet' (FORMAT PARQUET);
 
 
 query
@@ -160,15 +160,15 @@ CREATE TABLE varus
 
 
 statement count 3
-COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+COPY varus(name, id) FROM '${__TEST_DIR__}/lmao.parquet' (FORMAT PARQUET);
 
 
 statement count 3
-COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+COPY varus(name, id) FROM '${__TEST_DIR__}/lmao.parquet' (FORMAT PARQUET);
 
 
 statement count 3
-COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+COPY varus(name, id) FROM '${__TEST_DIR__}/lmao.parquet' (FORMAT PARQUET);
 
 
 query
@@ -193,7 +193,7 @@ COPY
     generate_series(1, 10) as iq, 
     generate_series(1, 100) as pencil_size, 
     generate_series(1, 100) as weight
-) TO '/tmp/${__DATABASE__}_arelav.parquet' WITH (FORMAT PARQUET);
+) TO '${__TEST_DIR__}/arelav.parquet' WITH (FORMAT PARQUET);
 
 
 statement ok
@@ -206,7 +206,7 @@ CREATE TABLE arelav
 
 
 statement count 100000
-COPY arelav FROM '/tmp/${__DATABASE__}_arelav.parquet' WITH (FORMAT PARQUET);
+COPY arelav FROM '${__TEST_DIR__}/arelav.parquet' WITH (FORMAT PARQUET);
 
 
 query
@@ -219,7 +219,7 @@ statement count 100
 COPY 
   (SELECT x, y::text FROM generate_series(1, 10) as g1(x), generate_series(1, 10) as g2(y)) 
 TO 
-  '/tmp/${__DATABASE__}_deadinside.parquet'
+  '${__TEST_DIR__}/deadinside.parquet'
 WITH (FORMAT PARQUET);
 
 
@@ -232,7 +232,7 @@ CREATE TABLE donsimon
 
 
 statement count 100
-COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.parquet' (FORMAT PARQUET);
+COPY donsimon FROM '${__TEST_DIR__}/deadinside.parquet' (FORMAT PARQUET);
 
 
 query

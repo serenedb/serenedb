@@ -20,8 +20,6 @@
 
 #include "catalog/catalog.h"
 
-#include "catalog/store/store.h"
-
 #include <absl/cleanup/cleanup.h>
 
 #include <expected>
@@ -52,6 +50,7 @@
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
 #include "catalog/sequence.h"
+#include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -84,17 +83,16 @@ ResultOr<DropTableOptions> GetTableOptionsForDrop(std::string_view bytes,
 }
 
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
-  CatalogStore& store, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, ObjectId index_id, ObjectType index_type,
-  bool is_root = false) {
+  CatalogStore& store, ObjectId db_id, ObjectId schema_id, ObjectId table_id,
+  ObjectId index_id, ObjectType index_type, bool is_root = false) {
   auto shard_type = IndexShardType(index_type);
   ObjectId shard_id;
   auto r = store.VisitBoot(index_id, shard_type,
-                                   [&](CatalogStore::Key key, std::string_view) {
-                                     SDB_ASSERT(!shard_id.isSet());
-                                     shard_id = key.id;
-                                     return Result{};
-                                   });
+                           [&](CatalogStore::Key key, std::string_view) {
+                             SDB_ASSERT(!shard_id.isSet());
+                             shard_id = key.id;
+                             return Result{};
+                           });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
@@ -103,20 +101,19 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
 }
 
 ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
-  CatalogStore& store, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, uint64_t cols, bool is_root = false) {
+  CatalogStore& store, ObjectId db_id, ObjectId schema_id, ObjectId table_id,
+  uint64_t cols, bool is_root = false) {
   ObjectId shard_id;
   uint64_t table_size = std::numeric_limits<uint64_t>::max();
 
-  auto r =
-    store.VisitBoot(table_id, ObjectType::TableShard,
-                            [&](CatalogStore::Key key, std::string_view bytes) {
-                              SDB_ASSERT(!shard_id.isSet());
-                              shard_id = key.id;
-                              auto stats = TableShard::DeserializeStats(bytes);
-                              table_size = stats.num_rows * cols;
-                              return Result{};
-                            });
+  auto r = store.VisitBoot(table_id, ObjectType::TableShard,
+                           [&](CatalogStore::Key key, std::string_view bytes) {
+                             SDB_ASSERT(!shard_id.isSet());
+                             shard_id = key.id;
+                             auto stats = TableShard::DeserializeStats(bytes);
+                             table_size = stats.num_rows * cols;
+                             return Result{};
+                           });
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
@@ -124,8 +121,8 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   auto collect_indexes = [&](ObjectType type) {
     return store.VisitBoot(
       table_id, type, [&](CatalogStore::Key key, std::string_view) {
-        auto index_drop = CreateIndexDrop(store, db_id, schema_id, table_id,
-                                          key.id, type);
+        auto index_drop =
+          CreateIndexDrop(store, db_id, schema_id, table_id, key.id, type);
         if (!index_drop) {
           return std::move(index_drop.error());
         }
@@ -145,10 +142,8 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   r = store.VisitBoot(
     schema_id, ObjectType::Sequence,
     [&](CatalogStore::Key key, std::string_view bytes) -> Result {
-      auto seq =
-        catalog::DeserializeObject<Sequence>(bytes, {.id = key.id,
-                                                     .database_id = db_id,
-                                                     .schema_id = schema_id});
+      auto seq = catalog::DeserializeObject<Sequence>(
+        bytes, {.id = key.id, .database_id = db_id, .schema_id = schema_id});
       if (seq && seq->GetOwnerTableId() == table_id) {
         owned_sequences.push_back(key.id);
       }
@@ -162,21 +157,21 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
     std::move(owned_sequences), schema_id, is_root);
 }
 
-ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
-  CatalogStore& store, ObjectId db_id, ObjectId schema_id,
-  bool is_root = false) {
+ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(CatalogStore& store,
+                                                       ObjectId db_id,
+                                                       ObjectId schema_id,
+                                                       bool is_root = false) {
   std::vector<std::shared_ptr<TableDrop>> tables;
   auto r = store.VisitBoot(
     schema_id, ObjectType::Table,
     [&](CatalogStore::Key key, std::string_view bytes) -> Result {
-      auto options = GetTableOptionsForDrop(bytes, {.id = key.id,
-                                                    .database_id = db_id,
-                                                    .schema_id = schema_id});
+      auto options = GetTableOptionsForDrop(
+        bytes, {.id = key.id, .database_id = db_id, .schema_id = schema_id});
       if (!options) {
         return std::move(options.error());
       }
-      auto table_drop = CreateTableDrop(store, db_id, schema_id,
-                                        key.id, options->columns);
+      auto table_drop =
+        CreateTableDrop(store, db_id, schema_id, key.id, options->columns);
       if (!table_drop) {
         return std::move(table_drop.error());
       }
@@ -191,8 +186,8 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
                                       is_root);
 }
 
-ResultOr<std::shared_ptr<DatabaseDrop>> CreateDatabaseDrop(
-  CatalogStore& store, ObjectId db_id) {
+ResultOr<std::shared_ptr<DatabaseDrop>> CreateDatabaseDrop(CatalogStore& store,
+                                                           ObjectId db_id) {
   std::vector<std::shared_ptr<SchemaDrop>> schemas;
   auto r = store.VisitBoot(
     db_id, ObjectType::Schema, [&](CatalogStore::Key key, std::string_view) {
@@ -271,10 +266,10 @@ class OpenDatabase {
     auto& deleted = _deleted[magic_enum::enum_integer(scope)];
     SDB_ASSERT(deleted.empty());
     auto r = store.VisitBoot(id, ObjectType::Tombstone,
-                                     [&](CatalogStore::Key key, std::string_view) {
-                                       deleted.insert(key.id);
-                                       return Result{};
-                                     });
+                             [&](CatalogStore::Key key, std::string_view) {
+                               deleted.insert(key.id);
+                               return Result{};
+                             });
     SDB_ASSERT(r.ok());
   }
 
@@ -325,8 +320,8 @@ Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
         return AddSchema(database_id, schema_id, bytes);
       }
 
-      auto drop = CreateSchemaDrop(GetCatalogStore(), database_id,
-                                   key.id, true);
+      auto drop =
+        CreateSchemaDrop(GetCatalogStore(), database_id, key.id, true);
       if (!drop) {
         return std::move(drop.error());
       }
@@ -437,7 +432,8 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
                                      ObjectId table_id) {
   auto visit = [&](ObjectType type) {
     return GetCatalogStore().VisitBoot(
-      table_id, type, [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+      table_id, type,
+      [&](CatalogStore::Key key, std::string_view bytes) -> Result {
         auto index_id = key.id;
         if (!IsDeleted(index_id, DeletedScope::Relation)) {
           return AddIndex(db_id, schema_id, table_id, index_id, type, bytes);
@@ -577,10 +573,10 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
   // Check there are no tombstones in index scope
   size_t counter = 0;
   r = GetCatalogStore().VisitBoot(index_id, ObjectType::Tombstone,
-                                         [&](CatalogStore::Key, std::string_view) {
-                                           counter++;
-                                           return Result{};
-                                         });
+                                  [&](CatalogStore::Key, std::string_view) {
+                                    counter++;
+                                    return Result{};
+                                  });
   if (!r.ok()) {
     return r;
   }

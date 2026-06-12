@@ -11,12 +11,12 @@ COPY (
     generate_series(1, 100) as clickclack(iq),
     generate_series(1, 100) as serenedb(salary)
   ORDER BY iq, serenedb.salary
-) TO '/tmp/${__DATABASE__}_vedernikoff_company.parquet';
+) TO '${__TEST_DIR__}/vedernikoff_company.parquet';
 
 
 statement ok
 CREATE VIEW vedernikoff_company AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_vedernikoff_company.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/vedernikoff_company.parquet');
 
 
 # all filters are supposed to be pushdowned — no FilterNode in the plan
@@ -324,12 +324,12 @@ COPY (
     CASE WHEN x % 3 = 0 THEN NULL ELSE x END as id,
     CASE WHEN x % 5 = 0 THEN NULL ELSE 'val_'::text || x::text END as name
   FROM generate_series(1, 15) as t(x)
-) TO '/tmp/${__DATABASE__}_nullable_data.parquet';
+) TO '${__TEST_DIR__}/nullable_data.parquet';
 
 
 statement ok
 CREATE VIEW nullable_data AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_nullable_data.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/nullable_data.parquet');
 
 
 query
@@ -511,12 +511,12 @@ COPY (
     generate_series(1, 100) as clickclack(iq),
     generate_series(1, 100) as serenedb(salary)
   ORDER BY iq, serenedb.salary
-) TO '/tmp/${__DATABASE__}_vedernikoff_company.csv';
+) TO '${__TEST_DIR__}/vedernikoff_company.csv';
 
 
 statement ok
 CREATE VIEW malandin_company AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_vedernikoff_company.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/vedernikoff_company.csv');
 
 
 query
@@ -738,12 +738,12 @@ COPY (
     CASE WHEN x % 3 = 0 THEN NULL ELSE x END as id,
     CASE WHEN x % 5 = 0 THEN NULL ELSE 'val_'::text || x::text END as name
   FROM generate_series(1, 15) as t(x)
-) TO '/tmp/${__DATABASE__}_nullable_data.csv';
+) TO '${__TEST_DIR__}/nullable_data.csv';
 
 
 statement ok
 CREATE VIEW clickclack AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_nullable_data.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/nullable_data.csv');
 
 
 query
@@ -936,13 +936,13 @@ statement ok
 INSERT INTO vedernikoff_src VALUES (1), (2)
 
 statement ok
-COPY vedernikoff_src TO '/tmp/${__DATABASE__}_vedernikoff.parquet' (FORMAT PARQUET);
+COPY vedernikoff_src TO '${__TEST_DIR__}/vedernikoff.parquet' (FORMAT PARQUET);
 
 
 # vedernikoff: same type (INT4 parquet column -> INT4 view column)
 statement ok
 CREATE VIEW vedernikoff AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_vedernikoff.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/vedernikoff.parquet');
 
 query
 SELECT * FROM vedernikoff;
@@ -957,7 +957,7 @@ weight
 statement ok
 CREATE VIEW fatter_vedernikoff AS
   SELECT weight::INT8 AS weight
-  FROM read_parquet('/tmp/${__DATABASE__}_vedernikoff.parquet');
+  FROM read_parquet('${__TEST_DIR__}/vedernikoff.parquet');
 
 query
 SELECT * FROM fatter_vedernikoff;

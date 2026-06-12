@@ -1070,7 +1070,7 @@ INSERT INTO vedernikoff_csv_crew VALUES
   (4, 'bossmann', 35);
 
 statement count 4
-COPY vedernikoff_csv_crew TO '/tmp/${__DATABASE__}_vedernikoff_csv_crew.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY vedernikoff_csv_crew TO '${__TEST_DIR__}/vedernikoff_csv_crew.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
 DROP TABLE vedernikoff_csv_crew;
@@ -1079,7 +1079,7 @@ statement ok
 CREATE TABLE vedernikoff_csv_crew (pid INTEGER PRIMARY KEY, nickname VARCHAR, stocks INTEGER);
 
 statement count 4
-COPY vedernikoff_csv_crew FROM '/tmp/${__DATABASE__}_vedernikoff_csv_crew.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY vedernikoff_csv_crew FROM '${__TEST_DIR__}/vedernikoff_csv_crew.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
 CREATE INDEX vedernikoff_csv_crew_stocks_idx ON vedernikoff_csv_crew(stocks);
@@ -1155,10 +1155,10 @@ COPY
     (4, 300, 'delta'),
     (5, 100, 'epsilon')
   ) AS t(pid, loot, tag))
-TO '/tmp/${__DATABASE__}_babsky_csv_vault.csv' WITH (FORMAT CSV, HEADER TRUE);
+TO '${__TEST_DIR__}/babsky_csv_vault.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement count 5
-COPY babsky_csv_vault FROM '/tmp/${__DATABASE__}_babsky_csv_vault.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY babsky_csv_vault FROM '${__TEST_DIR__}/babsky_csv_vault.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
 CREATE INDEX babsky_csv_vault_loot_idx ON babsky_csv_vault(loot);
@@ -1193,7 +1193,7 @@ INSERT INTO clickclack_csv_ops VALUES
   (5, 'berlin', 20, 'echo');
 
 statement count 5
-COPY clickclack_csv_ops TO '/tmp/${__DATABASE__}_clickclack_csv_ops.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY clickclack_csv_ops TO '${__TEST_DIR__}/clickclack_csv_ops.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
 DROP TABLE clickclack_csv_ops;
@@ -1202,7 +1202,7 @@ statement ok
 CREATE TABLE clickclack_csv_ops (pid INTEGER PRIMARY KEY, city VARCHAR, level INTEGER, note VARCHAR);
 
 statement count 5
-COPY clickclack_csv_ops FROM '/tmp/${__DATABASE__}_clickclack_csv_ops.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY clickclack_csv_ops FROM '${__TEST_DIR__}/clickclack_csv_ops.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
 CREATE INDEX clickclack_csv_ops_idx ON clickclack_csv_ops(city, level);
@@ -1235,7 +1235,7 @@ INSERT INTO vedernikoff_pq_crew VALUES
   (4, 'bossmann', 35);
 
 statement count 4
-COPY vedernikoff_pq_crew TO '/tmp/${__DATABASE__}_vedernikoff_pq_crew.tsv' WITH (FORMAT TEXT);
+COPY vedernikoff_pq_crew TO '${__TEST_DIR__}/vedernikoff_pq_crew.tsv' WITH (FORMAT TEXT);
 
 statement ok
 DROP TABLE vedernikoff_pq_crew;
@@ -1244,7 +1244,7 @@ statement ok
 CREATE TABLE vedernikoff_pq_crew (pid INTEGER PRIMARY KEY, nickname VARCHAR, stocks INTEGER);
 
 statement count 4
-COPY vedernikoff_pq_crew FROM '/tmp/${__DATABASE__}_vedernikoff_pq_crew.tsv' WITH (FORMAT TEXT);
+COPY vedernikoff_pq_crew FROM '${__TEST_DIR__}/vedernikoff_pq_crew.tsv' WITH (FORMAT TEXT);
 
 statement ok
 CREATE INDEX vedernikoff_pq_crew_stocks_idx ON vedernikoff_pq_crew(stocks);
@@ -1320,10 +1320,10 @@ COPY
     (4, 300, 'delta'),
     (5, 100, 'epsilon')
   ) AS t(pid, loot, tag))
-TO '/tmp/${__DATABASE__}_babsky_pq_vault.tsv' WITH (FORMAT TEXT);
+TO '${__TEST_DIR__}/babsky_pq_vault.tsv' WITH (FORMAT TEXT);
 
 statement count 5
-COPY babsky_pq_vault FROM '/tmp/${__DATABASE__}_babsky_pq_vault.tsv' WITH (FORMAT TEXT);
+COPY babsky_pq_vault FROM '${__TEST_DIR__}/babsky_pq_vault.tsv' WITH (FORMAT TEXT);
 
 statement ok
 CREATE INDEX babsky_pq_vault_loot_idx ON babsky_pq_vault(loot);
@@ -1358,7 +1358,7 @@ INSERT INTO clickclack_pq_ops VALUES
   (5, 'berlin', 20, 'echo');
 
 statement count 5
-COPY clickclack_pq_ops TO '/tmp/${__DATABASE__}_clickclack_pq_ops.tsv' WITH (FORMAT TEXT);
+COPY clickclack_pq_ops TO '${__TEST_DIR__}/clickclack_pq_ops.tsv' WITH (FORMAT TEXT);
 
 statement ok
 DROP TABLE clickclack_pq_ops;
@@ -1367,7 +1367,7 @@ statement ok
 CREATE TABLE clickclack_pq_ops (pid INTEGER PRIMARY KEY, city VARCHAR, level INTEGER, note VARCHAR);
 
 statement count 5
-COPY clickclack_pq_ops FROM '/tmp/${__DATABASE__}_clickclack_pq_ops.tsv' WITH (FORMAT TEXT);
+COPY clickclack_pq_ops FROM '${__TEST_DIR__}/clickclack_pq_ops.tsv' WITH (FORMAT TEXT);
 
 statement ok
 CREATE INDEX clickclack_pq_ops_idx ON clickclack_pq_ops(city, level);

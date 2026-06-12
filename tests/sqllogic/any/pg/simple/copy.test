@@ -23,11 +23,11 @@ INSERT INTO tindex VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky');
 
 
 statement count 3
-COPY tindex TO '/tmp/${__DATABASE__}_quit_low_salary.csv';
+COPY tindex TO '${__TEST_DIR__}/quit_low_salary.csv';
 
 
 statement count 3
-COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.csv';
+COPY clickclack FROM '${__TEST_DIR__}/quit_low_salary.csv';
 
 
 query
@@ -44,7 +44,7 @@ DELETE FROM clickclack;
 
 
 statement count 2
-COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.csv' WHERE id != 2;
+COPY clickclack FROM '${__TEST_DIR__}/quit_low_salary.csv' WHERE id != 2;
 
 
 query
@@ -60,11 +60,11 @@ DELETE FROM clickclack;
 
 
 statement count 1
-COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '/tmp/${__DATABASE__}_quit_low_salary.csv';
+COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '${__TEST_DIR__}/quit_low_salary.csv';
 
 
 statement count 1
-COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.csv';
+COPY clickclack FROM '${__TEST_DIR__}/quit_low_salary.csv';
 
 
 query
@@ -87,12 +87,12 @@ CREATE TABLE reversed
 
 
 statement count 3
-COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
+COPY tindex TO '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HEADER TRUE);
 
 
 skipif postgres
 query
-EXPLAIN COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
+EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HEADER TRUE);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -121,7 +121,7 @@ QUERY PLAN
 
 skipif postgres
 query
-EXPLAIN COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
+EXPLAIN COPY tindex TO '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HEADER TRUE);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -145,7 +145,7 @@ QUERY PLAN
 skipif postgres
 skipif serenedb # TODO(Pasha) support options better
 statement error
-EXPLAIN COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'blahblah');
+EXPLAIN COPY tindex TO '${__TEST_DIR__}/lmao' WITH (EXPLAIN 'blahblah');
 ----
 db error: ERROR: option "blahblah" not recognized
 HINT: Use WITH (HELP) to see available options
@@ -154,14 +154,14 @@ HINT: Use WITH (HELP) to see available options
 skipif postgres
 skipif serenedb # TODO(Pasha) support options better
 statement error
-EXPLAIN COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'logikal');
+EXPLAIN COPY tindex TO '${__TEST_DIR__}/lmao' WITH (EXPLAIN 'logikal');
 ----
 db error: ERROR: option "logikal" not recognized, did you mean "logical"?
 HINT: Use WITH (HELP) to see available options
 
 
 statement count 3
-COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
+COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HEADER TRUE);
 
 
 query
@@ -178,11 +178,11 @@ DELETE FROM reversed;
 
 
 statement count 3
-COPY tindex(name, id) TO '/tmp/${__DATABASE__}_lmao';
+COPY tindex(name, id) TO '${__TEST_DIR__}/lmao';
 
 
 statement count 3
-COPY reversed FROM '/tmp/${__DATABASE__}_lmao';
+COPY reversed FROM '${__TEST_DIR__}/lmao';
 
 
 query
@@ -205,15 +205,15 @@ CREATE TABLE varus
 
 
 statement count 3
-COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao';
+COPY varus(name, id) FROM '${__TEST_DIR__}/lmao';
 
 
 statement count 3
-COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao';
+COPY varus(name, id) FROM '${__TEST_DIR__}/lmao';
 
 
 statement count 3
-COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao';
+COPY varus(name, id) FROM '${__TEST_DIR__}/lmao';
 
 
 query
@@ -232,13 +232,13 @@ id	name	iq	iamdegenereted
 
 
 statement error
-COPY varus(iamdegenereted) FROM '/tmp/${__DATABASE__}_lmao';
+COPY varus(iamdegenereted) FROM '${__TEST_DIR__}/lmao';
 
 
 skipif postgres
 skipif serenedb # TODO(Pasha) support options better
 statement error
-COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao' WITH (LABUDABUDABDAB rick);
+COPY varus(name, id) FROM '${__TEST_DIR__}/lmao' WITH (LABUDABUDABDAB rick);
 ----
 db error: ERROR: option "labudabudabdab" not recognized
 HINT: Use WITH (HELP) to see available options
@@ -247,7 +247,7 @@ HINT: Use WITH (HELP) to see available options
 skipif postgres
 skipif serenedb # TODO(Pasha) support options better
 statement error
-COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao' WITH (HELL true);
+COPY varus(name, id) FROM '${__TEST_DIR__}/lmao' WITH (HELL true);
 ----
 db error: ERROR: option "hell" not recognized, did you mean "help"?
 HINT: Use WITH (HELP) to see available options
@@ -261,7 +261,7 @@ COPY
     generate_series(1, 10) as iq,
     generate_series(1, 100) as pencil_size,
     generate_series(1, 100) as weight
-) TO '/tmp/${__DATABASE__}_arelav' WITH (FORMAT CSV, HEADER 1);
+) TO '${__TEST_DIR__}/arelav' WITH (FORMAT CSV, HEADER 1);
 
 
 statement ok
@@ -274,7 +274,7 @@ CREATE TABLE arelav
 
 
 statement count 100000
-COPY arelav FROM '/tmp/${__DATABASE__}_arelav' WITH (FORMAT CSV, HEADER 1);
+COPY arelav FROM '${__TEST_DIR__}/arelav' WITH (FORMAT CSV, HEADER 1);
 
 
 query
@@ -287,7 +287,7 @@ statement count 100
 COPY
   (SELECT x, y::text FROM generate_series(1, 10) as g1(x), generate_series(1, 10) as g2(y))
 TO
-  '/tmp/${__DATABASE__}_deadinside.tsv'
+  '${__TEST_DIR__}/deadinside.tsv'
 WITH (HEADER TRUE);
 
 
@@ -300,7 +300,7 @@ CREATE TABLE donsimon
 
 
 statement count 100
-COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 1);
+COPY donsimon FROM '${__TEST_DIR__}/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 1);
 
 
 query
@@ -310,20 +310,20 @@ SELECT * FROM donsimon ORDER BY 1, 2;
 
 
 statement error
-COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT -1);
+COPY donsimon FROM '${__TEST_DIR__}/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT -1);
 ----
 db error: ERROR: REJECT_LIMIT (-1) must be greater than zero
 
 
 onlyif serenedb
 statement error
-COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR labudadadab);
+COPY donsimon FROM '${__TEST_DIR__}/deadinside.tsv' (ON_ERROR labudadadab);
 ----
 db error: ERROR: invalid value for parameter "on_error": "labudadadab"
 
 
 statement count 10
-COPY (SELECT * FROM generate_series(2, 11)) TO '/tmp/${__DATABASE__}_deadinside.tsv';
+COPY (SELECT * FROM generate_series(2, 11)) TO '${__TEST_DIR__}/deadinside.tsv';
 
 
 statement ok
@@ -331,31 +331,31 @@ CREATE TABLE biksalen(kek BOOLEAN);
 
 
 statement error
-COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 9);
+COPY biksalen FROM '${__TEST_DIR__}/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 9);
 
 
 statement count 0
-COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 10);
+COPY biksalen FROM '${__TEST_DIR__}/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 10);
 
 
 statement count 0
-COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE);
+COPY biksalen FROM '${__TEST_DIR__}/deadinside.tsv' (ON_ERROR IGNORE);
 
 
 statement ok
-COPY (SELECT * FROM generate_series(2, 11)) TO '/tmp/${__DATABASE__}_deadinside.tsv' WITH (HEADER TRUE);
+COPY (SELECT * FROM generate_series(2, 11)) TO '${__TEST_DIR__}/deadinside.tsv' WITH (HEADER TRUE);
 
 
 statement error
-COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR STOP);
+COPY biksalen FROM '${__TEST_DIR__}/deadinside.tsv' (ON_ERROR STOP);
 
 
 statement error
-COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv';
+COPY biksalen FROM '${__TEST_DIR__}/deadinside.tsv';
 
 
 statement error
-COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv' WITH (HEADER ON);
+COPY biksalen FROM '${__TEST_DIR__}/deadinside.tsv' WITH (HEADER ON);
 
 
 # header check also check that generated key is not inserted
@@ -364,12 +364,12 @@ CREATE TABLE header_eater (header1 TEXT, header2 TEXT);
 
 
 statement count 1
-COPY (SELECT 1 as header, 2 as header) TO '/tmp/${__DATABASE__}_headers.tsv' WITH (HEADER 1)
+COPY (SELECT 1 as header, 2 as header) TO '${__TEST_DIR__}/headers.tsv' WITH (HEADER 1)
 
 
 skipif serenedb # TODO(Pasha) copy option to disable sniffer? explicit say about header?
 statement count 2
-COPY header_eater FROM '/tmp/${__DATABASE__}_headers.tsv';
+COPY header_eater FROM '${__TEST_DIR__}/headers.tsv';
 
 
 skipif serenedb # TODO(Pasha) copy option to disable sniffer? explicit say about header?
@@ -382,7 +382,7 @@ header	header
 
 
 statement error
-COPY (SELECT 1) TO '/tmp/${__DATABASE__}_sayge.tsv' WITH (FORMAT)
+COPY (SELECT 1) TO '${__TEST_DIR__}/sayge.tsv' WITH (FORMAT)
 
 
 statement ok
@@ -394,7 +394,7 @@ INSERT INTO ts_test VALUES (1, '2024-01-15 10:30:45', '2024-01-15'), (2, '2024-1
 
 
 statement count 2
-COPY ts_test TO '/tmp/${__DATABASE__}_ts_test.csv' WITH (FORMAT CSV);
+COPY ts_test TO '${__TEST_DIR__}/ts_test.csv' WITH (FORMAT CSV);
 
 
 statement ok
@@ -402,7 +402,7 @@ CREATE TABLE ts_test_copy (id INTEGER PRIMARY KEY, ts TIMESTAMP, d DATE);
 
 
 statement count 2
-COPY ts_test_copy FROM '/tmp/${__DATABASE__}_ts_test.csv' WITH (FORMAT CSV);
+COPY ts_test_copy FROM '${__TEST_DIR__}/ts_test.csv' WITH (FORMAT CSV);
 
 
 query
@@ -415,7 +415,7 @@ id	ts	d
 
 # wanna detect format by file extension
 statement count 10
-COPY (SELECT 'imarelav', * FROM generate_series(1, 10)) TO '/tmp/${__DATABASE__}_arelav_consuma.csv';
+COPY (SELECT 'imarelav', * FROM generate_series(1, 10)) TO '${__TEST_DIR__}/arelav_consuma.csv';
 
 
 statement ok
@@ -427,7 +427,7 @@ CREATE TABLE arelav_consumer
 
 onlyif serenedb
 statement count 10
-COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT TEXT);
+COPY arelav_consumer FROM '${__TEST_DIR__}/arelav_consuma.csv' WITH (FORMAT TEXT);
 
 
 onlyif serenedb
@@ -448,13 +448,13 @@ imarelav,10
 
 
 statement error
-COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT 1);
+COPY arelav_consumer FROM '${__TEST_DIR__}/arelav_consuma.csv' WITH (FORMAT 1);
 
 
 skipif serenedb # TODO(Pasha) support options better
 skipif postgres
 statement error
-COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (LOG_VERBOSITY 228.228);
+COPY arelav_consumer FROM '${__TEST_DIR__}/arelav_consuma.csv' WITH (LOG_VERBOSITY 228.228);
 ----
 db error: ERROR: COPY LOG_VERBOSITY "228.228" not recognized
 HINT: Allowed values: SILENT, DEFAULT, VERBOSE
@@ -462,7 +462,7 @@ HINT: Allowed values: SILENT, DEFAULT, VERBOSE
 
 onlyif serenedb
 statement error
-COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.parquet' WITH (FORMAT PARQUET, DELIMITER ',');
+COPY arelav_consumer FROM '${__TEST_DIR__}/arelav_consuma.parquet' WITH (FORMAT PARQUET, DELIMITER ',');
 
 
 # JSON Lines: structured round-trip via DuckDB's native json copy function.
@@ -479,7 +479,7 @@ INSERT INTO json_source VALUES (666, 'clickclack'), (993, 'deadinside'), (228, '
 
 onlyif serenedb
 statement count 3
-COPY json_source TO '/tmp/${__DATABASE__}_kostya.jsonl' (FORMAT json);
+COPY json_source TO '${__TEST_DIR__}/kostya.jsonl' (FORMAT json);
 
 
 # .jsonl extension auto-detected as JSON format
@@ -489,7 +489,7 @@ CREATE TABLE json_target (kostya BIGINT, vedernikoff TEXT);
 
 onlyif serenedb
 statement count 3
-COPY json_target FROM '/tmp/${__DATABASE__}_kostya.jsonl';
+COPY json_target FROM '${__TEST_DIR__}/kostya.jsonl';
 
 onlyif serenedb
 query
@@ -509,7 +509,7 @@ DELETE FROM json_target;
 # explicit FORMAT json
 onlyif serenedb
 statement count 3
-COPY json_target FROM '/tmp/${__DATABASE__}_kostya.jsonl' WITH (FORMAT 'JSON');
+COPY json_target FROM '${__TEST_DIR__}/kostya.jsonl' WITH (FORMAT 'JSON');
 
 onlyif serenedb
 query
@@ -537,7 +537,7 @@ INSERT INTO json_iq VALUES (322), (993), (1337);
 
 onlyif serenedb
 statement count 3
-COPY json_iq TO '/tmp/${__DATABASE__}_vedernikoff.ndjson' (FORMAT json);
+COPY json_iq TO '${__TEST_DIR__}/vedernikoff.ndjson' (FORMAT json);
 
 onlyif serenedb
 statement ok
@@ -545,7 +545,7 @@ CREATE TABLE json_iq_copy (iq BIGINT);
 
 onlyif serenedb
 statement count 3
-COPY json_iq_copy FROM '/tmp/${__DATABASE__}_vedernikoff.ndjson';
+COPY json_iq_copy FROM '${__TEST_DIR__}/vedernikoff.ndjson';
 
 onlyif serenedb
 query
@@ -567,7 +567,7 @@ eater
 
 skipif postgres
 query
-EXPLAIN ANALYZE COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv';
+EXPLAIN ANALYZE COPY arelav_consumer FROM '${__TEST_DIR__}/arelav_consuma.csv';
 ----
 QUERY PLAN
 ┌─────────────────────────────────────┐
@@ -575,7 +575,7 @@ QUERY PLAN
 ││    Query Profiling Information    ││
 │└───────────────────────────────────┘│
 └─────────────────────────────────────┘
-EXPLAIN ANALYZE COPY arelav_consumer FROM '<slt:ignore>_arelav_consuma.csv';
+EXPLAIN ANALYZE COPY arelav_consumer FROM '<slt:ignore>/arelav_consuma.csv';
 <slt:ignore>
 ┌───────────────────────────┐
 │      RESULT_COLLECTOR     │
@@ -635,7 +635,7 @@ imarelav,10
 skipif postgres
 skipif serenedb # TODO(Pasha) support options better
 statement error
-COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (HELP);
+COPY arelav_consumer FROM '${__TEST_DIR__}/arelav_consuma.csv' WITH (HELP);
 ----
 db error: ERROR: 
 Explain, use WITH (EXPLAIN 'option_name'):

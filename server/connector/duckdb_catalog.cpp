@@ -1267,6 +1267,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
           create_index_info->options["_sdb_view_fast_path_pk"] =
             duckdb::Value("rocksdb_rowid");
           break;
+        case catalog::PkSpec::DuckDBRowId:
+          create_index_info->options["_sdb_view_fast_path_pk"] =
+            duckdb::Value("duckdb_rowid");
+          break;
+        case catalog::PkSpec::FileIndexPlusDuckDBRowId:
+          create_index_info->options["_sdb_view_fast_path_pk"] =
+            duckdb::Value("file_index_plus_duckdb_rowid");
+          break;
         default: {
           SDB_ASSERT(vcols_opt,
                      "view_fast_path set but vcols not populated -- the "

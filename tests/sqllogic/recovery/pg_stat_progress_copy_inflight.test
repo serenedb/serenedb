@@ -18,7 +18,7 @@ FROM generate_series(1, 100000) AS s(g);
 
 
 statement ok
-COPY pgsp_copy_src TO '/tmp/${__DATABASE__}_pgsp_copy_inflight.csv' (FORMAT CSV);
+COPY pgsp_copy_src TO '${__TEST_DIR__}/pgsp_copy_inflight.csv' (FORMAT CSV);
 
 
 statement ok
@@ -43,7 +43,7 @@ SET sdb_faults = 'pause_sst_sink_mid_copy';
 
 statement async ok
 COPY pgsp_copy_dst
-  FROM '/tmp/${__DATABASE__}_pgsp_copy_inflight.csv' (FORMAT CSV);
+  FROM '${__TEST_DIR__}/pgsp_copy_inflight.csv' (FORMAT CSV);
 
 
 # Poll until the parked COPY shows up. retry re-runs on result mismatch, so

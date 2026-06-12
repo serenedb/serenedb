@@ -202,12 +202,11 @@ AsyncResult TableDrop::Execute() {
 Result SchemaDrop::Finalize() {
   auto& server = GetCatalogStore();
   // Standalone seq counter rows -- DropEntry only sweeps definition rows.
-  auto r =
-    server.VisitDefinitions(_id, catalog::ObjectType::Sequence,
-                            [&](CatalogStore::Key key,
-                                std::string_view) -> Result {
-                              return server.DropSequence(key.id);
-                            });
+  auto r = server.VisitDefinitions(
+    _id, catalog::ObjectType::Sequence,
+    [&](CatalogStore::Key key, std::string_view) -> Result {
+      return server.DropSequence(key.id);
+    });
   if (!r.ok()) {
     return r;
   }

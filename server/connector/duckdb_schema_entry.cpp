@@ -74,6 +74,7 @@ namespace {
 
 // Extracts column names from `[a, b, c]` -- the only accepted shape. Anything
 // else (row, single ref, string) throws.
+
 }  // namespace
 
 ObjectId SereneDBSchemaEntry::GetDatabaseId() const {

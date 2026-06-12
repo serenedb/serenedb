@@ -138,27 +138,6 @@ void InitCommonState(CommonScanGlobalState& state,
         state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
         state.projected_types.push_back(catalog::Column::MakeOffsetsType());
       } else {
-        if (!bind_data.IsViewBacked()) {
-          const auto& tbd = bind_data.As<TableScanBindData>();
-          for (const auto& col : tbd.table->Columns()) {
-            if (col.GetId() != catalog_col_id ||
-                col.store_mode != catalog::ColumnStoreMode::kIndexOnly) {
-              continue;
-            }
-            if (bind_data.is_create_index) {
-              state.finished = true;
-            } else {
-              THROW_SQL_ERROR(
-                ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                ERR_MSG(
-                  "column \"", col.GetName(),
-                  "\" has sdb_indexonly storage and cannot be read directly;"
-                  " it is only accessible through an inverted-index search"
-                  " predicate"));
-            }
-            break;
-          }
-        }
         state.projected_columns.push_back(col_id);
         state.projected_types.push_back(bind_data.column_types[col_id]);
       }

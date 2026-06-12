@@ -55,9 +55,7 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
 
 class DuckDBColumnSerializer {
  public:
-  // Writes column cells into a rocksdb transaction. IndexOnly columns
-  // bypass main storage and emit a WAL marker instead so the value can be
-  // recovered into the inverted index on restart.
+  // Writes column cells into a rocksdb transaction.
   class TxnWriter {
    public:
     TxnWriter(query::Transaction& sdb_txn,
@@ -68,16 +66,8 @@ class DuckDBColumnSerializer {
     void Write(const std::vector<rocksdb::Slice>& slices, std::string_view key);
     void WriteNull(std::string_view key);
 
-    // Per-row delete marker. Only meaningful when an inverted index covers
-    // exclusively IndexOnly columns and would otherwise miss the row delete.
-    void EmitRowDelete(std::string_view key);
-
    private:
-    bool IsIndexOnly() const noexcept {
-      return _cur_col.store_mode == catalog::ColumnStoreMode::kIndexOnly;
-    }
 
-    query::Transaction* _sdb_txn;
     rocksdb::Transaction* _txn;
     rocksdb::ColumnFamilyHandle* _cf;
     ColumnDescriptor _cur_col{};
@@ -94,9 +84,7 @@ class DuckDBColumnSerializer {
     void WriteNull(std::string_view) noexcept {}
   };
 
-  // Writes column cells into an SST file. IndexOnly columns are skipped
-  // silently -- bulk ingest has no marker channel; durability of the value
-  // depends on the inverted index's own commit.
+  // Writes column cells into an SST file.
   class SstWriter {
    public:
     explicit SstWriter(rocksdb::SstFileWriter* writer) noexcept
@@ -108,9 +96,6 @@ class DuckDBColumnSerializer {
     void WriteNull(std::string_view key);
 
    private:
-    bool IsIndexOnly() const noexcept {
-      return _cur_col.store_mode == catalog::ColumnStoreMode::kIndexOnly;
-    }
 
     rocksdb::SstFileWriter* _writer;
     ColumnDescriptor _cur_col{};

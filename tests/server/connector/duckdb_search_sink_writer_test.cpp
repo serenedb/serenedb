@@ -197,16 +197,14 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
                                           {int_values[0], int_values[1]});
     std::vector<std::string_view> rk{pk[0], pk[1]};
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[0], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::INTEGER},
+      ColumnDescriptor{col_id[0], duckdb::LogicalType::INTEGER},
       vec, rk, 2);
   }
   {
     auto vec = MakeVarcharVector({string_values[0], string_values[1]});
     std::vector<std::string_view> rk{pk[0], pk[1]};
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[1], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::VARCHAR},
+      ColumnDescriptor{col_id[1], duckdb::LogicalType::VARCHAR},
       vec, rk, 2);
   }
   {
@@ -214,8 +212,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
                                        {bool_values[0], bool_values[1]});
     std::vector<std::string_view> rk{pk[0], pk[1]};
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[2], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::BOOLEAN},
+      ColumnDescriptor{col_id[2], duckdb::LogicalType::BOOLEAN},
       vec, rk, 2);
   }
   {
@@ -223,8 +220,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
                                         {float_values[0], float_values[1]});
     std::vector<std::string_view> rk{pk[0], pk[1]};
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[3], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::FLOAT},
+      ColumnDescriptor{col_id[3], duckdb::LogicalType::FLOAT},
       vec, rk, 2);
   }
   {
@@ -232,8 +228,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
                                           {bigint_values[0], bigint_values[1]});
     std::vector<std::string_view> rk{pk[0], pk[1]};
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[4], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::BIGINT},
+      ColumnDescriptor{col_id[4], duckdb::LogicalType::BIGINT},
       vec, rk, 2);
   }
   sink.Finish();
@@ -245,16 +240,14 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
                                           {int_values[2], int_values[3]});
     std::vector<std::string_view> rk{pk[2], pk[3]};
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[0], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::INTEGER},
+      ColumnDescriptor{col_id[0], duckdb::LogicalType::INTEGER},
       vec, rk, 2);
   }
   {
     auto vec = MakeVarcharVector({string_values[2], string_values[3]});
     std::vector<std::string_view> rk{pk[2], pk[3]};
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[1], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::VARCHAR},
+      ColumnDescriptor{col_id[1], duckdb::LogicalType::VARCHAR},
       vec, rk, 2);
   }
   {
@@ -262,8 +255,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
                                        {bool_values[2], bool_values[3]});
     std::vector<std::string_view> rk{pk[2], pk[3]};
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[2], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::BOOLEAN},
+      ColumnDescriptor{col_id[2], duckdb::LogicalType::BOOLEAN},
       vec, rk, 2);
   }
   {
@@ -271,8 +263,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
                                         {float_values[2], float_values[3]});
     std::vector<std::string_view> rk{pk[2], pk[3]};
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[3], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::FLOAT},
+      ColumnDescriptor{col_id[3], duckdb::LogicalType::FLOAT},
       vec, rk, 2);
   }
   {
@@ -280,8 +271,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
                                           {bigint_values[2], bigint_values[3]});
     std::vector<std::string_view> rk{pk[2], pk[3]};
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[4], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::BIGINT},
+      ColumnDescriptor{col_id[4], duckdb::LogicalType::BIGINT},
       vec, rk, 2);
   }
   sink.Finish();
@@ -455,16 +445,14 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
       {string_data[0], std::string_view{}, string_data[1], std::string_view{}},
       {true, false, true, false});
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[0], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::VARCHAR},
+      ColumnDescriptor{col_id[0], duckdb::LogicalType::VARCHAR},
       vec, rk, 4);
   }
   {
     // SQLNULL column: all 4 rows null.
     auto vec = MakeSqlNullVector(4);
     sink.SwitchColumn(
-      ColumnDescriptor{col_id[1], catalog::ColumnStoreMode::kNormal,
-                       duckdb::LogicalType::SQLNULL},
+      ColumnDescriptor{col_id[1], duckdb::LogicalType::SQLNULL},
       vec, rk, 4);
   }
   sink.Finish();
@@ -615,8 +603,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
 
   // Literal 4-byte term: \x0 'f' 'o' 'o'.
   auto vec = MakeVarcharVector({std::string_view{"\x0foo", 4}});
-  sink.SwitchColumn(ColumnDescriptor{col_id, catalog::ColumnStoreMode::kNormal,
-                                     duckdb::LogicalType::VARCHAR},
+  sink.SwitchColumn(ColumnDescriptor{col_id, duckdb::LogicalType::VARCHAR},
                     vec, rk, 1);
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
@@ -664,7 +651,7 @@ void InsertOneVarcharRow(irs::IndexWriter& writer, std::string_view pk,
   auto vec = MakeVarcharVector({value});
   std::vector<std::string_view> rk{pk};
   sink.SwitchColumn(
-    ColumnDescriptor{catalog::Column::Id{1}, catalog::ColumnStoreMode::kNormal,
+    ColumnDescriptor{catalog::Column::Id{1},
                      duckdb::LogicalType::VARCHAR},
     vec, rk, 1);
   sink.Finish();
@@ -683,7 +670,7 @@ void InsertTwoVarcharRows(irs::IndexWriter& writer, std::string_view pk_a,
   auto vec = MakeVarcharVector({value_a, value_b});
   std::vector<std::string_view> rk{pk_a, pk_b};
   sink.SwitchColumn(
-    ColumnDescriptor{catalog::Column::Id{1}, catalog::ColumnStoreMode::kNormal,
+    ColumnDescriptor{catalog::Column::Id{1},
                      duckdb::LogicalType::VARCHAR},
     vec, rk, 2);
   sink.Finish();
@@ -988,7 +975,6 @@ TEST_F(DuckDBSearchSinkWriterTest, UpdateWithExisting) {
     auto vec = MakeVarcharVector({std::string_view{"value1_new", 10}});
     std::vector<std::string_view> rk{kPk1};
     sink.SwitchColumn(ColumnDescriptor{catalog::Column::Id{1},
-                                       catalog::ColumnStoreMode::kNormal,
                                        duckdb::LogicalType::VARCHAR},
                       vec, rk, 1);
     sink.Finish();

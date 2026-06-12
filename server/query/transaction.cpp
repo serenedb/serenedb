@@ -57,13 +57,6 @@ Result Transaction::Commit() {
                        : 0;
   SDB_ASSERT(!_rocksdb_transaction || _rocksdb_transaction->GetNumMerges() == 0,
              "We do not expect merges for now");
-  // Marker-only txns have zero rocksdb ops and would skip the commit block;
-  // force a no-op Delete to consume a seq number so markers reach the WAL
-  // and the inverted index has a tick to commit on.
-  if (num_ops == 0 && _num_log_data_markers > 0 && _rocksdb_transaction) {
-    _rocksdb_transaction->Delete(rocksdb::Slice{});
-    ++num_ops;
-  }
   if (num_ops > 0) [[likely]] {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
@@ -220,7 +213,6 @@ void Transaction::Destroy() noexcept {
   _search_transactions.clear();
   _table_rows_deltas.clear();
   _search_snapshots.clear();
-  _num_log_data_markers = 0;
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {

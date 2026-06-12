@@ -854,7 +854,149 @@ the full sqllogic + recovery suites back to green before the next starts:
   `sdb_seq`, port engine catalog API, sequences, bootstrap order,
   shutdown checkpoint; rocksdb keeps row data only (Definitions/Sequences CFs
   emptied). Acceptance: the ~46 catalog/DDL recovery tests.
-- **phase B — the flip**: native tables + DML delegation + ART secondary indexes
+- **phase B — the flip**, split into sub-phases (user decision, design
+  iteration in progress before implementation):
+  - **B1 — lookup functions first**: `PkSpec::DuckDBRowId` + the
+    rowid-lookup table function, validated in isolation via
+    `ATTACH 'x.db'` + `CREATE VIEW` over the attached table +
+    `CREATE INDEX` on the view, with dedicated tests — no storage flip yet.
+  - **B2 — native tables**: our tables become real `DuckTableEntry`s in
+    `__sdb_store`; DML delegation; the DML/DDL surface questions below
+    must be answered first.
+  - **B3 — wire indexes**: ART secondary indexes + inverted-index
+    integration (rowid PK, checkpoint-coupled recovery from §6).
+  - **B4 — suites green** (EXPLAIN re-records, recovery-test failpoint
+    migration).
+  **Design iteration results (research complete, see decisions below):**
+  - **B1 primary shape: `read_duckdb`, not ATTACH.** The vendored tree ships
+    `read_duckdb` (`src/function/table/read_duckdb.cpp`) — a
+    MultiFileReader-based TF like `read_parquet`: glob support, `rowid` +
+    `row_number` virtual columns (:506, :520), `table_name` option. So the
+    parquet-symmetric design works verbatim: register `read_duckdb` in the
+    view-fast-path registry; `CREATE VIEW v AS SELECT * FROM
+    read_duckdb('x.db', table_name='t')` + CREATE INDEX → `PkSpec::DuckDBRowId`
+    (single file) / file_idx+rowid (glob). The path lives in the view body
+    exactly like parquet paths — no ATTACH, no re-attach-after-restart
+    problem, no need to store paths in the index. Views over
+    catalog-ATTACHed tables (`attached.t`) become a secondary branch (the
+    fast-path classifier currently falls through at `view_fast_path.cpp:287`
+    and silently builds a useless synthetic-counter index — that gets a
+    proper classification either way). External-file contract: no snapshot
+    pin exists for duckdb files (weaker than iceberg) — documented as
+    "valid until the external file compacts".
+  - **B3 verdict: inverted index as a native BoundIndex is feasible — GO.**
+    Nothing in the contract blocks it: a non-unique custom index receives
+    all inserts exactly once at commit (serialized, final rowids), deletes
+    at commit with values re-fetched, UPDATE arrives as delete+insert
+    automatically, ON CONFLICT never consults it, and **WAL replay feeds
+    custom indexes via UnboundIndex buffering + ApplyBufferedReplays at
+    first bind** — the §6 recovery design falls out of the architecture
+    instead of being built next to it. The existing sink core
+    (`SearchSinkInsertBaseImpl`) becomes the BoundIndex body; all five of
+    its inputs are bind-time-capturable, except indexed-expression
+    execution which needs a private `Connection` (the exact
+    `wal_recovery.cpp` precedent). Design items: (i) commit tick moves from
+    rocksdb seqno to duckdb commit id via the existing SereneDBClientState
+    pre/post-commit hooks; (ii) `SerializeToDisk` must fabricate a valid
+    `IndexStorageInfo` (free-form options map carries our payload);
+    (iii) `create_instance` registration required before first
+    post-recovery DML. Open risks: commit-time tokenization is serialized
+    per index (today it runs in parallel pipeline threads at execution) —
+    ingest-throughput benchmark needed early; partial-failure compensation
+    calls `Delete` on just-appended docs (remove-by-rowid handles it).
+  - **`sdb_indexonly` is REMOVED outright (user decision)** — the
+    eventual-consistent iresearch-only tables are the real answer to that
+    use case; interim column duplication is acceptable. (It was also the
+    one structural casualty of the BoundIndex route: `RemoveFromIndexes`
+    force-fetches indexed columns from the table, impossible for
+    index-only data.) Scope: `ColumnStoreMode::kIndexOnly` +
+    `ApplyColumnModes` option, `indexonly_marker` PutLogData plumbing, the
+    scan-rejection and SK-restriction paths, WAL-recovery marker replay,
+    `indexonly_*` tests. Independent of B1 — lands as its own early
+    commit.
+  - **Column naming, final**: real names stay (revisited `c_<id>` at user
+    request and rejected): CHECK/DEFAULT/generated expressions are stored
+    as parsed trees referencing columns BY NAME and would need two-way
+    rewriting under id-names, and native error messages would leak
+    `c_<id>` requiring a per-table dictionary in the PG error shim — both
+    permanent translation layers, versus a five-line metadata-only native
+    RENAME mirror in the same transaction.
+  - **Column naming (user decision)**: native columns keep their REAL names
+    — duckdb RENAME COLUMN is pure catalog metadata (storage is positional,
+    `DuckTableEntry::RenameColumn` shares storage), so facade renames
+    mirror a metadata-only native rename in the same store.db transaction.
+    Table naming, final (user proposal, adopted — supersedes the earlier
+    `t_<ObjectId>` idea): the native table name is the full pg path as ONE
+    quoted identifier — `"<database>.<schema>.<table>"` — in store.db's
+    default schema. Uniqueness = the full path is unique by definition;
+    no mangling convention (dots are just characters; the name is
+    write-only — identity stays ObjectId, nothing ever parses it back);
+    EXPLAIN output and native error messages read correctly with near-zero
+    shim work; standalone store.db is browsable. Cost: RENAME TABLE
+    mirrors a metadata-only native rename in the same transaction (the
+    only rename supported today; future schema/database renames would
+    cascade, still metadata-only). Why NOT per-pg-database files instead:
+    each attached db is its own durability domain (own WAL/txn-manager,
+    sequential per-db commits, no coordinated commit) — lifting the
+    single-writable-db rule safely requires cross-database 2PC (prepare
+    records + coordinator log + in-doubt recovery), a distributed-commit
+    subsystem out of scope for the interim engine; and catalog+data in
+    different files would make every DDL a cross-db transaction.
+  - **Catalog metadata stays authoritative, not deduplicated** (user
+    question, resolved): names/types/defaults could be derived from the
+    native entry at boot, but the minimum residue (Column::Id identity,
+    id↔position mapping, sdb attributes) must stay catalog-side anyway,
+    and the upcoming iresearch-native tables have no underlying duckdb
+    table — deriving would fork `catalog::Table` into two shapes. So
+    TableData remains the single uniform source of truth across engines;
+    the native schema is a derived, enforced duplicate, validated against
+    TableData at boot with a cheap mismatch assert (catches ALTER sync
+    bugs). Revisit dedup only if the redundancy hurts.
+  - **B1 test matrix** must cover: single-file `read_duckdb('x.db',
+    table_name=...)`, **glob** `read_duckdb('dir/*.db', ...)` (two-number
+    file_idx+rowid spec, same machinery as parquet globs), and the
+    attached-catalog-view branch — each with covered queries,
+    materializing queries, and the degradation paths (missing file,
+    externally compacted file, detached database).
+  - **UNIQUE/FK flip (user decision)**: native enforcement is embraced
+    (today both are parsed and silently dropped); needs dedicated tests.
+  - **Triggers (user decision)**: deferred — separate DDL surface; the
+    delegation design keeps statement-level AFTER triggers an almost-free
+    later addition (BEFORE/INSTEAD OF parse but never fire — never expose).
+  - **RETURNING is silently broken today** (INSERT returns garbage,
+    UPDATE/DELETE internal error, zero coverage) — native operators fix it;
+    add tests in B2.
+  - `sdb_write_conflict_policy=replace` re-lands as a plan-time ON
+    CONFLICT-on-PK rewrite (duckdb has no blind-replace); PG error-text
+    shims move to a wrapper over native constraint errors; SST bulk path is
+    replaced by native batch insert (the PK-sort prepass dies).
+
+  Original direction notes (kept for context):
+  - **No stubs anywhere in the DML surface.** Native tables get the full
+    duckdb behavior by genuine delegation — ON CONFLICT DO UPDATE,
+    RETURNING, MERGE INTO come from duckdb's own operators ("same as a
+    duckdb table, plus whatever the inverted index needs on top").
+  - **Preferred B3 architecture: inverted index as a first-class duckdb
+    index type** — a real BoundIndex in the table's TableIndexList, fed by
+    duckdb's own PhysicalInsert/Delete/Update through
+    AppendToIndexes/RemoveFromIndexes, instead of serenedb's custom DML
+    operators feeding search sinks. Search QUERIES keep going through
+    iresearch_scan + the optimizer. Feasibility research running (what the
+    index hooks receive, append timing vs commit, WAL-replay routing,
+    expression/tokenizer context capture); fall back to custom operators
+    only if something genuinely prevents it. Side benefit if it works:
+    rowid pinning, delete notification, and WAL-replay re-feeding all come
+    from the same registration — unifying with the §6 recovery design.
+  - **ALTER TABLE: both worlds must work** — everything serenedb supports
+    today keeps working, and duckdb-native forms (ADD/DROP COLUMN at least
+    for columns without indexes) become available rather than rejected.
+  - **B1 external-source semantics = the iceberg/parquet-glob contract**:
+    an index over a view of an attached duckdb table behaves like the
+    existing file-view indexes (index pins what it indexed; source
+    mutation has the same caveats). The duckdb-table lookup is implemented
+    as one more source kind alongside parquet/iceberg BEFORE any storage
+    flip.
+- **phase B details (original notes)**: native tables + DML delegation + ART secondary indexes
   + `PkSpec::DuckDBRowId` + `duckdb_rowid_lookup` TF + checkpoint-coupled
   recovery (§6) + failpoint migration. The big one; rocksdb row-data paths and
   SK machinery deleted within it. Includes EXPLAIN re-records (53 files) and

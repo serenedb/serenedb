@@ -36,7 +36,6 @@
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
-#include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -52,7 +51,6 @@ struct UpdateColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   duckdb::idx_t table_col_idx;
-  catalog::ColumnStoreMode store_mode;
 };
 
 struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
@@ -69,7 +67,6 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   struct ColumnMeta {
     catalog::Column::Id id;
     duckdb::LogicalType duckdb_type;
-    catalog::ColumnStoreMode store_mode;
   };
   std::vector<ColumnMeta> all_columns;
 
@@ -80,14 +77,8 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
 
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
-  // sdb-side transaction; the IndexOnly writer registers markers on it.
-  query::Transaction* sdb_txn = nullptr;
 
-  // True iff some inverted index on the table is built exclusively over
-  // IndexOnly columns and would not see the row delete through normal
-  // WAL replay. Drives the per-row [RD] marker emission in the PK-update
-  // path.
-  bool needs_rd_markers = false;
+  query::Transaction* sdb_txn = nullptr;
 
   // Single set of Update writers that handle both DeleteRow and Write.
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
@@ -117,7 +108,6 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
     catalog::Column::Id id;
     duckdb::LogicalType duckdb_type;
     duckdb::idx_t chunk_idx;
-    catalog::ColumnStoreMode store_mode;
   };
   std::vector<NonUpdateIdxColMeta> non_update_idx_cols;
 
@@ -226,7 +216,6 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     state->all_columns.push_back(SereneDBUpdateGlobalState::ColumnMeta{
       .id = col.GetId(),
       .duckdb_type = col.type,
-      .store_mode = col.store_mode,
     });
   }
 
@@ -237,7 +226,6 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
       .id = col.GetId(),
       .duckdb_type = col.type,
       .table_col_idx = table_col_idx,
-      .store_mode = col.store_mode,
     });
     state->update_col_id_set.insert(col.GetId());
   }
@@ -291,11 +279,8 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
                                 duckdb::OnConflictAction::THROW,
                                 state->table_name);
 
-  // Reused by both the marker-need check and the indexed-column mapping.
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto indexes = snapshot->GetIndexesByRelation(state->table_id);
-
-  state->needs_rd_markers = NeedsRowDeleteMarkers(indexes, columns);
 
   // Build column-ID-to-chunk-position mapping.
   // Chunk layout: [SET_vals..., pk_virtuals..., non_pk_virtuals..., rowid]
@@ -349,7 +334,6 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
               .id = col_id,
               .duckdb_type = col.type,
               .chunk_idx = _indexed_col_indices[i],
-              .store_mode = col.store_mode,
             });
           break;
         }
@@ -387,7 +371,6 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
               .id = pk_col_id,
               .duckdb_type = col.type,
               .chunk_idx = _pk_col_indices[i],
-              .store_mode = col.store_mode,
             });
           break;
         }
@@ -561,13 +544,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         if (!s.ok()) {
           SDB_THROW(ERROR_INTERNAL, "RocksDB Delete error: ", s.ToString());
         }
-      }
-      // Row-level marker for indexes that normal WAL replay would miss;
-      // see `needs_rd_markers` in the gstate definition.
-      if (gstate.needs_rd_markers) {
-        indexonly_marker::EmitRD(*gstate.sdb_txn, gstate.row_keys[row]);
-      }
-    }
+      }    }
 
     // 6. Write ALL columns at new keys.
     DuckDBColumnSerializer::TxnWriter txn_writer{*gstate.sdb_txn, gstate.cf};
@@ -578,7 +555,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     // Updated columns: from SET positions in the chunk.
     for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
       const auto& col = gstate.update_columns[i];
-      const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type};
+      const ColumnDescriptor desc{col.id, col.duckdb_type};
       gstate.active_writers.clear();
       for (auto& writer : gstate.index_writers) {
         if (writer->SwitchColumn(desc, chunk.data[i], view_new_row_keys,
@@ -601,7 +578,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     {
       DuckDBColumnSerializer::SstWriter noop_writer{nullptr};
       for (const auto& col : gstate.non_update_idx_cols) {
-        const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type};
+        const ColumnDescriptor desc{col.id, col.duckdb_type};
         gstate.active_writers.clear();
         for (auto& writer : gstate.index_writers) {
           if (writer->SwitchColumn(desc, chunk.data[col.chunk_idx],
@@ -673,7 +650,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
 
     for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
       const auto& col = gstate.update_columns[i];
-      const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type};
+      const ColumnDescriptor desc{col.id, col.duckdb_type};
       gstate.active_writers.clear();
       for (auto& writer : gstate.index_writers) {
         if (writer->SwitchColumn(desc, chunk.data[i], view_row_keys,
@@ -695,7 +672,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     {
       DuckDBColumnSerializer::SstWriter noop_writer{nullptr};
       for (const auto& col : gstate.non_update_idx_cols) {
-        const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type};
+        const ColumnDescriptor desc{col.id, col.duckdb_type};
         gstate.active_writers.clear();
         for (auto& writer : gstate.index_writers) {
           if (writer->SwitchColumn(desc, chunk.data[col.chunk_idx],

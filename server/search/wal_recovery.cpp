@@ -50,7 +50,6 @@
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_search_sink_writer.h"
-#include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -96,7 +95,6 @@ struct ShardState {
   struct IndexedColumn {
     catalog::Column::Id id;
     duckdb::LogicalType type;
-    catalog::ColumnStoreMode store_mode;
   };
   std::vector<IndexedColumn> indexed_columns;
 
@@ -154,7 +152,7 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
     if (it == table_columns.end()) {
       return false;
     }
-    s.indexed_columns.emplace_back(col_id, it->type, it->store_mode);
+    s.indexed_columns.emplace_back(col_id, it->type);
   }
 
   s.index = std::move(inverted);
@@ -252,7 +250,7 @@ void FlushShard(ShardState& s,
     for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
       const auto& col = s.indexed_columns[col_idx];
       absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId), col.id);
-      const connector::ColumnDescriptor desc{col.id, col.store_mode, col.type};
+      const connector::ColumnDescriptor desc{col.id, col.type};
       const auto count = static_cast<duckdb::idx_t>(insert_entries.size());
       duckdb::Vector vec{col.type, count};
       duckdb::FlatVector::ValidityMutable(vec).SetAllValid(count);
@@ -398,28 +396,6 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
     return rocksdb::Status::OK();
   }
 
-  void LogData(const rocksdb::Slice& blob) final {
-    // Replay sdb_indexonly markers; unrecognised blobs (different magic)
-    // are silently ignored.
-    namespace iom = connector::indexonly_marker;
-    auto decoded = iom::Decode(blob);
-    if (!decoded) {
-      return;
-    }
-    switch (decoded->kind) {
-      case iom::MarkerKind::CP:
-        PutCF(_default_cf_id,
-              rocksdb::Slice{decoded->key.data(), decoded->key.size()},
-              rocksdb::Slice{decoded->value.data(), decoded->value.size()});
-        return;
-      case iom::MarkerKind::RD:
-        ApplyMarkerRowDelete(decoded->key);
-        return;
-      case iom::MarkerKind::Unknown:
-        SDB_UNREACHABLE();
-    }
-  }
-
   rocksdb::Status MarkNoop(bool) final { return rocksdb::Status::OK(); }
 
   rocksdb::Status MarkBeginPrepare(bool) final {
@@ -446,38 +422,6 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
   bool NeedsFlush() const noexcept { return _needs_flush; }
 
  private:
-  // Row delete fires for every shard on the table; the col_id portion of
-  // `key` is ignored because the inverted index deletes by PK.
-  void ApplyMarkerRowDelete(std::string_view key) {
-    if (key.size() < kKeyPrefixSize) {
-      return;
-    }
-    ObjectId id{absl::big_endian::Load64(key.data())};
-    auto table_it = _table2shards.find(id);
-    if (table_it == _table2shards.end()) {
-      return;
-    }
-    std::string_view pk{key.data() + kKeyPrefixSize,
-                        key.size() - kKeyPrefixSize};
-    std::string_view full_key{key.data(), key.size()};
-
-    auto& [started, shards] = table_it->second;
-    for (size_t i = 0; i < shards.size(); ++i) {
-      auto* s = shards[i];
-      if (i >= started) {
-        if (s->start_tick >= _batch_sequence) {
-          break;
-        }
-        started = i + 1;
-      }
-      auto& row = s->GetRow(pk);
-      row.full_key = full_key;
-      row.indexed_cols.clear();
-      row.op = RowOp::Delete;
-      _needs_flush = s->pk2row.size() >= _flush_threshold;
-    }
-  }
-
   template<typename Fn>
   void ForEachMatchingShard(uint32_t cf_id, const rocksdb::Slice& key,
                             Fn&& fn) {

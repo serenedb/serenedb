@@ -74,66 +74,7 @@ namespace {
 
 // Extracts column names from `[a, b, c]` -- the only accepted shape. Anything
 // else (row, single ref, string) throws.
-std::vector<std::string> ExtractColumnList(
-  std::string_view option_key, const duckdb::ParsedExpression& expr) {
-  if (expr.GetExpressionType() != duckdb::ExpressionType::FUNCTION) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                    ERR_MSG("WITH option \"", option_key,
-                            "\" expects a list literal, e.g. [col1, col2]"));
-  }
-  auto& fn = expr.Cast<duckdb::FunctionExpression>();
-  if (duckdb::StringUtil::Lower(fn.function_name) != "list_value") {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG("WITH option \"", option_key,
-              "\" expects a list literal [col1, col2, ...], got \"",
-              fn.function_name, "\""));
-  }
-  std::vector<std::string> result;
-  result.reserve(fn.children.size());
-  for (auto& child : fn.children) {
-    if (child->GetExpressionType() != duckdb::ExpressionType::COLUMN_REF) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG("WITH option \"", option_key,
-                              "\" list element is not a column name"));
-    }
-    result.push_back(
-      child->Cast<duckdb::ColumnRefExpression>().GetColumnName());
-  }
-  return result;
-}
-
 }  // namespace
-
-void ApplyColumnModes(
-  std::vector<catalog::Column>& columns,
-  const duckdb::case_insensitive_map_t<
-    duckdb::unique_ptr<duckdb::ParsedExpression>>& options) {
-  static constexpr std::string_view kIndexOnlyKey = "sdb_indexonly";
-  auto it = options.find(std::string{kIndexOnlyKey});
-  if (it == options.end() || !it->second) {
-    return;
-  }
-  for (auto& name : ExtractColumnList(kIndexOnlyKey, *it->second)) {
-    auto col_it = absl::c_find_if(
-      columns, [&](const auto& c) { return c.GetName() == name; });
-    if (col_it == columns.end()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                      ERR_MSG("WITH option \"", kIndexOnlyKey,
-                              "\" references unknown column \"", name, "\""));
-    }
-    // VIRTUAL columns aren't materialized at insert time, so there's no
-    // value for the marker to carry.
-    if (col_it->generated_type == catalog::Column::GeneratedType::kVirtual) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("WITH option \"", kIndexOnlyKey,
-                "\" cannot be applied to VIRTUAL generated column \"", name,
-                "\""));
-    }
-    col_it->store_mode = catalog::ColumnStoreMode::kIndexOnly;
-  }
-}
 
 ObjectId SereneDBSchemaEntry::GetDatabaseId() const {
   return catalog.Cast<SereneDBCatalog>().GetDatabaseId();
@@ -193,6 +134,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   duckdb::CatalogTransaction transaction, duckdb::BoundCreateTableInfo& info) {
   auto& create_info = info.Base();
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
+
+  if (!table_info.options.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("unrecognized parameter \"",
+                            table_info.options.begin()->first, "\""));
+  }
 
   catalog::CreateTableOptions options;
   options.name = table_info.table;
@@ -371,8 +318,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
         break;
     }
   }
-
-  ApplyColumnModes(options.columns, table_info.options);
 
   auto& catalog_impl = catalog::CatalogFeature::instance().Global();
   auto database_id = GetDatabaseId();

@@ -30,7 +30,6 @@ namespace sdb::connector {
 
 struct ColumnDescriptor {
   catalog::Column::Id id;
-  catalog::ColumnStoreMode store_mode;
   duckdb::LogicalType type;
 };
 

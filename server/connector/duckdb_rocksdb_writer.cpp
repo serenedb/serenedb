@@ -30,12 +30,9 @@
 #include "basics/assert.h"
 #include "basics/string_utils.h"
 #include "connector/common.h"
-#include "connector/indexonly_marker.h"
 #include "pg/errcodes.h"
-#include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
-#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 
 namespace sdb::connector {
 namespace {
@@ -261,18 +258,10 @@ std::string MergeSlices(const std::vector<rocksdb::Slice>& slices) {
 
 DuckDBColumnSerializer::TxnWriter::TxnWriter(
   query::Transaction& sdb_txn, rocksdb::ColumnFamilyHandle* cf) noexcept
-  : _sdb_txn{&sdb_txn}, _txn{&sdb_txn.GetRocksDBTransaction()}, _cf{cf} {}
+  : _txn{&sdb_txn.GetRocksDBTransaction()}, _cf{cf} {}
 
 void DuckDBColumnSerializer::TxnWriter::Write(
   const std::vector<rocksdb::Slice>& slices, std::string_view key) {
-  if (IsIndexOnly()) {
-    // IndexOnly columns skip main storage; replay only knows the Default
-    // CF for marker blobs, so non-Default CF would silently lose the value.
-    SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
-                        RocksDBColumnFamilyManager::Family::Default));
-    indexonly_marker::EmitCP(*_sdb_txn, key, slices);
-    return;
-  }
   auto merged = MergeSlices(slices);
   auto status = _txn->Put(_cf, rocksdb::Slice(key.data(), key.size()),
                           rocksdb::Slice(merged));
@@ -282,14 +271,6 @@ void DuckDBColumnSerializer::TxnWriter::Write(
 }
 
 void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) {
-  if (IsIndexOnly()) {
-    // IndexOnly NULL is a marker with empty value bytes; same Default-CF
-    // constraint as Write().
-    SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
-                        RocksDBColumnFamilyManager::Family::Default));
-    indexonly_marker::EmitCP(*_sdb_txn, key, {});
-    return;
-  }
   auto status =
     _txn->Put(_cf, rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
   if (!status.ok()) {
@@ -297,18 +278,9 @@ void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) {
   }
 }
 
-void DuckDBColumnSerializer::TxnWriter::EmitRowDelete(std::string_view key) {
-  // Same Default-CF constraint as Write().
-  SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
-                      RocksDBColumnFamilyManager::Family::Default));
-  indexonly_marker::EmitRD(*_sdb_txn, key);
-}
-
 void DuckDBColumnSerializer::SstWriter::Write(
   const std::vector<rocksdb::Slice>& slices, std::string_view key) {
-  if (!_writer || IsIndexOnly()) {
-    // SST has no marker channel; durability of IndexOnly values relies on
-    // the inverted index's own commit.
+  if (!_writer) {
     return;
   }
   auto merged = MergeSlices(slices);
@@ -320,7 +292,7 @@ void DuckDBColumnSerializer::SstWriter::Write(
 }
 
 void DuckDBColumnSerializer::SstWriter::WriteNull(std::string_view key) {
-  if (!_writer || IsIndexOnly()) {
+  if (!_writer) {
     return;
   }
   auto status =
@@ -334,8 +306,6 @@ template<typename Writer>
 void DuckDBColumnSerializer::WriteRowSlices(
   Writer& writer, std::string_view key,
   std::span<DuckDBSinkColumnWriter*> index_writers) {
-  // Writer decides what "Write" means for the current column (regular Put,
-  // IndexOnly WAL marker, or Option-C silent skip on the SST path).
   writer.Write(_row_slices, key);
   for (auto* iw : index_writers) {
     iw->Write(_row_slices, key);
@@ -522,8 +492,6 @@ void DuckDBColumnSerializer::WriteColumn(
   Writer& writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
   std::vector<std::string>& row_keys,
   std::span<DuckDBSinkColumnWriter*> index_writers, ColumnDescriptor col) {
-  // Tell the writer which column we're streaming so its Write/WriteNull
-  // can branch (regular Put vs IndexOnly WAL marker vs SST silent skip).
   writer.SwitchColumn(col);
   const auto& type = col.type;
   switch (vec.GetVectorType()) {

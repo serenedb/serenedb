@@ -70,7 +70,6 @@ struct InsertColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   size_t input_col_idx;
-  catalog::ColumnStoreMode store_mode;
 };
 
 // `chunk_columns` is the chunk-ordered list of columns the scan projects
@@ -413,7 +412,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         .id = col.GetId(),
         .duckdb_type = col.type,
         .input_col_idx = chunk_idx,
-        .store_mode = col.store_mode,
       });
     }
   } else {
@@ -428,7 +426,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         .id = columns[i].GetId(),
         .duckdb_type = columns[i].type,
         .input_col_idx = i,
-        .store_mode = columns[i].store_mode,
       });
     }
   }
@@ -674,7 +671,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       continue;
     }
 
-    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type};
+    const ColumnDescriptor desc{col.id, col.duckdb_type};
     if (!writer->SwitchColumn(desc, chunk.data[col.input_col_idx],
                               view_row_keys, num_rows)) {
       continue;

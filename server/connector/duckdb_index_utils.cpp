@@ -226,31 +226,6 @@ CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
   std::span<const catalog::Column::Id> updated_col_ids,
   const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
-bool NeedsRowDeleteMarkers(
-  std::span<const std::shared_ptr<catalog::Index>> indexes,
-  std::span<const catalog::Column> columns) {
-  for (const auto& index : indexes) {
-    if (index->GetType() != catalog::ObjectType::InvertedIndex) {
-      continue;
-    }
-    bool all_indexonly = true;
-    for (auto col_id : index->GetColumnIds()) {
-      auto it = absl::c_find_if(
-        columns, [&](const auto& c) { return c.GetId() == col_id; });
-      SDB_ASSERT(it != columns.end(),
-                 "inverted index references unknown column id ", col_id);
-      if (it->store_mode != catalog::ColumnStoreMode::kIndexOnly) {
-        all_indexonly = false;
-        break;
-      }
-    }
-    if (all_indexonly) {
-      return true;
-    }
-  }
-  return false;
-}
-
 std::vector<size_t> BuildCreateIndexProjection(
   std::span<const catalog::Column> columns,
   std::span<const catalog::Column::Id> pk_column_ids,

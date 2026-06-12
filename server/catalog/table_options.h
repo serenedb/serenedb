@@ -40,12 +40,6 @@
 
 namespace sdb::catalog {
 
-// NOLINTBEGIN
-enum class ColumnStoreMode : uint8_t {
-  kNormal = 0,
-  kIndexOnly = 1,
-};
-
 // Persistent on-disk catalog format.
 class Column final : public Object {
  public:
@@ -57,10 +51,6 @@ class Column final : public Object {
   };
 
   using Id = ObjectId;
-
-  bool IsIndexOnly() const noexcept {
-    return store_mode == ColumnStoreMode::kIndexOnly;
-  }
 
   static constexpr uint64_t kMaxRealIdValue =
     std::numeric_limits<uint64_t>::max() - 1'000'000;
@@ -113,7 +103,6 @@ class Column final : public Object {
   duckdb::LogicalType type;
   std::shared_ptr<ColumnExpr> expr;
   GeneratedType generated_type = GeneratedType::kNone;
-  ColumnStoreMode store_mode = ColumnStoreMode::kNormal;
 };
 
 inline std::shared_ptr<Object> Column::Clone() const {

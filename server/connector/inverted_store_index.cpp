@@ -74,9 +74,9 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
                                                  duckdb::Vector& row_ids) {
   auto* conn = CurrentCommittingContext();
   if (!conn) {
-    return duckdb::ErrorData(duckdb::NotImplementedException(
-      "store inverted index appends outside a commit (WAL replay) are not "
-      "wired yet"));
+    // WAL replay: the shard has its own durability and recovers through
+    // the search recovery path, not through duckdb's WAL.
+    return {};
   }
   auto snapshot = conn->EnsureCatalogSnapshot();
   auto table = snapshot->GetObject<catalog::Table>(_table_id);

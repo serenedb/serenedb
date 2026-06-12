@@ -132,7 +132,8 @@ AsyncResult TableShardDrop::Execute() {
 }
 
 Result IndexDrop::Finalize() {
-  if (_type == catalog::ObjectType::InvertedIndex) {
+  if (_type == catalog::ObjectType::InvertedIndex ||
+      _type == catalog::ObjectType::SecondaryIndex) {
     auto r = GetCatalogStore().Write(
       [&](auto& ctx) { ctx.DropStoreIndex(_id); });
     if (!r.ok()) {

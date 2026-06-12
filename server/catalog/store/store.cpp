@@ -459,11 +459,20 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             }
             cols += QuotedIdent(name);
           }
-          auto res = _conn->Query(absl::StrCat(
-            "CREATE INDEX ", QuotedIdent(StoreIndexName(def.index_id)),
-            " ON \"", kStoreAlias, "\".main.", QuotedIdent(def.table),
-            " USING inverted(", cols, ") WITH (sdb_table_id=",
-            def.table_id.id(), ", sdb_index_id=", def.index_id.id(), ")"));
+          std::string sql;
+          if (def.kind == StoreIndexDef::Kind::Inverted) {
+            sql = absl::StrCat(
+              "CREATE INDEX ", QuotedIdent(StoreIndexName(def.index_id)),
+              " ON \"", kStoreAlias, "\".main.", QuotedIdent(def.table),
+              " USING inverted(", cols, ") WITH (sdb_table_id=",
+              def.table_id.id(), ", sdb_index_id=", def.index_id.id(), ")");
+          } else {
+            sql = absl::StrCat(
+              "CREATE ", def.unique ? "UNIQUE " : "", "INDEX ",
+              QuotedIdent(StoreIndexName(def.index_id)), " ON \"", kStoreAlias,
+              "\".main.", QuotedIdent(def.table), " (", cols, ")");
+          }
+          auto res = _conn->Query(sql);
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }

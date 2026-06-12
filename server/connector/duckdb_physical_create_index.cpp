@@ -495,17 +495,23 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   SDB_ASSERT(index);
 
   if (state->index_type == catalog::ObjectType::SecondaryIndex) {
-    auto& sec_index = basics::downCast<const catalog::SecondaryIndex>(*index);
-    auto sk_columns = BuildSKColumnsForBackfill(*index, state->columns);
-    auto& trx = conn_ctx.GetRocksDBTransaction();
+    if (!table_ptr) {
+      auto& sec_index =
+        basics::downCast<const catalog::SecondaryIndex>(*index);
+      auto sk_columns = BuildSKColumnsForBackfill(*index, state->columns);
+      auto& trx = conn_ctx.GetRocksDBTransaction();
 
-    if (sec_index.IsUnique()) {
-      state->writer = std::make_unique<DuckDBSecondarySinkInsertWriter<true>>(
-        trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
-    } else {
-      state->writer = std::make_unique<DuckDBSecondarySinkInsertWriter<false>>(
-        trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
+      if (sec_index.IsUnique()) {
+        state->writer = std::make_unique<DuckDBSecondarySinkInsertWriter<true>>(
+          trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
+      } else {
+        state->writer =
+          std::make_unique<DuckDBSecondarySinkInsertWriter<false>>(
+            trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
+      }
     }
+    // Table-backed secondary indexes are mirrored as native store indexes;
+    // the store CREATE INDEX builds from existing rows itself.
   } else {
     state->snapshot_for_providers = snapshot;
     state->index_for_providers = index;

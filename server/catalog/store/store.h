@@ -81,10 +81,19 @@ std::string DroppedStoreTableName(ObjectId table_id);
 std::string StoreIndexName(ObjectId index_id);
 
 struct StoreIndexDef {
+  enum class Kind : uint8_t {
+    // Native ART index on the store table (btree/secondary in PG terms).
+    Plain,
+    // Inverted-index linkage: store-side BoundIndex feeding iresearch.
+    Inverted,
+  };
+
   std::string table;
   ObjectId table_id;
   ObjectId index_id;
   std::vector<std::string> columns;
+  Kind kind = Kind::Inverted;
+  bool unique = false;
 };
 
 class Table;

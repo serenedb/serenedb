@@ -1315,9 +1315,13 @@ class SnapshotImpl : public Snapshot {
       ctx.DropDefinition(schema_id, ObjectType::PgSqlFunction, fn_id);
     }
     // Recovery anchor for cascade-dropped indexes (column->index cascade).
+    // The store-side index goes synchronously: enforcement (UNIQUE) must
+    // stop the moment the drop commits; the async task only sweeps shards
+    // and definitions.
     for (auto idx_id : plan.index_drops) {
       if (auto idx = GetObject<Index>(idx_id)) {
         ctx.WriteTombstone(idx->GetRelationId(), idx_id);
+        ctx.DropStoreIndex(idx_id);
       }
     }
   }
@@ -1845,7 +1849,8 @@ Result LocalCatalog::CreateIndexImpl(
           return r;
         }
       }
-      if (index->GetType() == ObjectType::InvertedIndex) {
+      if (index->GetType() == ObjectType::InvertedIndex ||
+          index->GetType() == ObjectType::SecondaryIndex) {
         auto table = clone->template GetObject<Table>(index->GetRelationId());
         if (table && table->GetEngine() == TableEngine::Transactional) {
           auto schema_obj =
@@ -1856,6 +1861,11 @@ Result LocalCatalog::CreateIndexImpl(
           StoreIndexDef def;
           def.table_id = table->GetId();
           def.index_id = index->GetId();
+          if (index->GetType() == ObjectType::SecondaryIndex) {
+            def.kind = StoreIndexDef::Kind::Plain;
+            def.unique =
+              basics::downCast<const SecondaryIndex>(*index).IsUnique();
+          }
           bool plain_columns = true;
           for (auto col_id : index->GetColumnIds()) {
             auto it = std::ranges::find_if(
@@ -2984,7 +2994,12 @@ Result LocalCatalog::DropIndex(std::string_view database,
                       pg::ToPgObjectTypeName(obj->GetType())};
       }
       auto index = basics::downCast<Index>(std::move(obj));
-      if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
+      // Store-side index drop is synchronous: UNIQUE enforcement must stop
+      // when DROP INDEX commits, not when the async sweep runs.
+      if (auto r = _engine->Write([&](auto& ctx) {
+            ctx.WriteTombstone(index->GetRelationId(), *index_id);
+            ctx.DropStoreIndex(*index_id);
+          });
           !r.ok()) {
         return r;
       }

@@ -546,3 +546,37 @@ def test_search_errors(conn, corpus):
     status, body = _request(conn, "GET", "/drv_es_missing/_search")
     assert status == 404
     assert body["error"]["type"] == "index_not_found_exception"
+
+
+def test_bulk_coercion(conn, index):
+    """ES default coercion: numeric strings parse, floats truncate for
+    integer fields, and an empty string is null for non-string fields."""
+    payload = (
+        '{"index":{"_id":"c1"}}\n'
+        '{"year":"1992","rating":"4.5","in_print":"true"}\n'
+        '{"index":{"_id":"c2"}}\n'
+        '{"year":1993.7,"rating":2}\n'
+        '{"index":{"_id":"c3"}}\n'
+        '{"year":"","published":"","rating":"","in_print":""}\n'
+    )
+    status, body = _bulk(conn, index, payload)
+    assert status == 200, body
+
+    status, body = _request(conn, "GET", f"/{index}/_count")
+    assert body["count"] == 3
+    status, body = _search(conn, index,
+                           {"query": {"term": {"year": 1992}}})
+    assert [h["_id"] for h in body["hits"]["hits"]] == ["c1"]
+    status, body = _search(conn, index,
+                           {"query": {"term": {"year": 1993}}})
+    assert [h["_id"] for h in body["hits"]["hits"]] == ["c2"]
+
+
+def test_search_match_phrase(conn, corpus):
+    status, body = _search(
+        conn, corpus, {"query": {"match_phrase": {"title": "quick brown"}}})
+    assert status == 200
+    assert [h["_id"] for h in body["hits"]["hits"]] == ["1"]
+    status, body = _search(
+        conn, corpus, {"query": {"match_phrase": {"title": "brown quick"}}})
+    assert body["hits"]["total"]["value"] == 0

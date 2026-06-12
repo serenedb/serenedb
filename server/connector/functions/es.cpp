@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/escaping.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
 #include <simdjson.h>
@@ -624,9 +625,54 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
                           index, "]: expected ", expected));
 }
 
-void WriteDocField(duckdb::Vector& vec, duckdb::idx_t row,
+// ES default coercion: numeric fields accept JSON strings ("42") and
+// truncate floating points; real corpora (e.g. rally's pmc) depend on it.
+int64_t CoerceInt64(simdjson::ondemand::value value, std::string_view index,
+                    std::string_view field) {
+  int64_t v = 0;
+  if (value.get_int64().get(v) == simdjson::SUCCESS) {
+    return v;
+  }
+  if (double d = 0; value.get_double().get(d) == simdjson::SUCCESS) {
+    return static_cast<int64_t>(d);
+  }
+  if (std::string_view text;
+      value.get_string().get(text) == simdjson::SUCCESS) {
+    if (absl::SimpleAtoi(text, &v)) {
+      return v;
+    }
+    if (double d = 0; absl::SimpleAtod(text, &d)) {
+      return static_cast<int64_t>(d);
+    }
+  }
+  ThrowFieldParseError(index, field, "an integer");
+}
+
+double CoerceDouble(simdjson::ondemand::value value, std::string_view index,
+                    std::string_view field) {
+  double v = 0;
+  if (value.get_double().get(v) == simdjson::SUCCESS) {
+    return v;
+  }
+  if (std::string_view text;
+      value.get_string().get(text) == simdjson::SUCCESS &&
+      absl::SimpleAtod(text, &v)) {
+    return v;
+  }
+  ThrowFieldParseError(index, field, "a number");
+}
+
+// false = the value reduces to NULL (ES treats an empty string as null for
+// every non-string field type).
+bool WriteDocField(duckdb::Vector& vec, duckdb::idx_t row,
                    simdjson::ondemand::value value, std::string_view index,
                    std::string_view field) {
+  if (vec.GetType().id() != duckdb::LogicalTypeId::VARCHAR) {
+    if (std::string_view text;
+        value.get_string().get(text) == simdjson::SUCCESS && text.empty()) {
+      return false;
+    }
+  }
   switch (vec.GetType().id()) {
     case duckdb::LogicalTypeId::VARCHAR: {
       std::string_view text;
@@ -635,51 +681,46 @@ void WriteDocField(duckdb::Vector& vec, duckdb::idx_t row,
       }
       duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
         duckdb::StringVector::AddString(vec, text.data(), text.size());
-      return;
+      return true;
     }
     case duckdb::LogicalTypeId::BIGINT: {
-      int64_t v = 0;
-      if (value.get_int64().get(v) != simdjson::SUCCESS) {
-        ThrowFieldParseError(index, field, "an integer");
-      }
-      duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] = v;
-      return;
+      duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] =
+        CoerceInt64(value, index, field);
+      return true;
     }
     case duckdb::LogicalTypeId::INTEGER: {
-      int64_t v = 0;
-      if (value.get_int64().get(v) != simdjson::SUCCESS ||
-          v < std::numeric_limits<int32_t>::min() ||
+      const int64_t v = CoerceInt64(value, index, field);
+      if (v < std::numeric_limits<int32_t>::min() ||
           v > std::numeric_limits<int32_t>::max()) {
         ThrowFieldParseError(index, field, "a 32-bit integer");
       }
       duckdb::FlatVector::GetDataMutable<int32_t>(vec)[row] =
         static_cast<int32_t>(v);
-      return;
+      return true;
     }
     case duckdb::LogicalTypeId::DOUBLE: {
-      double v = 0;
-      if (value.get_double().get(v) != simdjson::SUCCESS) {
-        ThrowFieldParseError(index, field, "a number");
-      }
-      duckdb::FlatVector::GetDataMutable<double>(vec)[row] = v;
-      return;
+      duckdb::FlatVector::GetDataMutable<double>(vec)[row] =
+        CoerceDouble(value, index, field);
+      return true;
     }
     case duckdb::LogicalTypeId::FLOAT: {
-      double v = 0;
-      if (value.get_double().get(v) != simdjson::SUCCESS) {
-        ThrowFieldParseError(index, field, "a number");
-      }
       duckdb::FlatVector::GetDataMutable<float>(vec)[row] =
-        static_cast<float>(v);
-      return;
+        static_cast<float>(CoerceDouble(value, index, field));
+      return true;
     }
     case duckdb::LogicalTypeId::BOOLEAN: {
       bool v = false;
-      if (value.get_bool().get(v) != simdjson::SUCCESS) {
-        ThrowFieldParseError(index, field, "a boolean");
+      if (value.get_bool().get(v) == simdjson::SUCCESS) {
+        duckdb::FlatVector::GetDataMutable<bool>(vec)[row] = v;
+        return true;
       }
-      duckdb::FlatVector::GetDataMutable<bool>(vec)[row] = v;
-      return;
+      if (std::string_view text;
+          value.get_string().get(text) == simdjson::SUCCESS &&
+          (text == "true" || text == "false")) {
+        duckdb::FlatVector::GetDataMutable<bool>(vec)[row] = text == "true";
+        return true;
+      }
+      ThrowFieldParseError(index, field, "a boolean");
     }
     case duckdb::LogicalTypeId::TIMESTAMP: {
       // ES default date leniency: ISO-8601 (offsets applied, named zones
@@ -707,7 +748,7 @@ void WriteDocField(duckdb::Vector& vec, duckdb::idx_t row,
         }
       }
       duckdb::FlatVector::GetDataMutable<duckdb::timestamp_t>(vec)[row] = ts;
-      return;
+      return true;
     }
     default:
       ThrowFieldParseError(index, field, "a supported type");
@@ -756,8 +797,10 @@ void WriteDocRow(const EsWriteBindData& bind, simdjson::ondemand::document& doc,
         value.is_null().get(is_null) == simdjson::SUCCESS && is_null) {
       continue;
     }
-    WriteDocField(output.data[it->second], row, value, bind.index, key);
-    duckdb::FlatVector::ValidityMutable(output.data[it->second]).SetValid(row);
+    if (WriteDocField(output.data[it->second], row, value, bind.index, key)) {
+      duckdb::FlatVector::ValidityMutable(output.data[it->second])
+        .SetValid(row);
+    }
   }
   // Trailing content would make the stored _source invalid JSON (and corrupt
   // the GET _doc envelope it gets embedded into verbatim).

@@ -323,12 +323,27 @@ void AppendSortValue(simdjson::builder::string_builder& sb,
   }
 }
 
+// A wildcard index pattern resolves against nothing here (no pattern
+// support yet); like ES with allow_no_indices, that is an empty 200 without
+// executing the query (rally telemetry searches .ml-anomalies-* this way).
+bool IsIndexPattern(std::string_view index) {
+  return index.find('*') != std::string_view::npos;
+}
+
 // GET|POST /{index}/_search
 class SearchHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
                           http::HttpResponseWriter& writer) override {
     const auto index = request.Param("index");
+    if (IsIndexPattern(index)) {
+      WriteJson(writer, 200,
+                R"({"took":0,"timed_out":false,"_shards":{"total":0,)"
+                R"("successful":0,"skipped":0,"failed":0},"hits":{)"
+                R"("total":{"value":0,"relation":"eq"},"max_score":null,)"
+                R"("hits":[]}})");
+      return yaclib::MakeFuture();
+    }
     const auto start = std::chrono::steady_clock::now();
 
     SearchRequest spec;
@@ -468,6 +483,12 @@ class CountHandler final : public HttpHandler {
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
                           http::HttpResponseWriter& writer) override {
     const auto index = request.Param("index");
+    if (IsIndexPattern(index)) {
+      WriteJson(writer, 200,
+                R"({"count":0,"_shards":{"total":0,"successful":0,)"
+                R"("skipped":0,"failed":0}})");
+      return yaclib::MakeFuture();
+    }
     SearchRequest spec;
     if (!ParseCountBody(FlattenBody(request.body), spec, writer)) {
       return yaclib::MakeFuture();
@@ -627,6 +648,63 @@ class CatIndicesHandler final : public HttpHandler {
   }
 };
 
+// GET /_nodes/stats[/{metric}] — enough node introspection for rally's
+// telemetry devices (empty collectors/pools iterate to nothing).
+class NodesStatsHandler final : public HttpHandler {
+ public:
+  yaclib::Future<> Handle(RequestContext&, const HttpRequest&,
+                          http::HttpResponseWriter& writer) override {
+    WriteJson(
+      writer, 200,
+      R"({"_nodes":{"total":1,"successful":1,"failed":0},)"
+      R"("cluster_name":"serenedb","nodes":{"sdb0":{"name":"serenedb-0",)"
+      R"("jvm":{"gc":{"collectors":{}},"mem":{"pools":{}}},)"
+      R"("ingest":{"total":{"count":0,"time_in_millis":0,"current":0,)"
+      R"("failed":0},"pipelines":{}}}}})");
+    return yaclib::MakeFuture();
+  }
+};
+
+// POST [/{index}]/_forcemerge — segment merging is the engine's own
+// consolidation; acknowledge.
+class ForceMergeHandler final : public HttpHandler {
+ public:
+  yaclib::Future<> Handle(RequestContext&, const HttpRequest&,
+                          http::HttpResponseWriter& writer) override {
+    WriteJson(writer, 200,
+              R"({"_shards":{"total":1,"successful":1,"failed":0}})");
+    return yaclib::MakeFuture();
+  }
+};
+
+// GET|PUT /_cluster/settings — nothing configurable yet; PUT acknowledges,
+// GET reports empty (rally's delete-index runner reads
+// action.destructive_requires_name before deleting).
+class ClusterSettingsHandler final : public HttpHandler {
+ public:
+  yaclib::Future<> Handle(RequestContext&, const HttpRequest&,
+                          http::HttpResponseWriter& writer) override {
+    WriteJson(writer, 200,
+              R"({"acknowledged":true,"persistent":{},"transient":{}})");
+    return yaclib::MakeFuture();
+  }
+};
+
+// GET [/{index}]/_stats — index stats with no pending merges (rally's
+// wait-until-merges-finish polls _all.total.merges.current).
+class IndexStatsHandler final : public HttpHandler {
+ public:
+  yaclib::Future<> Handle(RequestContext&, const HttpRequest&,
+                          http::HttpResponseWriter& writer) override {
+    WriteJson(
+      writer, 200,
+      R"({"_shards":{"total":1,"successful":1,"failed":0},)"
+      R"("_all":{"total":{"merges":{"current":0}},)"
+      R"("primaries":{"merges":{"current":0}}},"indices":{}})");
+    return yaclib::MakeFuture();
+  }
+};
+
 }  // namespace
 
 void Register(HttpRouter& router) {
@@ -638,6 +716,26 @@ void Register(HttpRouter& router) {
              std::make_unique<CatIndicesHandler>());
   router.Add(HttpMethod::Post, "/_bulk", std::make_unique<BulkHandler>());
   router.Add(HttpMethod::Put, "/_bulk", std::make_unique<BulkHandler>());
+  router.Add(HttpMethod::Get, "/_nodes/stats",
+             std::make_unique<NodesStatsHandler>());
+  router.Add(HttpMethod::Get, "/_nodes/stats/:metric",
+             std::make_unique<NodesStatsHandler>());
+  router.Add(HttpMethod::Put, "/_cluster/settings",
+             std::make_unique<ClusterSettingsHandler>());
+  router.Add(HttpMethod::Get, "/_cluster/settings",
+             std::make_unique<ClusterSettingsHandler>());
+  router.Add(HttpMethod::Get, "/_cluster/health/:index",
+             std::make_unique<HealthHandler>());
+  router.Add(HttpMethod::Get, "/_stats",
+             std::make_unique<IndexStatsHandler>());
+  router.Add(HttpMethod::Get, "/:index/_stats",
+             std::make_unique<IndexStatsHandler>());
+  router.Add(HttpMethod::Get, "/:index/_stats/:metric",
+             std::make_unique<IndexStatsHandler>());
+  router.Add(HttpMethod::Post, "/_forcemerge",
+             std::make_unique<ForceMergeHandler>());
+  router.Add(HttpMethod::Post, "/:index/_forcemerge",
+             std::make_unique<ForceMergeHandler>());
   router.Add(HttpMethod::Post, "/_refresh",
              std::make_unique<RefreshHandler>());
   router.Add(HttpMethod::Get, "/_refresh", std::make_unique<RefreshHandler>());

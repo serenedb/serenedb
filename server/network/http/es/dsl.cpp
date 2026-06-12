@@ -129,31 +129,33 @@ Clause TranslateQuery(JsonValue value);
 
 // {"match": {"field": "text"}} or {"field": {"query": "...", "operator":
 // "and"|"or"}}. operator=or tokenizes with ANY semantics (ts_tokenize),
-// operator=and requires every token (plainto_tsquery).
-Clause TranslateMatch(JsonValue value) {
-  auto object = Object(value, "match");
+// operator=and requires every token (plainto_tsquery); match_phrase is the
+// positional ts_phrase.
+Clause TranslateMatch(JsonValue value, bool phrase) {
+  const std::string_view what = phrase ? "match_phrase" : "match";
+  auto object = Object(value, what);
   std::string field;
   std::string query;
   bool conjunction = false;
   for (auto entry : object) {
     if (!field.empty()) {
-      Fail("[match] supports exactly one field");
+      Fail(absl::StrCat("[", what, "] supports exactly one field"));
     }
     field = Key(entry);
     auto body = Value(entry);
     simdjson::ondemand::json_type type;
     if (body.type().get(type) != simdjson::SUCCESS) {
-      Fail("malformed [match]");
+      Fail(absl::StrCat("malformed [", what, "]"));
     }
     if (type == simdjson::ondemand::json_type::string) {
-      query = String(body, "match");
+      query = String(body, what);
       continue;
     }
-    for (auto param : Object(body, "match")) {
+    for (auto param : Object(body, what)) {
       const auto key = Key(param);
       if (key == "query") {
-        query = String(Value(param), "match.query");
-      } else if (key == "operator") {
+        query = String(Value(param), "query");
+      } else if (key == "operator" && !phrase) {
         const auto op = String(Value(param), "match.operator");
         if (op == "and" || op == "AND") {
           conjunction = true;
@@ -161,16 +163,18 @@ Clause TranslateMatch(JsonValue value) {
           Fail(absl::StrCat("unknown [match] operator [", op, "]"));
         }
       } else {
-        Fail(absl::StrCat("[match] parameter [", key,
+        Fail(absl::StrCat("[", what, "] parameter [", key,
                           "] is not supported yet"));
       }
     }
   }
   if (field.empty()) {
-    Fail("[match] requires a field");
+    Fail(absl::StrCat("[", what, "] requires a field"));
   }
-  return {absl::StrCat(SqlIdentifier(field), " @@ ",
-                       conjunction ? "plainto_tsquery(" : "ts_tokenize(",
+  const std::string_view ts_query = phrase        ? "ts_phrase("
+                                    : conjunction ? "plainto_tsquery("
+                                                  : "ts_tokenize(";
+  return {absl::StrCat(SqlIdentifier(field), " @@ ", ts_query,
                        SqlLiteral(query), ")"),
           true};
 }
@@ -351,7 +355,9 @@ Clause TranslateQuery(JsonValue value) {
       Object(Value(entry), "match_all");
       out = {"TRUE", false};
     } else if (key == "match") {
-      out = TranslateMatch(Value(entry));
+      out = TranslateMatch(Value(entry), /*phrase=*/false);
+    } else if (key == "match_phrase") {
+      out = TranslateMatch(Value(entry), /*phrase=*/true);
     } else if (key == "term") {
       out = TranslateTerm(Value(entry));
     } else if (key == "range") {

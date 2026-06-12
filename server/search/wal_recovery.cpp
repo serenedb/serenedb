@@ -488,7 +488,10 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
 void RebuildStoreShard(ShardState& s,
                        const std::shared_ptr<const catalog::Snapshot>& snapshot,
                        Tick end_tick) {
-  s.shard->TruncateCommit({}, s.start_tick, nullptr);
+  // The rebuild runs even when the persisted tick claims currency (the
+  // tick domain cannot see store-only writes), so clamp the truncate tick
+  // below the commit tick.
+  s.shard->TruncateCommit({}, std::min(s.start_tick, end_tick - 1), nullptr);
 
   auto trx = s.shard->GetTransaction();
   auto tokenizer_provider =
@@ -715,7 +718,20 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         const bool is_view_backed =
           relation && relation->GetType() == catalog::ObjectType::PgSqlView;
 
-        if (skip_wal_recovery || is_view_backed || persisted >= end_tick) {
+        // The shard's recovery tick lives in the rocksdb seqno domain, but
+        // store-table commits do not necessarily mint seqnos before a
+        // crash -- the tick comparison cannot prove a table shard is
+        // current. Rebuild table shards unconditionally; the comparison
+        // still gates everything else.
+        const auto relation_table =
+          relation && relation->GetType() == catalog::ObjectType::Table
+            ? std::static_pointer_cast<const catalog::Table>(relation)
+            : nullptr;
+        const bool store_backed =
+          relation_table &&
+          relation_table->GetEngine() == catalog::TableEngine::Transactional;
+        if (skip_wal_recovery || is_view_backed ||
+            (!store_backed && persisted >= end_tick)) {
           inv_shard->FinishCreation();
           continue;
         }
@@ -730,9 +746,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
                      "WAL recovery: could not resolve catalog metadata for "
                      "inverted index '",
                      state.shard->GetId().id(), "'", kSkipHint);
-        // Transactional-table rows live in the engine's native storage:
-        // nothing for them in the rocksdb WAL, rebuild from the store.
-        if (state.table->GetEngine() == catalog::TableEngine::Transactional) {
+        if (store_backed) {
           rebuild_shards.push_back(std::move(state));
         } else {
           min_start_tick = std::min(min_start_tick, persisted);

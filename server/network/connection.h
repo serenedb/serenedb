@@ -37,6 +37,19 @@ inline constexpr size_t kSendFlushSize = 64 * 1024;
 // than this many committed bytes are not yet written to the socket. Bounds
 // per-connection memory for results a slow client doesn't drain.
 inline constexpr size_t kSendHighWater = 4u << 20;
+// Caps for parallel wire serialization (encoded-but-unsent chains). Emittable
+// bytes (batches at or below the ordered emit cursor, or everything in
+// unordered mode) drain at socket speed; this cap is the slow-client
+// backpressure bound.
+inline constexpr size_t kWireQueuedHighWater = 64u << 20;
+// Ordered-mode lookahead window, in batches beyond the emit cursor. Admission
+// must be per batch, not by a byte budget: pinned bytes only unpin when the
+// cursor reaches them, so any global byte cap fills once and from then on
+// admits a single follower per cursor advance -- serializing the encode.
+// Window admission keeps W encoders busy; memory is W x batch wire bytes,
+// backstopped by the pinned cap below.
+inline constexpr uint64_t kWireOrderedLookahead = 16;
+inline constexpr size_t kWirePinnedHighWater = 256u << 20;
 
 // Largest single pg-wire message accepted -- a distinct concept from the
 // buffer's chunk-growth ceiling above (they previously shared one constant).

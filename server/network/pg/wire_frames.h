@@ -34,6 +34,14 @@
 
 namespace sdb::network::pg {
 
+inline sdb::pg::VarFormat FormatFor(std::span<const sdb::pg::VarFormat> formats,
+                                    size_t column) {
+  if (formats.empty()) {
+    return sdb::pg::VarFormat::Text;
+  }
+  return formats.size() == 1 ? formats.front() : formats[column];
+}
+
 void WriteParameterStatus(message::Buffer& out, std::string_view name,
                           std::string_view value);
 

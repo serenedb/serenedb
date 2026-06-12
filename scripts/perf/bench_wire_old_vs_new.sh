@@ -311,6 +311,61 @@ for name in "${!WL[@]}"; do
 	printf '%s\n' "${WL[$name]}" >"${OUT_DIR}/wl_${name}.sql"
 done
 
+# Serialization matrix: per-type x per-format (text/binary) bulk-drain
+# throughput, the dimension pgbench cannot measure (text-only, and its row
+# parsing caps the client near 400 MB/s). wire_serialize_drain.py drains raw
+# bytes over the extended protocol with the result format set in Bind.
+# Tables live in an attached duckdb-NATIVE file (rocksdb scan is slow,
+# single-threaded and batch-index-less -- it would mask serialization);
+# preserve_insertion_order=false puts the new server on the parallel
+# (unordered) collector path. PERF_SERIALIZE=0 to skip.
+SERIALIZE="${PERF_SERIALIZE:-1}"
+SER_ROWS_PLAIN="${PERF_SER_ROWS_PLAIN:-5000000}"
+SER_ROWS_NESTED="${PERF_SER_ROWS_NESTED:-2000000}"
+SER_TYPES=(int double varchar json list struct nested)
+
+serialize_setup() {
+	local port="$1" datadir="$2"
+	local db="${datadir}/serialize.duckdb"
+	psql -h 127.0.0.1 -p "${port}" -U postgres -d postgres -AtX -q \
+		-c "ATTACH '${db}' AS ser" \
+		-c "CREATE TABLE IF NOT EXISTS ser.main.t_int AS SELECT i, i*1000000007 j, i%1000000 k, (i*31)%1000000000 l FROM range(${SER_ROWS_PLAIN}) t(i)" \
+		-c "CREATE TABLE IF NOT EXISTS ser.main.t_double AS SELECT i/3.0 a, i/7.0 b, i/11.0 c, i/13.0 d FROM range(${SER_ROWS_PLAIN}) t(i)" \
+		-c "CREATE TABLE IF NOT EXISTS ser.main.t_varchar AS SELECT 'user_'||i a, repeat('x', (16 + i%17)::int) b FROM range(${SER_ROWS_PLAIN}) t(i)" \
+		-c "CREATE TABLE IF NOT EXISTS ser.main.t_json AS SELECT to_json(struct_pack(id := i, name := 'user_'||i, score := i/7.0)) j FROM range(${SER_ROWS_NESTED}) t(i)" \
+		-c "CREATE TABLE IF NOT EXISTS ser.main.t_list AS SELECT [i, i+1, i+2, i+3] l FROM range(${SER_ROWS_NESTED}) t(i)" \
+		-c "CREATE TABLE IF NOT EXISTS ser.main.t_struct AS SELECT struct_pack(a := i, b := i/3.0, c := 'user_'||i) s FROM range(${SER_ROWS_NESTED}) t(i)" \
+		-c "CREATE TABLE IF NOT EXISTS ser.main.t_nested AS SELECT [struct_pack(k := i%10, v := [i, i+1]), struct_pack(k := (i+1)%10, v := [i*2])] n FROM range(${SER_ROWS_NESTED}/2) t(i)" \
+		>/dev/null
+}
+
+# run_serialize <srv> <port>: one row per type x format. Columns reuse the
+# results.tsv shape with tps=MB/s and lat=median seconds so the summary's
+# ratio machinery applies untouched; a failed cell (e.g. a type without
+# binary serialization) records 0 and the error lands in serialize_<srv>.log.
+run_serialize() {
+	local srv="$1" port="$2"
+	local log="${OUT_DIR}/serialize_${srv}.log"
+	if ! serialize_setup "${port}" "$3" >>"${log}" 2>&1; then
+		echo "  serialize: setup failed (see ${log})" >&2
+		return 0
+	fi
+	local typ fmt out
+	for typ in "${SER_TYPES[@]}"; do
+		for fmt in text binary; do
+			out=$(python3 "${ROOT}/scripts/perf/wire_serialize_drain.py" "${port}" "${fmt}" 3 \
+				"set preserve_insertion_order=false" \
+				"SELECT * FROM ser.main.t_${typ}" \
+				"${srv}_ser_${typ}_${fmt}" 2>>"${log}") || out="${srv}_ser_${typ}_${fmt}	0	0	0	ERROR: client failed"
+			local label med mb mbps status
+			IFS=$'\t' read -r label med mb mbps status <<<"${out}"
+			printf '%s\t%s\t%s\t%s\t0\t0\n' "${label}" "${mbps}" "${med}" "${mb}" >>"${OUT_DIR}/results.tsv"
+			printf '  %-26s %8s MB/s  (%ss, %s MB) %s\n' "${label}" "${mbps}" "${med}" "${mb}" "${status}"
+			echo "${out}" >>"${log}"
+		done
+	done
+}
+
 # run_one <label> <port> <pid> <sqlfile> <pgbench-mode> [extra pgbench args]
 # Returns nothing; appends a parsed row to ${OUT_DIR}/results.tsv.
 run_one() {
@@ -459,6 +514,10 @@ bench_server() {
 	# Connection lifecycle: -C reconnects per transaction (simple protocol), so this
 	# measures connect+startup+auth+teardown throughput rather than steady-state query cost.
 	run_one "${srv}_connect_select1" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_connect.sql" simple -C
+	if [[ "${SERIALIZE}" != 0 ]]; then
+		echo "  -- serialization matrix (type x text/binary, raw drain)"
+		run_serialize "${srv}" "${port}" "${datadir}"
+	fi
 	if [[ "${PROFILE}" != "0" ]]; then
 		echo "  -- profiling ${srv} (perf record ${PROFILE_SECS}s/workload, still isolated)"
 		profile_one "${srv}_select1_simple" "${port}" "${CUR_PID}" "${OUT_DIR}/wl_select1.sql" simple

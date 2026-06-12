@@ -10,6 +10,7 @@ target_sources(
         http/test_api_handlers.cpp
         pg/pg_frame_codec.cpp
         pg/wire_frames.cpp
+        pg/wire_collector.cpp
         pg/auth.cpp
         network_server_feature.cpp
 )

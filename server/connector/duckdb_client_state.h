@@ -31,6 +31,11 @@ namespace sdb {
 class ConnectionContext;
 }
 
+namespace sdb::network::pg {
+
+class WireSinkContext;
+}
+
 namespace sdb::connector {
 
 inline constexpr const char* kSereneDBClientStateKey = "serenedb";
@@ -65,6 +70,12 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   // it must not accumulate the replay buffer, which would duplicate the entire
   // input in memory.
   bool copy_stdin_no_replay = false;
+
+  // Armed by the pg-wire session around PendingQuery for row-returning
+  // statements: the get_result_collector hook reads it to install the
+  // encode-in-Sink wire collector. Shared so the executor's sink state keeps
+  // it alive on every error/teardown path.
+  std::shared_ptr<network::pg::WireSinkContext> wire_sink;
 
   void TransactionPreCommit(duckdb::MetaTransaction& transaction,
                             duckdb::ClientContext& context) final;

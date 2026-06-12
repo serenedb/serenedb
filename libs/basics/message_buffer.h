@@ -51,6 +51,82 @@ class Buffer {
   // committed-but-unsent bytes for drain/backpressure.
   size_t TotalCommitted() const { return _total_committed; }
 
+  // Detached chain of committed chunks, ready to be spliced into another
+  // buffer. `bytes` counts readable payload (chunks may be partially filled).
+  struct Chain {
+    Chunk* head = nullptr;
+    Chunk* tail = nullptr;
+    size_t bytes = 0;
+
+    ~Chain() {
+      auto* chunk = head;
+      while (chunk != nullptr) {
+        delete std::exchange(chunk, chunk->Next());
+      }
+    }
+    Chain() = default;
+    Chain(Chunk* head_p, Chunk* tail_p, size_t bytes_p)
+      : head{head_p}, tail{tail_p}, bytes{bytes_p} {}
+    Chain(Chain&& other) noexcept
+      : head{std::exchange(other.head, nullptr)},
+        tail{std::exchange(other.tail, nullptr)},
+        bytes{std::exchange(other.bytes, 0)} {}
+    Chain& operator=(Chain&& other) noexcept {
+      std::swap(head, other.head);
+      std::swap(tail, other.tail);
+      std::swap(bytes, other.bytes);
+      return *this;
+    }
+
+    void Append(Chain&& other) {
+      if (other.head == nullptr) {
+        return;
+      }
+      if (head == nullptr) {
+        *this = std::move(other);
+        return;
+      }
+      tail->AppendChunk(other.head);
+      tail = std::exchange(other.tail, nullptr);
+      other.head = nullptr;
+      bytes += std::exchange(other.bytes, 0);
+    }
+  };
+
+  // Single-owner producer op: detaches everything committed so far as a Chain
+  // and resets this buffer to a fresh empty chunk. No uncommitted bytes may be
+  // outstanding.
+  Chain ReleaseChain() {
+    SDB_ASSERT(_uncommitted_size == 0);
+    const size_t bytes = std::exchange(_volatile_size, 0);
+    if (bytes == 0) {
+      return {};
+    }
+    auto* head = std::exchange(_head, nullptr);
+    auto* tail = std::exchange(_tail, nullptr);
+    _head = _tail = CreateChunk(0);
+    return Chain{head, tail, bytes};
+  }
+
+  // Single-owner producer op (the splice counterpart of ReleaseChain): appends
+  // a donor chain's chunks to the writable end as already-committed bytes --
+  // O(1), no copy. Triggers the flush machinery like Commit().
+  void SpliceCommitted(Chain&& chain, bool need_flush) {
+    SDB_ASSERT(_uncommitted_size == 0);
+    if (chain.head == nullptr) {
+      return;
+    }
+    _tail->AppendChunk(chain.head);
+    _tail = chain.tail;
+    chain.head = nullptr;
+    chain.tail = nullptr;
+    _total_committed += chain.bytes;
+    _volatile_size += std::exchange(chain.bytes, 0);
+    if (need_flush || _volatile_size >= _flush_size) {
+      FlushStart();
+    }
+  }
+
   void FlushDone();
 
   void FlushStart();

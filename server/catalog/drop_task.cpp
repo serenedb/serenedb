@@ -33,13 +33,13 @@
 #include "basics/errors.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "catalog/store/store.h"
 #include "catalog/types.h"
 #include "connector/key_utils.hpp"
 #include "general_server/scheduler.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/search_engine.h"
@@ -132,7 +132,7 @@ AsyncResult TableShardDrop::Execute() {
 }
 
 Result IndexDrop::Finalize() {
-  auto& server = GetServerEngine();
+  auto& server = GetCatalogStore();
   auto shard_type = catalog::IndexShardType(_type);
   auto r = server.DropEntry(_id, shard_type);
   if (!r.ok()) {
@@ -163,7 +163,7 @@ AsyncResult IndexDrop::Execute() {
 
 Result TableDrop::Finalize() {
   SDB_IF_FAILURE("crash_before_seq_counter_wipe") { SDB_IMMEDIATE_ABORT(); }
-  auto& server = GetServerEngine();
+  auto& server = GetCatalogStore();
   // Indexes, shards.
   auto r = server.DropEntry(_id);
   if (!r.ok()) {
@@ -200,12 +200,13 @@ AsyncResult TableDrop::Execute() {
 }
 
 Result SchemaDrop::Finalize() {
-  auto& server = GetServerEngine();
-  // Standalone seq counter rows -- DropEntry only sweeps Definitions CF.
+  auto& server = GetCatalogStore();
+  // Standalone seq counter rows -- DropEntry only sweeps definition rows.
   auto r =
     server.VisitDefinitions(_id, catalog::ObjectType::Sequence,
-                            [&](DefinitionKey key, std::string_view) -> Result {
-                              return server.DropSequence(key.GetObjectId());
+                            [&](CatalogStore::Key key,
+                                std::string_view) -> Result {
+                              return server.DropSequence(key.id);
                             });
   if (!r.ok()) {
     return r;
@@ -240,7 +241,7 @@ AsyncResult SchemaDrop::Execute() {
 }
 
 Result DatabaseDrop::Finalize() {
-  auto& server = GetServerEngine();
+  auto& server = GetCatalogStore();
   // Range-delete schema Definitions under db. Per-schema standalone-seq
   // counter wipes already ran inside each SchemaDrop::Finalize above.
   auto r = server.DropEntry(_id, catalog::ObjectType::Schema);

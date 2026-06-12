@@ -106,6 +106,13 @@ bool Config::GetReadYourOwnWrites() const {
   return duckdb::BooleanValue::Get(value);
 }
 
+bool Config::GetStrictDDL() const {
+  duckdb::Value value;
+  auto ok = _client_ctx.TryGetCurrentSetting("sdb_strict_ddl", value);
+  SDB_ASSERT(ok && !value.IsNull());
+  return duckdb::BooleanValue::Get(value);
+}
+
 std::optional<std::string> Config::Get(std::string_view key) const {
   duckdb::Value value;
   if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {

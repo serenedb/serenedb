@@ -41,7 +41,6 @@ class RocksDBBackgroundThread {
   void beginShutdown();
 
  private:
-  void SyncStats();
   void run();
 
   RocksDBEngineCatalog& _engine;

@@ -208,6 +208,15 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_strict_ddl",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When enabled, DDL inside a transaction block fails instead of "
+        "committing immediately (DDL is not transactional).",
+        [] { return duckdb::Value::BOOLEAN(false); },
+      },
+    },
+    {
       "sdb_ef_search",
       {
         LogicalTypeId::INTEGER,

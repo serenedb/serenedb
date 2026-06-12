@@ -35,16 +35,12 @@
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/sequence.h"
+#include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
 #include "catalog/user_type.h"
 #include "storage_engine/table_shard.h"
-
-namespace sdb {
-
-class RocksDBEngineCatalog;
-}
 
 namespace sdb::catalog {
 
@@ -167,7 +163,7 @@ class LocalCatalog final : public LogicalCatalog,
   mutable absl::Mutex _mutex;
   mutable std::shared_mutex _snapshot_mutex;
   std::shared_ptr<const SnapshotImpl> _snapshot;
-  RocksDBEngineCatalog* _engine;
+  CatalogStore* _engine;
 };
 
 }  // namespace sdb::catalog

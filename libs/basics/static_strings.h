@@ -31,6 +31,7 @@ class StaticStrings {
 
  public:
   static constexpr std::string_view kRocksDbEngineRoot = "engine_rocksdb";
+  static constexpr std::string_view kCatalogStoreRoot = "engine_duckdb";
 
   // constants
   inline static const std::string kEmpty;

@@ -27,15 +27,11 @@ std::array<const char*,
            sdb::RocksDBColumnFamilyManager::kNumberOfColumnFamilies>
   RocksDBColumnFamilyManager::gNames = {
     rocksdb::kDefaultColumnFamilyName.c_str(),
-    "definitions",
-    "sequences",
 };
 
 std::array<rocksdb::ColumnFamilyHandle*,
            RocksDBColumnFamilyManager::kNumberOfColumnFamilies>
   RocksDBColumnFamilyManager::gHandles = {
-    nullptr,
-    nullptr,
     nullptr,
 };
 

@@ -1100,10 +1100,42 @@ void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
   _pop_packet = state == ProcessState::DonePacket;
 }
 
+namespace {
+
+bool IsCatalogDdl(duckdb::StatementType type) {
+  using duckdb::StatementType;
+  switch (type) {
+    case StatementType::CREATE_STATEMENT:
+    case StatementType::DROP_STATEMENT:
+    case StatementType::ALTER_STATEMENT:
+    case StatementType::ATTACH_STATEMENT:
+    case StatementType::DETACH_STATEMENT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
 duckdb::unique_ptr<duckdb::PendingQueryResult>
 PgSQLCommTaskBase::PendingQueryEnsured(duckdb::PreparedStatement& prepared,
                                        duckdb::vector<duckdb::Value>& values,
                                        bool allow_stream_result) {
+  if (_connection_ctx->IsExplicitTransaction() &&
+      IsCatalogDdl(prepared.GetStatementType())) {
+    if (_connection_ctx->GetStrictDDL()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+        ERR_MSG("DDL statements are not supported inside a transaction "
+                "block: DDL commits immediately and cannot be rolled back "
+                "(sdb_strict_ddl is enabled)"));
+    }
+    _connection_ctx->AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("DDL is not transactional: the statement commits immediately "
+              "and is not undone by ROLLBACK")));
+  }
   const auto& props = prepared.GetStatementProperties();
   const auto db_name = DatabaseName();
   _connection_ctx->EnsureCatalogSnapshot();

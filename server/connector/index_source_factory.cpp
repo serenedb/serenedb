@@ -87,9 +87,12 @@ std::unique_ptr<IndexSource> MakeIndexSource(
       context, std::move(*fp), projected_columns, projected_types,
       bind_column_ids);
   }
-  return std::make_unique<RocksDBIndexSource>(
-    bind_data.RelationId(), snapshot, projected_columns, projected_types,
-    bind_column_ids, txn);
+  const auto& tbd = bind_data.As<TableScanBindData>();
+  SDB_ASSERT(tbd.table);
+  SDB_ASSERT(tbd.table_entry);
+  return std::make_unique<TableRowIdIndexSource>(
+    context, *tbd.table_entry, *tbd.table, projected_columns, projected_types,
+    bind_column_ids);
 }
 
 }  // namespace sdb::connector

@@ -29,6 +29,9 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/errors.h"
+#include "catalog/store/store.h"
+#include "catalog/table.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
@@ -52,19 +55,67 @@ duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
   return entry;
 }
 
+duckdb::TableCatalogEntry& ResolveStoreTableEntry(
+  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& scan_entry,
+  const catalog::Table& table) {
+  // The scan entry is the facade table or one of its index entries; either
+  // way it shares the table's database and schema.
+  auto store_name = catalog::StoreTableName(
+    scan_entry.ParentCatalog().GetName(), scan_entry.ParentSchema().name,
+    table.GetName());
+  return duckdb::Catalog::GetEntry(
+           context, duckdb::CatalogType::TABLE_ENTRY,
+           std::string{catalog::kStoreDatabaseName}, "main", store_name)
+    .Cast<duckdb::TableCatalogEntry>();
+}
+
 }  // namespace
+
+duckdb::LogicalType RowIdFetchIndexSource::AddFetchColumn(
+  const duckdb::ColumnDefinition& col) {
+  if (col.Generated()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cannot materialise generated column \"", col.Name(),
+              "\" of \"", _table->name, "\" through an index lookup"));
+  }
+  const auto storage_idx =
+    _table->GetStorageIndex(duckdb::ColumnIndex(col.Logical().index));
+  duckdb::idx_t fetch_idx = duckdb::DConstants::INVALID_INDEX;
+  for (duckdb::idx_t i = 0; i < _fetch_columns.size(); ++i) {
+    if (_fetch_columns[i].GetPrimaryIndex() == storage_idx.GetPrimaryIndex()) {
+      fetch_idx = i;
+      break;
+    }
+  }
+  if (fetch_idx == duckdb::DConstants::INVALID_INDEX) {
+    fetch_idx = _fetch_columns.size();
+    _fetch_columns.push_back(storage_idx);
+    _fetch_types.push_back(col.Type());
+  }
+  _col_to_fetch.push_back(fetch_idx);
+  return col.Type();
+}
+
+void RowIdFetchIndexSource::FinishInit(duckdb::ClientContext& context) {
+  _rowid_fetch_idx = _fetch_columns.size();
+  _fetch_columns.emplace_back(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+  _fetch_types.push_back(duckdb::LogicalType::ROW_TYPE);
+  _fetch_chunk.Initialize(context, _fetch_types);
+}
 
 ViewTableIndexSource::ViewTableIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids)
-  : ViewIndexSourceBase{std::move(fast_path)},
-    _table{ResolveTableEntry(context, _fast_path)} {
+  : RowIdFetchIndexSource{std::move(fast_path)} {
+  auto& table = ResolveTableEntry(context, _fast_path);
+  SetTable(table);
   // Registers the attached database with the meta transaction, keeping it
   // alive for the query even if it is detached concurrently.
-  duckdb::DuckTransaction::Get(context, _table.ParentCatalog());
-  const auto& columns = _table.GetColumns();
+  duckdb::DuckTransaction::Get(context, table.ParentCatalog());
+  const auto& columns = table.GetColumns();
   containers::FlatHashMap<std::string_view, duckdb::idx_t> name_to_col;
   if (!_fast_path.projection_columns.empty()) {
     name_to_col.reserve(columns.LogicalColumnCount());
@@ -73,7 +124,6 @@ ViewTableIndexSource::ViewTableIndexSource(
       name_to_col.emplace(col.Name(), logical++);
     }
   }
-  _col_to_fetch.reserve(projected_columns.size());
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
     [&](std::string_view name) {
@@ -83,41 +133,56 @@ ViewTableIndexSource::ViewTableIndexSource(
     },
     [&](duckdb::idx_t table_col_idx) {
       SDB_ASSERT(table_col_idx < columns.LogicalColumnCount());
-      const auto& col = columns.GetColumn(duckdb::LogicalIndex(table_col_idx));
-      if (col.Generated()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("cannot materialise generated column \"", col.Name(),
-                  "\" of \"", _table.name, "\" through an index lookup"));
-      }
-      const auto storage_idx =
-        _table.GetStorageIndex(duckdb::ColumnIndex(table_col_idx));
-      duckdb::idx_t fetch_idx = duckdb::DConstants::INVALID_INDEX;
-      for (duckdb::idx_t i = 0; i < _fetch_columns.size(); ++i) {
-        if (_fetch_columns[i].GetPrimaryIndex() ==
-            storage_idx.GetPrimaryIndex()) {
-          fetch_idx = i;
-          break;
-        }
-      }
-      if (fetch_idx == duckdb::DConstants::INVALID_INDEX) {
-        fetch_idx = _fetch_columns.size();
-        _fetch_columns.push_back(storage_idx);
-        _fetch_types.push_back(col.Type());
-      }
-      _col_to_fetch.push_back(fetch_idx);
-      return col.Type();
+      return AddFetchColumn(
+        columns.GetColumn(duckdb::LogicalIndex(table_col_idx)));
     });
-  _rowid_fetch_idx = _fetch_columns.size();
-  _fetch_columns.emplace_back(duckdb::COLUMN_IDENTIFIER_ROW_ID);
-  _fetch_types.push_back(duckdb::LogicalType::ROW_TYPE);
-  _fetch_chunk.Initialize(context, _fetch_types);
+  FinishInit(context);
 }
 
-void ViewTableIndexSource::Materialize(duckdb::ClientContext& context,
-                                       PrimaryKeyBatch& batch,
-                                       duckdb::idx_t start, duckdb::idx_t count,
-                                       duckdb::DataChunk& output) {
+TableRowIdIndexSource::TableRowIdIndexSource(
+  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& scan_entry,
+  const catalog::Table& sdb_table,
+  std::span<const duckdb::idx_t> projected_columns,
+  std::span<const duckdb::LogicalType> projected_types,
+  std::span<const catalog::Column::Id> bind_column_ids)
+  : RowIdFetchIndexSource{ViewFastPath{}} {
+  auto& table = ResolveStoreTableEntry(context, scan_entry, sdb_table);
+  SetTable(table);
+  duckdb::DuckTransaction::Get(context, table.ParentCatalog());
+  const auto& columns = table.GetColumns();
+  // Store physical positions follow the facade column order minus the
+  // generated PK; map catalog column ids through that order.
+  containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> id_to_pos;
+  id_to_pos.reserve(sdb_table.Columns().size());
+  duckdb::idx_t pos = 0;
+  for (const auto& col : sdb_table.Columns()) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    id_to_pos.emplace(static_cast<duckdb::idx_t>(col.GetId()), pos++);
+  }
+  InitProjection(
+    context, projected_columns, projected_types, bind_column_ids,
+    [&](std::string_view) -> duckdb::idx_t {
+      SDB_ASSERT(false, "table index sources resolve columns by id");
+      return 0;
+    },
+    [&](duckdb::idx_t col_id) {
+      auto it = id_to_pos.find(col_id);
+      SDB_ENSURE(it != id_to_pos.end(), ERROR_INTERNAL,
+                 "column id is not on the store table");
+      SDB_ASSERT(it->second < columns.LogicalColumnCount());
+      return AddFetchColumn(
+        columns.GetColumn(duckdb::LogicalIndex(it->second)));
+    });
+  FinishInit(context);
+}
+
+void RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
+                                        PrimaryKeyBatch& batch,
+                                        duckdb::idx_t start,
+                                        duckdb::idx_t count,
+                                        duckdb::DataChunk& output) {
   if (count == 0) {
     return;
   }
@@ -138,9 +203,9 @@ void ViewTableIndexSource::Materialize(duckdb::ClientContext& context,
     }
   }
 
-  auto& storage = _table.Cast<duckdb::DuckTableEntry>().GetStorage();
+  auto& storage = _table->Cast<duckdb::DuckTableEntry>().GetStorage();
   auto& transaction =
-    duckdb::DuckTransaction::Get(context, _table.ParentCatalog());
+    duckdb::DuckTransaction::Get(context, _table->ParentCatalog());
 
   duckdb::idx_t done = 0;
   duckdb::idx_t pkp = 0;

@@ -29,17 +29,12 @@
 
 namespace sdb::connector {
 
-// Materializer for views over a table living in an attached database with
-// native storage: rows are fetched by rowid from the live catalog entry
-// through the caller's transaction, so reads are consistent with any
-// in-transaction changes to the source.
-class ViewTableIndexSource final : public ViewIndexSourceBase {
+// Shared rowid-keyed materializer over a table with native storage: rows
+// are fetched by rowid from the live catalog entry through the caller's
+// transaction, so reads are consistent with any in-transaction changes to
+// the source. Subclasses resolve the table entry and the projection.
+class RowIdFetchIndexSource : public ViewIndexSourceBase {
  public:
-  ViewTableIndexSource(duckdb::ClientContext& context, ViewFastPath fast_path,
-                       std::span<const duckdb::idx_t> projected_columns,
-                       std::span<const duckdb::LogicalType> projected_types,
-                       std::span<const catalog::Column::Id> bind_column_ids);
-
   PrimaryKeyBatch CreatePkBatch() const final {
     return PrimaryKeyBatch{std::in_place_type<PrimaryKeyI64>};
   }
@@ -47,13 +42,47 @@ class ViewTableIndexSource final : public ViewIndexSourceBase {
                    duckdb::idx_t start, duckdb::idx_t count,
                    duckdb::DataChunk& output) final;
 
+ protected:
+  explicit RowIdFetchIndexSource(ViewFastPath fast_path)
+    : ViewIndexSourceBase{std::move(fast_path)} {}
+
+  void SetTable(duckdb::TableCatalogEntry& table) { _table = &table; }
+
+  // Registers a fetch column for the table's storage index, deduplicating
+  // repeats, and records the output slot mapping. Returns the column type.
+  duckdb::LogicalType AddFetchColumn(const duckdb::ColumnDefinition& col);
+  // Appends the rowid fetch column and sizes the fetch chunk; call after
+  // InitProjection.
+  void FinishInit(duckdb::ClientContext& context);
+
  private:
-  duckdb::TableCatalogEntry& _table;
+  duckdb::TableCatalogEntry* _table = nullptr;
   duckdb::vector<duckdb::StorageIndex> _fetch_columns;
   duckdb::vector<duckdb::LogicalType> _fetch_types;
   std::vector<duckdb::idx_t> _col_to_fetch;
   duckdb::idx_t _rowid_fetch_idx = 0;
   duckdb::DataChunk _fetch_chunk;
+};
+
+// Views over a table living in an attached database with native storage.
+class ViewTableIndexSource final : public RowIdFetchIndexSource {
+ public:
+  ViewTableIndexSource(duckdb::ClientContext& context, ViewFastPath fast_path,
+                       std::span<const duckdb::idx_t> projected_columns,
+                       std::span<const duckdb::LogicalType> projected_types,
+                       std::span<const catalog::Column::Id> bind_column_ids);
+};
+
+// SereneDB tables: postings carry the store-table rowid; rows are fetched
+// from the hidden store table backing the facade entry.
+class TableRowIdIndexSource final : public RowIdFetchIndexSource {
+ public:
+  TableRowIdIndexSource(duckdb::ClientContext& context,
+                        const duckdb::TableCatalogEntry& scan_entry,
+                        const catalog::Table& sdb_table,
+                        std::span<const duckdb::idx_t> projected_columns,
+                        std::span<const duckdb::LogicalType> projected_types,
+                        std::span<const catalog::Column::Id> bind_column_ids);
 };
 
 }  // namespace sdb::connector

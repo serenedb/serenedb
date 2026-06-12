@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/errors.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
@@ -68,19 +69,29 @@ InvertedStoreIndex::InvertedStoreIndex(
 
 duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
                                                  duckdb::Vector& row_ids) {
-  const auto count = chunk.size();
-  if (count == 0) {
-    return {};
-  }
   auto* conn = CurrentCommittingContext();
   if (!conn) {
     return duckdb::ErrorData(duckdb::NotImplementedException(
       "store inverted index appends outside a commit (WAL replay) are not "
       "wired yet"));
   }
-  auto writer =
-    CreateInvertedIndexWriter<DuckDBWriteKind::Insert>(_table_id, _index_id,
-                                                       *conn);
+  auto snapshot = conn->EnsureCatalogSnapshot();
+  auto table = snapshot->GetObject<catalog::Table>(_table_id);
+  if (!table) {
+    return {};
+  }
+  return AppendRows(*conn, chunk, row_ids, TableChunkColumnIds(*table));
+}
+
+duckdb::ErrorData InvertedStoreIndex::AppendRows(
+  ConnectionContext& conn, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
+  std::span<const catalog::Column::Id> chunk_column_ids) {
+  const auto count = chunk.size();
+  if (count == 0) {
+    return {};
+  }
+  auto writer = CreateInvertedIndexWriter<DuckDBWriteKind::Insert>(
+    _table_id, _index_id, conn);
   if (!writer) {
     return {};
   }
@@ -88,7 +99,7 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
     return duckdb::ErrorData(duckdb::NotImplementedException(
       "store inverted index expressions are not wired yet"));
   }
-  auto snapshot = conn->EnsureCatalogSnapshot();
+  auto snapshot = conn.EnsureCatalogSnapshot();
   auto table = snapshot->GetObject<catalog::Table>(_table_id);
   if (!table) {
     return {};
@@ -107,20 +118,31 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
   }
 
   writer->Init(count, chunk);
-  duckdb::idx_t pos = 0;
-  for (const auto& col : table->Columns()) {
-    if (col.GetId() == catalog::Column::kGeneratedPKId) {
+  for (duckdb::idx_t pos = 0;
+       pos < chunk.ColumnCount() && pos < chunk_column_ids.size(); ++pos) {
+    auto col_id = chunk_column_ids[pos];
+    auto it = std::ranges::find_if(table->Columns(), [&](const auto& c) {
+      return c.GetId() == col_id;
+    });
+    if (it == table->Columns().end()) {
       continue;
     }
-    if (pos >= chunk.ColumnCount()) {
-      break;
-    }
-    const ColumnDescriptor desc{col.GetId(), col.type};
+    const ColumnDescriptor desc{col_id, it->type};
     writer->SwitchColumn(desc, chunk.data[pos], key_views, count);
-    ++pos;
   }
   writer->Finish();
   return {};
+}
+
+std::vector<catalog::Column::Id> InvertedStoreIndex::TableChunkColumnIds(
+  const catalog::Table& table) {
+  std::vector<catalog::Column::Id> ids;
+  for (const auto& col : table.Columns()) {
+    if (col.GetId() != catalog::Column::kGeneratedPKId) {
+      ids.push_back(col.GetId());
+    }
+  }
+  return ids;
 }
 
 duckdb::ErrorData InvertedStoreIndex::Append(duckdb::IndexLock&,
@@ -222,16 +244,11 @@ void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
     -> duckdb::unique_ptr<duckdb::IndexBuildLocalState> {
     return duckdb::make_uniq<InvertedStoreBuildLocalState>();
   };
-  type.build_sink = [](duckdb::IndexBuildSinkInput&,
-                       duckdb::DataChunk& key_chunk, duckdb::DataChunk&) {
-    // Pre-flip the store tables are empty at CREATE INDEX; the flip wires
-    // the initial build over existing rows.
-    if (key_chunk.size() != 0) {
-      throw duckdb::NotImplementedException(
-        "store inverted index initial build over existing rows is not "
-        "wired yet");
-    }
-  };
+  // The initial build is fed by the facade CREATE INDEX operator (which
+  // scans with rowid keys after the catalog objects exist); the store-side
+  // pipeline only constructs the BoundIndex for DML maintenance.
+  type.build_sink = [](duckdb::IndexBuildSinkInput&, duckdb::DataChunk&,
+                       duckdb::DataChunk&) {};
   type.build_combine = [](duckdb::IndexBuildCombineInput&) {};
   type.build_finalize = [](duckdb::IndexBuildFinalizeInput& input)
     -> duckdb::unique_ptr<duckdb::BoundIndex> {

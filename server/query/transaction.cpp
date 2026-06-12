@@ -63,7 +63,11 @@ Result Transaction::Commit() {
   if (num_ops == 0 && has_search_writes) {
     // Store-table DML feeds search indexes without any rocksdb writes; the
     // tick domain is still rocksdb seqnos pre-flip, so mint enough of them
-    // to satisfy the GetQueries() < num_ops invariant below.
+    // to satisfy the GetQueries() < num_ops invariant below. The statement's
+    // read leg may have pinned a snapshot-only read; reads are finished by
+    // commit time, so release it before opening the write transaction.
+    _rocksdb_snapshot = nullptr;
+    _storage_snapshot.reset();
     EnsureRocksDBTransaction();
     uint64_t max_queries = 0;
     for (const auto& [id, trx] : _search_transactions) {

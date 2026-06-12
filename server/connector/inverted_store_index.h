@@ -21,10 +21,24 @@
 #pragma once
 
 #include <duckdb/execution/index/bound_index.hpp>
+#include <span>
+#include <vector>
 #include <duckdb/execution/index/index_type.hpp>
 #include <string>
 
 #include "catalog/identifiers/object_id.h"
+#include "catalog/table_options.h"
+
+namespace sdb {
+
+class ConnectionContext;
+
+}  // namespace sdb
+namespace sdb::catalog {
+
+class Table;
+
+}  // namespace sdb::catalog
 
 namespace sdb::connector {
 
@@ -75,6 +89,16 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     const duckdb::case_insensitive_map_t<duckdb::Value>& options) override;
   std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType, idx_t,
                                             duckdb::DataChunk&) override;
+
+ public:
+  // Feeds rows with a known connection (initial CREATE INDEX build runs in
+  // normal execution; commit-time appends resolve it thread-locally).
+  duckdb::ErrorData AppendRows(
+    ConnectionContext& conn, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
+    std::span<const catalog::Column::Id> chunk_column_ids);
+
+  static std::vector<catalog::Column::Id> TableChunkColumnIds(
+    const catalog::Table& table);
 
  private:
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,

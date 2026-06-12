@@ -274,18 +274,11 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
     return info;
   };
 
-  SearchFilterOptions options{.client_context = context};
-  duckdb::Value v;
-  if (context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
-      !v.IsNull()) {
-    options.scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
-  }
-
-  auto root = std::make_unique<irs::And>();
+  auto root = std::make_shared<irs::And>();
   duckdb::unique_ptr<duckdb::Expression> match_owner = std::move(match_expr);
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts{
     &match_owner, 1};
-  auto result = MakeSearchFilter(*root, conjuncts, column_getter, options);
+  auto result = MakeSearchFilter(*root, conjuncts, column_getter, context);
   if (!result.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

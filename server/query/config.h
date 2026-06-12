@@ -92,6 +92,7 @@ class Config {
   WriteConflictPolicy GetWriteConflictPolicy() const;
   bool GetReadYourOwnWrites() const;
   bool IsExplicitTransaction() const;
+  bool IsTransactionInvalidated() const;
 
   void ResetAll();
 

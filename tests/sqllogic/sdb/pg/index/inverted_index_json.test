@@ -373,7 +373,7 @@ id
 
 # In Postgres ->> behaves in the same way for both SQL-null and JSON-null.
 query
-SELECT id FROM prim_types_idx WHERE content->>'val' IS NULL;
+SELECT id FROM prim_types_idx WHERE content->>'val' IS NULL ORDER BY id;
 ----
 id
 6
@@ -502,7 +502,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 query
-SELECT id FROM num_str_split_idx WHERE content->>'val' = '42';
+SELECT id FROM num_str_split_idx WHERE content->>'val' = '42' ORDER BY id;
 ----
 id
 1
@@ -544,7 +544,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 query
-SELECT id FROM num_str_split_idx WHERE content->>'val' = 'true';
+SELECT id FROM num_str_split_idx WHERE content->>'val' = 'true' ORDER BY id;
 ----
 id
 3

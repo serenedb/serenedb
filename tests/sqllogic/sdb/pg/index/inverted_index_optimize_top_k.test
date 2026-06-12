@@ -227,7 +227,7 @@ QUERY PLAN
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
-│     TopK: 4, optimized    │
+│     Top: 4, optimized     │
 │                           │
 │        Projections:       │
 │             id            │
@@ -317,7 +317,7 @@ QUERY PLAN
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
-│     TopK: 3, optimized    │
+│     Top: 3, optimized     │
 │                           │
 │        Projections:       │
 │             id            │
@@ -358,7 +358,7 @@ QUERY PLAN
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
-│          TopK: 3          │
+│           Top: 3          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -696,7 +696,7 @@ QUERY PLAN
 │           Score:          │
 │  tfidf(with_norms=false)  │
 │                           │
-│     TopK: 2, optimized    │
+│     Top: 2, optimized     │
 │                           │
 │        Projections:       │
 │             id            │
@@ -764,7 +764,7 @@ QUERY PLAN
 │           Score:          │
 │    bm25(k1=1.5, b=0.8)    │
 │                           │
-│     TopK: 2, optimized    │
+│     Top: 2, optimized     │
 │                           │
 │        Projections:       │
 │             id            │
@@ -810,7 +810,7 @@ QUERY PLAN
 │           Score:          │
 │  tfidf(with_norms=false)  │
 │                           │
-│          TopK: 2          │
+│           Top: 2          │
 │                           │
 │        Projections:       │
 │             id            │

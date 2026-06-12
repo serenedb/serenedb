@@ -20,17 +20,16 @@
 
 #pragma once
 
+#include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
-
-#include "connector/duckdb_physical_sst_insert.h"
 
 namespace sdb::connector {
 
 // Physical operator for CREATE TABLE AS SELECT on SereneDB tables.
-// Inherits SST bulk insert logic from SereneDBPhysicalSSTInsert.
-// Adds: table creation with tombstone in GetGlobalSinkState,
-//       tombstone removal in Finalize, rollback in destructor.
-class SereneDBPhysicalCTAS : public SereneDBPhysicalSSTInsert {
+// Creates the catalog table (tombstoned) in GetGlobalSinkState, appends
+// rows natively to the hidden store table, and removes the tombstone in
+// Finalize; the destructor drops the table when the query fails.
+class SereneDBPhysicalCTAS : public duckdb::PhysicalOperator {
  public:
   SereneDBPhysicalCTAS(duckdb::PhysicalPlan& plan,
                        duckdb::unique_ptr<duckdb::BoundCreateTableInfo> info,
@@ -39,10 +38,24 @@ class SereneDBPhysicalCTAS : public SereneDBPhysicalSSTInsert {
 
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
+  duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
+                              duckdb::DataChunk& chunk,
+                              duckdb::OperatorSinkInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline& pipeline, duckdb::Event& event,
     duckdb::ClientContext& context,
     duckdb::OperatorSinkFinalizeInput& input) const final;
+  bool IsSink() const final { return true; }
+  bool ParallelSink() const final { return false; }
+
+  duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
+    duckdb::ClientContext& context) const final;
+  duckdb::SourceResultType GetDataInternal(
+    duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
+    duckdb::OperatorSourceInput& input) const final;
+  bool IsSource() const final { return true; }
+
+  std::string GetName() const final { return "SDB_CREATE_TABLE_AS"; }
 
  private:
   duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _info;

@@ -155,6 +155,14 @@ class MmapSegmentBuffer final : public duckdb::FileBuffer {
   std::shared_ptr<IndexInput> _mapping;
 };
 
+// Codecs assume the alignment that buffer-manager blocks provide (roaring
+// asserts RunContainerRLEPair alignment, etc.), so a segment may only be
+// wrapped in place when its file offset was written aligned (the writer
+// pads to 64 bytes; older files weren't padded and must be staged).
+inline bool MmapWrapAligned(const byte_type* data) noexcept {
+  return reinterpret_cast<uintptr_t>(data) % 64 == 0;
+}
+
 // The staging copy that zero-copy replaced doubled as readahead; without a
 // hint the decode demand-pages the mapping 4KB at a time, which is much
 // slower on a cold page cache. Ask the kernel to fetch the whole segment
@@ -189,21 +197,22 @@ duckdb::shared_ptr<duckdb::BlockHandle> WrapMmapPointer(
   }
   const auto* direct =
     in->ReadStable(static_cast<uint64_t>(p.block_pointer.block_id), byte_size);
-  if (!direct) {
+  if (!direct || !MmapWrapAligned(direct)) {
     return nullptr;
   }
   auto& bm = duckdb::BufferManager::GetBufferManager(db);
   // TINY_BUFFER blocks are never unloaded by the buffer pool and the
-  // temporary block id makes ~BlockHandle a no-op, so the zero-size pool
-  // reservation is never reconciled against the pool.
+  // temporary block id keeps ~BlockHandle away from the BlockManager. The
+  // reservation must match the loaded buffer's size: ~BlockMemory asserts
+  // a positive charge for loaded buffers and returns it to the pool.
   return duckdb::make_shared_ptr<duckdb::BlockHandle>(
     bm.GetTemporaryBlockManager(), NextMmapBlockId(),
     duckdb::MemoryTag::EXTERNAL_FILE_CACHE,
     duckdb::make_uniq<MmapSegmentBuffer>(duckdb::BlockAllocator::Get(db),
                                          direct, byte_size, in),
     duckdb::DestroyBufferUpon::BLOCK, byte_size,
-    duckdb::BufferPoolReservation{duckdb::MemoryTag::EXTERNAL_FILE_CACHE,
-                                  bm.GetBufferPool()});
+    duckdb::TempBufferPoolReservation{duckdb::MemoryTag::EXTERNAL_FILE_CACHE,
+                                      bm.GetBufferPool(), byte_size});
 }
 
 // One prebuilt wrapper per pointer; null slots (constant pointers or a
@@ -456,7 +465,8 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
       PrefetchMmapRange(direct, byte_size);
     }
     handle = prebuilt;
-  } else if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size)) {
+  } else if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size);
+             direct && MmapWrapAligned(direct)) {
     PrefetchMmapRange(direct, byte_size);
     // Reader built without a ColumnBlockSource but the input is mmap'd:
     // wrap lazily, anchored by a duplicate of the per-query input.
@@ -467,8 +477,8 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
         duckdb::BlockAllocator::Get(db), direct, byte_size,
         std::shared_ptr<IndexInput>{ctx.In().Dup()}),
       duckdb::DestroyBufferUpon::BLOCK, byte_size,
-      duckdb::BufferPoolReservation{duckdb::MemoryTag::EXTERNAL_FILE_CACHE,
-                                    bm.GetBufferPool()});
+      duckdb::TempBufferPoolReservation{duckdb::MemoryTag::EXTERNAL_FILE_CACHE,
+                                        bm.GetBufferPool(), byte_size});
   } else {
     // Non-mmap input: stage a copy through the buffer manager.
     handle = bm.RegisterTransientMemory(byte_size, ctx);

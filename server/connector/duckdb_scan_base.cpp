@@ -161,10 +161,16 @@ void InitCommonState(CommonScanGlobalState& state,
 
 void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
                                     const SereneDBScanBindData& bind_data) {
+  // Store-table postings can outlive rows (search ticks commit
+  // independently of the table snapshot): every read fetches row
+  // visibility, even pure counts and columnstore-covered projections.
+  const bool always_fetch = !bind_data.IsViewBacked();
   if (!bind_data.IsInvertedIndexEntry() || !bind_data.inverted_index) {
-    state.has_external_projections = absl::c_any_of(
-      state.projected_columns,
-      [](auto p) { return p != duckdb::DConstants::INVALID_INDEX; });
+    state.has_external_projections =
+      always_fetch ||
+      absl::c_any_of(state.projected_columns, [](auto p) {
+        return p != duckdb::DConstants::INVALID_INDEX;
+      });
     return;
   }
   for (duckdb::idx_t proj = 0; proj < state.projected_columns.size(); ++proj) {
@@ -208,6 +214,9 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
         duckdb::DConstants::INVALID_INDEX;
       continue;
     }
+    state.has_external_projections = true;
+  }
+  if (always_fetch) {
     state.has_external_projections = true;
   }
 }

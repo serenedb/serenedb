@@ -846,8 +846,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   auto& bind_data = const_cast<SereneDBScanBindData&>(
     input.bind_data->Cast<SereneDBScanBindData>());
 
+  // Table-backed postings can outlive rows (search ticks commit
+  // independently of the table snapshot); counts must go through the
+  // row-visibility fetch, so the raw-postings shortcut is views-only.
   bind_data.scan_source->Cast<SearchScan>().count_only =
-    IsCountOnlyScan(bind_data, input);
+    bind_data.IsViewBacked() && IsCountOnlyScan(bind_data, input);
 
   switch (bind_data.scan_source->Kind()) {
     case ScanSourceKind::Search:

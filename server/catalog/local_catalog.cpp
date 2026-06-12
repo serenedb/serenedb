@@ -1845,6 +1845,40 @@ Result LocalCatalog::CreateIndexImpl(
           return r;
         }
       }
+      if (index->GetType() == ObjectType::InvertedIndex) {
+        auto table = clone->template GetObject<Table>(index->GetRelationId());
+        if (table && table->GetEngine() == TableEngine::Transactional) {
+          auto schema_obj =
+            clone->template GetObject<Schema>(table->GetParentId());
+          auto database = schema_obj ? clone->template GetObject<Database>(
+                                         schema_obj->GetParentId())
+                                     : nullptr;
+          StoreIndexDef def;
+          def.table_id = table->GetId();
+          def.index_id = index->GetId();
+          bool plain_columns = true;
+          for (auto col_id : index->GetColumnIds()) {
+            auto it = std::ranges::find_if(
+              table->Columns(),
+              [&](const auto& c) { return c.GetId() == col_id; });
+            if (it == table->Columns().end()) {
+              plain_columns = false;
+              break;
+            }
+            def.columns.emplace_back(it->GetName());
+          }
+          if (database && plain_columns && !def.columns.empty()) {
+            def.table = StoreTableName(database->GetName(),
+                                       schema_obj->GetName(),
+                                       table->GetName());
+            r = _engine->Write(
+              [&](auto& ctx) { ctx.CreateStoreIndex(std::move(def)); });
+            if (!r.ok()) {
+              return r;
+            }
+          }
+        }
+      }
       return Result{};
     },
     [&](auto& clone) {

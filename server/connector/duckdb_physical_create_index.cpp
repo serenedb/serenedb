@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_physical_create_index.h"
 
+#include "connector/inverted_store_index.h"
+
 #include <absl/strings/match.h>
 
 #include <atomic>
@@ -793,9 +795,11 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   auto* sdb_catalog = dynamic_cast<SereneDBCatalog*>(&op.table.ParentCatalog());
   if (!sdb_catalog) {
     if (op.table.type == duckdb::CatalogType::TABLE_ENTRY &&
-        op.table.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
-      // Store / attached native tables build through the generic pipeline
-      // (the index type's build callbacks + create_instance).
+        op.table.Cast<duckdb::TableCatalogEntry>().IsDuckTable() &&
+        op.info->options.contains(InvertedStoreIndex::kIndexIdOption)) {
+      // Store tables (identified by the mirror's linkage options) build
+      // through the generic pipeline (build callbacks + create_instance);
+      // other duck tables (temp, user attaches) keep the error below.
       return input.planner.CreateDefaultIndexPlan(op, input.table_scan);
     }
     THROW_SQL_ERROR(

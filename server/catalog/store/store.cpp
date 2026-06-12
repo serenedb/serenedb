@@ -139,6 +139,10 @@ std::string DroppedStoreTableName(ObjectId table_id) {
   return absl::StrCat("sdb_dropped$", table_id.id());
 }
 
+std::string StoreIndexName(ObjectId index_id) {
+  return absl::StrCat("sdb_idx_", index_id.id());
+}
+
 StoreTableDef MakeStoreTableDef(std::string_view database,
                                   std::string_view schema,
                                   const Table& table) {
@@ -249,6 +253,16 @@ void CatalogStore::WriteContext::DropStoreForeignKey(std::string table,
   _entries.push_back({.op = Op::DropStoreForeignKey,
                       .store_table = {.name = std::move(table)},
                       .name_a = std::move(other)});
+}
+
+void CatalogStore::WriteContext::CreateStoreIndex(StoreIndexDef def) {
+  _entries.push_back(
+    {.op = Op::CreateStoreIndex, .store_index = std::move(def)});
+}
+
+void CatalogStore::WriteContext::DropStoreIndex(ObjectId index_id) {
+  _entries.push_back(
+    {.op = Op::DropStoreIndex, .store_index = {.index_id = index_id}});
 }
 
 void CatalogStore::WriteContext::WriteTombstone(ObjectId parent_id,
@@ -431,6 +445,34 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             "ALTER TABLE \"", kStoreAlias, "\".main.",
             QuotedIdent(entry.store_table.name), " RENAME COLUMN ",
             QuotedIdent(entry.name_a), " TO ", QuotedIdent(entry.name_b)));
+          if (res->HasError()) {
+            return {ERROR_INTERNAL, res->GetError()};
+          }
+          break;
+        }
+        case WriteContext::Op::CreateStoreIndex: {
+          const auto& def = entry.store_index;
+          std::string cols;
+          for (const auto& name : def.columns) {
+            if (!cols.empty()) {
+              cols += ", ";
+            }
+            cols += QuotedIdent(name);
+          }
+          auto res = _conn->Query(absl::StrCat(
+            "CREATE INDEX ", QuotedIdent(StoreIndexName(def.index_id)),
+            " ON \"", kStoreAlias, "\".main.", QuotedIdent(def.table),
+            " USING inverted(", cols, ") WITH (sdb_table_id=",
+            def.table_id.id(), ", sdb_index_id=", def.index_id.id(), ")"));
+          if (res->HasError()) {
+            return {ERROR_INTERNAL, res->GetError()};
+          }
+          break;
+        }
+        case WriteContext::Op::DropStoreIndex: {
+          auto res = _conn->Query(absl::StrCat(
+            "DROP INDEX IF EXISTS \"", kStoreAlias, "\".main.",
+            QuotedIdent(StoreIndexName(entry.store_index.index_id))));
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }

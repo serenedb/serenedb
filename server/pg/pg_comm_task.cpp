@@ -58,7 +58,6 @@
 #include "connector/duckdb_client_state.h"
 #include "general_server/general_server_feature.h"
 #include "pg/connection_context.h"
-#include "pg/constraint_errors.h"
 #include "pg/errcodes.h"
 #include "pg/hba.h"
 #include "pg/pg_feature.h"
@@ -184,7 +183,6 @@ void PgSQLCommTaskBase::SafeCall(Func&& func) noexcept try {
     func();
   } catch (const duckdb::Exception& e) {
     duckdb::ErrorData error(e);
-    ThrowTranslatedConstraintError(error);
     SendError(error.RawMessage(), ERRCODE_INTERNAL_ERROR);
   }
 } catch (const SqlException& e) {

@@ -32,6 +32,7 @@
 #include "basics/system-compiler.h"
 #include "catalog/database.h"
 #include "connector/duckdb_physical_create_index.h"
+#include "connector/duckdb_physical_progress.h"
 #include "connector/duckdb_physical_sst_insert.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
@@ -50,12 +51,18 @@ std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
   const auto& root = prepared.physical_plan->Root();
 
   if (prepared.statement_type == duckdb::StatementType::COPY_STATEMENT) {
-    const auto* sst = dynamic_cast<const SereneDBPhysicalSSTInsert*>(&root);
-    if (!sst) {
+    // COPY FROM plans as a native insert with the SDB_PROGRESS pass-through
+    // (carrying the facade table) directly underneath.
+    const SereneDBPhysicalProgress* progress_op = nullptr;
+    if (!root.children.empty()) {
+      progress_op = dynamic_cast<const SereneDBPhysicalProgress*>(
+        &root.children[0].get());
+    }
+    if (!progress_op) {
       return nullptr;
     }
     auto reporter = std::make_unique<pg::ProgressReporter>(
-      datid, sst->TargetTableId(), pg::ProgressCommand::Copy);
+      datid, progress_op->TargetTableId(), pg::ProgressCommand::Copy);
     reporter->SetCommand(pg::copy_progress::Command::CopyFrom);
     reporter->SetType(pg::copy_progress::Type::File);
     return reporter;
@@ -183,8 +190,13 @@ ConnectionContext* CurrentCommittingContext() noexcept {
 void SereneDBClientState::TransactionPreCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   // Pre-durability crash point: fires before the engine commit, so the
-  // transaction must be absent after restart. The name is historical.
-  SDB_IF_FAILURE("crash_before_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
+  // transaction must be absent after restart. Only write transactions
+  // crash (the fault-arming SET itself must survive). Name historical.
+  SDB_IF_FAILURE("crash_before_rocksdb_commit") {
+    if (transaction.ModifiedDatabase()) {
+      SDB_IMMEDIATE_ABORT();
+    }
+  }
   // Revert SET LOCAL variables while the DuckDB transaction is still active
   // so catalog lookups performed by custom-impl settings (e.g. search_path)
   // can succeed via their normal set_local path.
@@ -201,8 +213,13 @@ void SereneDBClientState::TransactionPreRollback(
 void SereneDBClientState::TransactionCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   // Post-durability crash point: the engine commit is durable, search
-  // ticks are not yet -- recovery must rebuild the shard. Name historical.
-  SDB_IF_FAILURE("crash_after_rocksdb_commit") { SDB_IMMEDIATE_ABORT(); }
+  // ticks are not yet -- recovery must rebuild the shard. Only write
+  // transactions crash. Name historical.
+  SDB_IF_FAILURE("crash_after_rocksdb_commit") {
+    if (transaction.ModifiedDatabase()) {
+      SDB_IMMEDIATE_ABORT();
+    }
+  }
   tls_committing_ctx = nullptr;
   auto r = _connection_ctx->Commit();
   if (!r.ok()) {

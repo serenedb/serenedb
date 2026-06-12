@@ -112,14 +112,14 @@ query error connection closed
 SELECT 1;
 
 
-# Shard stats are not persisted anymore; reltuples resets on restart until
-# native table stats replace it.
+# reltuples is computed live from the store table, so it survives the
+# restart.
 connection after_reboot
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT reltuples FROM pg_class WHERE relname = 't';
 ----
 reltuples
-0
+6
 
 
 connection after_reboot

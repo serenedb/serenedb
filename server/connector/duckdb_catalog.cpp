@@ -60,6 +60,7 @@
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_ctas.h"
+#include "connector/duckdb_physical_progress.h"
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
 #include "connector/duckdb_physical_sst_insert.h"
@@ -491,36 +492,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
 
 namespace {
 
-// Pass-through operator feeding the session progress reporter (COPY FROM
-// progress) with per-chunk tuple/byte counts on the way into the insert.
-class SereneDBPhysicalProgress final : public duckdb::PhysicalOperator {
- public:
-  SereneDBPhysicalProgress(duckdb::PhysicalPlan& plan,
-                           duckdb::PhysicalOperator& child,
-                           pg::ProgressReporter& progress)
-    : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
-                               child.types, child.estimated_cardinality),
-      _progress(progress) {
-    children.push_back(child);
-  }
 
-  duckdb::OperatorResultType Execute(
-    duckdb::ExecutionContext&, duckdb::DataChunk& input,
-    duckdb::DataChunk& chunk, duckdb::GlobalOperatorState&,
-    duckdb::OperatorState&) const final {
-    _progress.Add(pg::copy_progress::Param::TuplesProcessed, input.size());
-    _progress.Add(pg::copy_progress::Param::BytesProcessed,
-                  input.GetAllocationSize());
-    chunk.Reference(input);
-    return duckdb::OperatorResultType::NEED_MORE_INPUT;
-  }
-  bool ParallelOperator() const final { return true; }
-
-  std::string GetName() const final { return "SDB_PROGRESS"; }
-
- private:
-  pg::ProgressReporter& _progress;
-};
 
 // Defaults / generated-column projection for INSERT.
 //
@@ -663,12 +635,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   }
 
   if (plan) {
-    if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
-          kSereneDBClientStateKey);
-        sdb_state && sdb_state->progress) {
-      plan = &planner.Make<SereneDBPhysicalProgress>(*plan,
-                                                     *sdb_state->progress);
-    }
+    plan = &planner.Make<SereneDBPhysicalProgress>(
+      *plan, table_entry.GetSereneDBTable()->GetId());
   }
 
   // The session-level sdb_write_conflict_policy is applied by the binder

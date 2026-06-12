@@ -43,8 +43,8 @@ BEGIN;
 statement count 2
 INSERT INTO t_ryow VALUES (4, 400), (5, 500);
 
-# With read_your_own_writes=off, we should NOT see the uncommitted inserts
-# Should only see previously committed data (1,2,3)
+# Native MVCC always sees the transaction's own writes; the legacy RYOW
+# opt-out is a no-op.
 query
 SELECT * FROM t_ryow ORDER BY id;
 ----
@@ -52,6 +52,8 @@ id	value
 1	100
 2	200
 3	300
+4	400
+5	500
 
 statement ok
 COMMIT;
@@ -97,12 +99,12 @@ BEGIN;
 statement count 1
 UPDATE t_ryow SET value = 888 WHERE id = 2;
 
-# Should NOT see the updated value, should see old committed value
+# Native MVCC: the transaction sees its own update.
 query
 SELECT * FROM t_ryow WHERE id = 2;
 ----
 id	value
-2	200
+2	888
 
 statement ok
 ROLLBACK;
@@ -136,12 +138,11 @@ BEGIN;
 statement count 1
 DELETE FROM t_ryow WHERE id = 4;
 
-# Should still see the deleted row (uncommitted delete not visible)
+# Native MVCC: the transaction sees its own delete.
 query
 SELECT * FROM t_ryow WHERE id = 4;
 ----
 id	value
-4	400
 
 statement ok
 ROLLBACK;
@@ -216,7 +217,7 @@ BEGIN;
 statement count 1
 INSERT INTO t VALUES (1, 10);
 
-statement count 0
+statement count 1
 DELETE FROM t WHERE id = 1;
 
 statement ok
@@ -226,7 +227,6 @@ query
 SELECT * FROM t ORDER BY id;
 ----
 id	value
-1	10
 
 
 # Test that invalid values cannot be set

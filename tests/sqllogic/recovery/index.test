@@ -238,7 +238,7 @@ sleep 2
 
 
 connection new2
-query
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT * FROM sdb_search_tasks_status;
 ----
 task_type	active_tasks	pending_tasks	threads

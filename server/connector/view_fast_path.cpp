@@ -274,6 +274,21 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.pk_spec = registry_entry->glob_pk_spec;
       return out;
     }
+    if (cat_type == "duckdb") {
+      auto& src_catalog = entry.ParentCatalog();
+      if (src_catalog.IsSystemCatalog() || src_catalog.IsTemporaryCatalog() ||
+          src_catalog.InMemory()) {
+        return std::nullopt;
+      }
+      ViewFastPath out;
+      out.function_name = "read_duckdb";
+      out.catalog_ref = CatalogTableRef{.catalog = src_catalog.GetName(),
+                                        .schema = entry.ParentSchema().name,
+                                        .table = entry.name};
+      out.projection_columns = std::move(projection_columns);
+      out.pk_spec = catalog::PkSpec::DuckDBRowId;
+      return out;
+    }
     if (cat_type == "serenedb") {
       const auto* sdb_entry = dynamic_cast<const SereneDBTableEntry*>(&entry);
       if (!sdb_entry) {

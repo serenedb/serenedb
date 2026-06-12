@@ -45,6 +45,19 @@
 
 namespace sdb::connector {
 
+namespace {
+
+duckdb::virtual_column_map_t StoreScanVirtualColumns(
+  duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData> data) {
+  auto& bind_data = data->Cast<duckdb::TableScanBindData>();
+  auto cols = bind_data.table.GetVirtualColumns();
+  cols.insert({kColumnIdentifierTableOid,
+               duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
+  return cols;
+}
+
+}  // namespace
+
 SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table) {
   // RTTI is unavoidable here: the caller hands us a generic
   // TableCatalogEntry that may be a SereneDBTableEntry, a
@@ -92,7 +105,18 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
       table_bind->display_name = name;
     }
   }
+  // tableoid binds on tables (scoring functions and PG compatibility take
+  // it as an argument); scoring rewrites consume the reference before any
+  // scan would have to materialize it.
+  function.get_virtual_columns = StoreScanVirtualColumns;
   return function;
+}
+
+duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
+  auto cols = duckdb::TableCatalogEntry::GetVirtualColumns();
+  cols.insert({kColumnIdentifierTableOid,
+               duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
+  return cols;
 }
 
 duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(

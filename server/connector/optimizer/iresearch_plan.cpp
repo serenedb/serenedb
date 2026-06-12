@@ -613,6 +613,10 @@ duckdb::unique_ptr<duckdb::Expression> RewriteCallInExpr(
       if (auto repl = PushdownScorerCall(func, root)) {
         return repl;
       }
+      // Native scans cannot materialize the tableoid argument, so the
+      // runtime stub would never be reached; raise its error here.
+      throw duckdb::InvalidInputException(
+        "%s() requires an inverted index scan in the same sub-query", name);
     } else if (name == connector::kOffsets) {
       if (auto repl = PushdownOffsetsCall(func, root)) {
         return repl;

@@ -223,9 +223,14 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
         auto tokenizer_provider =
           MakeTokenizerProvider(snapshot, inverted_index);
         auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
-        auto indexed_exprs = MakeIndexedExpressions(
-          inverted_index,
-          expr_context ? *expr_context : conn_ctx.GetClientContext());
+        std::vector<IndexedExpression> indexed_exprs;
+        if constexpr (Kind == DuckDBWriteKind::Insert) {
+          // Deletes are key-only; skipping the deserialization also keeps
+          // rollback paths (no usable transaction context) working.
+          indexed_exprs = MakeIndexedExpressions(
+            inverted_index,
+            expr_context ? *expr_context : conn_ctx.GetClientContext());
+        }
         writer = MakeDuckDBSearchWriter(
           Kind, index_txn, std::move(tokenizer_provider),
           std::move(entry_info_provider), index.GetColumnIds(),

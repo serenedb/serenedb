@@ -2327,5 +2327,5 @@ Text Search Dictionary:
   wordnet_synonyms:
     synonyms[required] (string) [default: none] - Inline WordNet Prolog database content: one `s(synset,w_num,'word',ss_type,sense_number,tag_count).` record per line
   sparse_ngram:
-    maxngramlength (integer) [default: 16] - Maximum n-gram length for the covering mode (minimum 3)
+    maxngramlength (integer) [default: 16] - Maximum emitted n-gram length (minimum 3)
     covering (boolean) [default: false] - Emit the minimal covering n-gram chain (query side) instead of all sparse n-grams (index side)

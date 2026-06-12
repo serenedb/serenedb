@@ -139,8 +139,7 @@ inline constexpr OptionInfo kCovering{
   "n-grams (index side)"};
 
 inline constexpr OptionInfo kMaxNgramLength{
-  "maxngramlength", 16,
-  "Maximum n-gram length for the covering mode (minimum 3)",
+  "maxngramlength", 16, "Maximum emitted n-gram length (minimum 3)",
   CheckMaxNgramLength};
 
 // Classification

@@ -119,6 +119,15 @@ TEST(sparse_ngram_tokenizer_test, covering_max_ngram_length) {
   }
 }
 
+TEST(sparse_ngram_tokenizer_test, all_ngrams_max_ngram_length) {
+  for (const auto max_len : {size_t{3}, size_t{5}, size_t{16}}) {
+    for (const auto& gram :
+         Collect("abcdefghijklmnopqrstuvwxyz0123456789", false, max_len)) {
+      EXPECT_LE(gram.size(), max_len);
+    }
+  }
+}
+
 TEST(sparse_ngram_tokenizer_test, increments) {
   auto stream = irs::analysis::SparseNGramTokenizer::Make({});
   ASSERT_TRUE(stream->reset("hello world"));

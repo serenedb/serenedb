@@ -12,7 +12,7 @@ CREATE TEXT SEARCH DICTIONARY sng_err1(
 )
 ----
 db error: ERROR: "maxngramlength" must be at least 3
-HINT: Maximum n-gram length for the covering mode (minimum 3)
+HINT: Maximum emitted n-gram length (minimum 3)
 
 
 # --- covering option not applicable to other tokenizers ---
@@ -39,6 +39,18 @@ CREATE TEXT SEARCH DICTIONARY sng_err3(
 )
 ----
 db error: ERROR: Unsupported index features are specified: 7
+
+
+# --- position feature is not supported (grams have no meaningful positions) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sng_err4(
+    template = 'sparse_ngram',
+    frequency = true,
+    position = true
+)
+----
+db error: ERROR: Unsupported index features are specified: 3
 
 
 # SPARSE NGRAM TOKENIZER

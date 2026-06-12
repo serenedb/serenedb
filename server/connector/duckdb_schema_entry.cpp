@@ -278,6 +278,24 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
       case duckdb::ConstraintType::UNIQUE: {
         auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
         if (!unique.IsPrimaryKey()) {
+          std::vector<catalog::Column::Id> cols;
+          if (unique.HasIndex()) {
+            auto idx = unique.GetIndex().index;
+            SDB_ASSERT(idx < options.columns.size());
+            cols.push_back(options.columns[idx].GetId());
+          } else {
+            for (auto& col_name : unique.GetColumnNames()) {
+              auto it = absl::c_find_if(options.columns, [&](const auto& col) {
+                return col.GetName() == col_name;
+              });
+              if (it == options.columns.end()) {
+                throw duckdb::CatalogException(
+                  "column \"%s\" named in key does not exist", col_name);
+              }
+              cols.push_back(it->GetId());
+            }
+          }
+          options.unique_constraints.push_back(std::move(cols));
           break;
         }
         if (unique.HasIndex()) {

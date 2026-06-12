@@ -2166,7 +2166,8 @@ Result LocalCatalog::CreateTable(
   auto table = std::make_shared<Table>(
     *schema_id, table_id, options.name, std::move(options.columns),
     std::move(options.pk_columns), std::move(options.check_constraints),
-    generated_pk_seq_id, options.engine);
+    generated_pk_seq_id, options.engine,
+    std::move(options.unique_constraints));
   if (operation_options.create_with_tombstone) {
     table->SetTombstoned(true);
   }

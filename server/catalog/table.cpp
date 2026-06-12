@@ -43,13 +43,15 @@ using persistence::TableData;
 Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
              std::vector<Column> columns, std::vector<Column::Id> pk_columns,
              std::vector<CheckConstraint> check_constraints,
-             ObjectId generated_pk_seq_id, TableEngine engine)
+             ObjectId generated_pk_seq_id, TableEngine engine,
+             std::vector<std::vector<Column::Id>> unique_constraints)
   : Object{schema_id, id, std::string{name}, ObjectType::Table},
     _columns{std::move(columns)},
     _pk_columns{std::move(pk_columns)},
     _check_constraints{std::move(check_constraints)},
     _generated_pk_seq_id{generated_pk_seq_id},
-    _engine{engine} {
+    _engine{engine},
+    _unique_constraints{std::move(unique_constraints)} {
   for (auto& col : _columns) {
     col.SetParentId(_id);
   }
@@ -65,7 +67,8 @@ std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
   return std::make_shared<Table>(
     ctx.schema_id, ctx.id, data.name, std::move(data.columns),
     std::move(data.pk_columns), std::move(data.check_constraints),
-    data.generated_pk_seq_id, data.engine);
+    data.generated_pk_seq_id, data.engine,
+    std::move(data.unique_constraints));
 }
 
 void Table::Serialize(duckdb::Serializer& sink) const {
@@ -76,6 +79,7 @@ void Table::Serialize(duckdb::Serializer& sink) const {
     .check_constraints = _check_constraints,
     .generated_pk_seq_id = _generated_pk_seq_id,
     .engine = _engine,
+    .unique_constraints = _unique_constraints,
   };
   basics::WriteTuple(sink, data);
 }
@@ -149,7 +153,7 @@ Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
 std::shared_ptr<Object> Table::Clone() const {
   auto cloned = std::make_shared<Table>(
     GetParentId(), GetId(), GetName(), _columns, _pk_columns,
-    _check_constraints, _generated_pk_seq_id);
+    _check_constraints, _generated_pk_seq_id, _engine, _unique_constraints);
   cloned->SetTombstoned(Tombstoned());
   return cloned;
 }
@@ -174,6 +178,9 @@ std::shared_ptr<Table> Table::DropColumn(Column::Id column_id) const {
   std::erase_if(cloned->_columns,
                 [&](const Column& c) { return c.GetId() == column_id; });
   std::erase(cloned->_pk_columns, column_id);
+  std::erase_if(cloned->_unique_constraints, [&](const auto& cols) {
+    return absl::c_contains(cols, column_id);
+  });
   return cloned;
 }
 

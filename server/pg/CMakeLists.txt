@@ -24,7 +24,6 @@ target_sources(
         information_schema/sql_implementation_info.cpp
         information_schema/sql_parts.cpp
         information_schema/sql_sizing.cpp
-        constraint_errors.cpp
         pg_comm_task.cpp
         pg_feature.cpp
         connection_context.cpp

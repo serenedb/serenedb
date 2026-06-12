@@ -38,6 +38,7 @@
 #include "catalog/index.h"
 #include "catalog/object_dependency.h"
 #include "catalog/schema.h"
+#include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "general_server/scheduler.h"
 #include "search/inverted_index_shard.h"
@@ -176,13 +177,25 @@ struct TableDrop final : public DropTask {
             const std::shared_ptr<TableShard>& shard,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
-            bool is_root = false)
+            std::string store_rename_from, bool is_root = false)
     : DropTask{table, schema_id, is_root},
+      _store_rename_from{std::move(store_rename_from)},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
       _shard_drop{std::make_shared<TableShardDrop>(
         shard, table->GetId(),
         table->Columns().size() * shard->GetTableStats().num_rows)} {}
+
+  // Moves the store table to its id-keyed dropped name in the same
+  // transaction that tombstones the drop, freeing the public name
+  // immediately; Finalize later drops by id alone (recovery-resumed drops
+  // never need the original names). No-op when the table has no store
+  // table (Fast engine) or already lives under the dropped name (CTAS).
+  void EmitStoreRenames(CatalogStore::WriteContext& ctx) const {
+    if (!_store_rename_from.empty()) {
+      ctx.RenameStoreTable(_store_rename_from, DroppedStoreTableName(_id));
+    }
+  }
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("TableDrop(schema $0 table $1)", _parent_id.id(),
@@ -204,6 +217,7 @@ struct TableDrop final : public DropTask {
   }
 
  private:
+  std::string _store_rename_from;
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
   std::vector<ObjectId> _owned_sequences;
   std::shared_ptr<TableShardDrop> _shard_drop;
@@ -226,6 +240,12 @@ struct SchemaDrop final : public DropTask {
   }
 
   std::string_view GetName() const noexcept final { return "schema drop"; }
+
+  void EmitStoreRenames(CatalogStore::WriteContext& ctx) const {
+    for (const auto& table : _tables) {
+      table->EmitStoreRenames(ctx);
+    }
+  }
 
   AsyncResult Execute() final;
   Result Finalize();
@@ -258,6 +278,12 @@ struct DatabaseDrop final : public DropTask {
   }
 
   std::string_view GetName() const noexcept final { return "database drop"; }
+
+  void EmitStoreRenames(CatalogStore::WriteContext& ctx) const {
+    for (const auto& schema : _schemas) {
+      schema->EmitStoreRenames(ctx);
+    }
+  }
 
   AsyncResult Execute() final;
   Result Finalize();

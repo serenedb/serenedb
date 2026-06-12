@@ -179,6 +179,7 @@ Result TableDrop::Finalize() {
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
     }
+    ctx.DropStoreTable(catalog::DroppedStoreTableName(_id));
   });
 }
 

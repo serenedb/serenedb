@@ -275,6 +275,11 @@ class OpenDatabase {
 
   LogicalCatalog& _catalog;
 
+  // Names of the database/schema currently being walked; the boot walk is
+  // strictly nested, so plain members suffice.
+  std::string _database_name;
+  std::string _schema_name;
+
   std::array<containers::FlatHashSet<ObjectId>,
              magic_enum::enum_count<DeletedScope>()>
     _deleted;
@@ -286,6 +291,7 @@ Result OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
   if (!db) {
     return Result{ERROR_INTERNAL, "Failed to read database definition"};
   }
+  _database_name = db->GetName();
   if (auto r = _catalog.RegisterDatabase(db); !r.ok()) {
     return r;
   }
@@ -494,6 +500,10 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
         if (!table) {
           return Result{ERROR_INTERNAL, "Failed to read table definition"};
         }
+        if (table->GetEngine() == TableEngine::Transactional) {
+          GetCatalogStore().ValidateStoreTable(
+            MakeStoreTableDef(_database_name, _schema_name, *table));
+        }
         return AddTable(db_id, schema_id, table_id, std::move(table));
       }
       auto options = GetTableOptionsForDrop(
@@ -594,6 +604,7 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   if (!schema) {
     return Result{ERROR_INTERNAL, "Failed to read schema definition"};
   }
+  _schema_name = schema->GetName();
 
   if (auto r = _catalog.RegisterSchema(db_id, std::move(schema)); !r.ok()) {
     return r;

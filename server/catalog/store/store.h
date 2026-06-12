@@ -40,11 +40,43 @@
 
 namespace sdb::catalog {
 
+// One serenedb table as a real table in the store database holding the row
+// data. `name` is the full pg path as one identifier
+// ("<database>.<schema>.<table>"); it is write-only -- identity stays
+// ObjectId, nothing ever parses it back.
+struct StoreTableColumn {
+  std::string name;
+  duckdb::LogicalType type;
+};
+
+struct StoreTableDef {
+  std::string name;
+  std::vector<StoreTableColumn> columns;
+  // Indices into `columns`.
+  std::vector<size_t> not_null;
+  std::vector<std::string> pk_columns;
+};
+
+std::string StoreTableName(std::string_view database, std::string_view schema,
+                           std::string_view table);
+
+// Store-table name of a tombstoned (pending-drop / not-yet-committed CTAS)
+// table. Composable from the ObjectId alone so drop recovery never needs the
+// original names; cannot collide with StoreTableName output (no dots).
+std::string DroppedStoreTableName(ObjectId table_id);
+
+class Table;
+
+StoreTableDef MakeStoreTableDef(std::string_view database,
+                                  std::string_view schema, const Table& table);
+
 // Catalog persistence: definitions and sequence counters stored as rows in
 // tables of the engine's single-file database, attached as "__sdb_store".
 // Writes are delete+insert by key; the tables carry no indexes, every read
 // is a filtered scan (the catalog is tiny, the per-commit WAL fsync
-// dominates any scan cost).
+// dominates any scan cost). The same database holds the store tables
+// carrying serenedb table data; their DDL rides the same transaction as the
+// catalog rows.
 class CatalogStore {
  public:
   struct Key {
@@ -67,14 +99,26 @@ class CatalogStore {
     void DropSequence(ObjectId sequence_id);
     void WriteTombstone(ObjectId parent_id, ObjectId id);
 
+    void CreateStoreTable(StoreTableDef def);
+    void DropStoreTable(std::string name);
+    void RenameStoreTable(std::string name, std::string new_name);
+    void RenameStoreColumn(std::string table, std::string name,
+                           std::string new_name);
+    void DropStoreColumn(std::string table, std::string name);
+
    private:
     friend class CatalogStore;
 
     enum class Op : uint8_t {
-      kPutDefinition,
-      kDropDefinition,
-      kPutSequence,
-      kDropSequence,
+      PutDefinition,
+      DropDefinition,
+      PutSequence,
+      DropSequence,
+      CreateStoreTable,
+      DropStoreTable,
+      RenameStoreTable,
+      RenameStoreColumn,
+      DropStoreColumn,
     };
 
     struct Entry {
@@ -82,6 +126,11 @@ class CatalogStore {
       Key key;
       uint64_t sequence_value = 0;
       std::string def;
+      // CreateStoreTable: the full definition; other store-table ops use
+      // only `store_table.name` (+ `name_a`/`name_b` rename arguments).
+      StoreTableDef store_table;
+      std::string name_a;
+      std::string name_b;
     };
 
     WriteContext() = default;
@@ -138,6 +187,10 @@ class CatalogStore {
   // Missing counter reads as 0.
   Result GetSequenceValue(ObjectId sequence_id, uint64_t& value);
 
+  // Boot-time sanity: the store table of a catalog table exists and its
+  // column names/types match. Assert-only (no-op in release builds).
+  void ValidateStoreTable(const StoreTableDef& def);
+
  private:
   struct BootDef {
     ObjectId id;
@@ -145,6 +198,7 @@ class CatalogStore {
   };
 
   Result ExecuteEntries(std::vector<WriteContext::Entry>& entries);
+  Result ExecuteCreateStoreTable(const StoreTableDef& def);
   void EnsureSystemDatabase();
 
   std::atomic<bool> _boot_loading = false;

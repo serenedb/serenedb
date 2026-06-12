@@ -197,7 +197,10 @@ TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
   root->GetOptional().add(make_term("source"));
   root->GetOptional().add(make_term("software"));
 
-  auto hits = CollectAll(reader, *root);
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  auto hits = CollectAll(reader, *filter);
   ASSERT_EQ(3u, hits.size());
 
   // Score ordering must be: C > B > A

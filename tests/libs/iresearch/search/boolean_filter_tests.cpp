@@ -574,8 +574,8 @@ TEST(boolean_query_boost, and_filter) {
       node.boost(value);
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    auto prep = tests::OptimizedPrepare(
+      std::move(root), {.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
@@ -606,8 +606,8 @@ TEST(boolean_query_boost, and_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    auto prep = tests::OptimizedPrepare(
+      std::move(root), {.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
@@ -838,8 +838,8 @@ TEST(boolean_query_boost, or_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    auto prep = tests::OptimizedPrepare(
+      std::move(root), {.index = irs::SubReader::empty(), .scorer = &sort});
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
 
@@ -869,8 +869,8 @@ TEST(boolean_query_boost, or_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    auto prep = tests::OptimizedPrepare(
+      std::move(root), {.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
@@ -15628,7 +15628,8 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
       *score = cur_doc;
     };
 
-    auto prepared_filter = root.prepare({.index = *rdr, .scorer = &sort});
+    auto prepared_filter = tests::OptimizedPrepare(
+      std::move(root), {.index = *rdr, .scorer = &sort});
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
     ASSERT_EQ(1, rdr->size());
@@ -16233,7 +16234,8 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
 
     irs::TFIDF tfidf_scorer;
 
-    auto prepared = root.prepare({.index = *rdr, .scorer = &tfidf_scorer});
+    auto prepared = tests::OptimizedPrepare(
+      std::move(root), {.index = *rdr, .scorer = &tfidf_scorer});
     ASSERT_NE(nullptr, prepared);
 
     std::vector<irs::doc_id_t> expected_docs{
@@ -16439,7 +16441,8 @@ TEST(And_test, optimize_single_node) {
     irs::And root;
     Append<irs::ByTerm>(root, kFieldTestField, "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = tests::OptimizedPrepare(std::move(root),
+                                            {.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 
@@ -16449,7 +16452,8 @@ TEST(And_test, optimize_single_node) {
     root.add<irs::And>().add<irs::And>().add<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = tests::OptimizedPrepare(std::move(root),
+                                            {.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 }
@@ -16460,7 +16464,8 @@ TEST(And_test, optimize_all_filters) {
     irs::And root;
     root.add<irs::All>().boost(5.f);
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = tests::OptimizedPrepare(std::move(root),
+                                            {.index = irs::SubReader::empty()});
     ASSERT_EQ(
       typeid(irs::All().prepare({.index = irs::SubReader::empty()}).get()),
       typeid(prepared.get()));
@@ -16530,7 +16535,8 @@ TEST(And_test, not_boosted) {
       node.boost(4);
     }
   }
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  auto prep = tests::OptimizedPrepare(
+    std::move(root), {.index = irs::SubReader::empty(), .scorer = &sort});
   auto docs =
     prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
   const auto& scr = docs->PrepareScore({
@@ -16624,7 +16630,8 @@ TEST(Or_test, optimize_single_node) {
     irs::Or root;
     Append<irs::ByTerm>(root, kFieldTestField, "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = tests::OptimizedPrepare(std::move(root),
+                                            {.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 
@@ -16634,7 +16641,8 @@ TEST(Or_test, optimize_single_node) {
     root.add<irs::Or>().add<irs::Or>().add<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = tests::OptimizedPrepare(std::move(root),
+                                            {.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 }

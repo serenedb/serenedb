@@ -29,13 +29,13 @@
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-
 #include "basics/message_buffer.h"
 #include "network/connection.h"
 #include "network/pg/task_runner.h"
 #include "pg/serialize.h"
 
 namespace duckdb {
+
 class PreparedStatementData;
 }
 
@@ -80,8 +80,6 @@ class WireSinkContext {
   message::Buffer* send = nullptr;
   // Writer progress, paired with committed counters for backpressure.
   const std::atomic<size_t>* send_written = nullptr;
-  // Encoded-byte cap (shared with the send high-water).
-  size_t high_water = 0;
   // The session's task runner; woken (RequestRun) on chain ready / cursor
   // advance / sink registration.
   TaskRunner* task = nullptr;

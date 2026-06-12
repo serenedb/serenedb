@@ -81,18 +81,16 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
     auto& lstate = input.local_state.Cast<PgWireCollectorLocalState>();
     if (!lstate.initialized) {
       lstate.sctx = CloneProto(ctx.proto);
-      lstate.sctx.buffer = ctx.mode == WireSinkContext::Mode::Direct
-                             ? ctx.send
-                             : &lstate.buffer;
+      lstate.sctx.buffer =
+        ctx.mode == WireSinkContext::Mode::Direct ? ctx.send : &lstate.buffer;
       lstate.serializers.reserve(types.size());
       for (size_t column = 0; column < types.size(); ++column) {
         lstate.serializers.push_back(sdb::pg::GetSerialization(
           types[column], FormatFor(ctx.formats, column), lstate.sctx));
       }
-      lstate.current_batch =
-        lstate.partition_info.batch_index.IsValid()
-          ? lstate.partition_info.batch_index.GetIndex()
-          : 0;
+      lstate.current_batch = lstate.partition_info.batch_index.IsValid()
+                               ? lstate.partition_info.batch_index.GetIndex()
+                               : 0;
       lstate.initialized = true;
     }
 
@@ -102,10 +100,9 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
     }
 
     if (OverHighWater(ctx, lstate)) {
-      ctx.BlockSink(input.interrupt_state,
-                    ctx.mode == WireSinkContext::Mode::Ordered
-                      ? lstate.current_batch
-                      : 0);
+      ctx.BlockSink(
+        input.interrupt_state,
+        ctx.mode == WireSinkContext::Mode::Ordered ? lstate.current_batch : 0);
       return duckdb::SinkResultType::BLOCKED;
     }
 
@@ -196,12 +193,11 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
     if (ctx.mode == WireSinkContext::Mode::Direct) {
       return ctx.send->TotalCommitted() -
                ctx.send_written->load(std::memory_order_acquire) >
-             ctx.high_water;
+             kSendHighWater;
     }
     if (ctx.mode == WireSinkContext::Mode::Ordered) {
       const auto min_batch = ctx.MinBatch();
-      const auto pinned =
-        ctx.pinned_bytes.load(std::memory_order_relaxed);
+      const auto pinned = ctx.pinned_bytes.load(std::memory_order_relaxed);
       if (lstate.current_batch <= min_batch) {
         // The emit cursor: its output drains at socket speed, so it only
         // pauses for a slow client (and is released by writer progress --
@@ -220,10 +216,9 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
     lstate.sealed_total = lstate.buffer.TotalCommitted();
     auto chain = lstate.buffer.ReleaseChain();
     if (chain.head != nullptr) {
-      ctx.PushChain(std::move(chain),
-                    ctx.mode == WireSinkContext::Mode::Ordered
-                      ? lstate.current_batch
-                      : 0);
+      ctx.PushChain(std::move(chain), ctx.mode == WireSinkContext::Mode::Ordered
+                                        ? lstate.current_batch
+                                        : 0);
     }
   }
 

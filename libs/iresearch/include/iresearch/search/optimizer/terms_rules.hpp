@@ -20,28 +20,8 @@
 
 #pragma once
 
-#include <array>
-#include <string_view>
-
-#include "iresearch/search/filter_optimizer.hpp"
-#include "iresearch/search/terms_filter.hpp"
-
 namespace irs::optimizer {
 
-struct ByTermsMinMatchZeroRule {
-  static constexpr std::string_view kName = "by_terms_min_match_zero";
-  static constexpr std::array kTargets{Type<ByTerms>::id()};
-  static constexpr bool kEnable = true;
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
-};
-
-struct ByTermsDegenerateRule {
-  static constexpr std::string_view kName = "by_terms_degenerate";
-  static constexpr std::array kTargets{Type<ByTerms>::id()};
-  static constexpr bool kEnable = true;
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
-};
+void InitTermsRules();
 
 }  // namespace irs::optimizer

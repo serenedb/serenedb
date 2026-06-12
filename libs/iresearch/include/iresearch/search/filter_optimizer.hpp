@@ -50,32 +50,19 @@ concept RuleLike = requires {
   } -> std::convertible_to<bool (*)(Filter::ptr&, const OptimizeContext&)>;
 };
 
+void RegisterRule(RuleDesc rule);
+
 template<RuleLike Rule>
-constexpr RuleDesc MakeRule() {
-  return RuleDesc{Rule::kName, Rule::kTargets, &Rule::Apply};
-}
-
-template<RuleLike... Rules>
-constexpr auto MakeRuleSet() {
-  constexpr std::array<bool, sizeof...(Rules)> kEnabled{Rules::kEnable...};
-  constexpr size_t kCount =
-    (size_t{0} + ... + (Rules::kEnable ? size_t{1} : size_t{0}));
-  std::array<RuleDesc, kCount> result{};
-  const std::array<RuleDesc, sizeof...(Rules)> all{MakeRule<Rules>()...};
-  size_t index = 0;
-  for (size_t i = 0; i < all.size(); ++i) {
-    if (kEnabled[i]) {
-      result[index++] = all[i];
-    }
+void RegisterRule() {
+  if constexpr (Rule::kEnable) {
+    auto r = RuleDesc{Rule::kName, Rule::kTargets, &Rule::Apply};
+    RegisterRule(std::move(r));
   }
-  return result;
 }
-
-extern const std::span<const RuleDesc> kDefaultRules;
-
-void RegisterRule(const RuleDesc& rule);
 
 std::span<const RuleDesc> ActiveRules();
+
+void InitOptimizeRules();
 
 void Optimize(Filter::ptr& root, const OptimizeContext& ctx = {},
               std::span<const RuleDesc> rules = ActiveRules());

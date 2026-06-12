@@ -20,44 +20,8 @@
 
 #pragma once
 
-#include <array>
-#include <string_view>
-
-#include "iresearch/search/boolean_filter.hpp"
-#include "iresearch/search/filter_optimizer.hpp"
-
 namespace irs::optimizer {
 
-struct NotSimplifyRule {
-  static constexpr std::string_view kName = "not_simplify";
-  static constexpr std::array kTargets{Type<Not>::id()};
-  static constexpr bool kEnable = true;
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
-};
-
-struct NotLowerRule {
-  static constexpr std::string_view kName = "not_lower";
-  static constexpr std::array kTargets{Type<Not>::id()};
-  static constexpr bool kEnable = true;
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
-};
-
-struct ExclusionRule {
-  static constexpr std::string_view kName = "exclusion_simplify";
-  static constexpr std::array kTargets{Type<Exclusion>::id()};
-  static constexpr bool kEnable = true;
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
-};
-
-struct ExclusionDoubleNegationRule {
-  static constexpr std::string_view kName = "exclusion_double_negation";
-  static constexpr std::array kTargets{Type<Exclusion>::id()};
-  static constexpr bool kEnable = true;
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
-};
+void InitNegationRules();
 
 }  // namespace irs::optimizer

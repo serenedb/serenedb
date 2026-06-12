@@ -71,7 +71,6 @@ set(iresearch-tests_sources
     ./search/boost_attribute_test.cpp
     ./search/filter_test_case_base.cpp
     ./search/boolean_filter_tests.cpp
-    ./search/filter_optimizer_test.cpp
     ./search/all_filter_tests.cpp
     ./search/term_filter_tests.cpp
     ./search/terms_filter_test.cpp

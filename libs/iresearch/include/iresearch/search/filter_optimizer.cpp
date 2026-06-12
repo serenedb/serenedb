@@ -62,19 +62,6 @@ void EnumerateChildSlots(Filter& node, Visitor&& visit) {
     visit(mixed.OptionalSlot());
   }
 }
-using namespace optimizer;
-
-constexpr auto kDefaultRulesStorage =
-  MakeRuleSet<ExclusionRule, NotSimplifyRule, AndEmptyRule, OrEmptyRule,
-              OrMinMatchZeroRule, OrUnsatRule, AndAllFoldRule, OrAllFoldRule,
-              FlattenAnd, FlattenOr, AndExclusionCoalesceRule,
-              OrAllRequiredRule, ByTermsRule, ByTermsMinMatchZeroRule,
-              ByTermsDegenerateRule, SingleChildRule, EmptyAndRule,
-              MixedDegenerateRule, RangeDegenerateRule,
-              GranularRangeDegenerateRule, NGramSimilarityLowerRule,
-              WildcardLowerRule, RegexpLowerRule, EditDistanceLowerRule,
-              PhraseLowerRule, ExclusionDoubleNegationRule, NotLowerRule>();
-
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
               std::span<const RuleDesc> rules) {
   bool changed = true;
@@ -95,18 +82,26 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
 }
 
 std::vector<RuleDesc>& RuleRegistry() {
-  static std::vector<RuleDesc> gRules(kDefaultRulesStorage.begin(),
-                                      kDefaultRulesStorage.end());
+  static std::vector<RuleDesc> gRules;
   return gRules;
 }
 
 }  // namespace
 
-constinit const std::span<const RuleDesc> kDefaultRules{kDefaultRulesStorage};
-
-void RegisterRule(const RuleDesc& rule) { RuleRegistry().push_back(rule); }
+void RegisterRule(RuleDesc rule) {
+  RuleRegistry().emplace_back(std::move(rule));
+}
 
 std::span<const RuleDesc> ActiveRules() { return RuleRegistry(); }
+
+void InitOptimizeRules() {
+  SDB_ASSERT(RuleRegistry().empty());
+  optimizer::InitBooleanRules();
+  optimizer::InitNegationRules();
+  optimizer::InitTermsRules();
+  optimizer::InitRangeRules();
+  optimizer::InitLoweringRules();
+}
 
 namespace {
 

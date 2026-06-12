@@ -27,12 +27,127 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
+#include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/optimizer/common.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
 
 namespace irs::optimizer {
 namespace {
+
+struct FlattenAnd {
+  static constexpr std::string_view kName = "flatten_and";
+  static constexpr std::array kTargets{Type<And>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct FlattenOr {
+  static constexpr std::string_view kName = "flatten_or";
+  static constexpr std::array kTargets{Type<Or>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct AndExclusionCoalesceRule {
+  static constexpr std::string_view kName = "and_exclusion_coalesce";
+  static constexpr std::array kTargets{Type<And>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct AndEmptyRule {
+  static constexpr std::string_view kName = "and_empty";
+  static constexpr std::array kTargets{Type<And>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct OrEmptyRule {
+  static constexpr std::string_view kName = "or_empty";
+  static constexpr std::array kTargets{Type<Or>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct AndAllFoldRule {
+  static constexpr std::string_view kName = "and_all_fold";
+  static constexpr std::array kTargets{Type<And>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct OrAllFoldRule {
+  static constexpr std::string_view kName = "or_all_fold";
+  static constexpr std::array kTargets{Type<Or>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct SingleChildRule {
+  static constexpr std::string_view kName = "single_child";
+  static constexpr std::array kTargets{Type<And>::id(), Type<Or>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct ByTermsRule {
+  static constexpr std::string_view kName = "by_terms";
+  static constexpr std::array kTargets{Type<And>::id(), Type<Or>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct OrMinMatchZeroRule {
+  static constexpr std::string_view kName = "or_min_match_zero";
+  static constexpr std::array kTargets{Type<Or>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct OrUnsatRule {
+  static constexpr std::string_view kName = "or_unsat";
+  static constexpr std::array kTargets{Type<Or>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct OrAllRequiredRule {
+  static constexpr std::string_view kName = "or_all_required";
+  static constexpr std::array kTargets{Type<Or>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct EmptyAndRule {
+  static constexpr std::string_view kName = "empty_and";
+  static constexpr std::array kTargets{Type<And>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct MixedDegenerateRule {
+  static constexpr std::string_view kName = "mixed_degenerate";
+  static constexpr std::array kTargets{Type<MixedBooleanFilter>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
 
 template<typename T>
 bool CanSplice(const T& parent, const Filter& child) noexcept {
@@ -409,6 +524,23 @@ bool MixedDegenerateRule::Apply(Filter::ptr& slot,
     return true;
   }
   return false;
+}
+
+void InitBooleanRules() {
+  RegisterRule<FlattenAnd>();
+  RegisterRule<FlattenOr>();
+  RegisterRule<AndExclusionCoalesceRule>();
+  RegisterRule<AndEmptyRule>();
+  RegisterRule<OrEmptyRule>();
+  RegisterRule<AndAllFoldRule>();
+  RegisterRule<OrAllFoldRule>();
+  RegisterRule<SingleChildRule>();
+  RegisterRule<ByTermsRule>();
+  RegisterRule<OrMinMatchZeroRule>();
+  RegisterRule<OrUnsatRule>();
+  RegisterRule<OrAllRequiredRule>();
+  RegisterRule<EmptyAndRule>();
+  RegisterRule<MixedDegenerateRule>();
 }
 
 }  // namespace irs::optimizer

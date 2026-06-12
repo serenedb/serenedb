@@ -24,10 +24,31 @@
 #include <vector>
 
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/optimizer/common.hpp"
 #include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/terms_filter.hpp"
 
 namespace irs::optimizer {
+namespace {
+
+struct ByTermsMinMatchZeroRule {
+  static constexpr std::string_view kName = "by_terms_min_match_zero";
+  static constexpr std::array kTargets{Type<ByTerms>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct ByTermsDegenerateRule {
+  static constexpr std::string_view kName = "by_terms_degenerate";
+  static constexpr std::array kTargets{Type<ByTerms>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+}  // namespace
 
 bool ByTermsMinMatchZeroRule::Apply(Filter::ptr& slot,
                                     const OptimizeContext& ctx) {
@@ -78,6 +99,11 @@ bool ByTermsDegenerateRule::Apply(Filter::ptr& slot,
   by_term->boost(node.Boost() * term.boost);
   slot = std::move(by_term);
   return true;
+}
+
+void InitTermsRules() {
+  RegisterRule<ByTermsMinMatchZeroRule>();
+  RegisterRule<ByTermsDegenerateRule>();
 }
 
 }  // namespace irs::optimizer

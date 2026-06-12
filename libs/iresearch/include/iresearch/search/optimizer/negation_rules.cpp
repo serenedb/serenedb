@@ -23,9 +23,46 @@
 #include <memory>
 
 #include "iresearch/search/all_docs_provider.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/optimizer/common.hpp"
 
 namespace irs::optimizer {
+namespace {
+
+struct NotSimplifyRule {
+  static constexpr std::string_view kName = "not_simplify";
+  static constexpr std::array kTargets{Type<Not>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct NotLowerRule {
+  static constexpr std::string_view kName = "not_lower";
+  static constexpr std::array kTargets{Type<Not>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct ExclusionRule {
+  static constexpr std::string_view kName = "exclusion_simplify";
+  static constexpr std::array kTargets{Type<Exclusion>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct ExclusionDoubleNegationRule {
+  static constexpr std::string_view kName = "exclusion_double_negation";
+  static constexpr std::array kTargets{Type<Exclusion>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+}  // namespace
 
 bool NotSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   size_t negations = 0;
@@ -134,6 +171,13 @@ bool ExclusionDoubleNegationRule::Apply(Filter::ptr& slot,
   exclusion->boost(node.Boost());
   slot = std::move(exclusion);
   return true;
+}
+
+void InitNegationRules() {
+  RegisterRule<NotSimplifyRule>();
+  RegisterRule<NotLowerRule>();
+  RegisterRule<ExclusionRule>();
+  RegisterRule<ExclusionDoubleNegationRule>();
 }
 
 }  // namespace irs::optimizer

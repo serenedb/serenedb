@@ -20,29 +20,8 @@
 
 #pragma once
 
-#include <array>
-#include <string_view>
-
-#include "iresearch/search/filter_optimizer.hpp"
-#include "iresearch/search/granular_range_filter.hpp"
-#include "iresearch/search/range_filter.hpp"
-
 namespace irs::optimizer {
 
-struct RangeDegenerateRule {
-  static constexpr std::string_view kName = "range_degenerate";
-  static constexpr std::array kTargets{Type<ByRange>::id()};
-  static constexpr bool kEnable = true;
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
-};
-
-struct GranularRangeDegenerateRule {
-  static constexpr std::string_view kName = "granular_range_degenerate";
-  static constexpr std::array kTargets{Type<ByGranularRange>::id()};
-  static constexpr bool kEnable = true;
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
-};
+void InitRangeRules();
 
 }  // namespace irs::optimizer

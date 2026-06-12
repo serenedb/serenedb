@@ -1,0 +1,211 @@
+statement ok
+CREATE TABLE fo_rng (id INTEGER PRIMARY KEY, s VARCHAR, n INTEGER);
+
+statement ok
+CREATE INDEX fo_rng_idx ON fo_rng USING inverted(id, s, n);
+
+statement ok
+INSERT INTO fo_rng VALUES
+  (1, 'alpha', 1),
+  (2, 'beta',  2),
+  (3, 'gamma', 3),
+  (4, 'delta', 4);
+
+statement ok
+VACUUM (REFRESH_TABLE) fo_rng;
+
+query
+EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_between('alpha', 'alpha', true, true);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_rng_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││ s(string) = alpha ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_between('alpha', 'alpha', true, false);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_rng_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││       EMPTY       ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~0 rows          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_rng_idx WHERE s @@ ts_between('alpha', 'gamma', true, true);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_rng_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││       Range       ││  │
+│  ││    ────────────   ││  │
+│  ││ s(string) >=alpha,││  │
+│  ││       <=gamma     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_rng_idx WHERE n @@ ts_between(2, 2, true, true);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_rng_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││  n(numeric) = \\x0 ││  │
+│  ││   \\x80\\x0\\x0\\x2   ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_rng_idx WHERE n @@ ts_between(2, 2, true, false);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_rng_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││       EMPTY       ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~0 rows          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_rng_idx WHERE n @@ ts_between(2, 4, true, true);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_rng_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││   GranularRange   ││  │
+│  ││    ────────────   ││  │
+│  ││ n(numeric) >=( \\x0││  │
+│  ││ \\x80\\x0\\x0\\x2 \\x10││  │
+│  ││ \\x80\\x0 ), <=( \\x0││  │
+│  ││ \\x80\\x0\\x0\\x4 \\x10││  │
+│  ││     \\x80\\x0 )     ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_rng_idx WHERE s IN ('alpha');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_rng_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││ s(string) = alpha ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_rng_idx WHERE s IN ('alpha', 'beta');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_rng_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││       TERMS       ││  │
+│  ││    ────────────   ││  │
+│  ││ s(string) {['alpha││  │
+│  ││ ', 1],['beta', 1] ││  │
+│  ││   ,} min_match=1  ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘

@@ -125,13 +125,28 @@ struct Clause {
   bool uses_match = false;
 };
 
-Clause TranslateQuery(JsonValue value);
+// nullptr = unmapped field (matches nothing, like ES); "_id" is implicitly
+// a keyword.
+const std::string* FieldType(const FieldTypes& fields,
+                             const std::string& name) {
+  static const std::string kKeyword = "keyword";
+  if (name == "_id") {
+    return &kKeyword;
+  }
+  const auto it = fields.find(name);
+  return it == fields.end() ? nullptr : &it->second;
+}
+
+constexpr std::string_view kMatchNone = "FALSE";
+
+Clause TranslateQuery(JsonValue value, const FieldTypes& fields);
 
 // {"match": {"field": "text"}} or {"field": {"query": "...", "operator":
 // "and"|"or"}}. operator=or tokenizes with ANY semantics (ts_tokenize),
 // operator=and requires every token (plainto_tsquery); match_phrase is the
 // positional ts_phrase.
-Clause TranslateMatch(JsonValue value, bool phrase) {
+Clause TranslateMatch(JsonValue value, const FieldTypes& fields,
+                      bool phrase) {
   const std::string_view what = phrase ? "match_phrase" : "match";
   auto object = Object(value, what);
   std::string field;
@@ -171,6 +186,16 @@ Clause TranslateMatch(JsonValue value, bool phrase) {
   if (field.empty()) {
     Fail(absl::StrCat("[", what, "] requires a field"));
   }
+  const auto* type = FieldType(fields, field);
+  if (type == nullptr) {
+    return {std::string{kMatchNone}, false};
+  }
+  if (*type != "text") {
+    // ES analyzes the match needle with the field's analyzer; for keyword
+    // (and other exact) fields that is the identity, i.e. equality.
+    return {absl::StrCat(SqlIdentifier(field), " = ", SqlLiteral(query)),
+            false};
+  }
   const std::string_view ts_query = phrase        ? "ts_phrase("
                                     : conjunction ? "plainto_tsquery("
                                                   : "ts_tokenize(";
@@ -179,12 +204,15 @@ Clause TranslateMatch(JsonValue value, bool phrase) {
           true};
 }
 
-// {"term": {"field": v}} or {"field": {"value": v}}.
-Clause TranslateTerm(JsonValue value) {
+// {"term": {"field": v}} or {"field": {"value": v}}. A term against a text
+// field is a single-token lookup in the inverted index (the needle passes
+// through the column analyzer, slightly more lenient than ES's unanalyzed
+// term); equality scans of multi-KB text bodies are not an option.
+Clause TranslateTerm(JsonValue value, const FieldTypes& fields) {
   auto object = Object(value, "term");
-  std::string sql;
+  Clause out;
   for (auto entry : object) {
-    if (!sql.empty()) {
+    if (!out.sql.empty()) {
       Fail("[term] supports exactly one field");
     }
     const auto field = std::string{Key(entry)};
@@ -209,23 +237,36 @@ Clause TranslateTerm(JsonValue value) {
     } else {
       literal = Scalar(body, field);
     }
-    sql = absl::StrCat(SqlIdentifier(field), " = ", literal);
+    const auto* field_type = FieldType(fields, field);
+    if (field_type == nullptr) {
+      out.sql = kMatchNone;
+    } else if (*field_type == "text") {
+      out.sql = absl::StrCat(SqlIdentifier(field), " @@ ts_tokenize(",
+                             literal.front() == '\'' ? literal
+                                                      : SqlLiteral(literal),
+                             ")");
+      out.uses_match = true;
+    } else {
+      out.sql = absl::StrCat(SqlIdentifier(field), " = ", literal);
+    }
   }
-  if (sql.empty()) {
+  if (out.sql.empty()) {
     Fail("[term] requires a field");
   }
-  return {std::move(sql), false};
+  return out;
 }
 
 // {"range": {"field": {"gte": x, "lt": y, ...}}}
-Clause TranslateRange(JsonValue value) {
+Clause TranslateRange(JsonValue value, const FieldTypes& fields) {
   auto object = Object(value, "range");
   std::string sql;
+  bool unmapped = false;
   for (auto entry : object) {
     if (!sql.empty()) {
       Fail("[range] supports exactly one field");
     }
     const auto field = std::string{Key(entry)};
+    unmapped = FieldType(fields, field) == nullptr;
     const auto ident = SqlIdentifier(field);
     std::vector<std::string> parts;
     for (auto param : Object(Value(entry), "range")) {
@@ -253,11 +294,15 @@ Clause TranslateRange(JsonValue value) {
   if (sql.empty()) {
     Fail("[range] requires a field");
   }
+  if (unmapped) {
+    return {std::string{kMatchNone}, false};
+  }
   return {std::move(sql), false};
 }
 
 // A clause group value is a single query object or an array of them.
-std::vector<Clause> TranslateGroup(JsonValue value, std::string_view what) {
+std::vector<Clause> TranslateGroup(JsonValue value, const FieldTypes& fields,
+                                   std::string_view what) {
   std::vector<Clause> out;
   simdjson::ondemand::json_type type;
   if (value.type().get(type) != simdjson::SUCCESS) {
@@ -273,15 +318,15 @@ std::vector<Clause> TranslateGroup(JsonValue value, std::string_view what) {
       if (element.get(item) != simdjson::SUCCESS) {
         Fail(absl::StrCat("malformed [", what, "]"));
       }
-      out.push_back(TranslateQuery(item));
+      out.push_back(TranslateQuery(item, fields));
     }
   } else {
-    out.push_back(TranslateQuery(value));
+    out.push_back(TranslateQuery(value, fields));
   }
   return out;
 }
 
-Clause TranslateBool(JsonValue value) {
+Clause TranslateBool(JsonValue value, const FieldTypes& fields) {
   std::vector<Clause> must;
   std::vector<Clause> must_not;
   std::vector<Clause> should;
@@ -289,15 +334,15 @@ Clause TranslateBool(JsonValue value) {
   for (auto entry : Object(value, "bool")) {
     const auto key = Key(entry);
     if (key == "must" || key == "filter") {
-      auto group = TranslateGroup(Value(entry), key);
+      auto group = TranslateGroup(Value(entry), fields, key);
       must.insert(must.end(), std::make_move_iterator(group.begin()),
                   std::make_move_iterator(group.end()));
     } else if (key == "must_not") {
-      auto group = TranslateGroup(Value(entry), key);
+      auto group = TranslateGroup(Value(entry), fields, key);
       must_not.insert(must_not.end(), std::make_move_iterator(group.begin()),
                       std::make_move_iterator(group.end()));
     } else if (key == "should") {
-      should = TranslateGroup(Value(entry), key);
+      should = TranslateGroup(Value(entry), fields, key);
     } else if (key == "minimum_should_match") {
       min_should = Int(Value(entry), "minimum_should_match");
       if (min_should != 0 && min_should != 1) {
@@ -344,7 +389,7 @@ Clause TranslateBool(JsonValue value) {
   return out;
 }
 
-Clause TranslateQuery(JsonValue value) {
+Clause TranslateQuery(JsonValue value, const FieldTypes& fields) {
   Clause out;
   for (auto entry : Object(value, "query")) {
     if (!out.sql.empty()) {
@@ -355,15 +400,15 @@ Clause TranslateQuery(JsonValue value) {
       Object(Value(entry), "match_all");
       out = {"TRUE", false};
     } else if (key == "match") {
-      out = TranslateMatch(Value(entry), /*phrase=*/false);
+      out = TranslateMatch(Value(entry), fields, /*phrase=*/false);
     } else if (key == "match_phrase") {
-      out = TranslateMatch(Value(entry), /*phrase=*/true);
+      out = TranslateMatch(Value(entry), fields, /*phrase=*/true);
     } else if (key == "term") {
-      out = TranslateTerm(Value(entry));
+      out = TranslateTerm(Value(entry), fields);
     } else if (key == "range") {
-      out = TranslateRange(Value(entry));
+      out = TranslateRange(Value(entry), fields);
     } else if (key == "bool") {
-      out = TranslateBool(Value(entry));
+      out = TranslateBool(Value(entry), fields);
     } else {
       Fail(absl::StrCat("query type [", key, "] is not supported yet"));
     }
@@ -564,8 +609,62 @@ bool ParseBody(std::string_view body, HttpResponseWriter& writer, F&& fill) {
 
 }  // namespace
 
-bool ParseSearchBody(std::string_view body, SearchRequest& out,
-                     HttpResponseWriter& writer) {
+bool ParseFieldTypes(std::string_view mappings_json, FieldTypes& out) {
+  try {
+    simdjson::padded_string padded{mappings_json};
+    simdjson::ondemand::parser parser;
+    simdjson::ondemand::document doc;
+    if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+      return false;
+    }
+    simdjson::ondemand::object root;
+    if (doc.get_object().get(root) != simdjson::SUCCESS) {
+      return false;
+    }
+    for (auto section : root) {
+      std::string_view section_key;
+      if (section.unescaped_key().get(section_key) != simdjson::SUCCESS) {
+        return false;
+      }
+      if (section_key != "properties") {
+        continue;
+      }
+      simdjson::ondemand::object properties;
+      if (section.value().get_object().get(properties) != simdjson::SUCCESS) {
+        return false;
+      }
+      for (auto property : properties) {
+        std::string_view name;
+        if (property.unescaped_key().get(name) != simdjson::SUCCESS) {
+          return false;
+        }
+        simdjson::ondemand::object body;
+        if (property.value().get_object().get(body) != simdjson::SUCCESS) {
+          return false;
+        }
+        for (auto param : body) {
+          std::string_view key;
+          if (param.unescaped_key().get(key) != simdjson::SUCCESS) {
+            return false;
+          }
+          if (key == "type") {
+            std::string_view type;
+            if (param.value().get_string().get(type) != simdjson::SUCCESS) {
+              return false;
+            }
+            out.emplace(std::string{name}, std::string{type});
+          }
+        }
+      }
+    }
+  } catch (const std::exception&) {
+    return false;
+  }
+  return true;
+}
+
+bool ParseSearchBody(std::string_view body, const FieldTypes& fields,
+                     SearchRequest& out, HttpResponseWriter& writer) {
   const bool ok = ParseBody(body, writer, [&](JsonObject& object) {
     for (auto entry : object) {
       const auto key = Key(entry);
@@ -586,7 +685,7 @@ bool ParseSearchBody(std::string_view body, SearchRequest& out,
             doc.get_value().get(query) != simdjson::SUCCESS) {
           Fail("malformed query");
         }
-        auto clause = TranslateQuery(query);
+        auto clause = TranslateQuery(query, fields);
         out.where = std::move(clause.sql);
         out.uses_match = clause.uses_match;
       } else if (key == "aggs" || key == "aggregations") {
@@ -635,7 +734,8 @@ bool ParseSearchBody(std::string_view body, SearchRequest& out,
   return true;
 }
 
-bool TranslateStoredQuery(std::string_view query_json, SearchRequest& out,
+bool TranslateStoredQuery(std::string_view query_json,
+                          const FieldTypes& fields, SearchRequest& out,
                           HttpResponseWriter& writer) {
   if (query_json.empty()) {
     return true;
@@ -649,7 +749,7 @@ bool TranslateStoredQuery(std::string_view query_json, SearchRequest& out,
         doc.get_value().get(query) != simdjson::SUCCESS) {
       Fail("malformed scroll id", "search_context_missing_exception");
     }
-    auto clause = TranslateQuery(query);
+    auto clause = TranslateQuery(query, fields);
     if (clause.sql != "TRUE") {
       out.where = std::move(clause.sql);
     }
@@ -664,8 +764,8 @@ bool TranslateStoredQuery(std::string_view query_json, SearchRequest& out,
   }
 }
 
-bool ParseCountBody(std::string_view body, SearchRequest& out,
-                    HttpResponseWriter& writer) {
+bool ParseCountBody(std::string_view body, const FieldTypes& fields,
+                    SearchRequest& out, HttpResponseWriter& writer) {
   const bool ok = ParseBody(body, writer, [&](JsonObject& object) {
     for (auto entry : object) {
       const auto key = Key(entry);
@@ -673,7 +773,7 @@ bool ParseCountBody(std::string_view body, SearchRequest& out,
         Fail(absl::StrCat("request does not support [", key, "]"),
              "parsing_exception");
       }
-      auto clause = TranslateQuery(Value(entry));
+      auto clause = TranslateQuery(Value(entry), fields);
       out.where = std::move(clause.sql);
       out.uses_match = clause.uses_match;
     }

@@ -537,13 +537,27 @@ def test_search_errors(conn, corpus):
          "illegal_argument_exception"),
         ({"size": 20000}, "illegal_argument_exception"),
         ({"highlight": {}}, "illegal_argument_exception"),
-        ({"query": {"term": {"missing_field": "x"}}},
-         "query_shard_exception"),
     ]
     for body, expected in cases:
         status, response = _search(conn, corpus, body)
         assert status == 400, body
         assert response["error"]["type"] == expected, body
+
+    # unmapped fields match nothing, like ES
+    status, body = _search(conn, corpus,
+                           {"query": {"term": {"missing_field": "x"}}})
+    assert status == 200
+    assert body["hits"]["total"]["value"] == 0
+
+    # term on a text field is an index token lookup
+    status, body = _search(conn, corpus,
+                           {"query": {"term": {"title": "quick"}}})
+    assert sorted(h["_id"] for h in body["hits"]["hits"]) == ["1", "3"]
+
+    # match on a keyword field is equality
+    status, body = _search(conn, corpus,
+                           {"query": {"match": {"author": "verne"}}})
+    assert [h["_id"] for h in body["hits"]["hits"]] == ["3"]
 
     status, body = _request(conn, "GET", "/drv_es_missing/_search")
     assert status == 404

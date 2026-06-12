@@ -24,9 +24,19 @@
 #include <string_view>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "network/http/response_writer.h"
 
 namespace sdb::network::http::es {
+
+// Field name -> ES type, from the index mapping. Translation is type-aware:
+// text fields query through the inverted index, everything else through
+// plain predicates, unmapped fields match nothing (like ES). "_id" is
+// implicitly a keyword.
+using FieldTypes = containers::FlatHashMap<std::string, std::string>;
+
+// Parses es_mapping() output ({"properties":{"f":{"type":"text"},...}}).
+bool ParseFieldTypes(std::string_view mappings_json, FieldTypes& out);
 
 // One aggregation request; sub-aggregations are not supported.
 struct Aggregation {
@@ -78,17 +88,18 @@ struct SearchRequest {
 
 // Parses a _search body ('' = match_all). On failure writes the ES error
 // envelope and returns false.
-bool ParseSearchBody(std::string_view body, SearchRequest& out,
-                     HttpResponseWriter& writer);
+bool ParseSearchBody(std::string_view body, const FieldTypes& fields,
+                     SearchRequest& out, HttpResponseWriter& writer);
 
 // Translates a query container captured in query_raw (scroll continuation);
 // '' = match_all. Fills where/uses_match only.
-bool TranslateStoredQuery(std::string_view query_json, SearchRequest& out,
+bool TranslateStoredQuery(std::string_view query_json,
+                          const FieldTypes& fields, SearchRequest& out,
                           HttpResponseWriter& writer);
 
 // Parses a _count body: only {"query": {...}} (or nothing) is legal; fills
 // where/uses_match. On failure writes the error envelope and returns false.
-bool ParseCountBody(std::string_view body, SearchRequest& out,
-                    HttpResponseWriter& writer);
+bool ParseCountBody(std::string_view body, const FieldTypes& fields,
+                    SearchRequest& out, HttpResponseWriter& writer);
 
 }  // namespace sdb::network::http::es

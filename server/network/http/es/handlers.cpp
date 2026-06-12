@@ -614,6 +614,25 @@ bool RunAggregation(RequestContext& ctx, const Aggregation& agg,
   }
 }
 
+// Type-aware query translation needs the index's field types; one catalog
+// read per request (es_mapping doubles as the existence check -> 404).
+// false = the error response is already written.
+bool FetchFieldTypes(RequestContext& ctx, std::string_view index,
+                     FieldTypes& fields, http::HttpResponseWriter& writer) {
+  auto result =
+    RunSql(ctx, absl::StrCat("CALL es_mapping(", SqlLiteral(index), ")"),
+           writer, index);
+  if (!result) {
+    return false;
+  }
+  const auto mapping = result->GetValue(0, 0).GetValue<std::string>();
+  if (!ParseFieldTypes(mapping, fields)) {
+    WriteError(writer, 500, "exception", "malformed index mapping");
+    return false;
+  }
+  return true;
+}
+
 // ES sends scroll/sort as URL params on the initial scroll search; only the
 // _doc order is supported (the cursor is the "_id" keyset).
 bool WantsScroll(const HttpRequest& request) {
@@ -650,8 +669,12 @@ class SearchHandler final : public HttpHandler {
         return yaclib::MakeFuture();
       }
     }
+    FieldTypes fields;
+    if (!FetchFieldTypes(ctx, index, fields, writer)) {
+      return yaclib::MakeFuture();
+    }
     // The body overrides URL params; no body = match_all.
-    if (!ParseSearchBody(FlattenBody(request.body), spec, writer)) {
+    if (!ParseSearchBody(FlattenBody(request.body), fields, spec, writer)) {
       return yaclib::MakeFuture();
     }
 
@@ -861,8 +884,12 @@ class ScrollHandler final : public HttpHandler {
       WriteScrollPage(writer, state, nullptr, TookMs(start));
       return yaclib::MakeFuture();
     }
+    FieldTypes fields;
+    if (!FetchFieldTypes(ctx, state.index, fields, writer)) {
+      return yaclib::MakeFuture();
+    }
     SearchRequest spec;
-    if (!TranslateStoredQuery(state.query, spec, writer)) {
+    if (!TranslateStoredQuery(state.query, fields, spec, writer)) {
       return yaclib::MakeFuture();
     }
     spec.include_source = state.include_source;
@@ -935,8 +962,12 @@ class CountHandler final : public HttpHandler {
                 R"("skipped":0,"failed":0}})");
       return yaclib::MakeFuture();
     }
+    FieldTypes fields;
+    if (!FetchFieldTypes(ctx, index, fields, writer)) {
+      return yaclib::MakeFuture();
+    }
     SearchRequest spec;
-    if (!ParseCountBody(FlattenBody(request.body), spec, writer)) {
+    if (!ParseCountBody(FlattenBody(request.body), fields, spec, writer)) {
       return yaclib::MakeFuture();
     }
     auto sql =

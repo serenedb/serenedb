@@ -13,9 +13,8 @@
 # and 3rd launches of a query:
 #  - default (no env):     hot only -- 1 warmup launch + hot.
 #  - PERF_COLD=1:          same-session cold (1st launch) + hot.
-#  - PERF_DROP_CACHES=1:   ClickBench-style: sync + drop OS cache before
-#                          each query, server keeps running; cold + hot
-#                          (PERF_DROP_CACHES wins over PERF_COLD).
+#  - PERF_DROP_CACHES=1:   restart + drop_caches before each query +
+#                          cold + hot (PERF_DROP_CACHES wins over PERF_COLD).
 #
 # Regen knobs (independent):
 #  - PERF_REGEN_PARQUET=1: rebuild the source parquet only. Implies a
@@ -28,7 +27,8 @@
 #  - PERF_EXTERNAL_SERENED=1: connect to a serened the user has already
 #                             started on PERF_PORT (default 6263). The
 #                             script does NOT spawn or kill serened.
-#                             Incompatible with parquet regen (would
+#                             Incompatible with PERF_DROP_CACHES (needs
+#                             a restart) and with any regen path (would
 #                             surprise the user's data dir).
 
 set -euo pipefail
@@ -146,6 +146,13 @@ run_setup() {
 
 PQ_SQL_PATH=$(printf '%s' "${PARQUET_FILE}" | sed "s/'/''/g")
 NDB_SQL_PATH=$(printf '%s' "${NATIVE_DB}" | sed "s/'/''/g")
+
+# Reject incompatible env combinations up-front.
+if [[ "${EXTERNAL_SERENED}" == "1" ]] && [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
+	echo "ERROR: PERF_EXTERNAL_SERENED=1 is incompatible with PERF_DROP_CACHES=1" >&2
+	echo "  (drop_caches needs to kill+restart serened, which would clobber the user's server)" >&2
+	exit 1
+fi
 
 # Two independent regen knobs:
 #   PERF_REGEN_PARQUET=1 -- rebuild the synthetic source parquet.
@@ -407,19 +414,17 @@ QUERIES=(
 #
 # - PERF_COLD=1: same-session cold + hot.  "cold" means 1st-touch within
 #   the same session (per-segment open + per-codec init cost).  Does NOT
-#   capture OS-cache fetch cost because the .col files are still in page
+#   capture OS-cache fetch cost because the .cs files are still in page
 #   cache from CREATE INDEX, AND DuckDB's BufferManager keeps the native
-#   side warm.
+#   side warm across the drop.
 #
-# - PERF_DROP_CACHES=1: ClickBench-style cold + hot.  The server stays up;
-#   before each query we sync + drop the OS page cache, exactly like
-#   ClickBench's per-query `echo 3 > drop_caches`.  cold = 1st launch
-#   after the drop; hot = avg of the 2nd + 3rd, in a steady-state process.
-#   After an in-run regen the server is restarted once so the first label
-#   isn't fake-warm from the CTAS/CREATE INDEX.  Inherited ClickBench
-#   caveat: drop_caches cannot evict pages mmap'd by the live server nor
-#   DuckDB's BufferManager, so data touched by EARLIER labels stays warm;
-#   per-label cold is real because labels touch disjoint columns.
+# - PERF_DROP_CACHES=1: true cold + hot.  Before each query we kill
+#   serened, drop the OS page cache, restart, and re-attach native_db.
+#   The restart drops both serened's BlockHandles AND DuckDB's
+#   BufferManager state for the native side, so both sides re-read from
+#   disk on the first query.  The view-backed `bench_idx` alias is
+#   reloaded by serened on startup (fixed in #662) so no CREATE INDEX is
+#   needed and no data duplication occurs.
 #
 #   sudo runs *only* the drop_caches command.  Credentials are cached
 #   once via `sudo -v` at the start so the bench runs uninterrupted.
@@ -444,6 +449,19 @@ SET search_path TO public, native_db.main;
 "
 }
 
+cycle_cold() {
+	# Server has to exit so its .cs mmaps release the pages before
+	# drop_caches can free them.
+	killall -9 serened >/dev/null 2>&1 || true
+	for _ in $(seq 1 30); do
+		pgrep -f "${SERENED_BIN}" >/dev/null || break
+		sleep 0.2
+	done
+	drop_os_cache_with_sudo || return 1
+	start_server
+	reattach_native_db
+}
+
 # Default mode: hot only.  1 warmup launch, hot = avg of 2nd + 3rd.
 run_pass_hot_only() {
 	for q in "${QUERIES[@]}"; do
@@ -462,16 +480,19 @@ run_pass_same_session() {
 	done
 }
 
-# PERF_DROP_CACHES=1: ClickBench-style -- sync + drop the OS page cache
-# before each query, server keeps running.
+# PERF_DROP_CACHES=1: restart-and-drop-OS-cache before each query, then
+# cold + hot.  Each cycle: kill serened -> drop_caches -> restart
+# -> reattach native.  Clears DuckDB BufferManager too so native isn't
+# unfairly warm.  cold = 1st launch from disk; hot = avg of the 2nd and
+# 3rd launches (no first-touch segment-open cost).
 run_pass_drop_caches() {
 	for q in "${QUERIES[@]}"; do
 		local label="${q%%|*}" expr="${q#*|}"
-		drop_os_cache_with_sudo || {
-			echo "ERROR: drop_caches failed" >&2
+		cycle_cold || {
+			echo "ERROR: drop_caches cycle failed" >&2
 			return 1
 		}
-		bench_pair_idx "cold" "${label}" "${expr}" # 1st launch after drop
+		bench_pair_idx "cold" "${label}" "${expr}" # 1st launch, timed
 		bench_hot_avg "${label}" "${expr}"         # 2nd + 3rd, averaged
 	done
 }
@@ -479,15 +500,16 @@ run_pass_drop_caches() {
 # Dispatch the bench pass.  PERF_DROP_CACHES wins over PERF_COLD.
 HAS_COLD=0
 echo
-# Both cold modes need sudo for drop_caches. Cache the credential up front
-# (sudo would otherwise prompt mid-loop and stall the bench) and refresh it
-# in the background so a long bench doesn't expire the cache.
-setup_sudo_for_drop_caches() {
-	echo "caching sudo credential for drop_caches"
+if [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
+	HAS_COLD=1
+	# Cache the sudo credential up front. Without this, sudo would
+	# prompt mid-loop and stall the bench.
+	echo "PERF_DROP_CACHES=1: caching sudo credential for drop_caches"
 	if ! sudo -v; then
 		echo "ERROR: failed to acquire sudo for drop_caches" >&2
 		exit 1
 	fi
+	# Refresh in the background so a long bench doesn't expire the cache.
 	(
 		while kill -0 "$$" 2>/dev/null; do
 			sudo -n true 2>/dev/null || break
@@ -496,28 +518,17 @@ setup_sudo_for_drop_caches() {
 	) &
 	SUDO_REFRESH_PID=$!
 	trap "kill ${SUDO_REFRESH_PID} 2>/dev/null; killall -9 serened >/dev/null 2>&1 || true" EXIT
-}
-if [[ "${PERF_DROP_CACHES:-0}" == "1" ]]; then
-	HAS_COLD=1
-	setup_sudo_for_drop_caches
-	if [[ "${NEED_DATA}" == "1" ]] && [[ "${EXTERNAL_SERENED}" != "1" ]]; then
-		# The regen's CTAS/checkpoint left native's BufferManager populated
-		# (and serened's mmaps faulted); restart once so the first cold
-		# label isn't fake-warm.
-		start_server
-		reattach_native_db
-	fi
-	echo "================ CLICKBENCH-STYLE COLD / HOT PASS (drop_caches, no restart) ================"
+	echo "================ TRUE-COLD / HOT PASS (restart + drop_caches) ================"
 	run_pass_drop_caches
 elif [[ "${PERF_COLD:-0}" == "1" ]]; then
 	HAS_COLD=1
 	echo "================ COLD / HOT PASS (same-session) ================"
-	echo "rerun with PERF_DROP_CACHES=1 for ClickBench-style drop-OS-cache cold timings"
+	echo "rerun with PERF_DROP_CACHES=1 for restart+drop-OS-cache cold timings"
 	run_pass_same_session
 else
 	echo "================ HOT PASS ================"
 	echo "rerun with PERF_COLD=1 for same-session cold timings,"
-	echo "or PERF_DROP_CACHES=1 for ClickBench-style drop-OS-cache cold timings"
+	echo "or PERF_DROP_CACHES=1 for restart+drop-OS-cache cold timings"
 	run_pass_hot_only
 fi
 

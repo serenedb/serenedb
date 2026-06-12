@@ -20,17 +20,18 @@
 
 #include "connector/duckdb_physical_ctas.h"
 
-#include <duckdb/execution/execution_context.hpp>
+#include <duckdb/main/appender.hpp>
+#include <duckdb/main/connection.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 
-#include "app/app_server.h"
+#include "basics/assert.h"
 #include "basics/debugging.h"
-#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
-#include "catalog/sequence.h"
+#include "catalog/store/store.h"
+#include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -39,14 +40,27 @@
 namespace sdb::connector {
 namespace {
 
-// TODO(mbkkt) fix this, drop by object id! Otherwise rename can break this
-struct CTASGlobalState final : public SSTInsertGlobalState {
+struct CTASGlobalState final : public duckdb::GlobalSinkState {
   ObjectId database_id;
   std::string database_name;
   std::string schema_name;
   std::string table_name;
+  // Appends ride a dedicated connection: the store table was created on
+  // the catalog-store connection mid-statement, so it is invisible to (and
+  // would write-write conflict with) the user transaction. The table only
+  // becomes user-visible at the RemoveTombstone rename, so rows committed
+  // through this connection appear atomically.
+  std::unique_ptr<duckdb::Connection> store_conn;
+  std::unique_ptr<duckdb::Appender> appender;
+  duckdb::idx_t insert_count = 0;
+  bool finalized = false;
 
   ~CTASGlobalState() final {
+    try {
+      appender.reset();
+      store_conn.reset();
+    } catch (...) {
+    }
     if (!finalized && !table_name.empty()) {
       try {
         auto& catalog = catalog::CatalogFeature::instance().Global();
@@ -58,18 +72,22 @@ struct CTASGlobalState final : public SSTInsertGlobalState {
   }
 };
 
+struct CTASSourceState final : public duckdb::GlobalSourceState {
+  bool done = false;
+};
+
 }  // namespace
 
 SereneDBPhysicalCTAS::SereneDBPhysicalCTAS(
   duckdb::PhysicalPlan& plan,
   duckdb::unique_ptr<duckdb::BoundCreateTableInfo> info,
   duckdb::SchemaCatalogEntry& schema, duckdb::idx_t estimated_cardinality)
-  : SereneDBPhysicalSSTInsert(plan, nullptr, {duckdb::LogicalType::BIGINT},
-                              estimated_cardinality),
+  : duckdb::PhysicalOperator(plan,
+                             duckdb::PhysicalOperatorType::CREATE_TABLE_AS,
+                             {duckdb::LogicalType::BIGINT},
+                             estimated_cardinality),
     _info(std::move(info)),
     _schema(schema) {}
-
-// --- GetGlobalSinkState: create table, then delegate to parent ---
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
@@ -123,9 +141,6 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
     SDB_THROW(std::move(r));
   }
 
-  // Get the newly created table and set up SST writers.
-  // Don't call parent's GetGlobalSinkState -- it creates index writers which
-  // crash on a tombstoned table not yet visible in the connection snapshot.
   auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_table = snapshot->GetTable(database_id, _schema.name,
                                           std::string{table_info.table});
@@ -134,17 +149,18 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   SDB_ASSERT(database);
 
   auto state = duckdb::make_uniq<CTASGlobalState>();
-  state->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
-    duckdb::BufferAllocator::Get(context));
   state->database_id = database_id;
   state->database_name = database->GetName();
   state->schema_name = _schema.name;
   state->table_name = table_info.table;
-  SetupSSTState(*state, *catalog_table);
 
-  state->generated_pk_seq = snapshot->GetObject<catalog::Sequence>(
-    catalog_table->GetGeneratedPkSeqId());
-  SDB_ASSERT(state->generated_pk_seq || !catalog_table->PKColumns().empty());
+  // The store table keeps its tombstone name until RemoveTombstone renames
+  // it on success.
+  state->store_conn =
+    std::make_unique<duckdb::Connection>(*context.db);
+  state->appender = std::make_unique<duckdb::Appender>(
+    *state->store_conn, std::string{catalog::kStoreDatabaseName}, "main",
+    catalog::DroppedStoreTableName(catalog_table->GetId()));
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.DropCatalogSnapshot();
@@ -152,29 +168,60 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   return state;
 }
 
-// --- Finalize: parent ingests SSTs, then we remove tombstone ---
+duckdb::SinkResultType SereneDBPhysicalCTAS::Sink(
+  duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
+  duckdb::OperatorSinkInput& input) const {
+  auto& gstate = input.global_state.Cast<CTASGlobalState>();
+  if (!gstate.appender || chunk.size() == 0) {
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
+  chunk.Flatten();
+  gstate.appender->AppendDataChunk(chunk);
+  gstate.insert_count += chunk.size();
+  return duckdb::SinkResultType::NEED_MORE_INPUT;
+}
 
 duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
-  duckdb::Pipeline& pipeline, duckdb::Event& event,
-  duckdb::ClientContext& context,
+  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
   duckdb::OperatorSinkFinalizeInput& input) const {
-  auto result =
-    SereneDBPhysicalSSTInsert::Finalize(pipeline, event, context, input);
-
-  // Remove tombstone if table was created (sink_state is non-null)
-  if (sink_state) {
-    SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
-    auto& gstate = sink_state->Cast<CTASGlobalState>();
-    auto& catalog = catalog::CatalogFeature::instance().Global();
-    auto r = catalog.RemoveTombstone(gstate.database_id, gstate.schema_name,
-                                     gstate.table_name);
-    if (!r.ok()) {
-      throw duckdb::InternalException("Failed to remove tombstone: %s",
-                                      std::string{r.errorMessage()});
-    }
+  auto& gstate = input.global_state.Cast<CTASGlobalState>();
+  if (gstate.appender) {
+    gstate.appender->Close();
+    gstate.appender.reset();
+    gstate.store_conn.reset();
   }
+  SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
+  auto& catalog = catalog::CatalogFeature::instance().Global();
+  auto r = catalog.RemoveTombstone(gstate.database_id, gstate.schema_name,
+                                   gstate.table_name);
+  if (!r.ok()) {
+    throw duckdb::InternalException("Failed to remove tombstone: %s",
+                                    std::string{r.errorMessage()});
+  }
+  gstate.finalized = true;
+  return duckdb::SinkFinalizeType::READY;
+}
 
-  return result;
+duckdb::unique_ptr<duckdb::GlobalSourceState>
+SereneDBPhysicalCTAS::GetGlobalSourceState(duckdb::ClientContext&) const {
+  return duckdb::make_uniq<CTASSourceState>();
+}
+
+duckdb::SourceResultType SereneDBPhysicalCTAS::GetDataInternal(
+  duckdb::ExecutionContext&, duckdb::DataChunk& chunk,
+  duckdb::OperatorSourceInput& input) const {
+  auto& src = input.global_state.Cast<CTASSourceState>();
+  if (src.done) {
+    return duckdb::SourceResultType::FINISHED;
+  }
+  src.done = true;
+  duckdb::idx_t count = 0;
+  if (sink_state) {
+    count = sink_state->Cast<CTASGlobalState>().insert_count;
+  }
+  chunk.SetCardinality(1);
+  chunk.SetValue(0, 0, duckdb::Value::BIGINT(static_cast<int64_t>(count)));
+  return duckdb::SourceResultType::FINISHED;
 }
 
 }  // namespace sdb::connector

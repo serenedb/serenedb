@@ -165,12 +165,27 @@ void SereneDBClientState::Register(
     };
 }
 
+namespace {
+
+// Published for the duration of the storage commit: BoundIndex appends run
+// on the committing connection's thread inside LocalStorage::Flush, after
+// TransactionPreCommit and before TransactionCommit/Rollback, with no
+// ClientContext parameter of their own.
+thread_local ConnectionContext* tls_committing_ctx = nullptr;
+
+}  // namespace
+
+ConnectionContext* CurrentCommittingContext() noexcept {
+  return tls_committing_ctx;
+}
+
 void SereneDBClientState::TransactionPreCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   // Revert SET LOCAL variables while the DuckDB transaction is still active
   // so catalog lookups performed by custom-impl settings (e.g. search_path)
   // can succeed via their normal set_local path.
   _connection_ctx->PreCommit();
+  tls_committing_ctx = _connection_ctx.get();
 }
 
 void SereneDBClientState::TransactionPreRollback(
@@ -181,6 +196,7 @@ void SereneDBClientState::TransactionPreRollback(
 
 void SereneDBClientState::TransactionCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
+  tls_committing_ctx = nullptr;
   auto r = _connection_ctx->Commit();
   if (!r.ok()) {
     throw duckdb::TransactionException("SereneDB commit failed: %s",
@@ -190,6 +206,7 @@ void SereneDBClientState::TransactionCommit(
 
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
+  tls_committing_ctx = nullptr;
   auto r = _connection_ctx->Rollback();
   if (!r.ok()) {
     throw duckdb::TransactionException("SereneDB rollback failed: %s",

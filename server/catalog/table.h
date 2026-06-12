@@ -69,6 +69,8 @@ class Table final : public Object {
   std::shared_ptr<Table> DropCheckConstraint(ObjectId constraint_id) const;
   std::shared_ptr<Table> DropColumnDefault(Column::Id column_id) const;
   std::shared_ptr<Table> DropColumn(Column::Id column_id) const;
+  std::shared_ptr<Table> DropForeignKeysReferencing(
+    ObjectId referenced_table) const;
 
  private:
   std::vector<Column> _columns;

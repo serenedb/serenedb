@@ -420,6 +420,13 @@ class SnapshotImpl : public Snapshot {
         }
       }
     }
+    for (const auto& fk : table.ForeignKeys()) {
+      if (fk.referenced_table.isSet()) {
+        ModifyDependency(fk.referenced_table,
+                         &TableDependency::fk_referencing_tables,
+                         table.GetId(), action);
+      }
+    }
     for (const auto& c : table.CheckConstraints()) {
       if (!c.expr || !c.expr->HasExpr()) {
         continue;

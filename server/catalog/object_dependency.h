@@ -149,6 +149,19 @@ class DropEmitter {
     _plan.index_drops.push_back(idx_id);
   }
 
+  // Dropping a referenced table strips the FOREIGN KEYs pointing at it
+  // from every surviving referencing table (PG DROP ... CASCADE semantics).
+  void EmitCascadeForeignKeyDrop(ObjectId referencing_table_id,
+                                 ObjectId referenced_table_id) {
+    if (_auto_drops.contains(referencing_table_id)) {
+      return;
+    }
+    auto& slot = _plan.table_rewrites[referencing_table_id];
+    CloneIntoSlot(referencing_table_id, slot);
+    slot.table =
+      slot.table->DropForeignKeysReferencing(referenced_table_id);
+  }
+
   void EmitCascadeCheckConstraintDrop(ObjectId constraint_id) {
     auto c = _lookup(constraint_id);
     SDB_ASSERT(c);
@@ -200,7 +213,7 @@ class DropEmitter {
 struct ObjectDependencyBase {
   virtual ~ObjectDependencyBase() = default;
   virtual std::shared_ptr<ObjectDependencyBase> Clone() const = 0;
-  virtual void Emit(DropEmitter&) const = 0;
+  virtual void Emit(DropEmitter&, ObjectId self) const = 0;
 };
 
 struct RelationDependency : ObjectDependencyBase {
@@ -212,15 +225,19 @@ struct RelationDependency : ObjectDependencyBase {
 struct TableDependency : RelationDependency {
   ObjectId shard_id;
   containers::FlatHashSet<ObjectId> owned_sequences;
+  containers::FlatHashSet<ObjectId> fk_referencing_tables;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TableDependency>(*this);
   }
-  void Emit(DropEmitter& e) const final {
+  void Emit(DropEmitter& e, ObjectId self) const final {
     if (shard_id.isSet()) {
       e.EmitAutoDrop(shard_id);
     }
     for (auto id : owned_sequences) {
       e.EmitAutoDrop(id);
+    }
+    for (auto id : fk_referencing_tables) {
+      e.EmitCascadeForeignKeyDrop(id, self);
     }
     for (auto id : indexes) {
       e.EmitAutoDrop(id);
@@ -238,7 +255,7 @@ struct ViewDependency : RelationDependency {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<ViewDependency>(*this);
   }
-  void Emit(DropEmitter& e) const final {
+  void Emit(DropEmitter& e, ObjectId self) const final {
     for (auto id : views) {
       e.EmitCascadeViewDrop(id);
     }
@@ -256,7 +273,7 @@ struct SequenceDependency : ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<SequenceDependency>(*this);
   }
-  void Emit(DropEmitter& e) const final {
+  void Emit(DropEmitter& e, ObjectId self) const final {
     for (auto col_id : column_defaults) {
       e.EmitCascadeColumnDefaultValueDrop(col_id);
     }
@@ -281,7 +298,7 @@ struct PgSqlTypeDependency : ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<PgSqlTypeDependency>(*this);
   }
-  void Emit(DropEmitter& e) const final {
+  void Emit(DropEmitter& e, ObjectId self) const final {
     for (auto col_id : column_types) {
       e.EmitCascadeColumnDrop(col_id);
     }
@@ -309,7 +326,7 @@ struct PgSqlFunctionDependency : ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<PgSqlFunctionDependency>(*this);
   }
-  void Emit(DropEmitter& e) const final {
+  void Emit(DropEmitter& e, ObjectId self) const final {
     for (auto id : views) {
       e.EmitCascadeViewDrop(id);
     }
@@ -333,7 +350,7 @@ struct IndexDependency : ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<IndexDependency>(*this);
   }
-  void Emit(DropEmitter& e) const final {
+  void Emit(DropEmitter& e, ObjectId self) const final {
     if (shard_id.isSet()) {
       e.EmitAutoDrop(shard_id);
     }
@@ -354,7 +371,7 @@ struct SchemaDependency : ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<SchemaDependency>(*this);
   }
-  void Emit(DropEmitter& e) const final {
+  void Emit(DropEmitter& e, ObjectId self) const final {
     for (auto id : tables) {
       e.EmitAutoDrop(id);
     }
@@ -381,7 +398,7 @@ struct DatabaseDependency : ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<DatabaseDependency>(*this);
   }
-  void Emit(DropEmitter& e) const final {
+  void Emit(DropEmitter& e, ObjectId self) const final {
     for (auto id : schemas) {
       e.EmitAutoDrop(id);
     }
@@ -393,7 +410,7 @@ struct TokenizerDependency : ObjectDependencyBase {
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TokenizerDependency>(*this);
   }
-  void Emit(DropEmitter& e) const final {
+  void Emit(DropEmitter& e, ObjectId self) const final {
     for (auto id : indexes) {
       e.EmitCascadeIndexDrop(id);
     }
@@ -405,7 +422,7 @@ inline DropPlan DropEmitter::ComputePlan() && {
     auto cur = _stack.back();
     _stack.pop_back();
     if (auto dep = _dep_lookup(cur)) {
-      dep->Emit(*this);
+      dep->Emit(*this, cur);
     }
   }
 

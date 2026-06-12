@@ -191,6 +191,15 @@ std::shared_ptr<Table> Table::DropColumn(Column::Id column_id) const {
   return cloned;
 }
 
+std::shared_ptr<Table> Table::DropForeignKeysReferencing(
+  ObjectId referenced_table) const {
+  auto cloned = basics::downCast<Table>(Clone());
+  std::erase_if(cloned->_foreign_keys, [&](const TableForeignKey& fk) {
+    return fk.referenced_table == referenced_table;
+  });
+  return cloned;
+}
+
 std::shared_ptr<Table> Table::DropCheckConstraint(
   ObjectId constraint_id) const {
   auto cloned = basics::downCast<Table>(Clone());

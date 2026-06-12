@@ -461,6 +461,13 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SereneDBCatalog::LookupSchema(
 void SereneDBCatalog::ScanSchemas(
   duckdb::ClientContext& context,
   std::function<void(duckdb::SchemaCatalogEntry&)> callback) {
+  // Internal connections (catalog store, appenders) have no serenedb
+  // session; error-path suggestion scans walk every attached catalog and
+  // must see this one as empty instead of dying on the missing state.
+  if (!context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    return;
+  }
   auto snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
   snapshot->GetDuckDBEntryCache().ScanSchemas(*this, GetDatabaseId(), callback,
                                               *snapshot);

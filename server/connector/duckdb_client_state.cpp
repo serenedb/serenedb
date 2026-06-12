@@ -237,7 +237,8 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  SDB_ASSERT(state, "SereneDB client state not registered");
+  SDB_ASSERT(state, "SereneDB client state not registered; active query: ",
+             context.GetCurrentQuery());
   return state->GetConnectionContext();
 }
 

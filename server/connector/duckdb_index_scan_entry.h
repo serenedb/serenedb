@@ -148,9 +148,6 @@ class TableSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
 
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
-  duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
-  duckdb::virtual_column_map_t GetVirtualColumns() const final;
-
   const std::shared_ptr<catalog::Table>& GetSereneDBTable() const {
     return _sdb_table;
   }

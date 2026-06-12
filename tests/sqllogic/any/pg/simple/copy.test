@@ -96,7 +96,7 @@ EXPLAIN COPY reversed(id, name) FROM '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HE
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           INSERT          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -125,14 +125,15 @@ EXPLAIN COPY tindex TO '${__TEST_DIR__}/lmao' WITH (FORMAT CSV, HEADER TRUE);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│        COPY_TO_FILE       │
+│     BATCH_COPY_TO_FILE    │
 │    ────────────────────   │
 │        FORMAT: CSV        │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: tindex       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
@@ -592,7 +593,7 @@ EXPLAIN ANALYZE COPY arelav_consumer FROM '<slt:ignore>/arelav_consuma.csv';
 <slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         EXTENSION         │
+│           INSERT          │
 │    ────────────────────   │
 │                           │
 │           1 row           │

@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <absl/synchronization/mutex.h>
+#include <atomic>
 
 #include "basics/message_buffer.h"
 #include "catalog/identifiers/object_id.h"
@@ -44,7 +44,7 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
                     message::Buffer* send_buffer,
                     pg::CopyMessagesQueue* copy_queue);
 
-  ~ConnectionContext() final { SDB_ASSERT(_notices.empty()); }
+  ~ConnectionContext() final { SDB_ASSERT(!HasNotices()); }
 
   std::string GetCurrentSchema() const;
   std::string GetCurrentSchemaFromSnapshot(
@@ -61,23 +61,50 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
   auto* GetCopyInBridge() const { return _copy_in_bridge; }
   void SetCopyInBridge(pg::CopyInBridge* bridge) { _copy_in_bridge = bridge; }
 
+  // Notices are an intrusive MPSC stack (Strand-style): producers on any
+  // thread CAS-push; the single consumer exchanges the head out and reverses
+  // for FIFO. The common SELECT/DML path pays one relaxed-ish load to learn
+  // the stack is empty -- no mutex, no allocation.
   void AddNotice(pg::SqlErrorData notice) {
-    std::lock_guard lock{_mutex};
-    _notices.push_back(std::move(notice));
+    auto* node = new NoticeNode{std::move(notice), nullptr};
+    node->next = _notices.load(std::memory_order_relaxed);
+    while (!_notices.compare_exchange_weak(node->next, node,
+                                           std::memory_order_release,
+                                           std::memory_order_relaxed)) {
+    }
   }
 
-  auto StealNotices() {
-    std::lock_guard lock{_mutex};
-    return std::exchange(_notices, {});
+  bool HasNotices() const {
+    return _notices.load(std::memory_order_relaxed) != nullptr;
+  }
+
+  // Single consumer: detaches the stack, reverses the links in place (FIFO),
+  // and feeds each notice to `fn` -- no intermediate storage.
+  template<typename Fn>
+  void ConsumeNotices(Fn&& fn) {
+    auto* node = _notices.exchange(nullptr, std::memory_order_acquire);
+    NoticeNode* fifo = nullptr;
+    while (node != nullptr) {
+      auto* next = std::exchange(node->next, fifo);
+      fifo = std::exchange(node, next);
+    }
+    while (fifo != nullptr) {
+      fn(fifo->data);
+      delete std::exchange(fifo, fifo->next);
+    }
   }
 
  private:
+  struct NoticeNode {
+    pg::SqlErrorData data;
+    NoticeNode* next;
+  };
+
   std::shared_ptr<catalog::Database> _database;
   message::Buffer* const _send_buffer;
   pg::CopyMessagesQueue* const _copy_queue;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
-  absl::Mutex _mutex;
-  std::vector<pg::SqlErrorData> _notices;
+  std::atomic<NoticeNode*> _notices{nullptr};
 };
 
 }  // namespace sdb

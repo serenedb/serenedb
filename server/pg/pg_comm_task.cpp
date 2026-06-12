@@ -1418,9 +1418,9 @@ void PgSQLCommTaskBase::SendNotices() {
   if (!_connection_ctx) {
     return;
   }
-  for (const auto& notice : _connection_ctx->StealNotices()) {
+  _connection_ctx->ConsumeNotices([this](const pg::SqlErrorData& notice) {
     SendNotice(PQ_MSG_NOTICE_RESPONSE, notice);
-  }
+  });
 }
 
 void PgSQLCommTaskBase::SendParameterStatus(std::string_view name,

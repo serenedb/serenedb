@@ -738,9 +738,12 @@ PgWireSession<Kind>::PendingQueryEnsured(
 
 template<SocketKind Kind>
 void PgWireSession<Kind>::DrainNotices() {
-  for (const auto& notice : _connection_ctx->StealNotices()) {
-    WriteNoticeResponse(_send, notice);
+  if (!_connection_ctx->HasNotices()) {
+    return;
   }
+  _connection_ctx->ConsumeNotices([this](const sdb::pg::SqlErrorData& notice) {
+    WriteNoticeResponse(_send, notice);
+  });
 }
 
 // A command may change a reportable GUC (e.g. SET TimeZone, SET search_path,
@@ -1139,17 +1142,27 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
 template<SocketKind Kind>
 yaclib::Future<duckdb::PendingExecutionResult> PgWireSession<Kind>::DriveQuery(
   duckdb::PendingQueryResult& pending) {
+  // Productive slices run back-to-back: a per-slice scheduler round-trip
+  // costs an enqueue + futex wake per query, and the common short query
+  // finishes on its second slice. The budget bounds worker hogging by long
+  // CPU-bound queries.
+  static constexpr int kInlineSliceBudget = 8;
+  int inline_slices = 0;
   for (;;) {
     const auto status = pending.ExecuteTask([this] { _task->RequestRun(); });
     if (duckdb::PendingQueryResult::IsResultReady(status)) {
       co_return status;
     }
     if (status == duckdb::PendingExecutionResult::RESULT_NOT_READY) {
-      // Made progress; give the worker back between slices.
+      if (++inline_slices < kInlineSliceBudget) {
+        continue;
+      }
+      inline_slices = 0;
       co_await _task->Yield();
     } else {
       // NO_TASKS / BLOCKED: the pool is executing the query (or it is
       // blocked); the executor's on_reschedule wake re-runs us.
+      inline_slices = 0;
       co_await _task->Park();
     }
   }
@@ -2100,7 +2113,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   _statements.clear();
   _anon_statement.Reset();
   if (_connection_ctx) {
-    _connection_ctx->StealNotices();
+    _connection_ctx->ConsumeNotices([](const sdb::pg::SqlErrorData&) {});
   }
   // Last responses (e.g. up to the Terminate) may still be draining; closing
   // mid-write would truncate them. The close is posted to the io thread,

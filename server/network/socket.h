@@ -144,7 +144,7 @@ class Socket final {
   [[nodiscard]] auto Handshake()
     requires(kSslBacked)
   {
-    Lowest().set_option(asio_ns::ip::tcp::no_delay{true});
+    // TCP_NODELAY is set once at accept time (Acceptor::Run) for all sessions.
     return Async<void>([this](auto&& handler) {
       _stream.async_handshake(asio_ns::ssl::stream_base::server,
                               std::forward<decltype(handler)>(handler));

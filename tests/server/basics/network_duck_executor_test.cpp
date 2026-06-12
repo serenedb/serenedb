@@ -20,39 +20,15 @@
 
 #include <gtest/gtest.h>
 
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <thread>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/on.hpp>
 
-#include "basics/duckdb_engine.h"
 #include "network/io_context.h"
-#include "network/pg/duck_executor.h"
 
 using namespace sdb;
-
-TEST(NetworkDuckExecutor, ResumesOnWorkerThread) {
-  auto& scheduler =
-    duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance());
-  network::IoThreadPool pool{1};
-  pool.Start();
-  network::pg::DuckExecutor executor{scheduler, pool.Next()};
-
-  const auto test_tid = std::this_thread::get_id();
-  std::thread::id worker_tid{};
-  auto future = [&]() -> yaclib::Future<> {
-    co_await yaclib::On(executor);
-    worker_tid = std::this_thread::get_id();
-    co_return {};
-  }();
-  [[maybe_unused]] const auto result = std::move(future).Get();
-
-  EXPECT_NE(worker_tid, std::thread::id{});
-  EXPECT_NE(worker_tid, test_tid);
-  pool.Stop();
-}
 
 TEST(NetworkIoExecutor, ResumesOnIoThread) {
   network::IoThreadPool pool{1};

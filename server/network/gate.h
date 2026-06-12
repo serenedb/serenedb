@@ -34,7 +34,7 @@ namespace sdb::network {
 // so a waiter must re-check its condition in a loop -- spurious wakeups are
 // possible when kickers race. The kicked coroutine resumes via the executor it
 // passed to Wait(); the promise IS the submitted yaclib::Job (no allocation,
-// same pattern as QueryPump's DriveAwaiter).
+// same pattern as TaskRunner).
 class Gate {
   static constexpr uintptr_t kEmpty = 0;
   static constexpr uintptr_t kKicked = 1;
@@ -76,6 +76,12 @@ class Gate {
   }
 
   void Kick() noexcept {
+    // Dekker handshake with Wait(): the kicker's preceding publication (e.g.
+    // the armed view) must be globally visible before reading the gate state;
+    // otherwise a no-op on kKicked can race a waiter that already re-checked
+    // its condition pre-publication and is about to park. The waiter's side
+    // is the exchange in await_suspend plus its RMW condition checks.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
     auto prev = _state.load(std::memory_order_acquire);
     for (;;) {
       if (prev == kKicked) {

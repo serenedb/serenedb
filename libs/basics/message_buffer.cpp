@@ -74,31 +74,56 @@ std::span<uint8_t> Buffer::Reserve(size_t min_capacity) {
   return {data, _tail->FreeSpace()};
 }
 
-void Buffer::CommitWrite(size_t size) { _tail->AdjustEnd(size); }
+void Buffer::CommitWrite(size_t size) {
+  _tail->AdjustEnd(size);
+  _read_end.store(BufferOffset{_tail, _tail->GetEnd()},
+                  std::memory_order_release);
+}
 
-std::string_view Buffer::Front() const noexcept {
-  const auto data = _head->Data(_head->GetEnd());
+// Bytes of `chunk` visible to the consumer: chunks before the watermark chunk
+// are final (the producer moved past them -- GetEnd is stable); the watermark
+// chunk is bounded by the snapshot offset, never its live _end.
+namespace {
+size_t ReadableEndOf(const Chunk* chunk, const BufferOffset& readable) {
+  return chunk == readable.chunk ? readable.in_chunk : chunk->GetEnd();
+}
+}  // namespace
+
+std::string_view Buffer::Front() noexcept {
+  RefreshReadable();
+  const auto data = _head->Data(ReadableEndOf(_head, _readable));
   return {reinterpret_cast<const char*>(data.data()), data.size()};
 }
 
-size_t Buffer::ReadableSize() const noexcept {
-  size_t size = 0;
-  for (const Chunk* chunk = _head; chunk != nullptr; chunk = chunk->Next()) {
-    size += chunk->Size();
+size_t Buffer::ReadableSize() noexcept {
+  RefreshReadable();
+  if (!_readable) {
+    return 0;
   }
-  return size;
+  size_t size = 0;
+  const Chunk* chunk = _head;
+  for (;;) {
+    size += ReadableEndOf(chunk, _readable) - chunk->GetBegin();
+    if (chunk == _readable.chunk) {
+      return size;
+    }
+    chunk = chunk->Next();
+    SDB_ASSERT(chunk != nullptr);
+  }
 }
 
-SequenceView Buffer::ReadableView(size_t length) const noexcept {
+SequenceView Buffer::ReadableView(size_t length) noexcept {
+  RefreshReadable();
   const Chunk* chunk = _head;
   size_t pos = chunk->GetBegin();
   const BufferOffset begin{chunk, pos};
   while (length != 0) {
-    const size_t available = chunk->GetEnd() - pos;
+    const size_t available = ReadableEndOf(chunk, _readable) - pos;
     if (length <= available) {
       return SequenceView{begin, BufferOffset{chunk, pos + length}};
     }
     length -= available;
+    SDB_ASSERT(chunk != _readable.chunk);
     chunk = chunk->Next();
     SDB_ASSERT(chunk != nullptr);
     pos = chunk->GetBegin();
@@ -107,27 +132,37 @@ SequenceView Buffer::ReadableView(size_t length) const noexcept {
 }
 
 void Buffer::Consume(size_t size) {
+  RefreshReadable();
   while (size != 0) {
-    const size_t available = _head->Size();
+    const size_t available =
+      ReadableEndOf(_head, _readable) - _head->GetBegin();
     if (size < available) {
       _head->SetBegin(_head->GetBegin() + size);
       return;
     }
     size -= available;
-    if (_head == _tail) {
+    if (_head == _readable.chunk) {
+      // Fully consumed up to the watermark. The producer may still be
+      // appending into this chunk (or already past it -- unknowable from the
+      // snapshot), so it can be neither deleted nor Reset; a later refresh
+      // moves _readable past it and frees it then.
       SDB_ASSERT(size == 0);
-      _head->Reset();
+      _head->SetBegin(_readable.in_chunk);
       return;
     }
     delete std::exchange(_head, _head->Next());
   }
 }
 
+// Single-owner operation: not safe while a concurrent producer or consumer
+// is active on either channel half.
 void Buffer::Clear() noexcept {
   FreeTill(_tail);
   _head->Reset();
   _uncommitted_size = 0;
   _volatile_size = 0;
+  _read_end.store(BufferOffset{}, std::memory_order_relaxed);
+  _readable = BufferOffset{};
 }
 
 void Buffer::WriteUncommitted(std::string_view data) {

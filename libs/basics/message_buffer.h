@@ -74,16 +74,26 @@ class Buffer {
 
   void Commit(bool need_flush);
 
+  // Receive-channel half: a producer (e.g. the io reader) appends raw bytes
+  // via Reserve/CommitWrite; CommitWrite publishes an atomic watermark. The
+  // consumer-side operations below (Readable/Front/ReadableSize/ReadableView/
+  // Consume) bound themselves by a snapshot of that watermark, never by the
+  // producer's _tail/_end, so a DIFFERENT thread may consume concurrently --
+  // the mirror of the send-channel _send_end discipline. Single-owner users
+  // are unaffected (the watermark is simply always current).
   std::span<uint8_t> Reserve(size_t min_capacity);
   void CommitWrite(size_t size);
-  bool Readable() const noexcept {
-    return _head != _tail || _head->Size() != 0;
+  bool Readable() noexcept {
+    RefreshReadable();
+    return _readable.chunk != nullptr &&
+           !(_head == _readable.chunk &&
+             _head->GetBegin() == _readable.in_chunk);
   }
-  std::string_view Front() const noexcept;
+  std::string_view Front() noexcept;
   void Consume(size_t size);
 
-  size_t ReadableSize() const noexcept;
-  SequenceView ReadableView(size_t length) const noexcept;
+  size_t ReadableSize() noexcept;
+  SequenceView ReadableView(size_t length) noexcept;
 
   SequenceView Written() const noexcept {
     return SequenceView{BufferOffset{_head, _head->GetBegin()},
@@ -107,6 +117,10 @@ class Buffer {
 
   std::function<void(SequenceView)> _send_callback;
 
+  void RefreshReadable() noexcept {
+    _readable = _read_end.load(std::memory_order_acquire);
+  }
+
   const size_t _flush_size;
   size_t _volatile_size{0};
   size_t _uncommitted_size{0};
@@ -118,6 +132,10 @@ class Buffer {
   BufferOffset _socket_end;
   // _send_end - the end of must-send buffer
   std::atomic<BufferOffset> _send_end;
+  // Receive-channel watermark: published by CommitWrite (producer), snapshot
+  // into _readable (consumer-owned) by the consumer-side operations.
+  std::atomic<BufferOffset> _read_end;
+  BufferOffset _readable;
 
   Chunk* _head{nullptr};
   Chunk* _tail{nullptr};

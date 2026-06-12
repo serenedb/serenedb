@@ -78,6 +78,9 @@ class Acceptor final : public AcceptorBase,
       auto connection = std::make_shared<Session>(_deps, _pool.Next());
       try {
         co_await AcceptInto(connection->Lowest());
+        // Sessions batch writes themselves (message::Buffer); Nagle on top
+        // only adds delayed-ACK stalls to multi-write responses.
+        connection->Lowest().set_option(asio_ns::ip::tcp::no_delay{true});
       } catch (const std::exception&) {
         if (!_running) {
           break;

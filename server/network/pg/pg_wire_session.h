@@ -72,9 +72,8 @@
 #include "network/io_executor.h"
 #include "network/pg/auth.h"
 #include "network/pg/cancel_registry.h"
-#include "network/pg/duck_executor.h"
 #include "network/pg/pg_frame_codec.h"
-#include "network/pg/query_pump.h"
+#include "network/pg/task_runner.h"
 #include "network/pg/wire_frames.h"
 #include "network/socket.h"
 #include "pg/command_tag.h"
@@ -276,21 +275,32 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
            _send_written.load(std::memory_order_acquire);
   }
   bool SendBroken() const { return _io_broken.load(std::memory_order_acquire); }
-  // Pauses the producing coroutine while the client is slower than the
-  // serializer; resumes on `resume` once the writer drains below the mark.
-  yaclib::Future<> AwaitSendBelowHighWater(yaclib::IExecutor& resume);
+  // Duck-side parks of the SessionTask: pause while the client is slower than
+  // the serializer / until everything committed reached the socket. Woken by
+  // SendWriter's RequestRun; spurious wakes re-check the condition.
+  yaclib::Future<> AwaitSendBelowHighWater();
+  yaclib::Future<> DrainSendOnTask();
   // io-pinned writer: parked until a committed flush arms a view, then drives
   // async_write + FlushDone chains. All socket writes happen here (TLS-safe),
-  // overlapping the session coroutine's encoding/execution.
+  // overlapping the SessionTask's encoding/execution.
   yaclib::Future<> SendWriter();
   void OnSendViewReady(message::SequenceView view) {
     _write_view = view;
     _write_armed.store(true, std::memory_order_release);
     _write_gate.Kick();
   }
+  // Sync frame-assembly core over _recv (the io->duck receive channel:
+  // RecvLoop produces bytes, the current consumer assembles frames bounded by
+  // the channel watermark). Returns a frame if one is complete, nullopt when
+  // more bytes are needed. Each consumer wraps it with its own wait: NextFrame
+  // (RecvLoop startup phase: socket reads), AwaitFrame (SessionTask: park),
+  // FeedFrame (COPY feeder: gate wait).
+  std::optional<Frame> TryAssembleFrame(bool typed, uint32_t max_len);
   yaclib::Future<Frame> NextFrame(bool typed, uint32_t max_len);
-  void CopyRecvInto(uint8_t* dst, size_t n) const;
-  std::optional<size_t> PeekTotalLength(bool typed) const;
+  yaclib::Future<Frame> AwaitFrame(bool typed, uint32_t max_len);
+  yaclib::Future<Frame> FeedFrame(bool typed, uint32_t max_len);
+  void CopyRecvInto(uint8_t* dst, size_t n);
+  std::optional<size_t> PeekTotalLength(bool typed);
   char TxnStatusByte() const;
   void DrainNotices();
   void ReportChangedParameters();
@@ -299,6 +309,15 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   yaclib::Future<bool> AuthenticateCleartext(const std::string& expected);
   yaclib::Future<bool> AuthenticateScram(const ScramVerifier& verifier);
 
+  // The duck-side half of the session: an endless coroutine hosted by _task
+  // on the DuckDB scheduler. Prologue (SetupConnection + startup burst) ->
+  // command loop -> teardown. Never runs on an io thread.
+  yaclib::Future<> SessionMain();
+  // Drives one query as inline ExecuteTask slices on the SessionTask's
+  // worker: yields between productive slices, parks on NO_TASKS/BLOCKED until
+  // the executor's on_reschedule wake.
+  yaclib::Future<duckdb::PendingExecutionResult> DriveQuery(
+    duckdb::PendingQueryResult& pending);
   yaclib::Future<> RunSimpleQuery(std::string_view query);
   yaclib::Future<> RunCopyFromStdin(
     duckdb::unique_ptr<duckdb::SQLStatement> statement);
@@ -322,23 +341,20 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   void SendStartupBurst();
   duckdb::unique_ptr<duckdb::PendingQueryResult> PendingQueryEnsured(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values);
-  // Coroutines: between chunks they yield to send-side backpressure (resuming
-  // on `resume`, the executor they were called on) and bail early when the
-  // client is gone.
+  // SessionTask coroutines: between chunks they park for send-side
+  // backpressure and bail early when the client is gone.
   yaclib::Future<> SerializeResult(const duckdb::PreparedStatement& prepared,
                                    duckdb::QueryResult& result,
                                    duckdb::StatementReturnType return_type,
                                    bool with_row_description,
-                                   std::span<const sdb::pg::VarFormat> formats,
-                                   yaclib::IExecutor& resume);
+                                   std::span<const sdb::pg::VarFormat> formats);
   // Emit up to max_rows (>0) DataRows from the portal's retained result,
   // resuming from a carried chunk. Returns true when the row limit was hit and
   // more rows remain (caller sends PortalSuspended); false when the portal
   // drained (CommandComplete already written, with this Execute's row count).
   yaclib::Future<bool> SerializePage(Portal& portal,
                                      duckdb::StatementReturnType return_type,
-                                     uint64_t max_rows,
-                                     yaclib::IExecutor& resume);
+                                     uint64_t max_rows);
 
   Socket<Kind> _socket;
   asio_ns::io_context& _io;
@@ -379,12 +395,17 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   uint64_t _reported_settings_version = 0;
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _connection_ctx;
-  // By value, not IExecutorPtr: no per-connection heap alloc, and because the
-  // type is concrete + final, `co_await yaclib::On(*_duck)` devirtualizes.
-  std::optional<DuckExecutor> _duck;
-  // Drives each query as a DuckDB scheduler task and resumes this coroutine on
-  // *_duck once the query terminates. By value -- no per-query allocation.
-  std::optional<QueryPump> _pump;
+  // Hosts SessionMain as a duckdb::Task on the scheduler. Emplaced by RecvLoop
+  // right before spawning; by value -- no per-connection heap alloc.
+  std::optional<TaskRunner> _task;
+  // Set (on the io thread) once SessionMain is detached and _task->Begin()
+  // captured the job; gates RequestRun wakes from io-side code.
+  bool _task_spawned = false;
+  // True while a COPY FROM STDIN feeder owns the recv consumer role: RecvLoop
+  // then kicks _copy_gate instead of RequestRun.
+  std::atomic<bool> _copy_route{false};
+  Gate _copy_gate;
+  std::atomic<bool> _feeder_done{false};
   // Non-owning: points to this session's io worker, which IS the IoExecutor.
   IoExecutor* _ioexec = nullptr;
   containers::NodeHashMap<std::string, sdb::pg::DuckDBStatement> _statements;
@@ -403,13 +424,21 @@ yaclib::Future<> PgWireSession<Kind>::Flush() {
 }
 
 template<SocketKind Kind>
-yaclib::Future<> PgWireSession<Kind>::AwaitSendBelowHighWater(
-  yaclib::IExecutor& resume) {
+yaclib::Future<> PgWireSession<Kind>::AwaitSendBelowHighWater() {
   while (_send.TotalCommitted() -
              _send_written.load(std::memory_order_acquire) >
            kSendHighWater &&
          !SendBroken()) {
-    co_await _producer_gate.Wait(resume);
+    co_await _task->Park();
+  }
+  co_return {};
+}
+
+template<SocketKind Kind>
+yaclib::Future<> PgWireSession<Kind>::DrainSendOnTask() {
+  KickSend();
+  while (HasUnsentBytes() && !SendBroken()) {
+    co_await _task->Park();
   }
   co_return {};
 }
@@ -428,11 +457,15 @@ yaclib::Future<> PgWireSession<Kind>::SendWriter() {
       try {
         co_await _socket.Write(view);
       } catch (const std::exception&) {
-        // Client is gone. Poison the send side, wake any parked producer, and
-        // close so the read side notices; the session coroutine bails at its
-        // next io touchpoint.
+        // Client is gone. Poison the send side, wake every parked waiter, and
+        // close so the read side notices; the SessionTask bails at its next
+        // condition re-check.
         _io_broken.store(true, std::memory_order_release);
         _producer_gate.Kick();
+        _copy_gate.Kick();
+        if (_task_spawned) {
+          _task->RequestRun();
+        }
         _socket.Close();
         co_return {};
       }
@@ -440,7 +473,12 @@ yaclib::Future<> PgWireSession<Kind>::SendWriter() {
       // May immediately re-arm via the send callback (continue case) -- the
       // pending kick is consumed by the next Wait.
       _send.FlushDone();
+      // Wake whichever side waits on drain: RecvLoop's startup-phase Flush
+      // (gate) or the SessionTask's WAIT_SEND park (RequestRun).
       _producer_gate.Kick();
+      if (_task_spawned) {
+        _task->RequestRun();
+      }
       continue;
     }
     if (_writer_stop) {
@@ -451,7 +489,7 @@ yaclib::Future<> PgWireSession<Kind>::SendWriter() {
 }
 
 template<SocketKind Kind>
-void PgWireSession<Kind>::CopyRecvInto(uint8_t* dst, size_t n) const {
+void PgWireSession<Kind>::CopyRecvInto(uint8_t* dst, size_t n) {
   size_t offset = 0;
   for (const auto buffer : _recv.ReadableView(n)) {
     std::memcpy(dst + offset, buffer.data(), buffer.size());
@@ -460,7 +498,7 @@ void PgWireSession<Kind>::CopyRecvInto(uint8_t* dst, size_t n) const {
 }
 
 template<SocketKind Kind>
-std::optional<size_t> PgWireSession<Kind>::PeekTotalLength(bool typed) const {
+std::optional<size_t> PgWireSession<Kind>::PeekTotalLength(bool typed) {
   const size_t offset = typed ? 1 : 0;
   const size_t header = offset + sizeof(uint32_t);
   if (_recv.ReadableSize() < header) {
@@ -472,46 +510,89 @@ std::optional<size_t> PgWireSession<Kind>::PeekTotalLength(bool typed) const {
 }
 
 template<SocketKind Kind>
+std::optional<typename PgWireSession<Kind>::Frame>
+PgWireSession<Kind>::TryAssembleFrame(bool typed, uint32_t max_len) {
+  const size_t offset = typed ? 1 : 0;
+  if (!_recv.Readable()) {
+    return std::nullopt;
+  }
+  const auto parsed = PgFrameCodec::Parse(_recv.Front(), typed, max_len);
+  if (parsed.status == FrameStatus::Ok) {
+    return Frame{parsed.frame.type, parsed.frame.payload, FrameStatus::Ok,
+                 parsed.consumed};
+  }
+  if (parsed.status != FrameStatus::NeedMore) {
+    return Frame{0, {}, parsed.status, 0};
+  }
+  // Front() is head-chunk-only; a frame that spans recv chunks parses as
+  // NeedMore forever. Once the whole frame has arrived, linearize it into
+  // _scratch (one copy) so the codec sees it contiguous.
+  if (const auto total = PeekTotalLength(typed)) {
+    const auto length = *total - offset;
+    if (length < sizeof(uint32_t)) {
+      return Frame{0, {}, FrameStatus::Malformed, 0};
+    }
+    if (length > max_len) {
+      return Frame{0, {}, FrameStatus::TooLarge, 0};
+    }
+    if (_recv.ReadableSize() >= *total) {
+      _scratch.resize(*total);
+      CopyRecvInto(reinterpret_cast<uint8_t*>(_scratch.data()), *total);
+      _recv.Consume(*total);
+      const std::string_view flat{_scratch.data(), *total};
+      const auto split = PgFrameCodec::Parse(flat, typed, max_len);
+      return Frame{split.frame.type, split.frame.payload, split.status, 0};
+    }
+  }
+  return std::nullopt;
+}
+
+// Startup-phase frames: RecvLoop is both byte producer and frame consumer,
+// reading the socket directly.
+template<SocketKind Kind>
 yaclib::Future<typename PgWireSession<Kind>::Frame>
 PgWireSession<Kind>::NextFrame(bool typed, uint32_t max_len) {
-  const size_t offset = typed ? 1 : 0;
   for (;;) {
-    if (_recv.Readable()) {
-      const auto parsed = PgFrameCodec::Parse(_recv.Front(), typed, max_len);
-      if (parsed.status == FrameStatus::Ok) {
-        co_return Frame{parsed.frame.type, parsed.frame.payload,
-                        FrameStatus::Ok, parsed.consumed};
-      }
-      if (parsed.status != FrameStatus::NeedMore) {
-        co_return Frame{0, {}, parsed.status, 0};
-      }
-      // Front() is head-chunk-only; a frame that spans recv chunks parses as
-      // NeedMore forever. Once the whole frame has arrived, linearize it into
-      // _scratch (one copy) so the codec sees it contiguous.
-      if (const auto total = PeekTotalLength(typed)) {
-        const auto length = *total - offset;
-        if (length < sizeof(uint32_t)) {
-          co_return Frame{0, {}, FrameStatus::Malformed, 0};
-        }
-        if (length > max_len) {
-          co_return Frame{0, {}, FrameStatus::TooLarge, 0};
-        }
-        if (_recv.ReadableSize() >= *total) {
-          _scratch.resize(*total);
-          CopyRecvInto(reinterpret_cast<uint8_t*>(_scratch.data()), *total);
-          _recv.Consume(*total);
-          const std::string_view flat{_scratch.data(), *total};
-          const auto split = PgFrameCodec::Parse(flat, typed, max_len);
-          co_return Frame{split.frame.type, split.frame.payload, split.status,
-                          0};
-        }
-      }
+    if (auto frame = TryAssembleFrame(typed, max_len)) {
+      co_return std::move(*frame);
     }
     const size_t n = co_await _socket.ReadSome(_recv.Reserve(kReadBlock));
     if (n == 0) {
       co_return Frame{0, {}, FrameStatus::Malformed, 0};
     }
     _recv.CommitWrite(n);
+  }
+}
+
+// Command-phase frames: the SessionTask consumes what RecvLoop committed,
+// parking until the next wake when the channel runs dry.
+template<SocketKind Kind>
+yaclib::Future<typename PgWireSession<Kind>::Frame>
+PgWireSession<Kind>::AwaitFrame(bool typed, uint32_t max_len) {
+  for (;;) {
+    if (auto frame = TryAssembleFrame(typed, max_len)) {
+      co_return std::move(*frame);
+    }
+    if (SendBroken()) {
+      co_return Frame{0, {}, FrameStatus::Malformed, 0};
+    }
+    co_await _task->Park();
+  }
+}
+
+// COPY-feeder frames: same consumer role, woken via _copy_gate (the feeder is
+// io-pinned and not a duckdb task).
+template<SocketKind Kind>
+yaclib::Future<typename PgWireSession<Kind>::Frame>
+PgWireSession<Kind>::FeedFrame(bool typed, uint32_t max_len) {
+  for (;;) {
+    if (auto frame = TryAssembleFrame(typed, max_len)) {
+      co_return std::move(*frame);
+    }
+    if (SendBroken()) {
+      co_return Frame{0, {}, FrameStatus::Malformed, 0};
+    }
+    co_await _copy_gate.Wait(*_ioexec);
   }
 }
 
@@ -707,7 +788,7 @@ template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::SerializeResult(
   const duckdb::PreparedStatement& prepared, duckdb::QueryResult& result,
   duckdb::StatementReturnType return_type, bool with_row_description,
-  std::span<const sdb::pg::VarFormat> formats, yaclib::IExecutor& resume) {
+  std::span<const sdb::pg::VarFormat> formats) {
   uint64_t rows = 0;
   if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
     if (with_row_description) {
@@ -729,7 +810,7 @@ yaclib::Future<> PgWireSession<Kind>::SerializeResult(
       }
       rows += chunk->size();
       WriteDataChunk(_send, *chunk, serializers, context);
-      co_await AwaitSendBelowHighWater(resume);
+      co_await AwaitSendBelowHighWater();
     }
   } else if (return_type == duckdb::StatementReturnType::CHANGED_ROWS) {
     auto chunk = result.FetchRaw();
@@ -744,8 +825,7 @@ yaclib::Future<> PgWireSession<Kind>::SerializeResult(
 
 template<SocketKind Kind>
 yaclib::Future<bool> PgWireSession<Kind>::SerializePage(
-  Portal& portal, duckdb::StatementReturnType return_type, uint64_t max_rows,
-  yaclib::IExecutor& resume) {
+  Portal& portal, duckdb::StatementReturnType return_type, uint64_t max_rows) {
   auto& result = *portal.result;
   sdb::pg::SerializationContext context;
   context.buffer = &_send;
@@ -775,7 +855,7 @@ yaclib::Future<bool> PgWireSession<Kind>::SerializePage(
                         portal.carry_offset, portal.carry_offset + take);
     portal.carry_offset += take;
     sent += take;
-    co_await AwaitSendBelowHighWater(resume);
+    co_await AwaitSendBelowHighWater();
   }
 
   if (portal.exhausted) {
@@ -1026,10 +1106,9 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
   }
   for (auto& statement : extracted) {
     if (IsCopyFromStdin(*statement)) {
+      // Returns pinned to _ioexec; remaining statements just continue
+      // inline-first from there.
       co_await RunCopyFromStdin(std::move(statement));
-      // RunCopyFromStdin returns pinned to _ioexec; the remaining statements'
-      // Prepare/Execute must run on the DuckDB worker, not the io thread.
-      co_await yaclib::On(*_duck);
       continue;
     }
     auto prepared = _conn->Prepare(std::move(statement));
@@ -1042,7 +1121,7 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     if (pending->HasError()) {
       ThrowDuck(pending->GetErrorObject());
     }
-    const auto status = co_await _pump->Drive(*pending);
+    const auto status = co_await DriveQuery(*pending);
     if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
         pending->HasError()) {
       ThrowDuck(pending->GetErrorObject());
@@ -1052,32 +1131,48 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       ThrowDuck(result->GetErrorObject());
     }
     co_await SerializeResult(*prepared, *result, return_type,
-                             /*with_row_description=*/true, {}, *_duck);
+                             /*with_row_description=*/true, {});
   }
   co_return {};
 }
 
+template<SocketKind Kind>
+yaclib::Future<duckdb::PendingExecutionResult> PgWireSession<Kind>::DriveQuery(
+  duckdb::PendingQueryResult& pending) {
+  for (;;) {
+    const auto status = pending.ExecuteTask([this] { _task->RequestRun(); });
+    if (duckdb::PendingQueryResult::IsResultReady(status)) {
+      co_return status;
+    }
+    if (status == duckdb::PendingExecutionResult::RESULT_NOT_READY) {
+      // Made progress; give the worker back between slices.
+      co_await _task->Yield();
+    } else {
+      // NO_TASKS / BLOCKED: the pool is executing the query (or it is
+      // blocked); the executor's on_reschedule wake re-runs us.
+      co_await _task->Park();
+    }
+  }
+}
+
 // COPY FROM STDIN binds (sniffs the CSV dialect by reading /dev/stdin) at
 // PendingQuery time, so the bridge + feeder must be live BEFORE binding, and
-// CopyInResponse must already be flushed (the client streams CopyData only
-// after seeing it). The worker-side COPY blocks pulling CopyData via the bridge
-// while the io feeder reads it from the socket -- two threads, since DuckDB's
-// FileSystem::Read can't yield.
+// CopyInResponse must already be on its way out (the client streams CopyData
+// only after seeing it). While the COPY runs, the io-pinned feeder takes over
+// the recv-consumer role: it assembles CopyData frames from the channel and
+// publishes them to the bridge, whose worker-side Read blocks inside DuckDB's
+// synchronous FileSystem::Read; the SessionTask itself is parked in DriveQuery
+// for the duration, so the single-consumer invariant holds.
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   duckdb::unique_ptr<duckdb::SQLStatement> statement) {
   const bool is_binary = statement && IsBinaryCopy(*statement);
-  // Handshake first (no bridge needed yet); a Flush failure here is clean. The
-  // client streams CopyData only after CopyInResponse, so it must go out before
-  // Prepare (which sniffs /dev/stdin).
-  co_await yaclib::On(*_ioexec);
+  // Consume the command frame early so the feeder starts past it, and hand
+  // the recv-consumer role over BEFORE the client can send CopyData.
   if (_dispatch_consume) {
     _recv.Consume(_dispatch_consume);
     _dispatch_consume = 0;
   }
-  WriteCopyInResponse(_send, is_binary);
-  co_await Flush();
-
   auto& client_state = *_conn->context->registered_state
                           ->template Get<connector::SereneDBClientState>(
                             connector::kSereneDBClientStateKey);
@@ -1087,9 +1182,12 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   client_state.copy_stdin_no_replay = is_binary;
   sdb::pg::CopyInBridge bridge;
   _connection_ctx->SetCopyInBridge(&bridge);
-  auto feeder = RunCopyInFeeder(bridge, is_binary);
+  _feeder_done.store(false, std::memory_order_relaxed);
+  _copy_route.store(true, std::memory_order_release);
+  WriteCopyInResponse(_send, is_binary);
+  KickSend();
+  RunCopyInFeeder(bridge, is_binary).Detach();
 
-  co_await yaclib::On(*_duck);
   std::exception_ptr error;
   duckdb::unique_ptr<duckdb::PreparedStatement> prepared;
   duckdb::unique_ptr<duckdb::QueryResult> result;
@@ -1103,7 +1201,7 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
     if (pending->HasError()) {
       ThrowDuck(pending->GetErrorObject());
     }
-    const auto status = co_await _pump->Drive(*pending);
+    const auto status = co_await DriveQuery(*pending);
     if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
         pending->HasError()) {
       ThrowDuck(pending->GetErrorObject());
@@ -1117,25 +1215,34 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   }
   // Always join the feeder before the bridge (a local) is destroyed; Abort
   // wakes it if the worker errored without draining the client's CopyData.
+  // The join is a park (the feeder's last act is RequestRun), keeping the
+  // SessionTask on its pool.
   bridge.Abort();
-  co_await yaclib::On(*_ioexec);
-  co_await std::move(feeder);
+  _copy_gate.Kick();
+  while (!_feeder_done.load(std::memory_order_acquire)) {
+    co_await _task->Park();
+  }
+  _copy_route.store(false, std::memory_order_release);
   _connection_ctx->SetCopyInBridge(nullptr);
   if (error) {
     std::rethrow_exception(error);
   }
   co_await SerializeResult(*prepared, *result,
                            prepared->GetStatementProperties().return_type,
-                           /*with_row_description=*/true, {}, *_ioexec);
+                           /*with_row_description=*/true, {});
   co_return {};
 }
 
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::RunCopyInFeeder(
   sdb::pg::CopyInBridge& bridge, bool is_binary) {
-  co_await yaclib::On(*_ioexec);
+  auto self = this->shared_from_this();
+  absl::Cleanup done_guard{[this] {
+    _feeder_done.store(true, std::memory_order_release);
+    _task->RequestRun();
+  }};
   for (;;) {
-    auto frame = co_await NextFrame(true, _max_message);
+    auto frame = co_await FeedFrame(true, _max_message);
     if (frame.status != FrameStatus::Ok) {
       bridge.Fail(std::make_exception_ptr(
         sdb::SqlException{sdb::pg::SqlErrorData{
@@ -1585,7 +1692,7 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
   // resumes the retained result. PendingQueryResult::Execute() closes the
   // pending, so calling it twice would throw.
   if (!portal->started) {
-    const auto status = co_await _pump->Drive(*portal->pending);
+    const auto status = co_await DriveQuery(*portal->pending);
     if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
         portal->pending->HasError()) {
       ThrowDuck(portal->pending->GetErrorObject());
@@ -1611,14 +1718,15 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
   // which stays byte-for-byte unchanged (zero added per-row overhead).
   if (max_rows == 0 ||
       return_type != duckdb::StatementReturnType::QUERY_RESULT) {
-    co_await SerializeResult(
-      *portal->stmt->prepared, *portal->result, return_type,
-      /*with_row_description=*/false, portal->bind_info.output_formats, *_duck);
+    co_await SerializeResult(*portal->stmt->prepared, *portal->result,
+                             return_type,
+                             /*with_row_description=*/false,
+                             portal->bind_info.output_formats);
     portal->exhausted = true;
     co_return {};
   }
 
-  if (co_await SerializePage(*portal, return_type, max_rows, *_duck)) {
+  if (co_await SerializePage(*portal, return_type, max_rows)) {
     WriteEmptyFrame(_send, PQ_MSG_PORTAL_SUSPENDED);
   }
   co_return {};
@@ -1815,150 +1923,190 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
       co_return {};
     }
 
-    // Register for query cancellation. The token holds this connection's
-    // ClientContext; a CancelRequest from another connection interrupts it
-    // cross-thread. Detach-then-Unregister on every exit path (the guard fires
-    // as the coroutine frame unwinds, while _conn is still alive) so a racing
-    // Cancel can never touch a torn-down context.
+    // Hand off to the duck-side half: the SessionTask owns the connection,
+    // the command loop, and the recv/send roles from here; this coroutine
+    // degrades into a byte pump (always-armed read -> channel -> wake). The
+    // cancel token is registered before the spawn so BackendKeyData can be
+    // sent; the ClientContext is attached to it duck-side after
+    // SetupConnection.
     _cancel_token = std::make_shared<CancelToken>();
-    _cancel_token->ctx = _conn->context.get();
     if (_cancel) {
       _cancel_key = _cancel->Register(_cancel_token);
     }
+    _task.emplace(duckdb::TaskScheduler::GetScheduler(
+                    DuckDBEngine::Instance().instance()),
+                  *_ioexec);
+    SessionMain().Detach();
+    _task_spawned = true;
+
+    for (;;) {
+      const size_t n = co_await _socket.ReadSome(_recv.Reserve(kReadBlock));
+      if (n == 0) {
+        break;
+      }
+      _recv.CommitWrite(n);
+      // During COPY FROM STDIN the io-pinned feeder is the recv consumer; the
+      // SessionTask is parked in DriveQuery and does not need message wakes.
+      if (_copy_route.load(std::memory_order_acquire)) {
+        _copy_gate.Kick();
+      } else {
+        _task->RequestRun();
+      }
+    }
+  } catch (const std::exception&) {
+  }
+  // Socket dead (EOF, reset, or our own post-close after Terminate): poison,
+  // interrupt any running query, and wake every parked waiter so the
+  // SessionTask and feeder unwind; the writer guard then releases SendWriter.
+  _io_broken.store(true, std::memory_order_release);
+  if (_cancel_token) {
+    _cancel_token->Cancel();
+  }
+  _copy_gate.Kick();
+  if (_task_spawned) {
+    _task->RequestRun();
+  }
+  _socket.Close();
+  co_return {};
+}
+
+template<SocketKind Kind>
+yaclib::Future<> PgWireSession<Kind>::SessionMain() {
+  auto self = this->shared_from_this();
+  co_await _task->Begin();
+  // From here every resume is a fresh Execute() frame on a duck worker.
+  absl::Cleanup finish_guard{[this] { _task->Finish(); }};
+  try {
+    // Detach-then-Unregister on every exit path, while _conn is still alive,
+    // so a racing CancelRequest can never touch a torn-down context.
     absl::Cleanup cancel_guard{[this] {
       _cancel_token->Detach();
       if (_cancel && _cancel_key) {
         _cancel->Unregister(_cancel_key);
       }
     }};
-
-    _duck.emplace(duckdb::TaskScheduler::GetScheduler(*_conn->context),
-                  *_ioexec);
-    _pump.emplace(duckdb::TaskScheduler::GetScheduler(*_conn->context),
-                  *_ioexec, *_duck);
-
-    SendStartupBurst();
-    KickSend();
-
-    // After an error in an extended-protocol message the backend silently
-    // discards every following message until the next Sync (postgres.c
-    // ignore_till_sync). A coroutine makes this a plain loop local.
-    bool ignore_till_sync = false;
-    for (;;) {
-      auto frame = co_await NextFrame(true, _max_message);
-      if (frame.status == FrameStatus::TooLarge) {
-        // PG sends an error then closes rather than silently dropping the
-        // connection on an over-cap message.
-        WriteErrorResponse(_send, "incoming message exceeds maximum size",
-                           "54000");
-        co_await Flush();
-        _socket.Close();
-        co_return {};
+    if (SetupConnection()) {
+      {
+        absl::MutexLock lock{&_cancel_token->mu};
+        _cancel_token->ctx = _conn->context.get();
       }
-      if (frame.status != FrameStatus::Ok || frame.type == PQ_MSG_TERMINATE) {
-        break;
-      }
-      const char type = frame.type;
+      SendStartupBurst();
+      KickSend();
 
-      if (type == PQ_MSG_FLUSH) {
-        if (frame.recv_consume) {
-          _recv.Consume(frame.recv_consume);
+      // After an error in an extended-protocol message the backend silently
+      // discards every following message until the next Sync (postgres.c
+      // ignore_till_sync). A coroutine makes this a plain loop local.
+      bool ignore_till_sync = false;
+      for (;;) {
+        auto frame = co_await AwaitFrame(true, _max_message);
+        if (frame.status == FrameStatus::TooLarge) {
+          // PG sends an error then closes rather than silently dropping the
+          // connection on an over-cap message.
+          WriteErrorResponse(_send, "incoming message exceeds maximum size",
+                             "54000");
+          break;
         }
-        KickSend();
-        continue;
-      }
-      if (type == PQ_MSG_SYNC) {
-        ignore_till_sync = false;
-        if (frame.recv_consume) {
-          _recv.Consume(frame.recv_consume);
+        if (frame.status != FrameStatus::Ok ||
+            frame.type == PQ_MSG_TERMINATE) {
+          break;
         }
-        WriteReadyForQuery(_send, TxnStatusByte());
-        KickSend();
-        continue;
-      }
-      if (ignore_till_sync) {
-        if (frame.recv_consume) {
-          _recv.Consume(frame.recv_consume);
-        }
-        continue;
-      }
+        const char type = frame.type;
 
-      _dispatch_consume = frame.recv_consume;
-      co_await yaclib::On(*_duck);
-      try {
-        switch (type) {
-          case PQ_MSG_QUERY:
-            co_await RunSimpleQuery(frame.payload);
-            break;
-          case PQ_MSG_PARSE:
-            HandleParse(frame.payload);
-            break;
-          case PQ_MSG_BIND:
-            HandleBind(frame.payload);
-            break;
-          case PQ_MSG_DESCRIBE:
-            HandleDescribe(frame.payload);
-            break;
-          case PQ_MSG_EXECUTE:
-            co_await HandleExecute(frame.payload);
-            break;
-          case PQ_MSG_CLOSE:
-            HandleClose(frame.payload);
-            break;
-          default:
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
-                            ERR_MSG("unsupported message type"));
+        if (type == PQ_MSG_FLUSH) {
+          if (frame.recv_consume) {
+            _recv.Consume(frame.recv_consume);
+          }
+          KickSend();
+          continue;
         }
-      } catch (const SqlException& exception) {
-        WriteErrorResponse(_send, exception.error());
-        ignore_till_sync = IsExtended(type);
-      } catch (const duckdb::Exception& exception) {
-        WriteErrorResponse(_send,
-                           DuckErrorToSqlData(duckdb::ErrorData{exception}));
-        ignore_till_sync = IsExtended(type);
-      } catch (const std::exception& exception) {
-        WriteErrorResponse(
-          _send, sdb::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
-                                       .errmsg = exception.what()});
-        ignore_till_sync = IsExtended(type);
-      }
-      co_await yaclib::On(*_ioexec);
-      DrainNotices();
-      ReportChangedParameters();
-      if (_dispatch_consume) {
-        _recv.Consume(_dispatch_consume);
-        _dispatch_consume = 0;
-      }
+        if (type == PQ_MSG_SYNC) {
+          ignore_till_sync = false;
+          if (frame.recv_consume) {
+            _recv.Consume(frame.recv_consume);
+          }
+          WriteReadyForQuery(_send, TxnStatusByte());
+          KickSend();
+          continue;
+        }
+        if (ignore_till_sync) {
+          if (frame.recv_consume) {
+            _recv.Consume(frame.recv_consume);
+          }
+          continue;
+        }
 
-      // Simple Query is self-syncing: emit ReadyForQuery and kick the writer.
-      // Extended replies accumulate and go out at the client's Sync. Neither
-      // waits for the socket -- the next frame is read while the response
-      // drains.
-      if (type == PQ_MSG_QUERY) {
-        WriteReadyForQuery(_send, TxnStatusByte());
-        KickSend();
+        _dispatch_consume = frame.recv_consume;
+        try {
+          switch (type) {
+            case PQ_MSG_QUERY:
+              co_await RunSimpleQuery(frame.payload);
+              break;
+            case PQ_MSG_PARSE:
+              HandleParse(frame.payload);
+              break;
+            case PQ_MSG_BIND:
+              HandleBind(frame.payload);
+              break;
+            case PQ_MSG_DESCRIBE:
+              HandleDescribe(frame.payload);
+              break;
+            case PQ_MSG_EXECUTE:
+              co_await HandleExecute(frame.payload);
+              break;
+            case PQ_MSG_CLOSE:
+              HandleClose(frame.payload);
+              break;
+            default:
+              THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
+                              ERR_MSG("unsupported message type"));
+          }
+        } catch (const SqlException& exception) {
+          WriteErrorResponse(_send, exception.error());
+          ignore_till_sync = IsExtended(type);
+        } catch (const duckdb::Exception& exception) {
+          WriteErrorResponse(_send,
+                             DuckErrorToSqlData(duckdb::ErrorData{exception}));
+          ignore_till_sync = IsExtended(type);
+        } catch (const std::exception& exception) {
+          WriteErrorResponse(
+            _send, sdb::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
+                                         .errmsg = exception.what()});
+          ignore_till_sync = IsExtended(type);
+        }
+        DrainNotices();
+        ReportChangedParameters();
+        if (_dispatch_consume) {
+          _recv.Consume(_dispatch_consume);
+          _dispatch_consume = 0;
+        }
+
+        // Simple Query is self-syncing: emit ReadyForQuery and kick the
+        // writer. Extended replies accumulate and go out at the client's
+        // Sync. Neither waits for the socket -- the next frame is consumed
+        // while the response drains.
+        if (type == PQ_MSG_QUERY) {
+          WriteReadyForQuery(_send, TxnStatusByte());
+          KickSend();
+        }
       }
     }
   } catch (const std::exception&) {
   }
-  // Destroy portal/statement-bound DuckDB results on the worker (they were
-  // created there) before the connection/context tear down, and discard any
-  // notices their cleanup produced so ~ConnectionContext sees an empty queue.
-  if (_duck) {
-    co_await yaclib::On(*_duck);
-    _portals.clear();
-    _anon_portal = Portal{};
-    _statements.clear();
-    _anon_statement.Reset();
-    co_await yaclib::On(*_ioexec);
-  }
+  // Teardown runs where everything was created: results/portals die on a duck
+  // worker; their cleanup may emit notices that must be stolen before
+  // ~ConnectionContext asserts an empty queue.
+  _portals.clear();
+  _anon_portal = Portal{};
+  _statements.clear();
+  _anon_statement.Reset();
   if (_connection_ctx) {
     _connection_ctx->StealNotices();
   }
   // Last responses (e.g. up to the Terminate) may still be draining; closing
-  // mid-write would truncate them.
-  co_await Flush();
-  _socket.Close();
+  // mid-write would truncate them. The close is posted to the io thread,
+  // which also makes RecvLoop's pending read fail and unwind.
+  co_await DrainSendOnTask();
+  asio_ns::post(_io, [self] { self->_socket.Close(); });
   co_return {};
 }
 

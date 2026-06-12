@@ -188,7 +188,6 @@ Result CompactAll(rocksdb::DB* db, bool change_level,
 
   for (auto family : {
          RocksDBColumnFamilyManager::Family::Default,
-         RocksDBColumnFamilyManager::Family::Definitions,
        }) {
     auto* cf = RocksDBColumnFamilyManager::get(family);
     // compact the entire data range

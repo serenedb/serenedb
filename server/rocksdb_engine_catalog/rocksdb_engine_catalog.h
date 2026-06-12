@@ -74,7 +74,6 @@ class RocksDBKey;
 class RocksDBLogValue;
 class RocksDBRecoveryHelper;
 class RocksDBReplicationManager;
-class RocksDBSettingsManager;
 class RocksDBSyncThread;
 class TransactionTable;
 class TransactionState;
@@ -85,8 +84,6 @@ class RestHandlerFactory;
 }
 
 class RocksDBEngineCatalog;
-
-using WriteProperties = absl::FunctionRef<std::string_view(bool internal)>;
 
 /// helper class to make file-purging thread-safe
 /// while there is an object of this type around, it will prevent
@@ -183,7 +180,6 @@ class RocksDBEngineCatalog {
   /// flushing column families becomes a separate API.
   Result flushWal(bool wait_for_sync = false,
                   bool flush_column_families = false);
-  void waitForEstimatorSync();
 
   // wal in recovery
   RecoveryState recoveryState() noexcept;
@@ -201,43 +197,6 @@ class RocksDBEngineCatalog {
 
   bool inRecovery() { return recoveryState() < RecoveryState::Done; }
 
-  Result SyncTableShard(const TableShard& shard);
-
-  Result CreateDefinition(ObjectId parent_id, catalog::ObjectType type,
-                          ObjectId id, WriteProperties properties);
-
-  // Transient handle for Write's callback. Caller mixes Put* calls; the
-  // whole batch commits atomically.
-  class CatalogWriteContext {
-   public:
-    CatalogWriteContext(const CatalogWriteContext&) = delete;
-    CatalogWriteContext& operator=(const CatalogWriteContext&) = delete;
-
-    void PutDefinition(ObjectId parent_id, catalog::ObjectType type,
-                       ObjectId id, std::string_view def);
-    void PutSequence(ObjectId sequence_id, uint64_t value);
-    void DropDefinition(ObjectId parent_id, catalog::ObjectType type,
-                        ObjectId id);
-    void DropSequence(ObjectId sequence_id);
-    void WriteTombstone(ObjectId parent_id, ObjectId id);
-
-   private:
-    friend class RocksDBEngineCatalog;
-    explicit CatalogWriteContext(rocksdb::WriteBatch& batch) : _batch{batch} {}
-    rocksdb::WriteBatch& _batch;
-  };
-
-  Result Write(absl::FunctionRef<void(CatalogWriteContext&)> fill);
-  Result DropDefinition(ObjectId parent_id, catalog::ObjectType type,
-                        ObjectId id);
-
-  // Pair with DropDefinition(..., ObjectType::Sequence, id) to fully drop.
-  Result DropSequence(ObjectId sequence_id);
-  Result DropEntry(ObjectId parent_id, catalog::ObjectType type);
-  Result DropEntry(ObjectId parent_id);
-  Result DropRange(std::string_view start, std::string_view end,
-                   rocksdb::ColumnFamilyHandle* cf);
-  Result WriteTombstone(ObjectId parent_id, ObjectId id);
 
   uint64_t GetTableSize(ObjectId table_id) const;
   uint64_t GetSchemaSize(const catalog::Snapshot& snapshot,
@@ -282,12 +241,6 @@ class RocksDBEngineCatalog {
 
   const rocksdb::DBOptions& rocksDBOptions() const { return _db_options; }
 
-  /// recovery manager
-  RocksDBSettingsManager* settingsManager() const {
-    SDB_ASSERT(_settings_manager);
-    return _settings_manager.get();
-  }
-
   /// manages the ongoing dump clients
   RocksDBReplicationManager* replicationManager() const {
     SDB_ASSERT(_replication_manager);
@@ -322,17 +275,8 @@ class RocksDBEngineCatalog {
 
   std::shared_ptr<StorageSnapshot> currentSnapshot();
 
-  Result VisitDefinitions(
-    ObjectId parent_id, catalog::ObjectType type,
-    absl::FunctionRef<Result(DefinitionKey, std::string_view)> visitor);
-
  private:
-  Result VisitDefinitionsImpl(
-    std::string_view start, std::string_view end,
-    absl::FunctionRef<Result(DefinitionKey, std::string_view)> visitor);
-
   void shutdownRocksDBInstance() noexcept;
-  void EnsureSystemDatabase();
 
   std::string getCompressionSupport() const;
 
@@ -359,7 +303,6 @@ class RocksDBEngineCatalog {
   /// repository for replication contexts
   std::shared_ptr<RocksDBReplicationManager> _replication_manager;
   /// tracks the count of documents in collections
-  std::unique_ptr<RocksDBSettingsManager> _settings_manager;
 
   /// Background thread handling garbage collection etc
   std::unique_ptr<RocksDBBackgroundThread> _background_thread;

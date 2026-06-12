@@ -95,7 +95,6 @@
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_sync_thread.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
@@ -110,55 +109,6 @@
 
 namespace sdb {
 namespace {
-
-void StartupVersionCheck(app::AppServer& server, rocksdb::TransactionDB* db,
-                         bool db_existed) {
-  // try to find version, using the version key
-  RocksDBKeyWithBuffer<SettingsKey> version_key{RocksDBSettingsType::Version};
-
-  if (db_existed) {
-    rocksdb::PinnableSlice old_version;
-    rocksdb::Status s =
-      db->Get({},
-              RocksDBColumnFamilyManager::get(
-                RocksDBColumnFamilyManager::Family::Definitions),
-              version_key.GetBuffer(), &old_version);
-
-    if (s.IsNotFound() || old_version.size() != 1) {
-      SDB_FATAL(STORAGE, "Error reading stored version from database: ",
-                rocksutils::ConvertStatus(s).errorMessage());
-    } else if (old_version.data()[0] < kRocksDBFormatVersion) {
-      // Performing 'upgrade' routine
-      if (old_version.data()[0] != '0' || kRocksDBFormatVersion != '1') {
-        SDB_FATAL(STORAGE, "Your database is in an old ",
-                  "format. Please downgrade the server, ",
-                  "dump & restore the data");
-      }
-
-    } else if (old_version.data()[0] > kRocksDBFormatVersion) {
-      SDB_FATAL(STORAGE,
-                "You are using an old version of SereneDB, please update ",
-                "before opening this database");
-    } else {
-      SDB_ASSERT(old_version.data()[0] == kRocksDBFormatVersion);
-    }
-  }
-
-  if (!db_existed) {
-    // store current version
-    auto s = db->Put(
-      rocksdb::WriteOptions(),
-      RocksDBColumnFamilyManager::get(
-        RocksDBColumnFamilyManager::Family::Definitions),
-      version_key.GetBuffer(),
-      rocksdb::Slice{&kRocksDBFormatVersion, sizeof(kRocksDBFormatVersion)});
-
-    if (!s.ok()) {
-      SDB_FATAL(STORAGE, "Error storing endianess/version: ",
-                rocksutils::ConvertStatus(s).errorMessage());
-    }
-  }
-}
 
 bool QueryDiskSpace(const char* path, uint64_t& total, uint64_t& free) {
   std::error_code ec;
@@ -218,69 +168,6 @@ RocksDBFilePurgeEnabler::RocksDBFilePurgeEnabler(
   : _engine(other._engine) {
   // steal engine from other
   other._engine = nullptr;
-}
-
-Result DeleteDefinition(rocksdb::DB* db, auto&& make_key,
-                        auto&& make_log_value) {
-  rocksdb::WriteBatch batch;
-  auto log_value = make_log_value();
-
-  if (!log_value.empty()) [[likely]] {
-    batch.PutLogData({log_value.data(), log_value.size()});
-  }
-
-  auto key = make_key();
-  batch.Delete(RocksDBColumnFamilyManager::get(
-                 RocksDBColumnFamilyManager::Family::Definitions),
-               key.GetBuffer());
-
-  rocksdb::WriteOptions wo;
-  return rocksutils::ConvertStatus(db->Write(wo, &batch));
-}
-
-Result WriteDefinition(rocksdb::DB* db, auto&& make_key, auto&& make_value,
-                       auto&& make_log_value) {
-  rocksdb::WriteBatch batch;
-
-  auto log_value = make_log_value();
-
-  if (!log_value.empty()) [[likely]] {
-    batch.PutLogData({log_value.data(), log_value.size()});
-  }
-
-  auto key = make_key();
-  std::string_view value = make_value();
-  batch.Put(RocksDBColumnFamilyManager::get(
-              RocksDBColumnFamilyManager::Family::Definitions),
-            key.GetBuffer(), value);
-
-  rocksdb::WriteOptions wo;
-  return rocksutils::ConvertStatus(db->Write(wo, &batch));
-}
-
-Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
-                       auto&& make_new_key, auto&& make_value,
-                       auto&& make_log_value) {
-  rocksdb::WriteBatch batch;
-
-  auto log_value = make_log_value();
-
-  if (!log_value.empty()) [[likely]] {
-    batch.PutLogData({log_value.data(), log_value.size()});
-  }
-
-  auto* column = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Definitions);
-
-  auto old_key = make_old_key();
-  auto new_key = make_new_key();
-  auto value = make_value();
-
-  batch.Delete(column, old_key.string());
-  batch.Put(column, new_key.string(), value.string());
-
-  rocksdb::WriteOptions wo;
-  return rocksutils::ConvertStatus(db->Write(wo, &batch));
 }
 
 RocksDBEngineCatalog::RocksDBEngineCatalog()
@@ -496,8 +383,6 @@ void RocksDBEngineCatalog::start() {
     cf_families.emplace_back(name, specialized);
   };
   add_family(RocksDBColumnFamilyManager::Family::Default);
-  add_family(RocksDBColumnFamilyManager::Family::Definitions);
-  add_family(RocksDBColumnFamilyManager::Family::Sequences);
 
   bool db_existed = checkExistingDB(cf_families);
 
@@ -539,20 +424,22 @@ void RocksDBEngineCatalog::start() {
     cf_handles[std::to_underlying(
       RocksDBColumnFamilyManager::Family::Default)]);
 
-  RocksDBColumnFamilyManager::set(
-    RocksDBColumnFamilyManager::Family::Definitions,
-    cf_handles[std::to_underlying(
-      RocksDBColumnFamilyManager::Family::Definitions)]);
-
-  RocksDBColumnFamilyManager::set(
-    RocksDBColumnFamilyManager::Family::Sequences,
-    cf_handles[std::to_underlying(
-      RocksDBColumnFamilyManager::Family::Sequences)]);
-
-  // will crash the process if version does not match
-  StartupVersionCheck(app::AppServer::Instance(), _db, db_existed);
-
   _db_existed = db_existed;
+
+  if (_db->GetLatestSequenceNumber() == 0) {
+    // The tick domain (= rocksdb seqno) starts at 1; catalog writes no
+    // longer seed a fresh instance, so mint the first tick explicitly.
+    rocksdb::WriteBatch batch;
+    batch.Delete(
+      RocksDBColumnFamilyManager::get(
+        RocksDBColumnFamilyManager::Family::Default),
+      rocksdb::Slice{});
+    auto seed = _db->GetRootDB()->Write(rocksdb::WriteOptions{}, &batch);
+    if (!seed.ok()) {
+      SDB_FATAL(STARTUP, "unable to seed rocksdb sequence number: ",
+                rocksutils::ConvertStatus(seed).errorMessage());
+    }
+  }
 
   if (_options_provider.limitOpenFilesAtStartup()) {
     _db->SetDBOptions({{"max_open_files", "-1"}});
@@ -574,15 +461,10 @@ void RocksDBEngineCatalog::start() {
   }
 
   SDB_ASSERT(_db != nullptr);
-  _settings_manager = std::make_unique<RocksDBSettingsManager>(*this);
-  _settings_manager->retrieveInitialValues();
-
   const double counter_sync_seconds = 2.5;
   _background_thread =
     std::make_unique<RocksDBBackgroundThread>(*this, counter_sync_seconds);
   _background_thread->start();
-
-  EnsureSystemDatabase();
 
   // to populate initial health check data
   if (auto hd = healthCheck(); hd.res.fail()) {
@@ -604,15 +486,6 @@ void RocksDBEngineCatalog::stop() {
     // stop the press
     _background_thread->beginShutdown();
 
-    if (_settings_manager) {
-      auto sync_res = _settings_manager->sync(/*force*/ true);
-      if (!sync_res) {
-        SDB_WARN(STORAGE,
-                 "caught exception while shutting down RocksDB engine: ",
-                 sync_res.error().errorMessage());
-      }
-    }
-
     // jthread joins on reset() via ~RocksDBBackgroundThread()
     _background_thread.reset();
   }
@@ -631,37 +504,6 @@ bool RocksDBEngineCatalog::hasBackgroundError() const {
   return _error_listener != nullptr && _error_listener->Called();
 }
 
-// TODO: Rewrite this to use single scan.
-Result RocksDBEngineCatalog::VisitDefinitionsImpl(
-  std::string_view start, std::string_view end,
-  absl::FunctionRef<Result(DefinitionKey key, std::string_view)> visitor) {
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Definitions);
-
-  rocksdb::Slice upper = rocksdb::Slice{end};
-  rocksdb::ReadOptions ro;
-  ro.iterate_upper_bound = &upper;
-  // TODO: more options?
-  ro.async_io = true;
-  std::unique_ptr<rocksdb::Iterator> iter{_db->NewIterator(ro, cf)};
-  for (iter->Seek(rocksdb::Slice{start}); iter->Valid(); iter->Next()) {
-    SDB_ASSERT(iter->key().compare(upper) < 0);
-    std::string_view def{iter->value().data(), iter->value().size()};
-    if (auto r = visitor(DefinitionKey{iter->key()}, def); !r.ok()) {
-      return r;
-    }
-  }
-
-  return rocksutils::ConvertStatus(iter->status());
-}
-
-Result RocksDBEngineCatalog::VisitDefinitions(
-  ObjectId parent_id, catalog::ObjectType type,
-  absl::FunctionRef<Result(DefinitionKey key, std::string_view)> visitor) {
-  auto [start, end] = DefinitionKey::CreateInterval(parent_id, type);
-  return VisitDefinitionsImpl(start, end, visitor);
-}
-
 std::string RocksDBEngineCatalog::versionFilename(ObjectId id) const {
   return absl::StrCat(_base_path, SERENEDB_DIR_SEPARATOR_STR, "VERSION-", id);
 }
@@ -672,23 +514,6 @@ RecoveryState RocksDBEngineCatalog::recoveryState() noexcept {
 
 Tick RocksDBEngineCatalog::recoveryTick() noexcept {
   return RocksDBRecoveryManager::instance().recoverySequenceNumber();
-}
-
-Result RocksDBEngineCatalog::SyncTableShard(const TableShard& shard) {
-  ObjectId table_id = shard.GetParentId();
-  ObjectId shard_id = shard.GetId();
-  duckdb::MemoryStream stream;
-  auto bytes = catalog::SerializeObject(shard, stream);
-  RocksDBKeyWithBuffer<DefinitionKey> key{
-    table_id, catalog::ObjectType::TableShard, shard_id};
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Definitions);
-
-  auto slice = rocksdb::Slice{bytes.data(), bytes.size()};
-  // TODO(codeworse): probably should use Merge instead of Put, since in case of
-  // concurrent delete operation it may re-create deleted entry.
-  return rocksutils::ConvertStatus(
-    _db->Put(rocksdb::WriteOptions{}, cf, key.GetBuffer(), slice));
 }
 
 yaclib::Future<Result> RocksDBEngineCatalog::compactAll(
@@ -733,14 +558,6 @@ Result RocksDBEngineCatalog::flushWal(bool wait_for_sync,
   }
 
   return res;
-}
-
-void RocksDBEngineCatalog::waitForEstimatorSync() {
-  // release all unused ticks from flush feature
-  FlushFeature::instance().releaseUnusedTicks();
-
-  // force-flush
-  std::ignore = _settings_manager->sync(/*force*/ true);
 }
 
 Result RocksDBEngineCatalog::RegisterRecoveryHelper(
@@ -1020,150 +837,6 @@ void RocksDBEngineCatalog::pruneWalFiles() {
             _prunable_wal_files.size());
 }
 
-void RocksDBEngineCatalog::EnsureSystemDatabase() {
-  bool has_system = false;
-  std::ignore =
-    VisitDefinitions(id::kInstance, catalog::ObjectType::Database,
-                     [&](DefinitionKey key, std::string_view) -> Result {
-                       has_system = key.GetObjectId() == id::kSystemDB;
-                       return {ERROR_INTERNAL};  // stop iteration
-                     });
-
-  if (has_system) {
-    SDB_TRACE(STARTUP, "Found system database");
-    return;
-  }
-
-  catalog::Database database{
-    id::kSystemDB,
-    catalog::DatabaseOptions{std::string{StaticStrings::kDefaultDatabase}}};
-  duckdb::MemoryStream stream;
-  auto database_bytes = catalog::SerializeObject(database, stream);
-  auto r = CreateDefinition(
-    id::kInstance, catalog::ObjectType::Database, id::kSystemDB,
-    [&](bool) { return std::string_view{database_bytes}; });
-  if (!r.ok()) {
-    SDB_FATAL(STARTUP, "unable to write database marker: ", r.errorMessage());
-  }
-
-  const auto schema_id = catalog::NextId();
-  catalog::Schema schema{
-    id::kSystemDB,
-    catalog::SchemaOptions{.id = schema_id,
-                           .name = std::string{StaticStrings::kPublic}}};
-  auto schema_bytes = catalog::SerializeObject(schema, stream);
-  r = CreateDefinition(id::kSystemDB, catalog::ObjectType::Schema, schema_id,
-                       [&](bool) { return std::string_view{schema_bytes}; });
-  if (!r.ok()) {
-    SDB_FATAL(STARTUP, "unable to write schema marker: ", r.errorMessage());
-  }
-}
-
-Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
-                                              catalog::ObjectType type,
-                                              ObjectId id,
-                                              WriteProperties properties) {
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] { return RocksDBKeyWithBuffer<DefinitionKey>{parent_id, type, id}; },
-    [&] { return properties(true); }, [] { return std::string_view{}; });
-}
-
-void RocksDBEngineCatalog::CatalogWriteContext::PutDefinition(
-  ObjectId parent_id, catalog::ObjectType type, ObjectId id,
-  std::string_view def) {
-  RocksDBKeyWithBuffer<DefinitionKey> key{parent_id, type, id};
-  _batch.Put(RocksDBColumnFamilyManager::get(
-               RocksDBColumnFamilyManager::Family::Definitions),
-             key.GetBuffer(), def);
-}
-
-void RocksDBEngineCatalog::CatalogWriteContext::PutSequence(
-  ObjectId sequence_id, uint64_t value) {
-  std::string key;
-  rocksutils::Uint64ToPersistent(key, sequence_id.id());
-  std::string encoded;
-  rocksutils::UintToPersistentLittleEndian<uint64_t>(encoded, value);
-  _batch.Put(RocksDBColumnFamilyManager::get(
-               RocksDBColumnFamilyManager::Family::Sequences),
-             key, encoded);
-}
-
-void RocksDBEngineCatalog::CatalogWriteContext::DropDefinition(
-  ObjectId parent_id, catalog::ObjectType type, ObjectId id) {
-  RocksDBKeyWithBuffer<DefinitionKey> key{parent_id, type, id};
-  _batch.Delete(RocksDBColumnFamilyManager::get(
-                  RocksDBColumnFamilyManager::Family::Definitions),
-                key.GetBuffer());
-}
-
-void RocksDBEngineCatalog::CatalogWriteContext::DropSequence(
-  ObjectId sequence_id) {
-  std::string key;
-  rocksutils::Uint64ToPersistent(key, sequence_id.id());
-  _batch.Delete(RocksDBColumnFamilyManager::get(
-                  RocksDBColumnFamilyManager::Family::Sequences),
-                key);
-}
-
-void RocksDBEngineCatalog::CatalogWriteContext::WriteTombstone(
-  ObjectId parent_id, ObjectId id) {
-  RocksDBKeyWithBuffer<DefinitionKey> key{parent_id,
-                                          catalog::ObjectType::Tombstone, id};
-  _batch.Put(RocksDBColumnFamilyManager::get(
-               RocksDBColumnFamilyManager::Family::Definitions),
-             key.GetBuffer(), std::string_view{});
-}
-
-Result RocksDBEngineCatalog::Write(
-  absl::FunctionRef<void(CatalogWriteContext&)> fill) {
-  rocksdb::WriteBatch batch;
-  CatalogWriteContext ctx{batch};
-  fill(ctx);
-  rocksdb::WriteOptions wo;
-  return rocksutils::ConvertStatus(_db->GetRootDB()->Write(wo, &batch));
-}
-
-Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
-                                            catalog::ObjectType type,
-                                            ObjectId id) {
-  return DeleteDefinition(
-    _db->GetRootDB(),
-    [&] { return RocksDBKeyWithBuffer<DefinitionKey>{parent_id, type, id}; },
-    [] { return std::string_view{}; });
-}
-
-Result RocksDBEngineCatalog::DropSequence(ObjectId sequence_id) {
-  std::string key;
-  rocksutils::Uint64ToPersistent(key, sequence_id.id());
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Sequences);
-  return rocksutils::ConvertStatus(
-    _db->GetRootDB()->Delete(rocksdb::WriteOptions{}, cf, key));
-}
-
-Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id,
-                                       catalog::ObjectType type) {
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Definitions);
-  auto [start, end] = DefinitionKey::CreateInterval(parent_id, type);
-  return DropRange(start, end, cf);
-}
-
-Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id) {
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Definitions);
-  auto [start, end] = DefinitionKey::CreateInterval(parent_id);
-  return DropRange(start, end, cf);
-}
-
-Result RocksDBEngineCatalog::DropRange(std::string_view start,
-                                       std::string_view end,
-                                       rocksdb::ColumnFamilyHandle* cf) {
-  return rocksutils::ConvertStatus(
-    _db->GetRootDB()->DeleteRange(rocksdb::WriteOptions{}, cf, start, end));
-}
-
 uint64_t RocksDBEngineCatalog::GetTableSize(ObjectId table_id) const {
   auto [start, end] = connector::key_utils::CreateTableRange(table_id);
   rocksdb::Range range(start, end);
@@ -1197,16 +870,6 @@ uint64_t RocksDBEngineCatalog::GetDatabaseSize(
     total += GetSchemaSize(snapshot, database_id, schema->GetName());
   }
   return total;
-}
-
-Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      return RocksDBKeyWithBuffer<DefinitionKey>{
-        parent_id, catalog::ObjectType::Tombstone, id};
-    },
-    [] { return std::string_view{}; }, [] { return std::string_view{}; });
 }
 
 /// get compression supported by RocksDB

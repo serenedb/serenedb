@@ -20,8 +20,9 @@
 
 #include "catalog/catalog.h"
 
+#include "catalog/store/store.h"
+
 #include <absl/cleanup/cleanup.h>
-#include <rocksdb/slice.h>
 
 #include <expected>
 #include <iostream>
@@ -59,9 +60,6 @@
 #include "catalog/view.h"
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "rocksdb_engine_catalog/rocksdb_key.h"
-#include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/secondary_index_shard.h"
 #include "storage_engine/table_shard.h"
@@ -86,15 +84,15 @@ ResultOr<DropTableOptions> GetTableOptionsForDrop(std::string_view bytes,
 }
 
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
-  RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
+  CatalogStore& store, ObjectId db_id, ObjectId schema_id,
   ObjectId table_id, ObjectId index_id, ObjectType index_type,
   bool is_root = false) {
   auto shard_type = IndexShardType(index_type);
   ObjectId shard_id;
-  auto r = engine.VisitDefinitions(index_id, shard_type,
-                                   [&](DefinitionKey key, std::string_view) {
+  auto r = store.VisitBoot(index_id, shard_type,
+                                   [&](CatalogStore::Key key, std::string_view) {
                                      SDB_ASSERT(!shard_id.isSet());
-                                     shard_id = key.GetObjectId();
+                                     shard_id = key.id;
                                      return Result{};
                                    });
   if (!r.ok()) {
@@ -105,16 +103,16 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
 }
 
 ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
-  RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
+  CatalogStore& store, ObjectId db_id, ObjectId schema_id,
   ObjectId table_id, uint64_t cols, bool is_root = false) {
   ObjectId shard_id;
   uint64_t table_size = std::numeric_limits<uint64_t>::max();
 
   auto r =
-    engine.VisitDefinitions(table_id, ObjectType::TableShard,
-                            [&](DefinitionKey key, std::string_view bytes) {
+    store.VisitBoot(table_id, ObjectType::TableShard,
+                            [&](CatalogStore::Key key, std::string_view bytes) {
                               SDB_ASSERT(!shard_id.isSet());
-                              shard_id = key.GetObjectId();
+                              shard_id = key.id;
                               auto stats = TableShard::DeserializeStats(bytes);
                               table_size = stats.num_rows * cols;
                               return Result{};
@@ -124,10 +122,10 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   }
   std::vector<std::shared_ptr<IndexDrop>> indexes;
   auto collect_indexes = [&](ObjectType type) {
-    return engine.VisitDefinitions(
-      table_id, type, [&](DefinitionKey key, std::string_view) {
-        auto index_drop = CreateIndexDrop(engine, db_id, schema_id, table_id,
-                                          key.GetObjectId(), type);
+    return store.VisitBoot(
+      table_id, type, [&](CatalogStore::Key key, std::string_view) {
+        auto index_drop = CreateIndexDrop(store, db_id, schema_id, table_id,
+                                          key.id, type);
         if (!index_drop) {
           return std::move(index_drop.error());
         }
@@ -144,15 +142,15 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   }
 
   std::vector<ObjectId> owned_sequences;
-  r = engine.VisitDefinitions(
+  r = store.VisitBoot(
     schema_id, ObjectType::Sequence,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
       auto seq =
-        catalog::DeserializeObject<Sequence>(bytes, {.id = key.GetObjectId(),
+        catalog::DeserializeObject<Sequence>(bytes, {.id = key.id,
                                                      .database_id = db_id,
                                                      .schema_id = schema_id});
       if (seq && seq->GetOwnerTableId() == table_id) {
-        owned_sequences.push_back(key.GetObjectId());
+        owned_sequences.push_back(key.id);
       }
       return Result{};
     });
@@ -165,20 +163,20 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
 }
 
 ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
-  RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
+  CatalogStore& store, ObjectId db_id, ObjectId schema_id,
   bool is_root = false) {
   std::vector<std::shared_ptr<TableDrop>> tables;
-  auto r = engine.VisitDefinitions(
+  auto r = store.VisitBoot(
     schema_id, ObjectType::Table,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
-      auto options = GetTableOptionsForDrop(bytes, {.id = key.GetObjectId(),
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+      auto options = GetTableOptionsForDrop(bytes, {.id = key.id,
                                                     .database_id = db_id,
                                                     .schema_id = schema_id});
       if (!options) {
         return std::move(options.error());
       }
-      auto table_drop = CreateTableDrop(engine, db_id, schema_id,
-                                        key.GetObjectId(), options->columns);
+      auto table_drop = CreateTableDrop(store, db_id, schema_id,
+                                        key.id, options->columns);
       if (!table_drop) {
         return std::move(table_drop.error());
       }
@@ -194,11 +192,11 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
 }
 
 ResultOr<std::shared_ptr<DatabaseDrop>> CreateDatabaseDrop(
-  RocksDBEngineCatalog& engine, ObjectId db_id) {
+  CatalogStore& store, ObjectId db_id) {
   std::vector<std::shared_ptr<SchemaDrop>> schemas;
-  auto r = engine.VisitDefinitions(
-    db_id, ObjectType::Schema, [&](DefinitionKey key, std::string_view) {
-      auto schema_drop = CreateSchemaDrop(engine, db_id, key.GetObjectId());
+  auto r = store.VisitBoot(
+    db_id, ObjectType::Schema, [&](CatalogStore::Key key, std::string_view) {
+      auto schema_drop = CreateSchemaDrop(store, db_id, key.id);
       if (!schema_drop) {
         return std::move(schema_drop.error());
       }
@@ -269,12 +267,12 @@ class OpenDatabase {
   }
 
   void CollectDeletedDefinitions(ObjectId id, DeletedScope scope) {
-    auto& engine = GetServerEngine();
+    auto& store = GetCatalogStore();
     auto& deleted = _deleted[magic_enum::enum_integer(scope)];
     SDB_ASSERT(deleted.empty());
-    auto r = engine.VisitDefinitions(id, ObjectType::Tombstone,
-                                     [&](DefinitionKey key, std::string_view) {
-                                       deleted.insert(key.GetObjectId());
+    auto r = store.VisitBoot(id, ObjectType::Tombstone,
+                                     [&](CatalogStore::Key key, std::string_view) {
+                                       deleted.insert(key.id);
                                        return Result{};
                                      });
     SDB_ASSERT(r.ok());
@@ -303,13 +301,13 @@ Result OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
 }
 
 Result OpenDatabase::RegisterDatabases() {
-  return GetServerEngine().VisitDefinitions(
+  return GetCatalogStore().VisitBoot(
     id::kInstance, ObjectType::Database,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
-      if (!IsDeleted(key.GetObjectId(), DeletedScope::Root)) {
-        return AddDatabase(key.GetObjectId(), bytes);
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+      if (!IsDeleted(key.id, DeletedScope::Root)) {
+        return AddDatabase(key.id, bytes);
       }
-      auto drop = CreateDatabaseDrop(GetServerEngine(), key.GetObjectId());
+      auto drop = CreateDatabaseDrop(GetCatalogStore(), key.id);
       if (!drop) {
         return std::move(drop.error());
       }
@@ -319,16 +317,16 @@ Result OpenDatabase::RegisterDatabases() {
 }
 
 Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
-  return GetServerEngine().VisitDefinitions(
+  return GetCatalogStore().VisitBoot(
     database_id, ObjectType::Schema,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
-      auto schema_id = key.GetObjectId();
-      if (!IsDeleted(key.GetObjectId(), DeletedScope::Database)) {
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+      auto schema_id = key.id;
+      if (!IsDeleted(key.id, DeletedScope::Database)) {
         return AddSchema(database_id, schema_id, bytes);
       }
 
-      auto drop = CreateSchemaDrop(GetServerEngine(), database_id,
-                                   key.GetObjectId(), true);
+      auto drop = CreateSchemaDrop(GetCatalogStore(), database_id,
+                                   key.id, true);
       if (!drop) {
         return std::move(drop.error());
       }
@@ -338,12 +336,12 @@ Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
 }
 
 Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
-  return GetServerEngine().VisitDefinitions(
+  return GetCatalogStore().VisitBoot(
     schema_id, ObjectType::PgSqlFunction,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
       auto function = catalog::DeserializeObject<catalog::PgSqlFunction>(
         bytes, {
-                 .id = key.GetObjectId(),
+                 .id = key.id,
                  .database_id = db_id,
                  .schema_id = schema_id,
                });
@@ -355,12 +353,12 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
 }
 
 Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
-  return GetServerEngine().VisitDefinitions(
+  return GetCatalogStore().VisitBoot(
     schema_id, ObjectType::Tokenizer,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
       auto tokenizer =
         catalog::DeserializeObject<Tokenizer>(bytes, {
-                                                       .id = key.GetObjectId(),
+                                                       .id = key.id,
                                                        .database_id = db_id,
                                                        .schema_id = schema_id,
                                                      });
@@ -372,10 +370,10 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
 }
 
 Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
-  return GetServerEngine().VisitDefinitions(
+  return GetCatalogStore().VisitBoot(
     schema_id, ObjectType::PgSqlView,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
-      auto view_id = key.GetObjectId();
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+      auto view_id = key.id;
       auto view = catalog::DeserializeObject<PgSqlView>(
         bytes, {.id = view_id, .database_id = db_id, .schema_id = schema_id});
       if (!view) {
@@ -394,12 +392,12 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
 
 Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
                                        bool owned) {
-  return GetServerEngine().VisitDefinitions(
+  return GetCatalogStore().VisitBoot(
     schema_id, ObjectType::Sequence,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
       auto seq =
         catalog::DeserializeObject<Sequence>(bytes, {
-                                                      .id = key.GetObjectId(),
+                                                      .id = key.id,
                                                       .database_id = db_id,
                                                       .schema_id = schema_id,
                                                     });
@@ -419,12 +417,12 @@ Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
 }
 
 Result OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
-  return GetServerEngine().VisitDefinitions(
+  return GetCatalogStore().VisitBoot(
     schema_id, ObjectType::PgSqlType,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
       auto type =
         catalog::DeserializeObject<PgSqlType>(bytes, {
-                                                       .id = key.GetObjectId(),
+                                                       .id = key.id,
                                                        .database_id = db_id,
                                                        .schema_id = schema_id,
                                                      });
@@ -438,15 +436,15 @@ Result OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
 Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
                                      ObjectId table_id) {
   auto visit = [&](ObjectType type) {
-    return GetServerEngine().VisitDefinitions(
-      table_id, type, [&](DefinitionKey key, std::string_view bytes) -> Result {
-        auto index_id = key.GetObjectId();
+    return GetCatalogStore().VisitBoot(
+      table_id, type, [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+        auto index_id = key.id;
         if (!IsDeleted(index_id, DeletedScope::Relation)) {
           return AddIndex(db_id, schema_id, table_id, index_id, type, bytes);
         }
 
-        auto drop = CreateIndexDrop(GetServerEngine(), db_id, schema_id,
-                                    table_id, key.GetObjectId(), type, true);
+        auto drop = CreateIndexDrop(GetCatalogStore(), db_id, schema_id,
+                                    table_id, key.id, type, true);
         if (!drop) {
           return std::move(drop.error());
         }
@@ -464,10 +462,10 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
 }
 
 Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
-  return GetServerEngine().VisitDefinitions(
+  return GetCatalogStore().VisitBoot(
     table_id, ObjectType::TableShard,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
-      ObjectId shard_id = key.GetObjectId();
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+      ObjectId shard_id = key.id;
       SDB_ASSERT(!IsDeleted(shard_id, DeletedScope::Relation));
       auto stats = TableShard::DeserializeStats(bytes);
       auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
@@ -476,10 +474,10 @@ Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
 }
 
 Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
-  return GetServerEngine().VisitDefinitions(
+  return GetCatalogStore().VisitBoot(
     index->GetId(), IndexShardType(index->GetType()),
-    [&](DefinitionKey key, std::string_view /*bytes*/) -> Result {
-      auto shard = index->CreateIndexShard(false, key.GetObjectId());
+    [&](CatalogStore::Key key, std::string_view /*bytes*/) -> Result {
+      auto shard = index->CreateIndexShard(false, key.id);
       if (!shard) {
         return std::move(shard.error());
       }
@@ -489,10 +487,10 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
 }
 
 Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
-  return GetServerEngine().VisitDefinitions(
+  return GetCatalogStore().VisitBoot(
     schema_id, ObjectType::Table,
-    [&](DefinitionKey key, std::string_view bytes) -> Result {
-      auto table_id = key.GetObjectId();
+    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
+      auto table_id = key.id;
       if (!IsDeleted(table_id, DeletedScope::Schema)) {
         auto table = catalog::DeserializeObject<Table>(
           bytes,
@@ -507,7 +505,7 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
       if (!options) {
         return std::move(options.error());
       }
-      auto drop = CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id,
+      auto drop = CreateTableDrop(GetCatalogStore(), db_id, schema_id, table_id,
                                   options->columns, true);
       if (!drop) {
         return std::move(drop.error());
@@ -518,10 +516,10 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
 }
 
 Result OpenDatabase::AddRoles() {
-  auto& engine = GetServerEngine();
-  auto r = engine.VisitDefinitions(
+  auto& store = GetCatalogStore();
+  auto r = store.VisitBoot(
     id::kInstance, ObjectType::Role,
-    [&](DefinitionKey, std::string_view bytes) -> Result {
+    [&](CatalogStore::Key, std::string_view bytes) -> Result {
       auto role = catalog::DeserializeObject<catalog::Role>(bytes, {});
       if (!role) {
         return Result{ERROR_INTERNAL, "Failed to read role definition"};
@@ -578,8 +576,8 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
 #ifdef SDB_DEV
   // Check there are no tombstones in index scope
   size_t counter = 0;
-  r = GetServerEngine().VisitDefinitions(index_id, ObjectType::Tombstone,
-                                         [&](DefinitionKey, std::string_view) {
+  r = GetCatalogStore().VisitBoot(index_id, ObjectType::Tombstone,
+                                         [&](CatalogStore::Key, std::string_view) {
                                            counter++;
                                            return Result{};
                                          });
@@ -669,6 +667,13 @@ void CatalogFeature::stop() {
 }
 
 Result CatalogFeature::Open() {
+  if (auto r = GetCatalogStore().LoadBootState(); !r.ok()) {
+    return r;
+  }
+  irs::Finally release_boot = [] noexcept {
+    GetCatalogStore().ReleaseBootState();
+  };
+
   OpenDatabase open_db{Local()};
   if (auto r = open_db.AddRoles(); !r.ok()) {
     return r;
@@ -676,7 +681,7 @@ Result CatalogFeature::Open() {
 
   // Bootstrap the default `postgres` role on first start. AddRoles() has
   // already loaded any persisted roles; if none exist we mint the root user
-  // and persist it via Local().CreateRole(), which writes it to RocksDB so it
+  // and persist it via Local().CreateRole(), which persists it so it
   // survives across restarts. RBAC isn't implemented yet, so the password is
   // empty and auth checks are skipped.
   if (Local().GetCatalogSnapshot()->GetRoles().empty()) {

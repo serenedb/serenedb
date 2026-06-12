@@ -91,6 +91,7 @@ class Config {
   IsolationLevel GetIsolationLevel() const;
   WriteConflictPolicy GetWriteConflictPolicy() const;
   bool GetReadYourOwnWrites() const;
+  bool GetStrictDDL() const;
   bool IsExplicitTransaction() const;
   bool IsTransactionInvalidated() const;
 

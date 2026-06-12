@@ -344,7 +344,7 @@ RocksDBOptionFeature::RocksDBOptionFeature()
       transaction::Options::gDefaultIntermediateCommitSize),
     _intermediate_commit_count(
       transaction::Options::gDefaultIntermediateCommitCount),
-    _max_write_buffer_number_cf{0, 0} {
+    _max_write_buffer_number_cf{0} {
   if (_total_write_buffer_size == 0) {
     // unlimited write buffer size... now set to some fraction of physical RAM
     _total_write_buffer_size = ::DefaultTotalWriteBufferSize();
@@ -914,11 +914,6 @@ RocksDBOptionFeature::getColumnFamilyOptionsDefault(
       result.table_factory.reset(
         rocksdb::NewBlockBasedTableFactory(table_options));
     } break;
-    case RocksDBColumnFamilyManager::Family::Definitions:
-      break;
-    case RocksDBColumnFamilyManager::Family::Sequences:
-      result.merge_operator = std::make_shared<rocksdb::UInt64AddOperator>();
-      break;
     default:
       SDB_UNREACHABLE();
       break;

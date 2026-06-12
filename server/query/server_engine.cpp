@@ -28,6 +28,7 @@
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 
+#include "catalog/store/store.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_storage_extension.h"
@@ -221,6 +222,8 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
+  catalog::RegisterCatalogStoreFunctions(db);
+
   connector::RegisterTokenizerPragma(db);
 
   connector::RegisterPgCasts(db);

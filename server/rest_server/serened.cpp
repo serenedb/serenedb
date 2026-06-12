@@ -34,6 +34,7 @@
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
+#include "catalog/store/store.h"
 #include "duckdb_shell.hpp"
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler_feature.h"
@@ -70,6 +71,7 @@ int RunServer(int argc, char** argv) {
     //    pointer; Feature::instance() works from here on.
     SslServerFeature ssl;
     DatabasePathFeature db_path;
+    catalog::CatalogStore store;
     SchedulerFeature scheduler;
     RocksDBOptionFeature rocksdb_opt;
     RocksDBEngineCatalog engine;
@@ -88,8 +90,9 @@ int RunServer(int argc, char** argv) {
     // hold BEFORE rocksdb is closed, yet must stay alive while the engine's
     // background thread drains. DuckDBEngine brackets all of this from main().
     // The up_* flags let DOWN skip whatever never came UP (start() threw).
-    bool up_ssl = false, up_scheduler = false, up_engine = false,
-         up_catalog = false, up_search = false, up_general = false;
+    bool up_ssl = false, up_store = false, up_scheduler = false,
+         up_engine = false, up_catalog = false, up_search = false,
+         up_general = false;
 
     absl::Cleanup down = [&]() noexcept {
       CrashHandler::SetState("stopping");
@@ -122,6 +125,9 @@ int RunServer(int argc, char** argv) {
       if (up_engine) {
         stop("rocksdb", [&] { engine.unprepare(); });  // close rocksdb
       }
+      if (up_store) {
+        stop("store", [&] { store.Shutdown(); });  // detach + checkpoint
+      }
       stop("flush", [&] { flush.stop(); });
       if (up_ssl) {
         stop("ssl", [&] { ssl.stop(); });
@@ -131,6 +137,8 @@ int RunServer(int argc, char** argv) {
     CrashHandler::SetState("starting");
     ssl.start();
     up_ssl = true;
+    store.Initialize(db_path.directory());
+    up_store = true;
     scheduler.start();
     up_scheduler = true;
     engine.prepare();

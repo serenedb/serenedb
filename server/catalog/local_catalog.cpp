@@ -94,8 +94,6 @@
 #include "general_server/state.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/sql_utils.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
@@ -1207,7 +1205,7 @@ class SnapshotImpl : public Snapshot {
       .ComputePlan();
   }
 
-  void CommitDropPlan(RocksDBEngineCatalog::CatalogWriteContext& ctx,
+  void CommitDropPlan(CatalogStore::WriteContext& ctx,
                       const DropPlan& plan) const {
     duckdb::MemoryStream stream;
     for (const auto& [tid, rw] : plan.table_rewrites) {
@@ -1529,7 +1527,7 @@ std::string DropPlan::FormatDependentsDetail(const Snapshot& snap,
 }
 
 LocalCatalog::LocalCatalog()
-  : _snapshot(std::make_shared<SnapshotImpl>()), _engine{&GetServerEngine()} {}
+  : _snapshot(std::make_shared<SnapshotImpl>()), _engine{&GetCatalogStore()} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
   SDB_INFO(GENERAL, "Register role ", role->GetName());
@@ -1621,7 +1619,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
         auto bytes = catalog::SerializeObject(*database, stream);
         auto r =
           _engine->CreateDefinition(id::kInstance, ObjectType::Database,
-                                    database_id, [&](bool) { return bytes; });
+                                    database_id, bytes);
 
         if (!r.ok()) {
           return r;
@@ -1636,8 +1634,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
       SDB_ASSERT(r.ok());
       auto bytes = catalog::SerializeObject(*schema, stream);
       return _engine->CreateDefinition(
-        database_id, ObjectType::Schema, schema->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+        database_id, ObjectType::Schema, schema->GetId(), bytes);
     },
     [&](auto clone) {
       clone->UnregisterObject(database, id::kInstance, true);
@@ -1657,8 +1654,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*schema, stream);
       return _engine->CreateDefinition(
-        database_id, ObjectType::Schema, schema->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+        database_id, ObjectType::Schema, schema->GetId(), bytes);
     },
     [&](auto clone) { clone->UnregisterObject(schema, database_id, true); });
 }
@@ -1676,8 +1672,7 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*role, stream);
       return _engine->CreateDefinition(
-        id::kInstance, ObjectType::Role, role->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+        id::kInstance, ObjectType::Role, role->GetId(), bytes);
     },
     [&](auto& clone) { clone->UnregisterObject(role, id::kInstance, true); });
 
@@ -1741,8 +1736,7 @@ Result LocalCatalog::CreateIndexImpl(
       {  // Write index definition
         auto bytes = catalog::SerializeObject(*index, stream);
         r = _engine->CreateDefinition(index->GetRelationId(), index->GetType(),
-                                      index->GetId(),
-                                      [&](bool) { return bytes; });
+                                      index->GetId(), bytes);
         if (!r.ok()) {
           return r;
         }
@@ -1751,8 +1745,7 @@ Result LocalCatalog::CreateIndexImpl(
         auto bytes = catalog::SerializeObject(**shard, stream);
 
         r = _engine->CreateDefinition(index->GetId(), shard_type,
-                                      (*shard)->GetId(),
-                                      [&](bool) { return bytes; });
+                                      (*shard)->GetId(), bytes);
         if (!r.ok()) {
           return r;
         }
@@ -1944,8 +1937,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
         });
       }
       return _engine->CreateDefinition(
-        *schema_id, ObjectType::PgSqlView, view->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+        *schema_id, ObjectType::PgSqlView, view->GetId(), bytes);
     },
     [&](auto clone) {
       if (!existed_id.isSet()) {
@@ -2043,8 +2035,7 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
         });
       }
       return _engine->CreateDefinition(
-        *schema_id, ObjectType::PgSqlFunction, function->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+        *schema_id, ObjectType::PgSqlFunction, function->GetId(), bytes);
     },
     [&](auto clone) {
       if (!existed_id.isSet()) {
@@ -2203,8 +2194,7 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*dict, stream);
       return _engine->CreateDefinition(
-        *schema_id, ObjectType::Tokenizer, dict->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+        *schema_id, ObjectType::Tokenizer, dict->GetId(), bytes);
     },
     [&](auto& clone) {
       return clone->UnregisterObject(dict, *schema_id, true);
@@ -2233,8 +2223,7 @@ Result LocalCatalog::CreateType(ObjectId database_id, std::string_view schema,
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*type, stream);
       return _engine->CreateDefinition(
-        *schema_id, ObjectType::PgSqlType, type->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+        *schema_id, ObjectType::PgSqlType, type->GetId(), bytes);
     },
     [&](auto clone) { clone->UnregisterObject(type, *schema_id, true); });
 }
@@ -2278,8 +2267,7 @@ Result LocalCatalog::RenameObjectImpl(ObjectId schema_id, std::string_view name,
       }
 
       return _engine->CreateDefinition(
-        parent_id, new_object->GetType(), new_object->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+        parent_id, new_object->GetType(), new_object->GetId(), bytes);
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
       auto current = clone->GetObject<T>(new_object->GetId());
@@ -2416,8 +2404,7 @@ Result LocalCatalog::ChangeRole(std::string_view name,
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*new_role_ptr, stream);
       return _engine->CreateDefinition(
-        id::kInstance, ObjectType::Role, new_role_ptr->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+        id::kInstance, ObjectType::Role, new_role_ptr->GetId(), bytes);
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
       auto obj = clone->GetObject<Role>(new_role_ptr->GetId());
@@ -2475,8 +2462,7 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
                  duckdb::MemoryStream stream;
                  auto bytes = catalog::SerializeObject(*updated, stream);
                  return _engine->CreateDefinition(
-                   *schema_id, ObjectType::PgSqlView, updated->GetId(),
-                   [&](bool) { return std::string_view{bytes}; });
+                   *schema_id, ObjectType::PgSqlView, updated->GetId(), bytes);
                });
 }
 
@@ -2527,8 +2513,7 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
                    duckdb::MemoryStream stream;
                    auto bytes = catalog::SerializeObject(*updated, stream);
                    return _engine->CreateDefinition(
-                     *schema_id, ObjectType::Table, updated->GetId(),
-                     [&](bool) { return std::string_view{bytes}; });
+                     *schema_id, ObjectType::Table, updated->GetId(), bytes);
                  });
                });
 }

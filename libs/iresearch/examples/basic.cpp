@@ -145,11 +145,14 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
   }
   auto& opt = root->GetOptional();
   auto& req = root->GetRequired();
-  if (opt.size() == 1 && req.empty()) {
-    return opt.PopBack();
+  if (req.empty() && opt.empty()) {
+    return {};
   }
-  if (req.size() == 1 && opt.empty()) {
-    return req.PopBack();
+  if (opt.empty()) {
+    return req.size() == 1 ? req.PopBack() : std::move(root->RequiredSlot());
+  }
+  if (req.empty()) {
+    return opt.size() == 1 ? opt.PopBack() : std::move(root->OptionalSlot());
   }
   return root;
 }

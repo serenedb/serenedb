@@ -287,30 +287,6 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
   }
 }
 
-duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
-                                  duckdb::Vector& col_output,
-                                  const duckdb::LogicalType& type,
-                                  duckdb::Vector& rowid_output,
-                                  size_t key_prefix_size,
-                                  duckdb::idx_t max_rows) {
-  // Generic loop: typed readers advance the iterator independently, so we
-  // can't use them when we need both key and value per row.
-  duckdb::idx_t count = 0;
-  while (it.Valid() && count < max_rows) {
-    auto key = it.key().ToStringView();
-    SDB_ASSERT(key.size() >= key_prefix_size);
-    auto pk_bytes = key.substr(key_prefix_size);
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(rowid_output)[count] =
-      duckdb::StringVector::AddStringOrBlob(rowid_output, pk_bytes.data(),
-                                            pk_bytes.size());
-    DeserializeValueIntoDuckDB(it.value().ToStringView(), col_output, type,
-                               count);
-    ++count;
-    it.Next();
-  }
-  rocksutils::CheckIteratorStatus(it);
-  return count;
-}
 
 void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
                                 const duckdb::LogicalType& type,

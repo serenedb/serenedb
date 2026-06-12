@@ -39,13 +39,6 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
 // from each key and storing them in `rowid_output` as BLOB values.
 // Also reads column values into `col_output`. Returns number of rows read.
 // Key format: [ObjectId(8)][ColumnId(8)][PK bytes...]
-duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
-                                  duckdb::Vector& col_output,
-                                  const duckdb::LogicalType& type,
-                                  duckdb::Vector& rowid_output,
-                                  size_t key_prefix_size,
-                                  duckdb::idx_t max_rows);
-
 // Deserialize a single RocksDB value into a DuckDB Vector at position idx.
 // Read-path counterpart to DuckDBColumnSerializer on the write path.
 // Handles NULL (empty value), strings (leading \0 byte), scalars (memcpy).

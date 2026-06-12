@@ -48,7 +48,6 @@
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
-#include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_search_sink_writer.h"
@@ -111,7 +110,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   ObjectId table_id;
   std::string table_key;
   std::vector<InsertColumnMeta> columns;
-  std::vector<duckdb_primary_key::PKColumn> pk_columns;
 
   duckdb::idx_t file_row_number_col_idx = 0;
   duckdb::idx_t file_index_col_idx = 0;
@@ -121,7 +119,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   bool has_generated_pk_col = false;
   // No PK column in the chunk -- Sink synthesises a monotonic counter.
   bool is_view_synth_pk = false;
-  bool is_view_rocksdb_pk = false;
 
   std::atomic<int64_t> view_row_counter_atomic{0};
   std::atomic<duckdb::idx_t> backfill_count_atomic{0};
@@ -436,49 +433,18 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   if (auto it = _info->options.find("_sdb_view_fast_path_pk");
       !table_ptr && it != _info->options.end()) {
     const auto kind = it->second.GetValue<std::string>();
-    if (kind == "rocksdb_explicit_pk") {
-      state->is_view_rocksdb_pk = true;
-    } else if (kind == "rocksdb_rowid") {
-      // Same wire format as a table-backed no-PK index.
-      state->has_generated_pk_col = true;
-    } else {
-      state->is_external = true;
-      if (kind == "file_index_plus_row_number" ||
-          kind == "file_index_plus_duckdb_rowid") {
-        state->is_glob_external = true;
-        state->file_index_col_idx = state->columns.size();
-        state->file_row_number_col_idx = state->columns.size() + 1;
-      }
+    state->is_external = true;
+    if (kind == "file_index_plus_row_number" ||
+        kind == "file_index_plus_duckdb_rowid") {
+      state->is_glob_external = true;
+      state->file_index_col_idx = state->columns.size();
+      state->file_row_number_col_idx = state->columns.size() + 1;
     }
   }
   if (table_ptr) {
     // Store-table postings are keyed by the native rowid the scan appends
     // after the projection, regardless of the declared PK.
     state->has_generated_pk_col = true;
-    state->is_view_synth_pk = false;
-  } else if (state->is_view_rocksdb_pk) {
-    auto& view = basics::downCast<const catalog::PgSqlView>(*_relation);
-    auto fp = ResolveViewFastPath(context, view);
-    SDB_ASSERT(fp && fp->base_table,
-               "rocksdb_explicit_pk fast-path lost ViewFastPath::base_table");
-    auto base_t = fp->base_table;
-    const auto& base_cols = base_t->Columns();
-    const auto& pk_ids = base_t->PKColumns();
-    state->pk_columns.reserve(pk_ids.size());
-    duckdb::idx_t trailing_pos = state->columns.size();
-    for (auto pk_id : pk_ids) {
-      for (const auto& c : base_cols) {
-        if (c.GetId() == pk_id) {
-          state->pk_columns.push_back(duckdb_primary_key::PKColumn{
-            .input_col_idx = trailing_pos,
-            .type = c.type,
-          });
-          ++trailing_pos;
-          break;
-        }
-      }
-    }
-    state->has_generated_pk_col = false;
     state->is_view_synth_pk = false;
   } else if (state->is_external) {
     state->is_view_synth_pk = false;
@@ -652,13 +618,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       append_row_number_key(pks[fmt.sel->get_index(row)]);
     }
   } else {
-    std::vector<duckdb::UnifiedVectorFormat> pk_formats;
-    duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      duckdb_primary_key::MakeColumnKey(
-        pk_formats, gstate.pk_columns, row, gstate.table_key, [](auto) {},
-        row_keys.emplace_back());
-    }
+    SDB_UNREACHABLE();
   }
 
   writer->Init(num_rows, chunk);

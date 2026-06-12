@@ -37,7 +37,7 @@
 using namespace std::string_view_literals;
 
 #include "catalog/table_options.h"
-#include "connector/duckdb_primary_key.h"
+#include "connector/primary_key.hpp"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/key_utils.hpp"
@@ -103,19 +103,14 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
   // Call key_utils::SetupColumnForKey on each key before writing a column.
   std::vector<std::string> BuildRowKeys(duckdb::DataChunk& pk_chunk) {
     const duckdb::idx_t num_rows = pk_chunk.size();
-    duckdb_primary_key::PKColumn pk_col{0, duckdb::LogicalType::INTEGER};
-    std::span<const duckdb_primary_key::PKColumn> pk_cols(&pk_col, 1);
-
-    // Build the per-column UnifiedVectorFormats once, reuse across rows.
-    std::vector<duckdb::UnifiedVectorFormat> pk_formats;
-    duckdb_primary_key::PreparePKFormats(pk_chunk, pk_cols, pk_formats);
-
     std::vector<std::string> row_keys(num_rows);
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      duckdb_primary_key::MakeColumnKey(
-        pk_formats, pk_cols, row, _table_key,
-        [](std::string_view) {},  // no locking in tests
-        row_keys[row]);
+      auto& key = row_keys[row];
+      basics::StrResize(key, sizeof(catalog::Column::Id) + sizeof(ObjectId));
+      std::memcpy(key.data() + sizeof(catalog::Column::Id), _table_key.data(),
+                  sizeof(ObjectId));
+      primary_key::AppendSigned(key, static_cast<int64_t>(row));
+      std::memcpy(key.data(), _table_key.data(), sizeof(ObjectId));
     }
     return row_keys;
   }

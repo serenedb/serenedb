@@ -906,9 +906,6 @@ void IResearchPushdownComplexFilter(
     return;
   }
   auto& conn_ctx = connector::GetSereneDBContext(context);
-  if (conn_ctx.GetReadYourOwnWrites() && conn_ctx.HasRocksDBTransaction()) {
-    return;
-  }
   auto& bind_data = bind_data_ptr->Cast<connector::SereneDBScanBindData>();
   if (bind_data.scan_source->Kind() != connector::ScanSourceKind::Search) {
     return;

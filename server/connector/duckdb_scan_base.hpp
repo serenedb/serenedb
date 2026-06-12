@@ -60,8 +60,6 @@ struct SereneDBScanBindData;
 // Holds the fields shared across every scan strategy: isolation context,
 // projection mapping, virtual column metadata, and the termination flag.
 struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
-  // Isolation: exactly one of txn / snapshot is set.
-  rocksdb::Transaction* txn = nullptr;
   const rocksdb::Snapshot* snapshot = nullptr;
 
   // Maps output column index -> bind_data column index.
@@ -326,8 +324,8 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
     SDB_ASSERT(l.bind_data);
     if (!l.index_source) {
       l.index_source = MakeIndexSource(
-        ctx, *l.bind_data, g.snapshot, g.txn, g.external_projected_columns,
-        g.projected_types, l.bind_data->column_ids);
+        ctx, *l.bind_data, g.external_projected_columns, g.projected_types,
+        l.bind_data->column_ids);
     }
     if (std::holds_alternative<std::monostate>(l.pk_batch)) {
       l.pk_batch = l.index_source->CreatePkBatch();

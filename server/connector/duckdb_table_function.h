@@ -38,7 +38,6 @@
 #include "catalog/scorer_options.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
-#include "connector/rocksdb_filter.hpp"
 
 namespace irs {
 
@@ -57,10 +56,6 @@ enum class ScanSourceKind : uint8_t {
   FullTable,
   Search,
   SecondaryIndex,
-  PkPoint,
-  PkRange,
-  SkPoint,
-  SkRange,
 };
 
 struct ScanSource {
@@ -77,8 +72,7 @@ struct ScanSource {
   bool IsSearchLike() const noexcept { return _kind == ScanSourceKind::Search; }
 
   bool IsSkLike() const noexcept {
-    return _kind == ScanSourceKind::SecondaryIndex ||
-           _kind == ScanSourceKind::SkPoint || _kind == ScanSourceKind::SkRange;
+    return _kind == ScanSourceKind::SecondaryIndex;
   }
 
   template<typename T>
@@ -188,58 +182,6 @@ struct SecondaryIndexScan : ScanSource {
   ObjectId shard_id;
   bool is_unique = false;
 
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-struct PkPointScan : ScanSource {
-  PkPointScan() : ScanSource(ScanSourceKind::PkPoint) {}
-
-  std::vector<catalog::Column::Id> column_ids;  // PK columns in order
-  std::vector<ResolvedPoint> points;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-struct PkRangeScan : ScanSource {
-  PkRangeScan() : ScanSource(ScanSourceKind::PkRange) {}
-
-  std::vector<catalog::Column::Id> column_ids;  // PK columns in order
-  std::vector<ResolvedRange> ranges;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-struct SkPointScan : ScanSource {
-  SkPointScan() : ScanSource(ScanSourceKind::SkPoint) {}
-
-  ObjectId shard_id;
-  bool is_unique = false;
-  std::vector<catalog::Column::Id> column_ids;  // SK columns in order
-  std::vector<ResolvedPoint> points;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-struct SkRangeScan : ScanSource {
-  SkRangeScan() : ScanSource(ScanSourceKind::SkRange) {}
-
-  ObjectId shard_id;
-  bool is_unique = false;
-  std::vector<catalog::Column::Id> column_ids;  // SK columns in order
-  std::vector<ResolvedRange> ranges;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
   std::unique_ptr<ScanSource> Clone() const final;
 };
 
@@ -356,17 +298,7 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
 
-duckdb::TableFunction CreateTableFullscanFunction();
-
-duckdb::TableFunction CreatePKPointsLookupFunction();
-
-duckdb::TableFunction CreatePKRangesScanFunction();
-
 duckdb::TableFunction CreateSKFullscanFunction();
-
-duckdb::TableFunction CreateSKPointsLookupFunction();
-
-duckdb::TableFunction CreateSKRangesScanFunction();
 
 duckdb::TableFunction CreateIResearchScanFunction();
 

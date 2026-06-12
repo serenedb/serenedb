@@ -440,25 +440,6 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 }
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
-  if (fp.pk_spec == catalog::PkSpec::RocksDBExplicitPK) {
-    SDB_ASSERT(fp.base_table);
-    const auto& base_cols = fp.base_table->Columns();
-    const auto& pk_ids = fp.base_table->PKColumns();
-    std::vector<duckdb::column_t> result;
-    result.reserve(pk_ids.size());
-    for (auto pk_id : pk_ids) {
-      for (size_t i = 0; i < base_cols.size(); ++i) {
-        if (base_cols[i].GetId() == pk_id) {
-          result.push_back(static_cast<duckdb::column_t>(i));
-          break;
-        }
-      }
-    }
-    return result;
-  }
-  if (fp.pk_spec == catalog::PkSpec::RocksDBGeneratedRowId) {
-    return {kColumnIdentifierGeneratedPk};
-  }
   if (fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
@@ -474,7 +455,6 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
 }
 
 duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp) {
-  SDB_ASSERT(!catalog::IsRocksPK(fp.pk_spec));
   const auto* entry = LookupRegistry(fp.function_name);
   SDB_ENSURE(entry, ERROR_INTERNAL,
              "fast-path classification missing for function ",
@@ -498,7 +478,6 @@ void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept {
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
-  SDB_ASSERT(!catalog::IsRocksPK(fp.pk_spec));
   if (fp.catalog_ref) {
     auto& entry =
       duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
@@ -589,9 +568,6 @@ int64_t ExtractIcebergSnapshotId(duckdb::FunctionData& bind_data) noexcept {
 }
 
 std::string FormatLookupLabel(const ViewFastPath& fp) {
-  if (catalog::IsRocksPK(fp.pk_spec)) {
-    return "rocksdb";
-  }
   if (fp.function_name == "iceberg_scan") {
     return "iceberg";
   }

@@ -23,6 +23,7 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
@@ -107,6 +108,10 @@ Result Features::Validate(std::string_view type) const {
       // Union does not expose OffsAttr; interleaving tokens from independent
       // sub-tokenizers over the same input breaks the monotonic offset
       // invariant required by the indexer.
+      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+             irs::IndexFeatures::Norm;
+    }
+    if (type == irs::analysis::SparseNGramTokenizer::type_name()) {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
              irs::IndexFeatures::Norm;
     }

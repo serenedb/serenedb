@@ -34,6 +34,7 @@
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
+#include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -127,6 +128,20 @@ inline constexpr OptionInfo kStartMarker{
 
 inline constexpr OptionInfo kEndMarker{
   "endmarker", ""sv, "Suffix marker appended at n-gram boundary"};
+
+// Sparse NGram
+
+void CheckMaxNgramLength(std::string_view option, int value);
+
+inline constexpr OptionInfo kCovering{
+  "covering", false,
+  "Emit the minimal covering n-gram chain (query side) instead of all sparse "
+  "n-grams (index side)"};
+
+inline constexpr OptionInfo kMaxNgramLength{
+  "maxngramlength", 16,
+  "Maximum n-gram length for the covering mode (minimum 3)",
+  CheckMaxNgramLength};
 
 // Classification
 
@@ -235,6 +250,9 @@ inline constexpr OptionInfo kTextOptions[] = {
 inline constexpr OptionInfo kNGramOptions[] = {
   kMinGram, kMaxGram, kPreserveOriginal, kInputType, kStartMarker, kEndMarker};
 
+inline constexpr OptionInfo kSparseNGramOptions[] = {kMaxNgramLength,
+                                                     kCovering};
+
 inline constexpr OptionInfo kNearestNeighborsOptions[] = {kModelLocation,
                                                           kTopK};
 
@@ -296,6 +314,11 @@ inline constexpr OptionGroup kTextGroup{
 inline constexpr OptionGroup kNGramGroup{
   irs::analysis::NGramTokenizerBase::type_name(),
   kNGramOptions,
+  {},
+};
+inline constexpr OptionGroup kSparseNGramGroup{
+  irs::analysis::SparseNGramTokenizer::type_name(),
+  kSparseNGramOptions,
   {},
 };
 inline constexpr OptionGroup kNearestNeighborsGroup{
@@ -407,6 +430,7 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kCopyFromGroup,       kGeoPointGroup,
   kGeoJsonGroup,        kKeywordGroup,
   kSolrSynonymsGroup,   kWordnetSynonymsGroup,
+  kSparseNGramGroup,
 };
 
 }  // namespace sdb::pg::tokenizer_options

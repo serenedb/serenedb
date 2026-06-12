@@ -1,0 +1,185 @@
+control substitution on
+
+
+# ERROR CASES
+
+# --- maxngramlength below minimum ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sng_err1(
+    template = 'sparse_ngram',
+    maxngramlength = 2
+)
+----
+db error: ERROR: "maxngramlength" must be at least 3
+HINT: Maximum n-gram length for the covering mode (minimum 3)
+
+
+# --- covering option not applicable to other tokenizers ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sng_err2(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    covering = true
+)
+----
+db error: ERROR: option "covering" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- offset feature is not supported ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY sng_err3(
+    template = 'sparse_ngram',
+    frequency = true,
+    position = true,
+    offset = true
+)
+----
+db error: ERROR: Unsupported index features are specified: 7
+
+
+# SPARSE NGRAM TOKENIZER
+
+# --- Index side: all sparse ngrams ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams(
+    template = 'sparse_ngram'
+)
+
+
+query
+SELECT ts_lexize('code_grams', 'hello world');
+----
+ts_lexize
+{hel,ell,llo,"lo ","o w","lo w"," wo","lo wo",wor,orl,worl,rld}
+
+
+query
+SELECT ts_lexize('code_grams', 'for(int i=42');
+----
+ts_lexize
+{for,or(,for(,r(i,for(i,(in,int,(int,"nt ","t i"," i=","t i=",i=4,"t i=4","nt i=4","(int i=4",=42}
+
+
+# --- Inputs shorter than 3 bytes produce no tokens ---
+
+query
+SELECT ts_lexize('code_grams', 'he');
+----
+ts_lexize
+{}
+
+
+query
+SELECT ts_lexize('code_grams', 'hel');
+----
+ts_lexize
+{hel}
+
+
+# --- Query side: minimal covering chain ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams_covering(
+    template = 'sparse_ngram',
+    covering = true
+)
+
+
+query
+SELECT ts_lexize('code_grams_covering', 'hello world');
+----
+ts_lexize
+{hel,ell,llo,rld,worl,"lo wo"}
+
+
+query
+SELECT ts_lexize('code_grams_covering', 'for(int i=42');
+----
+ts_lexize
+{for(i,"(int i=4",=42}
+
+
+# --- copy_from inherits and overrides ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams_copy(
+    template = 'copy_from',
+    from = 'code_grams',
+    covering = true
+)
+
+
+query
+SELECT ts_lexize('code_grams_copy', 'for(int i=42');
+----
+ts_lexize
+{for(i,"(int i=4",=42}
+
+
+# INVERTED INDEX + SUBSTRING SEARCH
+
+statement ok
+CREATE TABLE snippets(id INT, code TEXT);
+
+
+statement ok
+INSERT INTO snippets VALUES
+    (1, 'for(int i=42; i<n; ++i) total += data[i];'),
+    (2, 'for(int j=0; j<n; ++j) total -= data[j];'),
+    (3, 'while(n--) { sum += *ptr++; }'),
+    (4, 'hello world');
+
+
+statement ok
+CREATE INDEX snippets_idx ON snippets USING inverted(id, code code_grams);
+
+
+# All covering grams of the query must match: substring search.
+
+query
+SELECT id FROM snippets_idx WHERE code @@ ts_all(ts_tokenize(ARRAY['for(int i=42'], 'code_grams_covering')) ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id FROM snippets_idx WHERE code @@ ts_all(ts_tokenize(ARRAY['total'], 'code_grams_covering')) ORDER BY id;
+----
+id
+1
+2
+
+
+query
+SELECT id FROM snippets_idx WHERE code @@ ts_all(ts_tokenize(ARRAY['hello world'], 'code_grams_covering')) ORDER BY id;
+----
+id
+4
+
+
+query
+SELECT id FROM snippets_idx WHERE code @@ ts_all(ts_tokenize(ARRAY['nonexistent substring'], 'code_grams_covering')) ORDER BY id;
+----
+id
+
+
+statement ok
+DROP TABLE snippets;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY code_grams_copy;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY code_grams_covering;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY code_grams;

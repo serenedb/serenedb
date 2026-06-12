@@ -108,3 +108,29 @@ id
 1
 4
 5
+
+query
+SELECT id FROM fo_sem_idx WHERE n @@ ts_gt(1) AND n @@ ts_lt(4) ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM fo_sem_idx WHERE n @@ ts_ge(2) AND n @@ ts_le(4) ORDER BY id;
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM fo_sem_idx WHERE n @@ ts_ge(3) AND n @@ ts_le(3) ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM fo_sem_idx WHERE n @@ ts_gt(4) AND n @@ ts_lt(2) ORDER BY id;
+----
+id

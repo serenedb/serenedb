@@ -20,8 +20,11 @@
 
 #include "iresearch/search/optimizer/range_rules.hpp"
 
+#include <algorithm>
 #include <memory>
+#include <type_traits>
 
+#include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/granular_range_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
@@ -46,6 +49,106 @@ struct GranularRangeDegenerateRule {
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
 };
+
+struct AndRangeMergeRule {
+  static constexpr std::string_view kName = "and_range_merge";
+  static constexpr std::array kTargets{Type<And>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+template<typename Range>
+bool IsMinOnly(const Range& node) noexcept {
+  const auto& rng = node.options().range;
+  return rng.min_type != BoundType::Unbounded &&
+         rng.max_type == BoundType::Unbounded;
+}
+
+template<typename Range>
+bool IsMaxOnly(const Range& node) noexcept {
+  const auto& rng = node.options().range;
+  return rng.max_type != BoundType::Unbounded &&
+         rng.min_type == BoundType::Unbounded;
+}
+
+template<typename Range>
+const bstring& RangeBound(const Range& node, bool min) noexcept {
+  const auto& rng = node.options().range;
+  if constexpr (std::is_same_v<Range, ByRange>) {
+    return min ? rng.min : rng.max;
+  } else {
+    return min ? rng.min.front() : rng.max.front();
+  }
+}
+
+score_t MergedBoost(ScoreMergeType merge_type, score_t lo,
+                    score_t hi) noexcept {
+  switch (merge_type) {
+    case ScoreMergeType::Max:
+      return std::max(lo, hi);
+    case ScoreMergeType::Noop:
+      return kNoBoost;
+    case ScoreMergeType::Sum:
+      break;
+  }
+  return lo + hi;
+}
+
+template<typename Range>
+Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
+                             ScoreMergeType merge_type) {
+  const score_t boost = MergedBoost(merge_type, lo.Boost(), hi.Boost());
+  if (RangeBound(lo, true) == RangeBound(hi, false)) {
+    if (lo.options().range.min_type == BoundType::Inclusive &&
+        hi.options().range.max_type == BoundType::Inclusive) {
+      auto by_term = std::make_unique<ByTerm>();
+      *by_term->mutable_field_id() = lo.field_id();
+      by_term->mutable_options()->term = RangeBound(lo, true);
+      by_term->boost(boost);
+      return by_term;
+    }
+    return std::make_unique<Empty>();
+  }
+  auto merged = std::make_unique<Range>();
+  *merged->mutable_field_id() = lo.field_id();
+  auto& options = *merged->mutable_options();
+  options = lo.options();
+  options.range.max = hi.options().range.max;
+  options.range.max_type = hi.options().range.max_type;
+  merged->boost(boost);
+  return merged;
+}
+
+template<typename Range>
+bool MergeComplementaryRanges(And& node) {
+  auto& children = node.mutable_filters();
+  const auto is_range = [](const Filter::ptr& child) {
+    return child->type() == Type<Range>::id();
+  };
+  for (size_t i = 0; i < children.size(); ++i) {
+    if (!is_range(children[i])) {
+      continue;
+    }
+    auto& lo = sdb::basics::downCast<Range>(*children[i]);
+    if (!IsMinOnly(lo)) {
+      continue;
+    }
+    for (size_t j = 0; j < children.size(); ++j) {
+      if (j == i || !is_range(children[j])) {
+        continue;
+      }
+      auto& hi = sdb::basics::downCast<Range>(*children[j]);
+      if (!IsMaxOnly(hi) || hi.field_id() != lo.field_id()) {
+        continue;
+      }
+      children[i] = MergeRangeBounds(lo, hi, node.merge_type());
+      children.erase(children.begin() + j);
+      return true;
+    }
+  }
+  return false;
+}
 
 }  // namespace
 
@@ -91,9 +194,20 @@ bool GranularRangeDegenerateRule::Apply(Filter::ptr& slot,
   return true;
 }
 
+bool AndRangeMergeRule::Apply(Filter::ptr& slot,
+                              const OptimizeContext& /*ctx*/) {
+  auto& node = sdb::basics::downCast<And>(*slot);
+  if (node.size() < 2) {
+    return false;
+  }
+  return MergeComplementaryRanges<ByRange>(node) ||
+         MergeComplementaryRanges<ByGranularRange>(node);
+}
+
 void InitRangeRules() {
   RegisterRule<RangeDegenerateRule>();
   RegisterRule<GranularRangeDegenerateRule>();
+  RegisterRule<AndRangeMergeRule>();
 }
 
 }  // namespace irs::optimizer

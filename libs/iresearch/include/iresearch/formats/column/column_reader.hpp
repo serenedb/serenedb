@@ -197,6 +197,10 @@ class ColumnReader final {
     uint64_t Position() const noexcept { return _cursor; }
     explicit operator bool() const noexcept { return _seg != nullptr; }
 
+    duckdb::CompressionType Codec() const noexcept {
+      return _seg->GetCompressionFunction().type;
+    }
+
    private:
     duckdb::unique_ptr<duckdb::ColumnSegment> _seg;
     duckdb::ColumnScanState _state{nullptr};

@@ -401,6 +401,31 @@ RgWindow ColumnReader::LocateVariantRg(uint64_t row,
   return LocateInOffsets(row, _variant_rg_starts, hint);
 }
 
+namespace {
+
+// Whether a codec's SCAN_ENTIRE_VECTOR output keeps `out` a FLAT_VECTOR and
+// leaves any pre-existing validity mask intact. MaterializeNode scans the
+// separate validity column into `out`'s flat mask before the data scan, so a
+// codec that retypes `out` to a DICTIONARY/CONSTANT vector (dictionary, FSST,
+// RLE, constant) would silently drop that mask. The flat-preserving codecs
+// either decode in place (ALP/bitpacking/chimp/patas) or SetData while
+// preserving the mask (uncompressed).
+bool CodecPreservesValidityOnEntireScan(duckdb::CompressionType t) noexcept {
+  switch (t) {
+    case duckdb::CompressionType::COMPRESSION_UNCOMPRESSED:
+    case duckdb::CompressionType::COMPRESSION_ALP:
+    case duckdb::CompressionType::COMPRESSION_ALPRD:
+    case duckdb::CompressionType::COMPRESSION_BITPACKING:
+    case duckdb::CompressionType::COMPRESSION_CHIMP:
+    case duckdb::CompressionType::COMPRESSION_PATAS:
+      return true;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
 void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
                                    duckdb::Vector& out,
                                    duckdb::idx_t out_offset,
@@ -416,10 +441,16 @@ void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
     _cursor.SeekTo(row_pos - _window.begin);
     const auto take = std::min<duckdb::idx_t>(count, _window.end - row_pos);
     const bool single_shot = (out_offset == 0 && take == count);
-    const auto scan_type =
-      (may_use_entire && single_shot && !_validity && !_reader->HasValidity())
-        ? duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR
-        : duckdb::ScanVectorType::SCAN_FLAT_VECTOR;
+    // SCAN_ENTIRE_VECTOR is zero-copy/in-place; SCAN_FLAT_VECTOR memcpys the
+    // whole segment slice. Use the fast path on the data side whenever the
+    // codec keeps `out` flat -- when the column has no validity (nothing to
+    // preserve) or the codec preserves a pre-scanned mask (see helper).
+    const bool entire_safe =
+      !_validity && (!_reader->HasValidity() ||
+                     CodecPreservesValidityOnEntireScan(_cursor.Codec()));
+    const auto scan_type = (may_use_entire && single_shot && entire_safe)
+                             ? duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR
+                             : duckdb::ScanVectorType::SCAN_FLAT_VECTOR;
     _cursor.Scan(take, out, out_offset, scan_type);
     row_pos += take;
     count -= take;

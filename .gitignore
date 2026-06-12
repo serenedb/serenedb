@@ -16,6 +16,9 @@
 
 /perf.*
 
+# Perf-script artifacts (bench dbs, data dirs, run logs)
+/scripts/perf/results/
+
 /serenedb-data/
 /logs/
 *.pyc

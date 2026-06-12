@@ -72,6 +72,11 @@ uint64_t DirectoryReader::live_docs_count() const {
   return _impl->live_docs_count();
 }
 
+const duckdb::BaseStatistics* DirectoryReader::GetColumnStats(
+  field_id field) const {
+  return _impl->GetColumnStats(field);
+}
+
 size_t DirectoryReader::size() const { return _impl->size(); }
 
 const DirectoryMeta& DirectoryReader::Meta() const { return _impl->Meta(); }

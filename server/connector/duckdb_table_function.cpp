@@ -31,6 +31,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/storage/statistics/base_statistics.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 
@@ -705,7 +706,6 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
 static void SetCommonCallbacks(duckdb::TableFunction& func) {
   // TODO(mbkkt) Maybe we can use bind_replace/bind_operator to make indexes?
   func.init_local = CommonScanInitLocal;  // TODO: Use separate callbacks
-  // TODO: Provide statistics
   // TODO: Better cardinality estimates
   func.cardinality = SereneDBScanCardinality;
   func.get_metrics = CommonScanGetMetrics;
@@ -823,6 +823,42 @@ bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
   return info != nullptr && info->store_values;
 }
 
+duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
+  duckdb::ClientContext&, duckdb::TableFunctionGetStatisticsInput& input) {
+  if (!input.bind_data) {
+    return nullptr;
+  }
+  const auto& bind = input.bind_data->Cast<SereneDBScanBindData>();
+  if (!bind.IsInvertedIndexEntry() || !bind.inverted_index) {
+    return nullptr;
+  }
+  if (!input.column_index.HasPrimaryIndex() ||
+      input.column_index.HasChildren()) {
+    return nullptr;
+  }
+  const auto column_index = input.column_index.GetPrimaryIndex();
+  if (column_index >= bind.column_ids.size()) {
+    return nullptr;
+  }
+  const auto col_id = bind.column_ids[column_index];
+  const auto* info = bind.inverted_index->FindColumnInfo(col_id);
+  if (info == nullptr || !info->store_values) {
+    return nullptr;
+  }
+  if (bind.scan_source->Kind() != ScanSourceKind::Search) {
+    return nullptr;
+  }
+  const auto& ss = bind.scan_source->Cast<SearchScan>();
+  if (!ss.snapshot) {
+    return nullptr;
+  }
+  const auto* stats = ss.snapshot->reader.GetColumnStats(col_id);
+  if (stats == nullptr || stats->GetType() != bind.column_types[column_index]) {
+    return nullptr;
+  }
+  return stats->Copy().ToUnique();
+}
+
 bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
                      const duckdb::TableFunctionInitInput& input) {
   return absl::c_none_of(input.column_ids, [&](auto col_id) {
@@ -899,6 +935,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.pushdown_complex_filter = &optimizer::IResearchPushdownComplexFilter;
   func.set_scan_order = &IResearchSetScanOrder;
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
+  func.statistics_extended = &IResearchScanStatistics;
   return func;
 }
 

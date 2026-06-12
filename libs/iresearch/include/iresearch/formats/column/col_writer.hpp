@@ -61,7 +61,8 @@ class ColWriter final {
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
                            bool skip_validity, uint32_t row_group_size,
-                           duckdb::CompressionType compression);
+                           duckdb::CompressionType compression,
+                           bool distinct_count);
 
   NormColumnWriter* OpenNormColumn(field_id id);
 

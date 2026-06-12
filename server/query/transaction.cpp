@@ -23,6 +23,7 @@
 #include <absl/cleanup/cleanup.h>
 
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
@@ -37,6 +38,21 @@ void Transaction::OnNewStatement() {
     DropCatalogSnapshot();
     _rocksdb_snapshot = nullptr;
     _search_snapshots.clear();
+  }
+}
+
+void Transaction::RefreshReadCommittedSnapshot() {
+  if (GetIsolationLevel() != IsolationLevel::READ_COMMITTED) {
+    return;
+  }
+  // Statement-level snapshots over native storage: while the explicit
+  // transaction has made no writes, move its read visibility forward so
+  // the next statement sees other transactions' committed changes.
+  auto& context = GetClientContext();
+  auto& txn_ctx = context.transaction;
+  if (txn_ctx.HasActiveTransaction() && !txn_ctx.IsAutoCommit() &&
+      !txn_ctx.ActiveTransaction().ModifiedDatabase()) {
+    txn_ctx.ActiveTransaction().RefreshStartTime();
   }
 }
 

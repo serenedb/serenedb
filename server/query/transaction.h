@@ -63,6 +63,10 @@ class Transaction : public Config {
 #endif
 
   void OnNewStatement();
+  // Restarts a writeless explicit engine transaction under READ COMMITTED
+  // so the upcoming statement sees freshly committed changes. Must run
+  // outside the query lifecycle (before the statement starts).
+  void RefreshReadCommittedSnapshot();
 
   // Pre-commit work that needs an active transaction (revert SET LOCAL for
   // custom-impl settings). Runs before the rocksdb commit.

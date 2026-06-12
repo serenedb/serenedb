@@ -2747,6 +2747,7 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
                      if (store_name.empty()) {
                        return;
                      }
+                     bool renamed_columns = false;
                      for (const auto& old_col : table->Columns()) {
                        if (old_col.GetId() == Column::kGeneratedPKId) {
                          continue;
@@ -2760,6 +2761,32 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
                          ctx.RenameStoreColumn(store_name,
                                                std::string{old_col.GetName()},
                                                std::string{it->GetName()});
+                         renamed_columns = true;
+                       }
+                     }
+                     if (renamed_columns) {
+                       // Mirrored index definitions embed column names;
+                       // recreate them against the renamed table (rowid
+                       // postings and row data are untouched).
+                       auto deps = _snapshot->GetDependency<TableDependency>(
+                         updated->GetId());
+                       auto schema_obj =
+                         _snapshot->GetObject<Schema>(*schema_id);
+                       auto database = _snapshot->GetObject<Database>(
+                         database_id);
+                       if (deps && schema_obj && database) {
+                         for (auto idx_id : deps->indexes) {
+                           auto idx = _snapshot->GetObject<Index>(idx_id);
+                           if (!idx) {
+                             continue;
+                           }
+                           if (auto def = MakeStoreIndexDef(
+                                 database->GetName(), schema_obj->GetName(),
+                                 *updated, *idx)) {
+                             ctx.DropStoreIndex(idx_id);
+                             ctx.CreateStoreIndex(std::move(*def));
+                           }
+                         }
                        }
                      }
                      for (const auto& oc : table->CheckConstraints()) {

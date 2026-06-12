@@ -187,6 +187,17 @@ void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
   } else {
     SDB_ASSERT(segment_size <= std::numeric_limits<uint32_t>::max(),
                ".col writer segment > 4GB; offset field too narrow");
+    // Pad each segment payload to the alignment buffer-manager blocks give
+    // codecs (roaring asserts RunContainerRLEPair alignment, bitpacking
+    // reads aligned groups, ...). The mmap base is page-aligned, so an
+    // aligned file offset makes the zero-copy wrapper's pointer aligned
+    // too; unaligned segments from old files fall back to a staging copy
+    // in OpenSegmentImpl. Padding bytes are never referenced.
+    static constexpr uint64_t kAlign = 64;
+    static constexpr byte_type kZeros[kAlign] = {};
+    if (const uint64_t rem = out.Position() % kAlign; rem != 0) {
+      out.WriteData(kZeros, kAlign - rem);
+    }
     const uint64_t file_offset = out.Position();
     out.WriteData(bytes, segment_size);
     ptr.block_pointer.block_id = static_cast<duckdb::block_id_t>(file_offset);

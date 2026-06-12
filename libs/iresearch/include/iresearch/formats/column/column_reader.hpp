@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector_buffer.hpp>
@@ -28,6 +29,7 @@
 #include <duckdb/storage/data_pointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+#include <memory>
 #include <span>
 #include <string>
 #include <utility>
@@ -71,6 +73,34 @@ inline size_t ConsecutiveRunLength(
   return run;
 }
 
+// Source for building zero-copy block wrappers at reader-construction time.
+// `in` is a duplicate of the .col file input; for memory-mapped inputs the
+// wrappers point straight into the mapping and share it via this handle.
+// When empty (or the input is not memory-mapped), OpenSegmentImpl falls
+// back to wrapping lazily / staging a copy per open.
+struct ColumnBlockSource {
+  duckdb::DatabaseInstance* db = nullptr;
+  std::shared_ptr<IndexInput> in;
+
+  explicit operator bool() const noexcept {
+    return db != nullptr && in != nullptr;
+  }
+};
+
+// Keeps a segment's block pinned for as long as an output Vector references
+// segment memory (non-inline string_t payloads, zero-copy entire-vector
+// scans). The BufferHandle is shared by the owning ScanCursor and every
+// chunk it emitted, so attaching it costs a shared_ptr copy instead of a
+// BufferManager Pin/Unpin round-trip per chunk.
+class SharedPinHolder final : public duckdb::AuxiliaryDataHolder {
+ public:
+  explicit SharedPinHolder(std::shared_ptr<duckdb::BufferHandle> pin) noexcept
+    : _pin{std::move(pin)} {}
+
+ private:
+  std::shared_ptr<duckdb::BufferHandle> _pin;
+};
+
 class ColumnReader final {
  public:
   struct VariantRgReader {
@@ -85,11 +115,13 @@ class ColumnReader final {
                std::vector<duckdb::DataPointer> validity_pointers,
                std::unique_ptr<ColumnReader> element_child,
                std::vector<std::unique_ptr<ColumnReader>> struct_children,
-               uint64_t array_size, bool fully_shredded = true);
+               uint64_t array_size, bool fully_shredded = true,
+               const ColumnBlockSource& source = {});
 
   ColumnReader(field_id id, duckdb::LogicalType type,
                std::vector<duckdb::DataPointer> validity_pointers,
-               std::vector<VariantRgReader> variant_rgs);
+               std::vector<VariantRgReader> variant_rgs,
+               const ColumnBlockSource& source = {});
 
   ColumnReader(const ColumnReader&) = delete;
   ColumnReader& operator=(const ColumnReader&) = delete;
@@ -127,9 +159,13 @@ class ColumnReader final {
   class ScanCursor {
    public:
     ScanCursor() noexcept = default;
-    explicit ScanCursor(duckdb::unique_ptr<duckdb::ColumnSegment> seg) noexcept
+    explicit ScanCursor(duckdb::unique_ptr<duckdb::ColumnSegment> seg)
       : _seg{std::move(seg)} {
       _seg->InitializeScan(_state);
+      if (auto& block = _seg->GetBlockHandle()) {
+        auto& bm = duckdb::BufferManager::GetBufferManager(_seg->GetDatabase());
+        _pin = std::make_shared<duckdb::BufferHandle>(bm.Pin(block));
+      }
     }
 
     ScanCursor(const ScanCursor&) = delete;
@@ -162,27 +198,32 @@ class ColumnReader final {
       _state.offset_in_column += count;
       _state.internal_index += count;
       _cursor += count;
-      // Pin the segment's block onto the output Vector for BOTH scan types.
-      // SCAN_FLAT_VECTOR can still reference segment memory for non-inline
-      // string_t payloads (PK blobs, VARCHAR > 12 bytes), so dropping the
-      // segment between Fetch and the caller consuming pk_data[k] is a
-      // heap-use-after-free (ASAN-confirmed via SearchFullScanFunction ->
-      // AppendPrimaryKey<PrimaryKeyI64I64>).
-      if (_seg->GetBlockHandle()) {
-        auto& bm = duckdb::BufferManager::GetBufferManager(_seg->GetDatabase());
-        auto& block = _seg->GetBlockHandle();
-        auto handle = bm.Pin(block);
+      // Attach the cursor-lifetime pin onto the output Vector for BOTH scan
+      // types. SCAN_FLAT_VECTOR can still reference segment memory for
+      // non-inline string_t payloads (PK blobs, VARCHAR > 12 bytes), so
+      // dropping the segment between Fetch and the caller consuming
+      // pk_data[k] is a heap-use-after-free (ASAN-confirmed via
+      // SearchFullScanFunction -> AppendPrimaryKey<PrimaryKeyI64I64>).
+      // The block is pinned ONCE in the ctor and shared per chunk; a
+      // BufferManager Pin/Unpin round-trip here costs a mutex + a
+      // BlockHandle::Load resurrect on every 2048-row chunk.
+      if (_pin) {
         out_vec.BufferMutable().AddAuxiliaryData(
-          std::make_unique<duckdb::PinnedBufferHolder>(std::move(handle)));
+          std::make_unique<SharedPinHolder>(_pin));
       }
     }
 
     uint64_t Position() const noexcept { return _cursor; }
     explicit operator bool() const noexcept { return _seg != nullptr; }
 
+    duckdb::CompressionType Codec() const noexcept {
+      return _seg->GetCompressionFunction().type;
+    }
+
    private:
     duckdb::unique_ptr<duckdb::ColumnSegment> _seg;
     duckdb::ColumnScanState _state{nullptr};
+    std::shared_ptr<duckdb::BufferHandle> _pin;
     uint64_t _cursor = 0;
   };
 
@@ -327,7 +368,8 @@ class ColumnReader final {
 
   duckdb::unique_ptr<duckdb::ColumnSegment> OpenSegmentImpl(
     const duckdb::DataPointer& p, const duckdb::LogicalType& type,
-    ReadContext& ctx) const;
+    ReadContext& ctx, const duckdb::shared_ptr<duckdb::BlockHandle>& prebuilt,
+    std::atomic<bool>* advise_once) const;
 
   field_id _id;
   duckdb::LogicalType _type;
@@ -347,9 +389,25 @@ class ColumnReader final {
   std::vector<uint64_t> _rg_element_starts;
   std::vector<VariantRgReader> _variant_rgs;
   std::vector<uint64_t> _variant_rg_starts;
+  // Prebuilt zero-copy block wrappers, one slot per data/validity pointer.
+  // Null slots (constant pointers, non-mmap inputs, readers built without a
+  // ColumnBlockSource) make OpenSegmentImpl fall back to lazy wrapping or
+  // per-query staging. Immutable after construction, so opens are lock-free.
+  std::vector<duckdb::shared_ptr<duckdb::BlockHandle>> _data_blocks;
+  std::vector<duckdb::shared_ptr<duckdb::BlockHandle>> _validity_blocks;
+  // One-shot MADV_WILLNEED flags, one per prebuilt block. The first open of
+  // a block (cold page cache) wants kernel readahead; afterwards the pages
+  // are resident and the syscall is pure overhead (mmap_lock + range walk,
+  // ~5% of a hot query when issued per open). Racing opens may both advise;
+  // harmless. Sized with the block vectors at construction.
+  mutable std::unique_ptr<std::atomic<bool>[]> _data_advised;
+  mutable std::unique_ptr<std::atomic<bool>[]> _validity_advised;
 };
 
 std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
                                                PersistentColumnData&& node);
+std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
+                                               PersistentColumnData&& node,
+                                               const ColumnBlockSource& source);
 
 }  // namespace irs

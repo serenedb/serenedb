@@ -88,9 +88,15 @@ class ColumnstoreMaterializer {
     const auto& b = _bound[i];
     if (b.IsExtract()) {
       SDB_ASSERT(_context);
-      irs::MaterializeExtractNode(*b.reader, *b.state, doc_ids, b.extract_path,
-                                  b.extract_scan_type, out_vec, output_start,
-                                  *_context);
+      if (b.reader->Type().id() == duckdb::LogicalTypeId::STRUCT) {
+        irs::MaterializeStructExtractNode(*b.reader, *b.state, doc_ids,
+                                          b.extract_path, b.extract_scan_type,
+                                          out_vec, output_start, *_context);
+      } else {
+        irs::MaterializeExtractNode(*b.reader, *b.state, doc_ids,
+                                    b.extract_path, b.extract_scan_type,
+                                    out_vec, output_start, *_context);
+      }
       return;
     }
     irs::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec, output_start);
@@ -107,9 +113,15 @@ class ColumnstoreMaterializer {
       auto& out_vec = output.data[b.output_slot];
       if (b.IsExtract()) {
         SDB_ASSERT(_context);
-        irs::MaterializeExtractNode(*b.reader, *b.state, doc_ids,
-                                    b.extract_path, b.extract_scan_type,
-                                    out_vec, output_start, *_context);
+        if (b.reader->Type().id() == duckdb::LogicalTypeId::STRUCT) {
+          irs::MaterializeStructExtractNode(*b.reader, *b.state, doc_ids,
+                                            b.extract_path, b.extract_scan_type,
+                                            out_vec, output_start, *_context);
+        } else {
+          irs::MaterializeExtractNode(*b.reader, *b.state, doc_ids,
+                                      b.extract_path, b.extract_scan_type,
+                                      out_vec, output_start, *_context);
+        }
         continue;
       }
       const auto type_id = b.reader->Type().id();
@@ -131,9 +143,16 @@ class ColumnstoreMaterializer {
       auto& out_vec = output.data[b.output_slot];
       if (b.IsExtract()) {
         SDB_ASSERT(_context);
-        irs::MaterializeExtractNode(
-          *b.reader, *b.state, irs::IotaRange{start_doc, count}, b.extract_path,
-          b.extract_scan_type, out_vec, output_start, *_context);
+        const irs::IotaRange rows{start_doc, count};
+        if (b.reader->Type().id() == duckdb::LogicalTypeId::STRUCT) {
+          irs::MaterializeStructExtractNode(*b.reader, *b.state, rows,
+                                            b.extract_path, b.extract_scan_type,
+                                            out_vec, output_start, *_context);
+        } else {
+          irs::MaterializeExtractNode(*b.reader, *b.state, rows, b.extract_path,
+                                      b.extract_scan_type, out_vec,
+                                      output_start, *_context);
+        }
         continue;
       }
       const auto type_id = b.reader->Type().id();

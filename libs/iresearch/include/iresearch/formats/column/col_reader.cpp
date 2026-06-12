@@ -160,7 +160,12 @@ struct ColReader::Impl {
 };
 
 void ColReader::BuildColumnReaders(duckdb::BinaryDeserializer& deserializer,
-                                   duckdb::DatabaseInstance& /*db*/) {
+                                   duckdb::DatabaseInstance& db) {
+  // Shared anchor for the zero-copy block wrappers: one duplicate of the
+  // mmap'd input keeps the mapping alive for as long as any reader block
+  // (or a Vector pinning it) is around.
+  const ColumnBlockSource source{&db,
+                                 std::shared_ptr<IndexInput>{_impl->in->Dup()}};
   deserializer.ReadList(
     kFooterSlotColumns, "columns",
     [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
@@ -170,7 +175,7 @@ void ColReader::BuildColumnReaders(duckdb::BinaryDeserializer& deserializer,
         obj.ReadObject(1, "root", [&](duckdb::Deserializer& robj) {
           root = DeserializeColumnData(robj);
         });
-        auto reader = MakeColumnReader(id, std::move(root));
+        auto reader = MakeColumnReader(id, std::move(root), source);
         _impl->readers.push_back(std::move(reader));
         auto [it, ok] = _impl->by_id.emplace(id, _impl->readers.back().get());
         SDB_ENSURE(ok, sdb::ERROR_SERVER_CORRUPTED_DATAFILE,

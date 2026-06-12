@@ -1,0 +1,184 @@
+hash-threshold 100
+
+# INCLUDE columns expose merged per-rowgroup min/max statistics from the
+# columnstore to the optimizer. With statistics present, SUM over an
+# integer column whose bounds prove the result fits in int64 is planned
+# as sum_no_overflow; when the bounds do not prove it, the safe sum
+# stays. NULL flags come from the validity side, so IS NULL queries must
+# stay correct with statistics enabled.
+
+statement ok
+CREATE TABLE vedernikoff (
+    id INT PRIMARY KEY,
+    small BIGINT,
+    big BIGINT,
+    s VARCHAR
+)
+
+
+statement count 1
+INSERT INTO vedernikoff VALUES (1, 10, 4611686018427387904, 'aa')
+
+statement count 1
+INSERT INTO vedernikoff VALUES (2, NULL, 4611686018427387904, NULL)
+
+statement count 1
+INSERT INTO vedernikoff VALUES (3, -7, 4611686018427387904, 'zz')
+
+
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff
+    USING inverted(id)
+    INCLUDE (small, big, s)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vedernikoff
+
+
+# min=-7 / max=10 over 3 rows cannot overflow int64 -> sum_no_overflow.
+query
+EXPLAIN SELECT SUM(small) FROM vedernikoff_idx;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│    sum_no_overflow(#0)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│           small           │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      vedernikoff_idx      │
+│                           │
+│     Projections: small    │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+
+# Three rows of 2^62 can overflow int64 -> the rewrite must not fire.
+query
+EXPLAIN SELECT SUM(big) FROM vedernikoff_idx;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│    Aggregates: sum(#0)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            big            │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      vedernikoff_idx      │
+│                           │
+│      Projections: big     │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+
+query I
+SELECT SUM(small) FROM vedernikoff_idx;
+----
+sum
+3
+
+
+query I
+SELECT SUM(big) FROM vedernikoff_idx;
+----
+sum
+13835058055282163712
+
+
+# NULL flags from the validity side: IS NULL must not be folded away.
+query III
+SELECT MIN(small), MAX(small), COUNT(*) FILTER (WHERE small IS NULL)
+FROM vedernikoff_idx;
+----
+min	max	count
+-7	10	1
+
+
+query TTI
+SELECT MIN(s), MAX(s), COUNT(*) FILTER (WHERE s IS NULL)
+FROM vedernikoff_idx;
+----
+min	max	count
+aa	zz	1
+
+
+# The exact statistics the scan serves to the optimizer, asserted
+# directly: min/max from the rowgroup stats, has_null from validity.
+query T
+SELECT stats(small)::VARCHAR AS small_stats FROM vedernikoff_idx LIMIT 1;
+----
+small_stats
+{'has_no_null': true, 'has_null': true, 'max': 10, 'min': -7}
+
+
+# A column without NULLs must not over-claim has_null.
+query T
+SELECT stats(big)::VARCHAR AS big_stats FROM vedernikoff_idx LIMIT 1;
+----
+big_stats
+{'has_no_null': true, 'has_null': false, 'max': 4611686018427387904, 'min': 4611686018427387904}
+
+
+query T
+SELECT stats(s)::VARCHAR AS s_stats FROM vedernikoff_idx LIMIT 1;
+----
+s_stats
+{'has_no_null': true, 'has_null': true, 'has_unicode': false, 'max': zz, 'max_string_length': 2, 'min': aa, 'min_string_length': 2, 'total_string_length': 4}
+
+
+# Second segment: the reader must merge statistics across segments.
+statement count 1
+INSERT INTO vedernikoff VALUES (4, 100, 1, 'aa')
+
+statement ok
+VACUUM (REFRESH_TABLE) vedernikoff
+
+
+query T
+SELECT stats(small)::VARCHAR AS small_stats FROM vedernikoff_idx LIMIT 1;
+----
+small_stats
+{'has_no_null': true, 'has_null': true, 'max': 100, 'min': -7}
+
+
+query T
+SELECT stats(big)::VARCHAR AS big_stats FROM vedernikoff_idx LIMIT 1;
+----
+big_stats
+{'has_no_null': true, 'has_null': false, 'max': 4611686018427387904, 'min': 1}
+
+
+# Cleanup
+statement ok
+DROP INDEX vedernikoff_idx
+
+statement ok
+DROP TABLE vedernikoff

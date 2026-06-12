@@ -58,7 +58,8 @@ namespace irs {
 
 ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
                            uint32_t row_group_size, WriteContext& write_ctx,
-                           FooterColumnEntry& entry, bool skip_validity)
+                           FooterColumnEntry& entry, bool skip_validity,
+                           bool distinct_count)
   : _id{id},
     _type{std::move(type)},
     _row_group_size{row_group_size},
@@ -68,6 +69,9 @@ ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
              duckdb::VectorDataInitialization::UNINITIALIZED},
     _skip_validity{skip_validity} {
   SDB_ASSERT(_row_group_size != 0);
+  if (distinct_count) {
+    _distinct_hll = duckdb::make_uniq<duckdb::HyperLogLog>();
+  }
 }
 
 void ColumnWriter::PadNullsTo(uint64_t start_row) {
@@ -160,6 +164,9 @@ void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
 void ColumnWriter::Finalize() {
   if (_filled > 0) {
     FlushRowGroup();
+  }
+  if (_distinct_hll) {
+    _entry->root.distinct_hll = std::move(_distinct_hll);
   }
 }
 
@@ -619,6 +626,14 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
 void ColumnWriter::FlushRowGroup() {
   if (_filled == 0) {
     return;
+  }
+
+  if (_distinct_hll) {
+    duckdb::Vector hashes{duckdb::LogicalType::HASH,
+                          static_cast<duckdb::idx_t>(_filled)};
+    duckdb::VectorOperations::Hash(_staging, hashes,
+                                   static_cast<duckdb::idx_t>(_filled));
+    _distinct_hll->Update(_staging, hashes);
   }
 
   FlushNode(*_write_ctx, _type, _staging, _filled, _row_group_first_doc,

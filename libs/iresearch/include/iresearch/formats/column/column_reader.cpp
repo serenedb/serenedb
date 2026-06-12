@@ -32,7 +32,10 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
+#include <duckdb/storage/statistics/array_stats.hpp>
+#include <duckdb/storage/statistics/list_stats.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <duckdb/storage/statistics/struct_stats.hpp>
 #include <utility>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -78,9 +81,9 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
             field_limits::invalid(), std::move(*variant_layout.shredded_node));
         }
       }
-      return std::make_unique<ColumnReader>(id, std::move(node.type),
-                                            std::move(node.validity_pointers),
-                                            std::move(variant_rgs));
+      return std::make_unique<ColumnReader>(
+        id, std::move(node.type), std::move(node.validity_pointers),
+        std::move(variant_rgs), std::move(node.distinct_hll));
     }
     case duckdb::LogicalTypeId::STRUCT: {
       struct_children.reserve(node.child_columns.size());
@@ -99,7 +102,8 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
   return std::make_unique<ColumnReader>(
     id, std::move(node.type), std::move(node.pointers),
     std::move(node.validity_pointers), std::move(element_child),
-    std::move(struct_children), array_size, fully_shredded);
+    std::move(struct_children), array_size, fully_shredded,
+    std::move(node.distinct_hll));
 }
 
 namespace {
@@ -147,7 +151,8 @@ ColumnReader::ColumnReader(
   std::vector<duckdb::DataPointer> validity_pointers,
   std::unique_ptr<ColumnReader> element_child,
   std::vector<std::unique_ptr<ColumnReader>> struct_children,
-  uint64_t array_size, bool fully_shredded)
+  uint64_t array_size, bool fully_shredded,
+  duckdb::unique_ptr<duckdb::HyperLogLog> distinct_hll)
   : _id{id},
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
@@ -156,7 +161,8 @@ ColumnReader::ColumnReader(
     _fully_shredded{fully_shredded},
     _child{std::move(element_child)},
     _array_size{array_size},
-    _struct_fields{std::move(struct_children)} {
+    _struct_fields{std::move(struct_children)},
+    _distinct_hll{std::move(distinct_hll)} {
   if (!_validity_pointers.empty()) {
     _validity_offsets.reserve(_validity_pointers.size() + 1);
     uint64_t vtotal = 0;
@@ -224,16 +230,19 @@ ColumnReader::ColumnReader(
       _row_count = total;
     } break;
   }
+  _stats = BuildMergedStatistics().ToUnique();
 }
 
 ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
                            std::vector<duckdb::DataPointer> validity_pointers,
-                           std::vector<VariantRgReader> variant_rgs)
+                           std::vector<VariantRgReader> variant_rgs,
+                           duckdb::unique_ptr<duckdb::HyperLogLog> distinct_hll)
   : _id{id},
     _type{std::move(type)},
     _validity_pointers{std::move(validity_pointers)},
     _has_validity{AnyNonEmptyValidity(_validity_pointers)},
-    _variant_rgs{std::move(variant_rgs)} {
+    _variant_rgs{std::move(variant_rgs)},
+    _distinct_hll{std::move(distinct_hll)} {
   SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::VARIANT);
   if (!_validity_pointers.empty()) {
     _validity_offsets.reserve(_validity_pointers.size() + 1);
@@ -257,6 +266,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
   _variant_rg_starts.push_back(total);
   _row_count = total;
   _data_offsets.push_back(0);
+  _stats = BuildMergedStatistics().ToUnique();
 }
 
 RgWindow ColumnReader::Locate(uint64_t row_pos, RgWindow hint) const noexcept {
@@ -279,6 +289,51 @@ RgWindow ColumnReader::LocateVariantRg(uint64_t row,
   SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::VARIANT);
   SDB_ASSERT(row < _row_count);
   return LocateInOffsets(row, _variant_rg_starts, hint);
+}
+
+duckdb::BaseStatistics ColumnReader::BuildMergedStatistics() const {
+  const auto child_stats = [](const ColumnReader& child) {
+    auto s = duckdb::BaseStatistics::CreateEmpty(child.Type());
+    s.Merge(child.MergedStatistics());
+    return s.ToUnique();
+  };
+  auto stats = [&] {
+    switch (_type.id()) {
+      case duckdb::LogicalTypeId::ARRAY: {
+        auto s = duckdb::ArrayStats::CreateEmpty(_type);
+        duckdb::ArrayStats::SetChildStats(s, child_stats(*_child));
+        return s;
+      }
+      case duckdb::LogicalTypeId::MAP:
+      case duckdb::LogicalTypeId::LIST: {
+        auto s = duckdb::ListStats::CreateEmpty(_type);
+        duckdb::ListStats::SetChildStats(s, child_stats(*_child));
+        return s;
+      }
+      case duckdb::LogicalTypeId::STRUCT: {
+        auto s = duckdb::StructStats::CreateEmpty(_type);
+        for (size_t fi = 0; fi < _struct_fields.size(); ++fi) {
+          duckdb::StructStats::SetChildStats(s, fi,
+                                             child_stats(*_struct_fields[fi]));
+        }
+        return s;
+      }
+      case duckdb::LogicalTypeId::VARIANT:
+        return duckdb::BaseStatistics::CreateUnknown(_type);
+      default: {
+        auto s = duckdb::BaseStatistics::CreateEmpty(_type);
+        for (const auto& p : _data_pointers) {
+          s.Merge(p.statistics);
+        }
+        return s;
+      }
+    }
+  }();
+  if (_has_validity) {
+    stats.SetHasNull();
+  }
+  stats.SetHasNoNull();
+  return stats;
 }
 
 void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,

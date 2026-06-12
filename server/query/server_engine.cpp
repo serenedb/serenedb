@@ -44,6 +44,7 @@
 #include "connector/functions/search.h"
 #include "connector/functions/sequence.h"
 #include "connector/functions/string.h"
+#include "connector/functions/encode_key.h"
 #include "connector/functions/system.h"
 #include "connector/functions/vector.h"
 #include "connector/pg_logical_types.h"
@@ -229,6 +230,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgCasts(db);
 
   connector::RegisterPgMathFunctions(db);
+
+  connector::RegisterKeyEncodingFunctions(db);
 
   connector::RegisterPgSystemFunctions(db);
 

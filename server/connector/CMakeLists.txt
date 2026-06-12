@@ -1,6 +1,7 @@
 add_library(
     serene_connector
     STATIC
+    key_encoding.cpp
     key_utils.cpp
     offsets_collector.cpp
     search_sink_writer.cpp

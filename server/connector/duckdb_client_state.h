@@ -39,6 +39,11 @@ inline constexpr const char* kSereneDBClientStateKey = "serenedb";
 // ConnectionContext (which holds config, transactions, catalog snapshots).
 // Accessible from any DuckDB function/operator via:
 //   context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
+// The ConnectionContext whose transaction is currently committing on this
+// thread (between TransactionPreCommit and TransactionCommit/Rollback);
+// nullptr outside a commit (e.g. WAL replay).
+ConnectionContext* CurrentCommittingContext() noexcept;
+
 class SereneDBClientState final : public duckdb::ClientContextState {
  public:
   // Creates a SereneDBClientState, registers it in the ClientContext, and wires

@@ -52,6 +52,7 @@
 #include <duckdb/storage/database_size.hpp>
 #include <ranges>
 
+#include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/pk_spec.h"
 #include "catalog/schema.h"
@@ -61,11 +62,6 @@
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_progress.h"
-#include "connector/duckdb_physical_delete.h"
-#include "connector/duckdb_physical_insert.h"
-#include "connector/duckdb_physical_sst_insert.h"
-#include "connector/duckdb_physical_truncate.h"
-#include "connector/duckdb_physical_update.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
@@ -906,23 +902,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       const auto leaf_orig_size = leaf_get->GetColumnIds().size();
       duckdb::vector<duckdb::LogicalType> pk_types;
       pk_types.reserve(vcols.size());
-      if (view_fast_path->pk_spec == catalog::PkSpec::RocksDBExplicitPK) {
-        const auto& base_cols = view_fast_path->base_table->Columns();
-        for (auto vcol : vcols) {
-          SDB_ASSERT(vcol < base_cols.size());
-          pk_types.push_back(base_cols[vcol].type);
-        }
-      } else if (view_fast_path->pk_spec ==
-                 catalog::PkSpec::RocksDBGeneratedRowId) {
-        SDB_ASSERT(vcols.size() == 1);
-        pk_types.push_back(duckdb::LogicalType::BIGINT);
-      } else {
-        for (auto vcol : vcols) {
-          if (vcol == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
-            pk_types.push_back(duckdb::LogicalType::UBIGINT);
-          } else {
-            pk_types.push_back(duckdb::LogicalType::BIGINT);
-          }
+      for (auto vcol : vcols) {
+        if (vcol == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
+          pk_types.push_back(duckdb::LogicalType::UBIGINT);
+        } else {
+          pk_types.push_back(duckdb::LogicalType::BIGINT);
         }
       }
       leaf_get->types.clear();
@@ -931,10 +915,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
           leaf_get->GetColumnType(leaf_get->GetColumnIds()[i]));
       }
       for (size_t i = 0; i < vcols.size(); ++i) {
-        // TODO(Dronplane): deduplicate when vcols[i] already appears in
-        // leaf_get->column_ids (RocksDBExplicitPK + user-named PK key);
-        // requires teaching the runtime to find the PK at a non-fixed
-        // chunk position. See Case 7 in inverted_index_view_pruning.test
         leaf_get->AddColumnId(vcols[i]);
         leaf_get->types.push_back(pk_types[i]);
         // Iceberg's get_virtual_columns omits file_index even though the
@@ -1140,14 +1120,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     create_index_info->catalog = target.ParentCatalog().GetName();
     if (view_fast_path) {
       switch (view_fast_path->pk_spec) {
-        case catalog::PkSpec::RocksDBExplicitPK:
-          create_index_info->options["_sdb_view_fast_path_pk"] =
-            duckdb::Value("rocksdb_explicit_pk");
-          break;
-        case catalog::PkSpec::RocksDBGeneratedRowId:
-          create_index_info->options["_sdb_view_fast_path_pk"] =
-            duckdb::Value("rocksdb_rowid");
-          break;
         case catalog::PkSpec::DuckDBRowId:
           create_index_info->options["_sdb_view_fast_path_pk"] =
             duckdb::Value("duckdb_rowid");

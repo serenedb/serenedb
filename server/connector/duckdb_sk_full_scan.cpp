@@ -85,11 +85,7 @@ void SKFullScanFunction(duckdb::ClientContext& context,
     ro.total_order_seek = true;
     ro.iterate_upper_bound = &gstate.sk_upper_bound_slice;
 
-    if (gstate.txn) {
-      gstate.sk_iterator.reset(gstate.txn->GetIterator(ro, cf));
-    } else {
-      gstate.sk_iterator.reset(db->NewIterator(ro, cf));
-    }
+    gstate.sk_iterator.reset(db->NewIterator(ro, cf));
     gstate.sk_iterator->Seek(scan_prefix);
   }
 
@@ -97,10 +93,9 @@ void SKFullScanFunction(duckdb::ClientContext& context,
   auto& it = *gstate.sk_iterator;
 
   if (!gstate.index_source) {
-    gstate.index_source =
-      MakeIndexSource(context, bind_data, gstate.snapshot, gstate.txn,
-                      gstate.external_projected_columns, gstate.projected_types,
-                      bind_data.column_ids);
+    gstate.index_source = MakeIndexSource(
+      context, bind_data, gstate.external_projected_columns,
+      gstate.projected_types, bind_data.column_ids);
   }
   if (std::holds_alternative<std::monostate>(gstate.pk_batch)) {
     gstate.pk_batch = gstate.index_source->CreatePkBatch();

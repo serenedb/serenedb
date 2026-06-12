@@ -56,9 +56,7 @@
 namespace sdb::connector {
 
 CommonScanGlobalState::~CommonScanGlobalState() {
-  // Only release if we took the snapshot via db->GetSnapshot().
-  // When using a transaction, the snapshot is owned by the transaction.
-  if (snapshot && !txn) {
+  if (snapshot) {
     GetServerEngine().db()->ReleaseSnapshot(snapshot);
   }
   snapshot = nullptr;
@@ -71,25 +69,10 @@ void InitCommonState(CommonScanGlobalState& state,
   auto& engine = GetServerEngine();
   auto* db = engine.db();
 
-  // When inside BEGIN/COMMIT, use the connection's transaction so the scan
-  // sees the transaction's own uncommitted writes (read-your-writes).
-  // Outside a transaction, use a DB snapshot for read-only scans.
-  // If sdb_read_your_own_writes is false, always use a DB snapshot so reads
-  // see only committed data even within an explicit transaction.
-  auto& conn_ctx = GetSereneDBContext(context);
-  const bool is_search_scan = bind_data.scan_source->IsSearchLike();
-  if (is_search_scan && conn_ctx.GetReadYourOwnWrites() &&
-      conn_ctx.HasRocksDBTransaction()) {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "querying an index within a transaction is not supported when "
-              "sdb_read_your_own_writes is enabled");
-  }
-  if (conn_ctx.GetReadYourOwnWrites() && conn_ctx.HasRocksDBTransaction()) {
-    state.txn = &conn_ctx.GetRocksDBTransaction();
-    state.snapshot = &conn_ctx.GetRocksDBSnapshot();
-  } else {
-    state.snapshot = db->GetSnapshot();
-  }
+  // The connection's rocksdb transaction never buffers data anymore (it only
+  // mints tick seqnos at commit), so reads always use a plain DB snapshot;
+  // row visibility is enforced by the native MVCC fetch.
+  state.snapshot = db->GetSnapshot();
 
   // Determine which columns DuckDB actually wants (projection pushdown).
   const auto num_bind_columns = bind_data.column_ids.size();

@@ -70,7 +70,7 @@
 #include "geo_filter_builder.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "rocksdb_filter.hpp"
+#include "comparison_op.hpp"
 
 namespace magic_enum {
 

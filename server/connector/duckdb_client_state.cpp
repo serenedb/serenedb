@@ -33,7 +33,6 @@
 #include "catalog/database.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_progress.h"
-#include "connector/duckdb_physical_sst_insert.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"

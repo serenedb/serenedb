@@ -99,13 +99,6 @@ WriteConflictPolicy Config::GetWriteConflictPolicy() const {
   return GetEnumValue<WriteConflictPolicy>(*value);
 }
 
-bool Config::GetReadYourOwnWrites() const {
-  duckdb::Value value;
-  auto ok = _client_ctx.TryGetCurrentSetting("sdb_read_your_own_writes", value);
-  SDB_ASSERT(ok && !value.IsNull());
-  return duckdb::BooleanValue::Get(value);
-}
-
 bool Config::GetStrictDDL() const {
   duckdb::Value value;
   auto ok = _client_ctx.TryGetCurrentSetting("sdb_strict_ddl", value);

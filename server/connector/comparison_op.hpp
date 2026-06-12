@@ -20,24 +20,8 @@
 
 #pragma once
 
-#include <duckdb.hpp>
-
-#include "connector/duckdb_scan_base.hpp"
-#include "connector/index_source.h"
-
 namespace sdb::connector {
 
-struct SKPointLookupGlobalState : public CommonScanGlobalState {
-  size_t point_offset = 0;  // next index into SkPointScan::points to probe
-  // Reused PK batch across batches; std::monostate until first call.
-  PrimaryKeyBatch pk_batch;
-};
-
-duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SKPointLookupInitGlobal(
-  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);
-
-void SKPointLookupFunction(duckdb::ClientContext& context,
-                           duckdb::TableFunctionInput& data,
-                           duckdb::DataChunk& output);
+enum class ComparisonOp { None, Lt, Le, Gt, Ge };
 
 }  // namespace sdb::connector

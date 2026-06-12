@@ -256,6 +256,8 @@ class CatalogStore {
 
   Result ExecuteEntries(std::vector<WriteContext::Entry>& entries);
   Result ExecuteCreateStoreTable(const StoreTableDef& def);
+  Result ExecuteCreateStoreTableImpl(const StoreTableDef& def,
+                                     bool with_checks);
   void EnsureSystemDatabase();
 
   std::atomic<bool> _boot_loading = false;

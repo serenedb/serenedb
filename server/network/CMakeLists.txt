@@ -9,6 +9,7 @@ target_sources(
         http/h1_codec.cpp
         http/response_writer.cpp
         http/es/common.cpp
+        http/es/dsl.cpp
         http/es/handlers.cpp
         http/test/handlers.cpp
         pg/pg_frame_codec.cpp

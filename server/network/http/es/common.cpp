@@ -26,6 +26,7 @@
 
 #include <duckdb/common/error_data.hpp>
 
+#include "network/pg/wire_frames.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 
@@ -41,7 +42,7 @@ void WriteError(HttpResponseWriter& writer, int status, std::string_view type,
   sb.append_raw(R"(},"status":)");
   sb.append(static_cast<int64_t>(status));
   sb.append_raw("}");
-  writer.Json(status, std::string_view{sb.view().value()});
+  WriteJson(writer, status, std::string_view{sb.view().value()});
 }
 
 void WriteIndexNotFound(HttpResponseWriter& writer, std::string_view index) {
@@ -49,32 +50,49 @@ void WriteIndexNotFound(HttpResponseWriter& writer, std::string_view index) {
              absl::StrCat("no such index [", index, "]"));
 }
 
-void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error) {
+void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
+                   std::string_view index) {
+  sdb::pg::SqlErrorData data;
   try {
     error.Throw();
   } catch (const SqlException& e) {
-    const auto& data = e.error();
-    switch (data.errcode) {
-      case ERRCODE_UNDEFINED_TABLE:
-        WriteError(writer, 404, "index_not_found_exception", data.errmsg);
-        return;
-      case ERRCODE_DUPLICATE_TABLE:
-        WriteError(writer, 400, "resource_already_exists_exception",
-                   data.errmsg);
-        return;
-      case ERRCODE_INVALID_NAME:
-        WriteError(writer, 400, "invalid_index_name_exception", data.errmsg);
-        return;
-      case ERRCODE_INVALID_PARAMETER_VALUE:
-      case ERRCODE_INVALID_TEXT_REPRESENTATION:
-        WriteError(writer, 400, "mapper_parsing_exception", data.errmsg);
-        return;
-      default:
-        break;
-    }
+    data = e.error();
   } catch (...) {
+    data = pg::DuckErrorToSqlData(error);
   }
-  WriteError(writer, 500, "exception", error.RawMessage());
+  switch (data.errcode) {
+    case ERRCODE_UNDEFINED_TABLE:
+      if (!index.empty()) {
+        WriteIndexNotFound(writer, index);
+      } else {
+        WriteError(writer, 404, "index_not_found_exception", data.errmsg);
+      }
+      return;
+    case ERRCODE_DUPLICATE_TABLE:
+      WriteError(writer, 400, "resource_already_exists_exception",
+                 data.errmsg);
+      return;
+    case ERRCODE_INVALID_NAME:
+      WriteError(writer, 400, "invalid_index_name_exception", data.errmsg);
+      return;
+    case ERRCODE_INVALID_PARAMETER_VALUE:
+      WriteError(writer, 400, "illegal_argument_exception", data.errmsg);
+      return;
+    case ERRCODE_INVALID_TEXT_REPRESENTATION:
+      WriteError(writer, 400, "mapper_parsing_exception", data.errmsg);
+      return;
+    case ERRCODE_UNIQUE_VIOLATION:
+      WriteError(writer, 409, "version_conflict_engine_exception",
+                 data.errmsg);
+      return;
+    case ERRCODE_UNDEFINED_COLUMN:
+      // Unknown field in a query/sort (BINDER errors land here too).
+      WriteError(writer, 400, "query_shard_exception", data.errmsg);
+      return;
+    default:
+      WriteError(writer, 500, "exception", data.errmsg);
+      return;
+  }
 }
 
 std::string SqlLiteral(std::string_view text) {
@@ -88,6 +106,20 @@ std::string SqlLiteral(std::string_view text) {
     out.push_back(c);
   }
   out.push_back('\'');
+  return out;
+}
+
+std::string SqlIdentifier(std::string_view name) {
+  std::string out;
+  out.reserve(name.size() + 2);
+  out.push_back('"');
+  for (const char c : name) {
+    if (c == '"') {
+      out.push_back('"');
+    }
+    out.push_back(c);
+  }
+  out.push_back('"');
   return out;
 }
 

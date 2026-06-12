@@ -61,6 +61,13 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
   auto* GetCopyInBridge() const { return _copy_in_bridge; }
   void SetCopyInBridge(pg::CopyInBridge* bridge) { _copy_in_bridge = bridge; }
 
+  // Per-statement side channel for table functions that must hand serialized
+  // response payload to the protocol handler beyond the statement's result
+  // (es_bulk appends ES bulk-items JSON here while emitting rows; INSERT has
+  // no RETURNING on serenedb tables). Set before the statement, cleared after.
+  auto* GetResponseSink() const { return _response_sink; }
+  void SetResponseSink(std::string* sink) { _response_sink = sink; }
+
   // Notices are an intrusive MPSC stack (Strand-style): producers on any
   // thread CAS-push; the single consumer exchanges the head out and reverses
   // for FIFO. The common SELECT/DML path pays one relaxed-ish load to learn
@@ -103,6 +110,7 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
   message::Buffer* const _send_buffer;
   pg::CopyMessagesQueue* const _copy_queue;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
+  std::string* _response_sink = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};
 };
 

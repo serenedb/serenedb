@@ -37,6 +37,7 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
@@ -233,7 +234,24 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
         def.not_null.push_back(mirror_pos[*idx]);
       }
     } else if (constraint.expr && constraint.expr->HasExpr()) {
-      def.checks.push_back(constraint.expr->GetExpr().Copy());
+      // Function calls bind against the catalog visible to the store
+      // connection -- session/catalog-dependent functions (sequences,
+      // user macros) capture the wrong context there. Those checks stay
+      // facade-side; the facade passes them to inserts itself.
+      bool has_function = false;
+      auto scan = [&](this auto& self,
+                      const duckdb::ParsedExpression& e) -> void {
+        if (e.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
+          has_function = true;
+          return;
+        }
+        duckdb::ParsedExpressionIterator::EnumerateChildren(
+          e, [&](const duckdb::ParsedExpression& child) { self(child); });
+      };
+      scan(constraint.expr->GetExpr());
+      if (!has_function) {
+        def.checks.push_back(constraint.expr->GetExpr().Copy());
+      }
     }
   }
   auto names_for = [&](std::span<const Column::Id> ids,
@@ -641,6 +659,24 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
 }
 
 Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
+  auto r = ExecuteCreateStoreTableImpl(def, /*with_checks=*/true);
+  if (r.fail() && !def.checks.empty()) {
+    // CHECK expressions may reference functions that only the facade
+    // database can resolve; such constraints stay facade-side (unenforced)
+    // rather than failing the table.
+    auto retry = ExecuteCreateStoreTableImpl(def, /*with_checks=*/false);
+    if (retry.ok()) {
+      SDB_WARN(GENERAL, "store table \"", def.name,
+               "\": CHECK constraints were not mirrored: ",
+               r.errorMessage());
+      return retry;
+    }
+  }
+  return r;
+}
+
+Result CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
+                                                 bool with_checks) {
   return basics::SafeCall([&]() -> Result {
     auto info = duckdb::make_uniq<duckdb::CreateTableInfo>(
       std::string{kStoreAlias}, "main", def.name);
@@ -685,9 +721,11 @@ Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
         duckdb::make_uniq<duckdb::ForeignKeyConstraint>(
           std::move(pk_cols), std::move(fk_cols), std::move(fk_info)));
     }
-    for (const auto& check : def.checks) {
-      info->constraints.push_back(
-        duckdb::make_uniq<duckdb::CheckConstraint>(check->Copy()));
+    if (with_checks) {
+      for (const auto& check : def.checks) {
+        info->constraints.push_back(
+          duckdb::make_uniq<duckdb::CheckConstraint>(check->Copy()));
+      }
     }
     auto& context = *_conn->context;
     auto& catalog =

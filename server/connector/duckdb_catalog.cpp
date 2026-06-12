@@ -624,11 +624,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto& table_entry = RequireBaseTable(op.table);
   auto& store_entry =
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
-  duckdb::MetaTransaction::Get(context).ModifyDatabase(
-    store_entry.ParentCatalog().GetAttached(),
-    duckdb::DatabaseModificationType::INSERT_DATA |
-      duckdb::DatabaseModificationType::DELETE_DATA |
-      duckdb::DatabaseModificationType::UPDATE_DATA);
 
   // Two-pass projection: see ResolveDefaultsWithGenerated comment for why
   // we don't reuse upstream's single-pass ResolveDefaultsProjection here.
@@ -650,6 +645,14 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto store_constraints = duckdb::Binder::BindConstraints(
     context, store_entry.GetConstraints(), store_entry.name,
     store_entry.GetColumns());
+  // Facade-bound CHECK constraints can reference facade-only functions
+  // (bound with macros expanded); the store mirror demotes those, so they
+  // ride the insert from here. Column layouts match by construction.
+  for (auto& constraint : op.bound_constraints) {
+    if (constraint->type == duckdb::ConstraintType::CHECK) {
+      store_constraints.push_back(std::move(constraint));
+    }
+  }
   auto& insert = planner.Make<duckdb::PhysicalInsert>(
     op.types, store_entry, std::move(store_constraints),
     std::move(op.expressions), std::move(op.on_conflict_info.set_columns),
@@ -673,11 +676,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   auto& table_entry = RequireBaseTable(op.table);
   auto& store_entry =
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
-  duckdb::MetaTransaction::Get(context).ModifyDatabase(
-    store_entry.ParentCatalog().GetAttached(),
-    duckdb::DatabaseModificationType::INSERT_DATA |
-      duckdb::DatabaseModificationType::DELETE_DATA |
-      duckdb::DatabaseModificationType::UPDATE_DATA);
 
   auto& bound_ref =
     op.expressions[0]->Cast<duckdb::BoundReferenceExpression>();
@@ -698,11 +696,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto& table_entry = RequireBaseTable(op.table);
   auto& store_entry =
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
-  duckdb::MetaTransaction::Get(context).ModifyDatabase(
-    store_entry.ParentCatalog().GetAttached(),
-    duckdb::DatabaseModificationType::INSERT_DATA |
-      duckdb::DatabaseModificationType::DELETE_DATA |
-      duckdb::DatabaseModificationType::UPDATE_DATA);
 
   auto store_constraints = duckdb::Binder::BindConstraints(
     context, store_entry.GetConstraints(), store_entry.name,
@@ -814,11 +807,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
   auto& table_entry = RequireBaseTable(op.table);
   auto& store_entry =
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
-  duckdb::MetaTransaction::Get(context).ModifyDatabase(
-    store_entry.ParentCatalog().GetAttached(),
-    duckdb::DatabaseModificationType::INSERT_DATA |
-      duckdb::DatabaseModificationType::DELETE_DATA |
-      duckdb::DatabaseModificationType::UPDATE_DATA);
 
   std::map<duckdb::MergeActionCondition,
            duckdb::vector<duckdb::unique_ptr<duckdb::MergeIntoOperator>>>

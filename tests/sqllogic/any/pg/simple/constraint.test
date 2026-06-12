@@ -22,7 +22,7 @@ INSERT INTO iamkay DEFAULT VALUES;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           INSERT          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -44,6 +44,11 @@ CREATE TABLE iamkay228
 );
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO iamkay228 DEFAULT VALUES;
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO iamkay228 DEFAULT VALUES;
 ----
@@ -51,6 +56,11 @@ db error: ERROR: null value in column "kek" of relation "iamkay228" violates not
 DETAIL: Failing row contains (null).
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO iamkay228 VALUES(1000 - 7);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO iamkay228 VALUES(1000 - 7);
 ----
@@ -85,6 +95,11 @@ CREATE TABLE androed_vedernikoff_1
 );
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO androed_vedernikoff_1 (pencil_size) VALUES (null);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO androed_vedernikoff_1 (pencil_size) VALUES (null);
 ----
@@ -100,6 +115,11 @@ CREATE TABLE androed_vedernikoff_2
 );
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO androed_vedernikoff_1 (pencil_size) VALUES (null);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO androed_vedernikoff_1 (pencil_size) VALUES (null);
 ----
@@ -120,6 +140,11 @@ CREATE TABLE clickclack
 );
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (1, 'babsky', 140, 69);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO clickclack (id, name, weight, age) VALUES (1, 'babsky', 140, 69);
 ----
@@ -127,6 +152,11 @@ db error: ERROR: new row for relation "clickclack" violates check constraint "cl
 DETAIL: Failing row contains (1, babsky, 140, 69, 34).
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (2, 'arelav', 140, 69);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO clickclack (id, name, weight, age) VALUES (2, 'arelav', 140, 69);
 ----
@@ -134,6 +164,11 @@ db error: ERROR: new row for relation "clickclack" violates check constraint "cl
 DETAIL: Failing row contains (2, arelav, 140, 69, 34).
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (3, 'deadinside', 91, 54);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO clickclack (id, name, weight, age) VALUES (3, 'deadinside', 91, 54);
 ----
@@ -141,6 +176,11 @@ db error: ERROR: new row for relation "clickclack" violates check constraint "cl
 DETAIL: Failing row contains (3, deadinside, 91, 54, 23).
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (4, 'vedernikoff', 120, 21);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO clickclack (id, name, weight, age) VALUES (4, 'vedernikoff', 120, 21);
 ----
@@ -148,6 +188,11 @@ db error: ERROR: new row for relation "clickclack" violates check constraint "ch
 DETAIL: Failing row contains (4, vedernikoff, 120, 21, 26).
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (5, 'danpuz', 91, 32);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO clickclack (id, name, weight, age) VALUES (5, 'danpuz', 91, 32);
 ----
@@ -155,6 +200,11 @@ db error: ERROR: new row for relation "clickclack" violates check constraint "cl
 DETAIL: Failing row contains (5, danpuz, 91, 32, 21).
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (6, 'young_skuf', 91, 31);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO clickclack (id, name, weight, age) VALUES (6, 'young_skuf', 91, 31);
 ----
@@ -162,6 +212,11 @@ db error: ERROR: new row for relation "clickclack" violates check constraint "cl
 DETAIL: Failing row contains (6, young_skuf, 91, 31, 21).
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO clickclack (id, name, weight) VALUES (7, 'young_skuf', 91);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO clickclack (id, name, weight) VALUES (7, 'young_skuf', 91);
 ----
@@ -169,6 +224,11 @@ db error: ERROR: new row for relation "clickclack" violates check constraint "cl
 DETAIL: Failing row contains (7, young_skuf, 91, 40, 22).
 
 
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+INSERT INTO clickclack (id, age) VALUES (8, NULL);
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO clickclack (id, age) VALUES (8, NULL);
 ----
@@ -194,6 +254,11 @@ id	name	weight	age	grade
 
 
 onlyif serenedb
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+UPDATE clickclack SET name = 'babsky' WHERE name = 'deadinside';
+
+skipif serenedb # Postgres error
 statement error
 UPDATE clickclack SET name = 'babsky' WHERE name = 'deadinside';
 ----
@@ -202,6 +267,11 @@ DETAIL: Failing row contains (9, babsky, 140, 420).
 
 
 onlyif serenedb
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+UPDATE clickclack SET name = 'arelav' WHERE name = 'deadinside';
+
+skipif serenedb # Postgres error
 statement error
 UPDATE clickclack SET name = 'arelav' WHERE name = 'deadinside';
 ----
@@ -210,6 +280,11 @@ DETAIL: Failing row contains (9, arelav, 140, 420).
 
 
 onlyif serenedb
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+UPDATE clickclack SET age = 54 WHERE name = 'deadinside';
+
+skipif serenedb # Postgres error
 statement error
 UPDATE clickclack SET age = 54 WHERE name = 'deadinside';
 ----
@@ -218,6 +293,11 @@ DETAIL: Failing row contains (9, deadinside, 140, 54, 33).
 
 
 onlyif serenedb
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+UPDATE clickclack SET age = 21 WHERE name = 'deadinside';
+
+skipif serenedb # Postgres error
 statement error
 UPDATE clickclack SET age = 21 WHERE name = 'deadinside';
 ----
@@ -226,6 +306,11 @@ DETAIL: Failing row contains (9, deadinside, 140, 21, 30).
 
 
 onlyif serenedb
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+UPDATE clickclack SET weight = 50 WHERE name = 'deadinside';
+
+skipif serenedb # Postgres error
 statement error
 UPDATE clickclack SET weight = 50 WHERE name = 'deadinside';
 ----
@@ -234,6 +319,11 @@ DETAIL: Failing row contains (9, deadinside, 50, 420, 52).
 
 
 onlyif serenedb
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+UPDATE clickclack SET weight = 91, age = 31 WHERE name = 'deadinside';
+
+skipif serenedb # Postgres error
 statement error
 UPDATE clickclack SET weight = 91, age = 31 WHERE name = 'deadinside';
 ----
@@ -242,6 +332,11 @@ DETAIL: Failing row contains (9, deadinside, 91, 31, 21).
 
 
 onlyif serenedb
+onlyif serenedb # native constraint error embeds the store table name
+statement error
+UPDATE clickclack SET age = NULL WHERE name = 'deadinside';
+
+skipif serenedb # Postgres error
 statement error
 UPDATE clickclack SET age = NULL WHERE name = 'deadinside';
 ----

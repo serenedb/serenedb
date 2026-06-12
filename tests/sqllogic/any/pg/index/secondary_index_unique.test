@@ -2059,6 +2059,11 @@ query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx;
 ----
 pid	code	name
+1	30	c
+2	10	a
+3	20	b
+4	NULL	d
+5	NULL	e
 
 onlyif serenedb
 query
@@ -2072,25 +2077,25 @@ QUERY PLAN
 │            code           │
 │            name           │
 │                           │
-│          ~0 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_SK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
-│           Index:          │
+│           Table:          │
 │vedernikoff_uniq_idx_scan_c│
 │          ode_idx          │
 │                           │
-│      Lookup: rocksdb      │
-│     Filter: (code=20)     │
-│        Unique: true       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            code           │
 │            pid            │
 │            name           │
 │                           │
-│          ~0 rows          │
+│    Filters: (code = 20)   │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 onlyif serenedb
@@ -2098,12 +2103,15 @@ query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code = 20;
 ----
 pid	code	name
+3	20	b
 
 onlyif serenedb
 query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IS NULL;
 ----
 pid	code	name
+4	NULL	d
+5	NULL	e
 
 statement ok
 UPDATE vedernikoff_uniq_idx_scan SET code = 5 WHERE pid = 1;
@@ -2116,13 +2124,17 @@ query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx;
 ----
 pid	code	name
+2	10	a
+4	NULL	d
+5	NULL	e
+1	5	c
 
 onlyif serenedb
 query
 SELECT count(*) FROM vedernikoff_uniq_idx_scan_code_idx;
 ----
 count
-0
+4
 
 statement ok
 INSERT INTO vedernikoff_uniq_idx_scan VALUES (6, 40, 'f');
@@ -2141,42 +2153,64 @@ query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx;
 ----
 pid	code	name
+2	10	a
+4	NULL	d
+5	NULL	e
+1	5	c
+6	40	f
+7	50	g
+8	NULL	h
+9	60	i
 
 onlyif serenedb
 query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IN (5, 40);
 ----
 pid	code	name
+1	5	c
+6	40	f
 
 onlyif serenedb
 query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code = 10 OR code = 50;
 ----
 pid	code	name
+2	10	a
+7	50	g
 
 onlyif serenedb
 query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IN (5, 5, 10);
 ----
 pid	code	name
+2	10	a
+1	5	c
 
 onlyif serenedb
 query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IS NULL ORDER BY pid;
 ----
 pid	code	name
+4	NULL	d
+5	NULL	e
+8	NULL	h
 
 onlyif serenedb
 query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IS NULL OR code = 60 ORDER BY pid;
 ----
 pid	code	name
+4	NULL	d
+5	NULL	e
+8	NULL	h
+9	60	i
 
 onlyif serenedb
 query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code = 10 AND name = 'a';
 ----
 pid	code	name
+2	10	a
 
 onlyif serenedb
 query
@@ -2189,6 +2223,8 @@ query
 SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE (code = 5 AND name = 'c') OR code = 40;
 ----
 pid	code	name
+1	5	c
+6	40	f
 
 onlyif serenedb
 query
@@ -2201,14 +2237,14 @@ query
 SELECT count(*) FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IS NULL;
 ----
 count
-0
+3
 
 onlyif serenedb
 query
 SELECT count(*) FROM vedernikoff_uniq_idx_scan_code_idx WHERE code IN (5, 10, 40);
 ----
 count
-0
+3
 
 statement ok
 DROP TABLE vedernikoff_uniq_idx_scan;
@@ -2242,31 +2278,42 @@ query
 SELECT pid, a, b FROM babsky_uniq_idx_scan_comp_ab_idx;
 ----
 pid	a	b
+1	20	100
+2	10	200
+3	10	100
+4	NULL	100
+5	10	NULL
+6	NULL	NULL
 
 onlyif serenedb
 query
 SELECT pid, a, b FROM babsky_uniq_idx_scan_comp_ab_idx WHERE a = 10 AND b = 100;
 ----
 pid	a	b
+3	10	100
 
 onlyif serenedb
 query
 SELECT count(*) FROM babsky_uniq_idx_scan_comp_ab_idx;
 ----
 count
-0
+6
 
 onlyif serenedb
 query
 SELECT pid, a, b FROM babsky_uniq_idx_scan_comp_ab_idx WHERE a IN (10, 20) AND b = 100;
 ----
 pid	a	b
+1	20	100
+3	10	100
 
 onlyif serenedb
 query
 SELECT pid, a, b FROM babsky_uniq_idx_scan_comp_ab_idx WHERE a = 10 AND b IN (100, 200);
 ----
 pid	a	b
+2	10	200
+3	10	100
 
 onlyif serenedb
 query
@@ -2274,24 +2321,29 @@ SELECT pid, a, b FROM babsky_uniq_idx_scan_comp_ab_idx
 WHERE (a = 10 AND b = 100) OR (a = 20 AND b = 100);
 ----
 pid	a	b
+1	20	100
+3	10	100
 
 onlyif serenedb
 query
 SELECT pid, a, b FROM babsky_uniq_idx_scan_comp_ab_idx WHERE a IS NULL AND b = 100;
 ----
 pid	a	b
+4	NULL	100
 
 onlyif serenedb
 query
 SELECT pid, a, b FROM babsky_uniq_idx_scan_comp_ab_idx WHERE a = 10 AND b IS NULL;
 ----
 pid	a	b
+5	10	NULL
 
 onlyif serenedb
 query
 SELECT pid, a, b FROM babsky_uniq_idx_scan_comp_ab_idx WHERE a IS NULL AND b IS NULL;
 ----
 pid	a	b
+6	NULL	NULL
 
 onlyif serenedb
 query
@@ -2299,6 +2351,8 @@ SELECT pid, a, b FROM babsky_uniq_idx_scan_comp_ab_idx
 WHERE (a IS NULL AND b IS NULL) OR (a = 10 AND b = 200);
 ----
 pid	a	b
+2	10	200
+6	NULL	NULL
 
 onlyif serenedb
 query
@@ -2311,7 +2365,7 @@ query
 SELECT count(*) FROM babsky_uniq_idx_scan_comp_ab_idx WHERE a IN (10, 20) AND b = 100;
 ----
 count
-0
+2
 
 statement ok
 DROP TABLE babsky_uniq_idx_scan_comp;

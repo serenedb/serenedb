@@ -65,6 +65,8 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::virtual_column_map_t GetVirtualColumns() const override;
 
+  duckdb::Catalog& GetStorageCatalog(duckdb::ClientContext& context) override;
+
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
   // Resolves the hidden store table backing this facade entry.

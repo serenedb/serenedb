@@ -112,6 +112,11 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   return function;
 }
 
+duckdb::Catalog& SereneDBTableEntry::GetStorageCatalog(
+  duckdb::ClientContext& context) {
+  return ResolveStoreEntry(context).ParentCatalog();
+}
+
 duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
   auto cols = duckdb::TableCatalogEntry::GetVirtualColumns();
   cols.insert({kColumnIdentifierTableOid,

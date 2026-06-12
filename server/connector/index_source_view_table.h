@@ -38,15 +38,20 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
   PrimaryKeyBatch CreatePkBatch() const final {
     return PrimaryKeyBatch{std::in_place_type<PrimaryKeyI64>};
   }
-  void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
-                   duckdb::idx_t start, duckdb::idx_t count,
-                   duckdb::DataChunk& output) final;
+  duckdb::idx_t Materialize(duckdb::ClientContext& context,
+                            PrimaryKeyBatch& batch, duckdb::idx_t start,
+                            duckdb::idx_t count,
+                            duckdb::DataChunk& output) final;
 
  protected:
   explicit RowIdFetchIndexSource(ViewFastPath fast_path)
     : ViewIndexSourceBase{std::move(fast_path)} {}
 
   void SetTable(duckdb::TableCatalogEntry& table) { _table = &table; }
+
+  // Rows missing from the fetch are filtered out (transactional sources)
+  // instead of surfacing as NULL rows (static view captures).
+  bool _drop_missing = false;
 
   // Registers a fetch column for the table's storage index, deduplicating
   // repeats, and records the output slot mapping. Returns the column type.

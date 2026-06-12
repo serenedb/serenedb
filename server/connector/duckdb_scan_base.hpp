@@ -359,18 +359,21 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   return num_rows;
 }
 
+// Returns the rows remaining in `output` (transactional sources filter
+// rows the caller's transaction cannot see).
 template<typename Gstate, typename Lstate>
-void FinalizeBatch(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
-                   duckdb::DataChunk& output, duckdb::idx_t collected) {
+duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
+                            duckdb::DataChunk& output,
+                            duckdb::idx_t collected) {
   if (collected == 0 || !g.has_external_projections) {
-    return;
+    return collected;
   }
   SDB_ASSERT(l.index_source);
   SDB_ASSERT(std::visit(
     absl::Overload{[](std::monostate) { return false; },
                    [&](auto& pk) { return PrimaryKeysSize(pk) == collected; }},
     l.pk_batch));
-  l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
+  return l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
 }
 
 template<typename Gstate, typename Lstate>
@@ -410,7 +413,7 @@ void RunStreamingScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
     SDB_ASSERT(seg.live_docs_count() != 0);
     l.StartSegment(ctx, seg, seg_idx, g);
   }
-  FinalizeBatch(ctx, g, l, output, collected);
+  collected = FinalizeBatch(ctx, g, l, output, collected);
   output.SetChildCardinality(collected);
 }
 

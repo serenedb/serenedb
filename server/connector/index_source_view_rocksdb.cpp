@@ -130,7 +130,7 @@ ViewRocksDBIndexSource::ViewRocksDBIndexSource(
     std::span<const catalog::Column::Id>{inner_bind_column_ids}, txn);
 }
 
-void ViewRocksDBIndexSource::Materialize(duckdb::ClientContext& /*context*/,
+duckdb::idx_t ViewRocksDBIndexSource::Materialize(duckdb::ClientContext&,
                                          PrimaryKeyBatch& batch,
                                          duckdb::idx_t start,
                                          duckdb::idx_t count,
@@ -139,7 +139,7 @@ void ViewRocksDBIndexSource::Materialize(duckdb::ClientContext& /*context*/,
   SDB_ASSERT(start + count <= arena.views.size());
   std::span<const std::string_view> pk_bytes{arena.views.data() + start, count};
   if (pk_bytes.empty()) {
-    return;
+    return count;
   }
 
   for (size_t c = 0; c < _real_proj_slots.size(); ++c) {
@@ -158,7 +158,7 @@ void ViewRocksDBIndexSource::Materialize(duckdb::ClientContext& /*context*/,
   bool needs_cast = std::any_of(_cast_executors.begin(), _cast_executors.end(),
                                 [](const auto& e) { return e != nullptr; });
   if (!needs_cast) {
-    return;
+    return count;
   }
   duckdb::DataChunk single_col_input;
   duckdb::vector<duckdb::LogicalType> single_type{duckdb::LogicalType::SQLNULL};
@@ -173,6 +173,7 @@ void ViewRocksDBIndexSource::Materialize(duckdb::ClientContext& /*context*/,
     _cast_executors[c]->ExecuteExpression(single_col_input,
                                           output.data[_real_proj_slots[c]]);
   }
+  return count;
 }
 
 }  // namespace sdb::connector

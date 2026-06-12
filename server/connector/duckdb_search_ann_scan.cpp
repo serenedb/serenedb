@@ -101,9 +101,9 @@ bool EmitHitsChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& lstate,
   }
   const ScoreDocsView view{{lstate.hits.data() + lstate.current_idx, take}};
   const auto emitted = MaterializeChunk(ctx, g, lstate, view, output, 0);
-  FinalizeBatch(ctx, g, lstate, output, emitted);
+  const auto visible = FinalizeBatch(ctx, g, lstate, output, emitted);
   lstate.current_idx += take;
-  output.SetChildCardinality(emitted);
+  output.SetChildCardinality(visible);
   return emitted > 0;
 }
 

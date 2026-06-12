@@ -143,8 +143,8 @@ void SKPointLookupFunction(duckdb::ClientContext& context,
     return;
   }
 
-  gstate.index_source->Materialize(context, gstate.pk_batch, 0, row_count,
-                                   output);
+  std::ignore = gstate.index_source->Materialize(context, gstate.pk_batch, 0,
+                                                 row_count, output);
 
   if (gstate.scan_rowid) {
     const auto row_base = gstate.produced_rows.load(std::memory_order_relaxed);

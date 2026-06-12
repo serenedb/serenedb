@@ -72,13 +72,11 @@ ViewFileSingleFileIndexSource::ViewFileSingleFileIndexSource(
   _lookup_gstate = _lookup_func.init_global(context, init);
 }
 
-void ViewFileSingleFileIndexSource::Materialize(duckdb::ClientContext& context,
-                                                PrimaryKeyBatch& batch,
-                                                duckdb::idx_t start,
-                                                duckdb::idx_t count,
-                                                duckdb::DataChunk& output) {
+duckdb::idx_t ViewFileSingleFileIndexSource::Materialize(
+  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t count, duckdb::DataChunk& output) {
   if (count == 0) {
-    return;
+    return count;
   }
   auto& pk = std::get<PrimaryKeyI64>(batch);
   SDB_ASSERT(start + count <= pk.rows.size());
@@ -95,6 +93,7 @@ void ViewFileSingleFileIndexSource::Materialize(duckdb::ClientContext& context,
   _lookup_func.function(context, in, _tf_target);
 
   RunCastPass(output, count);
+  return count;
 }
 
 ViewFileGlobIndexSource::ViewFileGlobIndexSource(
@@ -105,13 +104,11 @@ ViewFileGlobIndexSource::ViewFileGlobIndexSource(
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
                             projected_types, bind_column_ids) {}
 
-void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
-                                          PrimaryKeyBatch& batch,
-                                          duckdb::idx_t start,
-                                          duckdb::idx_t count,
-                                          duckdb::DataChunk& output) {
+duckdb::idx_t ViewFileGlobIndexSource::Materialize(
+  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t count, duckdb::DataChunk& output) {
   if (count == 0) {
-    return;
+    return count;
   }
   auto& pk = std::get<PrimaryKeyI64I64>(batch);
   SDB_ASSERT(start + count <= pk.rows.size());
@@ -169,6 +166,7 @@ void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
   }
 
   RunCastPass(output, count);
+  return count;
 }
 
 }  // namespace sdb::connector

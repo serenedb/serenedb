@@ -60,7 +60,7 @@
 namespace sdb::catalog {
 namespace {
 
-constexpr std::string_view kStoreAlias = "__sdb_store";
+constexpr std::string_view kStoreAlias = kStoreDatabaseName;
 constexpr std::string_view kStoreFile = "store.db";
 constexpr std::string_view kCatalogTable = R"("__sdb_store".main.sdb_catalog)";
 constexpr std::string_view kSequenceTable = R"("__sdb_store".main.sdb_seq)";

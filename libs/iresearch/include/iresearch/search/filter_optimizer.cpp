@@ -20,7 +20,6 @@
 
 #include "filter_optimizer.hpp"
 
-#include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
 
 #include "iresearch/search/boolean_filter.hpp"
@@ -62,16 +61,23 @@ void EnumerateChildSlots(Filter& node, Visitor&& visit) {
     visit(mixed.OptionalSlot());
   }
 }
-void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
-              std::span<const RuleDesc> rules) {
+
+auto& RuleRegistry() {
+  static sdb::containers::FlatHashMap<TypeInfo::type_id, std::vector<RuleDesc>>
+    gRules;
+  return gRules;
+}
+
+void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
   bool changed = true;
+  const auto& rules = RuleRegistry();
   while (changed) {
     changed = false;
-    const auto tid = slot->type();
-    for (const auto& rule : rules) {
-      if (absl::c_find(rule.targets, tid) == rule.targets.end()) {
-        continue;
-      }
+    const auto it = rules.find(slot->type());
+    if (it == rules.end()) {
+      break;
+    }
+    for (const auto& rule : it->second) {
       if (rule.apply(slot, ctx)) {
         SDB_ASSERT(slot != nullptr);
         changed = true;
@@ -81,32 +87,7 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
   }
 }
 
-std::vector<RuleDesc>& RuleRegistry() {
-  static std::vector<RuleDesc> gRules;
-  return gRules;
-}
-
-}  // namespace
-
-void RegisterRule(RuleDesc rule) {
-  RuleRegistry().emplace_back(std::move(rule));
-}
-
-std::span<const RuleDesc> ActiveRules() { return RuleRegistry(); }
-
-void InitOptimizeRules() {
-  SDB_ASSERT(RuleRegistry().empty());
-  optimizer::InitBooleanRules();
-  optimizer::InitNegationRules();
-  optimizer::InitTermsRules();
-  optimizer::InitRangeRules();
-  optimizer::InitLoweringRules();
-}
-
-namespace {
-
-void RunPass(Filter::ptr& root, const OptimizeContext& ctx,
-             std::span<const RuleDesc> rules) {
+void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
   struct Frame {
     Filter::ptr* slot;
     bool children_visited;
@@ -117,7 +98,7 @@ void RunPass(Filter::ptr& root, const OptimizeContext& ctx,
   while (!stack.empty()) {
     auto& frame = stack.back();
     if (frame.children_visited) {
-      RunRules(*frame.slot, ctx, rules);
+      RunRules(*frame.slot, ctx);
       stack.pop_back();
       continue;
     }
@@ -130,13 +111,27 @@ void RunPass(Filter::ptr& root, const OptimizeContext& ctx,
 
 }  // namespace
 
-void Optimize(Filter::ptr& root, const OptimizeContext& ctx,
-              std::span<const RuleDesc> rules) {
+void RegisterRule(RuleDesc rule) {
+  for (const auto tid : rule.targets) {
+    RuleRegistry()[tid].push_back(rule);
+  }
+}
+
+void InitOptimizeRules() {
+  SDB_ASSERT(RuleRegistry().empty());
+  optimizer::InitBooleanRules();
+  optimizer::InitNegationRules();
+  optimizer::InitTermsRules();
+  optimizer::InitRangeRules();
+  optimizer::InitLoweringRules();
+}
+
+void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
   if (!root) {
     return;
   }
 
-  RunPass(root, ctx, rules);
+  RunPass(root, ctx);
 }
 
 }  // namespace irs

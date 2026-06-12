@@ -87,7 +87,7 @@ bool NotSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
     }
     return true;
   }
-  if (*AllDocsProvider::Default(kNoBoost) == *base) {
+  if (IsAllDocs(*base)) {
     if (odd) {
       slot = std::make_unique<Empty>();
     } else {

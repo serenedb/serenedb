@@ -170,10 +170,12 @@ template<typename T>
 bool Flatten(T& node) {
   auto& children = node.mutable_filters();
 
+  std::vector<bool> splice(children.size(), false);
   size_t spliced = 0;
-  for (const auto& child : children) {
-    if (CanSplice(node, *child)) {
-      spliced += sdb::basics::downCast<T>(*child).size();
+  for (size_t i = 0; i < children.size(); ++i) {
+    if (CanSplice(node, *children[i])) {
+      splice[i] = true;
+      spliced += sdb::basics::downCast<T>(*children[i]).size();
     }
   }
   if (spliced == 0) {
@@ -182,14 +184,14 @@ bool Flatten(T& node) {
 
   std::vector<Filter::ptr> flat;
   flat.reserve(children.size() + spliced);
-  for (auto& child : children) {
-    if (CanSplice(node, *child)) {
+  for (size_t i = 0; i < children.size(); ++i) {
+    if (splice[i]) {
       for (auto& grandchild :
-           sdb::basics::downCast<T>(*child).mutable_filters()) {
+           sdb::basics::downCast<T>(*children[i]).mutable_filters()) {
         flat.push_back(std::move(grandchild));
       }
     } else {
-      flat.push_back(std::move(child));
+      flat.push_back(std::move(children[i]));
     }
   }
   children = std::move(flat);
@@ -197,11 +199,11 @@ bool Flatten(T& node) {
 }
 
 template<typename T>
-std::pair<size_t, score_t> CountAllDocs(const T& node, const Filter& all) {
+std::pair<size_t, score_t> CountAllDocs(const T& node) {
   size_t count = 0;
   score_t boost = 0.F;
   for (const auto& child : node) {
-    if (all == *child) {
+    if (IsAllDocs(*child)) {
       ++count;
       boost += child->BoostImpl();
     }
@@ -210,11 +212,11 @@ std::pair<size_t, score_t> CountAllDocs(const T& node, const Filter& all) {
 }
 
 template<typename T>
-void EraseAllDocs(T& node, const Filter& all) {
+void EraseAllDocs(T& node) {
   auto& children = node.mutable_filters();
   const auto it =
     std::remove_if(children.begin(), children.end(),
-                   [&](const auto& child) { return all == *child; });
+                   [](const auto& child) { return IsAllDocs(*child); });
   children.erase(it, children.end());
 }
 
@@ -286,9 +288,10 @@ bool AndExclusionCoalesceRule::Apply(Filter::ptr& slot,
                    : MakeBoolean<Or>(std::move(excludes), ScoreMergeType::Sum);
 
   if (includes.empty()) {
-    auto not_node = std::make_unique<Not>(std::move(exclude));
-    not_node->boost(node.Boost());
-    slot = std::move(not_node);
+    auto exclusion = std::make_unique<Exclusion>();
+    exclusion->exclude(std::move(exclude));
+    exclusion->boost(node.Boost());
+    slot = std::move(exclusion);
     return true;
   }
 
@@ -336,8 +339,7 @@ bool OrEmptyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
 
 bool AndAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& node = sdb::basics::downCast<And>(*slot);
-  const auto all = node.MakeAllDocsFilter(kNoBoost);
-  const auto [all_count, all_boost] = CountAllDocs(node, *all);
+  const auto [all_count, all_boost] = CountAllDocs(node);
   if (all_count == 0) {
     return false;
   }
@@ -348,17 +350,17 @@ bool AndAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   if (ctx.scorer != nullptr && node.size() - all_count == 1) {
     auto& children = node.mutable_filters();
     const auto it = absl::c_find_if(
-      children, [&](const auto& child) { return !(*all == *child); });
+      children, [](const auto& child) { return !IsAllDocs(*child); });
     if (auto* boostable = dynamic_cast<FilterWithBoost*>(it->get())) {
       boostable->boost(boostable->Boost() + all_boost);
-      EraseAllDocs(node, *all);
+      EraseAllDocs(node);
       return true;
     }
   }
   if (ctx.scorer != nullptr && all_count < 2) {
     return false;
   }
-  EraseAllDocs(node, *all);
+  EraseAllDocs(node);
   if (ctx.scorer != nullptr) {
     node.mutable_filters().emplace_back(node.MakeAllDocsFilter(all_boost));
   }
@@ -371,8 +373,7 @@ bool OrAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   if (min_match == 0) {
     return false;
   }
-  const auto all = node.MakeAllDocsFilter(kNoBoost);
-  const auto [all_count, all_boost] = CountAllDocs(node, *all);
+  const auto [all_count, all_boost] = CountAllDocs(node);
   if (all_count == 0) {
     return false;
   }
@@ -383,7 +384,7 @@ bool OrAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   if (all_count < 2) {
     return false;
   }
-  EraseAllDocs(node, *all);
+  EraseAllDocs(node);
   auto& children = node.mutable_filters();
   children.emplace_back(node.MakeAllDocsFilter(all_boost));
   const size_t new_min_match =

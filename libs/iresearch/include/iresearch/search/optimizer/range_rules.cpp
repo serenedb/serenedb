@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <memory>
 #include <type_traits>
+#include <utility>
 
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
@@ -126,8 +127,10 @@ bool MergeComplementaryRanges(And& node) {
   const auto is_range = [](const Filter::ptr& child) {
     return child->type() == Type<Range>::id();
   };
+  std::vector<bool> consumed(children.size(), false);
+  bool changed = false;
   for (size_t i = 0; i < children.size(); ++i) {
-    if (!is_range(children[i])) {
+    if (consumed[i] || !is_range(children[i])) {
       continue;
     }
     auto& lo = sdb::basics::downCast<Range>(*children[i]);
@@ -135,7 +138,7 @@ bool MergeComplementaryRanges(And& node) {
       continue;
     }
     for (size_t j = 0; j < children.size(); ++j) {
-      if (j == i || !is_range(children[j])) {
+      if (j == i || consumed[j] || !is_range(children[j])) {
         continue;
       }
       auto& hi = sdb::basics::downCast<Range>(*children[j]);
@@ -143,11 +146,22 @@ bool MergeComplementaryRanges(And& node) {
         continue;
       }
       children[i] = MergeRangeBounds(lo, hi, node.merge_type());
-      children.erase(children.begin() + j);
-      return true;
+      consumed[j] = true;
+      changed = true;
+      break;
     }
   }
-  return false;
+  if (!changed) {
+    return false;
+  }
+  auto out = children.begin();
+  for (size_t i = 0; i < consumed.size(); ++i) {
+    if (!consumed[i]) {
+      *out++ = std::move(children[i]);
+    }
+  }
+  children.erase(out, children.end());
+  return true;
 }
 
 }  // namespace
@@ -200,8 +214,9 @@ bool AndRangeMergeRule::Apply(Filter::ptr& slot,
   if (node.size() < 2) {
     return false;
   }
-  return MergeComplementaryRanges<ByRange>(node) ||
-         MergeComplementaryRanges<ByGranularRange>(node);
+  const bool merged_range = MergeComplementaryRanges<ByRange>(node);
+  const bool merged_granular = MergeComplementaryRanges<ByGranularRange>(node);
+  return merged_range || merged_granular;
 }
 
 void InitRangeRules() {

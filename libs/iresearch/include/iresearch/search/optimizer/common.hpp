@@ -23,11 +23,16 @@
 #include <memory>
 #include <vector>
 
+#include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace irs::optimizer {
+
+inline bool IsAllDocs(const Filter& filter) noexcept {
+  return filter.type() == irs::Type<All>::id();
+}
 
 template<typename T>
 std::unique_ptr<T> MakeBoolean(std::vector<Filter::ptr> children,

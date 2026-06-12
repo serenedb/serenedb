@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <array>
 #include <concepts>
 #include <cstddef>
 #include <span>
@@ -60,11 +59,8 @@ void RegisterRule() {
   }
 }
 
-std::span<const RuleDesc> ActiveRules();
-
 void InitOptimizeRules();
 
-void Optimize(Filter::ptr& root, const OptimizeContext& ctx = {},
-              std::span<const RuleDesc> rules = ActiveRules());
+void Optimize(Filter::ptr& root, const OptimizeContext& ctx = {});
 
 }  // namespace irs

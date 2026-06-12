@@ -114,23 +114,6 @@ Filter::Query::ptr Exclusion::prepare(const PrepareContext& ctx) const {
     return _include->prepare(sub_ctx);
   }
 
-  if (_include == nullptr) {
-    const Filter* inner = _exclude.get();
-    bool negated = true;
-    while (inner->type() == Type<Exclusion>::id()) {
-      const auto& ex = sdb::basics::downCast<Exclusion>(*inner);
-      if (ex._include != nullptr || ex._exclude == nullptr) {
-        break;
-      }
-      inner = ex._exclude.get();
-      negated = !negated;
-    }
-    if (!negated) {
-      return inner->prepare(sub_ctx);
-    }
-    return PrepareExclusion(sub_ctx, nullptr, inner);
-  }
-
   return PrepareExclusion(sub_ctx, _include.get(), _exclude.get());
 }
 

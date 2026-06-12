@@ -177,23 +177,40 @@ struct TableDrop final : public DropTask {
             const std::shared_ptr<TableShard>& shard,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
-            std::string store_rename_from, bool is_root = false)
+            std::string store_name,
+            std::vector<std::string> fk_referenced_store_names,
+            bool is_root = false)
     : DropTask{table, schema_id, is_root},
-      _store_rename_from{std::move(store_rename_from)},
+      _store_name{std::move(store_name)},
+      _fk_referenced_store_names{std::move(fk_referenced_store_names)},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
       _shard_drop{std::make_shared<TableShardDrop>(
         shard, table->GetId(),
         table->Columns().size() * shard->GetTableStats().num_rows)} {}
 
-  // Moves the store table to its id-keyed dropped name in the same
-  // transaction that tombstones the drop, freeing the public name
-  // immediately; Finalize later drops by id alone (recovery-resumed drops
-  // never need the original names). No-op when the table has no store
-  // table (Fast engine) or already lives under the dropped name (CTAS).
-  void EmitStoreRenames(CatalogStore::WriteContext& ctx) const {
-    if (!_store_rename_from.empty()) {
-      ctx.RenameStoreTable(_store_rename_from, DroppedStoreTableName(_id));
+  // FK linkage entries must go before ANY table drop in the transaction:
+  // a live back-reference makes duckdb refuse dropping the main-key table,
+  // and the cascade emission order is arbitrary. Removing both directions
+  // up front makes the drops order-independent.
+  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const {
+    if (_store_name.empty()) {
+      return;
+    }
+    for (const auto& referenced : _fk_referenced_store_names) {
+      ctx.DropStoreForeignKey(referenced, _store_name);
+      ctx.DropStoreForeignKey(_store_name, referenced);
+    }
+  }
+
+  // Drops the store table synchronously in the same transaction that
+  // tombstones the drop, freeing the public name immediately (renames are
+  // unsafe for FK-involved tables: duckdb keeps back-references by name).
+  // No-op when the table has no store table (Fast engine) or lives under
+  // the dropped name (CTAS); Finalize's drop-by-id covers the latter.
+  void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
+    if (!_store_name.empty()) {
+      ctx.DropStoreTable(_store_name);
     }
   }
 
@@ -217,7 +234,8 @@ struct TableDrop final : public DropTask {
   }
 
  private:
-  std::string _store_rename_from;
+  std::string _store_name;
+  std::vector<std::string> _fk_referenced_store_names;
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
   std::vector<ObjectId> _owned_sequences;
   std::shared_ptr<TableShardDrop> _shard_drop;
@@ -241,9 +259,14 @@ struct SchemaDrop final : public DropTask {
 
   std::string_view GetName() const noexcept final { return "schema drop"; }
 
-  void EmitStoreRenames(CatalogStore::WriteContext& ctx) const {
+  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const {
     for (const auto& table : _tables) {
-      table->EmitStoreRenames(ctx);
+      table->EmitStoreFkCleanups(ctx);
+    }
+  }
+  void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
+    for (const auto& table : _tables) {
+      table->EmitStoreDrops(ctx);
     }
   }
 
@@ -279,9 +302,14 @@ struct DatabaseDrop final : public DropTask {
 
   std::string_view GetName() const noexcept final { return "database drop"; }
 
-  void EmitStoreRenames(CatalogStore::WriteContext& ctx) const {
+  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const {
     for (const auto& schema : _schemas) {
-      schema->EmitStoreRenames(ctx);
+      schema->EmitStoreFkCleanups(ctx);
+    }
+  }
+  void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
+    for (const auto& schema : _schemas) {
+      schema->EmitStoreDrops(ctx);
     }
   }
 

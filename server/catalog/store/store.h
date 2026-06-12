@@ -49,6 +49,12 @@ struct StoreTableColumn {
   duckdb::LogicalType type;
 };
 
+struct StoreForeignKey {
+  std::vector<std::string> columns;
+  std::string referenced_table;
+  std::vector<std::string> referenced_columns;
+};
+
 struct StoreTableDef {
   std::string name;
   std::vector<StoreTableColumn> columns;
@@ -56,6 +62,7 @@ struct StoreTableDef {
   std::vector<size_t> not_null;
   std::vector<std::string> pk_columns;
   std::vector<std::vector<std::string>> unique_constraints;
+  std::vector<StoreForeignKey> foreign_keys;
 };
 
 std::string StoreTableName(std::string_view database, std::string_view schema,
@@ -106,6 +113,9 @@ class CatalogStore {
     void RenameStoreColumn(std::string table, std::string name,
                            std::string new_name);
     void DropStoreColumn(std::string table, std::string name);
+    // Removes the FK linkage entry on `table` that references/backs
+    // `other` (symmetric: PK-side back-reference or the FK itself).
+    void DropStoreForeignKey(std::string table, std::string other);
 
    private:
     friend class CatalogStore;
@@ -120,6 +130,7 @@ class CatalogStore {
       RenameStoreTable,
       RenameStoreColumn,
       DropStoreColumn,
+      DropStoreForeignKey,
     };
 
     struct Entry {

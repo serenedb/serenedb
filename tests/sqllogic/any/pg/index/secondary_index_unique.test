@@ -842,7 +842,7 @@ INSERT INTO vedernikoff_csv_unique VALUES
   (3, 'crookface', 30);
 
 statement ok
-COPY vedernikoff_csv_unique TO '/tmp/${__DATABASE__}_vedernikoff_csv_unique.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY vedernikoff_csv_unique TO '${__TEST_DIR__}/vedernikoff_csv_unique.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
 DROP TABLE vedernikoff_csv_unique;
@@ -851,7 +851,7 @@ statement ok
 CREATE TABLE vedernikoff_csv_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
 
 statement count 3
-COPY vedernikoff_csv_unique FROM '/tmp/${__DATABASE__}_vedernikoff_csv_unique.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY vedernikoff_csv_unique FROM '${__TEST_DIR__}/vedernikoff_csv_unique.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
 CREATE UNIQUE INDEX vedernikoff_csv_unique_rank_idx ON vedernikoff_csv_unique(rank);
@@ -918,7 +918,7 @@ INSERT INTO babsky_csv_nulluniq VALUES
   (4, 200, 'delta');
 
 statement ok
-COPY babsky_csv_nulluniq TO '/tmp/${__DATABASE__}_babsky_csv_nulluniq.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY babsky_csv_nulluniq TO '${__TEST_DIR__}/babsky_csv_nulluniq.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
 DROP TABLE babsky_csv_nulluniq;
@@ -927,7 +927,7 @@ statement ok
 CREATE TABLE babsky_csv_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
 
 statement count 4
-COPY babsky_csv_nulluniq FROM '/tmp/${__DATABASE__}_babsky_csv_nulluniq.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY babsky_csv_nulluniq FROM '${__TEST_DIR__}/babsky_csv_nulluniq.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
 CREATE UNIQUE INDEX babsky_csv_nulluniq_code_idx ON babsky_csv_nulluniq(code);
@@ -962,7 +962,7 @@ INSERT INTO vedernikoff_pq_unique VALUES
   (3, 'crookface', 30);
 
 statement ok
-COPY vedernikoff_pq_unique TO '/tmp/${__DATABASE__}_vedernikoff_pq_unique.tsv' WITH (FORMAT TEXT);
+COPY vedernikoff_pq_unique TO '${__TEST_DIR__}/vedernikoff_pq_unique.tsv' WITH (FORMAT TEXT);
 
 statement ok
 DROP TABLE vedernikoff_pq_unique;
@@ -971,7 +971,7 @@ statement ok
 CREATE TABLE vedernikoff_pq_unique (pid INTEGER PRIMARY KEY, nickname VARCHAR, rank INTEGER);
 
 statement count 3
-COPY vedernikoff_pq_unique FROM '/tmp/${__DATABASE__}_vedernikoff_pq_unique.tsv' WITH (FORMAT TEXT);
+COPY vedernikoff_pq_unique FROM '${__TEST_DIR__}/vedernikoff_pq_unique.tsv' WITH (FORMAT TEXT);
 
 statement ok
 CREATE UNIQUE INDEX vedernikoff_pq_unique_rank_idx ON vedernikoff_pq_unique(rank);
@@ -1038,7 +1038,7 @@ INSERT INTO babsky_pq_nulluniq VALUES
   (4, 200, 'delta');
 
 statement ok
-COPY babsky_pq_nulluniq TO '/tmp/${__DATABASE__}_babsky_pq_nulluniq.tsv' WITH (FORMAT TEXT);
+COPY babsky_pq_nulluniq TO '${__TEST_DIR__}/babsky_pq_nulluniq.tsv' WITH (FORMAT TEXT);
 
 statement ok
 DROP TABLE babsky_pq_nulluniq;
@@ -1047,7 +1047,7 @@ statement ok
 CREATE TABLE babsky_pq_nulluniq (pid INTEGER PRIMARY KEY, code INTEGER, tag VARCHAR);
 
 statement count 4
-COPY babsky_pq_nulluniq FROM '/tmp/${__DATABASE__}_babsky_pq_nulluniq.tsv' WITH (FORMAT TEXT);
+COPY babsky_pq_nulluniq FROM '${__TEST_DIR__}/babsky_pq_nulluniq.tsv' WITH (FORMAT TEXT);
 
 statement ok
 CREATE UNIQUE INDEX babsky_pq_nulluniq_code_idx ON babsky_pq_nulluniq(code);

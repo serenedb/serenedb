@@ -219,10 +219,10 @@ COPY (SELECT 1 AS id, 'alpha' AS label, 30 AS score
       UNION ALL SELECT 2, 'beta', 25
       UNION ALL SELECT 3, 'gamma', 30
       UNION ALL SELECT 4, 'delta', 35)
-TO '/tmp/${__DATABASE__}_sk_pq.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/sk_pq.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE VIEW v_sk_pq AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_sk_pq.parquet');
+CREATE VIEW v_sk_pq AS SELECT * FROM read_parquet('${__TEST_DIR__}/sk_pq.parquet');
 
 statement ok
 CREATE INDEX v_sk_pq_idx ON v_sk_pq(score);
@@ -249,16 +249,16 @@ id	label
 statement count 2
 COPY (SELECT 10 AS id, 'one' AS label, 5 AS score
       UNION ALL SELECT 11, 'two', 7)
-TO '/tmp/${__DATABASE__}_sk_glob_a.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/sk_glob_a.parquet' (FORMAT PARQUET);
 
 statement count 2
 COPY (SELECT 12 AS id, 'three' AS label, 5 AS score
       UNION ALL SELECT 13, 'four', 9)
-TO '/tmp/${__DATABASE__}_sk_glob_b.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/sk_glob_b.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW v_sk_pq_glob AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_sk_glob_*.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/sk_glob_*.parquet');
 
 statement ok
 CREATE INDEX v_sk_pq_glob_idx ON v_sk_pq_glob(score);

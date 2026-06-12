@@ -133,8 +133,7 @@ void CatalogStore::WriteContext::PutSequence(ObjectId sequence_id,
 
 void CatalogStore::WriteContext::DropDefinition(ObjectId parent_id,
                                                 ObjectType type, ObjectId id) {
-  _entries.push_back(
-    {.op = Op::kDropDefinition, .key = {parent_id, type, id}});
+  _entries.push_back({.op = Op::kDropDefinition, .key = {parent_id, type, id}});
 }
 
 void CatalogStore::WriteContext::DropSequence(ObjectId sequence_id) {
@@ -160,8 +159,8 @@ void CatalogStore::Initialize(std::string_view database_directory) {
   std::error_code ec;
   fs::create_directories(dir, ec);
   if (ec) {
-    SDB_FATAL(STARTUP, "catalog store: cannot create directory '",
-              dir.string(), "': ", ec.message());
+    SDB_FATAL(STARTUP, "catalog store: cannot create directory '", dir.string(),
+              "': ", ec.message());
   }
   const auto file = (dir / kStoreFile).string();
 
@@ -171,13 +170,13 @@ void CatalogStore::Initialize(std::string_view database_directory) {
     _conn = DuckDBEngine::Instance().CreateConnection();
     _seq_conn = DuckDBEngine::Instance().CreateConnection();
 
+    ExecOrFatal(
+      *_conn, absl::StrCat("ATTACH '", absl::StrReplaceAll(file, {{"'", "''"}}),
+                           "' AS \"", kStoreAlias, "\""));
     ExecOrFatal(*_conn,
-                absl::StrCat("ATTACH '", absl::StrReplaceAll(file, {{"'", "''"}}),
-                             "' AS \"", kStoreAlias, "\""));
-    ExecOrFatal(*_conn, absl::StrCat(
-                          "CREATE TABLE IF NOT EXISTS ", kCatalogTable,
-                          " (parent_id UBIGINT, type UTINYINT, id UBIGINT, "
-                          "def BLOB)"));
+                absl::StrCat("CREATE TABLE IF NOT EXISTS ", kCatalogTable,
+                             " (parent_id UBIGINT, type UTINYINT, id UBIGINT, "
+                             "def BLOB)"));
     ExecOrFatal(*_conn,
                 absl::StrCat("CREATE TABLE IF NOT EXISTS ", kSequenceTable,
                              " (id UBIGINT, counter UBIGINT)"));
@@ -195,9 +194,8 @@ void CatalogStore::Initialize(std::string_view database_directory) {
       *_conn,
       absl::StrCat("DELETE FROM ", kCatalogTable, " WHERE parent_id = $1"));
     _select_definitions = PrepareOrFatal(
-      *_conn,
-      absl::StrCat("SELECT id, def FROM ", kCatalogTable,
-                   " WHERE parent_id = $1 AND type = $2 ORDER BY id"));
+      *_conn, absl::StrCat("SELECT id, def FROM ", kCatalogTable,
+                           " WHERE parent_id = $1 AND type = $2 ORDER BY id"));
     _delete_sequence_batch = PrepareOrFatal(
       *_conn, absl::StrCat("DELETE FROM ", kSequenceTable, " WHERE id = $1"));
     _insert_sequence_batch = PrepareOrFatal(
@@ -241,8 +239,7 @@ void CatalogStore::Shutdown() {
   }
 }
 
-Result CatalogStore::ExecuteEntries(
-  std::vector<WriteContext::Entry>& entries) {
+Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
   absl::MutexLock lock{&_mutex};
   return RunInTransaction(*_conn, [&]() -> Result {
     for (const auto& entry : entries) {
@@ -254,10 +251,10 @@ Result CatalogStore::ExecuteEntries(
               r.fail()) {
             return r;
           }
-          if (auto r = Exec(*_insert_definition,
-                            {IdValue(entry.key.parent_id),
-                             TypeValue(entry.key.type), IdValue(entry.key.id),
-                             DefValue(entry.def)});
+          if (auto r =
+                Exec(*_insert_definition,
+                     {IdValue(entry.key.parent_id), TypeValue(entry.key.type),
+                      IdValue(entry.key.id), DefValue(entry.def)});
               r.fail()) {
             return r;
           }
@@ -277,10 +274,9 @@ Result CatalogStore::ExecuteEntries(
               r.fail()) {
             return r;
           }
-          if (auto r =
-                Exec(*_insert_sequence_batch,
-                     {IdValue(entry.key.id),
-                      duckdb::Value::UBIGINT(entry.sequence_value)});
+          if (auto r = Exec(*_insert_sequence_batch,
+                            {IdValue(entry.key.id),
+                             duckdb::Value::UBIGINT(entry.sequence_value)});
               r.fail()) {
             return r;
           }
@@ -328,8 +324,7 @@ Result CatalogStore::DropSequence(ObjectId sequence_id) {
 Result CatalogStore::DropEntry(ObjectId parent_id, ObjectType type) {
   absl::MutexLock lock{&_mutex};
   return RunInTransaction(*_conn, [&]() -> Result {
-    return Exec(*_delete_by_parent_type,
-                {IdValue(parent_id), TypeValue(type)});
+    return Exec(*_delete_by_parent_type, {IdValue(parent_id), TypeValue(type)});
   });
 }
 
@@ -363,9 +358,9 @@ Result CatalogStore::VisitDefinitions(
     const auto* defs =
       duckdb::FlatVector::GetData<duckdb::string_t>(chunk->data[1]);
     for (duckdb::idx_t i = 0; i < count; ++i) {
-      if (auto r = visitor(Key{parent_id, type, ObjectId{ids[i]}},
-                           std::string_view{defs[i].GetData(),
-                                            defs[i].GetSize()});
+      if (auto r =
+            visitor(Key{parent_id, type, ObjectId{ids[i]}},
+                    std::string_view{defs[i].GetData(), defs[i].GetSize()});
           r.fail()) {
         return r;
       }
@@ -458,8 +453,7 @@ Result CatalogStore::LoadBootState() {
 Result CatalogStore::VisitBoot(
   ObjectId parent_id, ObjectType type,
   absl::FunctionRef<Result(Key, std::string_view)> visitor) const {
-  const auto it =
-    _boot_defs.find({parent_id.id(), static_cast<uint8_t>(type)});
+  const auto it = _boot_defs.find({parent_id.id(), static_cast<uint8_t>(type)});
   if (it == _boot_defs.end()) {
     return {};
   }
@@ -530,12 +524,11 @@ Result CatalogStore::GetSequenceValue(ObjectId sequence_id, uint64_t& value) {
 
 void CatalogStore::EnsureSystemDatabase() {
   bool has_system = false;
-  std::ignore =
-    VisitDefinitions(id::kInstance, ObjectType::Database,
-                     [&](Key key, std::string_view) -> Result {
-                       has_system = key.id == id::kSystemDB;
-                       return {ERROR_INTERNAL};  // stop iteration
-                     });
+  std::ignore = VisitDefinitions(id::kInstance, ObjectType::Database,
+                                 [&](Key key, std::string_view) -> Result {
+                                   has_system = key.id == id::kSystemDB;
+                                   return {ERROR_INTERNAL};  // stop iteration
+                                 });
 
   if (has_system) {
     SDB_TRACE(STARTUP, "Found system database");
@@ -586,11 +579,11 @@ duckdb::unique_ptr<duckdb::FunctionData> BindInitCatalog(
   duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
-  CheckInitInput(input.input_table_types,
-                 {duckdb::LogicalTypeId::UBIGINT,
-                  duckdb::LogicalTypeId::UTINYINT,
-                  duckdb::LogicalTypeId::UBIGINT, duckdb::LogicalTypeId::BLOB},
-                 "sdb_init_catalog");
+  CheckInitInput(
+    input.input_table_types,
+    {duckdb::LogicalTypeId::UBIGINT, duckdb::LogicalTypeId::UTINYINT,
+     duckdb::LogicalTypeId::UBIGINT, duckdb::LogicalTypeId::BLOB},
+    "sdb_init_catalog");
   return_types.emplace_back(duckdb::LogicalType::UBIGINT);
   names.emplace_back("loaded");
   return duckdb::make_uniq<duckdb::TableFunctionData>();
@@ -634,9 +627,9 @@ duckdb::OperatorResultType InitSequencesExec(duckdb::ExecutionContext&,
   return duckdb::OperatorResultType::NEED_MORE_INPUT;
 }
 
-duckdb::OperatorFinalizeResultType InitCatalogFinal(
-  duckdb::ExecutionContext&, duckdb::TableFunctionInput&,
-  duckdb::DataChunk& output) {
+duckdb::OperatorFinalizeResultType InitCatalogFinal(duckdb::ExecutionContext&,
+                                                    duckdb::TableFunctionInput&,
+                                                    duckdb::DataChunk& output) {
   output.SetCardinality(1);
   output.SetValue(
     0, 0, duckdb::Value::UBIGINT(CatalogStore::instance().BootDefsLoaded()));
@@ -647,9 +640,9 @@ duckdb::OperatorFinalizeResultType InitSequencesFinal(
   duckdb::ExecutionContext&, duckdb::TableFunctionInput&,
   duckdb::DataChunk& output) {
   output.SetCardinality(1);
-  output.SetValue(0, 0,
-                  duckdb::Value::UBIGINT(
-                    CatalogStore::instance().BootSequencesLoaded()));
+  output.SetValue(
+    0, 0,
+    duckdb::Value::UBIGINT(CatalogStore::instance().BootSequencesLoaded()));
   return duckdb::OperatorFinalizeResultType::FINISHED;
 }
 

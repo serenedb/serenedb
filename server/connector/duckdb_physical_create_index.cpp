@@ -441,7 +441,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       state->has_generated_pk_col = true;
     } else {
       state->is_external = true;
-      if (kind == "file_index_plus_row_number") {
+      if (kind == "file_index_plus_row_number" ||
+          kind == "file_index_plus_duckdb_rowid") {
         state->is_glob_external = true;
         state->file_index_col_idx = state->columns.size();
         state->file_row_number_col_idx = state->columns.size() + 1;

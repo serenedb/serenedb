@@ -430,10 +430,9 @@ void RocksDBEngineCatalog::start() {
     // The tick domain (= rocksdb seqno) starts at 1; catalog writes no
     // longer seed a fresh instance, so mint the first tick explicitly.
     rocksdb::WriteBatch batch;
-    batch.Delete(
-      RocksDBColumnFamilyManager::get(
-        RocksDBColumnFamilyManager::Family::Default),
-      rocksdb::Slice{});
+    batch.Delete(RocksDBColumnFamilyManager::get(
+                   RocksDBColumnFamilyManager::Family::Default),
+                 rocksdb::Slice{});
     auto seed = _db->GetRootDB()->Write(rocksdb::WriteOptions{}, &batch);
     if (!seed.ok()) {
       SDB_FATAL(STARTUP, "unable to seed rocksdb sequence number: ",

@@ -123,12 +123,12 @@ SET sdb_ef_search TO 512;
 
 statement ok
 COPY (SELECT id, emb FROM vecs)
-TO '/tmp/${__DATABASE__}_vecs.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/vecs.parquet' (FORMAT PARQUET);
 
 
 statement ok
 CREATE VIEW vecs_pq AS
-SELECT id, emb::FLOAT[8] as emb FROM read_parquet('/tmp/${__DATABASE__}_vecs.parquet');
+SELECT id, emb::FLOAT[8] as emb FROM read_parquet('${__TEST_DIR__}/vecs.parquet');
 
 
 statement ok
@@ -230,12 +230,12 @@ SET sdb_ef_search TO 512;
 
 statement ok
 COPY (SELECT id, body, emb FROM vecs_text)
-TO '/tmp/${__DATABASE__}_vecs_text.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/vecs_text.parquet' (FORMAT PARQUET);
 
 
 statement ok
 CREATE VIEW vecs_text_pq AS
-SELECT id, body, emb::FLOAT[8] as emb FROM read_parquet('/tmp/${__DATABASE__}_vecs_text.parquet');
+SELECT id, body, emb::FLOAT[8] as emb FROM read_parquet('${__TEST_DIR__}/vecs_text.parquet');
 
 
 statement ok

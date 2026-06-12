@@ -197,7 +197,6 @@ class RocksDBEngineCatalog {
 
   bool inRecovery() { return recoveryState() < RecoveryState::Done; }
 
-
   uint64_t GetTableSize(ObjectId table_id) const;
   uint64_t GetSchemaSize(const catalog::Snapshot& snapshot,
                          ObjectId database_id,

@@ -491,11 +491,11 @@ INSERT INTO babsky_src VALUES
   (5, 'krivda writes sql at night', 'clickclack university');
 
 statement count 5
-COPY babsky_src TO '/tmp/${__DATABASE__}_babsky_memes.parquet' (FORMAT PARQUET);
+COPY babsky_src TO '${__TEST_DIR__}/babsky_memes.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW babsky_ext AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_babsky_memes.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/babsky_memes.parquet');
 
 statement ok
 CREATE INDEX babsky_ext_idx ON babsky_ext USING inverted(a, b test_english, c test_english);
@@ -564,11 +564,11 @@ INSERT INTO text_idx_src VALUES
   (5, 'krivda writes sql at night', 'clickclack university');
 
 statement count 5
-COPY text_idx_src TO '/tmp/${__DATABASE__}_text_idx_memes.csv';
+COPY text_idx_src TO '${__TEST_DIR__}/text_idx_memes.csv';
 
 statement ok
 CREATE VIEW text_idx_ext AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_text_idx_memes.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/text_idx_memes.csv');
 
 statement ok
 CREATE INDEX text_idx_ext_idx ON text_idx_ext USING inverted(a, b test_english, c test_english);
@@ -635,11 +635,11 @@ INSERT INTO score_parquet_src VALUES
   (3, 'the lazy dog');
 
 statement count 3
-COPY score_parquet_src TO '/tmp/${__DATABASE__}_score_parquet.parquet' (FORMAT PARQUET);
+COPY score_parquet_src TO '${__TEST_DIR__}/score_parquet.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW score_parquet_ext AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_score_parquet.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/score_parquet.parquet');
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY score_en(
@@ -741,11 +741,11 @@ INSERT INTO score_text_src VALUES
   (3, 'the lazy dog');
 
 statement count 3
-COPY score_text_src TO '/tmp/${__DATABASE__}_score_text.csv';
+COPY score_text_src TO '${__TEST_DIR__}/score_text.csv';
 
 statement ok
 CREATE VIEW score_text_ext AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_score_text.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/score_text.csv');
 
 statement ok
 CREATE INDEX score_text_idx ON score_text_ext USING inverted(a, b score_en);
@@ -828,11 +828,11 @@ INSERT INTO dense_pq_src VALUES
   (8, 'common word theta here', 'group west side');
 
 statement count 8
-COPY dense_pq_src TO '/tmp/${__DATABASE__}_dense_pq.parquet' (FORMAT PARQUET);
+COPY dense_pq_src TO '${__TEST_DIR__}/dense_pq.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW dense_pq_ext AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_dense_pq.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/dense_pq.parquet');
 
 statement ok
 CREATE INDEX dense_pq_idx ON dense_pq_ext USING inverted(a, b test_english, c test_english);
@@ -952,11 +952,11 @@ INSERT INTO dense_csv_src VALUES
   (5, 'shared term epsilon info', 'dept red color');
 
 statement count 5
-COPY dense_csv_src TO '/tmp/${__DATABASE__}_dense_csv.csv';
+COPY dense_csv_src TO '${__TEST_DIR__}/dense_csv.csv';
 
 statement ok
 CREATE VIEW dense_csv_ext AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_dense_csv.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/dense_csv.csv');
 
 
 query
@@ -1084,11 +1084,11 @@ INSERT INTO vedernikoff_src VALUES
   (5, 'shared term epsilon info', 'dept red color');
 
 statement count 5
-COPY vedernikoff_src TO '/tmp/${__DATABASE__}_vedernikoff.jsonl' (FORMAT json);
+COPY vedernikoff_src TO '${__TEST_DIR__}/vedernikoff.jsonl' (FORMAT json);
 
 statement ok
 CREATE VIEW vedernikoff_ext AS
-  SELECT * FROM read_json('/tmp/${__DATABASE__}_vedernikoff.jsonl');
+  SELECT * FROM read_json('${__TEST_DIR__}/vedernikoff.jsonl');
 
 statement ok
 CREATE INDEX vedernikoff_idx ON vedernikoff_ext USING inverted(a, b test_english, c test_english);

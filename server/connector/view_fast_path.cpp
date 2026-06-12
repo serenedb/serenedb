@@ -59,6 +59,7 @@ TableFunction MakeCSVLookupTableFunction();
 TableFunction MakeJSONLookupTableFunction();
 TableFunction MakeJSONObjectsLookupTableFunction();
 TableFunction MakeTextLookupTableFunction();
+TableFunction MakeDuckDBLookupTableFunction();
 
 }  // namespace duckdb
 namespace sdb::connector {
@@ -121,6 +122,12 @@ const RegistryEntry kRegistry[] = {
     .single_pk_spec = catalog::PkSpec::FileRowNumber,
     .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeTextLookupTableFunction,
+  },
+  {
+    .function_name = "read_duckdb",
+    .single_pk_spec = catalog::PkSpec::DuckDBRowId,
+    .glob_pk_spec = catalog::PkSpec::FileIndexPlusDuckDBRowId,
+    .make_lookup = duckdb::MakeDuckDBLookupTableFunction,
   },
   // TODO: read_avro, postgres_scan / postgres_query.
 };
@@ -429,6 +436,13 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
   }
   if (fp.pk_spec == catalog::PkSpec::RocksDBGeneratedRowId) {
     return {kColumnIdentifierGeneratedPk};
+  }
+  if (fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
+    return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+  }
+  if (fp.pk_spec == catalog::PkSpec::FileIndexPlusDuckDBRowId) {
+    return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
+            duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
   if (catalog::IsGlobPK(fp.pk_spec)) {
     return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,

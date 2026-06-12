@@ -91,7 +91,6 @@ CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
   std::span<const catalog::Column::Id> updated_col_ids,
   const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
-
 // Catalog column positions to project for a CREATE INDEX backfill scan:
 // union of index-key columns and PK columns, sorted+deduped (== catalog
 // column order). For tables with a generated PK the caller appends ROW_ID

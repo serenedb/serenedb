@@ -116,7 +116,7 @@ class CatalogStore {
     ObjectId parent_id, ObjectType type,
     absl::FunctionRef<Result(Key, std::string_view)> visitor);
 
-  // Boot load: one in-pipeline pass per table — the sdb_init_catalog /
+  // Boot load: one in-pipeline pass per table -- the sdb_init_catalog /
   // sdb_init_sequences in-out table functions consume the scan's vectors
   // directly (no result materialization). The loaded state serves the
   // hierarchical catalog walk (which must not issue per-(parent,type)

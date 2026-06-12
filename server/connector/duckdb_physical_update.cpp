@@ -544,7 +544,8 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         if (!s.ok()) {
           SDB_THROW(ERROR_INTERNAL, "RocksDB Delete error: ", s.ToString());
         }
-      }    }
+      }
+    }
 
     // 6. Write ALL columns at new keys.
     DuckDBColumnSerializer::TxnWriter txn_writer{*gstate.sdb_txn, gstate.cf};

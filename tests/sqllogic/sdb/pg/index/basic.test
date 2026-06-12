@@ -1,3 +1,5 @@
+control substitution on
+
 statement ok
 CREATE TABLE t(r text);
 
@@ -386,7 +388,7 @@ db error: ERROR: Can only delete from base table
 
 
 statement error
-COPY view_idx_view FROM '/tmp/nonexistent.parquet' (FORMAT PARQUET);
+COPY view_idx_view FROM '${__TEST_DIR__}/nonexistent.parquet' (FORMAT PARQUET);
 ----
 db error: ERROR: view_idx_view is not an table
 
@@ -428,9 +430,9 @@ DETAIL: This operation is not supported for indexes.
 
 
 statement error
-COPY idx_dml_idx FROM '/tmp/nonexistent.parquet' (FORMAT PARQUET);
+COPY idx_dml_idx FROM '${__TEST_DIR__}/nonexistent.parquet' (FORMAT PARQUET);
 ----
-db error: ERROR: No files found that match the pattern "/tmp/nonexistent.parquet"
+db error: ERROR: No files found that match the pattern "<slt:ignore>/nonexistent.parquet"
 
 
 statement error

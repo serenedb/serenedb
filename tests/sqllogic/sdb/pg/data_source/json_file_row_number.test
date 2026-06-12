@@ -25,7 +25,7 @@ statement ok
 COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
       UNION ALL SELECT 2, 'manga beta'
       UNION ALL SELECT 3, 'pudge gamma')
-TO '/tmp/${__DATABASE__}_frn_array.json' (FORMAT JSON, ARRAY);
+TO '${__TEST_DIR__}/frn_array.json' (FORMAT JSON, ARRAY);
 
 # Record sizes: {"id":1,"body":"pudge alpha"} = 29, "manga beta" = 28,
 # "pudge gamma" = 29.
@@ -38,7 +38,7 @@ TO '/tmp/${__DATABASE__}_frn_array.json' (FORMAT JSON, ARRAY);
 # Post-fix: 3, 35, 66.   Pre-fix: 0, 32, 63.
 query
 SELECT file_row_number, id, body
-FROM read_json('/tmp/${__DATABASE__}_frn_array.json', format='array')
+FROM read_json('${__TEST_DIR__}/frn_array.json', format='array')
 ORDER BY id;
 ----
 file_row_number	id	body
@@ -50,7 +50,7 @@ file_row_number	id	body
 # as an opaque JSON document; the byte offsets are the same.
 query
 SELECT file_row_number, json
-FROM read_json_objects('/tmp/${__DATABASE__}_frn_array.json', format='array')
+FROM read_json_objects('${__TEST_DIR__}/frn_array.json', format='array')
 ORDER BY file_row_number;
 ----
 file_row_number	json
@@ -68,7 +68,7 @@ statement ok
 COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
       UNION ALL SELECT 2, 'manga beta'
       UNION ALL SELECT 3, 'pudge gamma')
-TO '/tmp/${__DATABASE__}_frn_nd.jsonl' (FORMAT JSON);
+TO '${__TEST_DIR__}/frn_nd.jsonl' (FORMAT JSON);
 
 # Records separated by single `\n`:
 #   byte 0..28  = record 1, byte 29 = `\n`
@@ -76,7 +76,7 @@ TO '/tmp/${__DATABASE__}_frn_nd.jsonl' (FORMAT JSON);
 #   byte 59..87 = record 3, byte 88 = `\n`
 query
 SELECT file_row_number, id, body
-FROM read_json('/tmp/${__DATABASE__}_frn_nd.jsonl', format='nd')
+FROM read_json('${__TEST_DIR__}/frn_nd.jsonl', format='nd')
 ORDER BY id;
 ----
 file_row_number	id	body
@@ -86,7 +86,7 @@ file_row_number	id	body
 
 query
 SELECT file_row_number, json
-FROM read_json_objects('/tmp/${__DATABASE__}_frn_nd.jsonl', format='nd')
+FROM read_json_objects('${__TEST_DIR__}/frn_nd.jsonl', format='nd')
 ORDER BY file_row_number;
 ----
 file_row_number	json

@@ -67,7 +67,6 @@ class DuckDBColumnSerializer {
     void WriteNull(std::string_view key);
 
    private:
-
     rocksdb::Transaction* _txn;
     rocksdb::ColumnFamilyHandle* _cf;
     ColumnDescriptor _cur_col{};
@@ -96,7 +95,6 @@ class DuckDBColumnSerializer {
     void WriteNull(std::string_view key);
 
    private:
-
     rocksdb::SstFileWriter* _writer;
     ColumnDescriptor _cur_col{};
   };

@@ -39,19 +39,19 @@ statement count 3
 COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
       UNION ALL SELECT 2, 'manga beta'
       UNION ALL SELECT 3, 'pudge gamma')
-TO '/tmp/${__DATABASE__}_pq_a.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/pq_a.parquet' (FORMAT PARQUET);
 
 statement count 4
 COPY (SELECT 4::int4 AS id, 'sql delta' AS body
       UNION ALL SELECT 5, 'pudge epsilon'
       UNION ALL SELECT 6, 'clickclack zeta'
       UNION ALL SELECT 7, 'mass effect eta')
-TO '/tmp/${__DATABASE__}_pq_b.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/pq_b.parquet' (FORMAT PARQUET);
 
 statement count 2
 COPY (SELECT 8::int4 AS id, 'pudge theta' AS body
       UNION ALL SELECT 9, '3am iota')
-TO '/tmp/${__DATABASE__}_pq_c.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/pq_c.parquet' (FORMAT PARQUET);
 
 
 # ============================================================================
@@ -61,7 +61,7 @@ TO '/tmp/${__DATABASE__}_pq_c.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW pq_glob_v AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_pq_*.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/pq_*.parquet');
 
 
 statement ok
@@ -300,24 +300,24 @@ statement count 3
 COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
       UNION ALL SELECT 2, 'manga beta'
       UNION ALL SELECT 3, 'pudge gamma')
-TO '/tmp/${__DATABASE__}_csv_a.csv';
+TO '${__TEST_DIR__}/csv_a.csv';
 
 statement count 4
 COPY (SELECT 4::int4 AS id, 'sql delta' AS body
       UNION ALL SELECT 5, 'pudge epsilon'
       UNION ALL SELECT 6, 'clickclack zeta'
       UNION ALL SELECT 7, 'mass effect eta')
-TO '/tmp/${__DATABASE__}_csv_b.csv';
+TO '${__TEST_DIR__}/csv_b.csv';
 
 statement count 2
 COPY (SELECT 8::int4 AS id, 'pudge theta' AS body
       UNION ALL SELECT 9, '3am iota')
-TO '/tmp/${__DATABASE__}_csv_c.csv';
+TO '${__TEST_DIR__}/csv_c.csv';
 
 
 statement ok
 CREATE VIEW csv_glob_v AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_csv_*.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/csv_*.csv');
 
 
 statement ok
@@ -420,24 +420,24 @@ statement count 3
 COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
       UNION ALL SELECT 2, 'manga beta'
       UNION ALL SELECT 3, 'pudge gamma')
-TO '/tmp/${__DATABASE__}_json_a.jsonl' (FORMAT json);
+TO '${__TEST_DIR__}/json_a.jsonl' (FORMAT json);
 
 statement count 4
 COPY (SELECT 4::int4 AS id, 'sql delta' AS body
       UNION ALL SELECT 5, 'pudge epsilon'
       UNION ALL SELECT 6, 'clickclack zeta'
       UNION ALL SELECT 7, 'mass effect eta')
-TO '/tmp/${__DATABASE__}_json_b.jsonl' (FORMAT json);
+TO '${__TEST_DIR__}/json_b.jsonl' (FORMAT json);
 
 statement count 2
 COPY (SELECT 8::int4 AS id, 'pudge theta' AS body
       UNION ALL SELECT 9, '3am iota')
-TO '/tmp/${__DATABASE__}_json_c.jsonl' (FORMAT json);
+TO '${__TEST_DIR__}/json_c.jsonl' (FORMAT json);
 
 
 statement ok
 CREATE VIEW json_glob_v AS
-  SELECT * FROM read_json('/tmp/${__DATABASE__}_json_*.jsonl');
+  SELECT * FROM read_json('${__TEST_DIR__}/json_*.jsonl');
 
 
 statement ok
@@ -547,30 +547,30 @@ statement count 15
 COPY (SELECT i AS id, 'row '::text || i::text ||
         CASE WHEN i % 4 = 0 THEN ' kappa' ELSE ' lambda' END AS body
       FROM generate_series(1, 15) AS g(i))
-TO '/tmp/${__DATABASE__}_big_a.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/big_a.parquet' (FORMAT PARQUET);
 
 statement count 15
 COPY (SELECT i AS id, 'row '::text || i::text ||
         CASE WHEN i % 4 = 0 THEN ' kappa' ELSE ' lambda' END AS body
       FROM generate_series(16, 30) AS g(i))
-TO '/tmp/${__DATABASE__}_big_b.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/big_b.parquet' (FORMAT PARQUET);
 
 statement count 15
 COPY (SELECT i AS id, 'row '::text || i::text ||
         CASE WHEN i % 4 = 0 THEN ' kappa' ELSE ' lambda' END AS body
       FROM generate_series(31, 45) AS g(i))
-TO '/tmp/${__DATABASE__}_big_c.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/big_c.parquet' (FORMAT PARQUET);
 
 statement count 15
 COPY (SELECT i AS id, 'row '::text || i::text ||
         CASE WHEN i % 4 = 0 THEN ' kappa' ELSE ' lambda' END AS body
       FROM generate_series(46, 60) AS g(i))
-TO '/tmp/${__DATABASE__}_big_d.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/big_d.parquet' (FORMAT PARQUET);
 
 
 statement ok
 CREATE VIEW pq_big_v AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_big_*.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/big_*.parquet');
 
 
 statement ok

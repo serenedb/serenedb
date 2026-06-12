@@ -15,7 +15,7 @@ COPY (SELECT 1 AS id, 'pudge goes mid'     AS body, 'alpha' AS unused1, 100 AS u
       UNION ALL SELECT 3, 'pudge plays again',      'charlie', 300, 'Z'
       UNION ALL SELECT 4, 'manga marathon weekend', 'delta', 400, 'W'
       UNION ALL SELECT 5, 'pudge unique phrase',    'echo', 500, 'V')
-TO '/tmp/${__DATABASE__}_view_prune.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/view_prune.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY prune_en(
@@ -32,7 +32,7 @@ CREATE TEXT SEARCH DICTIONARY prune_en(
 # Case 1: wide view, narrow index. Pruning drops unused1/unused2/unused3.
 
 statement ok
-CREATE VIEW prune_v1 AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+CREATE VIEW prune_v1 AS SELECT * FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
 
 query
 EXPLAIN CREATE INDEX prune_idx1 ON prune_v1 USING inverted(body prune_en);
@@ -71,7 +71,7 @@ count
 # Case 2: index covers every view column. Pruning is a no-op.
 
 statement ok
-CREATE VIEW prune_v2 AS SELECT id, body FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+CREATE VIEW prune_v2 AS SELECT id, body FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
 
 query
 EXPLAIN CREATE INDEX prune_idx2 ON prune_v2 USING inverted(id, body prune_en);
@@ -109,7 +109,7 @@ count
 statement ok
 CREATE VIEW prune_v3 AS
   SELECT id, upper(body) AS body
-  FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+  FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
 
 query
 EXPLAIN CREATE INDEX prune_idx3 ON prune_v3 USING inverted(body prune_en);
@@ -153,7 +153,7 @@ count
 statement ok
 CREATE VIEW prune_v4 AS
   SELECT id, body, unused1, unused2
-  FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet')
+  FROM read_parquet('${__TEST_DIR__}/view_prune.parquet')
   ORDER BY id;
 
 query
@@ -209,7 +209,7 @@ count
 statement ok
 CREATE VIEW prune_v5 AS
   SELECT id, body, unused1
-  FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet')
+  FROM read_parquet('${__TEST_DIR__}/view_prune.parquet')
   ORDER BY unused1
   LIMIT 4;
 
@@ -382,7 +382,7 @@ count
 # (file_row_number) is a virtual column that doesn't surface in Projections.
 
 statement ok
-CREATE VIEW prune_v8 AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+CREATE VIEW prune_v8 AS SELECT * FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
 
 query
 EXPLAIN CREATE INDEX prune_idx8 ON prune_v8 (body);
@@ -417,7 +417,7 @@ count
 
 statement ok
 CREATE VIEW prune_v9 AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
 
 statement ok
 CREATE INDEX prune_idx9 ON prune_v9 USING inverted(
@@ -440,7 +440,7 @@ CREATE TEXT SEARCH DICTIONARY prune_kw(template = 'keyword');
 
 statement ok
 CREATE VIEW prune_v10 AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
 
 statement ok
 CREATE INDEX prune_idx10 ON prune_v10 USING inverted(
@@ -460,7 +460,7 @@ count
 
 statement ok
 CREATE VIEW prune_v11 AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
 
 statement ok
 CREATE INDEX prune_idx11 ON prune_v11 USING inverted(
@@ -479,7 +479,7 @@ count
 statement ok
 CREATE VIEW prune_v12 AS
   SELECT unused2 AS u2, unused3 AS u3, body AS b, id AS i, unused1 AS u1
-  FROM read_parquet('/tmp/${__DATABASE__}_view_prune.parquet');
+  FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
 
 statement ok
 CREATE INDEX prune_idx12 ON prune_v12 USING inverted(
@@ -501,12 +501,12 @@ statement count 5000
 COPY (SELECT g AS id,
              'word' || (g % 1000) || ' word' || (g % 1000) || ' marker' AS body
       FROM range(0, 5000) AS t(g))
-TO '/tmp/${__DATABASE__}_multi_chunk.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/multi_chunk.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW multi_chunk_v AS
   SELECT id AS Id, body AS Body
-  FROM read_parquet('/tmp/${__DATABASE__}_multi_chunk.parquet');
+  FROM read_parquet('${__TEST_DIR__}/multi_chunk.parquet');
 
 statement ok
 CREATE INDEX multi_chunk_idx ON multi_chunk_v USING inverted(

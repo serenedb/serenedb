@@ -767,13 +767,13 @@ EXPLAIN DELETE FROM explain_t;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: explain_t     │
-│      Projections: id      │
+│   Type: Sequential Scan   │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -784,7 +784,15 @@ EXPLAIN TRUNCATE explain_t;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│      Table: explain_t     │
+│   Type: Sequential Scan   │
+│                           │
+│          ~3 rows          │
 └───────────────────────────┘
 
 
@@ -793,5 +801,13 @@ EXPLAIN TRUNCATE TABLE explain_t;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│      Table: explain_t     │
+│   Type: Sequential Scan   │
+│                           │
+│          ~3 rows          │
 └───────────────────────────┘

@@ -321,13 +321,11 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: prune_base     │
-│                           │
-│        Projections:       │
-│            body           │
-│             id            │
+│   Type: Sequential Scan   │
+│     Projections: body     │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -356,14 +354,14 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: prune_base     │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            body           │
-│             id            │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘

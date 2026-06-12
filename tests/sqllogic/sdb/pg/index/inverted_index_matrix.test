@@ -201,7 +201,7 @@ pk
 statement error
 INSERT INTO m_j_prim VALUES (99, '{"obj":1}');
 ----
-db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
 
 
 statement ok

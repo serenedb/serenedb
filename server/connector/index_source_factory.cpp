@@ -30,6 +30,7 @@
 #include "connector/index_source_rocksdb.h"
 #include "connector/index_source_view_file.h"
 #include "connector/index_source_view_rocksdb.h"
+#include "connector/index_source_view_table.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -71,6 +72,11 @@ std::unique_ptr<IndexSource> MakeIndexSource(
       return std::make_unique<ViewRocksDBIndexSource>(
         context, std::move(*fp), projected_columns, projected_types,
         bind_column_ids, snapshot, txn);
+    }
+    if (fp->catalog_ref && fp->pk_spec == catalog::PkSpec::DuckDBRowId) {
+      return std::make_unique<ViewTableIndexSource>(
+        context, std::move(*fp), projected_columns, projected_types,
+        bind_column_ids);
     }
     if (catalog::IsGlobPK(fp->pk_spec)) {
       return std::make_unique<ViewFileGlobIndexSource>(

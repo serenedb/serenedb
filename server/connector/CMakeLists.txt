@@ -35,8 +35,10 @@ add_library(
     columnstore_materializer.cpp
     index_source_factory.cpp
     index_source_rocksdb.cpp
+    index_source_view.cpp
     index_source_view_file.cpp
     index_source_view_rocksdb.cpp
+    index_source_view_table.cpp
     view_fast_path.cpp
     duckdb_copy_filesystem.cpp
     duckdb_physical_insert.cpp

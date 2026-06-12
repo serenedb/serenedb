@@ -274,7 +274,7 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
     return info;
   };
 
-  auto root = std::make_shared<irs::And>();
+  auto root = std::make_unique<irs::And>();
   duckdb::unique_ptr<duckdb::Expression> match_owner = std::move(match_expr);
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts{
     &match_owner, 1};

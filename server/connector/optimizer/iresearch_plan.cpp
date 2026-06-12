@@ -850,19 +850,6 @@ bool TryClaimSearchFilter(
   };
 
   auto& scan = bind_data.scan_source->Cast<connector::SearchScan>();
-  auto [stored,
-        root_ptr] = [&] -> std::pair<std::shared_ptr<irs::Filter>, irs::And*> {
-    if (scan.vector_scorer) {
-      auto proxy = std::make_shared<irs::ProxyFilter>();
-      auto* root =
-        &proxy->set_filter<irs::And>(irs::IResourceManager::gNoop).first;
-      return {std::move(proxy), root};
-    }
-    auto and_filter = std::make_shared<irs::And>();
-    auto* root = and_filter.get();
-    return {std::move(and_filter), root};
-  }();
-
 
   auto root_and = std::make_unique<irs::And>();
   bool any_claimed = false;

@@ -190,6 +190,9 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
     gstate.appender.reset();
     gstate.store_conn.reset();
   }
+  // Rows are durable in the store but the table is still tombstone-named;
+  // recovery must drop it. Name kept from the SST-ingest era.
+  SDB_IF_FAILURE("crash_sst_sink_after_ingest") { SDB_IMMEDIATE_ABORT(); }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
   auto& catalog = catalog::CatalogFeature::instance().Global();
   auto r = catalog.RemoveTombstone(gstate.database_id, gstate.schema_name,

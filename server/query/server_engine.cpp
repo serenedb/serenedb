@@ -38,6 +38,7 @@
 #include "connector/functions/array.h"
 #include "connector/functions/cast.h"
 #include "connector/functions/embedding/embedding.h"
+#include "connector/functions/es.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/json.h"
 #include "connector/functions/math.h"
@@ -239,6 +240,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgArrayFunctions(db);
 
   connector::RegisterPgJsonFunctions(db);
+
+  connector::RegisterEsFunctions(db);
 
   connector::RegisterVacuumFunction(db);
 

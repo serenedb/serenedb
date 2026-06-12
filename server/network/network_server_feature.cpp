@@ -29,8 +29,8 @@
 
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
-#include "network/http/test_api_handlers.h"
-#include "network/http/tier0_handlers.h"
+#include "network/http/test/handlers.h"
+#include "network/http/es/handlers.h"
 #include "network/pg/auth.h"
 #include "network/tls_context.h"
 
@@ -179,8 +179,12 @@ void NetworkServerFeature::start() {
       _auth_user, std::move(credential));
     _pg_context.credentials = _credentials.get();
     _pg_context.allow_cleartext_without_tls = _allow_cleartext_without_tls;
-    SDB_INFO(GENERAL, "network pg-wire auth enabled for user '", _auth_user,
-             "' (", _auth_cleartext ? "cleartext" : "scram-sha-256", ")");
+    // One user store for both protocols: HTTP Basic validates against the
+    // same provider (cleartext compare or scram-verifier derivation).
+    _http_context.credentials = _credentials.get();
+    SDB_INFO(GENERAL, "network pg-wire + http auth enabled for user '",
+             _auth_user, "' (", _auth_cleartext ? "cleartext" : "scram-sha-256",
+             ")");
   }
 
   _pg_context.cancel = &_cancel;
@@ -193,9 +197,9 @@ void NetworkServerFeature::start() {
 
   if (!_endpoint.empty()) {
     const auto bind = ParseEndpoint(_endpoint);
-    RegisterTier0(_router);
+    network::http::es::Register(_router);
     if (_http_test_api) {
-      network::RegisterTestApi(_router);
+      network::http::test::Register(_router);
       SDB_INFO(GENERAL, "network HTTP test API enabled under /_test/");
     }
     std::shared_ptr<network::AcceptorBase> acceptor;

@@ -22,11 +22,11 @@
 
 #include "network/http/router.h"
 
-namespace sdb::network {
+namespace sdb::network::http::test {
 
-// Registers test-only HTTP endpoints under /_test/ (echo, ping, bytes, fuzz,
+// Synthetic transport-test endpoints under /_test/ (echo, ping, bytes, fuzz,
 // status) used by functional + performance tests. Gated behind a flag; never
-// enabled in production.
-void RegisterTestApi(HttpRouter& router);
+// enabled in production; not part of any standard API.
+void Register(HttpRouter& router);
 
-}  // namespace sdb::network
+}  // namespace sdb::network::http::test

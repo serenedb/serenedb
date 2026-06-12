@@ -199,6 +199,24 @@ bool ConstantTimeEqual(std::span<const uint8_t> a, std::span<const uint8_t> b) {
   return diff == 0;
 }
 
+bool VerifyCleartextAgainstScram(const ScramVerifier& verifier,
+                                 std::string_view password) {
+  const std::string prepared = SaslPrep(password);
+  uint8_t salted[kScramKeyLen];
+  if (PKCS5_PBKDF2_HMAC(
+        prepared.data(), static_cast<int>(prepared.size()),
+        verifier.salt.data(), static_cast<int>(verifier.salt.size()),
+        verifier.iterations, EVP_sha256(), kScramKeyLen, salted) != 1) {
+    return false;
+  }
+  uint8_t client_key[kScramKeyLen];
+  Hmac256({salted, kScramKeyLen}, "Client Key", client_key);
+  uint8_t computed_stored[kScramKeyLen];
+  SHA256(client_key, kScramKeyLen, computed_stored);
+  return ConstantTimeEqual({computed_stored, kScramKeyLen},
+                           verifier.stored_key);
+}
+
 bool VerifyClientProof(const ScramVerifier& verifier,
                        std::string_view auth_message,
                        std::span<const uint8_t> proof) {

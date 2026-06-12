@@ -84,6 +84,12 @@ bool VerifyClientProof(const ScramVerifier& verifier,
                        std::string_view auth_message,
                        std::span<const uint8_t> proof);
 
+// Verify a cleartext password against a stored SCRAM verifier (derive
+// StoredKey, constant-time compare). Lets HTTP Basic auth share the same
+// credential store as the pg wire's SCRAM exchange.
+bool VerifyCleartextAgainstScram(const ScramVerifier& verifier,
+                                 std::string_view password);
+
 // ServerSignature = HMAC(ServerKey, AuthMessage), for the server-final v=.
 std::array<uint8_t, kScramKeyLen> ScramServerSignature(
   const ScramVerifier& verifier, std::string_view auth_message);

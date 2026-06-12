@@ -29,7 +29,6 @@
 
 #include "basics/message_buffer.h"
 #include "network/http/request.h"
-#include "network/http/response.h"
 
 namespace sdb::network {
 
@@ -74,9 +73,6 @@ class H1Codec final {
   [[nodiscard]] bool KeepAlive() const noexcept { return _keep_alive; }
   [[nodiscard]] int ErrorStatus() const noexcept { return _error_status; }
 
-  void EncodeHead(const HttpResponse& response, bool keep_alive,
-                  message::Buffer& out) const;
-
   void Reset() noexcept;
 
  private:
@@ -105,9 +101,5 @@ class H1Codec final {
   int _error_status{0};
   H1Event _event{H1Event::NeedMore};
 };
-
-// HTTP/1.1 chunked transfer-encoding framers for streaming responses (sans-io).
-void WriteChunk(message::Buffer& dst, std::string_view data);
-void WriteLastChunk(message::Buffer& dst);
 
 }  // namespace sdb::network

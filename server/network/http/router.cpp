@@ -26,7 +26,6 @@
 #include <string>
 #include <utility>
 #include <variant>
-#include <yaclib/async/make.hpp>
 
 #include "basics/assert.h"
 
@@ -43,7 +42,7 @@ void HttpRouter::Add(HttpMethod method, std::string_view pattern,
   _routes.push_back({method, std::move(compiled.value()), std::move(handler)});
 }
 
-yaclib::Future<HttpResponse> HttpRouter::Route(HttpRequest& request) {
+HttpHandler* HttpRouter::Match(HttpRequest& request) {
   std::string_view target = request.target;
   const size_t cut = target.find_first_of("?#");
   const std::string_view path =
@@ -62,7 +61,7 @@ yaclib::Future<HttpResponse> HttpRouter::Route(HttpRequest& request) {
     }
   }
   if (path.empty() || path.front() != '/') {
-    return yaclib::MakeFuture(HttpResponse::NotFound());
+    return nullptr;
   }
   const std::string url = absl::StrCat("http://serenedb", path);
   for (auto& route : _routes) {
@@ -80,9 +79,9 @@ yaclib::Future<HttpResponse> HttpRouter::Route(HttpRequest& request) {
         request.params.emplace_back(name, std::move(value.value()));
       }
     }
-    return route.handler->Handle(request);
+    return route.handler.get();
   }
-  return yaclib::MakeFuture(HttpResponse::NotFound());
+  return nullptr;
 }
 
 }  // namespace sdb::network

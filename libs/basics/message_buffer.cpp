@@ -93,6 +93,14 @@ size_t ReadableEndOf(const Chunk* chunk, const BufferOffset& readable) {
 
 std::string_view Buffer::Front() noexcept {
   RefreshReadable();
+  // A head chunk consumed exactly to its boundary stays in place (Consume
+  // cannot free the then-watermark chunk); once the watermark moved on, skip
+  // and free it here -- otherwise Front() reports an empty view while later
+  // chunks hold readable bytes.
+  while (_readable && _head != _readable.chunk &&
+         _head->GetBegin() == ReadableEndOf(_head, _readable)) {
+    delete std::exchange(_head, _head->Next());
+  }
   const auto data = _head->Data(ReadableEndOf(_head, _readable));
   return {reinterpret_cast<const char*>(data.data()), data.size()};
 }

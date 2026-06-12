@@ -21,17 +21,43 @@
 #pragma once
 
 #include <yaclib/async/future.hpp>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/coro.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "network/http/request.h"
-#include "network/http/response.h"
+#include "network/http/response_writer.h"
+
+namespace duckdb {
+class Connection;
+}
 
 namespace sdb::network {
 
+// Session-scoped services a handler may need; implemented by the session and
+// valid for the duration of one Handle call (on the session's duckdb task).
+class RequestContext {
+ public:
+  virtual ~RequestContext() = default;
+  // Lazily-created per-session duckdb connection (the storage seam: handlers
+  // speak SQL through it, never to a concrete table backend).
+  virtual duckdb::Connection& Connection() = 0;
+  // Authenticated user; empty = trust/anonymous.
+  virtual std::string_view User() const = 0;
+};
+
+// Runs on the session's duckdb task (NOT an io thread): handlers may drive
+// queries and block on backpressure. Output goes exclusively through the
+// writer, straight into the session's send buffer; a handler that returns
+// without finishing the response gets a 500 if the head is not yet out, or
+// the connection dropped if it is.
 class HttpHandler {
  public:
   virtual ~HttpHandler() = default;
 
-  virtual yaclib::Future<HttpResponse> Handle(const HttpRequest& request) = 0;
+  virtual yaclib::Future<> Handle(RequestContext& context,
+                                  const HttpRequest& request,
+                                  http::HttpResponseWriter& writer) = 0;
 };
 
 }  // namespace sdb::network

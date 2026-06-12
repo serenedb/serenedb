@@ -20,36 +20,11 @@
 
 #pragma once
 
-#include <ada.h>
+#include "network/http/router.h"
 
-#include <memory>
-#include <string_view>
-#include <vector>
+namespace sdb::network::http::es {
 
-#include "network/ada_re2_provider.h"
-#include "network/http/handler.h"
+// The standard Elasticsearch API surface (spec: rest-api-spec).
+void Register(HttpRouter& router);
 
-namespace sdb::network {
-
-class HttpRouter {
- public:
-  void Add(HttpMethod method, std::string_view pattern,
-           std::unique_ptr<HttpHandler> handler);
-
-  // Parses the query string into request.query, matches method + path,
-  // fills request.params from the pattern groups. nullptr = no route.
-  HttpHandler* Match(HttpRequest& request);
-
- private:
-  using Pattern = ada::url_pattern<AdaRe2Provider>;
-
-  struct Entry {
-    HttpMethod method;
-    Pattern pattern;
-    std::unique_ptr<HttpHandler> handler;
-  };
-
-  std::vector<Entry> _routes;
-};
-
-}  // namespace sdb::network
+}  // namespace sdb::network::http::es

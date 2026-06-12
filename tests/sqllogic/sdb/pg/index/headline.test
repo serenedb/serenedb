@@ -1200,9 +1200,10 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: hl_dyn       │
+│   Type: Sequential Scan   │
 │      Projections: doc     │
 │                           │
 │          ~2 rows          │
@@ -1229,9 +1230,10 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: hl_dyn       │
+│   Type: Sequential Scan   │
 │      Projections: doc     │
 │                           │
 │          ~2 rows          │

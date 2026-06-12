@@ -11,9 +11,10 @@ EXPLAIN select * from t;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │          Table: t         │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             c1            │
@@ -28,7 +29,7 @@ EXPLAIN INSERT INTO t VALUES ('text', 42);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           INSERT          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │      COLUMN_DATA_SCAN     │

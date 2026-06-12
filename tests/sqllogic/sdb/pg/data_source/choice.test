@@ -24,14 +24,16 @@ EXPLAIN SELECT * FROM t_choice WHERE id = 2;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
-│       Filter: (id=2)      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            val            │
+│                           │
+│     Filters: (id = 2)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -43,6 +45,14 @@ EXPLAIN SELECT * FROM t_choice ORDER BY id;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │      t_choice.id ASC      │
@@ -50,9 +60,18 @@ QUERY PLAN
 │          ~3 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
@@ -94,14 +113,16 @@ EXPLAIN SELECT * FROM t_choice WHERE id = 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
-│       Filter: (id=4)      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            val            │
+│                           │
+│     Filters: (id = 4)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -124,25 +145,29 @@ QUERY PLAN
 ┌───────────────────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│ (((val >= 20) OR (val < 20│
-│ )) AND (((id < 8) AND (val│
-│   >= 20)) OR ((id >= 10)  │
-│      AND (val < 20))))    │
+│ (((id < 8) OR (id >= 10)) │
+│  AND ((val >= 20) OR (val │
+│ < 20)) AND (((id < 8) AND │
+│ (val >= 20)) OR ((id >= 10│
+│    ) AND (val < 20))))    │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│          Filter:          │
-│       {id=(-inf, 8)}      │
-│      {id=[10, +inf)}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            val            │
+│                           │
+│          Filters:         │
+│ optional: ((id < 8) OR (id│
+│           >= 10))         │
+│ optional: ((val >= 20) OR │
+│        (val < 20))        │
 │                           │
 │          ~6 rows          │
 └───────────────────────────┘
@@ -168,15 +193,19 @@ EXPLAIN SELECT * FROM t_choice_cpk WHERE a = 3 AND b = 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│     Filter: (a=3, b=4)    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
+│                           │
+│          Filters:         │
+│          (a = 3)          │
+│          (b = 4)          │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -189,24 +218,44 @@ EXPLAIN SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~3 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│       Filter: {a=3}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~3 rows          │
+│      Filters: (a = 3)     │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -217,6 +266,15 @@ EXPLAIN SELECT * FROM t_choice_cpk ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │     t_choice_cpk.a ASC    │
@@ -224,9 +282,19 @@ QUERY PLAN
 │          ~3 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -268,28 +336,59 @@ EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 AND b=2) OR (a=3 AND b=4) ORDER BY
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~2 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((a = 1) OR (a = 3)) AND │
+│ ((b = 2) OR (b = 4)) AND (│
+│ ((a = 1) AND (b = 2)) OR (│
+│   (a = 3) AND (b = 4))))  │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│          Filter:          │
-│         (a=1, b=2)        │
-│         (a=3, b=4)        │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~2 rows          │
+│          Filters:         │
+│ optional: ((a = 1) OR (a =│
+│             3))           │
+│ optional: ((b = 2) OR (b =│
+│             4))           │
+│                           │
+│          ~8 rows          │
 └───────────────────────────┘
 
 query
@@ -305,26 +404,53 @@ EXPLAIN SELECT * FROM t_choice_cpk WHERE a=1 AND (b=2 OR b=4) ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~2 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│    ((b = 2) OR (b = 4))   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│          Filter:          │
-│         (a=1, b=2)        │
-│         (a=1, b=4)        │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
+│                           │
+│          Filters:         │
+│          (a = 1)          │
+│ optional: ((b = 2) OR (b =│
+│             4))           │
 │                           │
 │          ~2 rows          │
 └───────────────────────────┘
@@ -349,28 +475,51 @@ EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND (a=2 OR b=4) ORDER BY 
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~2 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((a = 1) OR (b = 2)) AND │
+│   ((a = 2) OR (b = 4)))   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│          Filter:          │
-│         (a=1, b=4)        │
-│         (a=2, b=2)        │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~2 rows          │
+│          ~8 rows          │
 └───────────────────────────┘
 
 
@@ -383,10 +532,28 @@ EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND 1=1 ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -398,9 +565,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -418,10 +586,28 @@ EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) OR (1=2) ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -433,9 +619,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -454,25 +641,47 @@ EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 and b=2) OR (1=2) ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│           ~1 row          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│     Filter: (a=1, b=2)    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│           ~1 row          │
+│          Filters:         │
+│          (a = 1)          │
+│          (b = 2)          │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 
@@ -493,30 +702,55 @@ EXPLAIN SELECT * FROM t_choice_cpk WHERE a IN (1,3) AND b IN (2,6) ORDER BY a, b
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │     t_choice_cpk.a ASC    │
 │     t_choice_cpk.b ASC    │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((a = 1) OR (a = 3)) AND │
+│   ((b = 2) OR (b = 6)))   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│          Filter:          │
-│         (a=1, b=2)        │
-│         (a=1, b=6)        │
-│         (a=3, b=2)        │
-│         (a=3, b=6)        │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~4 rows          │
+│          Filters:         │
+│  optional: (a IN (1, 3))  │
+│  optional: (b IN (2, 6))  │
+│                           │
+│          ~8 rows          │
 └───────────────────────────┘
 
 
@@ -572,43 +806,18 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_big4pk      │
+│   Type: Sequential Scan   │
 │                           │
-│          Filter:          │
-│    (a=1, b=1, c=1, d=1)   │
-│    (a=1, b=1, c=1, d=2)   │
-│    (a=1, b=1, c=1, d=3)   │
-│    (a=1, b=1, c=1, d=4)   │
-│    (a=1, b=1, c=1, d=5)   │
-│    (a=1, b=1, c=1, d=6)   │
-│    (a=1, b=1, c=1, d=7)   │
-│    (a=1, b=1, c=1, d=8)   │
-│    (a=1, b=1, c=1, d=9)   │
-│   (a=1, b=1, c=1, d=10)   │
-│    (a=1, b=1, c=2, d=1)   │
-│    (a=1, b=1, c=2, d=2)   │
-│    (a=1, b=1, c=2, d=3)   │
-│    (a=1, b=1, c=2, d=4)   │
-│            ...            │
-│   (a=10, b=10, c=9, d=6)  │
-│   (a=10, b=10, c=9, d=7)  │
-│   (a=10, b=10, c=9, d=8)  │
-│   (a=10, b=10, c=9, d=9)  │
-│  (a=10, b=10, c=9, d=10)  │
-│  (a=10, b=10, c=10, d=1)  │
-│  (a=10, b=10, c=10, d=2)  │
-│  (a=10, b=10, c=10, d=3)  │
-│  (a=10, b=10, c=10, d=4)  │
-│  (a=10, b=10, c=10, d=5)  │
-│  (a=10, b=10, c=10, d=6)  │
-│  (a=10, b=10, c=10, d=7)  │
-│  (a=10, b=10, c=10, d=8)  │
-│  (a=10, b=10, c=10, d=9)  │
-│  (a=10, b=10, c=10, d=10) │
+│          Filters:         │
+│         (a <= 10)         │
+│         (b <= 10)         │
+│         (c <= 10)         │
+│         (d <= 10)         │
 │                           │
-│        ~10,000 rows       │
+│        ~2,928 rows        │
 └───────────────────────────┘
 
 
@@ -631,43 +840,18 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_big4pk      │
+│   Type: Sequential Scan   │
 │                           │
-│          Filter:          │
-│    (a=1, b=1, c=1, d=1)   │
-│    (a=1, b=1, c=1, d=2)   │
-│    (a=1, b=1, c=1, d=3)   │
-│    (a=1, b=1, c=1, d=4)   │
-│    (a=1, b=1, c=1, d=5)   │
-│    (a=1, b=1, c=1, d=6)   │
-│    (a=1, b=1, c=1, d=7)   │
-│    (a=1, b=1, c=1, d=8)   │
-│    (a=1, b=1, c=1, d=9)   │
-│   (a=1, b=1, c=1, d=10)   │
-│    (a=1, b=1, c=2, d=1)   │
-│    (a=1, b=1, c=2, d=2)   │
-│    (a=1, b=1, c=2, d=3)   │
-│    (a=1, b=1, c=2, d=4)   │
-│            ...            │
-│   (a=10, b=10, c=9, d=6)  │
-│   (a=10, b=10, c=9, d=7)  │
-│   (a=10, b=10, c=9, d=8)  │
-│   (a=10, b=10, c=9, d=9)  │
-│  (a=10, b=10, c=9, d=10)  │
-│  (a=10, b=10, c=10, d=1)  │
-│  (a=10, b=10, c=10, d=2)  │
-│  (a=10, b=10, c=10, d=3)  │
-│  (a=10, b=10, c=10, d=4)  │
-│  (a=10, b=10, c=10, d=5)  │
-│  (a=10, b=10, c=10, d=6)  │
-│  (a=10, b=10, c=10, d=7)  │
-│  (a=10, b=10, c=10, d=8)  │
-│  (a=10, b=10, c=10, d=9)  │
-│  (a=10, b=10, c=10, d=10) │
+│          Filters:         │
+│         (a <= 10)         │
+│         (b <= 10)         │
+│         (c <= 10)         │
+│         (d <= 10)         │
 │                           │
-│        ~10,000 rows       │
+│        ~2,928 rows        │
 └───────────────────────────┘
 
 statement ok
@@ -709,61 +893,18 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
+│          SEQ_SCAN         │
 │    ────────────────────   │
-│          IN (...)         │
+│    Table: t_not_all_pk    │
+│   Type: Sequential Scan   │
 │                           │
-│          ~20 rows         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         HASH_JOIN         │
-│    ────────────────────   │
-│      Join Type: MARK      │
-│     Conditions: c = #0    ├──────────────┐
-│                           │              │
-│         ~100 rows         │              │
-└─────────────┬─────────────┘              │
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP ││      COLUMN_DATA_SCAN     │
-│    ────────────────────   ││    ────────────────────   │
-│    Table: t_not_all_pk    ││                           │
-│                           ││                           │
-│          Filter:          ││                           │
-│         (a=1, b=1)        ││                           │
-│         (a=1, b=2)        ││                           │
-│         (a=1, b=3)        ││                           │
-│         (a=1, b=4)        ││                           │
-│         (a=1, b=5)        ││                           │
-│         (a=1, b=6)        ││                           │
-│         (a=1, b=7)        ││                           │
-│         (a=1, b=8)        ││                           │
-│         (a=1, b=9)        ││                           │
-│        (a=1, b=10)        ││                           │
-│         (a=2, b=1)        ││                           │
-│         (a=2, b=2)        ││                           │
-│         (a=2, b=3)        ││                           │
-│         (a=2, b=4)        ││                           │
-│            ...            ││                           │
-│         (a=9, b=6)        ││                           │
-│         (a=9, b=7)        ││                           │
-│         (a=9, b=8)        ││                           │
-│         (a=9, b=9)        ││                           │
-│        (a=9, b=10)        ││                           │
-│        (a=10, b=1)        ││                           │
-│        (a=10, b=2)        ││                           │
-│        (a=10, b=3)        ││                           │
-│        (a=10, b=4)        ││                           │
-│        (a=10, b=5)        ││                           │
-│        (a=10, b=6)        ││                           │
-│        (a=10, b=7)        ││                           │
-│        (a=10, b=8)        ││                           │
-│        (a=10, b=9)        ││                           │
-│        (a=10, b=10)       ││                           │
-│                           ││                           │
-│       Projections: c      ││                           │
-│                           ││                           │
-│         ~100 rows         ││          ~0 rows          │
-└───────────────────────────┘└───────────────────────────┘
+│          Filters:         │
+│         (a <= 10)         │
+│         (b <= 10)         │
+│         (c <= 10)         │
+│                           │
+│          ~24 rows         │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_not_all_pk;
@@ -781,26 +922,41 @@ EXPLAIN SELECT * FROM t_choice_nulls WHERE id IN (2,3) ORDER BY id;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │   t_choice_nulls.id ASC   │
 │                           │
-│          ~2 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │   Table: t_choice_nulls   │
-│                           │
-│          Filter:          │
-│           (id=2)          │
-│           (id=3)          │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            val            │
 │                           │
-│          ~2 rows          │
+│     Filters: (id >= 2)    │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -842,19 +998,18 @@ EXPLAIN SELECT * FROM t_neq WHERE id != 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_neq       │
-│                           │
-│          Filter:          │
-│       {id=(-inf, 4)}      │
-│       {id=(4, +inf)}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            val            │
 │                           │
-│          ~5 rows          │
+│     Filters: (id != 4)    │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT (id = 4)  ->  same two ranges as id != 4
@@ -873,19 +1028,19 @@ EXPLAIN SELECT * FROM t_neq WHERE NOT (id = 4);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_neq       │
-│                           │
-│          Filter:          │
-│       {id=(-inf, 4)}      │
-│       {id=(4, +inf)}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│       (NOT (id = 4))      │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT (id IN (2, 4))  ->  3 ranges: (-inf, 2), (2, 4), (4, +inf)  ->  3 rows
@@ -903,20 +1058,19 @@ EXPLAIN SELECT * FROM t_neq WHERE NOT (id IN (2, 4));
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_neq       │
-│                           │
-│          Filter:          │
-│       {id=(-inf, 2)}      │
-│        {id=(2, 4)}        │
-│       {id=(4, +inf)}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│    (NOT (id IN (2, 4)))   │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 statement ok
@@ -941,17 +1095,25 @@ EXPLAIN SELECT * FROM t_neq_cpk WHERE NOT (a != 1 OR b != 2);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│           FILTER          │
+│    ────────────────────   │
+│ (NOT ((a != 1) OR (b != 2)│
+│             ))            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_neq_cpk     │
-│     Filter: (a=1, b=2)    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│           ~1 row          │
+│          ~4 rows          │
 └───────────────────────────┘
 
 statement ok
@@ -983,24 +1145,48 @@ EXPLAIN SELECT * FROM t_range1 WHERE a < 2 OR a > 8 ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range1.a ASC      │
 │                           │
-│          ~7 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│    ((a < 2) OR (a > 8))   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range1      │
-│                           │
-│          Filter:          │
-│       {a=(-inf, 2)}       │
-│       {a=(8, +inf)}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
+│                           │
+│          Filters:         │
+│ optional: ((a < 2) OR (a >│
+│             8))           │
 │                           │
 │          ~7 rows          │
 └───────────────────────────┘
@@ -1022,23 +1208,41 @@ EXPLAIN SELECT * FROM t_range1 WHERE a > 2 AND a >= 3 ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range1.a ASC      │
 │                           │
-│          ~7 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range1      │
-│   Filter: {a=[3, +inf)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~7 rows          │
+│     Filters: (a >= 3)     │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # Single lower bound: a >= 5
@@ -1057,23 +1261,41 @@ EXPLAIN SELECT * FROM t_range1 WHERE a >= 5 ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range1.a ASC      │
 │                           │
-│          ~7 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range1      │
-│   Filter: {a=[5, +inf)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~7 rows          │
+│     Filters: (a >= 5)     │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # Single upper bound: a < 5
@@ -1091,23 +1313,41 @@ EXPLAIN SELECT * FROM t_range1 WHERE a < 5 ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range1.a ASC      │
 │                           │
-│          ~7 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range1      │
-│   Filter: {a=(-inf, 5)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~7 rows          │
+│      Filters: (a < 5)     │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # Closed interval: a >= 2 AND a <= 8
@@ -1126,23 +1366,42 @@ EXPLAIN SELECT * FROM t_range1 WHERE a >= 2 AND a <= 8 ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range1.a ASC      │
 │                           │
-│          ~7 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range1      │
-│     Filter: {a=[2, 8]}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~7 rows          │
+│          Filters:         │
+│  ((a >= 2) AND (a <= 8))  │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 statement ok
@@ -1180,26 +1439,46 @@ EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b > 5 ORDER BY b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~13 rows         │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│          Filter:          │
-│     {a=1, b=(5, +inf)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│          Filters:         │
+│          (a = 1)          │
+│          (b > 5)          │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # Inclusive lower bound: a=1 AND b >= 5
@@ -1217,26 +1496,46 @@ EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 5 ORDER BY b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~13 rows         │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│          Filter:          │
-│     {a=1, b=[5, +inf)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│          Filters:         │
+│          (a = 1)          │
+│          (b >= 5)         │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # Exclusive upper bound only: a=2 AND b < 7
@@ -1254,26 +1553,46 @@ EXPLAIN SELECT * FROM t_range WHERE a = 2 AND b < 7 ORDER BY b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~13 rows         │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│          Filter:          │
-│     {a=2, b=(-inf, 7)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│          Filters:         │
+│          (a = 2)          │
+│          (b < 7)          │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # Closed interval: a=1 AND b >= 3 AND b <= 7
@@ -1291,26 +1610,46 @@ EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 3 AND b <= 7 ORDER BY b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~13 rows         │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│          Filter:          │
-│      {a=1, b=[3, 7]}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│          Filters:         │
+│          (a = 1)          │
+│  ((b >= 3) AND (b <= 7))  │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # Half-open exclusive on both sides: a=1 AND b > 1 AND b < 9
@@ -1328,26 +1667,46 @@ EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b > 1 AND b < 9 ORDER BY b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~13 rows         │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│          Filter:          │
-│      {a=1, b=(1, 9)}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│          Filters:         │
+│          (a = 1)          │
+│   ((b > 1) AND (b < 9))   │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # --- OR of ranges ---
@@ -1366,27 +1725,54 @@ EXPLAIN SELECT * FROM t_range WHERE a = 1 AND (b < 3 OR b > 7) ORDER BY b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~13 rows         │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│    ((b < 3) OR (b > 7))   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│          Filter:          │
-│     {a=1, b=(-inf, 3)}    │
-│     {a=1, b=(7, +inf)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│          Filters:         │
+│          (a = 1)          │
+│ optional: ((b < 3) OR (b >│
+│             7))           │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # OR of overlapping ranges on the same equality prefix → merged into one.
@@ -1406,26 +1792,47 @@ EXPLAIN SELECT * FROM t_range WHERE (a=1 AND b >= 3 AND b <= 7) OR (a=1 AND b >=
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~13 rows         │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│          Filter:          │
-│      {a=1, b=[3, 9]}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│          Filters:         │
+│          (a = 1)          │
+│  (((b >= 3) AND (b <= 7)) │
+│        OR (b >= 5))       │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # OR of ranges with different equality prefixes → two separate range constraints.
@@ -1443,26 +1850,57 @@ EXPLAIN SELECT * FROM t_range WHERE (a=1 AND b > 7) OR (a=2 AND b > 5) ORDER BY 
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.a ASC       │
 │       t_range.b ASC       │
 │                           │
-│          ~13 rows         │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((a = 1) OR (a = 2)) AND │
+│ ((b > 7) OR (b > 5)) AND (│
+│ ((a = 1) AND (b > 7)) OR (│
+│   (a = 2) AND (b > 5))))  │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│          Filter:          │
-│     {a=1, b=(7, +inf)}    │
-│     {a=2, b=(5, +inf)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
+│                           │
+│          Filters:         │
+│ optional: ((a = 1) OR (a =│
+│             2))           │
+│ optional: ((b > 7) OR (b >│
+│             5))           │
 │                           │
 │          ~13 rows         │
 └───────────────────────────┘
@@ -1488,25 +1926,45 @@ EXPLAIN SELECT * FROM t_range WHERE a > 1 ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.a ASC       │
 │       t_range.b ASC       │
 │                           │
-│          ~13 rows         │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│   Filter: {a=(1, +inf)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│      Filters: (a > 1)     │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 query
@@ -1528,26 +1986,52 @@ EXPLAIN SELECT * FROM t_range WHERE a <= 1 OR a > 2 ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.a ASC       │
 │       t_range.b ASC       │
 │                           │
-│          ~13 rows         │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│   ((a <= 1) OR (a > 2))   │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│          Filter:          │
-│       {a=(-inf, 1]}       │
-│       {a=(2, +inf)}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
+│                           │
+│          Filters:         │
+│ optional: ((a <= 1) OR (a │
+│           > 2))           │
 │                           │
 │          ~13 rows         │
 └───────────────────────────┘
@@ -1569,10 +2053,28 @@ EXPLAIN SELECT * FROM t_range WHERE b > 5 ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.a ASC       │
 │       t_range.b ASC       │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
 │                           │
 │          ~2 rows          │
 └─────────────┬─────────────┘
@@ -1586,23 +2088,19 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│          (b > 5)          │
-│                           │
-│          ~2 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             b             │
 │             a             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│      Filters: (b > 5)     │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 # OR mixing a range-scannable branch with a non-range-scannable one → full scan.
@@ -1626,10 +2124,28 @@ EXPLAIN SELECT * FROM t_range WHERE (a=1 AND b > 5) OR (b > 3) ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.a ASC       │
 │       t_range.b ASC       │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
 │                           │
 │          ~2 rows          │
 └─────────────┬─────────────┘
@@ -1643,14 +2159,19 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
+│                           │
+│          Filters:         │
+│ optional: ((b > 5) OR (b >│
+│             3))           │
 │                           │
 │          ~13 rows         │
 └───────────────────────────┘
@@ -1670,6 +2191,15 @@ EXPLAIN SELECT * FROM t_range WHERE a > 1 AND b > 5 ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range.a ASC       │
@@ -1678,24 +2208,30 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
+│         PROJECTION        │
 │    ────────────────────   │
-│          (b > 5)          │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
 │                           │
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│   Filter: {a=(1, +inf)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│          Filters:         │
+│          (a > 1)          │
+│          (b > 5)          │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 # Impossible range (b > 9 AND b < 1) → contradiction → 0 rows, full scan.
@@ -1733,17 +2269,21 @@ EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 5 AND b <= 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│     Filter: (a=1, b=5)    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│           ~1 row          │
+│          Filters:         │
+│          (a = 1)          │
+│  ((b >= 5) AND (b <= 5))  │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # NULL value in non-PK column passes through range scan correctly.
@@ -1762,29 +2302,10 @@ QUERY PLAN
 │    ────────────────────   │
 │       t_range.b ASC       │
 │                           │
-│          ~2 rows          │
+│          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│       (val IS NULL)       │
-│                           │
-│          ~2 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
-│    ────────────────────   │
-│       Table: t_range      │
-│                           │
-│          Filter:          │
-│     {a=1, b=(5, +inf)}    │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│            val            │
-│                           │
-│          ~13 rows         │
+│        EMPTY_RESULT       │
 └───────────────────────────┘
 
 # --- RYOW: range lookup within a transaction ---
@@ -1811,19 +2332,21 @@ EXPLAIN SELECT * FROM t_range WHERE a = 4 AND b > 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│          Filter:          │
-│     {a=4, b=(5, +inf)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~13 rows         │
+│          Filters:         │
+│          (a = 4)          │
+│          (b > 5)          │
+│                           │
+│          ~3 rows          │
 └───────────────────────────┘
 
 statement ok
@@ -1860,19 +2383,37 @@ EXPLAIN SELECT * FROM t_range3 WHERE a = 1 AND b = 2 AND c > 3 ORDER BY c;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range3.c ASC      │
 │                           │
-│          ~8 rows          │
+│          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│    CAST(#3 AS UTINYINT)   │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range3      │
-│                           │
-│          Filter:          │
-│  {a=1, b=2, c=(3, +inf)}  │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -1880,7 +2421,12 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~8 rows          │
+│          Filters:         │
+│          (a = 1)          │
+│          (b = 2)          │
+│          (c > 3)          │
+│                           │
+│          ~4 rows          │
 └───────────────────────────┘
 
 # a=1 AND b=2 (only equalities, no range col) → range lookup on equality prefix.
@@ -1899,17 +2445,37 @@ EXPLAIN SELECT * FROM t_range3 WHERE a = 1 AND b = 2 ORDER BY c;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range3.c ASC      │
 │                           │
-│          ~8 rows          │
+│          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│    CAST(#3 AS UTINYINT)   │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range3      │
-│     Filter: {a=1, b=2}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -1917,7 +2483,11 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~8 rows          │
+│          Filters:         │
+│          (a = 1)          │
+│          (b = 2)          │
+│                           │
+│          ~4 rows          │
 └───────────────────────────┘
 
 # a=1 AND c>3 (gap: b not constrained) → not a valid prefix → full scan.
@@ -1935,12 +2505,32 @@ EXPLAIN SELECT * FROM t_range3 WHERE a = 1 AND c > 3 ORDER BY b, c;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range3.b ASC      │
 │       t_range3.c ASC      │
 │                           │
-│           ~1 row          │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│    CAST(#3 AS UTINYINT)   │
+│                           │
+│          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -1950,20 +2540,13 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│           ~1 row          │
+│          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│          (c > 3)          │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range3      │
-│       Filter: {a=1}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -1971,7 +2554,11 @@ QUERY PLAN
 │             b             │
 │            val            │
 │                           │
-│          ~8 rows          │
+│          Filters:         │
+│          (a = 1)          │
+│          (c > 3)          │
+│                           │
+│          ~4 rows          │
 └───────────────────────────┘
 
 # a > 1 range on first col of 3-col PK → range lookup on a.
@@ -1988,19 +2575,39 @@ EXPLAIN SELECT * FROM t_range3 WHERE a > 1 ORDER BY a, b, c;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range3.a ASC      │
 │       t_range3.b ASC      │
 │       t_range3.c ASC      │
 │                           │
-│          ~8 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│    CAST(#3 AS UTINYINT)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range3      │
-│   Filter: {a=(1, +inf)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -2008,7 +2615,9 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~8 rows          │
+│      Filters: (a > 1)     │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # OR of two complete-prefix ranges on 3-col PK.
@@ -2025,22 +2634,49 @@ EXPLAIN SELECT * FROM t_range3 WHERE (a=1 AND b=2 AND c>5) OR (a=2 AND b=2 AND c
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range3.a ASC      │
 │       t_range3.b ASC      │
 │       t_range3.c ASC      │
 │                           │
-│          ~8 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│    CAST(#3 AS UTINYINT)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((c > 5) OR (c < 5)) AND │
+│ ((a = 1) OR (a = 2)) AND (│
+│ ((a = 1) AND (c > 5)) OR (│
+│   (a = 2) AND (c < 5))))  │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range3      │
-│                           │
-│          Filter:          │
-│  {a=1, b=2, c=(5, +inf)}  │
-│  {a=2, b=2, c=(-inf, 5)}  │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -2048,7 +2684,14 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~8 rows          │
+│          Filters:         │
+│ optional: ((a = 1) OR (a =│
+│             2))           │
+│          (b = 2)          │
+│ optional: ((c > 5) OR (c <│
+│             5))           │
+│                           │
+│          ~4 rows          │
 └───────────────────────────┘
 
 
@@ -2069,6 +2712,16 @@ EXPLAIN SELECT * FROM t_range3 WHERE (a <= 1 AND b <= 2) OR (a < 2 AND b < 3) OR
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_range3.a ASC      │
@@ -2078,25 +2731,42 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│    CAST(#3 AS UTINYINT)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│ (((b <= 2) OR (b < 3)) AND│
+│ (((a <= 1) OR (a < 2)) AND│
+│  ((b <= 2) OR (b < 3)) AND│
 │  (((a <= 1) AND (b <= 2)) │
 │ OR ((a < 2) AND (b < 3))))│
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_range3      │
-│   Filter: {a=(-inf, 2)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │             c             │
 │            val            │
+│                           │
+│          Filters:         │
+│ optional: ((a <= 1) OR (a │
+│           < 2))           │
+│ optional: ((b <= 2) OR (b │
+│           < 3))           │
 │                           │
 │          ~8 rows          │
 └───────────────────────────┘
@@ -2127,23 +2797,42 @@ EXPLAIN SELECT * FROM t_not WHERE NOT (a > 5) ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_not       │
-│   Filter: {a=(-inf, 5]}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│       (NOT (a > 5))       │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(a >= v) → a < v  (range_lookup)
@@ -2160,23 +2849,42 @@ EXPLAIN SELECT * FROM t_not WHERE NOT (a >= 5) ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_not       │
-│   Filter: {a=(-inf, 5)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│       (NOT (a >= 5))      │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(a < v) → a >= v  (range_lookup)
@@ -2194,23 +2902,42 @@ EXPLAIN SELECT * FROM t_not WHERE NOT (a < 5) ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_not       │
-│   Filter: {a=[5, +inf)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│       (NOT (a < 5))       │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(a <= v) → a > v  (range_lookup)
@@ -2227,23 +2954,42 @@ EXPLAIN SELECT * FROM t_not WHERE NOT (a <= 5) ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_not       │
-│   Filter: {a=(5, +inf)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│       (NOT (a <= 5))      │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(NOT(a > v)) → double negation → a > v  (range_lookup)
@@ -2260,23 +3006,42 @@ EXPLAIN SELECT * FROM t_not WHERE NOT (NOT (a > 5)) ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_not       │
-│   Filter: {a=(5, +inf)}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│    (NOT (NOT (a > 5)))    │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(a > x AND a < y) → De Morgan → a <= x OR a >= y  (two ranges)
@@ -2295,26 +3060,42 @@ EXPLAIN SELECT * FROM t_not WHERE NOT (a > 3 AND a < 7) ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│          Filter:          │
-│       {a=(-inf, 3]}       │
-│       {a=[7, +inf)}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│(NOT ((a > 3) AND (a < 7)))│
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(a > x OR a < y) → De Morgan → a <= x AND a >= y  (single range)
@@ -2332,23 +3113,42 @@ EXPLAIN SELECT * FROM t_not WHERE NOT (a > 7 OR a < 3) ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_not       │
-│     Filter: {a=[3, 7]}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│ (NOT ((a > 7) OR (a < 3)))│
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(a = v) → full scan (equality negation not pushed to range)
@@ -2367,26 +3167,42 @@ EXPLAIN SELECT * FROM t_not WHERE NOT (a = 5) ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│          Filter:          │
-│       {a=(-inf, 5)}       │
-│       {a=(5, +inf)}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│       (NOT (a = 5))       │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(a IN (...)) → full scan (IN negation not pushed to range)
@@ -2404,27 +3220,42 @@ EXPLAIN SELECT * FROM t_not WHERE NOT (a IN (3, 7)) ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not.a ASC        │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│          Filter:          │
-│       {a=(-inf, 3)}       │
-│         {a=(3, 7)}        │
-│       {a=(7, +inf)}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│    (NOT (a IN (3, 7)))    │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 statement ok
@@ -2453,25 +3284,46 @@ EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 3) ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not2.a ASC       │
 │        t_not2.b ASC       │
 │                           │
-│          ~6 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_not2       │
-│   Filter: {a=(-inf, 3]}   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~6 rows          │
+│          Filters:         │
+│       (NOT (a > 3))       │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(NOT(a = 1 AND b > 2)) → double negation → a = 1 AND b > 2  (range_lookup with prefix)
@@ -2487,20 +3339,44 @@ EXPLAIN SELECT * FROM t_not2 WHERE NOT (NOT (a = 1 AND b > 2)) ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not2.a ASC       │
 │        t_not2.b ASC       │
 │                           │
-│          ~6 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (NOT (NOT ((a = 1) AND (b │
+│          > 2))))          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_not2       │
-│                           │
-│          Filter:          │
-│     {a=1, b=(2, +inf)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -2524,25 +3400,46 @@ EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 4 OR a < 2) ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not2.a ASC       │
 │        t_not2.b ASC       │
 │                           │
-│          ~6 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_not2       │
-│     Filter: {a=[2, 4]}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~6 rows          │
+│          Filters:         │
+│ (NOT ((a > 4) OR (a < 2)))│
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(a > 1 AND a < 5) → De Morgan → a <= 1 OR a >= 5  (two ranges)
@@ -2561,28 +3458,46 @@ EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 1 AND a < 5) ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not2.a ASC       │
 │        t_not2.b ASC       │
 │                           │
-│          ~6 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_not2       │
-│                           │
-│          Filter:          │
-│       {a=(-inf, 1]}       │
-│       {a=[5, +inf)}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~6 rows          │
+│          Filters:         │
+│(NOT ((a > 1) AND (a < 5)))│
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # NOT(a = 1 AND b > 2) → De Morgan AND → a != 1 OR b <= 2 → full scan (OR loses prefix)
@@ -2602,10 +3517,28 @@ EXPLAIN SELECT * FROM t_not2 WHERE NOT (a = 1 AND b > 2) ORDER BY a, b;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │        t_not2.a ASC       │
 │        t_not2.b ASC       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -2617,9 +3550,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_not2       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -2666,13 +3600,10 @@ EXPLAIN SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name = 'a
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│          Filter:          │
-│  (region=1, priority=10,  │
-│         name=alice)       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │           region          │
@@ -2680,7 +3611,12 @@ QUERY PLAN
 │            name           │
 │           score           │
 │                           │
-│           ~1 row          │
+│          Filters:         │
+│        (region = 1)       │
+│      (priority = 10)      │
+│      (name = 'alice')     │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 # Equality prefix + range on third column (name <= 'bob').
@@ -2697,20 +3633,39 @@ EXPLAIN SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name <= '
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│     CAST(#0 AS BIGINT)    │
+│    CAST(#1 AS INTEGER)    │
+│__internal_decompress_strin│
+│           g(#2)           │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │    t_complex."name" ASC   │
 │                           │
-│          ~8 rows          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│__internal_compress_string_│
+│        ubigint(#2)        │
+│    CAST(#3 AS SMALLINT)   │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│          Filter:          │
-│  {region=1, priority=10,  │
-│      name=(-inf, bob]}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │           region          │
@@ -2718,7 +3673,12 @@ QUERY PLAN
 │            name           │
 │           score           │
 │                           │
-│          ~8 rows          │
+│          Filters:         │
+│        (region = 1)       │
+│      (priority = 10)      │
+│      (name <= 'bob')      │
+│                           │
+│          ~2 rows          │
 └───────────────────────────┘
 
 # Equality on first + range on second column (priority > 15).
@@ -2735,21 +3695,40 @@ EXPLAIN SELECT * FROM t_complex WHERE region = 1 AND priority > 15 ORDER BY prio
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│     CAST(#0 AS BIGINT)    │
+│    CAST(#1 AS INTEGER)    │
+│__internal_decompress_strin│
+│           g(#2)           │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~8 rows          │
+│          ~3 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│__internal_compress_string_│
+│        ubigint(#2)        │
+│    CAST(#3 AS SMALLINT)   │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│          Filter:          │
-│ {region=1, priority=(15,  │
-│           +inf)}          │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │           region          │
@@ -2757,7 +3736,11 @@ QUERY PLAN
 │            name           │
 │           score           │
 │                           │
-│          ~8 rows          │
+│          Filters:         │
+│        (region = 1)       │
+│      (priority > 15)      │
+│                           │
+│          ~3 rows          │
 └───────────────────────────┘
 
 # OR of two prefix ranges on first column.
@@ -2778,28 +3761,59 @@ EXPLAIN SELECT * FROM t_complex WHERE region <= 1 OR region >= 3 ORDER BY region
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│     CAST(#0 AS BIGINT)    │
+│    CAST(#1 AS INTEGER)    │
+│__internal_decompress_strin│
+│           g(#2)           │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │    t_complex.region ASC   │
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~8 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│__internal_compress_string_│
+│        ubigint(#2)        │
+│    CAST(#3 AS SMALLINT)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((region <= 1) OR (region │
+│           >= 3))          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│          Filter:          │
-│     {region=(-inf, 1]}    │
-│     {region=[3, +inf)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │           region          │
 │          priority         │
 │            name           │
 │           score           │
+│                           │
+│          Filters:         │
+│  optional: ((region <= 1) │
+│      OR (region >= 3))    │
 │                           │
 │          ~8 rows          │
 └───────────────────────────┘
@@ -2823,11 +3837,33 @@ EXPLAIN SELECT * FROM t_complex WHERE NOT (region > 1 AND priority < 20) ORDER B
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│     CAST(#0 AS BIGINT)    │
+│    CAST(#1 AS INTEGER)    │
+│__internal_decompress_strin│
+│           g(#2)           │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │    t_complex.region ASC   │
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│__internal_compress_string_│
+│        ubigint(#2)        │
+│    CAST(#3 AS SMALLINT)   │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -2840,9 +3876,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_complex     │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │           region          │
@@ -2871,21 +3908,41 @@ EXPLAIN SELECT * FROM t_complex WHERE NOT (region < 1 OR region > 2) ORDER BY re
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│     CAST(#0 AS BIGINT)    │
+│    CAST(#1 AS INTEGER)    │
+│__internal_decompress_strin│
+│           g(#2)           │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │    t_complex.region ASC   │
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~8 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│__internal_compress_string_│
+│        ubigint(#2)        │
+│    CAST(#3 AS SMALLINT)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│          Filter:          │
-│      {region=[1, 2]}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │           region          │
@@ -2893,7 +3950,10 @@ QUERY PLAN
 │            name           │
 │           score           │
 │                           │
-│          ~8 rows          │
+│          Filters:         │
+│     (NOT (region > 2))    │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # AND of prefix equality + NOT on range: region = 2 AND NOT(priority > 20).
@@ -2909,21 +3969,40 @@ EXPLAIN SELECT * FROM t_complex WHERE region = 2 AND NOT (priority > 20) ORDER B
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│     CAST(#0 AS BIGINT)    │
+│    CAST(#1 AS INTEGER)    │
+│__internal_decompress_strin│
+│           g(#2)           │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~8 rows          │
+│          ~3 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│__internal_compress_string_│
+│        ubigint(#2)        │
+│    CAST(#3 AS SMALLINT)   │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│          Filter:          │
-│ {region=2, priority=(-inf,│
-│            20]}           │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │           region          │
@@ -2931,7 +4010,11 @@ QUERY PLAN
 │            name           │
 │           score           │
 │                           │
-│          ~8 rows          │
+│          Filters:         │
+│        (region = 2)       │
+│   (NOT (priority > 20))   │
+│                           │
+│          ~3 rows          │
 └───────────────────────────┘
 
 # Complex: (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10).
@@ -2949,24 +4032,49 @@ EXPLAIN SELECT * FROM t_complex WHERE (region = 1 AND priority <= 10) OR (region
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│     CAST(#0 AS BIGINT)    │
+│    CAST(#1 AS INTEGER)    │
+│__internal_decompress_strin│
+│           g(#2)           │
+│    CAST(#3 AS INTEGER)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │    t_complex.region ASC   │
 │   t_complex.priority ASC  │
 │    t_complex."name" ASC   │
 │                           │
-│          ~8 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│__internal_compress_string_│
+│        ubigint(#2)        │
+│    CAST(#3 AS SMALLINT)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((region = 1) OR (region =│
+│             3))           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│          Filter:          │
-│ {region=1, priority=(-inf,│
-│            10]}           │
-│ {region=3, priority=(-inf,│
-│            10]}           │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │           region          │
@@ -2974,7 +4082,12 @@ QUERY PLAN
 │            name           │
 │           score           │
 │                           │
-│          ~8 rows          │
+│          Filters:         │
+│ optional: ((region = 1) OR│
+│        (region = 3))      │
+│      (priority <= 10)     │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 statement ok
@@ -2999,16 +4112,7 @@ EXPLAIN SELECT * FROM t_void WHERE a < 1 AND a > 1;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
-│    ────────────────────   │
-│       Table: t_void       │
-│     Filter: {a=empty}     │
-│                           │
-│        Projections:       │
-│             a             │
-│            val            │
-│                           │
-│          ~3 rows          │
+│        EMPTY_RESULT       │
 └───────────────────────────┘
 
 # a > 5 AND a < 3 → contradictory.
@@ -3055,22 +4159,16 @@ EXPLAIN SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR a = 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│ ((a = 3) OR ((a < 1) AND  │
-│         (a > 1)))         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: t_void       │
-│       Filter: (a=3)       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            val            │
+│                           │
+│      Filters: (a = 3)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -3087,16 +4185,7 @@ EXPLAIN SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR (a > 5 AND a < 3);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
-│    ────────────────────   │
-│       Table: t_void       │
-│     Filter: {a=empty}     │
-│                           │
-│        Projections:       │
-│             a             │
-│            val            │
-│                           │
-│          ~3 rows          │
+│        EMPTY_RESULT       │
 └───────────────────────────┘
 
 statement ok
@@ -3147,13 +4236,22 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│           FILTER          │
+│    ────────────────────   │
+│    ((a < 2) OR (a > 2))   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
+│   Type: Sequential Scan   │
+│       Projections: a      │
 │                           │
-│          Filter:          │
-│       {a=(-inf, 2)}       │
-│       {a=(2, +inf)}       │
+│          Filters:         │
+│ optional: ((a < 2) OR (a >│
+│             2))           │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3189,10 +4287,15 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
+│   Type: Sequential Scan   │
 │       Projections: a      │
+│                           │
+│          Filters:         │
+│ optional: ((a <= 2) OR (a │
+│           >= 2))          │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3227,10 +4330,15 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
+│   Type: Sequential Scan   │
 │       Projections: a      │
+│                           │
+│          Filters:         │
+│ optional: ((a < 2) OR (a >│
+│           = 2))           │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3257,17 +4365,15 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│   ((a <= 2) OR (a >= 1))  │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
+│   Type: Sequential Scan   │
 │       Projections: a      │
+│                           │
+│          Filters:         │
+│ optional: ((a <= 2) OR (a │
+│           >= 1))          │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3294,12 +4400,13 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│       Filter: {a=2}       │
+│   Type: Sequential Scan   │
+│      Filters: (a = 2)     │
 │                           │
-│          ~27 rows         │
+│          ~9 rows          │
 └───────────────────────────┘
 
 
@@ -3325,16 +4432,15 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
+│   Type: Sequential Scan   │
 │                           │
-│          Filter:          │
-│       {a=(-inf, 1)}       │
-│         {a=(1, 3)}        │
-│       {a=(3, +inf)}       │
+│          Filters:         │
+│   ((a > 1) AND (a < 3))   │
 │                           │
-│          ~27 rows         │
+│          ~5 rows          │
 └───────────────────────────┘
 
 
@@ -3363,16 +4469,21 @@ QUERY PLAN
 │    ────────────────────   │
 │    ((b < 2) OR (b > 1))   │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│       Filter: {a=2}       │
+│   Type: Sequential Scan   │
 │       Projections: b      │
 │                           │
-│          ~27 rows         │
+│          Filters:         │
+│          (a = 2)          │
+│ optional: ((b < 2) OR (b >│
+│             1))           │
+│                           │
+│          ~9 rows          │
 └───────────────────────────┘
 
 
@@ -3402,16 +4513,21 @@ QUERY PLAN
 │    ────────────────────   │
 │   ((b <= 2) OR (b > 2))   │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│       Filter: {a=1}       │
+│   Type: Sequential Scan   │
 │       Projections: b      │
 │                           │
-│          ~27 rows         │
+│          Filters:         │
+│          (a = 1)          │
+│ optional: ((b <= 2) OR (b │
+│           > 2))           │
+│                           │
+│          ~9 rows          │
 └───────────────────────────┘
 
 
@@ -3457,13 +4573,20 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
+│                           │
+│          Filters:         │
+│ optional: ((a <= 2) OR (a │
+│           >= 2))          │
+│ optional: ((b <= 2) OR (b │
+│           >= 2))          │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3488,22 +4611,53 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~2 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((c = 1) OR (c = 2)) AND │
+│ ((a = 1) OR (a = 2)) AND (│
+│ (b = 1) OR (b = 2)) AND ((│
+│ (a = 1) AND (b = 1) AND (c│
+│  = 1)) OR ((a = 2) AND (b │
+│    = 2) AND (c = 2))))    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│      (a=1, b=1, c=1)      │
-│      (a=2, b=2, c=2)      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3511,7 +4665,15 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~2 rows          │
+│          Filters:         │
+│ optional: ((a = 1) OR (a =│
+│             2))           │
+│ optional: ((b = 1) OR (b =│
+│             2))           │
+│ optional: ((c = 1) OR (c =│
+│             2))           │
+│                           │
+│          ~27 rows         │
 └───────────────────────────┘
 
 
@@ -3532,21 +4694,41 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│          ~9 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│           ~1 row          │
+│          ~9 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
+│                           │
+│          ~9 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│      (a=3, b=3, c=3)      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3554,7 +4736,12 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│           ~1 row          │
+│          Filters:         │
+│          (a = 3)          │
+│          (b = 3)          │
+│          (c = 3)          │
+│                           │
+│          ~9 rows          │
 └───────────────────────────┘
 
 
@@ -3585,16 +4772,22 @@ QUERY PLAN
 │    ────────────────────   │
 │   ((c <= 2) OR (c > 2))   │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│     Filter: {a=1, b=1}    │
+│   Type: Sequential Scan   │
 │       Projections: c      │
 │                           │
-│          ~27 rows         │
+│          Filters:         │
+│          (a = 1)          │
+│          (b = 1)          │
+│ optional: ((c <= 2) OR (c │
+│           > 2))           │
+│                           │
+│          ~9 rows          │
 └───────────────────────────┘
 
 
@@ -3619,27 +4812,48 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
+│                           │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│ ((c = 1) AND ((b <= 2) OR │
-│         (b > 2)))         │
+│   ((b <= 2) OR (b > 2))   │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│       Filter: {a=2}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3647,7 +4861,13 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~27 rows         │
+│          Filters:         │
+│          (a = 2)          │
+│ optional: ((b <= 2) OR (b │
+│           > 2))           │
+│          (c = 1)          │
+│                           │
+│          ~9 rows          │
 └───────────────────────────┘
 
 
@@ -3666,35 +4886,31 @@ EXPLAIN SELECT COUNT(*) FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│    UNGROUPED_AGGREGATE    │
-│    ────────────────────   │
-│        Aggregates:        │
+│<slt:ignore>│
+│<slt:ignore>│
+│<slt:ignore>│
 │        count_star()       │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│<slt:ignore>│
-│<slt:ignore>│
-│<slt:ignore>│
-│ )) AND (((a <= 2) AND (b <│
-│ = 2) AND (c <= 2)) OR ((a │
-│ >= 1) AND (b >= 1) AND (c │
-│          >= 1))))         │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │             c             │
+│                           │
+│          Filters:         │
+│ optional: ((a <= 2) OR (a │
+│           >= 1))          │
+│ optional: ((b <= 2) OR (b │
+│           >= 1))          │
+│ optional: ((c <= 2) OR (c │
+│           >= 1))          │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3719,22 +4935,48 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~27 rows         │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│    ((c < 2) OR (c > 2))   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│  {a=1, b=2, c=(-inf, 2)}  │
-│  {a=1, b=2, c=(2, +inf)}  │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3742,7 +4984,13 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~27 rows         │
+│          Filters:         │
+│          (a = 1)          │
+│          (b = 2)          │
+│ optional: ((c < 2) OR (c >│
+│             2))           │
+│                           │
+│          ~9 rows          │
 └───────────────────────────┘
 
 
@@ -3768,22 +5016,55 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~2 rows          │
+│          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((c = 1) OR (c = 2)) AND │
+│ ((a = 1) OR (a = 2)) AND (│
+│ (b = 1) OR (b = 2)) AND ((│
+│ (a = 1) AND (b = 1) AND (c│
+│  = 1)) OR ((a = 2) AND (b │
+│ = 2) AND (c = 2)) OR ((a =│
+│  1) AND (b = 1) AND (c = 1│
+│            ))))           │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│      (a=1, b=1, c=1)      │
-│      (a=2, b=2, c=2)      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3791,7 +5072,15 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~2 rows          │
+│          Filters:         │
+│ optional: ((a = 1) OR (a =│
+│             2))           │
+│ optional: ((b = 1) OR (b =│
+│             2))           │
+│ optional: ((c = 1) OR (c =│
+│             2))           │
+│                           │
+│          ~27 rows         │
 └───────────────────────────┘
 
 
@@ -3821,6 +5110,17 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
@@ -3830,28 +5130,43 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
+│         PROJECTION        │
 │    ────────────────────   │
-│ (((b < 2) OR (b > 2)) AND │
-│ (((a < 2) AND (b < 2)) OR │
-│  ((a > 2) AND (b > 2))))  │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
 │                           │
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│           FILTER          │
+│    ────────────────────   │
+│ (((a < 2) OR (a > 2)) AND │
+│ ((b < 2) OR (b > 2)) AND (│
+│ ((a < 2) AND (b < 2)) OR (│
+│   (a > 2) AND (b > 2))))  │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│       {a=(-inf, 2)}       │
-│       {a=(2, +inf)}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │             c             │
 │            val            │
+│                           │
+│          Filters:         │
+│ optional: ((a < 2) OR (a >│
+│             2))           │
+│ optional: ((b < 2) OR (b >│
+│             2))           │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3879,6 +5194,17 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
@@ -3888,28 +5214,43 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
+│         PROJECTION        │
 │    ────────────────────   │
-│ (((b = 1) OR (b = 3)) AND │
-│ (((a < 2) AND (b = 1)) OR │
-│  ((a > 2) AND (b = 3))))  │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
 │                           │
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│           FILTER          │
+│    ────────────────────   │
+│ (((a < 2) OR (a > 2)) AND │
+│ ((b = 1) OR (b = 3)) AND (│
+│ ((a < 2) AND (b = 1)) OR (│
+│   (a > 2) AND (b = 3))))  │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│       {a=(-inf, 2)}       │
-│       {a=(2, +inf)}       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │             c             │
 │            val            │
+│                           │
+│          Filters:         │
+│ optional: ((a < 2) OR (a >│
+│             2))           │
+│ optional: ((b = 1) OR (b =│
+│             3))           │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3935,6 +5276,17 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
@@ -3944,29 +5296,47 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
+│         PROJECTION        │
 │    ────────────────────   │
-│ (((c < 3) OR (c > 1)) AND │
-│ (((a = 1) AND (b < 2) AND │
-│ (c < 3)) OR ((a = 3) AND  │
-│   (b > 2) AND (c > 1))))  │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
 │                           │
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│           FILTER          │
+│    ────────────────────   │
+│ (((c < 3) OR (c > 1)) AND │
+│ ((a = 1) OR (a = 3)) AND (│
+│ (b < 2) OR (b > 2)) AND ((│
+│ (a = 1) AND (b < 2) AND (c│
+│  < 3)) OR ((a = 3) AND (b │
+│    > 2) AND (c > 1))))    │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│     {a=1, b=(-inf, 2)}    │
-│     {a=3, b=(2, +inf)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │             c             │
 │            val            │
+│                           │
+│          Filters:         │
+│ optional: ((a = 1) OR (a =│
+│             3))           │
+│ optional: ((b < 2) OR (b >│
+│             2))           │
+│ optional: ((c < 3) OR (c >│
+│             1))           │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3999,31 +5369,50 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
+│                           │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│ ((b > 2) OR ((b <= 2) OR (│
-│   (b < 2) OR (b >= 1))))  │
+│ (((a = 1) AND (b < 2)) OR │
+│ ((a = 2) AND (b <= 2)) OR │
+│   ((a = 3) AND (b > 2)))  │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│     {a=1, b=(-inf, 2)}    │
-│      {a=2, b=[1, 2]}      │
-│     {a=3, b=(2, +inf)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -4031,7 +5420,11 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~27 rows         │
+│          Filters:         │
+│ (((a = 1) OR (a = 2)) OR  │
+│          (a = 3))         │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # All 3 PK columns constrained differently
@@ -4055,31 +5448,52 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
+│                           │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│ ((c = 2) OR ((c < 3) OR (c│
-│           > 1)))          │
+│ (((a = 1) AND (b = 1) AND │
+│ (c < 3)) OR ((a = 2) AND  │
+│ (b = 2) AND (c > 1)) OR ( │
+│ (a = 3) AND (b = 3) AND (c│
+│           = 2)))          │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│  {a=1, b=1, c=(-inf, 3)}  │
-│  {a=2, b=2, c=(1, +inf)}  │
-│      {a=3, b=3, c=2}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -4087,7 +5501,15 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~27 rows         │
+│          Filters:         │
+│ (((a = 1) OR (a = 2)) OR  │
+│          (a = 3))         │
+│ (((b = 1) OR (b = 2)) OR  │
+│          (b = 3))         │
+│ (((c < 3) OR (c > 1)) OR  │
+│          (c = 2))         │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # Overlapping a-ranges -> fall back to full scan with remaining filter
@@ -4123,13 +5545,20 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
+│                           │
+│          Filters:         │
+│ optional: ((a < 3) OR (a >│
+│             1))           │
+│ optional: ((b < 2) OR (b <│
+│             3))           │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -4159,24 +5588,49 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((a = 1) OR (a = 3)) AND │
+│   ((b = 1) OR (b = 3)))   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│      (a=1, b=1, c=2)      │
-│      (a=1, b=3, c=2)      │
-│      (a=3, b=1, c=2)      │
-│      (a=3, b=3, c=2)      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -4184,7 +5638,14 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~4 rows          │
+│          Filters:         │
+│ optional: ((a = 1) OR (a =│
+│             3))           │
+│ optional: ((b = 1) OR (b =│
+│             3))           │
+│          (c = 2)          │
+│                           │
+│          ~9 rows          │
 └───────────────────────────┘
 
 # Range on a, range on b, OR on c -> a is range column (prefix=1), b/c beyond prefix.
@@ -4212,27 +5673,48 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
+│                           │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│ ((b BETWEEN 2 AND 3) AND (│
-│    (c = 1) OR (c = 3)))   │
+│    ((c = 1) OR (c = 3))   │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│     Filter: {a=[1, 2]}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -4240,7 +5722,13 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~27 rows         │
+│          Filters:         │
+│          (a <= 2)         │
+│          (b >= 2)         │
+│ optional: ((c = 1) OR (c =│
+│             3))           │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # OR on a (point), neq on b, range on c -> prefix=2 (a equality + b range), c beyond.
@@ -4268,31 +5756,49 @@ EXPLAIN SELECT a, b, c, val FROM t_sweep3
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│    CAST(#1 AS INTEGER)    │
+│    CAST(#2 AS INTEGER)    │
+│__internal_decompress_integ│
+│    ral_integer(#3, 111)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │       t_sweep3.a ASC      │
 │       t_sweep3.b ASC      │
 │       t_sweep3.c ASC      │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│    CAST(#1 AS TINYINT)    │
+│    CAST(#2 AS TINYINT)    │
+│__internal_compress_integra│
+│    l_utinyint(#3, 111)    │
+│                           │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│          (c >= 2)         │
+│ (((a = 1) OR (a = 2)) AND │
+│   ((b < 2) OR (b > 2)))   │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│          Filter:          │
-│     {a=1, b=(-inf, 2)}    │
-│     {a=1, b=(2, +inf)}    │
-│     {a=2, b=(-inf, 2)}    │
-│     {a=2, b=(2, +inf)}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
@@ -4300,7 +5806,14 @@ QUERY PLAN
 │             c             │
 │            val            │
 │                           │
-│          ~27 rows         │
+│          Filters:         │
+│ optional: ((a = 1) OR (a =│
+│             2))           │
+│ optional: ((b < 2) OR (b >│
+│             2))           │
+│          (c >= 2)         │
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 # Tautological per-column ORs -> always true -> full scan.
@@ -4336,14 +5849,23 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_sweep3      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │             c             │
+│                           │
+│          Filters:         │
+│ optional: ((a > 1) OR (a <│
+│             2))           │
+│ optional: ((b > 1) OR (b <│
+│             2))           │
+│ optional: ((c > 1) OR (c <│
+│             2))           │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -4377,16 +5899,19 @@ EXPLAIN SELECT * FROM t_between WHERE id BETWEEN 2 AND 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_between     │
-│    Filter: {id=[2, 4]}    │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            val            │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│ ((id >= 2) AND (id <= 4)) │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 # Degenerate BETWEEN where bounds are equal: id BETWEEN 3 AND 3  ->  point lookup
@@ -4402,14 +5927,17 @@ EXPLAIN SELECT * FROM t_between WHERE id BETWEEN 3 AND 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_between     │
-│       Filter: (id=3)      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            val            │
+│                           │
+│          Filters:         │
+│ ((id >= 3) AND (id <= 3)) │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -4447,19 +5975,21 @@ EXPLAIN SELECT * FROM t_between_cpk WHERE a = 1 AND b BETWEEN 3 AND 6;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_between_cpk   │
-│                           │
-│          Filter:          │
-│      {a=1, b=[3, 6]}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │             b             │
 │            val            │
 │                           │
-│          ~7 rows          │
+│          Filters:         │
+│          (a = 1)          │
+│  ((b >= 3) AND (b <= 6))  │
+│                           │
+│          ~4 rows          │
 └───────────────────────────┘
 
 statement ok
@@ -4492,22 +6022,18 @@ EXPLAIN SELECT * FROM t_contra
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│ ((id = 4) OR ((id = 2) AND│
-│         (id != 2)))       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_contra      │
-│       Filter: (id=4)      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │            val            │
+│                           │
+│          Filters:         │
+│ ((id = 4) OR ((id = 2) AND│
+│         (id != 2)))       │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -4532,30 +6058,22 @@ EXPLAIN UPDATE t_dml_point SET val = 99 WHERE id = 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│                           │
-│          ~0 rows          │
+│           UPDATE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             99            │
-│             id            │
+│           rowid           │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: t_dml_point    │
-│       Filter: (id=3)      │
-│      Projections: id      │
+│   Type: Sequential Scan   │
+│     Filters: (id = 3)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -4581,17 +6099,14 @@ EXPLAIN DELETE FROM t_dml_point WHERE id = 1;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: t_dml_point    │
-│       Filter: (id=1)      │
-│                           │
-│        Projections:       │
-│             id            │
-│             id            │
+│   Type: Sequential Scan   │
+│     Filters: (id = 1)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -4636,22 +6151,25 @@ EXPLAIN DELETE FROM t_dml_point WHERE id IN (2, 4);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│           FILTER          │
+│    ────────────────────   │
+│   ((id = 2) OR (id = 4))  │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: t_dml_point    │
+│   Type: Sequential Scan   │
 │                           │
-│          Filter:          │
-│           (id=2)          │
-│           (id=4)          │
+│          Filters:         │
+│  optional: (id IN (2, 4)) │
 │                           │
-│        Projections:       │
-│             id            │
-│             id            │
-│                           │
-│          ~2 rows          │
+│          ~5 rows          │
 └───────────────────────────┘
 
 
@@ -4686,32 +6204,26 @@ EXPLAIN UPDATE t_dml_range SET val = 0 WHERE id BETWEEN 2 AND 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│                           │
-│          ~0 rows          │
+│           UPDATE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             0             │
-│             id            │
+│           rowid           │
 │                           │
-│          ~5 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: t_dml_range    │
-│    Filter: {id=[2, 4]}    │
-│      Projections: id      │
+│   Type: Sequential Scan   │
 │                           │
-│          ~5 rows          │
+│          Filters:         │
+│ ((id >= 2) AND (id <= 4)) │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -4735,21 +6247,16 @@ EXPLAIN DELETE FROM t_dml_range WHERE id > 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: t_dml_range    │
+│   Type: Sequential Scan   │
+│     Filters: (id > 3)     │
 │                           │
-│          Filter:          │
-│       {id=(3, +inf)}      │
-│                           │
-│        Projections:       │
-│             id            │
-│             id            │
-│                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -4808,37 +6315,27 @@ EXPLAIN UPDATE t_dml_cpk SET val = 99 WHERE a = 2 AND b = 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│             #2            │
-│                           │
-│          ~0 rows          │
+│           UPDATE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             99            │
-│             a             │
-│             b             │
+│           rowid           │
 │                           │
-│           ~1 row          │
+│          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_dml_cpk     │
-│     Filter: (a=2, b=4)    │
+│   Type: Sequential Scan   │
 │                           │
-│        Projections:       │
-│             a             │
-│             b             │
+│          Filters:         │
+│          (a = 2)          │
+│          (b = 4)          │
 │                           │
-│           ~1 row          │
+│          ~2 rows          │
 └───────────────────────────┘
 
 
@@ -4860,23 +6357,19 @@ EXPLAIN DELETE FROM t_dml_cpk WHERE a = 1 AND b >= 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_dml_cpk     │
+│   Type: Sequential Scan   │
 │                           │
-│          Filter:          │
-│     {a=1, b=[3, +inf)}    │
+│          Filters:         │
+│          (a = 1)          │
+│          (b >= 3)         │
 │                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             a             │
-│             b             │
-│                           │
-│          ~8 rows          │
+│          ~3 rows          │
 └───────────────────────────┘
 
 
@@ -4896,37 +6389,24 @@ EXPLAIN UPDATE t_dml_cpk SET val = 0 WHERE a = 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│             #2            │
-│                           │
-│          ~0 rows          │
+│           UPDATE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             0             │
-│             a             │
-│             b             │
+│           rowid           │
 │                           │
-│          ~6 rows          │
+│          ~3 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_dml_cpk     │
-│       Filter: {a=3}       │
+│   Type: Sequential Scan   │
+│      Filters: (a = 3)     │
 │                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│                           │
-│          ~6 rows          │
+│          ~3 rows          │
 └───────────────────────────┘
 
 
@@ -4947,23 +6427,19 @@ EXPLAIN DELETE FROM t_dml_cpk WHERE a = 2 AND b BETWEEN 2 AND 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_dml_cpk     │
+│   Type: Sequential Scan   │
 │                           │
-│          Filter:          │
-│      {a=2, b=[2, 4]}      │
+│          Filters:         │
+│          (a = 2)          │
+│  ((b >= 2) AND (b <= 4))  │
 │                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             a             │
-│             b             │
-│                           │
-│          ~6 rows          │
+│          ~3 rows          │
 └───────────────────────────┘
 
 
@@ -5021,30 +6497,22 @@ EXPLAIN UPDATE t_dml_ryow SET val = 99 WHERE id = 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│                           │
-│          ~0 rows          │
+│           UPDATE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             99            │
-│             id            │
+│           rowid           │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: t_dml_ryow     │
-│       Filter: (id=3)      │
-│      Projections: id      │
+│   Type: Sequential Scan   │
+│     Filters: (id = 3)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -5066,17 +6534,14 @@ EXPLAIN DELETE FROM t_dml_ryow WHERE id = 2;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: t_dml_ryow     │
-│       Filter: (id=2)      │
-│                           │
-│        Projections:       │
-│             id            │
-│             id            │
+│   Type: Sequential Scan   │
+│     Filters: (id = 2)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -5159,21 +6624,16 @@ EXPLAIN DELETE FROM t_dml_corner WHERE id >= 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_dml_corner    │
+│   Type: Sequential Scan   │
+│     Filters: (id >= 5)    │
 │                           │
-│          Filter:          │
-│       {id=[5, +inf)}      │
-│                           │
-│        Projections:       │
-│             id            │
-│             id            │
-│                           │
-│          ~5 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -5196,35 +6656,24 @@ EXPLAIN UPDATE t_dml_corner SET val = 99 WHERE id < 2;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│                           │
-│          ~0 rows          │
+│           UPDATE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             99            │
-│             id            │
+│           rowid           │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_dml_corner    │
+│   Type: Sequential Scan   │
+│     Filters: (id < 2)     │
 │                           │
-│          Filter:          │
-│       {id=(-inf, 2)}      │
-│                           │
-│      Projections: id      │
-│                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -5247,36 +6696,24 @@ EXPLAIN UPDATE t_dml_corner SET val = 0 WHERE id != 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│                           │
-│          ~0 rows          │
+│           UPDATE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             0             │
-│             id            │
+│           rowid           │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: t_dml_corner    │
+│   Type: Sequential Scan   │
+│     Filters: (id != 3)    │
 │                           │
-│          Filter:          │
-│       {id=(-inf, 3)}      │
-│       {id=(3, +inf)}      │
-│                           │
-│      Projections: id      │
-│                           │
-│          ~4 rows          │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -5316,29 +6753,54 @@ EXPLAIN SELECT a, nums, labels FROM choices_array WHERE a = 1 OR a = 3 OR a = 4 
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│             #1            │
+│             #2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │    choices_array.a ASC    │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS TINYINT)    │
+│             #1            │
+│             #2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((a = 1) OR (a = 3) OR (a │
+│      = 4) OR (a = 5))     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │    Table: choices_array   │
-│                           │
-│          Filter:          │
-│           (a=1)           │
-│           (a=3)           │
-│           (a=4)           │
-│           (a=5)           │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             a             │
 │            nums           │
 │           labels          │
 │                           │
-│          ~4 rows          │
+│          Filters:         │
+│ optional: ((a = 1) OR (a =│
+│  3) OR (a = 4) OR (a = 5))│
+│                           │
+│          ~5 rows          │
 └───────────────────────────┘
 
 

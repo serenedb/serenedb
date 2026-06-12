@@ -636,23 +636,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     plan = &ResolveDefaultsWithGenerated(planner, op, *plan);
   }
 
-  // Resolve on-conflict action: when no explicit ON CONFLICT clause was given
-  // (action is THROW by default), override with the session-level
-  // sdb_write_conflict_policy setting.
-  auto on_conflict_action = op.on_conflict_info.action_type;
-  if (on_conflict_action == duckdb::OnConflictAction::THROW) {
-    switch (GetSereneDBContext(context).GetWriteConflictPolicy()) {
-      case WriteConflictPolicy::EmitError:
-        on_conflict_action = duckdb::OnConflictAction::THROW;
-        break;
-      case WriteConflictPolicy::DoNothing:
-        on_conflict_action = duckdb::OnConflictAction::NOTHING;
-        break;
-      case WriteConflictPolicy::Replace:
-        on_conflict_action = duckdb::OnConflictAction::REPLACE;
-        break;
-    }
-  }
+  // The session-level sdb_write_conflict_policy is applied by the binder
+  // (it rides the ON CONFLICT -> MERGE INTO rewrite).
+  const auto on_conflict_action = op.on_conflict_info.action_type;
 
   const bool parallel_streaming_insert =
     plan && !duckdb::PhysicalPlanGenerator::PreserveInsertionOrder(context,

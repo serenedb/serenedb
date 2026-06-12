@@ -337,14 +337,10 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │   Table: biksalen_memes   │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             c             │
+│   Type: Sequential Scan   │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -358,14 +354,10 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │   Table: biksalen_memes   │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             c             │
+│   Type: Sequential Scan   │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -379,14 +371,10 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │   Table: biksalen_memes   │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             c             │
+│   Type: Sequential Scan   │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -428,11 +416,7 @@ EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b tes
 │         TABLE_SCAN        │
 │    ────────────────────   │
 │   Table: biksalen_memes   │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             c             │
+│   Type: Sequential Scan   │
 │                           │
 │                           │
 │                           │

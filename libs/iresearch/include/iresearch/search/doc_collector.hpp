@@ -73,7 +73,7 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
   }
 
   std::sort(
-    hits.data(), hits.data() + hits.size(),
+    hits.data(), hits.data() + collector.AcceptedCount(),
     [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
   return collector.TotalMatches();
 }
@@ -119,7 +119,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   }
 
   std::sort(
-    hits.data(), hits.data() + hits.size(),
+    hits.data(), hits.data() + collector.AcceptedCount(),
     [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
   return collector.TotalMatches();
 }

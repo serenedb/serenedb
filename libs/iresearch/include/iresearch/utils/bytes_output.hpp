@@ -31,7 +31,7 @@ class BytesOutput : public DataOutput {
 
   void WriteByte(byte_type b) final { _buf->push_back(b); }
 
-  void WriteBytes(const byte_type* b, size_t size) final {
+  void WriteData(const byte_type* b, uint64_t size) final {
     _buf->append(b, size);
   }
 
@@ -41,9 +41,9 @@ class BytesOutput : public DataOutput {
 
 class StrOutput : public DataOutput {
  public:
-  void WriteByte(byte_type b) final { WriteBytes(&b, 1); }
+  void WriteByte(byte_type b) final { WriteData(&b, 1); }
 
-  void WriteBytes(const byte_type* b, size_t size) final {
+  void WriteData(const byte_type* b, uint64_t size) final {
     out.append(b, size);
   }
 

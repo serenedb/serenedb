@@ -50,7 +50,7 @@ struct WildcardField final {
   bool Write(irs::DataOutput& out) const {
     const auto* store = irs::get<irs::StoreAttr>(*analyzer);
     if (store && !store->value.empty()) {
-      out.WriteBytes(store->value.data(), store->value.size());
+      out.WriteData(store->value.data(), store->value.size());
     }
     return true;
   }

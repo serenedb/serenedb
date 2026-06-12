@@ -33,7 +33,6 @@
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
-#include "iresearch/formats/serializer_stream.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -150,8 +149,7 @@ void IdxWriter::Commit() {
 
   const uint64_t footer_offset = _impl->out->Position();
 
-  IndexOutputWriteStream stream{*_impl->out};
-  duckdb::BinarySerializer serializer{stream};
+  duckdb::BinarySerializer serializer{*_impl->out};
   serializer.Begin();
   serializer.WriteList(
     kFooterSlotTermDict, "term_dict", _impl->term_dict_entries.size(),

@@ -23,42 +23,42 @@
 #include "store_utils.hpp"
 
 #include "basics/crc.hpp"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "basics/std.hpp"
 
 namespace irs {
 
-size_t BytesViewInput::ReadBytes(byte_type* b, size_t size) noexcept {
-  size =
-    std::min<size_t>(size, std::distance(_pos, _data.data() + _data.size()));
+void BytesViewInput::ReadData(byte_type* b, uint64_t size) {
+  const uint64_t remain = std::distance(_pos, _data.data() + _data.size());
+  SDB_ENSURE(size <= remain, sdb::ERROR_INTERNAL, "short read (need ", size,
+             " bytes, ", remain, " remaining)");
   if (size != 0) {
     std::memcpy(b, _pos, sizeof(byte_type) * size);
     _pos += size;
   }
-  return size;
 }
 
-size_t BytesViewInput::ReadBytes(uint64_t offset, byte_type* b,
-                                 size_t size) noexcept {
+void BytesViewInput::ReadData(uint64_t offset, byte_type* b,
+                              size_t size) noexcept {
   if (offset < _data.size()) {
     size = std::min(size, size_t(_data.size() - offset));
     std::memcpy(b, _data.data() + offset, sizeof(byte_type) * size);
     _pos = _data.data() + offset + size;
-    return size;
+    return;
   }
 
   _pos = _data.data() + _data.size();
-  return 0;
 }
 
-void BytesViewInput::ReadBytes(bstring& buf, size_t size) {
+void BytesViewInput::ReadData(bstring& buf, size_t size) {
   const auto used = buf.size();
 
   buf.resize(used + size);
 
-  [[maybe_unused]] const auto read = ReadBytes(buf.data() + used, size);
-  SDB_ASSERT(read == size);
+  ReadData(buf.data() + used, size);
 }
 
 uint32_t BytesViewInput::Checksum(uint64_t offset) const {

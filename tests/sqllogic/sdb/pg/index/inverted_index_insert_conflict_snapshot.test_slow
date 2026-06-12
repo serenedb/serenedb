@@ -43,7 +43,7 @@ INSERT INTO t VALUES (1, 1001), (2, 2002), (3, 3003) ON CONFLICT DO NOTHING;
 query II
 SELECT id, val FROM t ORDER BY id;
 ----
-id  val
+id	val
 1	1
 2	2
 3	3

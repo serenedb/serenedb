@@ -63,7 +63,7 @@ QUERY PLAN
 │      vecs_hnsw (ANN)      │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 10         │
+│          Top: 10          │
 │          Dims: 8          │
 │                           │
 │        Projections:       │

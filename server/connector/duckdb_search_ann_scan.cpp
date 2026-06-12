@@ -245,13 +245,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   InitCommonState(*gstate, context, bind_data, input);
   ClassifyColumnstoreProjections(*gstate, bind_data);
   auto& ss = bind_data.scan_source->Cast<SearchScan>();
-  // TODO: put into set_scan_order
-  duckdb::Value v;
-  if (ss.score_top_k &&
-      context.TryGetCurrentSetting("sdb_disable_top_k_optimization", v) &&
-      !v.IsNull() && v.GetValue<bool>()) {
-    ss.score_top_k.reset();
-  }
   gstate->scan = &ss;
   gstate->ef_search = ReadEfSearch(context);
 

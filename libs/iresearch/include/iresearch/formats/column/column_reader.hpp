@@ -23,12 +23,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <duckdb/common/types.hpp>
-#include <memory>
 #include <duckdb/common/types/vector_buffer.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/data_pointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+#include <memory>
 #include <span>
 #include <string>
 #include <utility>
@@ -375,7 +375,8 @@ class ColumnReader final {
 
 std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
                                                PersistentColumnData&& node);
-std::unique_ptr<ColumnReader> MakeColumnReader(
-  field_id id, PersistentColumnData&& node, const ColumnBlockSource& source);
+std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
+                                               PersistentColumnData&& node,
+                                               const ColumnBlockSource& source);
 
 }  // namespace irs

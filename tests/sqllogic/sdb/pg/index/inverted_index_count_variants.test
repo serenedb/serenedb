@@ -76,7 +76,9 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: ct_idx       │
-│      Lookup: rocksdb      │
+│                           │
+│          Output:          │
+│       row-count only      │
 │                           │
 │          ~5 rows          │
 └───────────────────────────┘
@@ -101,7 +103,9 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: ct_idx       │
-│      Lookup: rocksdb      │
+│                           │
+│          Output:          │
+│       row-count only      │
 │                           │
 │          ~5 rows          │
 └───────────────────────────┘
@@ -134,6 +138,40 @@ QUERY PLAN
 │       Index: ct_idx       │
 │      Lookup: rocksdb      │
 │       Projections: x      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# EXPLAIN: count(NULL) keeps the null-skipping count(#0) over a projection
+# emitting the literal NULL -- the intermediate PROJECTION blocks the
+# count-only conversion, every input is NULL, so the result is 0. The scan
+# itself materialises no columns.
+query
+EXPLAIN SELECT count(NULL) FROM ct_idx;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│   Aggregates: count(#0)   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            NULL           │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│       Index: ct_idx       │
+│                           │
+│          Output:          │
+│       row-count only      │
 │                           │
 │          ~5 rows          │
 └───────────────────────────┘

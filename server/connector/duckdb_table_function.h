@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <__memory/shared_ptr.h>
-
 #include <cmath>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>

@@ -1,0 +1,452 @@
+hash-threshold 100
+
+# Aliasing the same score call twice (bm25 ... AS s1, bm25 ... AS s2) must not
+# duplicate scorers or score columns: the rewrite keeps one scorer + one
+# virtual score column on the scan, and each select-list slot gets its own
+# column ref carrying its own alias.
+#
+# Also pins the scan-order hint column check: ORDER BY a non-score column with
+# a scorer in the select list must NOT pull the limit into the scan as a
+# score top-k (the scan would return top-k by score and starve the real sort).
+
+statement ok
+CREATE TABLE vedernikoff (kostya INTEGER PRIMARY KEY, abramov VARCHAR);
+
+
+statement count 5
+INSERT INTO vedernikoff VALUES
+  (42,  'androed clickclack arelav'),
+  (322, 'deadinside clickclack'),
+  (666, 'ksimironov abramov another'),
+  (993, 'clickclack deadinside another'),
+  (1337, 'clickclack clickclack ksimironov');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kostya_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX vedernikoff_alias_idx ON vedernikoff USING inverted(kostya, abramov kostya_dict);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vedernikoff;
+
+
+# One Score: line, one sdb_inverted_index_score projection -- not two.
+query
+EXPLAIN SELECT kostya, bm25(vedernikoff_alias_idx.tableoid) AS s1, bm25(vedernikoff_alias_idx.tableoid) AS s2 FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY s1 DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│           kostya          │
+│             s1            │
+│             s2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│   vedernikoff_alias_idx   │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        AND        ││  │
+│  │└─────────┬─────────┘│  │
+│  │┌─────────┴─────────┐│  │
+│  ││       PHRASE      ││  │
+│  ││    ────────────   ││  │
+│  ││ abramov(string) = ││  │
+│  ││ <Term:clickclack(0││  │
+│  ││      , 0); >      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│           Top: 3          │
+│                           │
+│        Projections:       │
+│           kostya          │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+# Both aliases resolve to the same score values.
+query I
+SELECT count(*) FROM (
+  SELECT bm25(vedernikoff_alias_idx.tableoid) AS s1, bm25(vedernikoff_alias_idx.tableoid) AS s2
+  FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack')
+) WHERE s1 <> s2;
+----
+count
+0
+
+
+# Header names survive the rewrite.
+query ITT
+SELECT kostya, bm25(vedernikoff_alias_idx.tableoid) > 0 AS s1, bm25(vedernikoff_alias_idx.tableoid) > 0 AS s2
+FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya LIMIT 2;
+----
+kostya	s1	s2
+42	t	t
+322	t	t
+
+
+# ORDER BY a non-score column: the limit must stay in TOP_N, not become a
+# score top-k inside the scan. Matches are 42, 322, 993, 1337 -- the two
+# largest kostya values win, not the two best-scored docs.
+query I
+SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya DESC LIMIT 2;
+----
+kostya
+1337
+993
+
+
+# No "Top:" line inside the scan box here.
+query
+EXPLAIN SELECT kostya, bm25(vedernikoff_alias_idx.tableoid) AS s1 FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya DESC LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 2          │
+│                           │
+│         Order By:         │
+│   vedernikoff_alias_idx   │
+│        .kostya DESC       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│   vedernikoff_alias_idx   │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        AND        ││  │
+│  │└─────────┬─────────┘│  │
+│  │┌─────────┴─────────┐│  │
+│  ││       PHRASE      ││  │
+│  ││    ────────────   ││  │
+│  ││ abramov(string) = ││  │
+│  ││ <Term:clickclack(0││  │
+│  ││      , 0); >      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│           kostya          │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+# Two different scorers on one index cannot share the single score column.
+statement error
+SELECT bm25(vedernikoff_alias_idx.tableoid) AS s1, tfidf(vedernikoff_alias_idx.tableoid) AS s2
+FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack');
+----
+db error: ERROR: Only one scorer function is allowed per inverted index
+HINT: Use UNION to combine different score functions for the same inverted index
+
+
+# Same scorer, different parameters -- same restriction.
+statement error
+SELECT bm25(vedernikoff_alias_idx.tableoid) AS s1, bm25(vedernikoff_alias_idx.tableoid, 1.5, 0.6) AS s2
+FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack');
+----
+db error: ERROR: Only one scorer function is allowed per inverted index
+HINT: Use UNION to combine different score functions for the same inverted index
+
+
+# ---- Same shape for ANN: one vector scorer, one score column, two aliases ----
+
+statement ok
+CREATE TABLE deadinside (kostya INT, clickclack FLOAT[3]);
+
+
+statement ok
+CREATE INDEX deadinside_alias_idx ON deadinside USING inverted(kostya, clickclack hnsw (metric = 'l2'));
+
+
+statement count 4
+INSERT INTO deadinside VALUES
+  (42,  [100, 0, 0]::FLOAT[3]),
+  (322, [50, 50, 50]::FLOAT[3]),
+  (666, [50, 25, 50]::FLOAT[3]),
+  (993, [50, 50, 100]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) deadinside;
+
+
+query
+EXPLAIN SELECT kostya, clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] AS d1, clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] AS d2 FROM deadinside_alias_idx ORDER BY d1 LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 2          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│           kostya          │
+│             d1            │
+│             d2            │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│ deadinside_alias_idx (ANN)│
+│                           │
+│      Lookup: rocksdb      │
+│           Top: 2          │
+│          Dims: 3          │
+│                           │
+│        Projections:       │
+│           kostya          │
+│  sdb_inverted_index_score │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query I
+SELECT count(*) FROM (
+  SELECT clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] AS d1, clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] AS d2
+  FROM deadinside_alias_idx
+) WHERE d1 <> d2;
+----
+count
+0
+
+
+# ORDER BY a non-score column with a distance call in the select list: all
+# rows must reach TOP_N -- the two smallest kostya values win, not the two
+# nearest vectors (which would be 666, 322).
+query ITT
+SELECT kostya, clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] > 0 AS d1, clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] > 0 AS d2
+FROM deadinside_alias_idx ORDER BY kostya LIMIT 2;
+----
+kostya	d1	d2
+42	t	t
+322	t	t
+
+
+# Legit score top-k still engages: nearest two by distance.
+query I
+SELECT kostya FROM deadinside_alias_idx ORDER BY clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
+----
+kostya
+666
+322
+
+
+# ---- Multi-key ORDER BY over score ties: the scan must not truncate ----
+# All 8 vectors sit at the same L2 distance; with a secondary sort key the
+# limit must stay in TOP_N (an in-scan top-k would keep 2 arbitrary ties).
+
+statement ok
+CREATE TABLE arelav (kostya INT, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX arelav_idx ON arelav USING inverted(kostya, emb hnsw (metric = 'l2'));
+
+
+statement count 8
+INSERT INTO arelav VALUES
+  (8, [100, 0, 0]::FLOAT[3]),
+  (7, [0, 100, 0]::FLOAT[3]),
+  (6, [0, 0, 100]::FLOAT[3]),
+  (5, [-100, 0, 0]::FLOAT[3]),
+  (4, [0, -100, 0]::FLOAT[3]),
+  (3, [0, 0, -100]::FLOAT[3]),
+  (2, [60, 80, 0]::FLOAT[3]),
+  (1, [0, 60, 80]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) arelav;
+
+
+query I
+SELECT kostya FROM arelav_idx ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3], kostya LIMIT 2;
+----
+kostya
+1
+2
+
+
+# ---- Shapes from recovery/inverted_index_wand_faults.test, pinned at plan ----
+# level: neither may pull the limit into the scan (no "Top:" in the scan box,
+# so no WAND top-k engages).
+
+# Scorer wrapped in arithmetic: a derived expression is not a scan order key.
+query I
+SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY 2 * bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
+----
+kostya
+1337
+322
+
+
+query
+EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY 2 * bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│           kostya          │
+│(2 * sdb_inverted_index_sco│
+│            re)            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│   vedernikoff_alias_idx   │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        AND        ││  │
+│  │└─────────┬─────────┘│  │
+│  │┌─────────┴─────────┐│  │
+│  ││       PHRASE      ││  │
+│  ││    ────────────   ││  │
+│  ││ abramov(string) = ││  │
+│  ││ <Term:clickclack(0││  │
+│  ││      , 0); >      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│           kostya          │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+
+# Scorer not the primary sort key.
+query I
+SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
+----
+kostya
+42
+322
+
+
+query
+EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 2          │
+│                           │
+│         Order By:         │
+│   vedernikoff_alias_idx   │
+│        .kostya ASC        │
+│          #1 DESC          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│   vedernikoff_alias_idx   │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        AND        ││  │
+│  │└─────────┬─────────┘│  │
+│  │┌─────────┴─────────┐│  │
+│  ││       PHRASE      ││  │
+│  ││    ────────────   ││  │
+│  ││ abramov(string) = ││  │
+│  ││ <Term:clickclack(0││  │
+│  ││      , 0); >      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│           kostya          │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘

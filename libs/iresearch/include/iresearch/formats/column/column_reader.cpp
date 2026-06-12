@@ -33,16 +33,16 @@
 #include <duckdb/common/enums/memory_tag.hpp>
 #include <duckdb/common/file_buffer.hpp>
 #include <duckdb/common/types.hpp>
-#include <duckdb/storage/block_allocator.hpp>
-#include <duckdb/storage/storage_info.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/storage/block_allocator.hpp>
 #include <duckdb/storage/buffer/block_handle.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <duckdb/storage/storage_info.hpp>
 #include <utility>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -67,9 +67,8 @@ std::unique_ptr<ColumnReader> MakeColumnReader(
     case duckdb::LogicalTypeId::ARRAY: {
       SDB_ASSERT(node.child_columns.size() == 1);
       array_size = static_cast<uint64_t>(duckdb::ArrayType::GetSize(node.type));
-      element_child =
-        MakeColumnReader(field_limits::invalid(),
-                         std::move(node.child_columns.front()), source);
+      element_child = MakeColumnReader(
+        field_limits::invalid(), std::move(node.child_columns.front()), source);
       node.pointers.clear();  // ARRAY carries no self data on disk.
     } break;
     case duckdb::LogicalTypeId::MAP:
@@ -77,9 +76,8 @@ std::unique_ptr<ColumnReader> MakeColumnReader(
       // MAP rides on the LIST path: PhysicalType::LIST with a
       // STRUCT<key, value> element.
       SDB_ASSERT(node.child_columns.size() == 1);
-      element_child =
-        MakeColumnReader(field_limits::invalid(),
-                         std::move(node.child_columns.front()), source);
+      element_child = MakeColumnReader(
+        field_limits::invalid(), std::move(node.child_columns.front()), source);
     } break;
     case duckdb::LogicalTypeId::VARIANT: {
       std::vector<ColumnReader::VariantRgReader> variant_rgs;
@@ -145,8 +143,7 @@ class MmapSegmentBuffer final : public duckdb::FileBuffer {
     : duckdb::FileBuffer{block_allocator, duckdb::FileBufferType::TINY_BUFFER,
                          /*user_size=*/0, /*block_header_size=*/0},
       _mapping{std::move(mapping)} {
-    buffer =
-      reinterpret_cast<duckdb::data_ptr_t>(const_cast<byte_type*>(data));
+    buffer = reinterpret_cast<duckdb::data_ptr_t>(const_cast<byte_type*>(data));
     size = data_size;
     internal_buffer = buffer;
     internal_size = data_size;
@@ -177,8 +174,8 @@ void PrefetchMmapRange(const byte_type* data, size_t size) noexcept {
 // never talks to the BlockManager. Offset far above the buffer manager's
 // own temporary_id counter to keep the ranges visibly distinct.
 duckdb::block_id_t NextMmapBlockId() noexcept {
-  static std::atomic<duckdb::block_id_t> next{
-    MAXIMUM_BLOCK + (duckdb::block_id_t{1} << 40)};
+  static std::atomic<duckdb::block_id_t> next{MAXIMUM_BLOCK +
+                                              (duckdb::block_id_t{1} << 40)};
   return next.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -191,7 +188,7 @@ duckdb::shared_ptr<duckdb::BlockHandle> WrapMmapPointer(
     return nullptr;
   }
   const auto* direct =
-    in->ReadData(static_cast<uint64_t>(p.block_pointer.block_id), byte_size);
+    in->ReadStable(static_cast<uint64_t>(p.block_pointer.block_id), byte_size);
   if (!direct) {
     return nullptr;
   }
@@ -455,11 +452,11 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
     // Zero-copy: the block was wrapped around the mmap'd .col file when the
     // reader was built (see WrapMmapPointer); reuse costs one shared_ptr
     // copy.
-    if (const auto* direct = ctx.In().ReadData(file_offset, byte_size)) {
+    if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size)) {
       PrefetchMmapRange(direct, byte_size);
     }
     handle = prebuilt;
-  } else if (const auto* direct = ctx.In().ReadData(file_offset, byte_size)) {
+  } else if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size)) {
     PrefetchMmapRange(direct, byte_size);
     // Reader built without a ColumnBlockSource but the input is mmap'd:
     // wrap lazily, anchored by a duplicate of the per-query input.
@@ -476,7 +473,7 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
     // Non-mmap input: stage a copy through the buffer manager.
     handle = bm.RegisterTransientMemory(byte_size, ctx);
     auto buf = bm.Pin(handle);
-    ctx.In().ReadBytes(file_offset, buf.GetDataMutable(), byte_size);
+    ctx.In().ReadData(file_offset, buf.GetDataMutable(), byte_size);
   }
   auto segment = duckdb::make_uniq<duckdb::ColumnSegment>(
     db, std::move(handle), duckdb::ColumnSegmentType::PERSISTENT,

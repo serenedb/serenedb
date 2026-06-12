@@ -1136,6 +1136,9 @@ PgSQLCommTaskBase::PendingQueryEnsured(duckdb::PreparedStatement& prepared,
       ERR_MSG("DDL is not transactional: the statement commits immediately "
               "and is not undone by ROLLBACK")));
   }
+  if (_connection_ctx->IsExplicitTransaction()) {
+    _connection_ctx->RefreshReadCommittedSnapshot();
+  }
   const auto& props = prepared.GetStatementProperties();
   const auto db_name = DatabaseName();
   _connection_ctx->EnsureCatalogSnapshot();

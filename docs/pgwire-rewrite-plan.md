@@ -128,7 +128,7 @@ Naming/placement (per #796, applied with judgment): a greppable type (e.g. `Conn
 a coordinated tree-wide pass, not piecemeal).
 
 ### Phase 2 status + remaining migration (mechanical)
-DONE: `Connection<Kind, Session>` CRTP base added to `connection.h` (`7606b3fe`) — owns `_socket`, `_ioexec`, `_recv`,
+DONE: `Transport<Kind, Session>` CRTP base added to `connection.h` (`7606b3fe`) — owns `_socket`, `_ioexec`, `_recv`,
 `_send`, `_write_view`/`_write_armed`/`_write_gate`, `_send_written`, `_send_waiter`/`kSendWaiterIdle`, `_io_broken`,
 `_writer_stop`, `_producer_gate`, `_task`, `_task_spawned`; methods `KickSend`/`HasUnsentBytes`/`SendBroken`/
 `OverSendHighWater`/`OnSendViewReady`/`ArmSendWaiter`/`DisarmSendWaiter`/`AwaitSendBelowHighWater`/`DrainSendOnTask`/
@@ -136,7 +136,7 @@ DONE: `Connection<Kind, Session>` CRTP base added to `connection.h` (`7606b3fe`)
 
 REMAINING — migrate each session (do HTTP first, smaller; build + es/http(49)+gtests; then pg, build + drivers(1455);
 each its own commit). For `HttpSession` (`http/session.h`) and then `PgWireSession` (`pg_wire_session.h`):
-1. Base-list: add `public Connection<Kind, HttpSession>,` (resp. `PgWireSession`).
+1. Base-list: add `public Transport<Kind, HttpSession>,` (resp. `PgWireSession`).
 2. Ctors: replace the `_socket`/`_io`/`_ioexec` initializers with a base delegation — Tcp/non-Ssl → `Connection{exec}`;
    Ssl/MaybeTls → `Connection{exec, *ctx.ssl}`. Keep the protocol-specific initializers (`_deadline`/`_router`/`_auth`
    for http; `_credentials`/`_allow_cleartext`/`_cancel`/`_max_message` for pg).
@@ -152,10 +152,10 @@ each its own commit). For `HttpSession` (`http/session.h`) and then `PgWireSessi
    `TryAssembleFrame`/`NextFrame`/`AwaitFrame`/`FeedFrame`/`PeekTotalLength`/`CopyRecvInto` pg).
 6. Add `public: void OnSendPoison() {}` — http empty; pg `{ _copy_gate.Kick(); }`.
 7. `Start()` keeps `SendWriter().Detach()` (now the inherited one) + `Run().Detach()`.
-8. **CRITICAL (dependent-base lookup):** `Connection<Kind, …>` is templated on `Kind`, so it is a *dependent* base —
+8. **CRITICAL (dependent-base lookup):** `Transport<Kind, …>` is templated on `Kind`, so it is a *dependent* base —
    unqualified `_send`, `_recv`, `_socket`, `_task`, `KickSend()`, `SendWriter()`, `AwaitSendBelowHighWater()`, etc. in
    the session body are NOT found by two-phase lookup. Rather than sprinkle `this->` over hundreds of sites, add one
-   block of `using Connection<Kind, HttpSession>::member;` declarations near the top of the derived class for every
+   block of `using Transport<Kind, HttpSession>::member;` declarations near the top of the derived class for every
    inherited name the session references (`_socket _ioexec _recv _send _write_view _write_armed _write_gate
    _send_written _send_waiter _io_broken _writer_stop _producer_gate _task _task_spawned KickSend HasUnsentBytes
    SendBroken OverSendHighWater OnSendViewReady ArmSendWaiter DisarmSendWaiter AwaitSendBelowHighWater DrainSendOnTask
@@ -163,3 +163,12 @@ each its own commit). For `HttpSession` (`http/session.h`) and then `PgWireSessi
    iterate build → add the missing `using` → rebuild until green. (`OnSendPoison` is called by the base via
    `static_cast<Session*>` so it needs no `using`, but it must be public.) Keep the session bodies otherwise unchanged.
 Then phase 3 = delete http's now-dead duplicate (covered as http migrates here); phases 4-7 per the list above.
+
+### Phase 2 progress note (base done, sessions pending)
+- The shared base is `Transport<Kind, Session>` in `connection.h`, committed + green but unused (`7606b3fe`, renamed
+  from `Connection` in `6d152b39` to avoid the `duckdb::Connection` shadowing — an unqualified `Connection` in a
+  session resolved to the non-template duckdb type). `Transport` is globally unique/greppable.
+- Migration use: in each session add `using Transport<Kind, SessionName<Kind>>::member;` (explicit `<Kind>`, the form
+  that parses; `using Base = …` aliasing tripped two-phase lookup). Build → add each undeclared name's `using` → repeat.
+- A first HttpSession migration attempt was reverted to keep the tree green; redo it cleanly with the unique name +
+  explicit-`<Kind>` usings, build against es/http(49)+gtests, commit; then pg against drivers(1455).

@@ -368,19 +368,17 @@ yaclib::Future<> HttpSession<Kind>::Run() {
     _write_gate.Kick();
   }};
   if constexpr (Kind == SocketKind::Ssl) {
-    try {
-      _deadline.expires_after(kHttpHeaderReadTimeout);
-      _deadline.async_wait([self](const asio_ns::error_code& ec) {
-        if (!ec) {
-          self->_socket.Close();
-        }
-      });
-      co_await _socket.Handshake();
-      _deadline.cancel();
-    } catch (const std::exception&) {
+    _deadline.expires_after(kHttpHeaderReadTimeout);
+    _deadline.async_wait([self](const asio_ns::error_code& ec) {
+      if (!ec) {
+        self->_socket.Close();
+      }
+    });
+    if (co_await _socket.Handshake().NoThrow()) {
       _socket.Close();
       co_return {};
     }
+    _deadline.cancel();
   }
 
   _task.emplace(
@@ -389,25 +387,22 @@ yaclib::Future<> HttpSession<Kind>::Run() {
   SessionMain().Detach();
   _task_spawned = true;
 
-  try {
-    for (;;) {
-      _deadline.expires_after(_idle.load(std::memory_order_acquire)
-                                ? kHttpKeepAliveIdleTimeout
-                                : kHttpBodyReadTimeout);
-      _deadline.async_wait([self](const asio_ns::error_code& ec) {
-        if (!ec) {
-          self->_socket.Close();
-        }
-      });
-      const size_t n = co_await _socket.ReadSome(_recv.Reserve(kReadBlock));
-      _deadline.cancel();
-      if (n == 0) {
-        break;
+  for (;;) {
+    _deadline.expires_after(_idle.load(std::memory_order_acquire)
+                              ? kHttpKeepAliveIdleTimeout
+                              : kHttpBodyReadTimeout);
+    _deadline.async_wait([self](const asio_ns::error_code& ec) {
+      if (!ec) {
+        self->_socket.Close();
       }
-      _recv.CommitWrite(n);
-      _task->RequestRun();
+    });
+    auto [ec, n] = co_await _socket.ReadSome(_recv.Reserve(kReadBlock)).NoThrow();
+    _deadline.cancel();
+    if (ec || n == 0) {
+      break;
     }
-  } catch (const std::exception&) {
+    _recv.CommitWrite(n);
+    _task->RequestRun();
   }
   _io_broken.store(true, std::memory_order_release);
   if (_task_spawned) {

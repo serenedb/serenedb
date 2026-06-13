@@ -40,17 +40,12 @@
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_full_scan.hpp"
-#include "connector/duckdb_sk_full_scan.hpp"
 #include "connector/duckdb_table_entry.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
 #include "functions/search.h"
 #include "pg/connection_context.h"
 #include "search/inverted_index_shard.h"
-
-#define SDB_ROCKSDB_SCAN_SOURCE_KINDS  \
-  case ScanSourceKind::FullTable:      \
-  case ScanSourceKind::SecondaryIndex
 
 namespace sdb::connector {
 namespace {
@@ -293,10 +288,6 @@ static duckdb::vector<duckdb::column_t> SereneDBScanGetRowIdColumns(
 
 std::unique_ptr<ScanSource> FullTableScan::Clone() const {
   return std::make_unique<FullTableScan>();
-}
-
-std::unique_ptr<ScanSource> SecondaryIndexScan::Clone() const {
-  return std::make_unique<SecondaryIndexScan>(*this);
 }
 
 std::unique_ptr<ScanSource> SearchScan::Clone() const {
@@ -587,7 +578,6 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   func.projection_pushdown = true;
   // TODO: Use filter_pushdown, filter_prune instead of RBO approach for
   // indexes/primary keys
-  // TODO: Use sampling_pushdown for sampling from rocksdb/etc
   // TODO: Use late_materialization instead of our materialization approach for
   // indexes/primary keys
   // TODO: Better order preservation types for different scan strategies, e.g.,
@@ -596,15 +586,6 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
   // TODO: We can init_global on schedule for some scan types, with
   // global_initialization, but why?
-}
-
-duckdb::TableFunction CreateSKFullscanFunction() {
-  duckdb::TableFunction func{
-    "rocksdb_sk_fullscan", {}, SKFullScanFunction, SereneDBScanBind,
-    SKFullScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  return func;
 }
 
 namespace {
@@ -659,7 +640,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     case ScanSourceKind::Search:
       return IsAnnScan(bind_data) ? SearchAnnScanInitGlobal(context, input)
                                   : SearchFullScanInitGlobal(context, input);
-    SDB_ROCKSDB_SCAN_SOURCE_KINDS:
+    case ScanSourceKind::FullTable:
       SDB_UNREACHABLE();
   }
 }
@@ -673,7 +654,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       return IsAnnScan(bind_data)
                ? SearchAnnScanInitLocal(context, input, global_state)
                : SearchFullScanInitLocal(context, input, global_state);
-    SDB_ROCKSDB_SCAN_SOURCE_KINDS:
+    case ScanSourceKind::FullTable:
       SDB_UNREACHABLE();
   }
 }
@@ -687,7 +668,7 @@ void IResearchScanFunction(duckdb::ClientContext& context,
       return IsAnnScan(bind_data)
                ? SearchAnnScanFunction(context, data, output)
                : SearchFullScanFunction(context, data, output);
-    SDB_ROCKSDB_SCAN_SOURCE_KINDS:
+    case ScanSourceKind::FullTable:
       SDB_UNREACHABLE();
   }
 }

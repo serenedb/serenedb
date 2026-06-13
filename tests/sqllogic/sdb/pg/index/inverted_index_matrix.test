@@ -948,7 +948,7 @@ QUERY PLAN
 │           Index:          │
 │    m_vec_hnsw_st (ANN)    │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 1          │
 │          Dims: 3          │
 │                           │
@@ -978,7 +978,7 @@ QUERY PLAN
 │           Index:          │
 │  m_vec_hnsw_expr_ns (ANN) │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 1          │
 │          Dims: 3          │
 │                           │
@@ -1000,7 +1000,7 @@ QUERY PLAN
 │           Index:          │
 │ m_vec_hnsw_st (ANN range) │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │      Radius: 1.500000     │
 │          Dims: 3          │
 │      Projections: pk      │
@@ -1020,7 +1020,7 @@ QUERY PLAN
 │  m_vec_hnsw_expr_ns (ANN  │
 │           range)          │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │      Radius: 1.500000     │
 │          Dims: 3          │
 │      Projections: pk      │

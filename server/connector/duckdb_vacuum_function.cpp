@@ -28,7 +28,6 @@
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
 
 namespace sdb::connector {
@@ -46,7 +45,6 @@ enum class Action : uint8_t {
   Refresh,
   Compact,
   SyncStats,
-  CompactRocksdb,
 };
 
 struct Verb {
@@ -70,7 +68,6 @@ std::optional<Verb> ParseOption(std::string_view option) {
     {"sync_stats_schema", {Action::SyncStats, Scope::Schema}},
     {"sync_stats_database", {Action::SyncStats, Scope::Database}},
     {"sync_stats_all", {Action::SyncStats, Scope::All}},
-    {"compact_rocksdb", {Action::CompactRocksdb, Scope::All}},
   };
   for (const auto& [name, verb] : kVerbs) {
     if (option == name) {
@@ -380,11 +377,6 @@ void VacuumExecute(duckdb::ClientContext& context,
     case Action::SyncStats:
       DispatchSyncStats(*snapshot, verb->scope, target);
       break;
-    case Action::CompactRocksdb: {
-      auto& engine = GetServerEngine();
-      std::ignore = std::move(engine.compactAll(true, true)).Get().Ok();
-      break;
-    }
   }
 
   output.SetCardinality(0);

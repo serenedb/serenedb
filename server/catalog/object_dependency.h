@@ -124,7 +124,7 @@ class DropEmitter {
   }
 
   // doesn't work well now, it leaves the column data.
-  // TODO: delete it when we'll have deleted rocksdb
+  // TODO: column drop rewrites the store table; emit a real cascade drop
   void EmitCascadeColumnDrop(ObjectId col_id) {
     RewriteOwningTable(col_id, [&](auto& t) { return t->DropColumn(col_id); });
     // PG's column->index cascade: any index that covers col_id goes too.
@@ -158,8 +158,7 @@ class DropEmitter {
     }
     auto& slot = _plan.table_rewrites[referencing_table_id];
     CloneIntoSlot(referencing_table_id, slot);
-    slot.table =
-      slot.table->DropForeignKeysReferencing(referenced_table_id);
+    slot.table = slot.table->DropForeignKeysReferencing(referenced_table_id);
   }
 
   void EmitCascadeCheckConstraintDrop(ObjectId constraint_id) {

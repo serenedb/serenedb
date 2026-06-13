@@ -324,17 +324,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
         catalog, schema, *info, std::move(view), std::move(indexed_col_indices),
         std::move(inverted_index_ptr));
     }
-    if (index.GetType() == catalog::ObjectType::SecondaryIndex) {
-      const auto& sec_index =
-        basics::downCast<const catalog::SecondaryIndex>(index);
-      auto sk_shard = snapshot.GetIndexShard(index.GetId());
-      if (!sk_shard) {
-        return nullptr;
-      }
-      return duckdb::make_uniq<ViewSecondaryIndexScanEntry>(
-        catalog, schema, *info, std::move(view), std::move(indexed_col_indices),
-        sk_shard->GetId(), sec_index.IsUnique());
-    }
+    // Plain (secondary) indexes on views no longer exist; CREATE INDEX
+    // rejects them at bind time.
     return nullptr;
   }
 
@@ -355,7 +346,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
       std::move(built.indexed_col_indices), std::move(inverted_index_ptr));
   }
 
-  // Secondary (rocksdb-backed) index: find the shard for scanning.
+  // Secondary index: find the shard for scanning.
   const auto& sec_index =
     basics::downCast<const catalog::SecondaryIndex>(index);
   auto shard = snapshot.GetIndexShard(index.GetId());

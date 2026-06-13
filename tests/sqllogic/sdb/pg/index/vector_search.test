@@ -30,7 +30,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 2          │
 │          Dims: 3          │
 │                           │
@@ -58,7 +58,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 5          │
 │          Dims: 3          │
 │                           │
@@ -87,7 +87,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │          Top: 10          │
 │          Dims: 3          │
 │                           │
@@ -124,7 +124,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: l2_index      │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │        Projections:       │
 │           id (l)          │
@@ -179,7 +179,7 @@ QUERY PLAN
 │           Index:          │
 │    l2_index (ANN range)   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │      Radius: 0.700000     │
 │          Dims: 3          │
 │      Projections: id      │
@@ -211,7 +211,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: l2_index      │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │        Projections:       │
 │          emb (i)          │
@@ -239,7 +239,7 @@ QUERY PLAN
 │           Index:          │
 │    l2_index (ANN range)   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │      Radius: 1.000000     │
 │          Dims: 3          │
 │      Projections: id      │
@@ -273,7 +273,7 @@ QUERY PLAN
 │           Index:          │
 │    l2_index (ANN range)   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │     Radius: 100.000000    │
 │          Dims: 3          │
 │      Projections: id      │
@@ -329,7 +329,7 @@ QUERY PLAN
 │           Index:          │
 │    l2_index (ANN range)   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │      Radius: 0.700000     │
 │          Dims: 3          │
 │      Projections: id      │
@@ -354,7 +354,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │          Top: 10          │
 │          Dims: 3          │
 │                           │
@@ -390,7 +390,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: l2_index      │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │        Projections:       │
 │           id (l)          │
@@ -423,7 +423,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: l2_index      │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │        Projections:       │
 │          emb (i)          │
@@ -492,7 +492,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: l1_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 5          │
 │          Dims: 3          │
 │                           │
@@ -521,7 +521,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: l1_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 5          │
 │          Dims: 3          │
 │                           │
@@ -584,7 +584,7 @@ QUERY PLAN
 │           Index:          │
 │      cos_index (ANN)      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 2          │
 │          Dims: 3          │
 │                           │
@@ -622,7 +622,7 @@ QUERY PLAN
 │           Index:          │
 │      cos_index (ANN)      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 2          │
 │          Dims: 3          │
 │                           │
@@ -652,7 +652,7 @@ QUERY PLAN
 │           Index:          │
 │      cos_index (ANN)      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 2          │
 │          Dims: 3          │
 │                           │
@@ -674,7 +674,7 @@ QUERY PLAN
 │           Index:          │
 │   cos_index (ANN range)   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │      Radius: 0.500000     │
 │          Dims: 3          │
 │      Projections: id      │
@@ -708,7 +708,7 @@ QUERY PLAN
 │           Index:          │
 │      cos_index (ANN)      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -747,7 +747,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: ip_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 2          │
 │          Dims: 3          │
 │                           │
@@ -783,7 +783,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: ip_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 2          │
 │          Dims: 3          │
 │                           │
@@ -811,7 +811,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: ip_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 2          │
 │          Dims: 3          │
 │                           │
@@ -833,7 +833,7 @@ QUERY PLAN
 │           Index:          │
 │    ip_index (ANN range)   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │      Radius: 0.000000     │
 │          Dims: 3          │
 │      Projections: id      │
@@ -865,7 +865,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: ip_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -1018,7 +1018,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -1122,7 +1122,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: proj_idx (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -1159,7 +1159,7 @@ QUERY PLAN
 │           Index:          │
 │    l2_index (ANN range)   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │     Radius: 200.000000    │
 │          Dims: 3          │
 │                           │
@@ -1196,7 +1196,7 @@ QUERY PLAN
 │           Index:          │
 │    l2_index (ANN range)   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │     Radius: 200.000000    │
 │          Dims: 3          │
 │                           │
@@ -1232,7 +1232,7 @@ QUERY PLAN
 │           Index:          │
 │    proj_idx (ANN range)   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │     Radius: 200.000000    │
 │          Dims: 3          │
 │                           │
@@ -1305,7 +1305,7 @@ QUERY PLAN
 │           Index:          │
 │      mixed_idx (ANN)      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 2          │
 │          Dims: 3          │
 │                           │
@@ -1466,7 +1466,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │            Index: mixed_idx (ANN)           │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                   Dims: 3                   │
 │                                             │
 │                 TextFilter:                 │

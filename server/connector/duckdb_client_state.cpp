@@ -27,8 +27,8 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/debugging.h"
 #include "basics/containers/trivial_map.h"
+#include "basics/debugging.h"
 #include "basics/system-compiler.h"
 #include "catalog/database.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -54,8 +54,8 @@ std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
     // (carrying the facade table) directly underneath.
     const SereneDBPhysicalProgress* progress_op = nullptr;
     if (!root.children.empty()) {
-      progress_op = dynamic_cast<const SereneDBPhysicalProgress*>(
-        &root.children[0].get());
+      progress_op =
+        dynamic_cast<const SereneDBPhysicalProgress*>(&root.children[0].get());
     }
     if (!progress_op) {
       return nullptr;
@@ -164,7 +164,8 @@ void SereneDBClientState::Register(
           ERR_HINT("Available values: repeatable read, read committed."));
       }
       auto& conn_ctx = GetSereneDBContext(ctx);
-      if (conn_ctx.IsExplicitTransaction() && conn_ctx.HasRocksDBSnapshot() &&
+      if (conn_ctx.IsExplicitTransaction() &&
+          conn_ctx.HadQueryInTransaction() &&
           level != conn_ctx.GetIsolationLevel()) {
         throw duckdb::InvalidInputException(
           "SET TRANSACTION ISOLATION LEVEL must be called before any query");
@@ -191,7 +192,7 @@ void SereneDBClientState::TransactionPreCommit(
   // Pre-durability crash point: fires before the engine commit, so the
   // transaction must be absent after restart. Only write transactions
   // crash (the fault-arming SET itself must survive). Name historical.
-  SDB_IF_FAILURE("crash_before_rocksdb_commit") {
+  SDB_IF_FAILURE("crash_before_search_commit") {
     if (transaction.ModifiedDatabase()) {
       SDB_IMMEDIATE_ABORT();
     }
@@ -214,7 +215,7 @@ void SereneDBClientState::TransactionCommit(
   // Post-durability crash point: the engine commit is durable, search
   // ticks are not yet -- recovery must rebuild the shard. Only write
   // transactions crash. Name historical.
-  SDB_IF_FAILURE("crash_after_rocksdb_commit") {
+  SDB_IF_FAILURE("crash_after_search_commit") {
     if (transaction.ModifiedDatabase()) {
       SDB_IMMEDIATE_ABORT();
     }

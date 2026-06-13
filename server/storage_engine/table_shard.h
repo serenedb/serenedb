@@ -21,8 +21,6 @@
 
 #pragma once
 
-#include <rocksdb/types.h>
-
 #include <atomic>
 #include <shared_mutex>
 

@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_table_entry.h"
 
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/constraints/bound_check_constraint.hpp>
@@ -32,7 +33,6 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/table_filter.hpp>
-#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 
 #include "basics/assert.h"
@@ -44,7 +44,6 @@
 #include "pg/sql_utils.h"
 
 namespace sdb::connector {
-
 namespace {
 
 duckdb::virtual_column_map_t StoreScanVirtualColumns(
@@ -87,18 +86,19 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
 
 duckdb::TableCatalogEntry& SereneDBTableEntry::ResolveStoreEntry(
   duckdb::ClientContext& context) const {
-  auto store_name = catalog::StoreTableName(
-    ParentCatalog().GetName(), ParentSchema().name, name);
-  return duckdb::Catalog::GetEntry(
-           context, duckdb::CatalogType::TABLE_ENTRY,
-           std::string{catalog::kStoreDatabaseName}, "main", store_name)
+  auto store_name = catalog::StoreTableName(ParentCatalog().GetName(),
+                                            ParentSchema().name, name);
+  return duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
+                                   std::string{catalog::kStoreDatabaseName},
+                                   "main", store_name)
     .Cast<duckdb::TableCatalogEntry>();
 }
 
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  auto function = ResolveStoreEntry(context).GetScanFunction(context, bind_data);
+  auto function =
+    ResolveStoreEntry(context).GetScanFunction(context, bind_data);
   if (bind_data) {
     if (auto* table_bind =
           dynamic_cast<duckdb::TableScanBindData*>(bind_data.get())) {

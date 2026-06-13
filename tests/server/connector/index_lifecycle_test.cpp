@@ -29,15 +29,15 @@
 #include <gtest/gtest.h>
 
 #include <duckdb.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <duckdb/storage/index_storage_info.hpp>
 #include <duckdb/storage/table/append_state.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
-#include <duckdb/storage/index_storage_info.hpp>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -87,13 +87,13 @@ class ProbeIndex final : public duckdb::BoundIndex {
  public:
   static constexpr const char* kTypeName = "sdb_probe";
 
-  ProbeIndex(const std::string& name, duckdb::TableIOManager& io,
-             const duckdb::vector<duckdb::column_t>& column_ids,
-             const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>&
-               exprs,
-             duckdb::AttachedDatabase& db)
-    : BoundIndex(name, kTypeName, duckdb::IndexConstraintType::NONE,
-                 column_ids, io, exprs, db) {}
+  ProbeIndex(
+    const std::string& name, duckdb::TableIOManager& io,
+    const duckdb::vector<duckdb::column_t>& column_ids,
+    const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
+    duckdb::AttachedDatabase& db)
+    : BoundIndex(name, kTypeName, duckdb::IndexConstraintType::NONE, column_ids,
+                 io, exprs, db) {}
 
   duckdb::ErrorData Append(duckdb::IndexLock&, duckdb::DataChunk& chunk,
                            duckdb::Vector& row_ids) override {
@@ -121,8 +121,7 @@ class ProbeIndex final : public duckdb::BoundIndex {
     }
     return chunk.size();
   }
-  std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType,
-                                            idx_t,
+  std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType, idx_t,
                                             duckdb::DataChunk&) override {
     return "probe constraint violation";
   }
@@ -163,17 +162,15 @@ struct ProbeBuildLocalState final : duckdb::IndexBuildLocalState {};
 void RegisterProbeIndexType(duckdb::DatabaseInstance& db) {
   duckdb::IndexType type;
   type.name = ProbeIndex::kTypeName;
-  type.build_bind =
-    [](duckdb::IndexBuildBindInput&) -> duckdb::unique_ptr<duckdb::IndexBuildBindData> {
-    return nullptr;
-  };
+  type.build_bind = [](duckdb::IndexBuildBindInput&)
+    -> duckdb::unique_ptr<duckdb::IndexBuildBindData> { return nullptr; };
   type.build_global_init = [](duckdb::IndexBuildInitGlobalStateInput& input)
     -> duckdb::unique_ptr<duckdb::IndexBuildGlobalState> {
     auto state = duckdb::make_uniq<ProbeBuildGlobalState>();
     state->index = duckdb::make_uniq<ProbeIndex>(
       input.info.index_name,
-      duckdb::TableIOManager::Get(input.table.GetStorage()),
-      input.storage_ids, input.expressions, input.table.GetStorage().db);
+      duckdb::TableIOManager::Get(input.table.GetStorage()), input.storage_ids,
+      input.expressions, input.table.GetStorage().db);
     return std::move(state);
   };
   type.build_local_init = [](duckdb::IndexBuildInitLocalStateInput&)
@@ -228,8 +225,8 @@ class IndexLifecycleTest : public ::testing::Test {
     _conn.reset();
     _db.reset();
     duckdb::DBConfig config;
-    _db = std::make_unique<duckdb::DuckDB>((_dir / "probe.db").string(),
-                                           &config);
+    _db =
+      std::make_unique<duckdb::DuckDB>((_dir / "probe.db").string(), &config);
     RegisterProbeIndexType(*_db->instance);
     _conn = std::make_unique<duckdb::Connection>(*_db);
     auto res = _conn->Query("USE probe.main");

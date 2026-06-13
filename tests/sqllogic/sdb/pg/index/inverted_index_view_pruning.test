@@ -293,7 +293,7 @@ count
 0
 
 
-# Case 6: secondary (non-inverted) index on a view over a base table.
+# Case 6: single-column inverted index on a view over a base table.
 # The view's surrogate PK is the base table's real PK.
 
 statement ok
@@ -314,7 +314,7 @@ statement ok
 CREATE VIEW prune_v6 AS SELECT * FROM prune_base;
 
 query
-EXPLAIN CREATE INDEX prune_idx6 ON prune_v6 (body);
+EXPLAIN CREATE INDEX prune_idx6 ON prune_v6 USING inverted(body);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -331,7 +331,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 statement ok
-CREATE INDEX prune_idx6 ON prune_v6 (body);
+CREATE INDEX prune_idx6 ON prune_v6 USING inverted(body);
 
 query
 SELECT count(*) FROM prune_v6 WHERE body = 'pudge goes mid';
@@ -340,14 +340,14 @@ count
 1
 
 
-# Case 7: composite secondary index on view over a base table.
+# Case 7: composite inverted index on view over a base table.
 
 statement ok
 CREATE VIEW prune_v7 AS SELECT * FROM prune_base;
 
 # `id` appears twice in projections: once as an index key, once as PK plumbing.
 query
-EXPLAIN CREATE INDEX prune_idx7 ON prune_v7 (id, body);
+EXPLAIN CREATE INDEX prune_idx7 ON prune_v7 USING inverted(id, body);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -367,7 +367,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 statement ok
-CREATE INDEX prune_idx7 ON prune_v7 (id, body);
+CREATE INDEX prune_idx7 ON prune_v7 USING inverted(id, body);
 
 query
 SELECT count(*) FROM prune_v7 WHERE id = 3 AND body = 'pudge plays again';
@@ -376,14 +376,14 @@ count
 1
 
 
-# Case 8: secondary index on a view over read_parquet. The surrogate PK
+# Case 8: inverted index on a view over read_parquet. The surrogate PK
 # (file_row_number) is a virtual column that doesn't surface in Projections.
 
 statement ok
 CREATE VIEW prune_v8 AS SELECT * FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
 
 query
-EXPLAIN CREATE INDEX prune_idx8 ON prune_v8 (body);
+EXPLAIN CREATE INDEX prune_idx8 ON prune_v8 USING inverted(body);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -401,7 +401,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 statement ok
-CREATE INDEX prune_idx8 ON prune_v8 (body);
+CREATE INDEX prune_idx8 ON prune_v8 USING inverted(body);
 
 query
 SELECT count(*) FROM prune_v8 WHERE body = 'pudge goes mid';

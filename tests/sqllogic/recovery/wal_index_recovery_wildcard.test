@@ -47,7 +47,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: wal_wild_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │

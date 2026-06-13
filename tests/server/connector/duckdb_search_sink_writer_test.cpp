@@ -180,7 +180,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x4pk4", 19}};
 
   // Indexed term values per row (per column).
-  // VARCHAR: terms are exactly the string bytes -- no rocksdb kStringPrefix
+  // VARCHAR: terms are exactly the string bytes -- no legacy kStringPrefix
   // dance under the Vector-native API.
   const std::vector<std::string_view> string_values{
     std::string_view{"rrr", 3}, std::string_view{"", 0},
@@ -577,7 +577,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
 }
 
 // Corner case: string with leading null byte is preserved verbatim in the
-// term dict (the old test used the rocksdb 2-slice prefix encoding to assert
+// term dict (the old test used the legacy 2-slice prefix encoding to assert
 // the same thing; under the Vector-native API the bytes just go through).
 TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   auto trx = _data_writer->GetBatch();

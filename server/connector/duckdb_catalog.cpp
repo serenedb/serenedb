@@ -22,14 +22,19 @@
 
 #include <absl/strings/match.h>
 
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/execution/operator/order/physical_order.hpp>
+#include <duckdb/execution/operator/persistent/physical_delete.hpp>
+#include <duckdb/execution/operator/persistent/physical_insert.hpp>
 #include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
+#include <duckdb/execution/operator/persistent/physical_update.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -50,6 +55,7 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/storage/database_size.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <ranges>
 
 #include "basics/string_utils.h"
@@ -64,12 +70,6 @@
 #include "connector/duckdb_physical_progress.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
-#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
-#include <duckdb/execution/operator/persistent/physical_delete.hpp>
-#include <duckdb/execution/operator/persistent/physical_insert.hpp>
-#include <duckdb/execution/operator/persistent/physical_update.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
-#include <duckdb/transaction/meta_transaction.hpp>
 #include "connector/duckdb_table_function.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
@@ -488,8 +488,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
 
 namespace {
 
-
-
 // Defaults / generated-column projection for INSERT.
 //
 // Two passes so gen-col exprs can resolve their BoundRef(dep.storage_oid)
@@ -640,15 +638,14 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   const auto on_conflict_action = op.on_conflict_info.action_type;
 
   const bool parallel_streaming_insert =
-    plan && !duckdb::PhysicalPlanGenerator::PreserveInsertionOrder(context,
-                                                                   *plan) &&
-    !op.return_chunk &&
-    on_conflict_action == duckdb::OnConflictAction::THROW;
+    plan &&
+    !duckdb::PhysicalPlanGenerator::PreserveInsertionOrder(context, *plan) &&
+    !op.return_chunk && on_conflict_action == duckdb::OnConflictAction::THROW;
   const auto num_threads =
     duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
-  auto store_constraints = duckdb::Binder::BindConstraints(
-    context, store_entry.GetConstraints(), store_entry.name,
-    store_entry.GetColumns());
+  auto store_constraints =
+    duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
+                                    store_entry.name, store_entry.GetColumns());
   // Facade-bound CHECK constraints can reference facade-only functions
   // (bound with macros expanded); the store mirror demotes those, so they
   // ride the insert from here. Column layouts match by construction.
@@ -662,8 +659,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     std::move(op.expressions), std::move(op.on_conflict_info.set_columns),
     std::move(op.on_conflict_info.set_types), op.estimated_cardinality,
     op.return_chunk, parallel_streaming_insert && num_threads > 1,
-    on_conflict_action,
-    std::move(op.on_conflict_info.on_conflict_condition),
+    on_conflict_action, std::move(op.on_conflict_info.on_conflict_condition),
     std::move(op.on_conflict_info.do_update_condition),
     std::move(op.on_conflict_info.on_conflict_filter),
     std::move(op.on_conflict_info.columns_to_fetch),
@@ -681,15 +677,14 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   auto& store_entry =
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
 
-  auto& bound_ref =
-    op.expressions[0]->Cast<duckdb::BoundReferenceExpression>();
-  auto store_constraints = duckdb::Binder::BindConstraints(
-    context, store_entry.GetConstraints(), store_entry.name,
-    store_entry.GetColumns());
+  auto& bound_ref = op.expressions[0]->Cast<duckdb::BoundReferenceExpression>();
+  auto store_constraints =
+    duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
+                                    store_entry.name, store_entry.GetColumns());
   auto& del = planner.Make<duckdb::PhysicalDelete>(
     op.types, store_entry, store_entry.GetStorage(),
-    std::move(store_constraints), bound_ref.index,
-    op.estimated_cardinality, op.return_chunk, std::move(op.return_columns));
+    std::move(store_constraints), bound_ref.index, op.estimated_cardinality,
+    op.return_chunk, std::move(op.return_columns));
   del.children.push_back(plan);
   return del;
 }
@@ -701,14 +696,13 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto& store_entry =
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
 
-  auto store_constraints = duckdb::Binder::BindConstraints(
-    context, store_entry.GetConstraints(), store_entry.name,
-    store_entry.GetColumns());
+  auto store_constraints =
+    duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
+                                    store_entry.name, store_entry.GetColumns());
   auto& update = planner.Make<duckdb::PhysicalUpdate>(
     op.types, store_entry, store_entry.GetStorage(), op.columns,
     std::move(op.expressions), std::move(op.bound_defaults),
-    std::move(store_constraints), op.estimated_cardinality,
-    op.return_chunk);
+    std::move(store_constraints), op.estimated_cardinality, op.return_chunk);
   auto& cast_update = update.Cast<duckdb::PhysicalUpdate>();
   cast_update.update_is_del_and_insert = op.update_is_del_and_insert;
   cast_update.children.push_back(plan);
@@ -725,9 +719,9 @@ duckdb::unique_ptr<duckdb::MergeIntoOperator> PlanStoreMergeIntoAction(
 
   result->action_type = action.action_type;
   result->condition = std::move(action.condition);
-  auto bound_constraints = duckdb::Binder::BindConstraints(
-    context, store_entry.GetConstraints(), store_entry.name,
-    store_entry.GetColumns());
+  auto bound_constraints =
+    duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
+                                    store_entry.name, store_entry.GetColumns());
   auto return_types = op.types;
   if (op.return_chunk) {
     // For RETURNING the last column is the merge_action, added by the merge
@@ -828,8 +822,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
           action->update_is_del_and_insert) {
         ++append_count;
       }
-      planned_actions.push_back(PlanStoreMergeIntoAction(
-        context, op, planner, *action, store_entry));
+      planned_actions.push_back(
+        PlanStoreMergeIntoAction(context, op, planner, *action, store_entry));
     }
     actions.emplace(condition, std::move(planned_actions));
   }
@@ -1008,6 +1002,13 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       throw duckdb::CatalogException("access method \"%s\" does not exist",
                                      idx_type);
     }
+  }
+
+  if (view_backed && create_index_info->index_type == "secondary") {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("plain indexes on views are not supported; use an inverted "
+              "index instead"));
   }
 
   std::vector<std::pair<std::string, duckdb::LogicalType>> rel_columns;

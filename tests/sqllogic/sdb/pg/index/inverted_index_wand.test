@@ -86,7 +86,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -132,7 +132,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │            Index: wand_small_idx            │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│
@@ -178,7 +178,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -222,7 +222,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -268,7 +268,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │

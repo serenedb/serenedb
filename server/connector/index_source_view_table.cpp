@@ -41,11 +41,11 @@ namespace {
 duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
                                              const ViewFastPath& fast_path) {
   SDB_ASSERT(fast_path.catalog_ref);
-  auto& entry = duckdb::Catalog::GetEntry(
-                  context, duckdb::CatalogType::TABLE_ENTRY,
-                  fast_path.catalog_ref->catalog, fast_path.catalog_ref->schema,
-                  fast_path.catalog_ref->table)
-                  .Cast<duckdb::TableCatalogEntry>();
+  auto& entry =
+    duckdb::Catalog::GetEntry(
+      context, duckdb::CatalogType::TABLE_ENTRY, fast_path.catalog_ref->catalog,
+      fast_path.catalog_ref->schema, fast_path.catalog_ref->table)
+      .Cast<duckdb::TableCatalogEntry>();
   if (!entry.IsDuckTable()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -60,12 +60,12 @@ duckdb::TableCatalogEntry& ResolveStoreTableEntry(
   const catalog::Table& table) {
   // The scan entry is the facade table or one of its index entries; either
   // way it shares the table's database and schema.
-  auto store_name = catalog::StoreTableName(
-    scan_entry.ParentCatalog().GetName(), scan_entry.ParentSchema().name,
-    table.GetName());
-  return duckdb::Catalog::GetEntry(
-           context, duckdb::CatalogType::TABLE_ENTRY,
-           std::string{catalog::kStoreDatabaseName}, "main", store_name)
+  auto store_name =
+    catalog::StoreTableName(scan_entry.ParentCatalog().GetName(),
+                            scan_entry.ParentSchema().name, table.GetName());
+  return duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
+                                   std::string{catalog::kStoreDatabaseName},
+                                   "main", store_name)
     .Cast<duckdb::TableCatalogEntry>();
 }
 
@@ -76,8 +76,8 @@ duckdb::LogicalType RowIdFetchIndexSource::AddFetchColumn(
   if (col.Generated()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("cannot materialise generated column \"", col.Name(),
-              "\" of \"", _table->name, "\" through an index lookup"));
+      ERR_MSG("cannot materialise generated column \"", col.Name(), "\" of \"",
+              _table->name, "\" through an index lookup"));
   }
   const auto storage_idx =
     _table->GetStorageIndex(duckdb::ColumnIndex(col.Logical().index));
@@ -179,9 +179,11 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   FinishInit(context);
 }
 
-duckdb::idx_t RowIdFetchIndexSource::Materialize(
-  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
-  duckdb::idx_t count, duckdb::DataChunk& output) {
+duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
+                                                 PrimaryKeyBatch& batch,
+                                                 duckdb::idx_t start,
+                                                 duckdb::idx_t count,
+                                                 duckdb::DataChunk& output) {
   if (count == 0) {
     return count;
   }

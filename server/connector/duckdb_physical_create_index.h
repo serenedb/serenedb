@@ -46,7 +46,7 @@ class SereneDBSchemaEntry;
 class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
  public:
   // `relation` is the SereneDB-catalog object the index is built on: either
-  // a `catalog::Table` (native rocksdb) or a `catalog::PgSqlView`
+  // a `catalog::Table` or a `catalog::PgSqlView`
   // (foreign-source-backed). `view_columns` is the synthesised column list
   // when `relation` is a view (Tables expose Columns() directly); ignored
   // for tables.

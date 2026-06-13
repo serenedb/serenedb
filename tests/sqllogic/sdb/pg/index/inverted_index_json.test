@@ -447,7 +447,7 @@ QUERY PLAN
 │           Index:          │
 │     num_str_split_idx     │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -487,7 +487,7 @@ QUERY PLAN
 │           Index:          │
 │     num_str_split_idx     │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -540,7 +540,7 @@ QUERY PLAN
 │           Index:          │
 │     num_str_split_idx     │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │        Projections:       │
 │          content          │
@@ -582,7 +582,7 @@ QUERY PLAN
 │           Index:          │
 │     num_str_split_idx     │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │        Projections:       │
 │          content          │

@@ -448,7 +448,7 @@ duckdb::idx_t SearchFullScanScanLocalState::EmitChunk(
   if (chunk_hits.empty()) {
     return 0;
   }
-  SDB_IF_FAILURE("SearchRocksDBLookupFault") {
+  SDB_IF_FAILURE("SearchLookupFault") {
     if (g.has_external_projections) {
       SDB_THROW(ERROR_DEBUG);
     }

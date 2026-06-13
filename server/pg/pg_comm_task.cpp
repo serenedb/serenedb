@@ -168,7 +168,7 @@ PgSQLCommTaskBase::~PgSQLCommTaskBase() {
   if (_connection_ctx) {
     // Rollback unconditionally: even for auto-commit connections
     // (IsExplicitTransaction() == false), Config::_snapshot may be set and must
-    // be released via Destroy() to avoid unreleased RocksDB snapshots at
+    // be released via Destroy() to avoid leaked transaction state at
     // shutdown.
     std::ignore = _connection_ctx->Rollback();
   }
@@ -1142,14 +1142,11 @@ PgSQLCommTaskBase::PendingQueryEnsured(duckdb::PreparedStatement& prepared,
   const auto& props = prepared.GetStatementProperties();
   const auto db_name = DatabaseName();
   _connection_ctx->EnsureCatalogSnapshot();
-  if (props.modified_databases.contains(db_name)) {
-    _connection_ctx->EnsureRocksDBTransaction();
-    _connection_ctx->EnsureRocksDBSnapshot();
-  } else if (props.read_databases.contains(db_name)) {
+  if (props.modified_databases.contains(db_name) ||
+      props.read_databases.contains(db_name)) {
     if (_connection_ctx->IsExplicitTransaction()) {
-      _connection_ctx->EnsureRocksDBTransaction();
+      _connection_ctx->MarkQueryInTransaction();
     }
-    _connection_ctx->EnsureRocksDBSnapshot();
   }
   return prepared.PendingQuery(values, allow_stream_result);
 }

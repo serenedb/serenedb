@@ -378,8 +378,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
               [&](const auto& col) { return col.GetName() == col_name; });
             if (it == ref_table.Columns().end()) {
               throw duckdb::CatalogException(
-                "column \"%s\" named in foreign key does not exist",
-                col_name);
+                "column \"%s\" named in foreign key does not exist", col_name);
             }
             out.referenced_columns.push_back(it->GetId());
           }

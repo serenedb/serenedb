@@ -273,7 +273,7 @@ f
 # pg_am (access methods)
 
 
-# serened access methods: rocksdb/iresearch back tables;
+# serened access methods: iresearch backs tables;
 # secondary/inverted back indexes.
 query
 SELECT amname, amtype FROM pg_catalog.pg_am ORDER BY amname
@@ -281,7 +281,6 @@ SELECT amname, amtype FROM pg_catalog.pg_am ORDER BY amname
 amname	amtype
 inverted	i
 iresearch	t
-rocksdb	t
 secondary	i
 
 
@@ -297,7 +296,7 @@ query
 SELECT count(*) FROM pg_catalog.pg_am WHERE amtype = 't'
 ----
 count
-2
+1
 
 
 # pg_language

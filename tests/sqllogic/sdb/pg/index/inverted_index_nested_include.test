@@ -63,7 +63,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: n1_idx       │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -140,7 +140,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: n2_idx       │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -225,7 +225,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: n3_idx       │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -312,7 +312,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: n4_idx       │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -407,7 +407,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: n5_idx       │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -507,7 +507,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: n6_idx       │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │

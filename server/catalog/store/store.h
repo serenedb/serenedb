@@ -103,7 +103,7 @@ class Table;
 class Index;
 
 StoreTableDef MakeStoreTableDef(std::string_view database,
-                                  std::string_view schema, const Table& table);
+                                std::string_view schema, const Table& table);
 
 // Store mirror of an index, or nullopt when the index is not mirrored
 // (non-Transactional table, expression/INCLUDE columns, or ART-unfriendly

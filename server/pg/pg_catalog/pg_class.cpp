@@ -22,12 +22,9 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <deque>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
-
-#include "catalog/store/store.h"
-
-#include <deque>
 #include <string>
 
 #include "app/app_server.h"
@@ -36,6 +33,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/local_catalog.h"
 #include "catalog/sequence.h"
+#include "catalog/store/store.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "pg/pg_catalog/fwd.h"
@@ -146,8 +144,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
     if (!chunk || chunk->size() == 0) {
       return 0.0F;
     }
-    return static_cast<float>(
-      chunk->GetValue(0, 0).GetValue<int64_t>());
+    return static_cast<float>(chunk->GetValue(0, 0).GetValue<int64_t>());
   };
   auto database = catalog.GetDatabase(database_id);
   SDB_ASSERT(database);

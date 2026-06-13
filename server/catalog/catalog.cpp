@@ -67,19 +67,13 @@ namespace sdb::catalog {
 namespace {
 
 // In case of recovery the ColumnExpr shouldn't be parsed
-struct DropTableOptions {
-  uint64_t columns;
-};
-
-ResultOr<DropTableOptions> GetTableOptionsForDrop(std::string_view bytes,
-                                                  ReadContext ctx) {
+Result CheckTableForDrop(std::string_view bytes, ReadContext ctx) {
   auto table = catalog::DeserializeObject<Table>(bytes, ctx);
   if (!table) {
-    return std::unexpected<Result>{
-      std::in_place, ERROR_SERVER_ILLEGAL_STATE,
-      "failed to deserialize table definition during drop recovery"};
+    return {ERROR_SERVER_ILLEGAL_STATE,
+            "failed to deserialize table definition during drop recovery"};
   }
-  return DropTableOptions{.columns = table->Columns().size()};
+  return {};
 }
 
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
@@ -100,18 +94,17 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
                                      table_id, is_root);
 }
 
-ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
-  CatalogStore& store, ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-  uint64_t cols, bool is_root = false) {
+ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(CatalogStore& store,
+                                                     ObjectId db_id,
+                                                     ObjectId schema_id,
+                                                     ObjectId table_id,
+                                                     bool is_root = false) {
   ObjectId shard_id;
-  uint64_t table_size = std::numeric_limits<uint64_t>::max();
 
   auto r = store.VisitBoot(table_id, ObjectType::TableShard,
-                           [&](CatalogStore::Key key, std::string_view bytes) {
+                           [&](CatalogStore::Key key, std::string_view) {
                              SDB_ASSERT(!shard_id.isSet());
                              shard_id = key.id;
-                             auto stats = TableShard::DeserializeStats(bytes);
-                             table_size = stats.num_rows * cols;
                              return Result{};
                            });
   if (!r.ok()) {
@@ -152,9 +145,9 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  return std::make_shared<TableDrop>(
-    table_id, shard_id, table_size, std::move(indexes),
-    std::move(owned_sequences), schema_id, is_root);
+  return std::make_shared<TableDrop>(table_id, shard_id, std::move(indexes),
+                                     std::move(owned_sequences), schema_id,
+                                     is_root);
 }
 
 ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(CatalogStore& store,
@@ -165,13 +158,13 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(CatalogStore& store,
   auto r = store.VisitBoot(
     schema_id, ObjectType::Table,
     [&](CatalogStore::Key key, std::string_view bytes) -> Result {
-      auto options = GetTableOptionsForDrop(
-        bytes, {.id = key.id, .database_id = db_id, .schema_id = schema_id});
-      if (!options) {
-        return std::move(options.error());
+      if (auto check = CheckTableForDrop(
+            bytes,
+            {.id = key.id, .database_id = db_id, .schema_id = schema_id});
+          !check.ok()) {
+        return check;
       }
-      auto table_drop =
-        CreateTableDrop(store, db_id, schema_id, key.id, options->columns);
+      auto table_drop = CreateTableDrop(store, db_id, schema_id, key.id);
       if (!table_drop) {
         return std::move(table_drop.error());
       }
@@ -506,13 +499,14 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
         }
         return AddTable(db_id, schema_id, table_id, std::move(table));
       }
-      auto options = GetTableOptionsForDrop(
-        bytes, {.id = table_id, .database_id = db_id, .schema_id = schema_id});
-      if (!options) {
-        return std::move(options.error());
+      if (auto check = CheckTableForDrop(
+            bytes,
+            {.id = table_id, .database_id = db_id, .schema_id = schema_id});
+          !check.ok()) {
+        return check;
       }
-      auto drop = CreateTableDrop(GetCatalogStore(), db_id, schema_id, table_id,
-                                  options->columns, true);
+      auto drop =
+        CreateTableDrop(GetCatalogStore(), db_id, schema_id, table_id, true);
       if (!drop) {
         return std::move(drop.error());
       }

@@ -69,7 +69,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: map_t_idx     │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │

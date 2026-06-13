@@ -62,7 +62,6 @@ inline constexpr ObjectId kPgOpclassIncluded{kMinSystem.id() + 201};
 // Access methods
 inline constexpr ObjectId kPgAmInverted{kMinSystem.id() + 300};
 inline constexpr ObjectId kPgAmIresearch{kMinSystem.id() + 301};
-inline constexpr ObjectId kPgAmRocksdb{kMinSystem.id() + 302};
 inline constexpr ObjectId kPgAmSecondary{kMinSystem.id() + 303};
 
 }  // namespace id

@@ -78,9 +78,10 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
     for (const auto& column : col_reader->Columns()) {
       auto& [stats, distinct] = col2stats[column->Id()];
       if (!stats) {
-        stats = duckdb::BaseStatistics::CreateEmpty(column->Type()).ToUnique();
+        stats = column->MergedStatistics().ToUnique();
+      } else {
+        stats->Merge(column->MergedStatistics());
       }
-      stats->Merge(column->MergedStatistics());
       if (const auto* hll = column->DistinctHll()) {
         if (!distinct) {
           distinct = hll->Copy();

@@ -2195,10 +2195,31 @@ Result LocalCatalog::CreateTable(
   if (auto r = TableNameValidator::validateName(options.name); !r.ok()) {
     return r;
   }
-  for (auto pk_id : options.pk_columns) {
-    auto col = absl::c_find_if(
-      options.columns, [&](const auto& c) { return c.GetId() == pk_id; });
-    SDB_ASSERT(col != options.columns.end());
+  // Uniqueness keys are enforced by the store table's DuckDB ART, which cannot
+  // index nested types. Reject a nested-type key column up front with a clear
+  // error instead of silently creating the table with the constraint dropped
+  // (the store-side names_for clears it otherwise). Scalar key types are
+  // handled natively by the ART.
+  auto reject_nested_key = [&](std::span<const Column::Id> ids,
+                               std::string_view what) -> Result {
+    for (auto col_id : ids) {
+      auto col = absl::c_find_if(
+        options.columns, [&](const auto& c) { return c.GetId() == col_id; });
+      SDB_ASSERT(col != options.columns.end());
+      if (col->type.IsNested()) {
+        return Result{ERROR_BAD_PARAMETER, what, " column \"", col->GetName(),
+                      "\" has unsupported nested type ", col->type.ToString()};
+      }
+    }
+    return {};
+  };
+  if (auto r = reject_nested_key(options.pk_columns, "primary key"); !r.ok()) {
+    return r;
+  }
+  for (const auto& unique : options.unique_constraints) {
+    if (auto r = reject_nested_key(unique, "unique constraint"); !r.ok()) {
+      return r;
+    }
   }
   auto sequence_specs = std::move(options.sequences);
 

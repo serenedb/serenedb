@@ -423,7 +423,13 @@ yaclib::Future<> HttpSession<Kind>::Run() {
 template<SocketKind Kind>
 yaclib::Future<std::optional<H1Event>> HttpSession<Kind>::ReadHead() {
   for (;;) {
-    if (_recv.Readable()) {
+    // Observe the readable size ONCE and use it both to decide whether to
+    // parse and as the AwaitMoreBytes threshold. Re-reading ReadableSize() for
+    // the park threshold would race RecvLoop: bytes committed between the parse
+    // decision and the park would inflate `seen`, so the park would wait for
+    // *more* than what just arrived and never reparse the buffered request.
+    const size_t avail = _recv.ReadableSize();
+    if (avail != 0) {
       const auto fed = _codec.ParseHead(_recv.Front());
       _recv.Consume(fed.consumed);
       if (fed.event == H1Event::Error || fed.event == H1Event::Head ||
@@ -434,8 +440,8 @@ yaclib::Future<std::optional<H1Event>> HttpSession<Kind>::ReadHead() {
         continue;
       }
     }
-    _idle.store(_recv.ReadableSize() == 0, std::memory_order_release);
-    if (!co_await AwaitMoreBytes(_recv.ReadableSize())) {
+    _idle.store(avail == 0, std::memory_order_release);
+    if (!co_await AwaitMoreBytes(avail)) {
       co_return std::nullopt;
     }
     _idle.store(false, std::memory_order_release);
@@ -448,7 +454,11 @@ yaclib::Future<bool> HttpSession<Kind>::ReadBody(HttpRequest& request,
   if (_codec.IsChunked()) {
     _dechunk.Clear();
     for (;;) {
-      if (_recv.Readable()) {
+      // Single ReadableSize() observation per iteration (see ReadHead): the
+      // park threshold must match what was inspected, or a body chunk that
+      // arrives between the decode and the park is skipped.
+      const size_t avail = _recv.ReadableSize();
+      if (avail != 0) {
         const auto body = _codec.DecodeBody(_recv.Front(), _dechunk);
         _recv.Consume(body.consumed);
         if (body.error) {
@@ -461,7 +471,7 @@ yaclib::Future<bool> HttpSession<Kind>::ReadBody(HttpRequest& request,
           continue;
         }
       }
-      if (!co_await AwaitMoreBytes(_recv.ReadableSize())) {
+      if (!co_await AwaitMoreBytes(avail)) {
         co_return false;
       }
     }
@@ -469,8 +479,12 @@ yaclib::Future<bool> HttpSession<Kind>::ReadBody(HttpRequest& request,
     co_return true;
   }
   const auto length = static_cast<size_t>(_codec.ContentLength());
-  while (_recv.ReadableSize() < length) {
-    if (!co_await AwaitMoreBytes(_recv.ReadableSize())) {
+  for (;;) {
+    const size_t avail = _recv.ReadableSize();
+    if (avail >= length) {
+      break;
+    }
+    if (!co_await AwaitMoreBytes(avail)) {
       co_return false;
     }
   }

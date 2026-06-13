@@ -37,6 +37,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <duckdb/common/types/bit.hpp>
+#include <duckdb/common/types/cast_helpers.hpp>
 #include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
@@ -489,8 +490,18 @@ void SerializeDecimal(SerializationContext& context,
   auto value =
     vdata.unified.GetData<PhysicalType>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
-    auto str = duckdb::Value::DECIMAL(value, precision, scale).ToString();
-    context.buffer->WriteUncommitted(str);
+    // In-place, PG-compatible (leading zero, always an integer part): no
+    // intermediate duckdb::Value or std::string per row.
+    const int len =
+      duckdb::DecimalToString::DecimalLength<PhysicalType>(value, precision,
+                                                           scale);
+    context.buffer->WriteContiguousData(
+      static_cast<size_t>(len), [&](auto* data) {
+        duckdb::DecimalToString::FormatDecimal<PhysicalType>(
+          value, precision, scale, reinterpret_cast<char*>(data),
+          static_cast<duckdb::idx_t>(len));
+        return static_cast<size_t>(len);
+      });
   } else {
     if constexpr (std::is_same_v<PhysicalType, duckdb::hugeint_t>) {
       WriteAsNumericBinary(context, absl::MakeInt128(value.upper, value.lower),

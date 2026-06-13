@@ -1,0 +1,98 @@
+control substitution on
+
+# Column statistics persist in the .col footer: per-rowgroup min/max + null
+# flags (in the rowgroup DataPointers) and the optional approx_distinct
+# HyperLogLog. After a serened restart they must reload identically -- the
+# merged stats the optimizer sees (min/max, null flags, approx_unique) are
+# rebuilt at reader open from the on-disk footer, so a crash must not lose
+# them. Persistence canary for col_writer's footer + DirectoryReaderImpl::Init.
+
+statement ok
+CREATE TABLE stat_rec (
+    id INT PRIMARY KEY,
+    small BIGINT,
+    big BIGINT,
+    s VARCHAR
+)
+
+statement ok
+INSERT INTO stat_rec
+  SELECT i,
+         CASE WHEN i % 50 = 0 THEN NULL ELSE (i % 21) - 10 END,
+         4611686018427387904,
+         'v' || (i % 50)::VARCHAR
+  FROM range(200) t(i)
+
+statement ok
+CREATE INDEX stat_rec_idx ON stat_rec
+    USING inverted(id)
+    INCLUDE (small, big, s included (approx_distinct = true))
+
+statement ok
+VACUUM (REFRESH_TABLE) stat_rec
+
+
+# --- pre-restart: the stats the optimizer sees ---
+
+# small: bounded [-10, 10] with NULLs (has_null true from validity stream).
+query
+SELECT stats(small)::VARCHAR FROM stat_rec_idx LIMIT 1;
+----
+stats
+{'has_no_null': true, 'has_null': true, 'max': 10, 'min': -10}
+
+# big: 2^62 constant, no NULLs.
+query
+SELECT stats(big)::VARCHAR FROM stat_rec_idx LIMIT 1;
+----
+stats
+{'has_no_null': true, 'has_null': false, 'max': 4611686018427387904, 'min': 4611686018427387904}
+
+# approx_distinct HLL over 's' (50 distinct values).
+query
+SELECT (stats(s)).approx_unique::BIGINT BETWEEN 40 AND 60 AS ok
+FROM stat_rec_idx LIMIT 1;
+----
+ok
+t
+
+
+# --- crash + recover (serened restarts on the same data dir) ---
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+# --- post-restart: stats reloaded from the footer must be identical ---
+
+connection after_crash
+query
+SELECT stats(small)::VARCHAR FROM stat_rec_idx LIMIT 1;
+----
+stats
+{'has_no_null': true, 'has_null': true, 'max': 10, 'min': -10}
+
+connection after_crash
+query
+SELECT stats(big)::VARCHAR FROM stat_rec_idx LIMIT 1;
+----
+stats
+{'has_no_null': true, 'has_null': false, 'max': 4611686018427387904, 'min': 4611686018427387904}
+
+connection after_crash
+query
+SELECT (stats(s)).approx_unique::BIGINT BETWEEN 40 AND 60 AS ok
+FROM stat_rec_idx LIMIT 1;
+----
+ok
+t

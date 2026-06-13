@@ -598,8 +598,8 @@ PgWireSession<Kind>::NextFrame(bool typed, uint32_t max_len) {
     if (auto frame = TryAssembleFrame(typed, max_len)) {
       co_return std::move(*frame);
     }
-    const size_t n = co_await _socket.ReadSome(_recv.Reserve(kReadBlock));
-    if (n == 0) {
+    auto [ec, n] = co_await _socket.ReadSome(_recv.Reserve(kReadBlock)).NoThrow();
+    if (ec || n == 0) {
       co_return Frame{0, {}, FrameStatus::Malformed, 0};
     }
     _recv.CommitWrite(n);
@@ -1957,9 +1957,7 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
     _write_gate.Kick();
   }};
   if constexpr (Kind == SocketKind::Ssl) {
-    try {
-      co_await _socket.Handshake();
-    } catch (const std::exception&) {
+    if (co_await _socket.Handshake().NoThrow()) {
       _socket.Close();
       co_return {};
     }
@@ -1987,9 +1985,7 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
             }
             _send.WriteUncommitted("S");
             co_await Flush();
-            try {
-              co_await _socket.Handshake();
-            } catch (const std::exception&) {
+            if (co_await _socket.Handshake().NoThrow()) {
               _socket.Close();
               co_return {};
             }
@@ -2110,8 +2106,9 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
     _task_spawned = true;
 
     for (;;) {
-      const size_t n = co_await _socket.ReadSome(_recv.Reserve(kReadBlock));
-      if (n == 0) {
+      auto [ec, n] =
+        co_await _socket.ReadSome(_recv.Reserve(kReadBlock)).NoThrow();
+      if (ec || n == 0) {
         break;
       }
       _recv.CommitWrite(n);

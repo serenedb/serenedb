@@ -1,10 +1,27 @@
-# Error handling — coherent model (separate work stream)
+# Error handling — structural cleanup + coherent model (separate work stream)
 
-The branch already has the right *pieces* but no stated model, so the request path reads as a mess: 391
-`THROW_SQL_ERROR`, 147 `throw`, **73 `catch`** / 59 `try`, 50 `ErrorData`, plus a `Result` value-type — mixed
-ad-hoc. This document fixes the *model*, separately from the structural (transport/framer/…) refactor, because error
-handling is cross-cutting (every subsystem) and must be decided once and applied uniformly. **Perf-neutral by
-construction:** the ok path takes no throw; the single catch sits off the hot per-row path.
+The error handling is **genuinely badly written throughout** — not "almost-right pieces missing a model." Two problems
+compound: (1) the *code* abuses exceptions structurally (oversized `try`/`catch` scopes that are really on-failure
+cleanup, catch-and-ignore, terminal handling buried inside loops, hand-recomputing what an API already returns), and
+(2) there is no *model* — `Result`, `THROW_SQL_ERROR`/`SqlException`, and DuckDB `ErrorData` are mixed ad-hoc (391
+`THROW_SQL_ERROR`, 147 `throw`, **73 `catch`** / 59 `try`, 50 `ErrorData`). This document fixes both — as its own
+stream, because it is cross-cutting and must be decided once and applied uniformly. **Perf-neutral by construction:**
+the ok path takes no throw; the single per-request catch sits off the hot path.
+
+## Bad patterns to eliminate (the actual mess)
+Seen all over the request path; the `SendWriter` write-failure block is the canonical example.
+- **`try`/`catch` used as on-failure cleanup.** A `try` wraps one operation; its `catch` runs a big terminal block
+  (poison + wake-all + close + return) and *ignores the exception value*. That is not exception handling. Express it as
+  control flow (op fails → `break` → run the cleanup once) or, when cleanup must run on every exit, a scope guard
+  (`irs::Finally`; `absl::Cleanup` only when it must be cancelable). Never a bare `catch (const std::exception&)` that
+  drops the value.
+- **Terminal handling inside the loop.** The failure cleanup + `co_return` sits in the `for(;;)` body; it belongs once,
+  *after* the loop — the loop only `continue`s on success.
+- **Recomputing what the API returns.** e.g. summing `view` buffer sizes for the byte count `_socket.Write` already
+  returns (`Async<std::size_t>`). Use the return value.
+- **Scattered intermediate `try`/`catch`** in the request path instead of one boundary, plus the
+  throw-then-rethrow-to-preserve-type dance at the DuckDB edge.
+These are structural quality bugs; the rules below fix them — naming a model is necessary but not sufficient.
 
 ## The two domains (the rule)
 Pick the mechanism by **who is waiting**, never mix within a function:

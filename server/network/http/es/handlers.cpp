@@ -44,33 +44,18 @@
 namespace sdb::network::http::es {
 namespace {
 
-// pg-wire arms the storage transaction/snapshot per statement from prepared
-// statement properties (PendingQueryEnsured); the thin handlers know
-// statically which calls write. The commit/rollback at statement end comes
-// from the SereneDBClientState transaction hooks.
-duckdb::Connection& PrepareStatement(RequestContext& ctx, bool writes) {
-  auto& conn = ctx.Connection();
-  auto& sdb_ctx = connector::GetSereneDBContext(*conn.context);
-  sdb_ctx.EnsureCatalogSnapshot();
-  if (writes) {
-    sdb_ctx.EnsureRocksDBTransaction();
-  }
-  sdb_ctx.EnsureRocksDBSnapshot();
-  return conn;
-}
-
-// One es_*() call per request; a failed call has already been written out as
-// an ES error envelope when this returns null.
-duckdb::unique_ptr<duckdb::MaterializedQueryResult> RunSql(
-  RequestContext& ctx, const std::string& sql,
-  http::HttpResponseWriter& writer, std::string_view index = {},
-  bool writes = false) {
-  auto result = PrepareStatement(ctx, writes).Query(sql);
+// One es_*() call per request, driven cooperatively (RunQuery yields the
+// scheduler worker between executor slices). A failed call has already been
+// written out as an ES error envelope when this resolves null.
+yaclib::Future<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunSql(
+  RequestContext& ctx, std::string sql, http::HttpResponseWriter& writer,
+  std::string_view index = {}, bool writes = false) {
+  auto result = co_await ctx.RunQuery(std::move(sql), writes);
   if (result->HasError()) {
     WriteSqlError(writer, result->GetErrorObject(), index);
-    return nullptr;
+    co_return nullptr;
   }
-  return result;
+  co_return std::move(result);
 }
 
 // ?refresh, ?refresh=true and ?refresh=wait_for all refresh synchronously
@@ -84,13 +69,17 @@ bool WantsRefresh(const HttpRequest& request) {
   return false;
 }
 
-bool MaybeRefresh(RequestContext& ctx, const HttpRequest& request,
-                  std::string_view index, http::HttpResponseWriter& writer) {
+yaclib::Future<bool> MaybeRefresh(RequestContext& ctx,
+                                  const HttpRequest& request,
+                                  std::string_view index,
+                                  http::HttpResponseWriter& writer) {
   if (!WantsRefresh(request)) {
-    return true;
+    co_return true;
   }
-  return RunSql(ctx, absl::StrCat("CALL es_refresh(", SqlLiteral(index), ")"),
-                writer, index) != nullptr;
+  auto result = co_await RunSql(
+    ctx, absl::StrCat("CALL es_refresh(", SqlLiteral(index), ")"), writer,
+    index);
+  co_return result != nullptr;
 }
 
 int64_t TookMs(std::chrono::steady_clock::time_point start) {
@@ -145,14 +134,14 @@ class BulkHandler final : public HttpHandler {
       WriteError(writer, 400, "illegal_argument_exception",
                  "an index is required in the request URL or in the action "
                  "metadata");
-      return yaclib::MakeFuture();
+      co_return {};
     }
     const auto start = std::chrono::steady_clock::now();
 
     // es_bulk fills the items array through the side channel while the
-    // INSERT runs (serenedb INSERT has no RETURNING).
-    auto& conn = PrepareStatement(ctx, /*writes=*/true);
-    auto& sdb_ctx = connector::GetSereneDBContext(*conn.context);
+    // INSERT runs (serenedb INSERT has no RETURNING). The sink is on the
+    // ConnectionContext that RunQuery drives through.
+    auto& sdb_ctx = connector::GetSereneDBContext(*ctx.Connection().context);
     std::string items;
     sdb_ctx.SetResponseSink(&items);
     const absl::Cleanup clear_sink = [&] { sdb_ctx.SetResponseSink(nullptr); };
@@ -160,18 +149,16 @@ class BulkHandler final : public HttpHandler {
     const auto sql = absl::StrCat(
       "INSERT INTO \"es\".", SqlIdentifier(index), " SELECT * FROM es_bulk(",
       SqlLiteral(index), ", ", SqlLiteral(body), ")");
-    auto result = conn.Query(sql);
-    if (result->HasError()) {
-      WriteSqlError(writer, result->GetErrorObject(), index);
-      return yaclib::MakeFuture();
+    if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true)) {
+      co_return {};
     }
-    if (!MaybeRefresh(ctx, request, index, writer)) {
-      return yaclib::MakeFuture();
+    if (!co_await MaybeRefresh(ctx, request, index, writer)) {
+      co_return {};
     }
     WriteJson(writer, 200, absl::StrCat("{\"took\":", TookMs(start),
                                   ",\"errors\":false,\"items\":[", items,
                                   "]}"));
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -189,9 +176,9 @@ class DocHandler final : public HttpHandler {
       "INSERT INTO \"es\".", SqlIdentifier(index), " SELECT * FROM es_doc(",
       SqlLiteral(index), ", ", SqlLiteral(id), ", ",
       SqlLiteral(FlattenBody(request.body)), ")");
-    if (!RunSql(ctx, sql, writer, index, /*writes=*/true) ||
-        !MaybeRefresh(ctx, request, index, writer)) {
-      return yaclib::MakeFuture();
+    if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true) ||
+        !co_await MaybeRefresh(ctx, request, index, writer)) {
+      co_return {};
     }
     simdjson::builder::string_builder sb;
     sb.append_raw(R"({"_index":)");
@@ -202,7 +189,7 @@ class DocHandler final : public HttpHandler {
                   R"("successful":1,"failed":0},"_seq_no":0,)"
                   R"("_primary_term":1})");
     WriteJson(writer, 201, std::string_view{sb.view().value()});
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -213,10 +200,10 @@ class RefreshHandler final : public HttpHandler {
                           http::HttpResponseWriter& writer) override {
     const auto sql = absl::StrCat("CALL es_refresh(",
                                   SqlLiteral(request.Param("index")), ")");
-    if (RunSql(ctx, sql, writer)) {
+    if (co_await RunSql(ctx, sql, writer)) {
       WriteJson(writer, 200, R"({"_shards":{"total":1,"successful":1,"failed":0}})");
     }
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -228,13 +215,13 @@ class GetDocHandler final : public HttpHandler {
                           http::HttpResponseWriter& writer) override {
     const auto index = request.Param("index");
     const auto id = request.Param("id");
-    auto result = RunSql(
+    auto result = co_await RunSql(
       ctx,
       absl::StrCat("SELECT \"_source\" FROM \"es\".", SqlIdentifier(index),
                    " WHERE \"_id\" = ", SqlLiteral(id)),
       writer, index);
     if (!result) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
     simdjson::builder::string_builder sb;
     sb.append_raw(R"({"_index":)");
@@ -244,7 +231,7 @@ class GetDocHandler final : public HttpHandler {
     if (result->RowCount() == 0) {
       sb.append_raw(R"(,"found":false})");
       WriteJson(writer, 404, std::string_view{sb.view().value()});
-      return yaclib::MakeFuture();
+      co_return {};
     }
     const auto source = result->GetValue(0, 0).GetValue<std::string>();
     sb.append_raw(R"(,"_version":1,"_seq_no":0,"_primary_term":1,)"
@@ -252,7 +239,7 @@ class GetDocHandler final : public HttpHandler {
     sb.append_raw(source);
     sb.append_raw("}");
     WriteJson(writer, 200, std::string_view{sb.view().value()});
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -264,21 +251,21 @@ class GetSourceHandler final : public HttpHandler {
                           http::HttpResponseWriter& writer) override {
     const auto index = request.Param("index");
     const auto id = request.Param("id");
-    auto result = RunSql(
+    auto result = co_await RunSql(
       ctx,
       absl::StrCat("SELECT \"_source\" FROM \"es\".", SqlIdentifier(index),
                    " WHERE \"_id\" = ", SqlLiteral(id)),
       writer, index);
     if (!result) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
     if (result->RowCount() == 0) {
       WriteError(writer, 404, "resource_not_found_exception",
                  absl::StrCat("Document not found [", index, "]/[", id, "]"));
-      return yaclib::MakeFuture();
+      co_return {};
     }
     WriteJson(writer, 200, result->GetValue(0, 0).GetValue<std::string>());
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -486,11 +473,13 @@ std::string ScrollPageSql(const std::string& relation,
 // Appends `"name":{...}` to the aggregations fragment; each aggregation is
 // one GROUP-BY/aggregate statement over the query's relation and WHERE.
 // false = the error response is already written.
-bool RunAggregation(RequestContext& ctx, const Aggregation& agg,
-                    const std::string& relation, const std::string& where,
-                    std::string_view index,
-                    simdjson::builder::string_builder& sb,
-                    http::HttpResponseWriter& writer) {
+yaclib::Future<bool> RunAggregation(RequestContext& ctx,
+                                    const Aggregation& agg,
+                                    const std::string& relation,
+                                    const std::string& where,
+                                    std::string_view index,
+                                    simdjson::builder::string_builder& sb,
+                                    http::HttpResponseWriter& writer) {
   const auto field = SqlIdentifier(agg.field);
   const std::string_view filter =
     where.empty() ? std::string_view{"TRUE"} : std::string_view{where};
@@ -542,9 +531,9 @@ bool RunAggregation(RequestContext& ctx, const Aggregation& agg,
     }
   }
 
-  auto result = RunSql(ctx, sql, writer, index);
+  auto result = co_await RunSql(ctx, sql, writer, index);
   if (!result) {
-    return false;
+    co_return false;
   }
   sb.escape_and_append_with_quotes(std::string_view{agg.name});
   sb.append_raw(":");
@@ -574,7 +563,7 @@ bool RunAggregation(RequestContext& ctx, const Aggregation& agg,
       sb.append_raw(R"(,"buckets":[)");
       sb.append_raw(std::string_view{bucket_sb.view().value()});
       sb.append_raw("]}");
-      return true;
+      co_return true;
     }
     case Aggregation::Kind::kDateHistogram: {
       sb.append_raw(R"({"buckets":[)");
@@ -592,7 +581,7 @@ bool RunAggregation(RequestContext& ctx, const Aggregation& agg,
         sb.append_raw("}");
       }
       sb.append_raw("]}");
-      return true;
+      co_return true;
     }
     default: {
       const auto value = result->GetValue(0, 0);
@@ -609,7 +598,7 @@ bool RunAggregation(RequestContext& ctx, const Aggregation& agg,
         AppendSortValue(sb, value);
       }
       sb.append_raw("}");
-      return true;
+      co_return true;
     }
   }
 }
@@ -617,20 +606,22 @@ bool RunAggregation(RequestContext& ctx, const Aggregation& agg,
 // Type-aware query translation needs the index's field types; one catalog
 // read per request (es_mapping doubles as the existence check -> 404).
 // false = the error response is already written.
-bool FetchFieldTypes(RequestContext& ctx, std::string_view index,
-                     FieldTypes& fields, http::HttpResponseWriter& writer) {
-  auto result =
-    RunSql(ctx, absl::StrCat("CALL es_mapping(", SqlLiteral(index), ")"),
-           writer, index);
+yaclib::Future<bool> FetchFieldTypes(RequestContext& ctx,
+                                     std::string_view index,
+                                     FieldTypes& fields,
+                                     http::HttpResponseWriter& writer) {
+  auto result = co_await RunSql(
+    ctx, absl::StrCat("CALL es_mapping(", SqlLiteral(index), ")"), writer,
+    index);
   if (!result) {
-    return false;
+    co_return false;
   }
   const auto mapping = result->GetValue(0, 0).GetValue<std::string>();
   if (!ParseFieldTypes(mapping, fields)) {
     WriteError(writer, 500, "exception", "malformed index mapping");
-    return false;
+    co_return false;
   }
-  return true;
+  co_return true;
 }
 
 // ES sends scroll/sort as URL params on the initial scroll search; only the
@@ -656,7 +647,7 @@ class SearchHandler final : public HttpHandler {
                 R"("successful":0,"skipped":0,"failed":0},"hits":{)"
                 R"("total":{"value":0,"relation":"eq"},"max_score":null,)"
                 R"("hits":[]}})");
-      return yaclib::MakeFuture();
+      co_return {};
     }
     const auto start = std::chrono::steady_clock::now();
 
@@ -666,31 +657,33 @@ class SearchHandler final : public HttpHandler {
           !absl::SimpleAtoi(value, param[0] == 's' ? &spec.size : &spec.from)) {
         WriteError(writer, 400, "illegal_argument_exception",
                    absl::StrCat("[", param, "] must be an integer"));
-        return yaclib::MakeFuture();
+        co_return {};
       }
     }
     FieldTypes fields;
-    if (!FetchFieldTypes(ctx, index, fields, writer)) {
-      return yaclib::MakeFuture();
+    if (!co_await FetchFieldTypes(ctx, index, fields, writer)) {
+      co_return {};
     }
     // The body overrides URL params; no body = match_all.
     if (!ParseSearchBody(FlattenBody(request.body), fields, spec, writer)) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
 
     if (WantsScroll(request)) {
-      return HandleScroll(ctx, request, writer, index, spec, start);
+      co_await HandleScroll(ctx, request, writer, index, spec, start);
+      co_return {};
     }
 
     const auto relation = SearchRelation(index, spec);
     // Relevance order: real BM25 over the index scan (pushes TopK down);
     // explicit field sorts render null scores like ES.
     const bool relevance = spec.uses_match && spec.order_by.empty();
+    // Query-then-fetch, like ES: rank by score/sort WITHOUT projecting
+    // _source (TOP_N sits above the scan, so projecting _source here would
+    // materialize the stored doc for EVERY match before the limit prunes --
+    // seconds for a common term). _source is fetched for the final page only.
     std::string sql = "SELECT \"_id\"";
-    if (spec.include_source) {
-      absl::StrAppend(&sql, ", \"_source\"");
-    }
-    const duckdb::idx_t sort_base = spec.include_source ? 2 : 1;
+    const duckdb::idx_t sort_base = 1;
     for (const auto& field : spec.sort_fields) {
       absl::StrAppend(&sql, ", ", SqlIdentifier(field));
     }
@@ -708,11 +701,36 @@ class SearchHandler final : public HttpHandler {
     }
     absl::StrAppend(&sql, " LIMIT ", spec.size, " OFFSET ", spec.from);
 
-    auto result = RunSql(ctx, sql, writer, index);
+    auto result = co_await RunSql(ctx, sql, writer, index);
     if (!result) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
     const auto rows = result->RowCount();
+
+    // Fetch _source for just this page, by PK -- point lookups, not a scan.
+    containers::FlatHashMap<std::string, std::string> source_by_id;
+    if (spec.include_source && rows > 0) {
+      std::string ids;
+      for (duckdb::idx_t row = 0; row < rows; ++row) {
+        absl::StrAppend(
+          &ids, row > 0 ? "," : "",
+          SqlLiteral(result->GetValue(0, row).GetValue<std::string>()));
+      }
+      auto source_result = co_await RunSql(
+        ctx,
+        absl::StrCat("SELECT \"_id\", \"_source\" FROM \"es\".",
+                     SqlIdentifier(index), " WHERE \"_id\" IN (", ids, ")"),
+        writer, index);
+      if (!source_result) {
+        co_return {};
+      }
+      source_by_id.reserve(source_result->RowCount());
+      for (duckdb::idx_t row = 0; row < source_result->RowCount(); ++row) {
+        source_by_id.emplace(
+          source_result->GetValue(0, row).GetValue<std::string>(),
+          source_result->GetValue(1, row).GetValue<std::string>());
+      }
+    }
 
     // The page bounds the total exactly unless it is full (or skipped past
     // the end); only then pay for the count.
@@ -723,9 +741,9 @@ class SearchHandler final : public HttpHandler {
       if (!spec.where.empty()) {
         absl::StrAppend(&count_sql, " WHERE ", spec.where);
       }
-      auto count_result = RunSql(ctx, count_sql, writer, index);
+      auto count_result = co_await RunSql(ctx, count_sql, writer, index);
       if (!count_result) {
-        return yaclib::MakeFuture();
+        co_return {};
       }
       total = count_result->GetValue(0, 0).GetValue<int64_t>();
     }
@@ -778,8 +796,12 @@ class SearchHandler final : public HttpHandler {
       }
       if (spec.include_source) {
         sb.append_raw(",\"_source\":");
-        sb.append_raw(
-          std::string_view{duckdb::StringValue::Get(result->GetValue(1, row))});
+        const auto id = result->GetValue(0, row).GetValue<std::string>();
+        const auto it = source_by_id.find(id);
+        // A doc deleted between rank and fetch leaves an empty object.
+        sb.append_raw(it != source_by_id.end()
+                        ? std::string_view{it->second}
+                        : std::string_view{"{}"});
       }
       if (!spec.sort_fields.empty()) {
         sb.append_raw(",\"sort\":[");
@@ -800,16 +822,16 @@ class SearchHandler final : public HttpHandler {
         if (i > 0) {
           sb.append_raw(",");
         }
-        if (!RunAggregation(ctx, spec.aggs[i], relation, spec.where, index,
-                            sb, writer)) {
-          return yaclib::MakeFuture();
+        if (!co_await RunAggregation(ctx, spec.aggs[i], relation, spec.where,
+                                     index, sb, writer)) {
+          co_return {};
         }
       }
       sb.append_raw("}");
     }
     sb.append_raw("}");
     WriteJson(writer, 200, std::string_view{sb.view().value()});
-    return yaclib::MakeFuture();
+    co_return {};
   }
 
  private:
@@ -824,13 +846,13 @@ class SearchHandler final : public HttpHandler {
       if (key == "sort" && value != "_doc" && value != "_doc:asc") {
         WriteError(writer, 400, "illegal_argument_exception",
                    "scroll supports only the _doc sort order yet");
-        return yaclib::MakeFuture();
+        co_return {};
       }
     }
     if (!spec.sort_fields.empty() || !spec.aggs.empty() || spec.from != 0) {
       WriteError(writer, 400, "illegal_argument_exception",
                  "scroll supports only plain _doc-ordered requests yet");
-      return yaclib::MakeFuture();
+      co_return {};
     }
 
     const auto relation = SearchRelation(index, spec);
@@ -838,9 +860,9 @@ class SearchHandler final : public HttpHandler {
     if (!spec.where.empty()) {
       absl::StrAppend(&count_sql, " WHERE ", spec.where);
     }
-    auto count_result = RunSql(ctx, count_sql, writer, index);
+    auto count_result = co_await RunSql(ctx, count_sql, writer, index);
     if (!count_result) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
 
     ScrollState state{
@@ -850,13 +872,13 @@ class SearchHandler final : public HttpHandler {
       .total = count_result->GetValue(0, 0).GetValue<int64_t>(),
       .include_source = spec.include_source,
     };
-    auto result = RunSql(ctx, ScrollPageSql(relation, spec, state), writer,
+    auto result = co_await RunSql(ctx, ScrollPageSql(relation, spec, state), writer,
                          index);
     if (!result) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
     WriteScrollPage(writer, state, result.get(), TookMs(start));
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -872,35 +894,35 @@ class ScrollHandler final : public HttpHandler {
         !ParseScrollIdBody(FlattenBody(request.body), scroll_id)) {
       WriteError(writer, 400, "illegal_argument_exception",
                  "scroll_id is required");
-      return yaclib::MakeFuture();
+      co_return {};
     }
     ScrollState state;
     if (!DecodeScrollId(scroll_id, state)) {
       WriteError(writer, 404, "search_context_missing_exception",
                  "No search context found for the given scroll id");
-      return yaclib::MakeFuture();
+      co_return {};
     }
     if (state.done) {
       WriteScrollPage(writer, state, nullptr, TookMs(start));
-      return yaclib::MakeFuture();
+      co_return {};
     }
     FieldTypes fields;
-    if (!FetchFieldTypes(ctx, state.index, fields, writer)) {
-      return yaclib::MakeFuture();
+    if (!co_await FetchFieldTypes(ctx, state.index, fields, writer)) {
+      co_return {};
     }
     SearchRequest spec;
     if (!TranslateStoredQuery(state.query, fields, spec, writer)) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
     spec.include_source = state.include_source;
-    auto result = RunSql(
+    auto result = co_await RunSql(
       ctx, ScrollPageSql(SearchRelation(state.index, spec), spec, state),
       writer, state.index);
     if (!result) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
     WriteScrollPage(writer, state, result.get(), TookMs(start));
-    return yaclib::MakeFuture();
+    co_return {};
   }
 
  private:
@@ -946,7 +968,7 @@ class ClearScrollHandler final : public HttpHandler {
   yaclib::Future<> Handle(RequestContext&, const HttpRequest&,
                           http::HttpResponseWriter& writer) override {
     WriteJson(writer, 200, R"({"succeeded":true,"num_freed":1})");
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -960,30 +982,30 @@ class CountHandler final : public HttpHandler {
       WriteJson(writer, 200,
                 R"({"count":0,"_shards":{"total":0,"successful":0,)"
                 R"("skipped":0,"failed":0}})");
-      return yaclib::MakeFuture();
+      co_return {};
     }
     FieldTypes fields;
-    if (!FetchFieldTypes(ctx, index, fields, writer)) {
-      return yaclib::MakeFuture();
+    if (!co_await FetchFieldTypes(ctx, index, fields, writer)) {
+      co_return {};
     }
     SearchRequest spec;
     if (!ParseCountBody(FlattenBody(request.body), fields, spec, writer)) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
     auto sql =
       absl::StrCat("SELECT count(*) FROM ", SearchRelation(index, spec));
     if (!spec.where.empty()) {
       absl::StrAppend(&sql, " WHERE ", spec.where);
     }
-    auto result = RunSql(ctx, sql, writer, index);
+    auto result = co_await RunSql(ctx, sql, writer, index);
     if (!result) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
     const auto count = result->GetValue(0, 0).GetValue<int64_t>();
     WriteJson(writer, 200, absl::StrCat("{\"count\":", count,
                                   ",\"_shards\":{\"total\":1,\"successful\":1,"
                                   "\"skipped\":0,\"failed\":0}}"));
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -996,7 +1018,7 @@ class RootHandler final : public HttpHandler {
       R"({"name":"serenedb","cluster_name":"serenedb","version":{)"
       R"("number":"8.11.0","build_flavor":"default"},)"
       R"("tagline":"You Know, for Search"})");
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -1013,7 +1035,7 @@ class HealthHandler final : public HttpHandler {
       R"("delayed_unassigned_shards":0,"number_of_pending_tasks":0,)"
       R"("number_of_in_flight_fetch":0,"task_max_waiting_in_queue_millis":0,)"
       R"("active_shards_percent_as_number":100.0})");
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -1026,14 +1048,14 @@ class CreateIndexHandler final : public HttpHandler {
     const auto sql =
       absl::StrCat("CALL es_create_index(", SqlLiteral(index), ", ",
                    SqlLiteral(FlattenBody(request.body)), ")");
-    if (RunSql(ctx, sql, writer)) {
+    if (co_await RunSql(ctx, sql, writer)) {
       WriteJson(writer, 
         200,
         absl::StrCat(R"({"acknowledged":true,"shards_acknowledged":true,)"
                      R"("index":")",
                      index, R"("})"));
     }
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -1045,10 +1067,10 @@ class DeleteIndexHandler final : public HttpHandler {
     const auto sql =
       absl::StrCat("CALL es_drop_index(", SqlLiteral(request.Param("index")),
                    ")");
-    if (RunSql(ctx, sql, writer)) {
+    if (co_await RunSql(ctx, sql, writer)) {
       WriteJson(writer, 200, R"({"acknowledged":true})");
     }
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -1059,10 +1081,10 @@ class IndexExistsHandler final : public HttpHandler {
                           http::HttpResponseWriter& writer) override {
     const auto sql = absl::StrCat(
       "CALL es_mapping(", SqlLiteral(request.Param("index")), ")");
-    if (RunSql(ctx, sql, writer)) {
+    if (co_await RunSql(ctx, sql, writer)) {
       WriteJson(writer, 200, "{}");
     }
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -1074,14 +1096,14 @@ class MappingHandler final : public HttpHandler {
     const auto index = request.Param("index");
     const auto sql =
       absl::StrCat("CALL es_mapping(", SqlLiteral(index), ")");
-    auto result = RunSql(ctx, sql, writer);
+    auto result = co_await RunSql(ctx, sql, writer);
     if (!result) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
     const auto mappings = result->GetValue(0, 0).GetValue<std::string>();
     WriteJson(writer, 200, absl::StrCat(R"({")", index, R"(":{"mappings":)",
                                   mappings, "}}"));
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -1091,10 +1113,10 @@ class CatIndicesHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
                           http::HttpResponseWriter& writer) override {
-    auto result =
-      RunSql(ctx, "SELECT index, docs_count FROM es_cat_indices()", writer);
+    auto result = co_await RunSql(
+      ctx, "SELECT index, docs_count FROM es_cat_indices()", writer);
     if (!result) {
-      return yaclib::MakeFuture();
+      co_return {};
     }
     const bool json = request.Query("format") == "json";
     std::string body;
@@ -1121,7 +1143,7 @@ class CatIndicesHandler final : public HttpHandler {
     } else {
       WriteText(writer, 200, body);
     }
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -1138,7 +1160,7 @@ class NodesStatsHandler final : public HttpHandler {
       R"("jvm":{"gc":{"collectors":{}},"mem":{"pools":{}}},)"
       R"("ingest":{"total":{"count":0,"time_in_millis":0,"current":0,)"
       R"("failed":0},"pipelines":{}}}}})");
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -1150,7 +1172,7 @@ class ForceMergeHandler final : public HttpHandler {
                           http::HttpResponseWriter& writer) override {
     WriteJson(writer, 200,
               R"({"_shards":{"total":1,"successful":1,"failed":0}})");
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -1163,7 +1185,7 @@ class ClusterSettingsHandler final : public HttpHandler {
                           http::HttpResponseWriter& writer) override {
     WriteJson(writer, 200,
               R"({"acknowledged":true,"persistent":{},"transient":{}})");
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 
@@ -1178,7 +1200,7 @@ class IndexStatsHandler final : public HttpHandler {
       R"({"_shards":{"total":1,"successful":1,"failed":0},)"
       R"("_all":{"total":{"merges":{"current":0}},)"
       R"("primaries":{"merges":{"current":0}}},"indices":{}})");
-    return yaclib::MakeFuture();
+    co_return {};
   }
 };
 

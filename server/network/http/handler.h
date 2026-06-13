@@ -25,11 +25,14 @@
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
 
+#include <duckdb/common/unique_ptr.hpp>
+
 #include "network/http/request.h"
 #include "network/http/response_writer.h"
 
 namespace duckdb {
 class Connection;
+class MaterializedQueryResult;
 }
 
 namespace sdb::network {
@@ -40,8 +43,17 @@ class RequestContext {
  public:
   virtual ~RequestContext() = default;
   // Lazily-created per-session duckdb connection (the storage seam: handlers
-  // speak SQL through it, never to a concrete table backend).
+  // speak SQL through it, never to a concrete table backend). Prefer
+  // RunQuery for executing SQL -- a raw Connection().Query() blocks the whole
+  // query on the scheduler worker and starves it under concurrency.
   virtual duckdb::Connection& Connection() = 0;
+  // Cooperatively drives `sql` to a materialized result: runs it as inline
+  // executor slices, yielding/parking the session task between them so the
+  // scheduler worker is returned to the pool (other sessions + this query's
+  // own parallel sub-tasks keep progressing). `writes` arms the storage
+  // transaction. The result may carry an error (check HasError()).
+  virtual yaclib::Future<duckdb::unique_ptr<duckdb::MaterializedQueryResult>>
+  RunQuery(std::string sql, bool writes) = 0;
   // Authenticated user; empty = trust/anonymous.
   virtual std::string_view User() const = 0;
 };

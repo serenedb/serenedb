@@ -37,6 +37,8 @@
 #include "basics/asio_ns.h"
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/main/materialized_query_result.hpp>
+#include <duckdb/main/pending_query_result.hpp>
 
 #include "basics/duckdb_engine.h"
 #include "basics/exceptions.h"
@@ -145,6 +147,67 @@ class HttpSession final : public std::enable_shared_from_this<HttpSession<Kind>>
     }
     return *_conn;
   }
+
+  // Cooperative query drive -- the pg-wire DriveQuery pattern (see
+  // PgWireSession::DriveQuery): run executor slices inline up to a budget,
+  // then Yield the worker back to the scheduler; Park on NO_TASKS/BLOCKED
+  // until the executor's on_reschedule wake re-runs us. A blocking
+  // Connection().Query() would instead pin this scheduler worker for the
+  // whole query and starve the pool under concurrent requests.
+  yaclib::Future<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunQuery(
+    std::string sql, bool writes) override {
+    auto& conn = Connection();
+    auto& sdb_ctx = connector::GetSereneDBContext(*conn.context);
+    sdb_ctx.EnsureCatalogSnapshot();
+    if (writes) {
+      sdb_ctx.EnsureRocksDBTransaction();
+    }
+    sdb_ctx.EnsureRocksDBSnapshot();
+
+    // Connection::Query() captures execution exceptions into the result's
+    // ErrorData; the manual drive must do the same (table functions
+    // THROW_SQL_ERROR), preserving the typed exception so the handlers'
+    // sqlstate->ES-error mapping still works.
+    try {
+      auto pending = conn.PendingQuery(sql, /*allow_stream_result=*/false);
+      if (!pending->HasError()) {
+        static constexpr int kInlineSliceBudget = 8;
+        int inline_slices = 0;
+        for (;;) {
+          const auto status =
+            pending->ExecuteTask([this] { _task->RequestRun(); });
+          if (duckdb::PendingQueryResult::IsResultReady(status)) {
+            break;
+          }
+          if (status == duckdb::PendingExecutionResult::RESULT_NOT_READY) {
+            if (++inline_slices < kInlineSliceBudget) {
+              continue;
+            }
+            inline_slices = 0;
+            co_await _task->Yield();
+          } else {
+            inline_slices = 0;
+            co_await _task->Park();
+          }
+        }
+      }
+      // An execution error leaves the pending result un-executable; pull the
+      // error directly (it preserves the typed exception) instead of calling
+      // Execute(), which would throw "unsuccessful pending result".
+      if (pending->HasError()) {
+        co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
+          pending->GetErrorObject());
+      }
+      auto result = pending->Execute();
+      co_return duckdb::unique_ptr_cast<duckdb::QueryResult,
+                                        duckdb::MaterializedQueryResult>(
+        std::move(result));
+    } catch (const std::exception& ex) {
+      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
+        duckdb::ErrorData{ex});
+    }
+  }
+
   std::string_view User() const override { return _user; }
 
  private:

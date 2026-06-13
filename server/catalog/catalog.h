@@ -339,6 +339,18 @@ struct LogicalCatalog {
                            std::string_view name, bool cascade) = 0;
   virtual Result DropIndex(std::string_view database, std::string_view schema,
                            std::string_view name, bool cascade) = 0;
+  // ALTER TABLE DROP COLUMN: rewrites the table without the column and
+  // cascade-drops any index that covers it (PostgreSQL column->index cascade).
+  virtual Result DropTableColumn(ObjectId database_id, std::string_view schema,
+                                 std::string_view table,
+                                 std::string_view column, bool if_exists) = 0;
+  // ALTER TABLE ALTER COLUMN TYPE. `using_sql` is the USING cast text (empty
+  // for the implicit cast). Rejected if the column participates in an index.
+  virtual Result ChangeColumnType(ObjectId database_id, std::string_view schema,
+                                  std::string_view table,
+                                  std::string_view column,
+                                  duckdb::LogicalType new_type,
+                                  std::string using_sql) = 0;
 
   virtual Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                                  std::string_view name) = 0;

@@ -993,6 +993,89 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       return;
     }
 
+    case duckdb::AlterTableType::ADD_COLUMN: {
+      auto& add_info = table_info.Cast<duckdb::AddColumnInfo>();
+      const auto& cd = add_info.new_column;
+      if (cd.Generated()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("adding a generated column is not supported"));
+      }
+      catalog::Column column{ObjectId{}, catalog::NextId(), cd.Name(),
+                             cd.Type()};
+      if (cd.HasDefaultValue()) {
+        column.expr = std::make_shared<ColumnExpr>(cd.DefaultValue().Copy());
+      }
+      Result r = catalog_impl.ChangeTable(
+        db, name, table_name,
+        [&](const catalog::Table& table,
+            std::shared_ptr<catalog::Table>& updated) {
+          return table.AddColumn(updated, column,
+                                 add_info.if_column_not_exists);
+        });
+      if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+                        ERR_MSG("column \"", cd.Name(), "\" of relation \"",
+                                table_name, "\" already exists"));
+      }
+      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+          ERR_MSG("relation \"", table_name, "\" does not exist"));
+      }
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      return;
+    }
+
+    case duckdb::AlterTableType::REMOVE_COLUMN: {
+      auto& remove_info = table_info.Cast<duckdb::RemoveColumnInfo>();
+      Result r = catalog_impl.DropTableColumn(db, name, table_name,
+                                              remove_info.removed_column,
+                                              remove_info.if_column_exists);
+      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+          ERR_MSG("relation \"", table_name, "\" does not exist"));
+      }
+      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+          ERR_MSG("column \"", remove_info.removed_column, "\" of relation \"",
+                  table_name, "\" does not exist"));
+      }
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      return;
+    }
+
+    case duckdb::AlterTableType::ALTER_COLUMN_TYPE: {
+      auto& type_info = table_info.Cast<duckdb::ChangeColumnTypeInfo>();
+      std::string using_sql;
+      if (type_info.expression) {
+        using_sql = type_info.expression->ToString();
+      }
+      Result r = catalog_impl.ChangeColumnType(
+        db, name, table_name, type_info.column_name, type_info.target_type,
+        std::move(using_sql));
+      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+          ERR_MSG("relation \"", table_name, "\" does not exist"));
+      }
+      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+          ERR_MSG("column \"", type_info.column_name, "\" of relation \"",
+                  table_name, "\" does not exist"));
+      }
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      return;
+    }
+
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("this ALTER TABLE operation is not supported"));

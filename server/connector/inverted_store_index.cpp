@@ -599,6 +599,12 @@ std::string InvertedStoreIndex::GetConstraintViolationMessage(
 }
 
 void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
+  // Never bind this index implicitly: its data lives in iresearch and its bind
+  // needs the serenedb catalog + shards, which load after the store DB's WAL
+  // replay. It is bound only by InitInvertedIndexes (an explicit by-name bind)
+  // once those are ready. This keeps an ALTER-driven rebuild during WAL replay
+  // from binding it too early (queries use IRESEARCH_SCAN, not this index).
+  type.defer_implicit_bind = true;
   type.build_bind = [](duckdb::IndexBuildBindInput&)
     -> duckdb::unique_ptr<duckdb::IndexBuildBindData> { return nullptr; };
   type.build_global_init = [](duckdb::IndexBuildInitGlobalStateInput& input)

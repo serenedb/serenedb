@@ -1249,6 +1249,28 @@ class SnapshotImpl : public Snapshot {
       .ComputePlan();
   }
 
+  // Plan for ALTER TABLE DROP COLUMN: rewrite the owning table without the
+  // column and cascade-drop every index covering it (PG column->index cascade).
+  // The column has no dependency edges of its own, so this is built directly
+  // rather than seeded into DropEmitter (which walks a seed's dependents).
+  DropPlan ComputeColumnDropPlan(ObjectId table_id, ObjectId col_id) const {
+    DropPlan plan;
+    auto table = GetObject<Table>(table_id);
+    SDB_ASSERT(table);
+    auto& rw = plan.table_rewrites[table_id];
+    rw.schema_id = table->GetParentId();
+    rw.table = table->DropColumn(col_id);
+    if (auto td = GetDependency<TableDependency>(table_id)) {
+      for (auto idx_id : td->indexes) {
+        auto idx = GetObject<Index>(idx_id);
+        if (idx && absl::c_contains(idx->GetColumnIds(), col_id)) {
+          plan.index_drops.push_back(idx_id);
+        }
+      }
+    }
+    return plan;
+  }
+
   void CommitDropPlan(CatalogStore::WriteContext& ctx,
                       const DropPlan& plan) const {
     duckdb::MemoryStream stream;
@@ -2207,8 +2229,12 @@ Result LocalCatalog::CreateTable(
         options.columns, [&](const auto& c) { return c.GetId() == col_id; });
       SDB_ASSERT(col != options.columns.end());
       if (col->type.IsNested()) {
-        return Result{ERROR_BAD_PARAMETER, what, " column \"", col->GetName(),
-                      "\" has unsupported nested type ", col->type.ToString()};
+        return Result{ERROR_BAD_PARAMETER,
+                      what,
+                      " column \"",
+                      col->GetName(),
+                      "\" has unsupported nested type ",
+                      col->type.ToString()};
       }
     }
     return {};
@@ -2782,6 +2808,26 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
               renamed_columns = true;
             }
           }
+          // Newly added columns -> mirror to the store table. A constant
+          // DEFAULT backfills existing rows; the store handler retries without
+          // it when the expression calls a facade-only function.
+          for (const auto& new_col : updated->Columns()) {
+            if (new_col.GetId() == Column::kGeneratedPKId) {
+              continue;
+            }
+            auto existed = std::ranges::any_of(
+              table->Columns(),
+              [&](const auto& c) { return c.GetId() == new_col.GetId(); });
+            if (existed) {
+              continue;
+            }
+            std::string default_sql;
+            if (new_col.expr && new_col.expr->HasExpr()) {
+              default_sql = new_col.expr->GetExpr().ToString();
+            }
+            ctx.AddStoreColumn(store_name, std::string{new_col.GetName()},
+                               new_col.type.ToString(), std::move(default_sql));
+          }
           if (renamed_columns) {
             // Mirrored index definitions embed column names;
             // recreate them against the renamed table (rowid
@@ -2981,6 +3027,165 @@ Result LocalCatalog::DropTable(std::string_view database,
       SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
       DropTask::Schedule(std::move(task)).Detach();
       return Result{};
+    });
+}
+
+Result LocalCatalog::DropTableColumn(ObjectId database_id,
+                                     std::string_view schema,
+                                     std::string_view table,
+                                     std::string_view column, bool if_exists) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto table_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, table);
+  if (!table_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
+  auto object = _snapshot->GetObject(*table_id);
+  if (!object || object->GetType() != ObjectType::Table) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                  object ? pg::ToPgObjectTypeName(object->GetType()) : ""};
+  }
+  auto table_ptr = basics::downCast<Table>(std::move(object));
+  auto col_it = absl::c_find_if(table_ptr->Columns(), [&](const Column& c) {
+    return c.GetName() == column;
+  });
+  if (col_it == table_ptr->Columns().end()) {
+    if (if_exists) {
+      return {};
+    }
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto col_id = col_it->GetId();
+
+  auto plan = _snapshot->ComputeColumnDropPlan(*table_id, col_id);
+
+  return Apply(
+    _snapshot, _snapshot_mutex, [&](std::shared_ptr<SnapshotImpl>& clone) {
+      auto wr =
+        _engine->Write([&](auto& ctx) { clone->CommitDropPlan(ctx, plan); });
+      if (!wr.ok()) {
+        return wr;
+      }
+      clone->ApplyDropPlan(database_id, plan);
+      return Result{};
+    });
+}
+
+Result LocalCatalog::ChangeColumnType(ObjectId database_id,
+                                      std::string_view schema,
+                                      std::string_view table,
+                                      std::string_view column,
+                                      duckdb::LogicalType new_type,
+                                      std::string using_sql) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto table_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, table);
+  if (!table_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
+  auto object = _snapshot->GetObject(*table_id);
+  if (!object || object->GetType() != ObjectType::Table) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                  object ? pg::ToPgObjectTypeName(object->GetType()) : ""};
+  }
+  auto table_ptr = basics::downCast<Table>(std::move(object));
+  auto col_it = absl::c_find_if(table_ptr->Columns(), [&](const Column& c) {
+    return c.GetName() == column;
+  });
+  if (col_it == table_ptr->Columns().end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto col_id = col_it->GetId();
+
+  // The index stores values of the column's old type; a type change would
+  // leave them inconsistent. Reject and let the user drop the index first.
+  if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
+    for (auto idx_id : td->indexes) {
+      auto idx = _snapshot->GetObject<Index>(idx_id);
+      if (idx && absl::c_contains(idx->GetColumnIds(), col_id)) {
+        return Result{ERROR_BAD_PARAMETER,
+                      "cannot alter type of column \"",
+                      column,
+                      "\" because index \"",
+                      idx->GetName(),
+                      "\" depends on it; drop the index first"};
+      }
+    }
+  }
+
+  std::shared_ptr<Table> updated;
+  if (auto r = table_ptr->ChangeColumnType(updated, column, new_type);
+      !r.ok()) {
+    return r;
+  }
+
+  std::string store_name;
+  if (updated->GetEngine() == TableEngine::Transactional &&
+      !updated->Tombstoned()) {
+    auto database = _snapshot->GetObject<Database>(database_id);
+    SDB_ASSERT(database);
+    store_name = StoreTableName(database->GetName(), schema, table);
+  }
+  std::string type_sql = new_type.ToString();
+
+  return Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+      auto rr =
+        clone->ReplaceObject<ResolveType::Relation>(*schema_id, table, updated);
+      if (!rr.ok()) {
+        return rr;
+      }
+      return basics::SafeCall([&] {
+        duckdb::MemoryStream stream;
+        auto bytes = catalog::SerializeObject(*updated, stream);
+        return _engine->Write([&](auto& ctx) {
+          ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
+                            bytes);
+          if (store_name.empty()) {
+            return;
+          }
+          // The store blocks ALTER COLUMN TYPE while any index depends on the
+          // table; drop the mirrored store indexes, change the type, then
+          // recreate them (the data lives in the rows / iresearch, so the
+          // rebuild carries no state of its own).
+          std::vector<StoreIndexDef> recreate;
+          auto deps = _snapshot->GetDependency<TableDependency>(*table_id);
+          auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
+          auto database = _snapshot->GetObject<Database>(database_id);
+          if (deps && schema_obj && database) {
+            for (auto idx_id : deps->indexes) {
+              auto idx = _snapshot->GetObject<Index>(idx_id);
+              if (!idx) {
+                continue;
+              }
+              if (auto def =
+                    MakeStoreIndexDef(database->GetName(),
+                                      schema_obj->GetName(), *updated, *idx)) {
+                ctx.DropStoreIndex(idx_id);
+                recreate.push_back(std::move(*def));
+              }
+            }
+          }
+          ctx.ChangeStoreColumnType(store_name, std::string{column}, type_sql,
+                                    using_sql);
+          for (auto& def : recreate) {
+            ctx.CreateStoreIndex(std::move(def));
+          }
+        });
+      });
     });
 }
 

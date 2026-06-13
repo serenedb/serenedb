@@ -191,6 +191,38 @@ std::shared_ptr<Table> Table::DropColumn(Column::Id column_id) const {
   return cloned;
 }
 
+Result Table::AddColumn(std::shared_ptr<Table>& result, Column column,
+                        bool if_not_exists) const {
+  for (const auto& c : _columns) {
+    if (c.GetName() == column.GetName()) {
+      if (if_not_exists) {
+        return {};
+      }
+      return Result{ERROR_SERVER_DUPLICATE_NAME};
+    }
+  }
+  auto new_table = basics::downCast<Table>(Clone());
+  column.SetParentId(new_table->GetId());
+  new_table->_columns.push_back(std::move(column));
+  result = std::move(new_table);
+  return {};
+}
+
+Result Table::ChangeColumnType(std::shared_ptr<Table>& result,
+                               std::string_view column_name,
+                               duckdb::LogicalType new_type) const {
+  auto it = absl::c_find_if(
+    _columns, [&](const Column& c) { return c.GetName() == column_name; });
+  if (it == _columns.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto new_table = basics::downCast<Table>(Clone());
+  new_table->_columns[std::distance(_columns.begin(), it)].type =
+    std::move(new_type);
+  result = std::move(new_table);
+  return {};
+}
+
 std::shared_ptr<Table> Table::DropForeignKeysReferencing(
   ObjectId referenced_table) const {
   auto cloned = basics::downCast<Table>(Clone());

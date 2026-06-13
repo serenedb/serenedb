@@ -71,6 +71,11 @@ class Table final : public Object {
   std::shared_ptr<Table> DropColumn(Column::Id column_id) const;
   std::shared_ptr<Table> DropForeignKeysReferencing(
     ObjectId referenced_table) const;
+  Result AddColumn(std::shared_ptr<Table>& result, Column column,
+                   bool if_not_exists) const;
+  Result ChangeColumnType(std::shared_ptr<Table>& result,
+                          std::string_view column_name,
+                          duckdb::LogicalType new_type) const;
 
  private:
   std::vector<Column> _columns;

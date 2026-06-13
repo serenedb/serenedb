@@ -24,11 +24,13 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <utility>
 #include <vector>
 
 #include "pg/errcodes.h"
+#include "pg/sql_exception.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
@@ -251,6 +253,17 @@ sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
     .errmsg = interrupted ? "canceling statement due to user request"
                           : error.RawMessage(),
   };
+}
+
+sdb::pg::SqlErrorData ToSqlError(const std::exception& exception) {
+  if (const auto* sql = dynamic_cast<const sdb::SqlException*>(&exception)) {
+    return sql->error();
+  }
+  if (const auto* duck = dynamic_cast<const duckdb::Exception*>(&exception)) {
+    return DuckErrorToSqlData(duckdb::ErrorData{*duck});
+  }
+  return sdb::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
+                              .errmsg = exception.what()};
 }
 
 void WriteEmptyFrame(message::Buffer& out, char type) {

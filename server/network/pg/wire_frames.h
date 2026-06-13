@@ -88,6 +88,11 @@ void WriteNoticeResponse(message::Buffer& out,
 // XX000.
 sdb::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error);
 
+// Funnels any exception caught at the command-loop boundary into pg
+// SqlErrorData: a serenedb SqlException keeps its sqlstate/detail/hint, a DuckDB
+// exception maps via DuckErrorToSqlData, anything else is XX000 internal.
+sdb::pg::SqlErrorData ToSqlError(const std::exception& exception);
+
 void WriteReadyForQuery(message::Buffer& out, char txn_status);
 
 // NegotiateProtocolVersion ('v'): tells a client that requested a newer minor

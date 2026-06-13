@@ -133,12 +133,15 @@ inline duckdb::LogicalType ResolveExpectedType(const auto& value_map,
   return duckdb::LogicalTypeId::VARCHAR;
 }
 
-// DuckDB's ErrorData preserves the original exception_ptr; Throw() rethrows it,
-// so a serenedb SqlException (with its sqlstate/detail/hint) survives execution
-// intact and is caught typed by the command loop -- instead of being flattened
-// through DuckErrorToSqlData, which only sees the bare message.
-[[noreturn]] inline void ThrowDuck(const duckdb::ErrorData& error) {
-  error.Throw();
+// Rethrow a DuckDB result's error iff it carries one. ErrorData::Throw() re-raises
+// the original exception_ptr, so a serenedb SqlException (sqlstate/detail/hint)
+// survives execution typed -- instead of being flattened through
+// DuckErrorToSqlData, which only sees the bare message.
+template<typename Result>
+void ThrowIfError(Result& result) {
+  if (result.HasError()) {
+    result.GetErrorObject().Throw();
+  }
 }
 
 // Parse/Bind/Describe/Execute/Close/Flush. An error in one of these arms
@@ -1226,9 +1229,7 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       continue;
     }
     auto prepared = _conn->Prepare(std::move(statement));
-    if (prepared->HasError()) {
-      ThrowDuck(prepared->GetErrorObject());
-    }
+    ThrowIfError(*prepared);
     const auto return_type = prepared->GetStatementProperties().return_type;
     duckdb::vector<duckdb::Value> params;
     if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
@@ -1243,21 +1244,17 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
                           {});
       auto wire = MakeWireContext({});
       auto pending = PendingQueryEnsured(*prepared, params, wire);
-      if (pending->HasError()) {
-        ThrowDuck(pending->GetErrorObject());
-      }
+      ThrowIfError(*pending);
       const auto status = co_await DriveQuery(*pending, wire.get());
       if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
           pending->HasError()) {
         // Partial rows may already be out; the error response after them is
         // exactly postgres's mid-stream error behavior.
-        ThrowDuck(pending->GetErrorObject());
+        pending->GetErrorObject().Throw();
       }
       co_await FinishWireDrain(*wire);
       auto result = pending->Execute();
-      if (result->HasError()) {
-        ThrowDuck(result->GetErrorObject());
-      }
+      ThrowIfError(*result);
       WriteCommandComplete(
         _send,
         sdb::pg::FormatCommandTag(*prepared, return_type,
@@ -1265,18 +1262,14 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       continue;
     }
     auto pending = PendingQueryEnsured(*prepared, params);
-    if (pending->HasError()) {
-      ThrowDuck(pending->GetErrorObject());
-    }
+    ThrowIfError(*pending);
     const auto status = co_await DriveQuery(*pending);
     if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
         pending->HasError()) {
-      ThrowDuck(pending->GetErrorObject());
+      pending->GetErrorObject().Throw();
     }
     auto result = pending->Execute();
-    if (result->HasError()) {
-      ThrowDuck(result->GetErrorObject());
-    }
+    ThrowIfError(*result);
     WriteCommandTag(*prepared, *result, return_type);
   }
   co_return {};
@@ -1363,23 +1356,17 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   duckdb::unique_ptr<duckdb::QueryResult> result;
   try {
     prepared = _conn->Prepare(std::move(statement));  // sniffs /dev/stdin
-    if (prepared->HasError()) {
-      ThrowDuck(prepared->GetErrorObject());
-    }
+    ThrowIfError(*prepared);
     duckdb::vector<duckdb::Value> params;
     auto pending = PendingQueryEnsured(*prepared, params);
-    if (pending->HasError()) {
-      ThrowDuck(pending->GetErrorObject());
-    }
+    ThrowIfError(*pending);
     const auto status = co_await DriveQuery(*pending);
     if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
         pending->HasError()) {
-      ThrowDuck(pending->GetErrorObject());
+      pending->GetErrorObject().Throw();
     }
     result = pending->Execute();
-    if (result->HasError()) {
-      ThrowDuck(result->GetErrorObject());
-    }
+    ThrowIfError(*result);
   } catch (...) {
     error = std::current_exception();
   }
@@ -1556,7 +1543,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     if (!statement_name.empty()) {
       _statements.erase(_statements.find(statement_name));
     }
-    ThrowDuck(error);
+    error.Throw();
   }
   WriteEmptyFrame(_send, PQ_MSG_PARSE_COMPLETE);
 }
@@ -1868,19 +1855,15 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
       auto wire = MakeWireContext(portal->bind_info.output_formats);
       portal->pending = PendingQueryEnsured(
         *portal->stmt->prepared, portal->bind_info.param_values, wire);
-      if (portal->pending->HasError()) {
-        ThrowDuck(portal->pending->GetErrorObject());
-      }
+      ThrowIfError(*portal->pending);
       const auto status = co_await DriveQuery(*portal->pending, wire.get());
       if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
           portal->pending->HasError()) {
-        ThrowDuck(portal->pending->GetErrorObject());
+        portal->pending->GetErrorObject().Throw();
       }
       co_await FinishWireDrain(*wire);
       portal->result = portal->pending->Execute();
-      if (portal->result->HasError()) {
-        ThrowDuck(portal->result->GetErrorObject());
-      }
+      ThrowIfError(*portal->result);
       portal->started = true;
       portal->exhausted = true;
       WriteCommandComplete(
@@ -1891,18 +1874,14 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     }
     portal->pending = PendingQueryEnsured(*portal->stmt->prepared,
                                           portal->bind_info.param_values);
-    if (portal->pending->HasError()) {
-      ThrowDuck(portal->pending->GetErrorObject());
-    }
+    ThrowIfError(*portal->pending);
     const auto status = co_await DriveQuery(*portal->pending);
     if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
         portal->pending->HasError()) {
-      ThrowDuck(portal->pending->GetErrorObject());
+      portal->pending->GetErrorObject().Throw();
     }
     portal->result = portal->pending->Execute();
-    if (portal->result->HasError()) {
-      ThrowDuck(portal->result->GetErrorObject());
-    }
+    ThrowIfError(*portal->result);
     portal->started = true;
   }
 
@@ -2256,17 +2235,8 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
                               ERR_MSG("unsupported message type"));
           }
-        } catch (const SqlException& exception) {
-          WriteErrorResponse(_send, exception.error());
-          ignore_till_sync = IsExtended(type);
-        } catch (const duckdb::Exception& exception) {
-          WriteErrorResponse(_send,
-                             DuckErrorToSqlData(duckdb::ErrorData{exception}));
-          ignore_till_sync = IsExtended(type);
         } catch (const std::exception& exception) {
-          WriteErrorResponse(
-            _send, sdb::pg::SqlErrorData{.errcode = ERRCODE_INTERNAL_ERROR,
-                                         .errmsg = exception.what()});
+          WriteErrorResponse(_send, ToSqlError(exception));
           ignore_till_sync = IsExtended(type);
         }
         DrainNotices();

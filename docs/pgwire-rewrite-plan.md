@@ -172,3 +172,198 @@ Then phase 3 = delete http's now-dead duplicate (covered as http migrates here);
   that parses; `using Base = …` aliasing tripped two-phase lookup). Build → add each undeclared name's `using` → repeat.
 - A first HttpSession migration attempt was reverted to keep the tree green; redo it cleanly with the unique name +
   explicit-`<Kind>` usings, build against es/http(49)+gtests, commit; then pg against drivers(1455).
+
+---
+
+# Phase specifications (3–7)
+
+Phases 0–2 are covered above (0 harness, 1 error-model+scars DONE, 2 transport base DONE + migration checklist). The
+sections below give phases 3–7 the same design/steps/gates/gotchas detail. Every phase keeps the **one session
+coroutine** and the **four perf seams**, builds green, and is gated on the functional suites (pg drivers 1455, es/http
+49, the `serenedb-tests_basics` gtests); the two hot-path phases (6, and the migrations in 2/3) also take a `build_perf`
+before/after.
+
+## Phase 3 — migrate `HttpSession` onto `Transport`; delete its duplicate transport
+
+**Design.** With pg-wire on `Transport<Kind, PgWireSession<Kind>>` (phase 2), do the same for HTTP so both protocols
+share one implementation of every send/recv seam. http's framing (`H1Codec`, `ReadHead`/`ReadBody`, `_dechunk`) and its
+deadline/idle machinery (`_deadline`, `_idle`, `kHttp*ReadTimeout`) stay http-specific on top of the inherited transport.
+
+**Steps.**
+1. Base-list: `class HttpSession final : public Transport<Kind, HttpSession<Kind>>, public std::enable_shared_from_this<…>, public http::ResponseSink, public RequestContext`.
+2. Ctors delegate to the base: non-Ssl → `Transport<Kind, HttpSession<Kind>>{exec}`; Ssl → `…{exec, *ctx.ssl}`. Drop the
+   `_socket`/`_io`/`_ioexec` initializers; keep `_deadline`/`_router`/`_auth`.
+3. Add the dependent-base `using Transport<Kind, HttpSession<Kind>>::member;` block (see phase-2 checklist) for every
+   inherited name http references (`_socket _ioexec _recv _send _task _task_spawned KickSend HasUnsentBytes SendBroken
+   AwaitSendBelowHighWater DrainSendOnTask AwaitMoreBytes`; add more on undeclared-identifier errors).
+4. Delete the now-inherited members + methods (`OnSendViewReady KickSend HasUnsentBytes SendBroken ArmSendWaiter
+   DisarmSendWaiter AwaitSendBelowHighWater DrainSendOnTask AwaitMoreBytes SendWriter` + the `_socket/_recv/_send/
+   _write_*/ _send_*/ _io_broken/ _writer_stop/ _task/ _task_spawned` members) and the redundant `_io`; rewrite the one
+   teardown `asio_ns::post(_io, …)` to `asio_ns::post(_ioexec->Context(), …)`.
+5. `void OnSendPoison() {}` (http owes no extra wake — no COPY feeder / producer gate). `Start()` keeps
+   `this->SendWriter().Detach()` + `Run().Detach()`.
+6. The `ResponseSink` overrides stay: `Drain() { return AwaitSendBelowHighWater(); }`, `Broken() { return SendBroken(); }`
+   (now the inherited ones).
+
+**Gate.** build → `serened serenedb-tests_basics` → `NetworkHttp.*`/`NetworkRouter.*` gtests → es/http driver suite (49)
+→ `build_perf` http throughput/latency vs the phase-0 baseline.
+
+**Gotchas.** Dependent-base lookup (usings, not `this->` soup, not a `Base` alias). `Transport` name avoids the
+`duckdb::Connection` shadowing. http never calls `Flush()`/`_producer_gate` — they're inherited-but-unused (harmless;
+one extra atomic kick per 64 KiB flush, below the bench's noise). The `_send` flush-callback now lives in the base, so
+http's member block must NOT redeclare `_send`.
+
+## Phase 4 — `RecvFramer`: fold `pg_frame_codec` in, one parameterized frame-await, RAII consume
+
+**Design.** The receive side is currently smeared between the session (`TryAssembleFrame`, the three
+`NextFrame`/`AwaitFrame`/`FeedFrame` wrappers, `PeekTotalLength`, `CopyRecvInto`, `_scratch`, the `recv_consume`/
+`_dispatch_consume` bookkeeping) and the over-extracted `pg_frame_codec.{h,cpp}` (a 2-method class + 3 result structs
+for ~20 lines of pure parsing, called from two places, that *leaks* the split-frame reassembly back into the session).
+Collapse it into one `RecvFramer` owning the recv view over `Transport::_recv`, with `pg_frame_codec`'s `Parse`/
+`StartupCode` folded in as private free functions (delete `pg_frame_codec.{h,cpp}`, keep the `FrameStatus` enum, drop the
+`WireFrame`/`FrameResult` wrappers — one `Frame` type). `wire_frames.{h,cpp}` is the opposite concern (response
+*writing*) and stays separate.
+
+**Steps.**
+1. New `RecvFramer` (own header or a clearly-bounded section) holding `_scratch`, `max_len`, the consume bookkeeping, and
+   a reference to the transport's `_recv`. Move `TryAssembleFrame`/`PeekTotalLength`/`CopyRecvInto` in; inline
+   `pg_frame_codec::Parse`/`StartupCode`.
+2. One co_await-able `NextFrame(bool typed, uint32_t max_len, Waiter wait)` parameterized by the wait strategy —
+   replacing the three near-duplicate wrappers (`Waiter` = socket-read for startup, `_task->Park` for the command phase,
+   `_copy_gate.Wait` for the feeder). The wait *is* the io↔duck seam; keep all three call patterns.
+3. Replace `recv_consume`/`_dispatch_consume` + the ~13 manual `if (frame.recv_consume) _recv.Consume(...)` sites with an
+   RAII frame handle: contiguous frames hold the pending consume and `Consume` on scope-exit (or an explicit `Commit()`
+   the caller invokes after it's done with the borrowed payload); split frames already consumed → handle is a no-op.
+   COPY-FROM-STDIN moves the handle to the feeder instead of the early-consume-then-zero hack.
+4. Make non-`Ok` outcomes a status-only `Frame` variant so `.payload` is unreadable on error.
+
+**Invariants.** Single recv consumer at any instant (the role handoff is the `Waiter` choice). Zero-copy contiguous
+payload view into `_recv`, consumed only after the handler runs. One-copy `_scratch` linearization for chunk-spanning
+frames only. `max_len` enforced before alloc; over-cap → `TooLarge`, never a silent drop. Big-endian length + typed/
+untyped offset (startup frames have no type byte). CVE-2021-23214 empty-buffer check before the TLS handshake.
+
+**Gate.** build → drivers (1455) — exercise split frames (large statements/params) + COPY. **Optional, bench-gated
+follow-up:** the "always-contiguous via Reserve-the-rest" idea that would delete `PeekTotalLength`/`CopyRecvInto`/
+`_scratch` — only if a COPY/large-result `build_perf` shows it's a wash or better.
+
+**Gotchas.** The borrow-then-consume contract is load-bearing; the RAII handle must not consume before the handler
+finishes with the view. Keep `wire_frames` separate; move `DuckErrorToSqlData`/`ToSqlError` with the error concern, not
+here.
+
+## Phase 5 — `PgAuthenticator`: SCRAM parsing → `auth.cpp`, non-template driver, named `Handshake()`
+
+**Design.** `auth.{h,cpp}` (pure crypto, shared with HTTP Basic) stays. The wrong boundary is *inside* the session: the
+SCRAM/SASL message parsing (gs2 header, client-first-bare, client-final proof/cbind/nonce) lives in the `SocketKind`
+template header though it has zero dependency on the socket. Move it to `auth.cpp` as pure functions; lift the
+`Authenticate*` trio into a non-template `PgAuthenticator` so the ~220-line auth body leaves every `Kind` instantiation.
+
+**Steps.**
+1. In `auth.cpp`: `struct ScramClientFirst {…}`, `struct ScramClientFinal {…}`, and
+   `optional<ScramClientFirst> ParseScramClientFirst(string_view)` / `…Final(string_view)` (discriminated error reason →
+   right SQLSTATE). Unit-testable, no io.
+2. New non-template `PgAuthenticator` (`.cpp`) driving SCRAM/cleartext over two callbacks — a frame reader
+   `Future<optional<string_view>> ReadPasswordMessage()` and `WriteAuth(int code, string_view)`+flush — returning
+   `{Ok, Failed(SqlErrorData), Closed}`. The session passes lambdas binding `NextFrame`/`_send`. No `fail()` lambda
+   scattering, no exceptions.
+3. Session `Run()` prologue → a named `Handshake()` returning `{Proceed, Closed}` (the SSLRequest/GSS/Cancel/version loop
+   as states, not inline `for(;;)`+break); delete the dead `Ssl`-Kind arm and the swallow-all `try/catch` in favour of an
+   `absl::Cleanup` teardown.
+4. `SetupConnection` GUC loop → a non-throwing `SetSetting` status path (per the THROW_SQL_ERROR rule). Replace the manual
+   `kAuthOk` byte array with `WriteAuthRequest(_send, 0, {})`; add `WriteAuthSASL(mechanisms)` to `wire_frames`.
+
+**Invariants.** `AuthenticationOk` + the startup burst go out **after** `Authenticate()` succeeds **and after**
+`SetupConnection`, on the duck worker. CVE plaintext check on the SSLRequest→TLS upgrade. Constant-time secret compares
+(`ConstantTimeEqual`, vendored OpenSSL). `NextFrame` is the only frame source during startup/auth (no SessionTask yet).
+BackendKeyData pid=high32/secret=low32.
+
+**Gate.** build → drivers (1455) — exercise the SCRAM, cleartext, and trust auth paths (and any md5/channel-binding added
+under the separate auth work-item). Add a small gtest for the new pure SCRAM parsers.
+
+**Gotchas.** Lifting auth out of the `Kind` template shrinks per-Kind code but the authenticator still needs
+`_socket.IsTls()` (one bool) — pass it, don't re-template. Keep auth io-side; do not pull `SetupConnection`/burst back
+from the duck side for symmetry.
+
+## Phase 6 — query execution: two drive primitives, split `WireSinkContext`, one backpressure authority
+
+**Design.** The session/`wire_collector` split is right in principle (the collector is a `PhysicalResultCollector`, a
+DuckDB operator) but leaky: `WireSinkContext` is half session-owned (send/written/task/formats/proto) and half
+collector-owned (mode/rows/batches/blocked + the high-water math), and the backpressure decision is split across **three**
+places that must stay in lockstep (`DrainWire` session, `OverHighWater` collector, `UnblockSinks` ctx) — the single
+biggest hazard here. Also the execution core is duplicated across ~5 drive blocks (simple + extended).
+
+**Steps.**
+1. Two shared drive primitives (free functions / a thin `Executor`, **no new coroutines**): `DriveToResult(prepared,
+   params) -> unique_ptr<QueryResult>` (ensure-txn + `PendingQueryEnsured` + `DriveQuery` + `Execute` + `ThrowIfError`)
+   and `DriveWire(prepared, params, formats) -> uint64 rows` (`WriteRowDescription` + `MakeWireContext` +
+   `PendingQueryEnsured(wire)` + `DriveQuery(wire)` + `FinishWireDrain` + cleanup `Execute`). Replace the ~5 duplicated
+   drive blocks in `RunSimpleQuery`/`HandleExecute`/`RunCopyFromStdin`/`SerializePage`. `DriveQuery` itself is unchanged
+   (the handoff seam — preserve `kInlineSliceBudget=8`, the `ExecuteTask([this]{_task->RequestRun();})` lambda, the
+   arm/disarm-on-wire branch).
+2. Split `WireSinkContext` along its real seam: an immutable per-query `SessionWireBinding {send, send_written, task,
+   formats, proto}` the session hands in, and a collector-owned `WireQueue {mode, batches, blocked, queued/pinned_bytes,
+   min_batch, Push/Pop/Block/Unblock}`. Kill the `Reset()`/`use_count()==1` reuse hack.
+3. Make `WireQueue` the **one** backpressure authority: fold `DrainWire`'s per-mode switch + the session's
+   `OverSendHighWater` duplication into `ctx.Drain(send, written, finished)` / `ctx.OnWriterProgress(written)`; co-locate
+   the `kSend*`/`kWire*` constants. `FinishWireDrain` becomes a thin loop over `ctx.Drain(finished=true)` + Park.
+4. `ResolveStatement(name)`/`ResolvePortal(name)` fold the `_anon_*` special-case (or key unnamed entries under `""`);
+   `DescribeStatement`'s dummy-replan → a named `ResolveResultTypes(prepared)`.
+
+**Invariants.** RowDescription committed to `_send` **before** `PendingQuery` in direct mode (then CommandComplete after
+the drain). Lazy kickoff (`DriveQuery`'s gated `RequestRun`, `kInlineSliceBudget=8`). Zero-copy splice
+(`SpliceCommitted`, `WriteDataChunkRange` builds the DataRow prefix in place). The **three** distinct backpressure
+accounting modes each survive. `PendingQuery` `allow_stream_result=false` only when a wire ctx is armed. RocksDB txn/
+snapshot ensured per the prepared statement's read/modified set. `Execute()`'s row count is *this* Execute's, not the
+portal total.
+
+**Gate.** build → drivers (1455) — large results, extended protocol, cursors/paging → `build_perf` (simple-query,
+extended, large-result) vs baseline (hot path).
+
+**Gotchas.** The three-place backpressure lockstep is the top correctness hazard — collapsing it onto `WireQueue` is the
+point; verify the ordered-mode lookahead window + pinned cap behaviour is unchanged. Keep `wire_frames` free encoders;
+don't class-ify them.
+
+## Phase 7 — `CopyInScope` RAII; delete the dead old-server `CopyMessagesQueue` layer
+
+**Design.** COPY-FROM-STDIN control belongs in the session (it owns `_recv`/`_send`/`_copy_gate`/`_copy_route`); the
+DuckDB FileSystem + binary `CopyFunction` adapters stay in `connector/` (registered on the DuckDB instance), with
+`CopyInBridge` the seam — keep that two-layer shape. But the session leaks COPY state across 5 members + 3 methods with
+manual lifetime/join/rethrow wiring, and a whole `CopyMessagesQueue` layer from the old server is dead.
+
+**Steps.**
+1. `CopyInScope` (RAII, header-only, pg module): ctor sets up the stack bridge, flips `_copy_route=true`, resets the
+   client-state `copy_stdin_*` fields, writes `CopyInResponse`, kicks send, spawns the feeder; dtor / an explicit
+   `co_await Join()` does `bridge.Abort()` + `_copy_gate.Kick()` + park-until-`_feeder_done` + `_copy_route=false` +
+   `SetCopyInBridge(nullptr)`. `RunCopyFromStdin` becomes: construct scope, Prepare/Drive/Execute letting `SqlException`
+   propagate, `co_await scope.Join()`, `WriteCommandTag` — deleting the `try/catch`/`exception_ptr`/rethrow.
+2. Delete the dead old-server queue layer: `copy_messages_queue.h`, `ConnectionContext::_copy_queue`/`GetCopyQueue`, the
+   `CopyInFileHandle` queue ctor arg/`_iterator`/bridge-vs-iterator ternary, and the dead `if (auto* queue =
+   GetCopyQueue())` branch in `duckdb_client_state.cpp` (`_copy_queue` is always null in the new server — `SetupConnection`
+   passes `nullptr`). `CopyInFileHandle` collapses to bridge-only (CSV replay-buffer stays).
+3. `CopyInBridge::Fail(SqlErrorData)` overload so the feeder stops hand-building `make_exception_ptr`+`source_location` at
+   three sites; hoist the per-arm `_recv.Consume` to one post-switch consume (mirror the command loop).
+4. One `WriteCopyDataFrame(message::Buffer&, payload-callback)` (reserve 5-byte prefix, write payload, backpatch type+len,
+   `Commit(false)`) shared by text-out and binary header/row/trailer — replacing the duplicated dance in
+   `CopyOutFileHandle::DoWrite` and `pg_binary_copy::FinishCopyData`.
+
+**Invariants.** Strict lock-step single-in-flight borrowed view between feeder and worker (one `OneShotEvent` pair, no
+queue, no per-packet copy). `_copy_route` recv-consumer handoff (exactly one consumer of `_recv`). Detection-before-
+Prepare + feeder-live-before-sniff ordering. Feeder always joined before the stack bridge is destroyed, even on error.
+CSV-sniff re-open replay vs binary single-open no-replay (`copy_stdin_no_replay`). Binary TO STDOUT single-threaded
+(`SetChildCardinality`, already fixed). Zero-copy CopyData framing (prefix-reserve + backpatch).
+
+**Gate.** build → drivers (1455) incl. `test_copy`/`test_shell_copy` + the binary-COPY-`WHERE` repro
+(`COPY t FROM STDIN (FORMAT binary) WHERE s LIKE 'x%'`).
+
+**Gotchas.** Do NOT merge the connector adapters into the session (they're the DuckDB-facing half, registered on the
+instance). The feeder is a transient per-COPY coroutine that joins back — not a new long-lived coroutine; do not fragment
+`RunCopyInFeeder`.
+
+---
+
+## Cross-phase cleanups (apply as each phase touches the area)
+- Comments → WHY-only; strip the "mirrors / matches X / without RTTI" narration the iterative growth left behind.
+- Keep one error-mapping home (the phase-1 `ToSqlError`/`ThrowIfError` + `DuckErrorToSqlData`); no new `throw`/`catch`
+  outside the single command-loop boundary and the feeder join.
+- After all phases: re-evaluate whether `pg_wire_session.h` should split into `.h` (decl + hot inline helpers) + a
+  `.cpp`/per-concern headers so a touch doesn't recompile every `SocketKind` instantiation (compile-time win, no
+  behaviour change). Naming/placement per #796 (greppable unique types, no `duckdb` in identifiers) applied with judgment.

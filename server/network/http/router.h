@@ -20,13 +20,11 @@
 
 #pragma once
 
-#include <ada.h>
-
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 
-#include "network/ada_re2_provider.h"
 #include "network/http/handler.h"
 
 namespace sdb::network {
@@ -37,17 +35,27 @@ class HttpRouter {
            std::unique_ptr<HttpHandler> handler);
 
   // Parses the query string into request.query, matches method + path,
-  // fills request.params from the pattern groups. nullptr = no route.
+  // fills request.params from the pattern's `:name` segments. nullptr = no
+  // route. Routes are tried in insertion order, first match wins.
   HttpHandler* Match(HttpRequest& request);
 
  private:
-  using Pattern = ada::url_pattern<AdaRe2Provider>;
-
+  // A route pattern is a list of '/'-delimited segments; `param` segments
+  // (`:name`) capture the request segment verbatim, the rest match literally.
+  // No regex, optionals, or wildcards -- every ES/OS route is this shape, so a
+  // segment walk beats per-request URL parsing + regex by ~30% of server CPU.
+  struct Segment {
+    std::string text;
+    bool param;
+  };
   struct Entry {
     HttpMethod method;
-    Pattern pattern;
+    std::vector<Segment> segments;
     std::unique_ptr<HttpHandler> handler;
   };
+
+  static bool MatchPath(const std::vector<Segment>& segments,
+                        std::string_view path, HttpRequest& request);
 
   std::vector<Entry> _routes;
 };

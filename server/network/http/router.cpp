@@ -20,12 +20,11 @@
 
 #include "network/http/router.h"
 
-#include <absl/strings/str_cat.h>
 #include <ada.h>
 
 #include <string>
+#include <string_view>
 #include <utility>
-#include <variant>
 
 #include "basics/assert.h"
 
@@ -33,13 +32,60 @@ namespace sdb::network {
 
 void HttpRouter::Add(HttpMethod method, std::string_view pattern,
                      std::unique_ptr<HttpHandler> handler) {
-  ada::url_pattern_init init;
-  init.pathname = std::string{pattern};
-  auto compiled = ada::parse_url_pattern<AdaRe2Provider>(
-    std::variant<std::string_view, ada::url_pattern_init>{std::move(init)});
-  SDB_VERIFY(compiled.has_value(), "failed to compile HTTP route pattern '",
-             pattern, "'");
-  _routes.push_back({method, std::move(compiled.value()), std::move(handler)});
+  SDB_VERIFY(!pattern.empty() && pattern.front() == '/',
+             "HTTP route pattern must start with '/': '", pattern, "'");
+  std::vector<Segment> segments;
+  std::string_view rest = pattern.substr(1);
+  // "/" is the root: zero segments. Any other pattern splits on '/'.
+  if (!rest.empty()) {
+    for (;;) {
+      const size_t slash = rest.find('/');
+      const std::string_view seg =
+        slash == std::string_view::npos ? rest : rest.substr(0, slash);
+      if (!seg.empty() && seg.front() == ':') {
+        segments.push_back({std::string{seg.substr(1)}, true});
+      } else {
+        segments.push_back({std::string{seg}, false});
+      }
+      if (slash == std::string_view::npos) {
+        break;
+      }
+      rest = rest.substr(slash + 1);
+    }
+  }
+  _routes.push_back({method, std::move(segments), std::move(handler)});
+}
+
+bool HttpRouter::MatchPath(const std::vector<Segment>& segments,
+                           std::string_view path, HttpRequest& request) {
+  // `path` is non-empty with a leading '/'. Walk segments in lockstep with
+  // '/'-delimited path pieces; a trailing '/' leaves an empty piece that only
+  // matches an empty literal (never registered), so "/x/" != "/x".
+  std::string_view rest = path.substr(1);
+  if (rest.empty()) {
+    return segments.empty();
+  }
+  size_t i = 0;
+  for (;;) {
+    if (i >= segments.size()) {
+      return false;
+    }
+    const size_t slash = rest.find('/');
+    const std::string_view seg =
+      slash == std::string_view::npos ? rest : rest.substr(0, slash);
+    const Segment& pat = segments[i];
+    if (pat.param) {
+      request.params.emplace_back(pat.text, std::string{seg});
+    } else if (seg != pat.text) {
+      return false;
+    }
+    ++i;
+    if (slash == std::string_view::npos) {
+      break;
+    }
+    rest = rest.substr(slash + 1);
+  }
+  return i == segments.size();
 }
 
 HttpHandler* HttpRouter::Match(HttpRequest& request) {
@@ -48,7 +94,7 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
   const std::string_view path =
     cut == std::string_view::npos ? target : target.substr(0, cut);
   // Parse the query string (request-scoped) into request.query, percent-decoded
-  // by ada; path matching below still uses `path` only, so it is unaffected.
+  // by ada; path matching below uses `path` only, so it is unaffected.
   request.query.clear();
   if (cut != std::string_view::npos && target[cut] == '?') {
     const size_t frag = target.find('#', cut);
@@ -63,23 +109,14 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
   if (path.empty() || path.front() != '/') {
     return nullptr;
   }
-  const std::string url = absl::StrCat("http://serenedb", path);
   for (auto& route : _routes) {
     if (route.method != request.method) {
       continue;
     }
-    auto matched =
-      route.pattern.exec(ada::url_pattern_input{std::string_view{url}});
-    if (!matched.has_value() || !matched.value().has_value()) {
-      continue;
-    }
     request.params.clear();
-    for (auto& [name, value] : matched.value().value().pathname.groups) {
-      if (value.has_value()) {
-        request.params.emplace_back(name, std::move(value.value()));
-      }
+    if (MatchPath(route.segments, path, request)) {
+      return route.handler.get();
     }
-    return route.handler.get();
   }
   return nullptr;
 }

@@ -61,9 +61,9 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     const auto opts = (column_options && *column_options)
                         ? (*column_options)(field_id_v)
                         : ColumnOptions{};
-    auto& cw =
-      output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
-                        opts.row_group_size, opts.compression);
+    auto& cw = output.OpenColumn(field_id_v, first_col->Type(),
+                                 opts.skip_validity, opts.row_group_size,
+                                 opts.compression, opts.approx_distinct);
 
     if (opts.hnsw_info) {
       output.AttachHnsw(field_id_v, *opts.hnsw_info);

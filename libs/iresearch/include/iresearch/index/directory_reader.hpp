@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <duckdb/storage/statistics/base_statistics.hpp>
+
 #include "basics/object_pool.hpp"
 #include "basics/shared.hpp"
 #include "index_reader.hpp"
@@ -74,6 +76,8 @@ class DirectoryReader final : public IndexReader {
   uint64_t docs_count() const final;
 
   uint64_t live_docs_count() const final;
+
+  const duckdb::BaseStatistics* GetColumnStats(field_id field) const;
 
   size_t size() const final;
 

@@ -132,6 +132,7 @@ struct InvertedIndexEntryInfo {
   uint32_t norm_row_group_size = 0;
   bool store_values = false;
   bool indexed_term_dict = false;
+  bool approx_distinct = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   std::optional<HNSWColumnConfig> hnsw_config;

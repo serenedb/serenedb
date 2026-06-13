@@ -25,6 +25,7 @@
 #include <cstring>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -58,7 +59,8 @@ namespace irs {
 
 ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
                            uint32_t row_group_size, WriteContext& write_ctx,
-                           FooterColumnEntry& entry, bool skip_validity)
+                           FooterColumnEntry& entry, bool skip_validity,
+                           bool approx_distinct)
   : _id{id},
     _type{std::move(type)},
     _row_group_size{row_group_size},
@@ -68,6 +70,15 @@ ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
              duckdb::VectorDataInitialization::UNINITIALIZED},
     _skip_validity{skip_validity} {
   SDB_ASSERT(_row_group_size != 0);
+  if (approx_distinct) {
+    _entry->root.distinct_hll = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
+    _hashes = duckdb::make_uniq<duckdb::Vector>(duckdb::LogicalType::HASH,
+                                                _row_group_size);
+  }
+}
+
+bool ColumnWriter::ApproxDistinct() const noexcept {
+  return _entry->root.distinct_hll != nullptr;
 }
 
 void ColumnWriter::PadNullsTo(uint64_t start_row) {
@@ -619,6 +630,11 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
 void ColumnWriter::FlushRowGroup() {
   if (_filled == 0) {
     return;
+  }
+
+  if (_entry->root.distinct_hll) {
+    duckdb::VectorOperations::Hash(_staging, *_hashes, _filled);
+    _entry->root.distinct_hll->Update(_staging, *_hashes);
   }
 
   FlushNode(*_write_ctx, _type, _staging, _filled, _row_group_first_doc,

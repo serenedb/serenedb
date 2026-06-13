@@ -335,6 +335,28 @@ void CatalogStore::WriteContext::DropStoreColumn(std::string table,
                       .name_a = std::move(name)});
 }
 
+void CatalogStore::WriteContext::AddStoreColumn(std::string table,
+                                                std::string name,
+                                                std::string type_sql,
+                                                std::string default_sql) {
+  _entries.push_back({.op = Op::AddStoreColumn,
+                      .def = std::move(default_sql),
+                      .store_table = {.name = std::move(table)},
+                      .name_a = std::move(name),
+                      .name_b = std::move(type_sql)});
+}
+
+void CatalogStore::WriteContext::ChangeStoreColumnType(std::string table,
+                                                       std::string name,
+                                                       std::string type_sql,
+                                                       std::string using_sql) {
+  _entries.push_back({.op = Op::ChangeStoreColumnType,
+                      .def = std::move(using_sql),
+                      .store_table = {.name = std::move(table)},
+                      .name_a = std::move(name),
+                      .name_b = std::move(type_sql)});
+}
+
 void CatalogStore::WriteContext::DropStoreForeignKey(std::string table,
                                                      std::string other) {
   _entries.push_back({.op = Op::DropStoreForeignKey,
@@ -645,6 +667,45 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
             absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
                          QuotedIdent(entry.store_table.name), " DROP COLUMN ",
                          QuotedIdent(entry.name_a)));
+          if (res->HasError()) {
+            return {ERROR_INTERNAL, res->GetError()};
+          }
+          break;
+        }
+        case WriteContext::Op::AddStoreColumn: {
+          std::string base =
+            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
+                         QuotedIdent(entry.store_table.name), " ADD COLUMN ",
+                         QuotedIdent(entry.name_a), " ", entry.name_b);
+          std::string sql = base;
+          if (!entry.def.empty()) {
+            absl::StrAppend(&sql, " DEFAULT ", entry.def);
+          }
+          auto res = _conn->Query(sql);
+          if (res->HasError() && !entry.def.empty()) {
+            // The DEFAULT may call a function the store connection can't
+            // resolve (sequences, user macros bind facade-side). Add the
+            // column without it; existing rows get NULL and the facade fills
+            // the default for future inserts.
+            SDB_WARN(GENERAL, "store table \"", entry.store_table.name,
+                     "\": ADD COLUMN \"", entry.name_a,
+                     "\" DEFAULT not mirrored: ", res->GetError());
+            res = _conn->Query(base);
+          }
+          if (res->HasError()) {
+            return {ERROR_INTERNAL, res->GetError()};
+          }
+          break;
+        }
+        case WriteContext::Op::ChangeStoreColumnType: {
+          std::string sql =
+            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
+                         QuotedIdent(entry.store_table.name), " ALTER COLUMN ",
+                         QuotedIdent(entry.name_a), " TYPE ", entry.name_b);
+          if (!entry.def.empty()) {
+            absl::StrAppend(&sql, " USING ", entry.def);
+          }
+          auto res = _conn->Query(sql);
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }

@@ -148,6 +148,14 @@ class CatalogStore {
     void RenameStoreColumn(std::string table, std::string name,
                            std::string new_name);
     void DropStoreColumn(std::string table, std::string name);
+    // Adds a column. `type_sql` is the SQL type text; `default_sql` is the
+    // DEFAULT expression text (empty for none) used to backfill existing rows.
+    void AddStoreColumn(std::string table, std::string name,
+                        std::string type_sql, std::string default_sql);
+    // Changes a column's type. `using_sql` is the USING cast text (empty for
+    // the implicit cast).
+    void ChangeStoreColumnType(std::string table, std::string name,
+                               std::string type_sql, std::string using_sql);
     // Removes the FK linkage entry on `table` that references/backs
     // `other` (symmetric: PK-side back-reference or the FK itself).
     void DropStoreForeignKey(std::string table, std::string other);
@@ -170,6 +178,8 @@ class CatalogStore {
       RenameStoreTable,
       RenameStoreColumn,
       DropStoreColumn,
+      AddStoreColumn,
+      ChangeStoreColumnType,
       DropStoreForeignKey,
       DropStoreCheck,
       DropStoreNotNull,

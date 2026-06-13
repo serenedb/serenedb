@@ -140,6 +140,13 @@ class LocalCatalog final : public LogicalCatalog,
                    std::string_view name, bool cascade) final;
   Result DropIndex(std::string_view database, std::string_view schema,
                    std::string_view name, bool cascade) final;
+  Result DropTableColumn(ObjectId database_id, std::string_view schema,
+                         std::string_view table, std::string_view column,
+                         bool if_exists) final;
+  Result ChangeColumnType(ObjectId database_id, std::string_view schema,
+                          std::string_view table, std::string_view column,
+                          duckdb::LogicalType new_type,
+                          std::string using_sql) final;
 
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                          std::string_view name) final;

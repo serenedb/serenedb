@@ -21,7 +21,6 @@
 #include "network/http/es/common.h"
 
 #include <absl/strings/str_cat.h>
-
 #include <simdjson.h>
 
 #include <duckdb/common/error_data.hpp>
@@ -69,8 +68,7 @@ void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
       }
       return;
     case ERRCODE_DUPLICATE_TABLE:
-      WriteError(writer, 400, "resource_already_exists_exception",
-                 data.errmsg);
+      WriteError(writer, 400, "resource_already_exists_exception", data.errmsg);
       return;
     case ERRCODE_INVALID_NAME:
       WriteError(writer, 400, "invalid_index_name_exception", data.errmsg);
@@ -82,8 +80,7 @@ void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
       WriteError(writer, 400, "mapper_parsing_exception", data.errmsg);
       return;
     case ERRCODE_UNIQUE_VIOLATION:
-      WriteError(writer, 409, "version_conflict_engine_exception",
-                 data.errmsg);
+      WriteError(writer, 409, "version_conflict_engine_exception", data.errmsg);
       return;
     case ERRCODE_UNDEFINED_COLUMN:
       // Unknown field in a query/sort (BINDER errors land here too).

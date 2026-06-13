@@ -38,7 +38,6 @@
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/view.h"
-#include "catalog/server_state.h"
 #include "pg/information_schema/sql_features.h"
 #include "pg/information_schema/sql_implementation_info.h"
 #include "pg/information_schema/sql_parts.h"

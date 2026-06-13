@@ -89,7 +89,6 @@
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_entry_cache.h"
-#include "catalog/server_state.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/sql_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"

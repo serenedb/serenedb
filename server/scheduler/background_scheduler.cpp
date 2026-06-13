@@ -24,7 +24,6 @@
 
 #include <algorithm>
 #include <memory>
-
 #include <yaclib/async/contract.hpp>
 
 #include "basics/asio_ns.h"
@@ -73,7 +72,8 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
   auto timer = std::make_shared<asio_ns::steady_timer>(ctx, d);
   timer->async_wait(
     [timer, p = std::move(p)](const asio_ns::error_code&) mutable {
-      // Runs on an io thread: trivial promise-set only, no background work here.
+      // Runs on an io thread: trivial promise-set only, no background work
+      // here.
       std::move(p).Set();
     });
   return std::move(f);

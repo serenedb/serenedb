@@ -1,7 +1,6 @@
 target_sources(
     sereneserver
     PRIVATE
-        server_state.cpp
         column_expr.cpp
         database.cpp
         drop_task.cpp

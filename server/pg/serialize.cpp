@@ -492,9 +492,8 @@ void SerializeDecimal(SerializationContext& context,
   if constexpr (Format == VarFormat::Text) {
     // In-place, PG-compatible (leading zero, always an integer part): no
     // intermediate duckdb::Value or std::string per row.
-    const int len =
-      duckdb::DecimalToString::DecimalLength<PhysicalType>(value, precision,
-                                                           scale);
+    const int len = duckdb::DecimalToString::DecimalLength<PhysicalType>(
+      value, precision, scale);
     context.buffer->WriteContiguousData(
       static_cast<size_t>(len), [&](auto* data) {
         duckdb::DecimalToString::FormatDecimal<PhysicalType>(

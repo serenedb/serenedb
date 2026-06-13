@@ -138,6 +138,7 @@ AuthResult HttpAuthenticator::Bearer(std::string_view payload) const {
 }
 
 namespace {
+
 bool SecureEquals(std::string_view a, std::string_view b) {
   // Content compare is constant time; length short-circuits (same as the
   // Basic-password path) so the secret length can leak via timing -- fine
@@ -146,6 +147,7 @@ bool SecureEquals(std::string_view a, std::string_view b) {
     {reinterpret_cast<const uint8_t*>(a.data()), a.size()},
     {reinterpret_cast<const uint8_t*>(b.data()), b.size()});
 }
+
 }  // namespace
 
 std::optional<AuthContext> FlagApiKeyValidator::Validate(

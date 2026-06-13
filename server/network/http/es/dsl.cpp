@@ -22,7 +22,6 @@
 
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-
 #include <simdjson.h>
 
 #include "network/http/es/common.h"
@@ -115,8 +114,8 @@ std::string Scalar(JsonValue value, std::string_view what) {
       return v ? "TRUE" : "FALSE";
     }
     default:
-      Fail(absl::StrCat("[", what,
-                        "] must be a string, a number or a boolean"));
+      Fail(
+        absl::StrCat("[", what, "] must be a string, a number or a boolean"));
   }
 }
 
@@ -145,8 +144,7 @@ Clause TranslateQuery(JsonValue value, const FieldTypes& fields);
 // "and"|"or"}}. operator=or tokenizes with ANY semantics (ts_tokenize),
 // operator=and requires every token (plainto_tsquery); match_phrase is the
 // positional ts_phrase.
-Clause TranslateMatch(JsonValue value, const FieldTypes& fields,
-                      bool phrase) {
+Clause TranslateMatch(JsonValue value, const FieldTypes& fields, bool phrase) {
   const std::string_view what = phrase ? "match_phrase" : "match";
   auto object = Object(value, what);
   std::string field;
@@ -226,8 +224,8 @@ Clause TranslateTerm(JsonValue value, const FieldTypes& fields) {
       for (auto param : Object(body, "term")) {
         const auto key = Key(param);
         if (key != "value") {
-          Fail(absl::StrCat("[term] parameter [", key,
-                            "] is not supported yet"));
+          Fail(
+            absl::StrCat("[term] parameter [", key, "] is not supported yet"));
         }
         literal = Scalar(Value(param), field);
       }
@@ -241,10 +239,9 @@ Clause TranslateTerm(JsonValue value, const FieldTypes& fields) {
     if (field_type == nullptr) {
       out.sql = kMatchNone;
     } else if (*field_type == "text") {
-      out.sql = absl::StrCat(SqlIdentifier(field), " @@ ts_tokenize(",
-                             literal.front() == '\'' ? literal
-                                                      : SqlLiteral(literal),
-                             ")");
+      out.sql = absl::StrCat(
+        SqlIdentifier(field), " @@ ts_tokenize(",
+        literal.front() == '\'' ? literal : SqlLiteral(literal), ")");
       out.uses_match = true;
     } else {
       out.sql = absl::StrCat(SqlIdentifier(field), " = ", literal);
@@ -281,8 +278,8 @@ Clause TranslateRange(JsonValue value, const FieldTypes& fields) {
       } else if (key == "lte") {
         op = " <= ";
       } else {
-        Fail(absl::StrCat("[range] parameter [", key,
-                          "] is not supported yet"));
+        Fail(
+          absl::StrCat("[range] parameter [", key, "] is not supported yet"));
       }
       parts.push_back(absl::StrCat(ident, op, Scalar(Value(param), field)));
     }
@@ -379,11 +376,9 @@ Clause TranslateBool(JsonValue value, const FieldTypes& fields) {
       options.push_back(absl::StrCat("(", clause.sql, ")"));
     }
     if (any_match && any_filter) {
-      Fail(
-        "[should] mixing full-text and filter clauses is not supported yet");
+      Fail("[should] mixing full-text and filter clauses is not supported yet");
     }
-    parts.push_back(
-      absl::StrCat("(", absl::StrJoin(options, " OR "), ")"));
+    parts.push_back(absl::StrCat("(", absl::StrJoin(options, " OR "), ")"));
   }
   out.sql = parts.empty() ? "TRUE" : absl::StrJoin(parts, " AND ");
   return out;
@@ -458,8 +453,8 @@ void TranslateSort(JsonValue value, SearchRequest& out) {
       for (auto param : Object(body, "sort")) {
         const auto key = Key(param);
         if (key != "order") {
-          Fail(absl::StrCat("[sort] parameter [", key,
-                            "] is not supported yet"));
+          Fail(
+            absl::StrCat("[sort] parameter [", key, "] is not supported yet"));
         }
         order = String(Value(param), "sort.order");
       }
@@ -511,8 +506,7 @@ std::string_view TruncUnit(std::string_view interval) {
   if (interval == "year" || interval == "1y") {
     return "year";
   }
-  Fail(absl::StrCat("calendar_interval [", interval,
-                    "] is not supported yet"));
+  Fail(absl::StrCat("calendar_interval [", interval, "] is not supported yet"));
 }
 
 Aggregation TranslateAggregation(std::string_view name, JsonValue value) {
@@ -525,8 +519,7 @@ Aggregation TranslateAggregation(std::string_view name, JsonValue value) {
       Fail("sub-aggregations are not supported yet");
     }
     if (has_kind) {
-      Fail(absl::StrCat("aggregation [", name,
-                        "] must have exactly one type"));
+      Fail(absl::StrCat("aggregation [", name, "] must have exactly one type"));
     }
     has_kind = true;
     if (key == "terms") {
@@ -554,10 +547,8 @@ Aggregation TranslateAggregation(std::string_view name, JsonValue value) {
         agg.field = String(Value(param), "field");
       } else if (param_key == "calendar_interval" &&
                  agg.kind == Aggregation::Kind::kDateHistogram) {
-        agg.interval =
-          TruncUnit(String(Value(param), "calendar_interval"));
-      } else if (param_key == "size" &&
-                 agg.kind == Aggregation::Kind::kTerms) {
+        agg.interval = TruncUnit(String(Value(param), "calendar_interval"));
+      } else if (param_key == "size" && agg.kind == Aggregation::Kind::kTerms) {
         agg.size = Int(Value(param), "size");
         if (agg.size < 0 || agg.size > 10000) {
           Fail("[size] must be between 0 and 10000");
@@ -575,8 +566,7 @@ Aggregation TranslateAggregation(std::string_view name, JsonValue value) {
     Fail(absl::StrCat("aggregation [", name, "] requires a field"));
   }
   if (agg.kind == Aggregation::Kind::kDateHistogram && agg.interval.empty()) {
-    Fail(absl::StrCat("aggregation [", name,
-                      "] requires calendar_interval"));
+    Fail(absl::StrCat("aggregation [", name, "] requires calendar_interval"));
   }
   return agg;
 }
@@ -707,8 +697,8 @@ bool ParseSearchBody(std::string_view body, const FieldTypes& fields,
       } else if (key == "track_total_hits") {
         // Totals are exact; the tracking hint has nothing to change.
       } else {
-        Fail(absl::StrCat("request parameter [", key,
-                          "] is not supported yet"));
+        Fail(
+          absl::StrCat("request parameter [", key, "] is not supported yet"));
       }
     }
   });
@@ -734,9 +724,8 @@ bool ParseSearchBody(std::string_view body, const FieldTypes& fields,
   return true;
 }
 
-bool TranslateStoredQuery(std::string_view query_json,
-                          const FieldTypes& fields, SearchRequest& out,
-                          HttpResponseWriter& writer) {
+bool TranslateStoredQuery(std::string_view query_json, const FieldTypes& fields,
+                          SearchRequest& out, HttpResponseWriter& writer) {
   if (query_json.empty()) {
     return true;
   }

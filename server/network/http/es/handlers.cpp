@@ -25,7 +25,6 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-
 #include <simdjson.h>
 
 #include <chrono>
@@ -90,7 +89,7 @@ int64_t TookMs(std::chrono::steady_clock::time_point start) {
 
 // The official clients post to bare /_bulk and route via per-line _index;
 // peek the FIRST action line for it (es_bulk enforces that every line names
-// the same index — multi-index bulks are not supported).
+// the same index -- multi-index bulks are not supported).
 std::string FirstActionIndex(std::string_view body) {
   const auto line = body.substr(0, body.find('\n'));
   try {
@@ -146,18 +145,18 @@ class BulkHandler final : public HttpHandler {
     sdb_ctx.SetResponseSink(&items);
     const absl::Cleanup clear_sink = [&] { sdb_ctx.SetResponseSink(nullptr); };
 
-    const auto sql = absl::StrCat(
-      "INSERT INTO \"es\".", SqlIdentifier(index), " SELECT * FROM es_bulk(",
-      SqlLiteral(index), ", ", SqlLiteral(body), ")");
+    const auto sql = absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
+                                  " SELECT * FROM es_bulk(", SqlLiteral(index),
+                                  ", ", SqlLiteral(body), ")");
     if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true)) {
       co_return {};
     }
     if (!co_await MaybeRefresh(ctx, request, index, writer)) {
       co_return {};
     }
-    WriteJson(writer, 200, absl::StrCat("{\"took\":", TookMs(start),
-                                  ",\"errors\":false,\"items\":[", items,
-                                  "]}"));
+    WriteJson(writer, 200,
+              absl::StrCat("{\"took\":", TookMs(start),
+                           ",\"errors\":false,\"items\":[", items, "]}"));
     co_return {};
   }
 };
@@ -172,10 +171,10 @@ class DocHandler final : public HttpHandler {
     if (id.empty()) {
       id = connector::GenerateEsDocId();
     }
-    const auto sql = absl::StrCat(
-      "INSERT INTO \"es\".", SqlIdentifier(index), " SELECT * FROM es_doc(",
-      SqlLiteral(index), ", ", SqlLiteral(id), ", ",
-      SqlLiteral(FlattenBody(request.body)), ")");
+    const auto sql = absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
+                                  " SELECT * FROM es_doc(", SqlLiteral(index),
+                                  ", ", SqlLiteral(id), ", ",
+                                  SqlLiteral(FlattenBody(request.body)), ")");
     if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true) ||
         !co_await MaybeRefresh(ctx, request, index, writer)) {
       co_return {};
@@ -198,10 +197,11 @@ class RefreshHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
                           http::HttpResponseWriter& writer) override {
-    const auto sql = absl::StrCat("CALL es_refresh(",
-                                  SqlLiteral(request.Param("index")), ")");
+    const auto sql =
+      absl::StrCat("CALL es_refresh(", SqlLiteral(request.Param("index")), ")");
     if (co_await RunSql(ctx, sql, writer)) {
-      WriteJson(writer, 200, R"({"_shards":{"total":1,"successful":1,"failed":0}})");
+      WriteJson(writer, 200,
+                R"({"_shards":{"total":1,"successful":1,"failed":0}})");
     }
     co_return {};
   }
@@ -418,8 +418,7 @@ void WriteScrollPage(http::HttpResponseWriter& writer, ScrollState& state,
       state.done = true;
     }
     if (rows > 0) {
-      state.last_id =
-        duckdb::StringValue::Get(result->GetValue(0, rows - 1));
+      state.last_id = duckdb::StringValue::Get(result->GetValue(0, rows - 1));
     }
   }
   simdjson::builder::string_builder sb;
@@ -455,8 +454,7 @@ void WriteScrollPage(http::HttpResponseWriter& writer, ScrollState& state,
 // The keyset page statement shared by the initial scroll search and
 // continuations.
 std::string ScrollPageSql(const std::string& relation,
-                          const SearchRequest& spec,
-                          const ScrollState& state) {
+                          const SearchRequest& spec, const ScrollState& state) {
   std::string sql = "SELECT \"_id\"";
   if (state.include_source) {
     absl::StrAppend(&sql, ", \"_source\"");
@@ -473,8 +471,7 @@ std::string ScrollPageSql(const std::string& relation,
 // Appends `"name":{...}` to the aggregations fragment; each aggregation is
 // one GROUP-BY/aggregate statement over the query's relation and WHERE.
 // false = the error response is already written.
-yaclib::Future<bool> RunAggregation(RequestContext& ctx,
-                                    const Aggregation& agg,
+yaclib::Future<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
                                     const std::string& relation,
                                     const std::string& where,
                                     std::string_view index,
@@ -572,8 +569,8 @@ yaclib::Future<bool> RunAggregation(RequestContext& ctx,
           sb.append_raw(",");
         }
         sb.append_raw(R"({"key_as_string":)");
-        sb.escape_and_append_with_quotes(std::string_view{
-          duckdb::StringValue::Get(result->GetValue(1, row))});
+        sb.escape_and_append_with_quotes(
+          std::string_view{duckdb::StringValue::Get(result->GetValue(1, row))});
         sb.append_raw(R"(,"key":)");
         sb.append(result->GetValue(0, row).GetValue<int64_t>());
         sb.append_raw(R"(,"doc_count":)");
@@ -607,8 +604,7 @@ yaclib::Future<bool> RunAggregation(RequestContext& ctx,
 // read per request (es_mapping doubles as the existence check -> 404).
 // false = the error response is already written.
 yaclib::Future<bool> FetchFieldTypes(RequestContext& ctx,
-                                     std::string_view index,
-                                     FieldTypes& fields,
+                                     std::string_view index, FieldTypes& fields,
                                      http::HttpResponseWriter& writer) {
   auto result = co_await RunSql(
     ctx, absl::StrCat("CALL es_mapping(", SqlLiteral(index), ")"), writer,
@@ -653,7 +649,8 @@ class SearchHandler final : public HttpHandler {
 
     SearchRequest spec;
     for (const auto param : {"size", "from"}) {
-      if (const auto value = request.Query(param); !value.empty() &&
+      if (const auto value = request.Query(param);
+          !value.empty() &&
           !absl::SimpleAtoi(value, param[0] == 's' ? &spec.size : &spec.from)) {
         WriteError(writer, 400, "illegal_argument_exception",
                    absl::StrCat("[", param, "] must be an integer"));
@@ -799,9 +796,8 @@ class SearchHandler final : public HttpHandler {
         const auto id = result->GetValue(0, row).GetValue<std::string>();
         const auto it = source_by_id.find(id);
         // A doc deleted between rank and fetch leaves an empty object.
-        sb.append_raw(it != source_by_id.end()
-                        ? std::string_view{it->second}
-                        : std::string_view{"{}"});
+        sb.append_raw(it != source_by_id.end() ? std::string_view{it->second}
+                                               : std::string_view{"{}"});
       }
       if (!spec.sort_fields.empty()) {
         sb.append_raw(",\"sort\":[");
@@ -837,8 +833,7 @@ class SearchHandler final : public HttpHandler {
  private:
   // Initial scroll page: exact total once (it rides in the scroll id), then
   // the first keyset page.
-  yaclib::Future<> HandleScroll(RequestContext& ctx,
-                                const HttpRequest& request,
+  yaclib::Future<> HandleScroll(RequestContext& ctx, const HttpRequest& request,
                                 http::HttpResponseWriter& writer,
                                 std::string_view index, SearchRequest& spec,
                                 std::chrono::steady_clock::time_point start) {
@@ -872,8 +867,8 @@ class SearchHandler final : public HttpHandler {
       .total = count_result->GetValue(0, 0).GetValue<int64_t>(),
       .include_source = spec.include_source,
     };
-    auto result = co_await RunSql(ctx, ScrollPageSql(relation, spec, state), writer,
-                         index);
+    auto result =
+      co_await RunSql(ctx, ScrollPageSql(relation, spec, state), writer, index);
     if (!result) {
       co_return {};
     }
@@ -1002,9 +997,10 @@ class CountHandler final : public HttpHandler {
       co_return {};
     }
     const auto count = result->GetValue(0, 0).GetValue<int64_t>();
-    WriteJson(writer, 200, absl::StrCat("{\"count\":", count,
-                                  ",\"_shards\":{\"total\":1,\"successful\":1,"
-                                  "\"skipped\":0,\"failed\":0}}"));
+    WriteJson(writer, 200,
+              absl::StrCat("{\"count\":", count,
+                           ",\"_shards\":{\"total\":1,\"successful\":1,"
+                           "\"skipped\":0,\"failed\":0}}"));
     co_return {};
   }
 };
@@ -1013,11 +1009,10 @@ class RootHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext&, const HttpRequest&,
                           http::HttpResponseWriter& writer) override {
-    WriteJson(writer, 
-      200,
-      R"({"name":"serenedb","cluster_name":"serenedb","version":{)"
-      R"("number":"8.11.0","build_flavor":"default"},)"
-      R"("tagline":"You Know, for Search"})");
+    WriteJson(writer, 200,
+              R"({"name":"serenedb","cluster_name":"serenedb","version":{)"
+              R"("number":"8.11.0","build_flavor":"default"},)"
+              R"("tagline":"You Know, for Search"})");
     co_return {};
   }
 };
@@ -1026,8 +1021,8 @@ class HealthHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext&, const HttpRequest&,
                           http::HttpResponseWriter& writer) override {
-    WriteJson(writer, 
-      200,
+    WriteJson(
+      writer, 200,
       R"({"cluster_name":"serenedb","status":"green","timed_out":false,)"
       R"("number_of_nodes":1,"number_of_data_nodes":1,)"
       R"("active_primary_shards":0,"active_shards":0,"relocating_shards":0,)"
@@ -1049,8 +1044,8 @@ class CreateIndexHandler final : public HttpHandler {
       absl::StrCat("CALL es_create_index(", SqlLiteral(index), ", ",
                    SqlLiteral(FlattenBody(request.body)), ")");
     if (co_await RunSql(ctx, sql, writer)) {
-      WriteJson(writer, 
-        200,
+      WriteJson(
+        writer, 200,
         absl::StrCat(R"({"acknowledged":true,"shards_acknowledged":true,)"
                      R"("index":")",
                      index, R"("})"));
@@ -1064,9 +1059,8 @@ class DeleteIndexHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
                           http::HttpResponseWriter& writer) override {
-    const auto sql =
-      absl::StrCat("CALL es_drop_index(", SqlLiteral(request.Param("index")),
-                   ")");
+    const auto sql = absl::StrCat("CALL es_drop_index(",
+                                  SqlLiteral(request.Param("index")), ")");
     if (co_await RunSql(ctx, sql, writer)) {
       WriteJson(writer, 200, R"({"acknowledged":true})");
     }
@@ -1079,8 +1073,8 @@ class IndexExistsHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
                           http::HttpResponseWriter& writer) override {
-    const auto sql = absl::StrCat(
-      "CALL es_mapping(", SqlLiteral(request.Param("index")), ")");
+    const auto sql =
+      absl::StrCat("CALL es_mapping(", SqlLiteral(request.Param("index")), ")");
     if (co_await RunSql(ctx, sql, writer)) {
       WriteJson(writer, 200, "{}");
     }
@@ -1094,15 +1088,15 @@ class MappingHandler final : public HttpHandler {
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
                           http::HttpResponseWriter& writer) override {
     const auto index = request.Param("index");
-    const auto sql =
-      absl::StrCat("CALL es_mapping(", SqlLiteral(index), ")");
+    const auto sql = absl::StrCat("CALL es_mapping(", SqlLiteral(index), ")");
     auto result = co_await RunSql(ctx, sql, writer);
     if (!result) {
       co_return {};
     }
     const auto mappings = result->GetValue(0, 0).GetValue<std::string>();
-    WriteJson(writer, 200, absl::StrCat(R"({")", index, R"(":{"mappings":)",
-                                  mappings, "}}"));
+    WriteJson(
+      writer, 200,
+      absl::StrCat(R"({")", index, R"(":{"mappings":)", mappings, "}}"));
     co_return {};
   }
 };
@@ -1147,7 +1141,7 @@ class CatIndicesHandler final : public HttpHandler {
   }
 };
 
-// GET /_nodes/stats[/{metric}] — enough node introspection for rally's
+// GET /_nodes/stats[/{metric}] -- enough node introspection for rally's
 // telemetry devices (empty collectors/pools iterate to nothing).
 class NodesStatsHandler final : public HttpHandler {
  public:
@@ -1164,7 +1158,7 @@ class NodesStatsHandler final : public HttpHandler {
   }
 };
 
-// POST [/{index}]/_forcemerge — segment merging is the engine's own
+// POST [/{index}]/_forcemerge -- segment merging is the engine's own
 // consolidation; acknowledge.
 class ForceMergeHandler final : public HttpHandler {
  public:
@@ -1176,7 +1170,7 @@ class ForceMergeHandler final : public HttpHandler {
   }
 };
 
-// GET|PUT /_cluster/settings — nothing configurable yet; PUT acknowledges,
+// GET|PUT /_cluster/settings -- nothing configurable yet; PUT acknowledges,
 // GET reports empty (rally's delete-index runner reads
 // action.destructive_requires_name before deleting).
 class ClusterSettingsHandler final : public HttpHandler {
@@ -1189,22 +1183,21 @@ class ClusterSettingsHandler final : public HttpHandler {
   }
 };
 
-// GET [/{index}]/_stats — index stats with no pending merges (rally's
+// GET [/{index}]/_stats -- index stats with no pending merges (rally's
 // wait-until-merges-finish polls _all.total.merges.current).
 class IndexStatsHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext&, const HttpRequest&,
                           http::HttpResponseWriter& writer) override {
-    WriteJson(
-      writer, 200,
-      R"({"_shards":{"total":1,"successful":1,"failed":0},)"
-      R"("_all":{"total":{"merges":{"current":0}},)"
-      R"("primaries":{"merges":{"current":0}}},"indices":{}})");
+    WriteJson(writer, 200,
+              R"({"_shards":{"total":1,"successful":1,"failed":0},)"
+              R"("_all":{"total":{"merges":{"current":0}},)"
+              R"("primaries":{"merges":{"current":0}}},"indices":{}})");
     co_return {};
   }
 };
 
-// GET|POST /{index}/_mget — multi-get by id. Body {"ids":["1","2"]} or
+// GET|POST /{index}/_mget -- multi-get by id. Body {"ids":["1","2"]} or
 // {"docs":[{"_id":"1"},...]}; index comes from the path. Returns docs in
 // request order with per-doc found flag (a missing doc is found:false, not
 // an error; a missing index 404s the whole request like other path-index
@@ -1316,7 +1309,7 @@ class MgetHandler final : public HttpHandler {
   }
 };
 
-// HEAD /{index}/_doc/{id} — document existence (200 / 404, no body).
+// HEAD /{index}/_doc/{id} -- document existence (200 / 404, no body).
 class ExistsDocHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
@@ -1340,7 +1333,7 @@ class ExistsDocHandler final : public HttpHandler {
   }
 };
 
-// GET /{index} — index info: aliases (none yet), mappings, minimal settings.
+// GET /{index} -- index info: aliases (none yet), mappings, minimal settings.
 class IndexInfoHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
@@ -1363,14 +1356,13 @@ class IndexInfoHandler final : public HttpHandler {
   }
 };
 
-// GET /_cat/count [?format=json] — total doc count across ES indices.
+// GET /_cat/count [?format=json] -- total doc count across ES indices.
 class CatCountHandler final : public HttpHandler {
  public:
   yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
                           http::HttpResponseWriter& writer) override {
     auto result = co_await RunSql(
-      ctx, "SELECT coalesce(sum(docs_count), 0) FROM es_cat_indices()",
-      writer);
+      ctx, "SELECT coalesce(sum(docs_count), 0) FROM es_cat_indices()", writer);
     if (!result) {
       co_return {};
     }
@@ -1407,8 +1399,7 @@ void Register(HttpRouter& router) {
              std::make_unique<ClusterSettingsHandler>());
   router.Add(HttpMethod::Get, "/_cluster/health/:index",
              std::make_unique<HealthHandler>());
-  router.Add(HttpMethod::Get, "/_stats",
-             std::make_unique<IndexStatsHandler>());
+  router.Add(HttpMethod::Get, "/_stats", std::make_unique<IndexStatsHandler>());
   router.Add(HttpMethod::Get, "/:index/_stats",
              std::make_unique<IndexStatsHandler>());
   router.Add(HttpMethod::Get, "/:index/_stats/:metric",
@@ -1417,8 +1408,7 @@ void Register(HttpRouter& router) {
              std::make_unique<ForceMergeHandler>());
   router.Add(HttpMethod::Post, "/:index/_forcemerge",
              std::make_unique<ForceMergeHandler>());
-  router.Add(HttpMethod::Post, "/_refresh",
-             std::make_unique<RefreshHandler>());
+  router.Add(HttpMethod::Post, "/_refresh", std::make_unique<RefreshHandler>());
   router.Add(HttpMethod::Get, "/_refresh", std::make_unique<RefreshHandler>());
   router.Add(HttpMethod::Put, "/:index",
              std::make_unique<CreateIndexHandler>());
@@ -1431,8 +1421,7 @@ void Register(HttpRouter& router) {
              std::make_unique<MappingHandler>());
   router.Add(HttpMethod::Post, "/:index/_bulk",
              std::make_unique<BulkHandler>());
-  router.Add(HttpMethod::Put, "/:index/_bulk",
-             std::make_unique<BulkHandler>());
+  router.Add(HttpMethod::Put, "/:index/_bulk", std::make_unique<BulkHandler>());
   router.Add(HttpMethod::Post, "/:index/_doc", std::make_unique<DocHandler>());
   router.Add(HttpMethod::Post, "/:index/_doc/:id",
              std::make_unique<DocHandler>());
@@ -1444,8 +1433,7 @@ void Register(HttpRouter& router) {
              std::make_unique<ExistsDocHandler>());
   router.Add(HttpMethod::Get, "/:index/_source/:id",
              std::make_unique<GetSourceHandler>());
-  router.Add(HttpMethod::Get, "/:index/_mget",
-             std::make_unique<MgetHandler>());
+  router.Add(HttpMethod::Get, "/:index/_mget", std::make_unique<MgetHandler>());
   router.Add(HttpMethod::Post, "/:index/_mget",
              std::make_unique<MgetHandler>());
   router.Add(HttpMethod::Post, "/:index/_refresh",

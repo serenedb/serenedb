@@ -20,21 +20,21 @@
 
 #pragma once
 
+#include <duckdb/common/unique_ptr.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include <duckdb/common/unique_ptr.hpp>
-
 #include "network/http/request.h"
 #include "network/http/response_writer.h"
 
 namespace duckdb {
+
 class Connection;
 class MaterializedQueryResult;
-}
 
+}  // namespace duckdb
 namespace sdb::network {
 
 // Session-scoped services a handler may need; implemented by the session and

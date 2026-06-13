@@ -2117,12 +2117,9 @@ yaclib::Future<> PgWireSession<Kind>::Run() {
       co_return {};
     }
 
-    if (!SetupConnection()) {
-      co_await Flush();
-      _socket.Close();
-      co_return {};
-    }
-
+    // Connection setup (catalog snapshot, CreateConnection, GUC application) is
+    // heavy and must not run on the io thread: SessionMain does it once on the
+    // duck worker (and reports db-not-found / bad-GUC via _send + close there).
     // Hand off to the duck-side half: the SessionTask owns the connection,
     // the command loop, and the recv/send roles from here; this coroutine
     // degrades into a byte pump (always-armed read -> channel -> wake). The

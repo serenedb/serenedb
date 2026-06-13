@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb/main/database.hpp>
-
 #include <string>
 
 namespace sdb::connector {

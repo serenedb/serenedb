@@ -29,8 +29,8 @@
 
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
-#include "network/http/test/handlers.h"
 #include "network/http/es/handlers.h"
+#include "network/http/test/handlers.h"
 #include "network/pg/auth.h"
 #include "network/tls_context.h"
 
@@ -215,9 +215,8 @@ void NetworkServerFeature::start() {
     SDB_INFO(GENERAL, "network http ApiKey auth enabled");
   }
   if (!_bearer_token.empty()) {
-    _bearer_validator =
-      std::make_unique<network::http::FlagBearerValidator>(_bearer_token,
-                                                           _auth_user);
+    _bearer_validator = std::make_unique<network::http::FlagBearerValidator>(
+      _bearer_token, _auth_user);
     _http_context.bearer = _bearer_validator.get();
     SDB_INFO(GENERAL, "network http Bearer auth enabled");
   }

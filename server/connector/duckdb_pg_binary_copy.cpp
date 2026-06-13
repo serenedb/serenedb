@@ -348,7 +348,11 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
       output.SetValue(column, row, std::move(*value));
     }
   }
-  output.SetCardinality(row);
+  // SetChildCardinality (not SetCardinality): fork vectors carry their own
+  // v_size, and a downstream size-deriving op (e.g. a LIKE/prefix filter on the
+  // scanned chunk) reads it. SetCardinality sets only chunk.count, leaving the
+  // column vectors at v_size 0 -> "Mismatch in input vector sizes".
+  output.SetChildCardinality(row);
 }
 
 }  // namespace

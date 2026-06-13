@@ -27,6 +27,7 @@
 #include "network/http/response_writer.h"
 
 namespace duckdb {
+
 class ErrorData;
 }
 

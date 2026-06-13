@@ -23,7 +23,6 @@
 
 #include "basics/debugging.h"
 #include "basics/static_strings.h"
-#include "catalog/server_state.h"
 
 using namespace sdb::transaction;
 

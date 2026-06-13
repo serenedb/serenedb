@@ -52,6 +52,7 @@
 #include <utility>
 
 #include "app/app_server.h"
+#include "app/version.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
 #include "basics/build.h"
@@ -78,7 +79,6 @@
 #include "catalog/types.h"
 #include "connector/common.h"
 #include "connector/key_utils.hpp"
-#include "app/version.h"
 #include "database/ticks.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"

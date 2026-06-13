@@ -23,7 +23,6 @@
 #include "app/app_server.h"
 #include "catalog/identifiers/object_id.h"
 #include "database/ticks.h"
-#include "catalog/server_state.h"
 
 namespace sdb::catalog {
 

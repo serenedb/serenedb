@@ -39,9 +39,9 @@
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"
-#include "scheduler/background_scheduler.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
+#include "scheduler/background_scheduler.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 

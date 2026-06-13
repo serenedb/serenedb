@@ -24,20 +24,20 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-
 #include <simdjson.h>
 
+#include <cstring>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uuid.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
-
-#include <cstring>
 #include <map>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/serializer.h"
@@ -49,8 +49,6 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/containers/flat_hash_set.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
@@ -113,10 +111,9 @@ void ValidateFieldName(std::string_view index, std::string_view name) {
   // object field path, which the flat column model doesn't support yet.
   if (name.empty() || name.front() == '_' ||
       name.find('.') != std::string_view::npos) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-      ERR_MSG("Failed to parse mapping: invalid field name [", name,
-              "] for index [", index, "]"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                    ERR_MSG("Failed to parse mapping: invalid field name [",
+                            name, "] for index [", index, "]"));
   }
 }
 
@@ -144,10 +141,10 @@ duckdb::LogicalType EsTypeToLogical(std::string_view index,
   if (es_type == "date") {
     return duckdb::LogicalType::TIMESTAMP;
   }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                  ERR_MSG("Failed to parse mapping: No handler for type [",
-                          es_type, "] declared on field [", field,
-                          "] for index [", index, "]"));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+    ERR_MSG("Failed to parse mapping: No handler for type [", es_type,
+            "] declared on field [", field, "] for index [", index, "]"));
 }
 
 std::string_view LogicalToEsType(const duckdb::LogicalType& type,
@@ -188,9 +185,9 @@ CreateIndexRequest ParseCreateIndexBody(std::string_view index,
     basics::JsonSource source{doc};
     basics::ReadObject(source, request);
   } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                    ERR_MSG("Failed to parse mapping for index [", index,
-                            "]: ", e.what()));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+      ERR_MSG("Failed to parse mapping for index [", index, "]: ", e.what()));
   }
   return request;
 }
@@ -290,10 +287,9 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
   };
 
   const auto index_name = absl::StrCat(index, kEsTextIndexSuffix);
-  auto r = catalog.CreateInvertedIndex(database_id, kEsSchema, index,
-                                       index_name, std::move(idx_columns),
-                                       std::move(options),
-                                       {.create_with_tombstone = true});
+  auto r = catalog.CreateInvertedIndex(
+    database_id, kEsSchema, index, index_name, std::move(idx_columns),
+    std::move(options), {.create_with_tombstone = true});
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
@@ -374,9 +370,8 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
 
   auto r = catalog.CreateTable(database_id, kEsSchema, std::move(options), {});
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-      ERR_MSG("index [", data.index, "] already exists"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                    ERR_MSG("index [", data.index, "] already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
@@ -523,8 +518,8 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     if (snapshot->GetSchema(database_id, kEsSchema)) {
       for (const auto& table : snapshot->GetTables(database_id, kEsSchema)) {
         auto shard = snapshot->GetTableShard(table->GetId());
-        state.rows.emplace_back(
-          table->GetName(), shard ? shard->GetTableStats().num_rows : 0);
+        state.rows.emplace_back(table->GetName(),
+                                shard ? shard->GetTableStats().num_rows : 0);
       }
       absl::c_sort(state.rows);
     }
@@ -565,8 +560,10 @@ void ValidateDocId(std::string_view id) {
   }
   if (id.size() > 512) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("id [", id, "] is too long, must be no longer "
-                            "than 512 bytes but was: ", id.size()));
+                    ERR_MSG("id [", id,
+                            "] is too long, must be no longer "
+                            "than 512 bytes but was: ",
+                            id.size()));
   }
 }
 
@@ -772,16 +769,16 @@ void WriteDocRow(const EsWriteBindData& bind, simdjson::ondemand::document& doc,
 
   simdjson::ondemand::object object;
   if (doc.get_object().get(object) != simdjson::SUCCESS) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                    ERR_MSG("document for index [", bind.index,
-                            "] must be a JSON object"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+      ERR_MSG("document for index [", bind.index, "] must be a JSON object"));
   }
   for (auto field : object) {
     std::string_view key;
     if (field.unescaped_key().get(key) != simdjson::SUCCESS) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("malformed document for index [", bind.index,
-                              "]"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+        ERR_MSG("malformed document for index [", bind.index, "]"));
     }
     const auto it = bind.field_columns.find(key);
     if (it == bind.field_columns.end()) {
@@ -789,9 +786,9 @@ void WriteDocRow(const EsWriteBindData& bind, simdjson::ondemand::document& doc,
     }
     simdjson::ondemand::value value;
     if (field.value().get(value) != simdjson::SUCCESS) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("malformed document for index [", bind.index,
-                              "]"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+        ERR_MSG("malformed document for index [", bind.index, "]"));
     }
     if (bool is_null = false;
         value.is_null().get(is_null) == simdjson::SUCCESS && is_null) {
@@ -805,9 +802,9 @@ void WriteDocRow(const EsWriteBindData& bind, simdjson::ondemand::document& doc,
   // Trailing content would make the stored _source invalid JSON (and corrupt
   // the GET _doc envelope it gets embedded into verbatim).
   if (!doc.at_end()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                    ERR_MSG("document for index [", bind.index,
-                            "] has trailing content"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+      ERR_MSG("document for index [", bind.index, "] has trailing content"));
   }
 }
 
@@ -846,9 +843,9 @@ void EsDocExecute(duckdb::ClientContext& context,
   simdjson::ondemand::parser parser;
   simdjson::ondemand::document doc;
   if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                    ERR_MSG("failed to parse document for index [", data.index,
-                            "]"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+      ERR_MSG("failed to parse document for index [", data.index, "]"));
   }
   WriteDocRow(data, doc, data.id, data.body, output, 0);
   output.SetChildCardinality(1);
@@ -890,9 +887,9 @@ std::string_view NextBulkLine(std::string_view body, size_t& pos) {
 }
 
 [[noreturn]] void ThrowMalformedAction(size_t line, std::string_view detail) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                  ERR_MSG("Malformed action/metadata line [", line, "]: ",
-                          detail));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("Malformed action/metadata line [", line, "]: ", detail));
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> EsBulkBind(
@@ -923,8 +920,8 @@ void EsBulkExecute(duckdb::ClientContext& context,
                         simdjson::ondemand::document& doc) {
     state.padded.assign(text);
     state.padded.append(simdjson::SIMDJSON_PADDING, ' ');
-    return state.parser.iterate(state.padded.data(), text.size(),
-                                state.padded.size())
+    return state.parser
+             .iterate(state.padded.data(), text.size(), state.padded.size())
              .get(doc) == simdjson::SUCCESS;
   };
 
@@ -947,8 +944,7 @@ void EsBulkExecute(duckdb::ClientContext& context,
     state.id.clear();
     for (auto field : action) {
       std::string_view key;
-      if (field.unescaped_key().get(key) != simdjson::SUCCESS ||
-          !op.empty()) {
+      if (field.unescaped_key().get(key) != simdjson::SUCCESS || !op.empty()) {
         ThrowMalformedAction(state.line, "expected a single action");
       }
       if (key == "index") {
@@ -956,9 +952,10 @@ void EsBulkExecute(duckdb::ClientContext& context,
       } else if (key == "create") {
         op = "create";
       } else {
-        ThrowMalformedAction(
-          state.line, absl::StrCat("expected one of [create, index] but "
-                                   "found [", key, "]"));
+        ThrowMalformedAction(state.line,
+                             absl::StrCat("expected one of [create, index] but "
+                                          "found [",
+                                          key, "]"));
       }
       simdjson::ondemand::object params;
       if (field.value().get_object().get(params) != simdjson::SUCCESS) {
@@ -981,9 +978,10 @@ void EsBulkExecute(duckdb::ClientContext& context,
           if (param.value().get_string().get(explicit_index) !=
                 simdjson::SUCCESS ||
               explicit_index != data.index) {
-            ThrowMalformedAction(
-              state.line, absl::StrCat("_index must match the request "
-                                       "index [", data.index, "]"));
+            ThrowMalformedAction(state.line,
+                                 absl::StrCat("_index must match the request "
+                                              "index [",
+                                              data.index, "]"));
           }
         }
         // routing/version/pipeline/...: accepted and ignored.
@@ -1020,10 +1018,9 @@ void EsBulkExecute(duckdb::ClientContext& context,
       absl::StrAppend(sink, ",\"_id\":");
       AppendJsonString(*sink, state.id);
       absl::StrAppend(
-        sink,
-        R"(,"_version":1,"result":"created","_shards":{"total":1,)"
-        R"("successful":1,"failed":0},"_seq_no":0,"_primary_term":1,)"
-        R"("status":201}})");
+        sink, R"(,"_version":1,"result":"created","_shards":{"total":1,)"
+              R"("successful":1,"failed":0},"_seq_no":0,"_primary_term":1,)"
+              R"("status":201}})");
     }
   }
   output.SetChildCardinality(row);
@@ -1106,25 +1103,31 @@ void RegisterEsFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
   const auto kVarchar = duckdb::LogicalType::VARCHAR;
 
-  loader.RegisterFunction(duckdb::TableFunction{
-    "es_create_index", {kVarchar, kVarchar}, EsCreateIndexExecute,
-    EsAcknowledgedBind, EsOnceState::Init});
+  loader.RegisterFunction(duckdb::TableFunction{"es_create_index",
+                                                {kVarchar, kVarchar},
+                                                EsCreateIndexExecute,
+                                                EsAcknowledgedBind,
+                                                EsOnceState::Init});
   loader.RegisterFunction(duckdb::TableFunction{"es_drop_index",
                                                 {kVarchar},
                                                 EsDropIndexExecute,
                                                 EsAcknowledgedBind,
                                                 EsOnceState::Init});
-  loader.RegisterFunction(duckdb::TableFunction{
-    "es_mapping", {kVarchar}, EsMappingExecute, EsMappingBind,
-    EsOnceState::Init});
+  loader.RegisterFunction(duckdb::TableFunction{"es_mapping",
+                                                {kVarchar},
+                                                EsMappingExecute,
+                                                EsMappingBind,
+                                                EsOnceState::Init});
   loader.RegisterFunction(duckdb::TableFunction{"es_cat_indices",
                                                 {},
                                                 EsCatIndicesExecute,
                                                 EsCatIndicesBind,
                                                 EsCatIndicesState::Init});
-  loader.RegisterFunction(duckdb::TableFunction{
-    "es_doc", {kVarchar, kVarchar, kVarchar}, EsDocExecute, EsDocBind,
-    EsOnceState::Init});
+  loader.RegisterFunction(duckdb::TableFunction{"es_doc",
+                                                {kVarchar, kVarchar, kVarchar},
+                                                EsDocExecute,
+                                                EsDocBind,
+                                                EsOnceState::Init});
   loader.RegisterFunction(duckdb::TableFunction{"es_bulk",
                                                 {kVarchar, kVarchar},
                                                 EsBulkExecute,

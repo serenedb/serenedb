@@ -53,8 +53,8 @@ std::string_view ReasonPhrase(int status) noexcept;
 // BeginChunk/EndChunk -- no intermediate chunk buffer.
 class HttpResponseWriter {
  public:
-  HttpResponseWriter(message::Buffer& send, ResponseSink& sink,
-                     bool keep_alive, bool head_only)
+  HttpResponseWriter(message::Buffer& send, ResponseSink& sink, bool keep_alive,
+                     bool head_only)
     : _send{send},
       _sink{sink},
       _keep_alive{keep_alive},
@@ -80,7 +80,9 @@ class HttpResponseWriter {
   void Fixed(int status, std::string_view content_type, std::string_view body,
              std::string_view extra_headers = {}) {
     WriteHead(status, content_type, body.size(), extra_headers);
-    if (!_head_only) {
+    // WriteHead leaves kFixedBody only when a body is actually expected; for
+    // HEAD and bodiless statuses (1xx/204/304) it goes straight to kFinished.
+    if (_state == State::kFixedBody) {
       _send.WriteUncommitted(body);
     }
     _send.Commit(true);
@@ -90,9 +92,10 @@ class HttpResponseWriter {
   // --- known-length streamed body ----------------------------------------
   void WriteHead(int status, std::string_view content_type,
                  uint64_t content_length, std::string_view extra_headers = {}) {
-    EncodeHead(status, content_type, &content_length, extra_headers);
+    const bool bodiless =
+      EncodeHead(status, content_type, &content_length, extra_headers);
     _state = State::kFixedBody;
-    _remaining = _head_only ? 0 : content_length;
+    _remaining = (_head_only || bodiless) ? 0 : content_length;
     if (_remaining == 0) {
       _state = State::kFinished;
     }
@@ -206,16 +209,18 @@ class HttpResponseWriter {
 
   static constexpr size_t kChunkHeaderLen = 10;  // "XXXXXXXX\r\n"
 
-  void EncodeHead(int status, std::string_view content_type,
+  // Returns whether the status is bodiless (1xx/204/304); the caller must then
+  // emit no body and no framing length.
+  bool EncodeHead(int status, std::string_view content_type,
                   const uint64_t* content_length,
                   std::string_view extra_headers) {
     SDB_ASSERT(_state == State::kIdle);
     // 1xx/204/304 carry neither a body nor framing length (RFC 9112 6.1).
     const bool bodiless =
       status == 204 || status == 304 || (status >= 100 && status < 200);
-    std::string head = absl::StrCat("HTTP/1.1 ", status, " ",
-                                    ReasonPhrase(status),
-                                    "\r\nContent-Type: ", content_type);
+    std::string head =
+      absl::StrCat("HTTP/1.1 ", status, " ", ReasonPhrase(status),
+                   "\r\nContent-Type: ", content_type);
     if (bodiless) {
       // no Content-Length, no Transfer-Encoding
     } else if (content_length != nullptr) {
@@ -227,6 +232,7 @@ class HttpResponseWriter {
                     "\r\nConnection: ", _keep_alive ? "keep-alive" : "close",
                     "\r\n", extra_headers, "\r\n");
     _send.WriteUncommitted(head);
+    return bodiless;
   }
 
   message::Buffer& _send;

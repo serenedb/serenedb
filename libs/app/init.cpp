@@ -32,11 +32,11 @@
 #include <string_view>
 #include <yaclib/log.hpp>
 
+#include "app/version.h"
 #include "basics/crash_handler.h"
 #include "basics/files.h"
 #include "basics/log.h"
 #include "basics/random/random_generator.h"
-#include "app/version.h"
 #include "basics/string_utils.h"
 #define ZLIB_COMPAT
 #include <functable.h>

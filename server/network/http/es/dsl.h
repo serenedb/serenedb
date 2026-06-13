@@ -66,7 +66,7 @@ struct Aggregation {
 // min/max/avg/sum/value_count/cardinality).
 //
 // match clauses become @@ ts_tokenize/plainto_tsquery predicates, which only
-// plan on a relation with the inverted index — the caller must target
+// plan on a relation with the inverted index -- the caller must target
 // "<index>$text" when uses_match is set. A should group mixing match and
 // filter clauses is rejected: the planner claims OR groups all-or-nothing,
 // and an unclaimed @@ throws at runtime.
@@ -93,9 +93,8 @@ bool ParseSearchBody(std::string_view body, const FieldTypes& fields,
 
 // Translates a query container captured in query_raw (scroll continuation);
 // '' = match_all. Fills where/uses_match only.
-bool TranslateStoredQuery(std::string_view query_json,
-                          const FieldTypes& fields, SearchRequest& out,
-                          HttpResponseWriter& writer);
+bool TranslateStoredQuery(std::string_view query_json, const FieldTypes& fields,
+                          SearchRequest& out, HttpResponseWriter& writer);
 
 // Parses a _count body: only {"query": {...}} (or nothing) is legal; fills
 // where/uses_match. On failure writes the error envelope and returns false.

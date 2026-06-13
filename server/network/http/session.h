@@ -26,6 +26,10 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/main/client_data.hpp>
+#include <duckdb/main/connection.hpp>
+#include <duckdb/main/materialized_query_result.hpp>
+#include <duckdb/main/pending_query_result.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -35,18 +39,12 @@
 #include <yaclib/coro/future.hpp>
 
 #include "basics/asio_ns.h"
-#include <duckdb/main/client_data.hpp>
-#include <duckdb/main/connection.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
-#include <duckdb/main/pending_query_result.hpp>
-
 #include "basics/duckdb_engine.h"
 #include "basics/exceptions.h"
 #include "basics/message_buffer.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
-#include "pg/connection_context.h"
 #include "network/connection.h"
 #include "network/gate.h"
 #include "network/http/auth.h"
@@ -56,6 +54,7 @@
 #include "network/io_executor.h"
 #include "network/pg/task_runner.h"
 #include "network/socket.h"
+#include "pg/connection_context.h"
 
 namespace sdb::network {
 
@@ -76,9 +75,10 @@ struct HttpServerContext {
 // byte channel (watermark-published), _send runs write-behind (committed
 // bytes auto-flush at kSendFlushSize; the callback arms the writer).
 template<SocketKind Kind>
-class HttpSession final : public std::enable_shared_from_this<HttpSession<Kind>>,
-                          public http::ResponseSink,
-                          public RequestContext {
+class HttpSession final
+  : public std::enable_shared_from_this<HttpSession<Kind>>,
+    public http::ResponseSink,
+    public RequestContext {
  public:
   using Deps = HttpServerContext;
 
@@ -522,9 +522,9 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       if (!co_await ReadBody(request, pinned_body)) {
         if (!SendBroken()) {
           http::HttpResponseWriter error_writer{_send, *this, false, false};
-          error_writer.Error(_codec.ErrorStatus() != 0 ? _codec.ErrorStatus()
-                                                       : 400,
-                             "bad_request");
+          error_writer.Error(
+            _codec.ErrorStatus() != 0 ? _codec.ErrorStatus() : 400,
+            "bad_request");
           co_await DrainSendOnTask();
         }
         break;
@@ -534,8 +534,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       const bool head_only = request.method == HttpMethod::Head;
       http::HttpResponseWriter writer{_send, *this, keep_alive, head_only};
 
-      auto auth =
-        _auth.Authenticate(request.Header(HttpHeader::Authorization));
+      auto auth = _auth.Authenticate(request.Header(HttpHeader::Authorization));
       _user = std::move(auth.context.user);
       if (auth.status != 0) {
         writer.Fixed(auth.status, "application/json",

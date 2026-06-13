@@ -4,6 +4,12 @@ Goal: turn `server/network/pg/pg_wire_session.h` (2309-line god-header, grown it
 code **with no perf regression**. Derived from an 8-way per-concern study of the whole pg-wire module (session + every
 dep + the design doc), not a line-by-line port.
 
+> **Scope note.** This is **subsystem 1** of the whole-branch simplification effort (`docs/branch-refactor.md`), used as
+> its template. **Error handling is a separate cross-cutting stream** (`docs/error-handling.md`): this plan defers all
+> error-path work there — phase 1's change is step E1, and the error aspects of phases 5/6/7 follow stream 1's rules
+> (one per-request catch boundary, no intermediate try/catch, `ThrowIfError` at the one DuckDB boundary, `ToSqlError`
+> funnel). The phases below own the *structural* rewrite only.
+
 ## Hard constraints (non-negotiable)
 - **One duck session coroutine** (`SessionMain`/SessionTask hosted by `TaskRunner`) + the two io byte-pump coroutines
   (`Run`/RecvLoop and `SendWriter`) + the **transient** per-COPY feeder. Do **not** fragment into more coroutines.

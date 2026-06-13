@@ -29,14 +29,14 @@ statement ok
 VACUUM (REFRESH_TABLE) dc_t
 
 # --- 1. NDV exposed for opted-in columns (true NDV: v=100, s=7) ----------
-query T
+query
 SELECT (stats(v)).approx_unique::BIGINT BETWEEN 80 AND 120 AS ok
 FROM dc_t_idx LIMIT 1;
 ----
 ok
 t
 
-query T
+query
 SELECT (stats(s)).approx_unique::BIGINT BETWEEN 5 AND 9 AS ok
 FROM dc_t_idx LIMIT 1;
 ----
@@ -44,7 +44,7 @@ ok
 t
 
 # --- 2. Option off -> no approx_unique in the propagated statistics ------
-query T
+query
 SELECT stats(plain)::VARCHAR NOT LIKE '%approx_unique%' AS ok
 FROM dc_t_idx LIMIT 1;
 ----
@@ -52,7 +52,7 @@ ok
 t
 
 # min/max statistics are present regardless of the option.
-query T
+query
 SELECT stats(plain)::VARCHAR LIKE '%max%' AS ok FROM dc_t_idx LIMIT 1;
 ----
 ok
@@ -68,14 +68,14 @@ FROM range(10000, 30000) t(i);
 statement ok
 VACUUM (REFRESH_TABLE) dc_t
 
-query T
+query
 SELECT (stats(v)).approx_unique::BIGINT BETWEEN 700 AND 1300 AS ok
 FROM dc_t_idx LIMIT 1;
 ----
 ok
 t
 
-query T
+query
 SELECT (stats(s)).approx_unique::BIGINT BETWEEN 40 AND 62 AS ok
 FROM dc_t_idx LIMIT 1;
 ----
@@ -83,7 +83,7 @@ ok
 t
 
 # --- 4. Reads through the index stay correct with the option on ----------
-query II
+query
 SELECT COUNT(*), COUNT(DISTINCT v) FROM dc_t_idx;
 ----
 count	count

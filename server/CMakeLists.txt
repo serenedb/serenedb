@@ -39,7 +39,6 @@ target_link_libraries(
         llhttp
         rocksdb
         duckdb_static
-        Folly::folly
 )
 
 target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)

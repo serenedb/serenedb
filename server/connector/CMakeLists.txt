@@ -67,7 +67,6 @@ target_link_libraries(
     rocksdb
     duckdb_static
     simdjson
-    Folly::folly
 )
 
 # TODO(Dronplane): why not make public includes for sereneserver so we avoid this ugly line below?

@@ -29,7 +29,9 @@
 #include <absl/strings/internal/memutil.h>
 #include <absl/strings/match.h>
 #include <benchmark/benchmark.h>
+#ifdef SDB_ENABLE_FOLLY
 #include <folly/Range.h>
+#endif
 #include <immintrin.h>
 
 #include <algorithm>
@@ -96,12 +98,14 @@ bool LtNaive(const char* a, size_t an, const char* b, size_t bn) {
 bool EqAbsl(const char* a, size_t an, const char* b, size_t bn) {
   return absl::EqualsIgnoreCase({a, an}, {b, bn});
 }
+#ifdef SDB_ENABLE_FOLLY
 bool EqFolly(const char* a, size_t an, const char* b, size_t bn) {
   if (an != bn) {
     return false;
   }
   return std::equal(a, a + an, b, folly::AsciiCaseInsensitive{});
 }
+#endif
 bool EqSwar(const char* a, size_t an, const char* b, size_t bn) {
   if (an != bn) {
     return false;
@@ -307,7 +311,9 @@ void Bm(benchmark::State& s) {
 BENCHMARK_TEMPLATE(Bm, EqNaive, false)->Name("eq_naive_ref");
 BENCHMARK_TEMPLATE(Bm, LtNaive, true)->Name("lt_naive_ref");
 BENCHMARK_TEMPLATE(Bm, EqAbsl, false)->Name("eq_absl_current");
+#ifdef SDB_ENABLE_FOLLY
 BENCHMARK_TEMPLATE(Bm, EqFolly, false)->Name("eq_folly");
+#endif
 BENCHMARK_TEMPLATE(Bm, EqSwar, false)->Name("eq_swar");
 BENCHMARK_TEMPLATE(Bm, EqSimd, false)->Name("eq_simd");
 BENCHMARK_TEMPLATE(Bm, LtAbsl, true)->Name("lt_absl_current");

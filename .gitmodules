@@ -18,17 +18,9 @@
 	path = third_party/rocksdb
 	url = https://github.com/serenedb/rocksdb.git
 	shallow = true
-[submodule "third_party/folly"]
-	path = third_party/folly
-	url = https://github.com/serenedb/folly.git
-	shallow = true
 [submodule "third_party/simdjson"]
 	path = third_party/simdjson
 	url = https://github.com/serenedb/simdjson.git
-	shallow = true
-[submodule "third_party/double-conversion"]
-	path = third_party/double-conversion
-	url = https://github.com/serenedb/double-conversion.git
 	shallow = true
 [submodule "third_party/abseil-cpp"]
 	path = third_party/abseil-cpp
@@ -41,10 +33,6 @@
 [submodule "third_party/zlib-ng"]
 	path = third_party/zlib-ng
 	url = https://github.com/serenedb/zlib-ng.git
-	shallow = true
-[submodule "third_party/nghttp2/nghttp2-lib"]
-	path = third_party/nghttp2/nghttp2-lib
-	url = https://github.com/serenedb/nghttp2.git
 	shallow = true
 [submodule "third_party/immer"]
 	path = third_party/immer

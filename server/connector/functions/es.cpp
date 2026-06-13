@@ -210,7 +210,8 @@ duckdb::unique_ptr<duckdb::FunctionData> BindIndexArgs(
   duckdb::TableFunctionBindInput& input) {
   auto data = duckdb::make_uniq<EsIndexBindData>();
   if (input.inputs.empty() || input.inputs[0].IsNull()) {
-    throw duckdb::BinderException("index name cannot be NULL");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("index name cannot be NULL"));
   }
   data->index = input.inputs[0].GetValue<std::string>();
   if (input.inputs.size() >= 2 && !input.inputs[1].IsNull()) {
@@ -586,7 +587,8 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
   duckdb::vector<duckdb::string>& names) {
   auto data = duckdb::make_uniq<EsWriteBindData>();
   if (index_arg.IsNull()) {
-    throw duckdb::BinderException("index name cannot be NULL");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("index name cannot be NULL"));
   }
   data->index = index_arg.GetValue<std::string>();
 
@@ -816,7 +818,8 @@ duckdb::unique_ptr<duckdb::FunctionData> EsDocBind(
   duckdb::vector<duckdb::string>& names) {
   auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
   if (input.inputs[1].IsNull() || input.inputs[2].IsNull()) {
-    throw duckdb::BinderException("es_doc id and body cannot be NULL");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("es_doc id and body cannot be NULL"));
   }
   data->id = input.inputs[1].GetValue<std::string>();
   data->body = input.inputs[2].GetValue<std::string>();
@@ -898,7 +901,8 @@ duckdb::unique_ptr<duckdb::FunctionData> EsBulkBind(
   duckdb::vector<duckdb::string>& names) {
   auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
   if (input.inputs[1].IsNull()) {
-    throw duckdb::BinderException("es_bulk body cannot be NULL");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("es_bulk body cannot be NULL"));
   }
   data->body = input.inputs[1].GetValue<std::string>();
   if (data->body.empty()) {

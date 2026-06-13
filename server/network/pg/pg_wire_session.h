@@ -723,7 +723,10 @@ bool PgWireSession<Kind>::SetupConnection() {
     try {
       _connection_ctx->SetSettingChecked(name, value, false);
     } catch (const std::exception& exception) {
-      WriteErrorResponse(_send, exception.what(), "22023");
+      // Prologue boundary: no command loop yet, so convert here and close.
+      // Same ToSqlError funnel as the command loop -- keeps the real sqlstate /
+      // detail / hint instead of forcing 22023 + raw what().
+      WriteErrorResponse(_send, ToSqlError(exception));
       return false;
     }
   }
@@ -1345,6 +1348,10 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   KickSend();
   RunCopyInFeeder(bridge, is_binary).Detach();
 
+  // The feeder join below is an async park (co_await), so the cleanup that must
+  // run on every exit cannot live in a destructor (no RAII guard / absl::Cleanup
+  // here). Stash any error, run the async join, then re-propagate to the
+  // command-loop boundary -- this is the reason for the exception_ptr, not laziness.
   std::exception_ptr error;
   duckdb::unique_ptr<duckdb::PreparedStatement> prepared;
   duckdb::unique_ptr<duckdb::QueryResult> result;

@@ -1,0 +1,44 @@
+# Regression: integer GEOMETRY coordinates must round-trip through WKT.
+#
+# SereneDB compiles DuckDB against std::format, whose "{}" renders doubles in
+# shortest form ("30", not "30.0"). The DuckDB geometry WKT writer used to strip
+# a trailing zero assuming the "30.0" form, corrupting "30" -> "3" (so
+# POINT(30 10) came back as POINT (3 1)). See serenedb/duckdb#30.
+
+query
+SELECT 'POINT(30 10)'::GEOMETRY::TEXT AS wkt;
+----
+wkt
+POINT (30 10)
+
+query
+SELECT 'POINT(100 5)'::GEOMETRY::TEXT AS wkt;
+----
+wkt
+POINT (100 5)
+
+query
+SELECT 'POINT(4500 200)'::GEOMETRY::TEXT AS wkt;
+----
+wkt
+POINT (4500 200)
+
+query
+SELECT 'LINESTRING(30 10, 10 30, 40 40)'::GEOMETRY::TEXT AS wkt;
+----
+wkt
+LINESTRING (30 10, 10 30, 40 40)
+
+# Fractional coordinates must be preserved exactly (no over-stripping).
+query
+SELECT 'POINT(30.5 10.25)'::GEOMETRY::TEXT AS wkt;
+----
+wkt
+POINT (30.5 10.25)
+
+# ST_AsText goes through the same WKT writer.
+query
+SELECT ST_AsText('POINT(30 10)'::GEOMETRY) AS wkt;
+----
+wkt
+POINT (30 10)

@@ -20,10 +20,9 @@
 
 #include "search/search_table_transaction.h"
 
-#include <absl/algorithm/container.h>
-
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "basics/assert.h"
@@ -35,6 +34,20 @@
 #include "storage_engine/table_shard.h"
 
 namespace sdb::search {
+namespace {
+
+// Width of this shard's iresearch tick band: sum-over-trxs(GetQueries()+1), so
+// each trx gets a tick strictly above its predecessor (iresearch's <= removal
+// rule). Pure inserts have GetQueries()==0 -> one tick per trx.
+uint64_t ShardTickSpan(const SearchShardWrites& w) {
+  uint64_t span = 0;
+  for (const auto& trx : w.transactions) {
+    span += trx->GetQueries() + 1;
+  }
+  return span;
+}
+
+}  // namespace
 
 void SearchTableTransaction::AddParallelSearchTransaction(
   const std::shared_ptr<TableShard>& shard,
@@ -46,6 +59,27 @@ void SearchTableTransaction::AddParallelSearchTransaction(
   }
   w.transactions.push_back(std::move(trx));
   w.chunks.push_back(std::move(chunk));
+}
+
+void SearchTableTransaction::AddReferences(
+  const std::shared_ptr<TableShard>& shard,
+  std::span<const uint64_t> seg_ids) {
+  // One batched call per bulk statement (after its parallel sinks combine), so
+  // the manifest's current insert run is resolved once -- and the manifest is
+  // never touched from the multi-threaded Combine path.
+  _changes[shard->GetTableId()].AppendReference(seg_ids);
+}
+
+void SearchTableTransaction::AddInlineInsertChunk(
+  const std::shared_ptr<TableShard>& shard,
+  duckdb::BufferManager& buffer_manager,
+  const duckdb::vector<duckdb::LogicalType>& types, duckdb::DataChunk& chunk,
+  bool uses_generated_pk, uint64_t pk_base) {
+  // The destination shard + serial trx are recorded by
+  // EnsureSerialSearchTransaction (the inline Sink runs it first); here we only
+  // grow the ordered op manifest.
+  _changes[shard->GetTableId()].AppendInsertChunk(buffer_manager, types, chunk,
+                                                  uses_generated_pk, pk_base);
 }
 
 irs::IndexWriter::Transaction&
@@ -61,6 +95,14 @@ SearchTableTransaction::EnsureSerialSearchTransaction(
       std::make_unique<irs::IndexWriter::Transaction>(make_trx()));
   }
   return *w.transactions.back();
+}
+
+void SearchTableTransaction::AddSearchDeletes(
+  const std::shared_ptr<TableShard>& shard, std::span<const std::string> pks) {
+  // The destination shard + serial trx are recorded by
+  // EnsureSerialSearchTransaction (the delete Sink runs it first); here we only
+  // append the DELETE op, which seals the current insert run.
+  _changes[shard->GetTableId()].AppendDeletes(pks);
 }
 
 void SearchTableTransaction::RegisterFlush() noexcept {
@@ -82,21 +124,24 @@ void SearchTableTransaction::Abort() noexcept {
 
 void SearchTableTransaction::Commit() {
   SDB_ASSERT(!_writes.empty());
-  // Insert-only today: zero removes, so all segments share first_tick and one
-  // RefreshCommit publishes them.
-  SDB_ASSERT(absl::c_all_of(_writes, [](const auto& e) {
-    return absl::c_all_of(e.second.transactions,
-                          [](const auto& t) { return t->GetQueries() == 0; });
-  }));
   SDB_IF_FAILURE("crash_before_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
-  const uint64_t tick = AppendCommit();
+  const uint64_t record_tick = AppendCommit();
   SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
   for (auto& [table_id, w] : _writes) {
     for (auto& c : w.chunks) {
       c.MarkCommitted();
     }
-    for (auto& trx : w.transactions) {
-      trx->Commit(tick);
+    // Assign descending ticks: the last trx commits at the record tick (band
+    // top) so the shard's published tick reaches it and recovery never
+    // re-replays this record; each earlier trx sits one (GetQueries()+1) step
+    // below the next, so a removal's tick exceeds the inserts it masks
+    // (iresearch's <= rule). Shards are independent ordering domains, so
+    // sharing the top tick across them is fine.
+    uint64_t tick = record_tick;
+    for (size_t i = w.transactions.size(); i-- > 0;) {
+      auto& trx = *w.transactions[i];
+      trx.Commit(tick);
+      tick -= trx.GetQueries() + 1;
     }
   }
 }
@@ -107,35 +152,42 @@ uint64_t SearchTableTransaction::AppendCommit() {
   sections.reserve(_writes.size());
   std::vector<std::vector<SearchDbWal::Op>> op_lists;
   op_lists.reserve(_writes.size());
-  std::vector<std::vector<uint64_t>> seg_id_lists;
-  seg_id_lists.reserve(_writes.size());
+  // Widest shard band -> ticks this commit reserves; every shard tops out here.
+  uint64_t tick_span = 0;
   SearchDbWal* wal =
     &basics::downCast<SearchTableShard>(*_writes.begin()->second.shard).Wal();
   for (auto& [table_id, w] : _writes) {
     SDB_ASSERT(wal == &basics::downCast<SearchTableShard>(*w.shard).Wal(),
                "all search shards in a txn must share one database WAL");
+    tick_span = std::max(tick_span, ShardTickSpan(w));
     auto& ops = op_lists.emplace_back();
-    auto it = _changes.find(table_id);
-    if (it != _changes.end()) {
-      for (auto& buf : it->second.inserts) {
-        if (buf.collection && buf.collection->Count() > 0) {
-          ops.push_back(SearchDbWal::Op{
-            buf.collection.get(),
-            buf.pk_segments
-              ? std::span<const SearchDbWal::InlinePk>{*buf.pk_segments}
-              : std::span<const SearchDbWal::InlinePk>{},
-            {}});
-        }
+    // Walk the table's ordered manifest in statement order. An insert run emits
+    // an INLINE op (if it buffered rows) and/or a REFERENCE op (its bulk chunk
+    // files); a delete run emits a DELETE op. Recovery replays this exact order
+    // into one trx, reproducing the live single-trx `_queries` ordering.
+    auto cit = _changes.find(table_id);
+    SDB_ASSERT(cit != _changes.end(),
+               "search shard with a trx but no manifest ops");
+    for (const auto& op : cit->second.ops) {
+      if (op.IsDelete()) {
+        ops.push_back(SearchDbWal::Op{
+          nullptr, {}, {}, std::span<const std::string>{op.delete_pks}});
+        continue;
       }
-    }
-    if (!w.chunks.empty()) {
-      auto& segs = seg_id_lists.emplace_back();
-      segs.reserve(w.chunks.size());
-      for (const auto& c : w.chunks) {
-        segs.push_back(c.SegId());
+      if (op.collection && op.collection->Count() > 0) {
+        ops.push_back(SearchDbWal::Op{
+          op.collection.get(),
+          op.pk_segments
+            ? std::span<const SearchDbWal::InlinePk>{*op.pk_segments}
+            : std::span<const SearchDbWal::InlinePk>{},
+          {},
+          {}});
       }
-      ops.push_back(
-        SearchDbWal::Op{nullptr, {}, std::span<const uint64_t>{segs}});
+      if (!op.seg_ids.empty()) {
+        ops.push_back(
+          SearchDbWal::Op{nullptr, {}, std::span<const uint64_t>{op.seg_ids},
+                          {}});
+      }
     }
     SDB_ASSERT(!ops.empty(),
                "search-table commit with neither chunk files nor inline rows");
@@ -147,7 +199,7 @@ uint64_t SearchTableTransaction::AppendCommit() {
   }
 
   SDB_ASSERT(wal != nullptr);
-  return wal->AppendCommit(sections);
+  return wal->AppendCommit(sections, tick_span);
 }
 
 }  // namespace sdb::search

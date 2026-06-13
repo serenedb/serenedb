@@ -99,10 +99,27 @@ UPDATE search_dml SET b = 'y' WHERE a = 1;
 db error: ERROR: UPDATE on a search-backed table is not yet supported
 
 
-statement error
+# DELETE removes rows by PK term; the removal is visible after the publish
+# (VACUUM REFRESH_TABLE), like inserts.
+statement ok
 DELETE FROM search_dml WHERE a = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+query
+SELECT a, b FROM search_dml ORDER BY a;
 ----
-db error: ERROR: DELETE on a search-backed table is not yet supported
+a	b
+2	y
+3	z
+
+
+query
+SELECT COUNT(*) FROM search_dml;
+----
+count
+2
 
 
 statement error
@@ -146,6 +163,20 @@ a	b
 10	p
 20	q
 30	r
+
+# DELETE on a generated-PK table: the rowid is the synthetic PK, materialised
+# from the stored kGeneratedPKId column for row identity.
+statement ok
+DELETE FROM search_genpk WHERE a >= 20;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_genpk;
+
+query
+SELECT * FROM search_genpk ORDER BY a;
+----
+a	b
+10	p
 
 statement ok
 DROP TABLE search_genpk;

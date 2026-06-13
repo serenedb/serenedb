@@ -29,7 +29,9 @@
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "basics/assert.h"
@@ -70,12 +72,15 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     std::string table_key;
     bool uses_generated_pk = false;
   };
-  // Per-shard replay context: one open iresearch trx + sink, accumulated across
-  // all of the shard's records. Kept in a node map so the sink's trx reference
-  // stays stable across inserts.
+  // Per-shard replay context: one open iresearch trx accumulated across all of
+  // the shard's records, with an insert sink and a delete sink that share it.
+  // Ops replay in manifest order into this single trx; iresearch's `_queries`
+  // cursor reproduces the original insert/delete ordering. Kept in a node map
+  // so the sinks' trx reference stays stable.
   struct ReplayCtx {
     irs::IndexWriter::Transaction trx;
-    std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
+    std::unique_ptr<connector::SearchSinkInsertBaseImpl> insert_sink;
+    std::unique_ptr<connector::SearchSinkDeleteBaseImpl> delete_sink;
     uint64_t max_tick = 0;
   };
 
@@ -118,28 +123,51 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       return it != shards.end() ? it->second.search->CommittedTick()
                                 : std::numeric_limits<uint64_t>::max();
     };
-    auto replay = [&](uint64_t tick, ObjectId table_id, uint64_t pk_base,
-                      duckdb::DataChunk& chunk) {
-      auto& info = shards.at(table_id);
+    auto ensure_ctx = [&](ObjectId table_id) -> ReplayCtx& {
       auto [cit, inserted] = ctxs.try_emplace(table_id);
       auto& ctx = cit->second;
       if (inserted) {
+        auto& info = shards.at(table_id);
         ctx.trx = info.search->GetTransaction();
-        ctx.sink =
+        ctx.insert_sink =
           connector::MakeSearchTableInsertSink(ctx.trx, info.column_ids);
+        ctx.delete_sink =
+          std::make_unique<connector::SearchSinkDeleteBaseImpl>(ctx.trx);
       }
-      connector::WriteChunkToSearchSink(*ctx.sink, chunk, info.column_ids,
-                                        info.pk_columns, info.table_key,
-                                        info.uses_generated_pk, pk_base);
+      return ctx;
+    };
+    auto replay = [&](uint64_t tick, ObjectId table_id, uint64_t pk_base,
+                      duckdb::DataChunk& chunk) {
+      auto& info = shards.at(table_id);
+      auto& ctx = ensure_ctx(table_id);
+      connector::WriteChunkToSearchSink(
+        *ctx.insert_sink, chunk, info.column_ids, info.pk_columns,
+        info.table_key, info.uses_generated_pk, pk_base);
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-
-    wal.Recover(exists_of, committed_of, replay);
+    // Each DELETE op replays as one removal batch on the shared trx; feeding it
+    // in manifest order keeps the `_queries` ordering vs surrounding inserts.
+    auto replay_delete = [&](uint64_t tick, ObjectId table_id,
+                             std::span<const std::string_view> pks) {
+      if (pks.empty()) {
+        return;
+      }
+      auto& ctx = ensure_ctx(table_id);
+      ctx.delete_sink->InitImpl(pks.size());
+      for (auto pk : pks) {
+        ctx.delete_sink->DeleteRowImpl(pk);
+      }
+      ctx.delete_sink->FinishImpl();
+      ctx.max_tick = std::max(ctx.max_tick, tick);
+    };
+    wal.Recover(exists_of, committed_of, replay, replay_delete);
 
     // Finalize each replayed shard outside Recover() so Commit()'s locking + GC
     // are safe.
     for (auto& [table_id, ctx] : ctxs) {
-      ctx.sink.reset();  // release the Document before committing
+      // Release the insert Document (and the delete filter) before committing.
+      ctx.insert_sink.reset();
+      ctx.delete_sink.reset();
       ctx.trx.Commit(ctx.max_tick);
       auto& info = shards.at(table_id);
       info.search->Commit();

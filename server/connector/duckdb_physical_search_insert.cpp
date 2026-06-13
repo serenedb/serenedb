@@ -76,6 +76,10 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
 
   std::mutex combine_mu;
   duckdb::idx_t insert_count = 0;
+  // Bulk path only: each combining sink thread appends its sealed chunk's
+  // seg_id here (under combine_mu); Finalize hands the whole statement's
+  // segments to the manifest in one batched AddReferences call.
+  std::vector<uint64_t> bulk_seg_ids;
 
   // CTAS bookkeeping.
   bool ctas_mode = false;
@@ -119,8 +123,6 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
   std::unique_ptr<SearchSinkInsertBaseImpl> sink;
   bool bulk = false;
   std::optional<search::SearchDbWal::ChunkWriter> chunk_writer;
-  duckdb::ColumnDataCollection* collection = nullptr;
-  std::vector<search::SearchDbWal::InlinePk>* pk_segments = nullptr;
   duckdb::idx_t insert_count = 0;
 };
 
@@ -299,21 +301,10 @@ SereneDBSearchInsert::GetLocalSinkState(
       gstate->search_shard->GetTransaction());
     lstate->sink =
       MakeSearchTableInsertSink(*lstate->search_trx, gstate->column_ids);
-  } else {
-    auto collection = std::make_unique<duckdb::ColumnDataCollection>(
-      duckdb::BufferManager::GetBufferManager(context.client),
-      gstate->chunk_types);
-    std::lock_guard<std::mutex> lock(gstate->combine_mu);
-    auto& entry = gstate->sdb_txn->SearchTxn().Changes()[gstate->table_id];
-    auto& buf = entry.inserts.emplace_back();
-    buf.collection = std::move(collection);
-    lstate->collection = buf.collection.get();
-    if (gstate->generated_pk_seq != nullptr) {
-      buf.pk_segments =
-        std::make_unique<std::vector<search::SearchDbWal::InlinePk>>();
-      lstate->pk_segments = buf.pk_segments.get();
-    }
   }
+  // Inline (single-threaded): the serial trx + sink are created lazily in Sink,
+  // and each chunk is coalesced into the ordered manifest's current insert run
+  // there -- no per-statement collection is pre-created.
   return lstate;
 }
 
@@ -349,10 +340,9 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     }
     lstate->chunk_writer->Append(chunk, pk_base);
   } else {
-    lstate->collection->Append(chunk);
-    if (lstate->pk_segments != nullptr) {
-      lstate->pk_segments->push_back({pk_base, num_rows});
-    }
+    gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
+      gstate.table_shard, duckdb::BufferManager::GetBufferManager(context.client),
+      gstate.chunk_types, chunk, uses_generated_pk, pk_base);
   }
   lstate->insert_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -384,6 +374,7 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   std::lock_guard<std::mutex> lock(gstate.combine_mu);
   gstate.insert_count += lstate->insert_count;
   if (lstate->bulk) {
+    gstate.bulk_seg_ids.push_back(pending.SegId());
     gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
       gstate.table_shard, std::move(lstate->search_trx), std::move(pending));
   }
@@ -399,6 +390,13 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
     // Empty SELECT into CTAS still materialises an (empty) table.
     RemoveCtasTombstoneIfNeeded(gstate);
     return duckdb::SinkFinalizeType::READY;
+  }
+
+  // All parallel sinks have combined: hand the bulk statement's chunk-file refs
+  // to the manifest in one batched call (resolves the insert run once).
+  if (!gstate.bulk_seg_ids.empty()) {
+    gstate.sdb_txn->SearchTxn().AddReferences(gstate.table_shard,
+                                              gstate.bulk_seg_ids);
   }
 
   auto& conn_ctx = GetSereneDBContext(context);

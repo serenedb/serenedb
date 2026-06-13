@@ -20,9 +20,12 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/function/table_function.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/iterators.hpp>
 #include <memory>
+#include <vector>
 
 #include "connector/columnstore_materializer.h"
 #include "connector/duckdb_scan_base.hpp"
@@ -32,11 +35,13 @@ namespace sdb::connector {
 struct SearchTableScanGlobalState : public CommonScanGlobalState {
   std::shared_ptr<irs::DirectoryReader> reader;
 
-  // doc_in_seg is a 0-based row offset within the segment's columnstore,
-  // not an iresearch doc_id.
   size_t segment_idx = 0;
-  uint64_t doc_in_seg = 0;
+  // Live-docs iterator over the current segment (skips deleted/masked docs via
+  // SubReader::mask); null until the segment is opened.
+  irs::DocIterator::ptr live_docs;
   std::unique_ptr<ColumnstoreMaterializer> materializer;
+  // Scratch: the current batch's live columnstore row ids (doc_id - min).
+  std::vector<uint64_t> row_ids;
 
   // COUNT(*)-style scan: emit `count_remaining` empty rows, no materialisation.
   bool count_only = false;

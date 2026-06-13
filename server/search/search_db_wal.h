@@ -28,6 +28,8 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
@@ -138,13 +140,17 @@ class SearchDbWal {
     uint64_t count;
   };
 
-  // One op in a shard section's ordered manifest.
+  // One op in a shard section's ordered manifest. Exactly one kind is active:
+  // INLINE (inline_data set), REFERENCE (seg_ids non-empty), or DELETE
+  // (delete_pks non-empty). The on-disk op kind byte is derived from which.
   struct Op {
     // INLINE only: one entry per inserted Sink chunk, in append order.
     const duckdb::ColumnDataCollection* inline_data = nullptr;
     std::span<const InlinePk> inline_pks;
     // REFERENCE
     std::span<const uint64_t> seg_ids;
+    // DELETE: the encoded PK byte strings to remove (iresearch PK terms).
+    std::span<const std::string> delete_pks;
   };
 
   // One transaction's contribution for a single search shard
@@ -156,6 +162,12 @@ class SearchDbWal {
   using ReplayCallback =
     absl::AnyInvocable<void(uint64_t tick, ObjectId table_id, uint64_t pk_base,
                             duckdb::DataChunk& chunk) const>;
+
+  // Invoked once per DELETE op, in manifest order, with the encoded PK byte
+  // strings to remove (views into the record buffer, valid for the call only).
+  using DeleteReplayCallback =
+    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id,
+                            std::span<const std::string_view> pks) const>;
 
   using ShardExistsFn = absl::AnyInvocable<bool(ObjectId table_id) const>;
   using ShardCommittedFn =
@@ -181,10 +193,17 @@ class SearchDbWal {
   void DeregisterShard(ObjectId table_id);
 
   ChunkWriter NewChunkWriter(ObjectId table_id);
-  uint64_t AppendCommit(std::span<const ShardSection> sections);
+  // Reserves `tick_span` consecutive ticks under the append lock and writes one
+  // record at the top of that band; returns the record tick (== base +
+  // tick_span). The caller lays out per-shard iresearch tick bands within
+  // (base, record_tick] (see SearchTableTransaction::Commit). `tick_span` is
+  // the max over the txn's shards of sum-over-trxs(GetQueries()+1); >= 1.
+  uint64_t AppendCommit(std::span<const ShardSection> sections,
+                        uint64_t tick_span);
   uint64_t Recover(const ShardExistsFn& exists_of,
                    const ShardCommittedFn& committed_of,
-                   const ReplayCallback& cb);
+                   const ReplayCallback& insert_cb,
+                   const DeleteReplayCallback& delete_cb);
 
  private:
   duckdb::FileSystem& _fs;

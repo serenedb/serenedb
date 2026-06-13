@@ -75,11 +75,32 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
   for (duckdb::idx_t out_slot = 0; out_slot < input.column_ids.size();
        ++out_slot) {
     const auto col_id = input.column_ids[out_slot];
+    if (col_id == kColumnIdentifierGeneratedPk) {
+      // Row identity on a no-PK table: materialise the synthetic PK from the
+      // stored kGeneratedPKId BIGINT column (written alongside the PK term on
+      // insert). This is the rowid DELETE/UPDATE plans project.
+      state->cs_projections.push_back(ColumnstoreProjection{
+        .output_slot = out_slot, .column_id = catalog::Column::kGeneratedPKId});
+      continue;
+    }
+    // Explicit-PK row identity: DELETE/UPDATE plans project PK columns as
+    // VIRTUAL_COLUMN_START + table-position (BuildRowIdColumns). Map back to
+    // the real (stored) column. Special sentinels (tableoid/score/rowid) land
+    // far above the table range and fall through to the rejection below.
+    if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
+      const auto table_pos = col_id - duckdb::VIRTUAL_COLUMN_START;
+      const auto& columns = tbd.table->Columns();
+      if (table_pos < columns.size()) {
+        state->cs_projections.push_back(ColumnstoreProjection{
+          .output_slot = out_slot, .column_id = columns[table_pos].GetId()});
+        continue;
+      }
+    }
     if (col_id >= num_bind_columns) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("Virtual columns (rowid, tableoid, score) on a search-"
-                "backed table are not yet supported (column slot ",
+        ERR_MSG("Virtual columns (tableoid, score) on a search-backed table "
+                "are not yet supported (column slot ",
                 out_slot, ")"));
     }
     const auto catalog_col_id = bind_data.column_ids[col_id];
@@ -112,36 +133,41 @@ void SearchTableScanFunction(duckdb::ClientContext& /*context*/,
   const auto batch_size = static_cast<duckdb::idx_t>(STANDARD_VECTOR_SIZE);
 
   duckdb::idx_t produced = 0;
-  // Stop at segment boundary: ColumnstoreMaterializer::Scan writes from slot
-  // 0, so two segments cannot share one batch.
+  // One segment per batch: SelectByDocIds writes from output slot 0, so two
+  // segments cannot share a batch.
   while (produced == 0 && gstate.segment_idx < reader.size()) {
     auto& segment = reader[gstate.segment_idx];
-    const auto seg_docs = segment.docs_count();
-    if (gstate.doc_in_seg >= seg_docs) {
-      ++gstate.segment_idx;
-      gstate.doc_in_seg = 0;
-      gstate.materializer.reset();
-      continue;
-    }
 
     if (!gstate.materializer) {
       const auto* cs_reader = segment.GetColReader();
       if (!cs_reader) {
         // Segment has no columnstore (e.g. an empty pre-INSERT commit).
         ++gstate.segment_idx;
-        gstate.doc_in_seg = 0;
         continue;
       }
       gstate.materializer = std::make_unique<ColumnstoreMaterializer>(
         *cs_reader, gstate.cs_projections, gstate.client_context);
+      // mask() wraps the all-docs iterator to skip deleted docs.
+      gstate.live_docs = segment.mask(segment.docs_iterator());
     }
 
-    const auto take =
-      std::min<duckdb::idx_t>(batch_size, seg_docs - gstate.doc_in_seg);
-    gstate.materializer->Scan(gstate.doc_in_seg, take, output,
-                              /*output_start=*/0);
-    gstate.doc_in_seg += take;
-    produced = take;
+    // Collect this batch's live rows (row = doc_id - min); the iterator's
+    // position persists across calls.
+    gstate.row_ids.clear();
+    while (gstate.row_ids.size() < batch_size && gstate.live_docs->next()) {
+      gstate.row_ids.push_back(gstate.live_docs->value() -
+                               irs::doc_limits::min());
+    }
+    if (gstate.row_ids.empty()) {
+      ++gstate.segment_idx;
+      gstate.materializer.reset();
+      gstate.live_docs.reset();
+      continue;
+    }
+
+    gstate.materializer->SelectByDocIds(gstate.row_ids, output,
+                                        /*output_start=*/0);
+    produced = gstate.row_ids.size();
   }
 
   if (produced == 0) {

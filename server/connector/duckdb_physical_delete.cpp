@@ -109,7 +109,8 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
   state->table_shard =
     conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
   SDB_ASSERT(state->table_shard);
-  RejectIfSearchTable(*state->table_shard, "DELETE");
+  SDB_ASSERT(state->table_shard->GetStorage() != catalog::StorageKind::kSearch,
+             "SereneDBPhysicalDelete reached a search shard");
   state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
 
   const auto& columns = _table->Columns();

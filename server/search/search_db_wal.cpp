@@ -52,6 +52,7 @@ namespace {
 
 constexpr uint8_t kKindInline = 0;
 constexpr uint8_t kKindReference = 1;
+constexpr uint8_t kKindDelete = 2;
 
 constexpr uint8_t kChunkCodecNone = 0;
 constexpr uint8_t kChunkCodecZstd = 1;
@@ -393,11 +394,16 @@ void SearchDbWal::WriteFrameLocked(const uint8_t* payload, uint64_t size) {
   }
 }
 
-uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
+uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
+                                   uint64_t tick_span) {
   SDB_ASSERT(!sections.empty(), "AppendCommit with no shard sections");
+  SDB_ASSERT(tick_span >= 1, "every commit advances the tick by at least 1");
   std::lock_guard<std::mutex> lock(_append_mu);
-  // Insert-only today: one tick per record.
-  uint64_t tick = _tick.fetch_add(1, std::memory_order_relaxed) + 1;
+  // Reserve `tick_span` ticks atomically with the append; the record's tick is
+  // the top of the band so file-order == tick-order is preserved. The per-shard
+  // iresearch bands live within (base, tick] and are assigned by the caller.
+  uint64_t base = _tick.fetch_add(tick_span, std::memory_order_relaxed);
+  uint64_t tick = base + tick_span;
   EnsureActiveSegmentLocked(tick);
 
   duckdb::MemoryStream payload;
@@ -410,10 +416,15 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
     SDB_ASSERT(!s.ops.empty(), "shard section with no ops");
     payload.Write<uint32_t>(static_cast<uint32_t>(s.ops.size()));
     for (const auto& op : s.ops) {
-      SDB_ASSERT((op.inline_data != nullptr) != !op.seg_ids.empty(),
-                 "op must be exactly one of INLINE / REFERENCE");
-      payload.Write<uint8_t>(op.inline_data ? kKindInline : kKindReference);
-      if (op.inline_data) {
+      SDB_ASSERT((op.inline_data != nullptr) + (!op.seg_ids.empty()) +
+                     (!op.delete_pks.empty()) ==
+                   1,
+                 "op must be exactly one of INLINE / REFERENCE / DELETE");
+      const uint8_t kind = op.inline_data        ? kKindInline
+                           : !op.seg_ids.empty() ? kKindReference
+                                                 : kKindDelete;
+      payload.Write<uint8_t>(kind);
+      if (kind == kKindInline) {
         payload.Write<uint32_t>(static_cast<uint32_t>(op.inline_pks.size()));
         for (const auto& pk : op.inline_pks) {
           payload.Write<uint64_t>(pk.base);
@@ -427,7 +438,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
         auto len = static_cast<uint64_t>(tmp.GetPosition());
         payload.Write<uint64_t>(len);
         payload.WriteData(tmp.GetData(), len);
-      } else {
+      } else if (kind == kKindReference) {
         payload.Write<uint32_t>(static_cast<uint32_t>(op.seg_ids.size()));
         for (uint64_t sid : op.seg_ids) {
           payload.Write<uint64_t>(sid);
@@ -441,6 +452,13 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections) {
           } else {
             _active_chunk_bytes += sz;
           }
+        }
+      } else {  // kKindDelete
+        payload.Write<uint32_t>(static_cast<uint32_t>(op.delete_pks.size()));
+        for (const auto& pk : op.delete_pks) {
+          payload.Write<uint32_t>(static_cast<uint32_t>(pk.size()));
+          payload.WriteData(reinterpret_cast<const uint8_t*>(pk.data()),
+                            pk.size());
         }
       }
     }
@@ -584,10 +602,12 @@ void SearchDbWal::RunGc() {
 
 uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
                               const ShardCommittedFn& committed_of,
-                              const ReplayCallback& cb) {
+                              const ReplayCallback& insert_cb,
+                              const DeleteReplayCallback& delete_cb) {
   std::lock_guard<std::mutex> lock(_append_mu);
   uint64_t max_tick = 0;
   std::unordered_set<std::string> referenced;  // surviving chunk-file paths
+  std::vector<std::string_view> delete_pks;    // scratch, reused per DELETE op
 
   for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
     duckdb::BufferedFileReader reader(_fs, path.string().c_str());
@@ -631,9 +651,9 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
             // Chunks() coalesce partial appends, so we can't index by chunk.
             VisitInlineSegments(
               *cdc, segments, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                cb(tick, tid, pk_base, chunk);
+                insert_cb(tick, tid, pk_base, chunk);
               });
-          } else {
+          } else if (kind == kKindReference) {
             auto seg_count = c.Read<uint32_t>();
             for (uint32_t k = 0; k < seg_count; ++k) {
               uint64_t sid = c.Read<uint64_t>();
@@ -645,8 +665,26 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
               }
               ReplayChunkFile(_fs, chunk_path,
                               [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                                cb(tick, tid, pk_base, chunk);
+                                insert_cb(tick, tid, pk_base, chunk);
                               });
+            }
+          } else {  // kKindDelete: consume the PK list either way; collect and
+                    // replay only if live
+            auto pk_count = c.Read<uint32_t>();
+            delete_pks.clear();
+            if (live) {
+              delete_pks.reserve(pk_count);
+            }
+            for (uint32_t i = 0; i < pk_count; ++i) {
+              auto len = c.Read<uint32_t>();
+              const uint8_t* bytes = c.ReadBlob(len);
+              if (live) {
+                delete_pks.emplace_back(reinterpret_cast<const char*>(bytes),
+                                        len);
+              }
+            }
+            if (live) {
+              delete_cb(tick, tid, delete_pks);
             }
           }
         }

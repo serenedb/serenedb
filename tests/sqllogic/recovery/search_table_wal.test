@@ -296,3 +296,142 @@ v7
 connection mix_conn
 statement ok
 DROP TABLE mix_t;
+
+
+###############################################################################
+# 6. DELETE -> the removal survives recovery replay (explicit + generated PK).
+#    The baseline is published; the DELETE is fsynced into the WAL but crashes
+#    before the iresearch removal commits, so recovery must re-apply it.
+###############################################################################
+
+connection mix_conn
+statement ok
+CREATE TABLE del_t (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+connection mix_conn
+statement ok
+INSERT INTO del_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
+
+connection mix_conn
+statement ok
+VACUUM (REFRESH_TABLE) del_t;
+
+connection mix_conn
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection mix_conn
+statement error connection closed
+DELETE FROM del_t WHERE id = 2;
+
+# --- restart ---
+connection del_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, b FROM del_t ORDER BY id;
+----
+id	b
+1	one
+3	three
+
+# The surviving rows are still reachable by their explicit PK.
+connection del_after
+query
+SELECT b FROM del_t WHERE id = 3;
+----
+b
+three
+
+connection del_after
+statement ok
+VACUUM (REFRESH_TABLE) del_t;
+
+connection del_after
+statement ok
+DROP TABLE del_t;
+
+
+# Generated-PK DELETE: the rowid is the synthetic PK (materialised from the
+# stored kGeneratedPKId column); its removal must also survive recovery.
+connection del_after
+statement ok
+CREATE TABLE del_g (a INTEGER, b TEXT) WITH (storage = 'search');
+
+connection del_after
+statement ok
+INSERT INTO del_g VALUES (10, 'p'), (20, 'q'), (30, 'r');
+
+connection del_after
+statement ok
+VACUUM (REFRESH_TABLE) del_g;
+
+connection del_after
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection del_after
+statement error connection closed
+DELETE FROM del_g WHERE a >= 20;
+
+# --- restart ---
+connection del_g_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, b FROM del_g ORDER BY a;
+----
+a	b
+10	p
+
+connection del_g_after
+statement ok
+DROP TABLE del_g;
+
+
+###############################################################################
+# 7. DELETE then re-INSERT the same PK -> last write wins through recovery.
+#    'a' is published; the same-PK [DELETE id=1] (unpublished) and [INSERT
+#    (1,'b')] are both fsynced into the WAL but crash before publish. Recovery
+#    replays them in manifest order (delete before the re-insert), so the
+#    higher-tick re-insert survives: exactly one row, b.
+###############################################################################
+
+connection del_g_after
+statement ok
+CREATE TABLE reins (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+connection del_g_after
+statement ok
+INSERT INTO reins VALUES (1, 'a');
+
+connection del_g_after
+statement ok
+VACUUM (REFRESH_TABLE) reins;
+
+connection del_g_after
+statement ok
+DELETE FROM reins WHERE id = 1;
+
+connection del_g_after
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection del_g_after
+statement error connection closed
+INSERT INTO reins VALUES (1, 'b');
+
+# --- restart ---
+connection reins_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, b FROM reins ORDER BY id;
+----
+id	b
+1	b
+
+connection reins_after
+query
+SELECT COUNT(*) AS n FROM reins;
+----
+n
+1
+
+connection reins_after
+statement ok
+DROP TABLE reins;

@@ -865,6 +865,20 @@ void WriteChunkToSearchSink(
                          chunk.data[col].GetType(), chunk.data[col], key_views,
                          num_rows);
   }
+  // Generated-PK tables: store the synthetic PK as a scannable BIGINT column
+  // under kGeneratedPKId so the table scan can materialise the rowid. (The PK
+  // term used for delete matching was already emitted on the first column;
+  // explicit-PK rows carry their key in real columns and need none of this.)
+  if (uses_generated_pk) {
+    duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      data[row] = static_cast<int64_t>(pk_base + row);
+    }
+    sink.SwitchFieldImpl(
+      static_cast<irs::field_id>(catalog::Column::kGeneratedPKId.id()),
+      duckdb::LogicalType::BIGINT, gen_pk, key_views, num_rows);
+  }
   sink.FinishImpl();
 }
 

@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "network/network_server_feature.h"
+#include "network/server.h"
 
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
@@ -144,7 +144,7 @@ asio_ns::ip::tcp::endpoint ParseEndpoint(const std::string& url) {
 
 }  // namespace
 
-NetworkServerFeature::NetworkServerFeature()
+Server::Server()
   : _endpoint{absl::GetFlag(FLAGS_network_http_endpoint)},
     _pg_endpoint{absl::GetFlag(FLAGS_network_pg_endpoint)},
     _tls_cert{absl::GetFlag(FLAGS_network_tls_cert)},
@@ -166,9 +166,9 @@ NetworkServerFeature::NetworkServerFeature()
   gInstance = this;
 }
 
-NetworkServerFeature::~NetworkServerFeature() { gInstance = nullptr; }
+Server::~Server() { gInstance = nullptr; }
 
-void NetworkServerFeature::start() {
+void Server::start() {
   if (_endpoint.empty() && _pg_endpoint.empty()) {
     return;
   }
@@ -271,7 +271,7 @@ void NetworkServerFeature::start() {
   }
 }
 
-void NetworkServerFeature::stop() {
+void Server::stop() {
   for (auto& acceptor : _acceptors) {
     acceptor->Stop();
   }

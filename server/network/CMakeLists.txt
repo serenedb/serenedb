@@ -16,7 +16,7 @@ target_sources(
         pg/wire_frames.cpp
         pg/wire_collector.cpp
         pg/auth.cpp
-        network_server_feature.cpp
+        server.cpp
 )
 
 target_link_libraries(sereneserver PUBLIC ada::ada simdutf::simdutf re2::re2)

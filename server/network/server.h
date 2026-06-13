@@ -35,13 +35,13 @@
 
 namespace sdb {
 
-class NetworkServerFeature final {
+class Server final {
  public:
-  inline static NetworkServerFeature* gInstance = nullptr;
-  static NetworkServerFeature& instance() noexcept { return *gInstance; }
+  inline static Server* gInstance = nullptr;
+  static Server& instance() noexcept { return *gInstance; }
 
-  NetworkServerFeature();
-  ~NetworkServerFeature();
+  Server();
+  ~Server();
 
   void start();
   void stop();

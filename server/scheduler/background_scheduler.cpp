@@ -29,7 +29,7 @@
 #include "basics/asio_ns.h"
 #include "basics/number_of_cores.h"
 #include "network/io_context.h"
-#include "network/network_server_feature.h"
+#include "network/server.h"
 
 ABSL_FLAG(uint64_t, server_background_threads, 0,
           "Number of background worker threads (drop / cleanup / maintenance "
@@ -61,7 +61,7 @@ void BackgroundScheduler::stop() {
 
 yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
   auto [f, p] = yaclib::MakeContract<>();
-  auto* pool = NetworkServerFeature::instance().IoPool();
+  auto* pool = Server::instance().IoPool();
   if (pool == nullptr || d <= clock::duration::zero()) {
     // No io workers to host the timer (no endpoints / not started / shutdown):
     // skip the backoff rather than block a background thread.

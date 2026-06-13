@@ -56,7 +56,7 @@ struct CancelToken {
 };
 
 // Process-wide registry mapping a connection's cancel key to its CancelToken.
-// One instance per server (owned by NetworkServerFeature, handed to sessions
+// One instance per server (owned by Server, handed to sessions
 // via PgServerContext, like ssl/credentials). The 64-bit key is split into the
 // pid/secret halves sent in BackendKeyData; a CancelRequest must present both
 // halves to match, so a guessed pid alone cannot cancel a query.

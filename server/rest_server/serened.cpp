@@ -35,7 +35,7 @@
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "duckdb_shell.hpp"
-#include "network/network_server_feature.h"
+#include "network/server.h"
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"
@@ -74,7 +74,7 @@ int RunServer(int argc, char** argv) {
     RocksDBRecoveryManager recovery;
     catalog::CatalogFeature catalog;
     search::SearchEngine search;
-    NetworkServerFeature network;
+    Server network;
 
     // --------------------------------------------------------------
     // Two-method lifecycle: start() does non-IO setup + spin-up of

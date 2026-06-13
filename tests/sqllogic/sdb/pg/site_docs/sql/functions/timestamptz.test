@@ -1,0 +1,114 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT '2022-10-08 13:13:34-07'::TIMESTAMPTZ;
+----
+timestamp with time zone
+2022-10-08 20:13:34+00
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query error
+SELECT '2022-10-08 13:13:34 Europe/Amsterdam'::TIMESTAMPTZ::VARCHAR;
+----
+db error: ERROR: timestamp field value "2022-10-08 13:13:34 Europe/Amsterdam" has a timestamp that is not UTC.
+Use the TIMESTAMPTZ type with the ICU extension loaded to handle non-UTC timestamps.
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query error
+SELECT TIMESTAMP '2001-02-16 20:38:40' AT TIME ZONE 'America/Denver' AS ts;
+----
+db error: ERROR: An error occurred while trying to automatically install the required extension 'icu:
+Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_extension" not found.
+Extension "icu" is an existing extension.
+
+Install it first using "INSTALL icu".
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query error
+SELECT TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40-05' AT TIME ZONE 'America/Denver' AS ts;
+----
+db error: ERROR: An error occurred while trying to automatically install the required extension 'icu:
+Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_extension" not found.
+Extension "icu" is an existing extension.
+
+Install it first using "INSTALL icu".
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query error
+SELECT TIMESTAMP '2001-02-16 20:38:40-05' AT TIME ZONE '0200' AS ts;
+----
+db error: ERROR: An error occurred while trying to automatically install the required extension 'icu:
+Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_extension" not found.
+Extension "icu" is an existing extension.
+
+Install it first using "INSTALL icu".
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+SET timezone = 'Europe/Amsterdam';
+
+query error
+SELECT TIMESTAMPTZ '2025-03-29 02:30:00+01' + INTERVAL '1 day';
+----
+db error: ERROR: No function matches the given name and argument types '+(TIMESTAMP WITH TIME ZONE, INTERVAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	+(TINYINT) -> TINYINT
+	+(TINYINT, TINYINT) -> TINYINT
+	+(SMALLINT) -> SMALLINT
+	+(SMALLINT, SMALLINT) -> SMALLINT
+	+(INTEGER) -> INTEGER
+	+(INTEGER, INTEGER) -> INTEGER
+	+(BIGINT) -> BIGINT
+	+(BIGINT, BIGINT) -> BIGINT
+	+(HUGEINT) -> HUGEINT
+	+(HUGEINT, HUGEINT) -> HUGEINT
+	+(FLOAT) -> FLOAT
+	+(FLOAT, FLOAT) -> FLOAT
+	+(DOUBLE) -> DOUBLE
+	+(DOUBLE, DOUBLE) -> DOUBLE
+	+(DECIMAL) -> DECIMAL
+	+(DECIMAL, DECIMAL) -> DECIMAL
+	+(UTINYINT) -> UTINYINT
+	+(UTINYINT, UTINYINT) -> UTINYINT
+	+(USMALLINT) -> USMALLINT
+	+(USMALLINT, USMALLINT) -> USMALLINT
+	+(UINTEGER) -> UINTEGER
+	+(UINTEGER, UINTEGER) -> UINTEGER
+	+(UBIGINT) -> UBIGINT
+	+(UBIGINT, UBIGINT) -> UBIGINT
+	+(UHUGEINT) -> UHUGEINT
+	+(UHUGEINT, UHUGEINT) -> UHUGEINT
+	+(DATE, INTEGER) -> DATE
+	+(INTEGER, DATE) -> DATE
+	+(INTERVAL, INTERVAL) -> INTERVAL
+	+(DATE, INTERVAL) -> TIMESTAMP
+	+(INTERVAL, DATE) -> TIMESTAMP
+	+(TIME, INTERVAL) -> TIME
+	+(INTERVAL, TIME) -> TIME
+	+(TIMESTAMP, INTERVAL) -> TIMESTAMP
+	+(INTERVAL, TIMESTAMP) -> TIMESTAMP
+	+(TIME WITH TIME ZONE, INTERVAL) -> TIME WITH TIME ZONE
+	+(INTERVAL, TIME WITH TIME ZONE) -> TIME WITH TIME ZONE
+	+(TIME, DATE) -> TIMESTAMP
+	+(DATE, TIME) -> TIMESTAMP
+	+(TIME WITH TIME ZONE, DATE) -> TIMESTAMP WITH TIME ZONE
+	+(DATE, TIME WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	+([ANY[]...]) -> ANY[]
+	+(BIGNUM, BIGNUM) -> BIGNUM

@@ -1,0 +1,17 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query error
+EXPLAIN ⟨query⟩;
+----
+db error: ERROR: syntax error at or near "⟨query⟩"
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query error
+EXPLAIN ANALYZE ⟨query⟩;
+----
+db error: ERROR: syntax error at or near "⟨query⟩"

@@ -1,0 +1,19 @@
+# DOCS_TEST: example_017
+
+statement ok
+CREATE SEQUENCE id_sequence START 1;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER DEFAULT nextval('id_sequence'),
+    s VARCHAR
+);
+
+# DOCS_TEST_BODY
+
+statement error
+DROP SEQUENCE id_sequence;
+----
+db error: ERROR: cannot drop sequence id_sequence because other objects depend on it
+DETAIL: table tbl depends on sequence id_sequence
+HINT: Use DROP ... CASCADE to drop the dependent objects too, or DROP TABLE on the owning table.

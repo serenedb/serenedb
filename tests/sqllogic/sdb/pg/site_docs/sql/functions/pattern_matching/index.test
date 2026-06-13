@@ -1,0 +1,284 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'abc' LIKE 'abc';
+----
+?column?
+t
+
+query
+SELECT 'abc' LIKE 'a%' ;
+----
+?column?
+t
+
+query
+SELECT 'abc' LIKE '_b_';
+----
+?column?
+t
+
+query
+SELECT 'abc' LIKE 'c';
+----
+?column?
+f
+
+query
+SELECT 'abc' LIKE 'c%' ;
+----
+?column?
+f
+
+query
+SELECT 'abc' LIKE '%c';
+----
+?column?
+t
+
+query
+SELECT 'abc' NOT LIKE '%c';
+----
+?column?
+f
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'abc' ILIKE '%C';
+----
+?column?
+t
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'abc' NOT ILIKE '%C';
+----
+?column?
+f
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'a%c' LIKE 'a$%c' ESCAPE '$';
+----
+like_escape
+t
+
+query
+SELECT 'azc' LIKE 'a$%c' ESCAPE '$';
+----
+like_escape
+f
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'A%c' ILIKE 'a$%c' ESCAPE '$';
+----
+ilike_escape
+t
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'abc' SIMILAR TO 'abc';
+----
+?column?
+t
+
+query
+SELECT 'abc' SIMILAR TO 'a';
+----
+?column?
+f
+
+query
+SELECT 'abc' SIMILAR TO '.*(b|d).*';
+----
+?column?
+f
+
+query
+SELECT 'abc' SIMILAR TO '(b|c).*';
+----
+?column?
+f
+
+query
+SELECT 'abc' NOT SIMILAR TO 'abc';
+----
+?column?
+f
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'best.txt' GLOB '*.txt';
+----
+?column?
+t
+
+query
+SELECT 'best.txt' GLOB '????.txt';
+----
+?column?
+t
+
+query
+SELECT 'best.txt' GLOB '?.txt';
+----
+?column?
+f
+
+query
+SELECT 'best.txt' GLOB '[abc]est.txt';
+----
+?column?
+t
+
+query
+SELECT 'best.txt' GLOB '[a-z]est.txt';
+----
+?column?
+t
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'Best.txt' GLOB '[a-z]est.txt';
+----
+?column?
+f
+
+query
+SELECT 'Best.txt' GLOB '[a-zA-Z]est.txt';
+----
+?column?
+t
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'Best.txt' GLOB '[!a-zA-Z]est.txt';
+----
+?column?
+f
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT NOT 'best.txt' GLOB '*.txt';
+----
+?column?
+f
+
+# DOCS_TEST: example_011
+
+statement ok
+COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/site_docs_pattern_matching_example_011_duckdb.exe';
+
+statement ok
+COPY (SELECT 1 AS id, 'alpha' AS name) TO '/tmp/site_docs_pattern_matching_example_011_test.csv' (FORMAT CSV, HEADER true);
+
+statement ok
+COPY (SELECT 1 AS id, 'alpha' AS name) TO '/tmp/site_docs_pattern_matching_example_011_test.json' (FORMAT JSON);
+
+statement ok
+COPY (SELECT 1 AS id, 'alpha' AS name) TO '/tmp/site_docs_pattern_matching_example_011_test.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT 2 AS id, 'beta' AS name) TO '/tmp/site_docs_pattern_matching_example_011_test2.csv' (FORMAT CSV, HEADER true);
+
+statement ok
+COPY (SELECT 2 AS id, 'beta' AS name) TO '/tmp/site_docs_pattern_matching_example_011_test2.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT 1 AS id, 'todo' AS task) TO '/tmp/site_docs_pattern_matching_example_011_todos.json' (FORMAT JSON);
+
+# DOCS_TEST_RAW
+#| SELECT * FROM glob('*');
+
+# DOCS_TEST_BODY
+
+query
+SELECT replace(
+    file,
+    '/tmp/site_docs_pattern_matching_example_011_',
+    ''
+) AS file
+FROM glob('/tmp/site_docs_pattern_matching_example_011_*')
+ORDER BY file;
+----
+file
+duckdb.exe
+test.csv
+test.json
+test.parquet
+test2.csv
+test2.parquet
+todos.json
+
+# DOCS_TEST: example_012
+
+statement ok
+COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/site_docs_pattern_matching_example_012_README.md';
+
+# DOCS_TEST_RAW
+#| SELECT * FROM glob('README.md');
+
+# DOCS_TEST_BODY
+
+query
+SELECT replace(
+    file,
+    '/tmp/site_docs_pattern_matching_example_012_',
+    ''
+) AS file
+FROM glob('/tmp/site_docs_pattern_matching_example_012_README.md')
+ORDER BY file;
+----
+file
+README.md
+
+# DOCS_TEST: example_013
+
+statement ok
+COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/site_docs_pattern_matching_example_013_README.md';
+
+# DOCS_TEST_RAW
+#| SELECT * FROM glob('**/README.md');
+
+# DOCS_TEST_BODY
+
+query
+SELECT replace(
+    file,
+    '/tmp/site_docs_pattern_matching_example_013_',
+    ''
+) AS file
+FROM glob('/tmp/site_docs_pattern_matching_example_013_**/README.md')
+ORDER BY file;
+----
+file

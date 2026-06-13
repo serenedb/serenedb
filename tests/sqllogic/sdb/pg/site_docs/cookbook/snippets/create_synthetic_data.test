@@ -1,0 +1,42 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    i * 10 + j                                                          AS id,
+    DATE '2020-01-01' + (hash(i * 10 + j) % 365)::INTEGER               AS created_at,
+    (['electronics', 'books', 'toys', 'home'])[(hash(i) % 4)::BIGINT + 1] AS category,
+    ROUND((hash(j * 7) % 10000) / 100.0, 2)                            AS price,
+    (j % 2 = 0)                                                        AS in_stock
+FROM generate_series(1, 3) AS s(i)
+CROSS JOIN generate_series(1, 2) AS t(j)
+ORDER BY id;
+----
+id	created_at	category	price	in_stock
+32	2020-07-03	toys	79.56	t
+31	2020-07-31	toys	31.46	f
+22	2020-09-08	toys	79.56	t
+21	2020-07-18	toys	31.46	f
+12	2020-09-17	electronics	79.56	t
+11	2020-05-05	electronics	31.46	f
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE synthetic_users AS
+SELECT
+    i                                              AS id,
+    'user_' || i                                   AS username,
+    DATE '2024-01-01' + (hash(i) % 365)::INTEGER   AS signed_up,
+    (hash(i * 31) % 1000) / 10.0                   AS balance
+FROM generate_series(1, 1000) AS s(i);
+
+query
+SELECT COUNT(*) AS rows, MIN(id) AS min_id, MAX(id) AS max_id
+FROM synthetic_users;
+----
+rows	min_id	max_id
+1000	1	1000

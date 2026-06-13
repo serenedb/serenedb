@@ -1,0 +1,14 @@
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tbl (i INTEGER, j INTEGER, PRIMARY KEY (i));
+
+query error
+SELECT j
+FROM tbl
+GROUP BY i;
+----
+db error: ERROR: column "j" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(j)" if the exact value of "j" is not important.

@@ -1,0 +1,190 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM read_xlsx('test_excel.xlsx');
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM 'test_excel.xlsx';
+----
+db error: ERROR: Table with name test_excel.xlsx does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM read_xlsx('test_excel.xlsx', sheet = 'Sheet1');
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM read_xlsx('test_excel.xlsx', range = 'A1:B2');
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM read_xlsx('test_excel.xlsx', range = 'A5:Z');
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM read_xlsx('test_excel.xlsx', range = 'E:Z');
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query error
+-- Read the first 100 rows, or until the first empty row, whichever comes first
+SELECT * FROM read_xlsx('test_excel.xlsx', range = '1:100', stop_at_empty = true);
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+
+query error
+-- Always read the whole sheet, even if it contains empty rows
+SELECT * FROM read_xlsx('test_excel.xlsx', stop_at_empty = false);
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE TABLE new_tbl AS
+    SELECT * FROM read_xlsx('test_excel.xlsx', sheet = 'Sheet1');
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_009
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST_BODY
+
+statement error
+INSERT INTO tbl
+    SELECT * FROM read_xlsx('test_excel.xlsx', sheet = 'Sheet1');
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement error
+COPY tbl FROM 'test_excel.xlsx' (FORMAT xlsx, SHEET 'Sheet1');
+----
+db error: ERROR: Copy Function with name xlsx does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM read_xlsx('test_excel.xlsx', header = true);
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM read_xlsx('test_excel.xlsx', empty_as_varchar = true);
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM read_xlsx('test_excel.xlsx', all_varchar = true);
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM read_xlsx('test_excel.xlsx', ignore_errors = true);
+----
+db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
+
+This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.

@@ -1,0 +1,302 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query error
+PIVOT ⟨dataset⟩
+ON ⟨columns⟩
+USING ⟨values⟩
+GROUP BY ⟨rows⟩
+ORDER BY ⟨columns_with_order_directions⟩
+LIMIT ⟨number_of_rows⟩;
+----
+db error: ERROR: Table with name ⟨dataset⟩ does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE cities (
+    country VARCHAR, name VARCHAR, year INTEGER, population INTEGER
+);
+
+statement ok
+INSERT INTO cities VALUES
+    ('NL', 'Amsterdam', 2000, 1005),
+    ('NL', 'Amsterdam', 2010, 1065),
+    ('NL', 'Amsterdam', 2020, 1158),
+    ('US', 'Seattle', 2000, 564),
+    ('US', 'Seattle', 2010, 608),
+    ('US', 'Seattle', 2020, 738),
+    ('US', 'New York City', 2000, 8015),
+    ('US', 'New York City', 2010, 8175),
+    ('US', 'New York City', 2020, 8772);
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM cities;
+----
+country	name	year	population
+NL	Amsterdam	2000	1005
+NL	Amsterdam	2010	1065
+NL	Amsterdam	2020	1158
+US	Seattle	2000	564
+US	Seattle	2010	608
+US	Seattle	2020	738
+US	New York City	2000	8015
+US	New York City	2010	8175
+US	New York City	2020	8772
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query ????? rowsort
+PIVOT cities
+ON year
+USING sum(population);
+----
+country	name	2000	2010	2020
+NL	Amsterdam	1005	1065	1158
+US	New York City	8015	8175	8772
+US	Seattle	564	608	738
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query ????? rowsort
+PIVOT cities
+ON year
+USING first(population);
+----
+country	name	2000	2010	2020
+NL	Amsterdam	1005	1065	1158
+US	New York City	8015	8175	8772
+US	Seattle	564	608	738
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query ???? rowsort
+PIVOT cities
+ON year
+USING sum(population)
+GROUP BY country;
+----
+country	2000	2010	2020
+NL	1005	1065	1158
+US	8579	8783	9510
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query ??? rowsort
+PIVOT cities
+ON year IN (2000, 2010)
+USING sum(population)
+GROUP BY country;
+----
+country	2000	2010
+NL	1005	1065
+US	8579	8783
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query ??????? rowsort
+PIVOT cities
+ON country, name
+USING sum(population);
+----
+year	nl_amsterdam	nl_new york city	nl_seattle	us_amsterdam	us_new york city	us_seattle
+2000	1005	NULL	NULL	NULL	8015	564
+2010	1065	NULL	NULL	NULL	8175	608
+2020	1158	NULL	NULL	NULL	8772	738
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query ???? rowsort
+PIVOT cities
+ON country || '_' || name
+USING sum(population);
+----
+year	nl_amsterdam	us_new york city	us_seattle
+2000	1005	8015	564
+2010	1065	8175	608
+2020	1158	8772	738
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query ??????? rowsort
+PIVOT cities
+ON year
+USING sum(population) AS total, max(population) AS max
+GROUP BY country;
+----
+country	2000_total	2000_max	2010_total	2010_max	2020_total	2020_max
+NL	1005	1005	1065	1065	1158	1158
+US	8579	8015	8783	8175	9510	8772
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query ????? rowsort
+PIVOT cities
+ON year
+USING sum(population)
+GROUP BY country, name;
+----
+country	name	2000	2010	2020
+NL	Amsterdam	1005	1065	1158
+US	New York City	8015	8175	8772
+US	Seattle	564	608	738
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query ???? rowsort
+WITH pivot_alias AS (
+    PIVOT cities
+    ON year
+    USING sum(population)
+    GROUP BY country
+)
+SELECT * FROM pivot_alias;
+----
+country	2000	2010	2020
+NL	1005	1065	1158
+US	8579	8783	9510
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query ???? rowsort
+SELECT *
+FROM (
+    PIVOT cities
+    ON year
+    USING sum(population)
+    GROUP BY country
+) pivot_alias;
+----
+country	2000	2010	2020
+NL	1005	1065	1158
+US	8579	8783	9510
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query ??????? rowsort
+SELECT *
+FROM (PIVOT cities ON year USING sum(population) GROUP BY country) year_pivot
+JOIN (PIVOT cities ON name USING sum(population) GROUP BY country) name_pivot
+USING (country);
+----
+country	2000	2010	2020	amsterdam	new york city	seattle
+NL	1005	1065	1158	3228	NULL	NULL
+US	8579	8783	9510	NULL	24962	1910
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query error
+SELECT *
+FROM ⟨dataset⟩
+PIVOT (
+    ⟨values⟩
+    FOR
+        ⟨column_1⟩ IN (⟨in_list⟩)
+        ⟨column_2⟩ IN (⟨in_list⟩)
+        ...
+    GROUP BY ⟨rows⟩
+);
+----
+db error: ERROR: syntax error at or near "\.\."
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query ???? rowsort
+SELECT *
+FROM cities
+PIVOT (
+    sum(population)
+    FOR
+        year IN (2000, 2010, 2020)
+    GROUP BY country
+);
+----
+country	2000	2010	2020
+NL	1005	1065	1158
+US	8579	8783	9510
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query ????????? rowsort
+SELECT *
+FROM cities
+PIVOT (
+    sum(population) AS total,
+    count(population) AS count
+    FOR
+        year IN (2000, 2010)
+        country IN ('NL', 'US')
+);
+----
+name	2000_nl_total	2000_nl_count	2000_us_total	2000_us_count	2010_nl_total	2010_nl_count	2010_us_total	2010_us_count
+Amsterdam	1005	1	NULL	0	1065	1	NULL	0
+New York City	NULL	0	8015	1	NULL	0	8175	1
+Seattle	NULL	0	564	1	NULL	0	608	1
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query ????? rowsort
+PIVOT cities
+ON year
+USING sum(population) * 1000;
+----
+country	name	2000	2010	2020
+NL	Amsterdam	1005000	1065000	1158000
+US	New York City	8015000	8175000	8772000
+US	Seattle	564000	608000	738000
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query ????? rowsort
+SELECT country, name, 1000 * COLUMNS(* EXCLUDE (country, name))
+FROM (
+    PIVOT cities
+    ON year
+    USING sum(population)
+);
+----
+country	name	2000	2010	2020
+NL	Amsterdam	1005000	1065000	1158000
+US	New York City	8015000	8175000	8772000
+US	Seattle	564000	608000	738000

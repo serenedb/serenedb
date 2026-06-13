@@ -1,0 +1,16 @@
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE tbl AS
+    SELECT 'ABCDEFG'[floor(random() * 7 + 1)::INT] AS s, 3.7 AS x, i AS y
+    FROM range(1, 1_000_000) r(i);
+
+query error
+SELECT s, stddev(x) AS standard_deviation, corr(x, y) AS correlation
+FROM tbl
+GROUP BY s
+ORDER BY s;
+----
+db error: ERROR: Unsupported vector type

@@ -1,0 +1,70 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query error
+SELECT 'abc'::INTEGER;
+----
+db error: ERROR: Could not convert string 'abc' to INT32
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT TRY('abc'::INTEGER);
+----
+?column?
+NULL
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT ln(0);
+----
+ln
+-Infinity
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT TRY(ln(0));
+----
+?column?
+-Infinity
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query error
+WITH cte AS (FROM (VALUES ('123'), ('test'), ('235')) t(a))
+SELECT a::INTEGER AS x FROM cte;
+----
+db error: ERROR: Could not convert string 'test' to INT32 when casting from source column a
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+WITH cte AS (FROM (VALUES ('123'), ('test'), ('235')) t(a))
+SELECT TRY(a::INTEGER) AS x FROM cte;
+----
+x
+123
+NULL
+235
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query error
+SELECT TRY(random())
+----
+db error: ERROR: TRY can not be used in combination with a volatile function

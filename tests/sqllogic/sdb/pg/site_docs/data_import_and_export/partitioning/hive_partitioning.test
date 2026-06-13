@@ -1,0 +1,240 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE orders AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
+statement ok
+CREATE TABLE services AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_001_1_parquet_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_001_1_parquet_2.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_parquet('orders/*/*/*.parquet', hive_partitioning = true);
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_001_1_parquet_*.parquet', hive_partitioning = true);
+----
+id	name	value
+1	alpha	10
+2	beta	20
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_002
+
+statement ok
+DROP TABLE IF EXISTS orders;
+
+statement ok
+CREATE TABLE orders (
+    order_id INTEGER,
+    customer VARCHAR,
+    amount INTEGER,
+    year INTEGER,
+    month INTEGER
+);
+
+statement ok
+INSERT INTO orders VALUES
+    (1, 'Ada', 100, 2024, 1),
+    (2, 'Bob', 150, 2024, 2),
+    (3, 'Cara', 200, 2025, 1);
+
+# DOCS_TEST_RAW
+#| COPY orders
+#| TO 'orders' (FORMAT parquet, PARTITION_BY (year, month));
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY orders
+TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_002_orders' (FORMAT parquet, PARTITION_BY (year, month), OVERWRITE_OR_IGNORE);
+
+# DOCS_TEST: example_003
+
+statement ok
+DROP TABLE IF EXISTS services;
+
+statement ok
+CREATE TABLE services (
+    service_id INTEGER,
+    service_name VARCHAR,
+    timestamp TIMESTAMP
+);
+
+statement ok
+INSERT INTO services VALUES
+    (1, 'search', TIMESTAMP '2024-01-15 10:00:00'),
+    (2, 'analytics', TIMESTAMP '2024-02-20 12:30:00'),
+    (3, 'storage', TIMESTAMP '2025-01-05 09:15:00');
+
+# DOCS_TEST_RAW
+#| COPY (SELECT *, year(timestamp) AS year, month(timestamp) AS month FROM services)
+#| TO 'test' (PARTITION_BY (year, month));
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT *, year(timestamp) AS year, month(timestamp) AS month FROM services)
+TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_003_test' (PARTITION_BY (year, month), OVERWRITE_OR_IGNORE);
+
+# DOCS_TEST: example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_1_parquet_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_1_parquet_2.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| FROM read_parquet('test/*/*/*.parquet', hive_partitioning = false);
+#|
+#| FROM read_parquet('test/*/*/*.parquet', hive_partitioning = true);
+
+# DOCS_TEST_BODY
+
+query
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_1_parquet_*.parquet', hive_partitioning = false);
+----
+id	name	value
+1	alpha	10
+2	beta	20
+1	alpha	10
+2	beta	20
+
+
+query
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_1_parquet_*.parquet', hive_partitioning = true);
+----
+id	name	value
+1	alpha	10
+2	beta	20
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_005_1_parquet_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_005_1_parquet_2.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_parquet('orders/*/*/*.parquet', hive_partitioning = true);
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_005_1_parquet_*.parquet', hive_partitioning = true);
+----
+id	name	value
+1	alpha	10
+2	beta	20
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_006
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'november order', 110, 2022, 11),
+    (2, 'december order', 120, 2022, 12),
+    (3, 'older order', 90, 2021, 11)
+) AS t("id", "name", "value", "year", "month"))
+TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_006_orders'
+(FORMAT parquet, PARTITION_BY (year, month), OVERWRITE_OR_IGNORE);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_parquet('orders/*/*/*.parquet', hive_partitioning = true)
+#| WHERE year = 2022
+#|   AND month = 11;
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_006_orders/*/*/*.parquet', hive_partitioning = true)
+WHERE year = 2022
+  AND month = 11;
+----
+id	name	value	month	year
+1	november order	110	11	2022
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement error
+SET hive_partitioning = false;
+----
+db error: ERROR: unrecognized configuration parameter "hive_partitioning"
+
+Did you mean: "partitioned_write_flush_threshold"
+
+# DOCS_TEST: example_008
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_008_1_parquet_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_008_1_parquet_2.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_parquet(
+#|     'dir/**/*.parquet',
+#|     hive_partitioning = true,
+#|     hive_types = {'release': DATE, 'orders': BIGINT}
+#| );
+
+# DOCS_TEST_BODY
+
+query error db error: ERROR: Unknown hive_type: "release" does not appear to be a partition
+SELECT *
+FROM read_parquet(
+    '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_008_1_parquet_*.parquet',
+    hive_partitioning = true,
+    hive_types = {'release': DATE, 'orders': BIGINT}
+);

@@ -1,0 +1,131 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT CAST(3.1 AS INTEGER);
+----
+int4
+3
+
+query
+SELECT CAST(3.5 AS INTEGER);
+----
+int4
+4
+
+query
+SELECT CAST(-1.7 AS INTEGER);
+----
+int4
+-2
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query error
+SELECT CAST(999 AS TINYINT);
+----
+db error: ERROR: Type INT32 with value 999 can't be cast because the value is out of range for the destination type INT8
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT CAST(42.5 AS VARCHAR);
+----
+text
+42.5
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query error
+SELECT CAST('NotANumber' AS INTEGER);
+----
+db error: ERROR: Could not convert string 'NotANumber' to INT32
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query error
+SELECT CAST(CAST([1, 2, 3] AS VARCHAR) AS INTEGER[]);
+----
+db error: ERROR: Failed to parse array literal: malformed array literal: must be wrapped in \{\}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT CAST([1, 2, 3] AS VARCHAR[]);
+----
+list_value
+{1,2,3}
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT CAST({'a': 42} AS STRUCT(a VARCHAR));
+----
+struct_pack
+(42)
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT CAST({'a': 42} AS STRUCT(a VARCHAR, b VARCHAR));
+----
+struct_pack
+(42,)
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT CAST({'a': 42, 'b': 43} AS STRUCT(a VARCHAR));
+----
+struct_pack
+(42)
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT CAST({'a': 42, 'b': 84} AS STRUCT(b VARCHAR, a VARCHAR));
+----
+struct_pack
+(84,42)
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT {'outer1': {'inner1': 42, 'inner2': 42}} AS c
+UNION
+SELECT {'outer1': {'inner2': 'hello', 'inner3': 'world'}, 'outer2': '100'} AS c;
+----
+c
+("(,hello,world)",100)
+("(42,42,)",)
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT [{'a': 42}, {'b': 84}];
+----
+list_value
+{"(42,)","(,84)"}

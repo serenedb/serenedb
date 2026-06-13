@@ -1,0 +1,29 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+-- Create a table with a vector column
+CREATE TABLE items (
+    id SERIAL PRIMARY KEY,
+    embedding FLOAT[3]
+);
+
+statement ok
+-- Insert vector data
+INSERT INTO items VALUES
+    (1, '[0.1, 0.2, 0.3]'),
+    (2, '[0.4, 0.5, 0.6]'),
+    (3, '[0.7, 0.8, 0.9]');
+
+
+query
+-- Perform a similarity query (nearest neighbor)
+SELECT id, embedding
+FROM items
+ORDER BY embedding <-> '[0.3, 0.3, 0.3]'::FLOAT[3]  -- distance operator
+LIMIT 2;
+----
+id	embedding
+1	{0.1,0.2,0.3}
+2	{0.4,0.5,0.6}

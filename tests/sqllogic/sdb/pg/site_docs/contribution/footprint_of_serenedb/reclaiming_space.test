@@ -1,0 +1,25 @@
+# DOCS_TEST: example_001
+
+statement ok
+DETACH IF EXISTS db1;
+
+statement ok
+DETACH IF EXISTS db2;
+
+# DOCS_TEST_RAW
+#| ATTACH 'db1.db' AS db1;
+#|
+#| ATTACH 'db2.db' AS db2;
+#|
+#| COPY FROM DATABASE db1 TO db2;
+
+# DOCS_TEST_BODY
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_contribution_footprint_of_serenedb_reclaiming_space_example_001_1_db1_db.csv' AS db1;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_contribution_footprint_of_serenedb_reclaiming_space_example_001_1_db2_db.csv' AS db2;
+
+statement ok
+COPY FROM DATABASE db1 TO db2;

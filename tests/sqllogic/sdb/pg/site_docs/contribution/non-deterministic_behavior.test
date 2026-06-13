@@ -1,0 +1,62 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT *
+FROM (
+    SELECT 'A' AS x
+    UNION
+    SELECT 'B' AS x
+);
+----
+x
+A
+B
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_distinct(['A', 'A', 'B', NULL, NULL]) AS arr;
+----
+arr
+<slt:ignore>
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+SET threads = 1;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM (
+    SELECT 'A' AS x
+    UNION
+    SELECT 'B' AS x
+)
+ORDER BY ALL;
+----
+x
+A
+B
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_sort(array_distinct(['A', 'A', 'B', NULL, NULL])) AS i
+ORDER BY i;
+----
+i
+<slt:ignore>

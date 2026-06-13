@@ -1,0 +1,780 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_cum_sum(ARRAY [1, 2, 3]) -- array[1, 3, 6]
+SELECT array_cum_sum(ARRAY [1, 2, null, 3]) -- array[1, 3, null, null]
+----
+db error: ERROR: syntax error at or near "SELECT"
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_distinct(ARRAY [1, 2, 3]);
+----
+array_distinct
+<slt:ignore>
+
+query
+SELECT array_distinct(ARRAY [1, 2, 1]);
+----
+array_distinct
+<slt:ignore>
+
+query
+SELECT array_distinct(ARRAY [1, NULL, NULL]);
+----
+array_distinct
+<slt:ignore>
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_except(ARRAY [1, 2, 3], ARRAY [4, 5, 6]);
+----
+db error: ERROR: Scalar Function with name array_except does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_except(ARRAY [1, 2, 3], ARRAY [1, 2]);
+----
+db error: ERROR: Scalar Function with name array_except does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_except(ARRAY [1, 2, 2], ARRAY [1, 1, 2]);
+----
+db error: ERROR: Scalar Function with name array_except does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_except(ARRAY [1, 2, 2], ARRAY [1, 3, 4]);
+----
+db error: ERROR: Scalar Function with name array_except does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_except(ARRAY [1, NULL, NULL], ARRAY [1, 1, NULL]);
+----
+db error: ERROR: Scalar Function with name array_except does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_frequency(ARRAY [1, 1, 2, 2, 2, 2]);
+----
+db error: ERROR: Scalar Function with name array_frequency does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_frequency(ARRAY [1, 1, NULL, NULL, NULL]);
+----
+db error: ERROR: Scalar Function with name array_frequency does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_frequency(ARRAY ["knock", "knock", "who", "?"]);
+----
+db error: ERROR: Scalar Function with name array_frequency does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_frequency(ARRAY []);
+----
+db error: ERROR: Scalar Function with name array_frequency does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_intersect(ARRAY [1, 2, 3], ARRAY[4, 5, 6]);
+----
+array_intersect
+<slt:ignore>
+
+query
+SELECT array_intersect(ARRAY [1, 2, 2], ARRAY[1, 1, 2]);
+----
+array_intersect
+<slt:ignore>
+
+query
+SELECT array_intersect(ARRAY [1, NULL, NULL], ARRAY[1, 1, NULL]);
+----
+array_intersect
+<slt:ignore>
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_max(ARRAY [1, 2, 3]);
+----
+db error: ERROR: Scalar Function with name array_max does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_max(ARRAY [-1, -2, -2]);
+----
+db error: ERROR: Scalar Function with name array_max does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_max(ARRAY [-1, -2, NULL]);
+----
+db error: ERROR: Scalar Function with name array_max does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_max(ARRAY []);
+----
+db error: ERROR: Scalar Function with name array_max does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_max(ARRAY [-1, nan(), NULL]);
+----
+db error: ERROR: Scalar Function with name array_max does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_max(ARRAY[\{-1, -2, -3, nan()]);
+----
+db error: ERROR: syntax error at or near "\\"
+
+
+query error
+SELECT array_max(ARRAY[\{infinity(), nan()]);
+----
+db error: ERROR: syntax error at or near "\\"
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_min(ARRAY [1, 2, 3]);
+----
+db error: ERROR: Scalar Function with name array_min does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_min(ARRAY [-1, -2, -2]);
+----
+db error: ERROR: Scalar Function with name array_min does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_min(ARRAY [-1, -2, NULL]);
+----
+db error: ERROR: Scalar Function with name array_min does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_min(ARRAY []);
+----
+db error: ERROR: Scalar Function with name array_min does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_min(ARRAY [-1, nan(), NULL]);
+----
+db error: ERROR: Scalar Function with name array_min does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_min(ARRAY[\{-1, -2, -3, nan()]);
+----
+db error: ERROR: syntax error at or near "\\"
+
+
+query error
+SELECT array_min(ARRAY[\{infinity(), nan()]);
+----
+db error: ERROR: syntax error at or near "\\"
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_sort(ARRAY [1, 2, 3]);
+----
+array_sort
+<slt:ignore>
+
+query
+SELECT array_sort(ARRAY [3, 2, 1]);
+----
+array_sort
+<slt:ignore>
+
+query error
+SELECT array_sort(ARRAY [infinity(), -1.1, nan(), 1.1, -Infinity(), 0]));
+----
+db error: ERROR: syntax error at or near "\)"
+
+
+query error
+SELECT array_sort(ARRAY [2, 1, NULL];
+----
+db error: ERROR: syntax error at or near ";"
+
+
+query
+SELECT array_sort(ARRAY [NULL, 1, NULL]);
+----
+array_sort
+<slt:ignore>
+
+query
+SELECT array_sort(ARRAY [NULL, 2, 1]);
+----
+array_sort
+<slt:ignore>
+
+query
+SELECT array_sort(ARRAY [ARRAY [1, 2], ARRAY [2, null]]);
+----
+array_sort
+<slt:ignore>
+
+query
+SELECT array_sort(ARRAY [ARRAY [1, 2], ARRAY [1, null]]);
+----
+array_sort
+<slt:ignore>
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_sort(ARRAY ['cat', 'leopard', 'mouse'], x -> length(x));
+----
+db error: ERROR: failed to bind function, either: This scalar function does not support lambdas!
+ or: Referenced column "x" was not found because the FROM clause is missing
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_sort_desc(ARRAY [1, 2, 3]);
+----
+db error: ERROR: Scalar Function with name array_sort_desc does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_sort_desc(ARRAY [3, 2, 1]);
+----
+db error: ERROR: Scalar Function with name array_sort_desc does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_sort_desc(ARRAY [2, 1, NULL];
+----
+db error: ERROR: syntax error at or near ";"
+
+
+query error
+SELECT array_sort_desc(ARRAY [NULL, 1, NULL]);
+----
+db error: ERROR: Scalar Function with name array_sort_desc does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_sort_desc(ARRAY [NULL, 2, 1]);
+----
+db error: ERROR: Scalar Function with name array_sort_desc does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query
+SELECT array_sort(ARRAY [ARRAY [1, 2], ARRAY [2, null]]);
+----
+array_sort
+<slt:ignore>
+
+query
+SELECT array_sort(ARRAY [ARRAY [1, 2], ARRAY [1, null]]);
+----
+array_sort
+<slt:ignore>
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_sort_desc(ARRAY ['cat', 'leopard', 'mouse'], x -> length(x));
+----
+db error: ERROR: Scalar Function with name array_sort_desc does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_subset(ARRAY[1, 2, 3, 4, 5], ARRAY[1, 3, 5]);
+----
+db error: ERROR: Scalar Function with name array_subset does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_subset(ARRAY['a', 'b', 'c'], ARRAY[3, 1, 2]);
+----
+db error: ERROR: Scalar Function with name array_subset does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_subset(ARRAY[1, NULL, 3], ARRAY[2]);
+----
+db error: ERROR: Scalar Function with name array_subset does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_subset(ARRAY[1, 2, 3], ARRAY[1, 1, 2]);
+----
+db error: ERROR: Scalar Function with name array_subset does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_subset(ARRAY[1, 2, 3], ARRAY[5, 0, -1]);
+----
+db error: ERROR: Scalar Function with name array_subset does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query error
+SELECT combinations(ARRAY['foo', 'bar', 'boo'],2);
+----
+db error: ERROR: Scalar Function with name combinations does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT combinations(ARRAY[1,2,3,4,5],3);
+----
+db error: ERROR: Scalar Function with name combinations does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT combinations(ARRAY[1,2,2],2);
+----
+db error: ERROR: Scalar Function with name combinations does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query error
+SELECT contains(ARRAY [2.1, 1.1, nan()], nan());
+----
+db error: ERROR: Scalar Function with name nan does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query
+SELECT contains(ARRAY[ARRAY[1, 3]], ARRAY[2, null]);
+----
+contains
+f
+
+query
+SELECT contains(ARRAY[ARRAY[2, 3]], ARRAY[2, null]);
+----
+contains
+f
+
+query
+SELECT contains(ARRAY[ARRAY[2, null]], ARRAY[2, 1]);
+----
+contains
+f
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query
+SELECT filter(ARRAY [], x -> true);
+----
+filter
+{}
+
+query
+SELECT filter(ARRAY [5, -6, NULL, 7], x -> x > 0);
+----
+filter
+{5,7}
+
+query
+SELECT filter(ARRAY [5, NULL, 7, NULL], x -> x IS NOT NULL);
+----
+filter
+{5,7}
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query error
+SELECT find_first(ARRAY[3, 4, 5, 6], 2, x -> x > 0);
+----
+db error: ERROR: Scalar Function with name find_first does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_first(ARRAY[3, 4, 5, 6], -2, x -> x > 0);
+----
+db error: ERROR: Scalar Function with name find_first does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_first(ARRAY[3, 4, 5, 6], 2, x -> x < 4);
+----
+db error: ERROR: Scalar Function with name find_first does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_first(ARRAY[3, 4, 5, 6], -2, x -> x > 5);
+----
+db error: ERROR: Scalar Function with name find_first does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+query error
+SELECT find_first_index(ARRAY[3, 4, 5, 6], 2, x -> x > 0);
+----
+db error: ERROR: Scalar Function with name find_first_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_first_index(ARRAY[3, 4, 5, 6], -2, x -> x > 0);
+----
+db error: ERROR: Scalar Function with name find_first_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_first_index(ARRAY[3, 4, 5, 6], 2, x -> x < 4);
+----
+db error: ERROR: Scalar Function with name find_first_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_first_index(ARRAY[3, 4, 5, 6], -2, x -> x > 5);
+----
+db error: ERROR: Scalar Function with name find_first_index does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
+
+query error
+SELECT ngrams(ARRAY['foo', 'bar', 'baz', 'foo'], 2);
+----
+db error: ERROR: Scalar Function with name ngrams does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT ngrams(ARRAY['foo', 'bar', 'baz', 'foo'], 3);
+----
+db error: ERROR: Scalar Function with name ngrams does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT ngrams(ARRAY['foo', 'bar', 'baz', 'foo'], 4);
+----
+db error: ERROR: Scalar Function with name ngrams does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT ngrams(ARRAY['foo', 'bar', 'baz', 'foo'], 5);
+----
+db error: ERROR: Scalar Function with name ngrams does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT ngrams(ARRAY[1, 2, 3, 4], 2);
+----
+db error: ERROR: Scalar Function with name ngrams does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT ngrams(ARRAY["foo", NULL, "bar"], 2);
+----
+db error: ERROR: Scalar Function with name ngrams does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
+
+query error
+SELECT reduce(ARRAY [], 0, (s, x) -> s + x, s -> s);
+----
+db error: ERROR: failed to bind function, either: No function matches the given name and argument types: 'reduce(list_value(), 0, (main."row"(s, x) -> (s + x)), (s -> s))'. You might need to add explicit type casts.
+ or: Referenced column "s" was not found because the FROM clause is missing
+
+
+query error
+SELECT reduce(ARRAY [5, 20, 50], 0, (s, x) -> s + x, s -> s);
+----
+db error: ERROR: failed to bind function, either: No function matches the given name and argument types: 'reduce(list_value(5, 20, 50), 0, (main."row"(s, x) -> (s + x)), (s -> s))'. You might need to add explicit type casts.
+ or: Referenced column "s" was not found because the FROM clause is missing
+
+
+query error
+SELECT reduce(ARRAY [5, 20, NULL, 50], 0, (s, x) -> s + x, s -> s);
+----
+db error: ERROR: failed to bind function, either: No function matches the given name and argument types: 'reduce(list_value(5, 20, CAST(NULL AS INTEGER), 50), 0, (main."row"(s, x) -> (s + x)), (s -> s))'. You might need to add explicit type casts.
+ or: Referenced column "s" was not found because the FROM clause is missing
+
+
+query error
+SELECT reduce(ARRAY [5, 20, NULL, 50], 0, (s, x) -> s + COALESCE(x, 0), s -> s);
+----
+db error: ERROR: failed to bind function, either: No function matches the given name and argument types: 'reduce(list_value(5, 20, CAST(NULL AS INTEGER), 50), 0, (main."row"(s, x) -> (s + COALESCE(x, 0))), (s -> s))'. You might need to add explicit type casts.
+ or: Referenced column "s" was not found because the FROM clause is missing
+
+
+query error
+SELECT reduce(ARRAY [5, 20, NULL, 50], 0, (s, x) -> IF(x IS NULL, s, s + x), s -> s);
+----
+db error: ERROR: failed to bind function, either: No function matches the given name and argument types: 'reduce(list_value(5, 20, CAST(NULL AS INTEGER), 50), 0, (main."row"(s, x) -> CASE  WHEN ((x IS NULL)) THEN (s) ELSE (s + x) END), (s -> s))'. You might need to add explicit type casts.
+ or: Referenced column "s" was not found because the FROM clause is missing
+
+
+query error
+SELECT reduce(ARRAY [2147483647, 1], CAST (0 AS BIGINT), (s, x) -> s + x, s -> s);
+----
+db error: ERROR: failed to bind function, either: No function matches the given name and argument types: 'reduce(list_value(2147483647, 1), CAST(0 AS BIGINT), (main."row"(s, x) -> (s + x)), (s -> s))'. You might need to add explicit type casts.
+ or: Referenced column "s" was not found because the FROM clause is missing
+
+
+query error
+SELECT reduce(ARRAY [5, 6, 10, 20], -- calculates arithmetic average: 10.25
+              CAST(ROW(0.0, 0) AS ROW(sum DOUBLE, count INTEGER)),
+              (s, x) -> CAST(ROW(x + s.sum, s.count + 1) AS ROW(sum DOUBLE, count INTEGER)),
+              s -> IF(s.count = 0, NULL, s.sum / s.count));
+----
+db error: ERROR: failed to bind function, either: No function matches the given name and argument types: 'reduce(list_value(5, 6, 10, 20), CAST(main."row"(0.0, 0) AS STRUCT(sum "DOUBLE", count INTEGER)), (main."row"(s, x) -> CAST(main."row"((x + s.sum), (s.count + 1)) AS STRUCT(sum "DOUBLE", count INTEGER))), (s -> CASE  WHEN ((s.count = 0)) THEN (NULL) ELSE (s.sum / s.count) END))'. You might need to add explicit type casts.
+ or: Referenced column "s" was not found because the FROM clause is missing
+
+# DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
+
+query error
+SELECT shuffle(ARRAY [1, 2, 3]);
+----
+db error: ERROR: Scalar Function with name shuffle does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT shuffle(ARRAY [0, 0, 0]);
+----
+db error: ERROR: Scalar Function with name shuffle does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT shuffle(ARRAY [1, NULL, 1, NULL, 2]);
+----
+db error: ERROR: Scalar Function with name shuffle does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
+
+query error
+SELECT transform(ARRAY [], x -> x + 1);
+----
+db error: ERROR: Scalar Function with name transform does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT transform(ARRAY [5, 6], x -> x + 1);
+----
+db error: ERROR: Scalar Function with name transform does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT transform(ARRAY [5, NULL, 6], x -> COALESCE(x, 0) + 1);
+----
+db error: ERROR: Scalar Function with name transform does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT transform(ARRAY ['x', 'abc', 'z'], x -> x || '0');
+----
+db error: ERROR: Scalar Function with name transform does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT transform(ARRAY [ARRAY [1, NULL, 2], ARRAY[3, NULL]], a -> filter(a, x -> x IS NOT NULL));
+----
+db error: ERROR: Scalar Function with name transform does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
+
+query
+SELECT trim_array(ARRAY[1, 2, 3, 4], 1);
+----
+trim_array
+{1,2,3}
+
+query
+SELECT trim_array(ARRAY[1, 2, 3, 4], 2);
+----
+trim_array
+{1,2}
+
+query
+SELECT trim_array(ARRAY[1, 2, 3, 4], 4);
+----
+trim_array
+{}
+
+# DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
+
+query error
+SELECT remove_nulls(ARRAY[1, NULL, 3, NULL]);
+----
+db error: ERROR: Scalar Function with name remove_nulls does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT remove_nulls(ARRAY[true, false, NULL]);
+----
+db error: ERROR: Scalar Function with name remove_nulls does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT remove_nulls(ARRAY[ARRAY[1, 2], NULL, ARRAY[1, NULL, 3]]);
+----
+db error: ERROR: Scalar Function with name remove_nulls does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
+
+query error
+SELECT zip(ARRAY[1, 2], ARRAY['1b', null, '3b']);
+----
+db error: ERROR: Scalar Function with name zip does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
+
+query error
+SELECT zip_with(ARRAY[1, 3, 5], ARRAY['a', 'b', 'c'], (x, y) -> (y, x));
+----
+db error: ERROR: Scalar Function with name zip_with does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT zip_with(ARRAY[1, 2], ARRAY[3, 4], (x, y) -> x + y);
+----
+db error: ERROR: Scalar Function with name zip_with does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT zip_with(ARRAY['a', 'b', 'c'], ARRAY['d', 'e', 'f'], (x, y) -> concat(x, y));
+----
+db error: ERROR: Scalar Function with name zip_with does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT zip_with(ARRAY['a'], ARRAY['d', null, 'f'], (x, y) -> coalesce(x, y));
+----
+db error: ERROR: Scalar Function with name zip_with does not exist!
+Did you mean "<slt:ignore>"?

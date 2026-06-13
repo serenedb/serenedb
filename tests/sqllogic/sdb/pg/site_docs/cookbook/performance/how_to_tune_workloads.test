@@ -1,0 +1,40 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+SET preserve_insertion_order = false;
+
+# DOCS_TEST: example_002
+
+statement ok
+DETACH IF EXISTS db;
+
+# DOCS_TEST_BODY
+
+statement ok
+ATTACH '/tmp/somefile.db' AS db (ROW_GROUP_SIZE 16384);
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+SET temp_directory = '/path/to/temp_dir.tmp/';
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+FROM duckdb_external_file_cache();
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_RAW
+#| CALL dbgen(sf = 30);
+#|
+#| .timer on
+#| PRAGMA tpch(1);
+
+# DOCS_TEST_BODY

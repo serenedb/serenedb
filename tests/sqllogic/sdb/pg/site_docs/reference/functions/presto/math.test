@@ -1,0 +1,125 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query error
+SELECT cosine_similarity(MAP(ARRAY['a'], ARRAY[1.0]),
+MAP(ARRAY['a'], ARRAY[2.0]));
+----
+db error: ERROR: No function matches the given name and argument types 'cosine_similarity(MAP(VARCHAR, DECIMAL(2,1)), MAP(VARCHAR, DECIMAL(2,1)))'. You might need to add explicit type casts.
+	Candidate functions:
+	cosine_similarity(FLOAT[ANY], FLOAT[ANY]) -> FLOAT
+	cosine_similarity(DOUBLE[ANY], DOUBLE[ANY]) -> DOUBLE
+
+
+statement error
+>
+SELECT cosine_similarity(MAP(ARRAY['a', 'b'], ARRAY[1.0, 2.0]),
+MAP(ARRAY['a', 'b'], ARRAY[NULL, 3.0]));
+----
+db error: ERROR: syntax error at or near ">"
+
+
+statement error
+>
+SELECT cosine_similarity(MAP(ARRAY[], ARRAY[]), MAP(ARRAY['a',
+'b'], ARRAY[2, 3]));
+----
+db error: ERROR: syntax error at or near ">"
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query error
+SELECT cosine_similarity(ARRAY[1], ARRAY[2]);
+----
+db error: ERROR: No function matches the given name and argument types 'cosine_similarity(INTEGER[], INTEGER[])'. You might need to add explicit type casts.
+	Candidate functions:
+	cosine_similarity(FLOAT[ANY], FLOAT[ANY]) -> FLOAT
+	cosine_similarity(DOUBLE[ANY], DOUBLE[ANY]) -> DOUBLE
+
+
+statement error
+>
+SELECT cosine_similarity(ARRAY[1.0, 2.0], ARRAY[NULL, 3.0]);
+----
+db error: ERROR: syntax error at or near ">"
+
+
+statement error
+NULL
+>
+SELECT cosine_similarity(ARRAY[], ARRAY[2, 3]);
+----
+db error: ERROR: syntax error at or near "NULL"
+
+
+statement error
+VeloxUserError
+>
+SELECT cosine_similarity(ARRAY[], ARRAY[]);
+----
+db error: ERROR: syntax error at or near "VeloxUserError"
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query error
+SELECT l2_squared(ARRAY[1], ARRAY[2]);
+----
+db error: ERROR: Scalar Function with name l2_squared does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+>
+SELECT l2_squared(ARRAY[1.0, 2.0], ARRAY[NULL, 3.0]);
+----
+db error: ERROR: syntax error at or near ">"
+
+
+statement error
+>
+SELECT l2_squared(ARRAY[], ARRAY[2, 3]);
+----
+db error: ERROR: syntax error at or near ">"
+
+
+statement error
+>
+SELECT l2_squared(ARRAY[], ARRAY[]);
+----
+db error: ERROR: syntax error at or near ">"
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query error
+SELECT dot_product(ARRAY[1], ARRAY[2]);
+----
+db error: ERROR: Scalar Function with name dot_product does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+>
+SELECT dot_product(ARRAY[1.0, 2.0], ARRAY[NULL, 3.0]);
+----
+db error: ERROR: syntax error at or near ">"
+
+
+statement error
+>
+SELECT dot_product(ARRAY[], ARRAY[2, 3]);
+----
+db error: ERROR: syntax error at or near ">"
+
+
+statement error
+>
+SELECT dot_product(ARRAY[], ARRAY[]);
+----
+db error: ERROR: syntax error at or near ">"

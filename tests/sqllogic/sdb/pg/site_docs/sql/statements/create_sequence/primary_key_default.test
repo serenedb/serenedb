@@ -1,0 +1,19 @@
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SEQUENCE id_sequence START 1;
+
+statement ok
+CREATE TABLE tbl (id INTEGER PRIMARY KEY DEFAULT nextval('id_sequence'), s VARCHAR);
+
+statement ok
+INSERT INTO tbl (s) VALUES ('hello'), ('world');
+
+query
+SELECT * FROM tbl;
+----
+id	s
+1	hello
+2	world

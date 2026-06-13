@@ -1,0 +1,16 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| CREATE TABLE cities AS
+#|     FROM (VALUES ('Amsterdam', 1), ('London', 2)) cities(name, id);
+#|
+#| COPY cities TO 'cities.json';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE cities AS
+    FROM (VALUES ('Amsterdam', 1), ('London', 2)) cities(name, id);
+
+statement ok
+COPY cities TO '/tmp/${__DATABASE__}_data_import_and_export_json_writing_json_example_001_cities.json';

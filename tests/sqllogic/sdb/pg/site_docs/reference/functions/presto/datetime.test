@@ -1,0 +1,133 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query error
+SELECT to_iso8601(current_date);
+----
+db error: ERROR: Scalar Function with name to_iso8601 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT to_iso8601(now());
+----
+db error: ERROR: Scalar Function with name to_iso8601 does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT to_iso8601(now() + interval '6' month);
+----
+db error: ERROR: Scalar Function with name to_iso8601 does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query error
+SELECT current_timezone;
+----
+db error: ERROR: Referenced column "current_timezone" was not found because the FROM clause is missing
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT current_timestamp;
+----
+current_timestamp
+<slt:ignore>
+
+query
+SELECT now();
+----
+now
+<slt:ignore>
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query error
+SELECT parse_duration('42.8ms');
+----
+db error: ERROR: Scalar Function with name parse_duration does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT parse_duration('3.81 d');
+----
+db error: ERROR: Scalar Function with name parse_duration does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT parse_duration('5m');
+----
+db error: ERROR: Scalar Function with name parse_duration does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query error
+SELECT date_add('hour', 24, cast('2014-03-08 09:00:00' as timestamp));
+----
+db error: ERROR: Macro date_add() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	date_add(date, interval)
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query error
+SELECT date_add('day', 1, cast('2014-03-08 09:00:00' as timestamp));
+----
+db error: ERROR: Macro date_add() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	date_add(date, interval)
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT cast('2014-03-09 02:30:00' as timestamp);
+----
+timestamp
+2014-03-09 02:30:00
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT cast('2014-11-02 01:30:00' as timestamp);
+----
+timestamp
+2014-11-02 01:30:00
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query error
+SELECT timestamp '2012-10-31 01:00 UTC';
+----
+db error: ERROR: invalid timestamp field format: "2012\-10\-31 01:00 UTC", expected format is \(YYYY\-MM\-DD HH:MM:SS\[\.US\]\[±HH\[:MM\[:SS\]\]\| ZONE\]\)
+
+
+query error
+SELECT timestamp '2012-10-31 01:00 UTC' AT TIME ZONE 'America/Los_Angeles';
+----
+db error: ERROR: An error occurred while trying to automatically install the required extension 'icu:
+Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_extension" not found.
+Extension "icu" is an existing extension.
+
+Install it first using "INSTALL icu".

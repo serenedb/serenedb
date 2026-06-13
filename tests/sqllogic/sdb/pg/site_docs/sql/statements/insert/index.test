@@ -1,0 +1,209 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (i INTEGER);
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT INTO tbl
+    VALUES (1), (2), (3);
+
+# DOCS_TEST: example_002
+
+statement ok
+DROP TABLE IF EXISTS other_tbl;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+statement ok
+CREATE TABLE other_tbl AS SELECT * FROM tbl LIMIT 0;
+
+statement ok
+INSERT INTO other_tbl VALUES
+    (11, 'other mark', 11, 12, 'delta', 11, 110, 120, 130, 110, 1100, 11000),
+    (13, 'other bookmark', 14, 15, 'epsilon', 12, 111, 121, 131, 120, 1200, 12000);
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT INTO tbl
+    SELECT * FROM other_tbl;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT INTO tbl (i)
+    VALUES (1), (2), (3);
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT INTO tbl (i)
+    VALUES (1), (DEFAULT), (3);
+
+# DOCS_TEST: example_005
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+statement ok
+CREATE TABLE tbl (i INTEGER PRIMARY KEY);
+
+statement ok
+INSERT INTO tbl VALUES (1);
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT OR IGNORE INTO tbl (i)
+    VALUES (1);
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+INSERT OR REPLACE INTO tbl (i)
+    VALUES (1);
+
+# DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE t1 (id INTEGER PRIMARY KEY, val1 DOUBLE, val2 DOUBLE NOT NULL);
+
+statement ok
+CREATE TABLE t2 (id INTEGER PRIMARY KEY, val1 DOUBLE);
+
+statement ok
+INSERT INTO t1
+    VALUES (1, 2, 3);
+
+statement ok
+INSERT INTO t2
+    VALUES (1, 5);
+
+statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+INSERT INTO t1 BY NAME (SELECT id, val1 FROM t2)
+    ON CONFLICT DO UPDATE
+    SET val1 = EXCLUDED.val1;
+
+# DOCS_TEST: example_022
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE t1 (id1 INTEGER, id2 INTEGER, val1 DOUBLE, PRIMARY KEY (id1, id2));
+
+statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+INSERT OR REPLACE INTO t1
+    VALUES (1, 2, 3);
+
+statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+INSERT OR REPLACE INTO t1
+    VALUES (1, 2, 4);
+
+# DOCS_TEST: example_027
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE t1 (i INTEGER);
+
+query
+INSERT INTO t1
+    SELECT 42
+    RETURNING *;
+----
+i
+1
+
+# DOCS_TEST: example_028
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t2;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE t2 (i INTEGER, j INTEGER);
+
+query
+INSERT INTO t2
+    SELECT 2 AS i, 3 AS j
+    RETURNING *, i * j AS i_times_j;
+----
+i	j	i_times_j
+1	0	0
+
+# DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE t3 (i INTEGER PRIMARY KEY, j INTEGER);
+
+statement ok
+CREATE SEQUENCE 't3_key';
+
+query
+INSERT INTO t3
+    SELECT nextval('t3_key') AS i, 42 AS j
+    UNION ALL
+    SELECT nextval('t3_key') AS i, 43 AS j
+    RETURNING *;
+----
+i	j
+2	0

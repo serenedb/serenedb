@@ -1,0 +1,88 @@
+# DOCS_TEST: example_001
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, TIMESTAMP '2025-01-01 10:00:00', 'ERROR', 'postgres', 'connection timeout to database'),
+    (2, TIMESTAMP '2025-01-01 11:00:00', 'INFO',  'api',      'startup complete'),
+    (3, TIMESTAMP '2025-01-01 12:00:00', 'ERROR', 'api',      'out of memory while indexing')
+) AS t(id, timestamp, level, service, message))
+TO '/tmp/${__DATABASE__}_ext_logs.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| CREATE TABLE logs AS
+#|     SELECT * FROM read_parquet('s3://my-bucket/logs/2025/*.parquet');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE logs AS
+    SELECT * FROM read_parquet('/tmp/${__DATABASE__}_ext_logs.parquet');
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = true,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX logs_idx ON logs
+    USING inverted (id, level, service, message english_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) logs;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+-- Full-text search ranked by relevance
+SELECT id, level, message
+FROM logs_idx
+WHERE message @@ ts_phrase('connection timeout')
+ORDER BY BM25(logs_idx.tableoid) DESC, id;
+----
+id	level	message
+1	ERROR	connection timeout to database
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+-- Combine search with exact filters
+SELECT id, level, message
+FROM logs_idx
+WHERE message @@ ts_phrase('out of memory') AND level @@ 'ERROR'
+ORDER BY id;
+----
+id	level	message
+3	ERROR	out of memory while indexing
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+-- Typo-tolerant matching on a non-text column
+SELECT id, service, message
+FROM logs_idx
+WHERE service @@ ts_levenshtein('postgre', 1)
+ORDER BY id;
+----
+id	service	message
+1	postgres	connection timeout to database

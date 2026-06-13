@@ -1,0 +1,112 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE DATABASE IF NOT EXISTS shop;
+
+# DOCS_TEST_BODY
+
+statement ok
+USE shop;
+
+query
+SELECT current_database();
+----
+current_database
+shop
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE DATABASE IF NOT EXISTS shop;
+
+statement ok
+USE shop;
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS analytics;
+
+# DOCS_TEST_BODY
+
+statement ok
+USE analytics;
+
+query
+SELECT current_schema();
+----
+current_schema
+analytics
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE DATABASE IF NOT EXISTS shop;
+
+statement ok
+USE shop;
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS analytics;
+
+# DOCS_TEST_BODY
+
+statement ok
+USE shop.analytics;
+
+query
+SELECT current_database();
+----
+current_database
+shop
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE DATABASE IF NOT EXISTS shop;
+
+statement ok
+USE shop;
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS analytics;
+
+# DOCS_TEST_BODY
+
+statement ok
+USE analytics;
+
+query
+SHOW search_path;
+----
+search_path
+analytics
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE DATABASE IF NOT EXISTS shop;
+
+statement ok
+USE shop;
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS foo;
+
+statement ok
+CREATE DATABASE IF NOT EXISTS foo;
+
+# DOCS_TEST_BODY
+
+statement ok
+USE foo;
+
+query
+SELECT current_database();
+----
+current_database
+shop
+
+query
+SELECT current_schema();
+----
+current_schema
+foo

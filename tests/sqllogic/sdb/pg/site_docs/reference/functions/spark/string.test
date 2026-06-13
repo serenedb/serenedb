@@ -1,0 +1,1094 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT base64('Spark SQL');
+----
+base64
+U3BhcmsgU1FM
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT bit_length('123');
+----
+bit_length
+24
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement error
+-- Function call examples (this function is not directly callable in Spark SQL).
+char_type_write_side_check("abcd", 3) -- VeloxUserError: "Exceeds allowed length limitation: '3'"
+char_type_write_side_check("世界人", 2) -- VeloxUserError: "Exceeds allowed length limitation: '2'"
+char_type_write_side_check("abc", 0) -- VeloxUserError: "The length limit must be greater than 0."
+----
+db error: ERROR: syntax error at or near "char_type_write_side_check"
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT concat_ws('~', 'a', 'b', 'c');
+----
+concat_ws
+a~b~c
+
+query
+SELECT concat_ws('~', ['a', 'b', 'c'], ['d']);
+----
+concat_ws
+[a, b, c]~[d]
+
+query
+SELECT concat_ws('~', 'a', ['b', 'c']);
+----
+concat_ws
+a~[b, c]
+
+query
+SELECT concat_ws('~', '', [''], ['a', '']);
+----
+concat_ws
+~['']~[a, '']
+
+query
+SELECT concat_ws(NULL, 'a');
+----
+concat_ws
+NULL
+
+query error
+SELECT concat_ws('~');
+----
+db error: ERROR: No function matches the given name and argument types 'concat_ws(STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	concat_ws(VARCHAR, ANY, [ANY...]) -> VARCHAR
+
+
+query
+SELECT concat_ws('~', NULL, [NULL], 'a', 'b');
+----
+concat_ws
+[NULL]~a~b
+
+query
+SELECT concat_ws('~', NULL, NULL);
+----
+concat_ws
+(empty)
+
+query
+SELECT concat_ws('~', [NULL]);
+----
+concat_ws
+[NULL]
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT contains('Spark SQL', 'Spark');
+----
+contains
+t
+
+query
+SELECT contains('Spark SQL', 'SPARK');
+----
+contains
+f
+
+query error
+SELECT contains('Spark SQL', null);
+----
+db error: ERROR: Could not choose a best candidate function for the function call "contains(STRING_LITERAL, "NULL")". In order to select one, please add explicit type casts.
+	Candidate functions:
+	contains(MAP(K, V), K) -> BOOLEAN
+	contains(T[], T) -> BOOLEAN
+
+
+query
+SELECT contains(x'537061726b2053514c', x'537061726b');
+----
+contains
+t
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query error
+SELECT conv('100', 2, 10);
+----
+db error: ERROR: Scalar Function with name conv does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT conv('-10', 16, -10);
+----
+db error: ERROR: Scalar Function with name conv does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT conv("-1", 10, 16);
+----
+db error: ERROR: Scalar Function with name conv does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT conv("123", 10, 39);
+----
+db error: ERROR: Scalar Function with name conv does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT conv('', 16, 10);
+----
+db error: ERROR: Scalar Function with name conv does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT conv(' ', 2, 10);
+----
+db error: ERROR: Scalar Function with name conv does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT conv("11", 10, 16);
+----
+db error: ERROR: Scalar Function with name conv does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT conv("11ABC", 10, 16);
+----
+db error: ERROR: Scalar Function with name conv does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT conv("11abc", 10, 10);
+----
+db error: ERROR: Scalar Function with name conv does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT conv('H016F', 16, 10);
+----
+db error: ERROR: Scalar Function with name conv does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query error
+SELECT empty2null('');
+----
+db error: ERROR: Scalar Function with name empty2null does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT empty2null('abc');
+----
+db error: ERROR: Scalar Function with name empty2null does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query error
+SELECT endswith('js SQL', 'SQL');
+----
+db error: ERROR: Scalar Function with name endswith does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT endswith('js SQL', 'js');
+----
+db error: ERROR: Scalar Function with name endswith does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT endswith('js SQL', NULL);
+----
+db error: ERROR: Scalar Function with name endswith does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query error
+SELECT find_in_set('ab', 'abc,b,ab,c,def');
+----
+db error: ERROR: Scalar Function with name find_in_set does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_in_set('ab,', 'abc,b,ab,c,def');
+----
+db error: ERROR: Scalar Function with name find_in_set does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_in_set('dfg', 'abc,b,ab,c,def');
+----
+db error: ERROR: Scalar Function with name find_in_set does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_in_set('', '');
+----
+db error: ERROR: Scalar Function with name find_in_set does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_in_set('', '123,');
+----
+db error: ERROR: Scalar Function with name find_in_set does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_in_set('', ',123');
+----
+db error: ERROR: Scalar Function with name find_in_set does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_in_set(NULL, ',123');
+----
+db error: ERROR: Scalar Function with name find_in_set does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT find_in_set("abc", NULL);
+----
+db error: ERROR: Scalar Function with name find_in_set does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT initcap('spark sql');
+----
+initcap
+Spark Sql
+
+query
+SELECT initcap('spARK sQL');
+----
+initcap
+Spark Sql
+
+query
+SELECT initcap('123abc DEF!ghi');
+----
+initcap
+123Abc Def!Ghi
+
+query
+SELECT initcap('élan vital für alle');
+----
+initcap
+éLan Vital FüR Alle
+
+query
+SELECT initcap('hello-world test_case');
+----
+initcap
+Hello-World Test_Case
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT levenshtein('kitten', 'sitting');
+----
+levenshtein
+3
+
+query error
+SELECT levenshtein('kitten', 'sitting', 10);
+----
+db error: ERROR: No function matches the given name and argument types 'levenshtein(STRING_LITERAL, STRING_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	levenshtein(VARCHAR, VARCHAR) -> BIGINT
+
+
+query error
+SELECT levenshtein('kitten', 'sitting', 2);
+----
+db error: ERROR: No function matches the given name and argument types 'levenshtein(STRING_LITERAL, STRING_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	levenshtein(VARCHAR, VARCHAR) -> BIGINT
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query error
+SELECT locate('aa', 'aaads', 1);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate('aa', 'aaads', -1);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate('aa', 'aaads', 2);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate('aa', 'aaads', 6);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate('aa', 'aaads', NULL);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate('', 'aaads', 1);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate('', 'aaads', 9);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate('', 'aaads', -1);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate('', '', 1);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate('aa', '', 1);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate(NULL, NULL, NULL);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate(NULL, NULL, 1);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT locate('\u4FE1', '\u4FE1\u5FF5,\u4FE1\u7231,\u4FE1\u5E0C\u671B', 2);
+----
+db error: ERROR: Scalar Function with name locate does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT lower('SparkSql');
+----
+lower
+sparksql
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query
+SELECT lpad('hi', 5, '??');
+----
+lpad
+???hi
+
+query
+SELECT lpad('hi', 1, '??');
+----
+lpad
+h
+
+query error
+SELECT lpad('hi', 4);
+----
+db error: ERROR: No function matches the given name and argument types 'lpad(STRING_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	lpad(VARCHAR, INTEGER, VARCHAR) -> VARCHAR
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+SELECT ltrim('  data  ');
+----
+ltrim
+data  
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+SELECT ltrim('ps', 'spark');
+----
+ltrim
+(empty)
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query error
+SELECT luhn_check('4111111111111111');
+----
+db error: ERROR: Scalar Function with name luhn_check does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT luhn_check('378282246310006');
+----
+db error: ERROR: Scalar Function with name luhn_check does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT luhn_check(NULL);
+----
+db error: ERROR: Scalar Function with name luhn_check does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query error
+SELECT mask('abcd-EFGH-8765-4321');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask('abcd-EFGH-8765-4321', 'Q');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask('AbCD123-@$#');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask('AbCD123-@$#', 'Q');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask('AbCD123-@$#', 'Q', 'q');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask('AbCD123-@$#', 'Q', 'q', 'd');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask('AbCD123-@$#', 'Q', 'q', 'd', 'o');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask('AbCD123-@$#', NULL, 'q', 'd', 'o');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask('AbCD123-@$#', NULL, NULL, 'd', 'o');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask('AbCD123-@$#', NULL, NULL, NULL, 'o');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask(NULL, NULL, NULL, NULL, 'o');
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask(NULL);
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT mask('AbCD123-@$#', NULL, NULL, NULL, NULL);
+----
+db error: ERROR: Scalar Function with name mask does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query error
+SELECT overlay('Spark SQL', '_', 6, -1);
+----
+db error: ERROR: syntax error at or near ","
+
+
+query error
+SELECT overlay('Spark SQL', 'CORE', 7, -1);
+----
+db error: ERROR: syntax error at or near ","
+
+
+query error
+SELECT overlay('Spark SQL', 'ANSI ', 7, 0);
+----
+db error: ERROR: syntax error at or near ","
+
+
+query error
+SELECT overlay('Spark SQL', 'tructured', 2, 4);
+----
+db error: ERROR: syntax error at or near ","
+
+
+query error
+SELECT overlay('Spark SQL', '_', -6, 3);
+----
+db error: ERROR: syntax error at or near ","
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+statement error
+-- Function call examples (this function is not directly callable in Spark SQL).
+read_side_padding("a", 0) -- VeloxUserError: "The length limit must be greater than 0."
+----
+db error: ERROR: syntax error at or near "read_side_padding"
+
+# DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
+
+query
+SELECT repeat('123', 2);
+----
+repeat
+123123
+
+# DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
+
+query error
+SELECT replace('ABCabc', '');
+----
+db error: ERROR: No function matches the given name and argument types 'replace(STRING_LITERAL, STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	replace(VARCHAR, VARCHAR, VARCHAR) -> VARCHAR
+
+
+query error
+SELECT replace('ABCabc', 'bc');
+----
+db error: ERROR: No function matches the given name and argument types 'replace(STRING_LITERAL, STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	replace(VARCHAR, VARCHAR, VARCHAR) -> VARCHAR
+
+# DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
+
+query
+SELECT replace('ABCabc', '', 'DEF');
+----
+replace
+ABCabc
+
+query
+SELECT replace('ABCabc', 'abc', '');
+----
+replace
+ABC
+
+query
+SELECT replace('ABCabc', 'abc', 'DEF');
+----
+replace
+ABCDEF
+
+# DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
+
+query
+SELECT lpad('hi', 5, '??');
+----
+lpad
+???hi
+
+query
+SELECT lpad('hi', 1, '??');
+----
+lpad
+h
+
+query error
+SELECT lpad('hi', 4);
+----
+db error: ERROR: No function matches the given name and argument types 'lpad(STRING_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	lpad(VARCHAR, INTEGER, VARCHAR) -> VARCHAR
+
+# DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
+
+query
+SELECT rtrim('  data  ');
+----
+rtrim
+  data
+
+# DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
+
+query
+SELECT rtrim('kr', 'spark');
+----
+rtrim
+(empty)
+
+# DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
+
+query error
+SELECT soundex('Miller');
+----
+db error: ERROR: Scalar Function with name soundex does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
+
+query
+SELECT split('oneAtwoBthreeC', '[ABC]');
+----
+split
+{oneAtwoBthreeC}
+
+query error
+SELECT split('oneAtwoBthreeC', '[ABC]', 2);
+----
+db error: ERROR: No function matches the given name and argument types 'split(STRING_LITERAL, STRING_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	split(VARCHAR, VARCHAR) -> VARCHAR[]
+
+
+query error
+SELECT split('oneAtwoBthreeC', '[ABC]', 5);
+----
+db error: ERROR: No function matches the given name and argument types 'split(STRING_LITERAL, STRING_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	split(VARCHAR, VARCHAR) -> VARCHAR[]
+
+
+query
+SELECT split('one', '1');
+----
+split
+{one}
+
+query
+SELECT split('abcd', '');
+----
+split
+{abcd}
+
+query error
+SELECT split('abcd', '', 3);
+----
+db error: ERROR: No function matches the given name and argument types 'split(STRING_LITERAL, STRING_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	split(VARCHAR, VARCHAR) -> VARCHAR[]
+
+
+query error
+SELECT split('abcd', '', 5);
+----
+db error: ERROR: No function matches the given name and argument types 'split(STRING_LITERAL, STRING_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	split(VARCHAR, VARCHAR) -> VARCHAR[]
+
+# DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
+
+query error
+SELECT startswith('js SQL', 'js');
+----
+db error: ERROR: Scalar Function with name startswith does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT startswith('js SQL', 'SQL');
+----
+db error: ERROR: Scalar Function with name startswith does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT startswith('js SQL', null);
+----
+db error: ERROR: Scalar Function with name startswith does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_030
+
+# DOCS_TEST_BODY
+
+query error
+SELECT str_to_map('a:1,b:2,c:3', ',', ':');
+----
+db error: ERROR: Scalar Function with name str_to_map does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT str_to_map('a', ',', ':');
+----
+db error: ERROR: Scalar Function with name str_to_map does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT str_to_map('', ',', ':');
+----
+db error: ERROR: Scalar Function with name str_to_map does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT str_to_map('a:1,b:2,c:3', ',', ',');
+----
+db error: ERROR: Scalar Function with name str_to_map does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
+
+query
+SELECT substring('Spark SQL', 0, 2);
+----
+substring
+S
+
+query
+SELECT substring('Spark SQL', 1, 2);
+----
+substring
+Sp
+
+query
+SELECT substring('Spark SQL', 5, 0);
+----
+substring
+(empty)
+
+query
+SELECT substring('Spark SQL', 5, -1);
+----
+substring
+r
+
+query
+SELECT substring('Spark SQL', 5, 10000);
+----
+substring
+k SQL
+
+query
+SELECT substring('Spark SQL', -9, 3);
+----
+substring
+Spa
+
+query
+SELECT substring('Spark SQL', -10, 3);
+----
+substring
+Sp
+
+query
+SELECT substring('Spark SQL', -20, 3);
+----
+substring
+(empty)
+
+# DOCS_TEST: example_032
+
+# DOCS_TEST_BODY
+
+query error
+SELECT substring_index('Spark.SQL', '.', 1);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('Spark.SQL', '.', 0);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('Spark.SQL', '.', -1);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('TEST.Spark.SQL', '.',2);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('TEST.Spark.SQL', '', 0);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('TEST.Spark.SQL', '.', -2);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('TEST.Spark.SQL', '.', 10);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('TEST.Spark.SQL', '.', -12);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('aaaaa', 'aa', 2);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('aaaaa', 'aa', -4);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('aaaaa', 'aa', 0);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('aaaaa', 'aa', 5);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT substring_index('aaaaa', 'aa', -5);
+----
+db error: ERROR: Scalar Function with name substring_index does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_033
+
+# DOCS_TEST_BODY
+
+query
+SELECT translate('spark', 'sa', '12');
+----
+translate
+1p2rk
+
+query
+SELECT translate('spark', 'sa', '1');
+----
+translate
+1prk
+
+query
+SELECT translate('spark', 'ss', '12');
+----
+translate
+1park
+
+# DOCS_TEST: example_034
+
+# DOCS_TEST_BODY
+
+query
+SELECT trim('  data  ');
+----
+btrim
+data
+
+# DOCS_TEST: example_035
+
+# DOCS_TEST_BODY
+
+query
+SELECT trim('sprk', 'spark');
+----
+btrim
+(empty)
+
+# DOCS_TEST: example_036
+
+# DOCS_TEST_BODY
+
+query error
+SELECT cast(unbase64('U3BhcmsgU1FM') AS STRING);
+----
+db error: ERROR: Scalar Function with name unbase64 does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_037
+
+# DOCS_TEST_BODY
+
+query
+SELECT upper('SparkSql');
+----
+upper
+SPARKSQL
+
+# DOCS_TEST: example_038
+
+# DOCS_TEST_BODY
+
+statement error
+-- Function call examples (this function is not directly callable in Spark SQL).
+varchar_type_write_side_check("abcd", 3) -- VeloxUserError: "Exceeds allowed length limitation: '3'"
+varchar_type_write_side_check("中文中国", 3) -- VeloxUserError: "Exceeds allowed length limitation: '3'"
+varchar_type_write_side_check("   ", 0) -- VeloxUserError: "The length limit must be greater than 0."
+----
+db error: ERROR: syntax error at or near "varchar_type_write_side_check"

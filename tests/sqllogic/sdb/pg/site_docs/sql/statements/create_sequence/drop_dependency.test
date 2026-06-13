@@ -1,0 +1,28 @@
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SEQUENCE id_sequence START 1;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER DEFAULT nextval('id_sequence'),
+    s VARCHAR
+);
+
+statement ok
+INSERT INTO tbl(s) VALUES ('default is the next value from id_sequence');
+
+statement error db error: ERROR: ALTER TABLE through DuckDB
+ALTER TABLE tbl ALTER COLUMN id SET DEFAULT NULL;
+
+statement ok
+INSERT INTO tbl(s) VALUES ('default is NULL');
+
+query ??
+SELECT * FROM tbl;
+----
+id	s
+1	default is the next value from id_sequence
+2	default is NULL

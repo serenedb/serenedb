@@ -1,0 +1,53 @@
+# These examples document sqllogictest syntax. They are rendered in docs
+# through SqlLogicTest; the executable record below each raw block is a no-op
+# that keeps this file valid for the sqllogictest runner.
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| # name: test/sql/projection/test_simple_projection.test
+#| # group [projection]
+#|
+#| # enable query verification
+#| statement ok
+#| PRAGMA enable_verification
+#|
+#| # create table
+#| statement ok
+#| CREATE TABLE a (i INTEGER, j INTEGER);
+#|
+#| # insertion: 1 affected row
+#| statement ok
+#| INSERT INTO a VALUES (42, 84);
+#|
+#| query II
+#| SELECT * FROM a;
+#| ----
+#| 42	84
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_100b7bfb_001 (i INTEGER);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| statement ok
+#| PRAGMA enable_verification
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_100b7bfb_002 (i INTEGER);
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| statement ok
+#| COPY csv_data TO '__TEST_DIR__/output_file.csv.gz' (COMPRESSION gzip);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_100b7bfb_003 (i INTEGER);

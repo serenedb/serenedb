@@ -1,0 +1,78 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_serialize_sql('SELECT 2');
+----
+json_serialize_sql
+<slt:ignore>
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_serialize_sql('SELECT 1 + 2; SELECT a + b FROM tbl1', skip_empty := true, skip_null := true);
+----
+json_serialize_sql
+<slt:ignore>
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_serialize_sql('SELECT 1 + 2; SELECT a + b FROM tbl1', skip_default := true, skip_empty := true, skip_null := true);
+----
+json_serialize_sql
+<slt:ignore>
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_serialize_sql('TOTALLY NOT VALID SQL');
+----
+json_serialize_sql
+<slt:ignore>
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_deserialize_sql(json_serialize_sql('SELECT 1 + 2'));
+----
+json_deserialize_sql
+<slt:ignore>
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_deserialize_sql(json_serialize_sql('FROM x SELECT 1 + 2'));
+----
+json_deserialize_sql
+<slt:ignore>
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT 1 + 2'));
+----
+?column?
+<slt:ignore>
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query error
+SELECT * FROM json_execute_serialized_sql(json_serialize_sql('TOTALLY NOT VALID SQL'));
+----
+db error: ERROR: Error parsing json: parser: syntax error at or near "TOTALLY"

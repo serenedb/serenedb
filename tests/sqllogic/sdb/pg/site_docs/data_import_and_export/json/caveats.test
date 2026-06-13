@@ -1,0 +1,21 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    a != b, -- Space is part of physical JSON content. Despite equal logical content, values are treated as not equal.
+    c != d, -- Same.
+    c[0] = d[0], -- Equality because space was removed from physical content of fields:
+    a = c[0], -- Indeed, field is equal to empty list without space...
+    b != c[0], -- ... but different from empty list with space.
+FROM (
+    SELECT
+        '[]'::JSON AS a,
+        '[ ]'::JSON AS b,
+        '[[]]'::JSON AS c,
+        '[[ ]]'::JSON AS d
+    );
+----
+?column?	?column?	?column?	?column?	?column?
+t	t	f	t	t

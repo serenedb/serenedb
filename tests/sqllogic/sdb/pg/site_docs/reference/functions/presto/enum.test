@@ -1,0 +1,9 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query error
+SELECT enum_key(alpha.A);
+----
+db error: ERROR: Scalar Function with name enum_key does not exist!
+Did you mean "<slt:ignore>"?

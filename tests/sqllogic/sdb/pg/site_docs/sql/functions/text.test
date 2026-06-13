@@ -1,0 +1,343 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('Hello world');
+----
+format
+Hello world
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('The answer is {}', 42);
+----
+format
+The answer is {}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('I''d rather be {1} than {0}.', 'right', 'happy');
+----
+format
+I'd rather be {1} than {0}.
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('{} + {} = {}', 3, 5, 3 + 5);
+----
+format
+{} + {} = {}
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('{} != {}', true, false);
+----
+format
+{} != {}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('{}', DATE '1992-01-01');
+----
+format
+{}
+
+query
+SELECT format('{}', TIME '12:01:00');
+----
+format
+{}
+
+query
+SELECT format('{}', TIMESTAMP '1992-01-01 12:01:00');
+----
+format
+{}
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query error
+SELECT format('{}', BLOB '\x00hello');
+----
+db error: ERROR: invalid hexadecimal digit: "h"
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('{:04d}', 33);
+----
+format
+{:04d}
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('{:02d}:{:02d}:{:02d} {}', 12, 3, 16, 'AM');
+----
+format
+{:02d}:{:02d}:{:02d} {}
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('{:x}', 123_456_789);
+----
+format
+{:x}
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('{:b}', 123_456_789);
+----
+format
+{:b}
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('{:,}',  123_456_789);
+----
+format
+{:,}
+
+query
+SELECT format('{:t.}', 123_456_789);
+----
+format
+{:t.}
+
+query
+SELECT format('{:''}', 123_456_789);
+----
+format
+{:'}
+
+query
+SELECT format('{:_}',  123_456_789);
+----
+format
+{:_}
+
+query
+SELECT format('{:t }', 123_456_789);
+----
+format
+{:t }
+
+query
+SELECT format('{:tX}', 123_456_789);
+----
+format
+{:tX}
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT format('{:,f}',    123456.789);
+----
+format
+{:,f}
+
+query
+SELECT format('{:,.2f}',  123456.789);
+----
+format
+{:,.2f}
+
+query
+SELECT format('{:t..2f}', 123456.789);
+----
+format
+{:t..2f}
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('Hello world');
+----
+printf
+Hello world
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('The answer to %s is %d', 'life', 42);
+----
+printf
+The answer to life is 42
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('I''d rather be %2$s than %1$s.', 'right', 'happy');
+----
+printf
+I'd rather be happy than right.
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%d + %d = %d', 3, 5, 3 + 5);
+----
+printf
+3 + 5 = 8
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query error
+SELECT printf('%s != %s', true, false);
+----
+db error: ERROR: invalid format specifier
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%s', DATE '1992-01-01');
+----
+printf
+1992-01-01
+
+query
+SELECT printf('%s', TIME '12:01:00');
+----
+printf
+12:01:00
+
+query
+SELECT printf('%s', TIMESTAMP '1992-01-01 12:01:00');
+----
+printf
+1992-01-01 12:01:00
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+query error
+SELECT printf('%s', BLOB '\x00hello');
+----
+db error: ERROR: invalid hexadecimal digit: "h"
+
+# DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%04d', 33);
+----
+printf
+0033
+
+# DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%02d:%02d:%02d %s', 12, 3, 16, 'AM');
+----
+printf
+12:03:16 AM
+
+# DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
+
+query
+SELECT printf('%x', 123_456_789);
+----
+printf
+75bcd15
+
+# DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
+
+query error
+SELECT printf('%b', 123_456_789);
+----
+db error: ERROR: invalid format specifier
+
+# DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
+
+query error
+SELECT printf('%,d',  123_456_789);
+----
+db error: ERROR: invalid format specifier
+
+
+query
+SELECT printf('%.d',  123_456_789);
+----
+printf
+123456789
+
+query error
+SELECT printf('%''d', 123_456_789);
+----
+db error: ERROR: invalid format specifier
+
+
+query error
+SELECT printf('%_d',  123_456_789);
+----
+db error: ERROR: invalid format specifier
+
+# DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
+
+query error
+SELECT printf('%,f',   123456.789);
+----
+db error: ERROR: invalid format specifier
+
+
+query error
+SELECT printf('%,.2f', 123456.789);
+----
+db error: ERROR: invalid format specifier

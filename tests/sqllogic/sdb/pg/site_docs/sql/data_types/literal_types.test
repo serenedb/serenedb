@@ -1,0 +1,169 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT 1.5;
+----
+?column?
+1.5
+
+query
+SELECT .50;
+----
+?column?
+0.50
+
+query
+SELECT 2.;
+----
+?column?
+2
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT 1e2;
+----
+?column?
+100
+
+query
+SELECT 6.02214e23;
+----
+?column?
+6.02214e+23
+
+query
+SELECT 1e-10;
+----
+?column?
+1e-10
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT 100_000_000;
+----
+?column?
+100000000
+
+query
+SELECT '0xFF_FF'::INTEGER;
+----
+int4
+65535
+
+query error
+SELECT 1_2.1_2E0_1;
+----
+db error: ERROR: Could not convert string '1_2\.1_2E0_1' to DOUBLE
+
+
+query
+SELECT '0b0_1_0_1'::INTEGER;
+----
+int4
+5
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'Hello'
+    ' '
+    'World' AS greeting;
+----
+greeting
+Hello World
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'Hello'
+    || ' '
+    || 'World' AS greeting;
+----
+greeting
+Hello World
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query error
+SELECT 'Hello' ' ' 'World' AS greeting;
+----
+db error: ERROR: syntax error at or near "' '"
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT d > '1992-01-01' AS result
+FROM (VALUES (DATE '1992-01-01')) t(d);
+----
+result
+f
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query error
+SELECT d > '1992-01-01'::VARCHAR
+FROM (VALUES (DATE '1992-01-01')) t(d);
+----
+db error: ERROR: Cannot compare values of type DATE and type VARCHAR \- an explicit cast is required
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT e'Hello\nworld' AS msg;
+----
+msg
+Hello\nworld
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT $$Hello
+world$$ AS msg;
+----
+msg
+Hello\nworld
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT $$The price is $9.95$$ AS msg;
+----
+msg
+The price is $9.95
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT $tag$ this string can contain newlines,
+'single quotes',
+"double quotes",
+and $$dollar quotes$$ $tag$ AS msg;
+----
+msg
+ this string can contain newlines,\n'single quotes',\n"double quotes",\nand $$dollar quotes$$

@@ -1,0 +1,15 @@
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement ok
+SET preserve_identifier_case = false;
+
+statement ok
+CREATE TABLE tbl AS SELECT cos(pi()) AS CosineOfPi;
+
+query ?
+SELECT CosineOfPi FROM tbl;
+----
+cosineofpi
+-1

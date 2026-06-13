@@ -1,0 +1,147 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE MACRO pretty_print_integer(n) AS
+    CASE
+        WHEN n >= 1_000_000_000 THEN printf('%dB', n // 1_000_000_000)
+        WHEN n >= 1_000_000     THEN printf('%dM', n // 1_000_000)
+        WHEN n >= 1_000         THEN printf('%dk', n // 1_000)
+        ELSE printf('%d', n)
+    END;
+
+query
+SELECT pretty_print_integer(25_500_000) AS x;
+----
+x
+25M
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement error
+INSTALL httpfs;
+----
+db error: ERROR: Failed to download extension "httpfs" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/httpfs.duckdb_extension.gz"
+Extension "httpfs" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=httpfs (ERROR Problem with the SSL CA cert (path? access rights?))
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| ATTACH 'https://blobs.duckdb.org/data/pretty_print_integer_macro.duckdb'
+#|     AS pretty_print_macro_db;
+#|
+#| SELECT pretty_print_macro_db.pretty_print_integer(42_123) AS x;
+
+# DOCS_TEST_BODY
+
+statement ok
+DETACH IF EXISTS pretty_print_macro_fixture;
+
+statement ok
+DETACH IF EXISTS pretty_print_macro_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_003_pretty_print_integer_macro.duckdb' AS pretty_print_macro_fixture;
+
+statement ok
+CREATE OR REPLACE MACRO pretty_print_macro_fixture.pretty_print_integer(n) AS
+    CASE
+        WHEN n >= 1_000_000_000 THEN printf('%dB', n // 1_000_000_000)
+        WHEN n >= 1_000_000     THEN printf('%dM', n // 1_000_000)
+        WHEN n >= 1_000         THEN printf('%dk', n // 1_000)
+        ELSE printf('%d', n)
+    END;
+
+statement ok
+DETACH pretty_print_macro_fixture;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_003_pretty_print_integer_macro.duckdb'
+    AS pretty_print_macro_db;
+
+query
+SELECT pretty_print_macro_db.pretty_print_integer(42_123) AS x;
+----
+x
+42k
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE MACRO checksum(table_name) AS TABLE
+    SELECT bit_xor(md5_number(COLUMNS(*)::VARCHAR))
+    FROM query_table(table_name);
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement error
+INSTALL httpfs;
+----
+db error: ERROR: Failed to download extension "httpfs" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/httpfs.duckdb_extension.gz"
+Extension "httpfs" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=httpfs (ERROR Problem with the SSL CA cert (path? access rights?))
+
+# DOCS_TEST: example_006
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, '[2,3]', 4.5::DOUBLE),
+    (2, '[5,8]', 9.5::DOUBLE)
+) AS t("duck", "goose", "swan")) TO '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_006_1_stations_parquet.parquet' (FORMAT parquet);
+
+statement ok
+DETACH IF EXISTS checksum_macro_fixture;
+
+statement ok
+DETACH IF EXISTS compute_table_checksum_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_006_compute_table_checksum.duckdb' AS checksum_macro_fixture;
+
+statement ok
+CREATE OR REPLACE MACRO checksum_macro_fixture.checksum(table_name) AS TABLE
+    SELECT bit_xor(md5_number(COLUMNS(*)::VARCHAR))
+    FROM query_table(table_name);
+
+statement ok
+DETACH checksum_macro_fixture;
+
+# DOCS_TEST_RAW
+#| ATTACH 'https://blobs.duckdb.org/data/compute_table_checksum.duckdb'
+#|     AS compute_table_checksum_db;
+#|
+#| CREATE TABLE stations AS
+#|     FROM 'https://blobs.duckdb.org/stations.parquet';
+#|
+#| .mode line
+#| FROM compute_table_checksum_db.checksum('stations');
+
+# DOCS_TEST_BODY
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_006_compute_table_checksum.duckdb'
+    AS compute_table_checksum_db;
+
+
+statement ok
+DROP TABLE IF EXISTS stations;
+
+statement ok
+CREATE TABLE stations AS
+    FROM '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_006_1_stations_parquet.parquet';
+
+query
+FROM compute_table_checksum_db.checksum('stations');
+----
+checksum	checksum	checksum
+243261088136216708875926412427487400972	138465933354732981678276855003030579445	165028020406096909720161240673293274409

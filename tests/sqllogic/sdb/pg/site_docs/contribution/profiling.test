@@ -1,0 +1,48 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+EXPLAIN (FORMAT html) SELECT 42 AS x;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| CALL enable_profiling(
+#|     format := 'json',
+#|     save_location := '/path/to/output.json',
+#|     coverage := 'select',
+#|     mode := 'standard',
+#|     metrics := ['QUERY_NAME', 'LATENCY', 'OPERATOR_TIMING']
+#| );
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_profiling(
+    format := 'json',
+    save_location := '/tmp/${__DATABASE__}_contribution_profiling_example_002_output.json',
+    coverage := 'select',
+    mode := 'standard',
+    metrics := ['QUERY_NAME', 'LATENCY', 'OPERATOR_TIMING']
+);
+----
+success
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+CALL enable_profiling(['LATENCY', 'RESULT_SET_SIZE']);
+----
+success
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+CALL disable_profiling();
+----
+success

@@ -1,0 +1,28 @@
+# DOCS_TEST: example_018
+
+statement ok
+CREATE SEQUENCE id_sequence START 1;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER DEFAULT nextval('id_sequence'),
+    s VARCHAR
+);
+
+# DOCS_TEST_RAW
+#| DROP SEQUENCE id_sequence CASCADE;
+#|
+#| SELECT * FROM tbl;
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP SEQUENCE id_sequence CASCADE;
+
+statement ok
+DROP TABLE IF EXISTS tbl;
+
+query error
+SELECT * FROM tbl;
+----
+db error: ERROR: Table with name tbl does not exist!

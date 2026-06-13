@@ -1,0 +1,176 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_snippets_analyze_git_repository_example_001_1_git_log_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| CREATE TABLE commits AS
+#|     FROM read_csv(
+#|             'git-log.csv',
+#|             delim = '🍥',
+#|             header = false,
+#|             column_names = ['timestamp', 'hash', 'author', 'message']
+#|         );
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE TABLE commits AS
+    FROM read_csv(
+            '/tmp/${__DATABASE__}_cookbook_snippets_analyze_git_repository_example_001_1_git_log_csv.csv',
+            delim = '🍥',
+            header = false,
+            column_names = ['timestamp', 'hash', 'author', 'message']
+        );
+----
+db error: ERROR: Error when sniffing file "/tmp/tests_sqllogic_sdb_pg_site_docs_cookbook_snippets_anal_pvhnqzah_cookbook_snippets_analyze_git_repository_example_001_1_git_log_csv.csv".
+It was not possible to detect the CSV Header, due to the header having less columns than expected
+Number of expected columns: 4. Actual number of columns 1
+Detected row as Header:
+1,alpha,10
+Possible fixes:
+* Disable the parser's strict mode (strict_mode=false) to allow reading rows that do not comply with the CSV standard.
+* Header is set to '0'. Consider unsetting it.
+* Set skip (skip=${n}) to skip ${n} lines at the top of the file
+* Enable ignore errors (ignore_errors=true) to ignore potential errors
+* Enable null padding (null_padding=true) to pad missing columns with NULL values
+
+# DOCS_TEST: example_002
+
+statement ok
+DROP TABLE IF EXISTS commits;
+
+statement ok
+CREATE TABLE commits (timestamp TIMESTAMP, hash VARCHAR, author VARCHAR, message VARCHAR);
+
+statement ok
+INSERT INTO commits VALUES
+    (TIMESTAMP '2025-01-01 10:00:00', 'abc123', 'Ada', 'ci update python tests'),
+    (TIMESTAMP '2025-02-01 11:00:00', 'def456', 'Bob', 'cli parser fix');
+
+# DOCS_TEST_BODY
+
+query ????
+FROM commits
+LIMIT 5;
+----
+timestamp	hash	author	message
+2025-01-01 10:00:00	abc123	Ada	ci update python tests
+2025-02-01 11:00:00	def456	Bob	cli parser fix
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query error
+SELECT
+    message.lower().regexp_extract('\b(ci|cli|python)\b') AS topic,
+    count(*) AS num_commits
+FROM commits
+WHERE topic <> ''
+GROUP BY ALL
+ORDER BY num_commits DESC;
+----
+substitution failed: Invalid escape sequence: \\b
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE TABLE words AS
+    SELECT unnest(
+        message
+            .lower()
+            .regexp_replace('\W', ' ')
+            .trim(' ')
+            .string_split_regex('\W')
+        ) AS word
+FROM commits;
+----
+substitution failed: Invalid escape sequence: \\W
+
+# DOCS_TEST: example_005
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS words;
+
+statement ok
+DROP TABLE IF EXISTS words;
+
+statement ok
+CREATE TABLE words (word VARCHAR);
+
+statement ok
+INSERT INTO words VALUES
+    ('ci'),
+    ('python'),
+    ('tests'),
+    ('cli');
+
+# DOCS_TEST_RAW
+#| CREATE TABLE stopwords AS
+#|     SELECT unnest(['a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by', 'can', 'did', 'do', 'does', 'doing', 'don', 'down', 'during', 'each', 'few', 'for', 'from', 'further', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'herself', 'him', 'himself', 'his', 'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'itself', 'just', 'me', 'more', 'most', 'my', 'myself', 'no', 'nor', 'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our', 'ourselves', 'out', 'over', 'own', 's', 'same', 'she', 'should', 'so', 'some', 'such', 't', 'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', 'these', 'they', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up', 'very', 'was', 'we', 'were', 'what', 'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with', 'you', 'your', 'yours', 'yourself', 'yourselves']) AS word;
+#|
+#| CREATE OR REPLACE TABLE words AS
+#|     FROM words
+#|     NATURAL ANTI JOIN stopwords
+#|     WHERE word != '';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE stopwords AS
+    SELECT unnest(['a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by', 'can', 'did', 'do', 'does', 'doing', 'don', 'down', 'during', 'each', 'few', 'for', 'from', 'further', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'herself', 'him', 'himself', 'his', 'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'itself', 'just', 'me', 'more', 'most', 'my', 'myself', 'no', 'nor', 'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our', 'ours', 'ourselves', 'out', 'over', 'own', 's', 'same', 'she', 'should', 'so', 'some', 'such', 't', 'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', 'these', 'they', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up', 'very', 'was', 'we', 'were', 'what', 'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with', 'you', 'your', 'yours', 'yourself', 'yourselves']) AS word;
+
+statement ok
+CREATE TABLE words_filtered AS
+    FROM words
+    NATURAL ANTI JOIN stopwords
+    WHERE word != '';
+
+statement ok
+DROP TABLE words;
+
+statement ok
+ALTER TABLE words_filtered RENAME TO words;
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query ?? rowsort
+SELECT word, count(*) AS count FROM words
+GROUP BY ALL
+ORDER BY count DESC
+LIMIT 20;
+----
+word	count
+ci	1
+cli	1
+python	1
+tests	1
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query ???
+SELECT
+    year(timestamp) AS year,
+    count(*) AS num_commits,
+    num_commits.bar(0, 20_000) AS num_commits_viz
+FROM commits
+GROUP BY ALL
+ORDER BY ALL;
+----
+year	num_commits	num_commits_viz
+2025	2	<slt:ignore>

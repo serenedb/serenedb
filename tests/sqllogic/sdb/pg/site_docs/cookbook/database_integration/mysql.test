@@ -1,0 +1,40 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement error
+INSTALL mysql;
+----
+db error: ERROR: Failed to download extension "mysql_scanner" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/mysql_scanner.duckdb_extension.gz"
+Extension "mysql_scanner" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=mysql_scanner (ERROR Problem with the SSL CA cert (path? access rights?))
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement error
+LOAD mysql;
+----
+db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/mysql_scanner.duckdb_extension" not found.
+Extension "mysql" is an existing extension.
+
+Install it first using "INSTALL mysql".
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement error
+ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS mysql_db (TYPE mysql, READ_ONLY);
+----
+db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/mysql_scanner.duckdb_extension" not found.
+Extension "mysql" is an existing extension.
+
+Install it first using "INSTALL mysql".
+
+statement ok
+USE mysql_db;

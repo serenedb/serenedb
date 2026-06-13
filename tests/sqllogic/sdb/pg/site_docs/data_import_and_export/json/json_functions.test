@@ -1,0 +1,590 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT ((JSON '{"field": 42}')->'field') = 42;
+----
+?column?
+t
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE example (j JSON);
+
+statement ok
+INSERT INTO example VALUES
+    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+
+# DOCS_TEST: example_003
+
+statement ok
+DROP TABLE IF EXISTS example;
+
+statement ok
+CREATE TABLE example (j JSON);
+
+statement ok
+INSERT INTO example VALUES
+    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+
+# DOCS_TEST_RAW
+#| SELECT json_extract(j, '$.family') FROM example;
+
+# DOCS_TEST_BODY
+
+control substitution off
+
+query
+SELECT json_extract(j, '$.family') FROM example;
+----
+json_extract
+NULL
+
+control substitution on
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query error
+SELECT j->'$.family' FROM example;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query error
+SELECT j->'$.species[0]' FROM example;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query error
+SELECT j->'$.species[*]' FROM example;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query error
+SELECT j->>'$.species[*]' FROM example;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query error
+SELECT j->'$.species'->0 FROM example;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT j->'species'->['/0', '/1'] FROM example;
+----
+?column?
+{"\\"duck\\"","\\"goose\\""}
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query error
+SELECT json_extract_string(j, '$.family') FROM example;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query error
+SELECT j->>'$.family' FROM example;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query error
+SELECT j->>'$.species[0]' FROM example;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT j->'species'->>0 FROM example;
+----
+?column?
+duck
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query
+SELECT j->'species'->>['/0', '/1'] FROM example;
+----
+?column?
+{duck,goose}
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    json_extract(j, 'family') AS family,
+    json_extract(j, 'species') AS species
+FROM example;
+----
+family	species
+"anatidae"	[ "duck", "goose", "swan", null ]
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+WITH extracted AS (
+    SELECT json_extract(j, ['family', 'species']) AS extracted_list
+    FROM example
+)
+SELECT
+    extracted_list[1] AS family,
+    extracted_list[2] AS species
+FROM extracted;
+----
+family	species
+"anatidae"	["duck","goose","swan",null]
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_extract('{"duck": [1, 2, 3]}', '/duck/0');
+----
+json_extract
+1
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query error
+SELECT json_extract('{"duck": [1, 2, 3]}', '$.duck[0]');
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query error
+SELECT json_extract('{"duck": [1, 2, 3]}', '$.duck[#-1]');
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+query error
+SELECT json_extract('{"duck.goose": [1, 2, 3]}', '$."duck.goose"[1]');
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_021
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS example;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE example (j JSON);
+
+statement ok
+INSERT INTO example VALUES
+    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+
+# DOCS_TEST: example_022
+
+statement ok
+DROP TABLE IF EXISTS example;
+
+statement ok
+CREATE TABLE example (j VARCHAR);
+
+statement ok
+INSERT INTO example VALUES
+    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+
+# DOCS_TEST_BODY
+
+query
+SELECT json(j) FROM example;
+----
+json
+{"family":"anatidae","species":["duck","goose","swan",null]}
+
+# DOCS_TEST: example_023
+
+statement ok
+DROP TABLE IF EXISTS example;
+
+statement ok
+CREATE TABLE example (j JSON);
+
+statement ok
+INSERT INTO example VALUES
+    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+
+# DOCS_TEST_BODY
+
+query
+SELECT j.family FROM example;
+----
+family
+"anatidae"
+
+# DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
+
+query
+SELECT j.species[0] FROM example;
+----
+species
+"duck"
+
+# DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_valid(j) FROM example;
+----
+json_valid
+t
+
+# DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_valid('{');
+----
+json_valid
+f
+
+# DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_array_length('["duck", "goose", "swan", null]');
+----
+json_array_length
+4
+
+# DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_array_length(j, 'species') FROM example;
+----
+json_array_length
+4
+
+# DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_array_length(j, '/species') FROM example;
+----
+json_array_length
+4
+
+# DOCS_TEST: example_030
+
+# DOCS_TEST_BODY
+
+query error
+SELECT json_array_length(j, '$.species') FROM example;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
+
+query error
+SELECT json_array_length(j, ['$.species']) FROM example;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_032
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_type(j) FROM example;
+----
+json_type
+OBJECT
+
+# DOCS_TEST: example_033
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_keys(j) FROM example;
+----
+json_keys
+{family,species}
+
+# DOCS_TEST: example_034
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_structure(j) FROM example;
+----
+json_structure
+{"family":"VARCHAR","species":["VARCHAR"]}
+
+# DOCS_TEST: example_035
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_structure('["duck", {"family": "anatidae"}]');
+----
+json_structure
+["JSON"]
+
+# DOCS_TEST: example_036
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_contains('{"key": "value"}', '"value"');
+----
+json_contains
+t
+
+# DOCS_TEST: example_037
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_contains('{"key": 1}', '1');
+----
+json_contains
+t
+
+# DOCS_TEST: example_038
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_contains('{"top_key": {"key": "value"}}', '{"key": "value"}');
+----
+json_contains
+t
+
+# DOCS_TEST: example_039
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE example1 (k VARCHAR, v INTEGER);
+
+statement ok
+INSERT INTO example1 VALUES ('duck', 42), ('goose', 7);
+
+# DOCS_TEST: example_040
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_group_array(v) FROM example1;
+----
+json_group_array
+[42,7]
+
+# DOCS_TEST: example_041
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_group_object(k, v) FROM example1;
+----
+json_group_object
+<slt:ignore>
+
+# DOCS_TEST: example_042
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE example2 (j JSON);
+
+statement ok
+INSERT INTO example2 VALUES
+    ('{"family": "anatidae", "species": ["duck", "goose"], "coolness": 42.42}'),
+    ('{"family": "canidae", "species": ["labrador", "bulldog"], "hair": true}');
+
+# DOCS_TEST: example_043
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_group_structure(j) FROM example2;
+----
+json_group_structure
+{"family":"VARCHAR","species":["VARCHAR"],"coolness":"DOUBLE","hair":"BOOLEAN"}
+
+# DOCS_TEST: example_044
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS example;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE example (j JSON);
+
+statement ok
+INSERT INTO example VALUES
+    ('{"family": "anatidae", "species": ["duck", "goose"], "coolness": 42.42}'),
+    ('{"family": "canidae", "species": ["labrador", "bulldog"], "hair": true}');
+
+# DOCS_TEST: example_045
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_transform(j, '{"family": "VARCHAR", "coolness": "DOUBLE"}') FROM example;
+----
+json_transform
+(anatidae,42.42)
+(canidae,)
+
+# DOCS_TEST: example_046
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_transform(j, '{"family": "TINYINT", "coolness": "DECIMAL(4, 2)"}') FROM example;
+----
+json_transform
+(,42.42)
+(,)
+
+# DOCS_TEST: example_047
+
+# DOCS_TEST_BODY
+
+query error
+SELECT json_transform_strict(j, '{"family": "TINYINT", "coolness": "DOUBLE"}') FROM example;
+----
+db error: ERROR: Failed to cast value to numerical: "canidae"
+
+# DOCS_TEST: example_048
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS example;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE example (j JSON);
+
+statement ok
+INSERT INTO example VALUES
+    ('{"family": "anatidae", "species": ["duck", "goose"], "coolness": 42.42}'),
+    ('{"family": "canidae", "species": ["labrador", "bulldog"], "hair": true}');
+
+# DOCS_TEST: example_049
+
+# DOCS_TEST_BODY
+
+query
+SELECT je.*, je.rowid
+FROM example AS e, json_each(e.j) AS je;
+----
+key	value	type	atom	id	parent	fullkey	path	rowid
+family	"anatidae"	VARCHAR	"anatidae"	2	NULL	$.family	$	0
+species	["duck","goose"]	ARRAY	NULL	4	NULL	$.species	$	1
+coolness	42.42	DOUBLE	42.42	8	NULL	$.coolness	$	2
+family	"canidae"	VARCHAR	"canidae"	2	NULL	$.family	$	0
+species	["labrador","bulldog"]	ARRAY	NULL	4	NULL	$.species	$	1
+hair	true	BOOLEAN	true	8	NULL	$.hair	$	2
+
+# DOCS_TEST: example_050
+
+# DOCS_TEST_BODY
+
+query error
+SELECT je.*, je.rowid
+FROM example AS e, json_each(e.j, '$.species') AS je;
+----
+substitution failed: Missing variable name
+
+# DOCS_TEST: example_051
+
+# DOCS_TEST_BODY
+
+query
+SELECT je.key, je.value, je.type, je.id, je.parent, je.fullkey, je.rowid
+FROM example AS e, json_tree(e.j) AS je;
+----
+key	value	type	id	parent	fullkey	rowid
+NULL	{"family":"anatidae","species":["duck","goose"],"coolness":42.42}	OBJECT	0	NULL	$	0
+family	"anatidae"	VARCHAR	2	0	$.family	1
+species	["duck","goose"]	ARRAY	4	0	$.species	2
+0	"duck"	VARCHAR	5	4	$.species[0]	3
+1	"goose"	VARCHAR	6	4	$.species[1]	4
+coolness	42.42	DOUBLE	8	0	$.coolness	5
+NULL	{"family":"canidae","species":["labrador","bulldog"],"hair":true}	OBJECT	0	NULL	$	0
+family	"canidae"	VARCHAR	2	0	$.family	1
+species	["labrador","bulldog"]	ARRAY	4	0	$.species	2
+0	"labrador"	VARCHAR	5	4	$.species[0]	3
+1	"bulldog"	VARCHAR	6	4	$.species[1]	4
+hair	true	BOOLEAN	8	0	$.hair	5

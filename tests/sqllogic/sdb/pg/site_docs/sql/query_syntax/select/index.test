@@ -1,0 +1,325 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE cities AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
+statement ok
+CREATE TABLE sales AS SELECT * FROM (VALUES
+    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
+    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
+) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+
+control substitution on
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT col1 + col2 AS res, sqrt(col1) AS root FROM tbl;
+----
+res	root
+3	1
+9	2
+25	3
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    res: col1 + col2,
+    root: sqrt(col1)
+FROM tbl;
+----
+res	root
+3	1
+9	2
+25	3
+
+# DOCS_TEST: example_004
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE addresses (
+    address VARCHAR,
+    city VARCHAR,
+    street_name VARCHAR,
+    income DOUBLE,
+    zip VARCHAR,
+    country VARCHAR,
+    population INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO addresses VALUES
+    ('123 Quack Blvd', 'DuckTown', 'Quack Blvd', 50000, '11111', 'NL', 100, 1, 10),
+    ('111 Duck Duck Goose Ln', 'DuckTown', 'Duck Duck Goose Ln', 60000, '11111', 'NL', 100, 2, 20),
+    ('111 Duck Duck Goose Ln', 'Duck Town', 'Duck Duck Goose Ln', 70000, '11111', 'US', 50, 3, 30),
+    ('111 Duck Duck Goose Ln', 'Duck Town', 'Duck Duck Goose Ln', 80000, '11111-0001', 'US', 50, 4, 40),
+    ('5 Pond Road', 'Mallard', 'Pond Road', 90000, '22222', 'UK', 25, 5, 50),
+    ('9 Lake View', 'Mallard', 'Lake View', 40000, '33333', 'UK', 25, 6, 60);
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT DISTINCT city FROM addresses;
+----
+city
+Duck Town
+DuckTown
+Mallard
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FROM addresses;
+----
+count
+6
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT * EXCLUDE (city) FROM addresses;
+----
+address	street_name	income	zip	country	population	number1	number2
+123 Quack Blvd	Quack Blvd	50000	11111	NL	100	1	10
+111 Duck Duck Goose Ln	Duck Duck Goose Ln	60000	11111	NL	100	2	20
+111 Duck Duck Goose Ln	Duck Duck Goose Ln	70000	11111	US	50	3	30
+111 Duck Duck Goose Ln	Duck Duck Goose Ln	80000	11111-0001	US	50	4	40
+5 Pond Road	Pond Road	90000	22222	UK	25	5	50
+9 Lake View	Lake View	40000	33333	UK	25	6	60
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT * REPLACE (lower(city) AS city) FROM addresses;
+----
+address	city	street_name	income	zip	country	population	number1	number2
+123 Quack Blvd	ducktown	Quack Blvd	50000	11111	NL	100	1	10
+111 Duck Duck Goose Ln	ducktown	Duck Duck Goose Ln	60000	11111	NL	100	2	20
+111 Duck Duck Goose Ln	duck town	Duck Duck Goose Ln	70000	11111	US	50	3	30
+111 Duck Duck Goose Ln	duck town	Duck Duck Goose Ln	80000	11111-0001	US	50	4	40
+5 Pond Road	mallard	Pond Road	90000	22222	UK	25	5	50
+9 Lake View	mallard	Lake View	40000	33333	UK	25	6	60
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query error
+SELECT COLUMNS('number\d+') FROM addresses;
+----
+substitution failed: Invalid escape sequence: \\d
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT min(COLUMNS(*)) FROM addresses;
+----
+address	city	street_name	income	zip	country	population	number1	number2
+111 Duck Duck Goose Ln	Duck Town	Duck Duck Goose Ln	40000	11111	NL	25	1	10
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT "Some Column Name" FROM tbl;
+----
+some column name
+alpha
+beta
+gamma
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM tbl;
+----
+id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
+1	mark	1	2	alpha	1	10	20	30	10	100	1000
+3	bookmark	4	5	beta	2	11	21	31	20	200	2000
+7	other	9	16	gamma	3	12	22	32	NULL	300	3000
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query error
+SELECT COLUMNS('number\d+')
+FROM addresses;
+----
+substitution failed: Invalid escape sequence: \\d
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT DISTINCT city
+FROM addresses;
+----
+city
+Duck Town
+DuckTown
+Mallard
+
+# DOCS_TEST: example_014
+
+statement ok
+DROP TABLE IF EXISTS cities;
+
+statement ok
+CREATE TABLE cities (
+    city VARCHAR,
+    country VARCHAR,
+    population INTEGER
+);
+
+statement ok
+INSERT INTO cities VALUES
+    ('Amsterdam', 'NL', 921402),
+    ('Rotterdam', 'NL', 664046),
+    ('New York', 'US', 8804190),
+    ('Los Angeles', 'US', 3898747),
+    ('London', 'UK', 8799800),
+    ('Manchester', 'UK', 551938);
+
+# DOCS_TEST_BODY
+
+query ??
+SELECT DISTINCT ON(country) city, population
+FROM cities
+ORDER BY population DESC;
+----
+city	population
+New York	8804190
+London	8799800
+Amsterdam	921402
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*)
+FROM addresses;
+----
+count
+6
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query ?? rowsort
+SELECT city, count(*)
+FROM addresses
+GROUP BY city;
+----
+city	count
+Duck Town	2
+DuckTown	2
+Mallard	2
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT row_number() OVER ()
+FROM sales;
+----
+row_number
+1
+2
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT amount - lag(amount) OVER (ORDER BY time)
+FROM sales;
+----
+?column?
+NULL
+100
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest([1, 2, 3]);
+----
+unnest
+1
+2
+3
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest({'a': 42, 'b': 84});
+----
+a	b
+42	84

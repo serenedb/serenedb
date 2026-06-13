@@ -1,0 +1,106 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement error
+INSTALL excel;
+----
+db error: ERROR: Failed to download extension "excel" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/excel.duckdb_extension.gz"
+Extension "excel" is an existing extension.
+
+For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=excel (ERROR Problem with the SSL CA cert (path? access rights?))
+
+
+statement error
+LOAD excel;
+----
+db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/excel.duckdb_extension" not found.
+Extension "excel" is an existing extension.
+
+Install it first using "INSTALL excel".
+
+# DOCS_TEST: example_002
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST_BODY
+
+statement error
+COPY tbl TO 'output.xlsx' WITH (FORMAT xlsx);
+----
+db error: ERROR: Copy Function with name xlsx does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement error
+COPY (SELECT * FROM tbl) TO 'output.xlsx' WITH (FORMAT xlsx);
+----
+db error: ERROR: Copy Function with name xlsx does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement error
+COPY (SELECT * FROM tbl) TO 'output.xlsx';
+----
+db error: ERROR: Copy Function with name "xlsx" is not in the catalog, but it exists in the excel extension\.
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement error
+COPY tbl TO 'output.xlsx' WITH (FORMAT xlsx, HEADER true);
+----
+db error: ERROR: Copy Function with name xlsx does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement error
+COPY tbl TO 'output.xlsx' WITH (FORMAT xlsx, SHEET 'Sheet1');
+----
+db error: ERROR: Copy Function with name xlsx does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement error
+COPY (SELECT CAST(a AS VARCHAR), b FROM tbl) TO 'output.xlsx' WITH (FORMAT xlsx);
+----
+db error: ERROR: Copy Function with name xlsx does not exist!
+Did you mean "<slt:ignore>"?

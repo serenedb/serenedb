@@ -1,0 +1,172 @@
+# DOCS_TEST: example_001
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('{"key1":"value1", "key2": "value1"}'),
+    ('{"key1":"value2", "key2": "value2"}'),
+    ('{"key1":"value3", "key2": "value3"}')
+) AS t(line)) TO '/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_001_filename.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM filename.json;
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM '/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_001_filename.json';
+----
+key1	key2
+value1	value1
+value2	value2
+value3	value3
+
+# DOCS_TEST: example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('{"key1":"value1", "key2": "value1"}'),
+    ('{"key1":"value2", "key2": "value2"}'),
+    ('{"key1":"value3", "key2": "value3"}')
+) AS t(line)) TO '/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_002_1_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_json('records.json', format = 'newline_delimited');
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_002_1_records_json.json', format = 'newline_delimited');
+----
+key1	key2
+value1	value1
+value2	value2
+value3	value3
+
+# DOCS_TEST: example_003
+
+statement ok
+COPY (SELECT '[{"key1":"value1","key2":"value1"},{"key1":"value2","key2":"value2"},{"key1":"value3","key2":"value3"}]' AS line) TO '/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_003_1_records_in_array_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_json('records-in-array.json', format = 'array');
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_003_1_records_in_array_json.json', format = 'array');
+----
+key1	key2
+value1	value1
+value2	value2
+value3	value3
+
+# DOCS_TEST: example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('{'),
+    ('    "key1":"value1",'),
+    ('    "key2":"value1"'),
+    ('}'),
+    ('{'),
+    ('    "key1":"value2",'),
+    ('    "key2":"value2"'),
+    ('}'),
+    ('{'),
+    ('    "key1":"value3",'),
+    ('    "key2":"value3"'),
+    ('}')
+) AS t(line)) TO '/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_004_1_unstructured_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_json('unstructured.json', format = 'unstructured');
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_004_1_unstructured_json.json', format = 'unstructured');
+----
+key1	key2
+value1	value1
+value2	value2
+value3	value3
+
+# DOCS_TEST: example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('{"key1":"value1", "key2": "value1"}'),
+    ('{"key1":"value2", "key2": "value2"}'),
+    ('{"key1":"value3", "key2": "value3"}')
+) AS t(line)) TO '/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_005_1_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_json('records.json', records = true);
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_005_1_records_json.json', records = true);
+----
+key1	key2
+value1	value1
+value2	value2
+value3	value3
+
+# DOCS_TEST: example_006
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('{"key1":"value1", "key2": "value1"}'),
+    ('{"key1":"value2", "key2": "value2"}'),
+    ('{"key1":"value3", "key2": "value3"}')
+) AS t(line)) TO '/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_006_1_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_json('records.json', records = false);
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_006_1_records_json.json', records = false);
+----
+json
+(value1,value1)
+(value2,value2)
+(value3,value3)
+
+# DOCS_TEST: example_007
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    ('[1, 2, 3]'),
+    ('[4, 5, 6]'),
+    ('[7, 8, 9]')
+) AS t(line)) TO '/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_007_1_arrays_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_json('arrays.json', records = false);
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_format_settings_example_007_1_arrays_json.json', records = false);
+----
+json
+{1,2,3}
+{4,5,6}
+{7,8,9}

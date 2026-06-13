@@ -223,6 +223,75 @@ id
 3
 
 
+# TS_HIGHLIGHT / TS_OFFSETS OVER SPARSE NGRAM
+# Regression: the tokenizer emits grams out of start-offset order, so the
+# offsets/highlight path re-derives them by sorting the grams in an in-memory
+# index. Before the sorting adapter this segfaulted (positions written, offsets
+# not). The matched substring region must come back wrapped, and ts_offsets
+# must return pairs sorted ascending by start.
+
+query
+SELECT ts_highlight(code) FROM snippets_idx
+WHERE code @@ ts_all(ts_lexize('code_grams_covering', 'for(int i=42'))
+ORDER BY id;
+----
+ts_highlight
+<b>for(int i=42</b>; i<n; ++i) total += data[i
+
+
+query
+SELECT ts_offsets(code) FROM snippets_idx
+WHERE code @@ ts_all(ts_lexize('code_grams_covering', 'for(int i=42'))
+ORDER BY id;
+----
+ts_offsets
+{0,3,0,4,0,5,1,4,2,5,3,6,3,7,3,11,4,7,5,8,5,11,6,9,6,10,6,11,7,10,8,11,9,12}
+
+
+# Guard: union interleaves independent sub-tokenizers and cannot produce
+# offsets at all, so highlight must raise a clean error instead of crashing.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_dict(
+    template = 'union',
+    tokenizer1_template = 'text',
+    tokenizer1_locale = 'en_US.UTF-8',
+    tokenizer1_case = 'lower',
+    tokenizer1_stemming = false,
+    tokenizer2_template = 'ngram',
+    tokenizer2_mingram = 3,
+    tokenizer2_maxgram = 3,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE union_tbl(id INT, body TEXT)
+
+
+statement ok
+INSERT INTO union_tbl VALUES (1, 'hello world')
+
+
+statement ok
+CREATE INDEX union_idx ON union_tbl USING inverted(id, body union_dict)
+
+
+statement error
+SELECT ts_highlight(body) FROM union_idx WHERE body @@ ts_tokenize('hello')
+----
+db error: ERROR: ts_offsets()/ts_highlight() is not supported for this dictionary: its tokenizer does not produce text offsets
+
+
+statement ok
+DROP TABLE union_tbl
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY union_dict
+
+
 statement ok
 DROP TABLE snippets;
 

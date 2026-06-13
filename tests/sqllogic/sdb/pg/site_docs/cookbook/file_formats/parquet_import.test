@@ -1,0 +1,156 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_001_1_input_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT * FROM read_parquet('input.parquet');
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_001_1_input_parquet.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_002_1_input_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT * FROM 'input.parquet';
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_002_1_input_parquet.parquet';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_003_1_input_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| CREATE TABLE new_tbl AS
+#|     SELECT * FROM read_parquet('input.parquet');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE new_tbl AS
+    SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_003_1_input_parquet.parquet');
+
+# DOCS_TEST: example_004
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_004_1_input_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| INSERT INTO tbl
+#|     SELECT * FROM read_parquet('input.parquet');
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT INTO tbl
+    SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_004_1_input_parquet.parquet');
+
+# DOCS_TEST: example_005
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_005_1_input_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| COPY tbl FROM 'input.parquet' (FORMAT parquet);
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY tbl FROM '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_005_1_input_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_RAW
+#| COPY (FROM (VALUES (42, 43)) t(c1, c2))
+#| TO 'f.parquet';
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (FROM (VALUES (42, 43)) t(c1, c2))
+TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_006_1_f_parquet.parquet';
+
+# DOCS_TEST: example_007
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_007_1_f_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| FROM (VALUES (NULL::VARCHAR, NULL, NULL)) t(c1, c2, c3)
+#| WHERE false
+#| UNION ALL BY NAME
+#| FROM 'f.parquet';
+
+# DOCS_TEST_BODY
+
+query
+FROM (VALUES (NULL::VARCHAR, NULL, NULL)) t(c1, c2, c3)
+WHERE false
+UNION ALL BY NAME
+FROM '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_007_1_f_parquet.parquet';
+----
+c1	c2	c3	id	name	value
+NULL	NULL	NULL	1	alpha	10
+NULL	NULL	NULL	2	beta	20

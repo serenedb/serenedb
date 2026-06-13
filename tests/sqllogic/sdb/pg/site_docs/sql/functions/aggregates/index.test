@@ -1,0 +1,107 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE sales (
+    amount INTEGER,
+    region VARCHAR,
+    date DATE
+);
+
+statement ok
+INSERT INTO sales VALUES
+    (10, 'north', DATE '2024-01-01'),
+    (20, 'south', DATE '2024-01-02'),
+    (30, 'north', DATE '2024-01-03'),
+    (110, 'east', DATE '2024-01-04');
+
+# DOCS_TEST_BODY
+
+query
+SELECT sum(amount)
+FROM sales;
+----
+sum
+170
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query ?? rowsort
+SELECT region, sum(amount)
+FROM sales
+GROUP BY region;
+----
+region	sum
+east	110
+north	40
+south	20
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT region
+FROM sales
+GROUP BY region
+HAVING sum(amount) > 100;
+----
+region
+east
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(DISTINCT region)
+FROM sales;
+----
+count
+3
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT sum(amount), sum(amount) FILTER (region != 'north')
+FROM sales;
+----
+sum	sum
+170	130
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT list(region ORDER BY amount DESC)
+FROM sales;
+----
+list
+{east,north,south,north}
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT first(amount ORDER BY date ASC)
+FROM sales;
+----
+first
+10
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query error
+SELECT ⟨aggregate_function⟩(⟨arg⟩, ⟨sep⟩ ORDER BY ⟨ordering_criteria⟩);
+----
+db error: ERROR: Scalar Function with name ⟨aggregate_function⟩ does not exist!
+Did you mean "<slt:ignore>"?

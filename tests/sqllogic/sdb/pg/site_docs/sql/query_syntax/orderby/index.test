@@ -1,0 +1,115 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+SET default_null_order = 'NULLS_FIRST';
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+SET default_order = 'DESC';
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE TABLE addresses AS
+    SELECT '123 Quack Blvd' AS address, 'DuckTown' AS city, '11111' AS zip
+    UNION ALL
+    SELECT '111 Duck Duck Goose Ln', 'DuckTown', '11111'
+    UNION ALL
+    SELECT '111 Duck Duck Goose Ln', 'Duck Town', '11111'
+    UNION ALL
+    SELECT '111 Duck Duck Goose Ln', 'Duck Town', '11111-0001';
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM addresses
+ORDER BY city;
+----
+address	city	zip
+123 Quack Blvd	DuckTown	11111
+111 Duck Duck Goose Ln	DuckTown	11111
+111 Duck Duck Goose Ln	Duck Town	11111
+111 Duck Duck Goose Ln	Duck Town	11111-0001
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM addresses
+ORDER BY city DESC NULLS LAST;
+----
+address	city	zip
+123 Quack Blvd	DuckTown	11111
+111 Duck Duck Goose Ln	DuckTown	11111
+111 Duck Duck Goose Ln	Duck Town	11111
+111 Duck Duck Goose Ln	Duck Town	11111-0001
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM addresses
+ORDER BY city, zip;
+----
+address	city	zip
+123 Quack Blvd	DuckTown	11111
+111 Duck Duck Goose Ln	DuckTown	11111
+111 Duck Duck Goose Ln	Duck Town	11111-0001
+111 Duck Duck Goose Ln	Duck Town	11111
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query error
+SELECT *
+FROM addresses
+ORDER BY city COLLATE DE;
+----
+db error: ERROR: Collation with name "de" is not in the catalog, but it exists in the icu extension.
+
+This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM addresses
+ORDER BY ALL;
+----
+address	city	zip
+123 Quack Blvd	DuckTown	11111
+111 Duck Duck Goose Ln	DuckTown	11111
+111 Duck Duck Goose Ln	Duck Town	11111-0001
+111 Duck Duck Goose Ln	Duck Town	11111
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM addresses
+ORDER BY ALL DESC;
+----
+address	city	zip
+123 Quack Blvd	DuckTown	11111
+111 Duck Duck Goose Ln	DuckTown	11111
+111 Duck Duck Goose Ln	Duck Town	11111-0001
+111 Duck Duck Goose Ln	Duck Town	11111

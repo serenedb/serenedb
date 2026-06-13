@@ -1,0 +1,6 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP FUNCTION IF EXISTS article_url;

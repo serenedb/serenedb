@@ -1,0 +1,842 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query error
+SELECT aggregate(array(1, 2, 3), 0, (acc, x) -> acc + x, acc -> acc * 10);
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array(1, 2, 3);
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_append(array(1, 2, 3), 2);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_append(array(1, 2, 3), NULL);
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_compact(array(1, 2, NULL, 3));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_compact(array());
+----
+db error: ERROR: syntax error at or near "\)"
+
+
+query error
+SELECT array_compact(array(NULL));
+----
+db error: ERROR: syntax error at or near "NULL"
+
+
+query error
+SELECT array_compact(NULL);
+----
+db error: ERROR: Scalar Function with name array_compact does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_compact(array(array(1, 2), NULL, array(NULL, 3, 4)));
+----
+db error: ERROR: syntax error at or near "array"
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_contains(array(1, 2, 3), 2);
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT array_distinct(ARRAY [1, 2, 3]);
+----
+array_distinct
+<slt:ignore>
+
+query
+SELECT array_distinct(ARRAY [1, 2, 1]);
+----
+array_distinct
+<slt:ignore>
+
+query
+SELECT array_distinct(ARRAY [1, NULL, NULL]);
+----
+array_distinct
+<slt:ignore>
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_except(ARRAY [1, 2, 3], ARRAY [4, 5, 6]);
+----
+db error: ERROR: Scalar Function with name array_except does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_except(ARRAY [1, 2, 3], ARRAY [1, 2]);
+----
+db error: ERROR: Scalar Function with name array_except does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_except(ARRAY [1, 2, 2], ARRAY [1, 1, 2]);
+----
+db error: ERROR: Scalar Function with name array_except does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_except(ARRAY [1, 2, 2], ARRAY [1, 3, 4]);
+----
+db error: ERROR: Scalar Function with name array_except does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_except(ARRAY [1, NULL, NULL], ARRAY [1, 1, NULL]);
+----
+db error: ERROR: Scalar Function with name array_except does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_insert(NULL, 1, 0, false);
+----
+db error: ERROR: Scalar Function with name array_insert does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_insert(NULL, 1, 0, true);
+----
+db error: ERROR: Scalar Function with name array_insert does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_insert(array(1, 2), NULL, 0, false);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_insert(array(1, 2), NULL, 0, true);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_insert(array(1, 2), 1, 0, false);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_insert(array(1, 2), 1, 0, true);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_insert(array(1, 2), 4, 0, false);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_insert(array(1, 2), 4, 0, true);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_insert(array(1, 2), -1, 0, false);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_insert(array(1, 2), -1, 0, true);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_insert(array(1, 2), -4, 0, false);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_insert(array(1, 2), -4, 0, true);
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_intersect(array(1, 2, 3), array(1, 3, 5));
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_max(array(1, 2, 3));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_max(array(-1, -2, -2));
+----
+db error: ERROR: syntax error at or near "\-"
+
+
+query error
+SELECT array_max(array(-1, -2, NULL));
+----
+db error: ERROR: syntax error at or near "\-"
+
+
+query error
+SELECT array_max(array());
+----
+db error: ERROR: syntax error at or near "\)"
+
+
+query error
+SELECT array_max(array(-0.0001, -0.0002, -0.0003, float('nan')));
+----
+db error: ERROR: syntax error at or near "\-"
+
+
+query error
+SELECT array_max(array(array(1), array(NULL)));
+----
+db error: ERROR: syntax error at or near "array"
+
+
+query error
+SELECT array_max(array(array(1), array(2, 1), array(2)));
+----
+db error: ERROR: syntax error at or near "array"
+
+
+query error
+SELECT array_max(array(array(1.0), array(1.0, 2.0), array(cast('NaN' as double))));
+----
+db error: ERROR: syntax error at or near "array"
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_min(array(1, 2, 3));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_min(array(-1, -2, -2));
+----
+db error: ERROR: syntax error at or near "\-"
+
+
+query error
+SELECT array_min(array(-1, -2, NULL));
+----
+db error: ERROR: syntax error at or near "\-"
+
+
+query error
+SELECT array_min(array(NULL, NULL));
+----
+db error: ERROR: syntax error at or near "NULL"
+
+
+query error
+SELECT array_min(array());
+----
+db error: ERROR: syntax error at or near "\)"
+
+
+query error
+SELECT array_min(array(4.0, float('nan')));
+----
+db error: ERROR: syntax error at or near "4\.0"
+
+
+query error
+SELECT array_min(array(NULL, float('nan')));
+----
+db error: ERROR: syntax error at or near "NULL"
+
+
+query error
+SELECT array_min(array(array(1), array(NULL)));
+----
+db error: ERROR: syntax error at or near "array"
+
+
+query error
+SELECT array_min(array(array(1), array(1, 2), array(2)));
+----
+db error: ERROR: syntax error at or near "array"
+
+
+query error
+SELECT array_min(array(array(1.0), array(1.0, 2.0), array(cast('NaN' as double))));
+----
+db error: ERROR: syntax error at or near "array"
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_position(array(1, 2, 3), 2);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_position(array(1, 2, 3), 4);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_position(array(1, 2, 3, 2), 2);
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_prepend(array(1, 2, 3), 2);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_prepend(array(1, 2, 3), NULL);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_prepend(NULL, 1);
+----
+db error: ERROR: No function matches the given name and argument types 'list_concat("NULL"[], INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	list_concat([ANY[]...]) -> ANY[]
+
+
+query error
+SELECT array_prepend(array(NULL, 2, 3), 1);
+----
+db error: ERROR: syntax error at or near "NULL"
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_remove(array(1, 2, 3), 3);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_remove(array(2, 1, NULL), 1);
+----
+db error: ERROR: syntax error at or near "2"
+
+
+query error
+SELECT array_remove(array(1, 2, NULL), NULL);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_remove(array(), 1);
+----
+db error: ERROR: syntax error at or near "\)"
+
+
+query error
+SELECT array_remove(array(NULL, NULL), -1);
+----
+db error: ERROR: syntax error at or near "NULL"
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_repeat(100, 3);
+----
+db error: ERROR: Scalar Function with name array_repeat does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_repeat(NULL, 3);
+----
+db error: ERROR: Scalar Function with name array_repeat does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_repeat(100, NULL);
+----
+db error: ERROR: Scalar Function with name array_repeat does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_repeat(100, 0);
+----
+db error: ERROR: Scalar Function with name array_repeat does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT array_repeat(100, -1);
+----
+db error: ERROR: Scalar Function with name array_repeat does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_sort(array(1, 2, 3));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_sort(array(3, 2, 1));
+----
+db error: ERROR: syntax error at or near "3"
+
+
+query error
+SELECT array_sort(array(2, 1, NULL));
+----
+db error: ERROR: syntax error at or near "2"
+
+
+query error
+SELECT array_sort(array(NULL, 1, NULL));
+----
+db error: ERROR: syntax error at or near "NULL"
+
+
+query error
+SELECT array_sort(array(NULL, 2, 1));
+----
+db error: ERROR: syntax error at or near "NULL"
+
+
+query error
+SELECT array_sort(array(4.0, NULL, float('nan'), 3.0));
+----
+db error: ERROR: syntax error at or near "4\.0"
+
+
+query error
+SELECT array_sort(array(array(), array(1, 3, NULL), array(NULL, 6), NULL, array(2, 1)));
+----
+db error: ERROR: syntax error at or near "array"
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_sort(array('cat', 'leopard', 'mouse'), (left, right) -> if(length(left) > length(right), 1, if(length(left) < length(right), -1, 0)));
+----
+db error: ERROR: syntax error at or near "'cat'"
+
+
+query error
+select array_sort(array("abcd123", "abcd", NULL, "abc"), (left, right) -> if(length(left) > length(right), 1, if(length(left) < length(right), -1, 0)));
+----
+db error: ERROR: syntax error at or near ""abcd123""
+
+
+query error
+select array_sort(array("abcd123", "abcd", NULL, "abc"), (left, right) -> if(length(left) > length(right), 1, if(length(left) = length(right), 0, -1)));
+----
+db error: ERROR: syntax error at or near ""abcd123""
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query error
+SELECT array_union(array(1, 2, 3), array(1, 3, 5));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_union(array(1, 3, 5), array(1, 2, 3));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_union(array(1, 2, 3), array(1, 3, 5, null));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_union(array(1, 2, float('nan')), array(1, 3, float('nan')));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT array_union(array(array(1)), array(array(null)));
+----
+db error: ERROR: syntax error at or near "array"
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+query error
+SELECT arrays_zip(ARRAY[1, 2], ARRAY['1b', null, '3b']);
+----
+db error: ERROR: Scalar Function with name arrays_zip does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
+
+query error
+SELECT concat(array(1, 2, 3), array(4, 5), array(6));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT concat(array(1, 2, 3), null);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT concat(array(1, 2), array(1, 2), array(1, null));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT concat(array(array(1, 2)), array(array(1, null)));
+----
+db error: ERROR: syntax error at or near "array"
+
+# DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
+
+query error
+SELECT filter(array(1, 2, 3), x -> x % 2 == 1);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT filter(array(0, 2, 3), (x, i) -> x > i);
+----
+db error: ERROR: syntax error at or near "0"
+
+
+query error
+SELECT filter(array(0, null, 2, 3, null), x -> x IS NOT NULL);
+----
+db error: ERROR: syntax error at or near "0"
+
+# DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
+
+query error
+SELECT flatten(array(array(1, 2), array(3, 4)));
+----
+db error: ERROR: syntax error at or near "array"
+
+
+query error
+SELECT flatten(array(array(1, 2), array(3, NULL)));
+----
+db error: ERROR: syntax error at or near "array"
+
+
+query error
+SELECT flatten(array(array(1, 2), NULL, array(3, 4)));
+----
+db error: ERROR: syntax error at or near "array"
+
+# DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
+
+query error
+SELECT get(array(1, 2, 3), 0);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT get(array(1, 2, 3), 3);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT get(array(1, 2, 3), -1);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT get(array(1, 2, 3), NULL);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT get(array(1, 2, NULL), 2);
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
+
+query error
+SELECT shuffle(array(1, 2, 3), 0);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT shuffle(array(0, 0, 0), 0);
+----
+db error: ERROR: syntax error at or near "0"
+
+
+query error
+SELECT shuffle(array(1, NULL, 1, NULL, 2), 0);
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
+
+query error
+SELECT size(array(1, 2, 3), true);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT size(NULL, true);
+----
+db error: ERROR: Scalar Function with name size does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT size(NULL, false);
+----
+db error: ERROR: Scalar Function with name size does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
+
+query error
+SELECT slice(array(1, 2, 3, 4), 2, 2);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT slice(array(1, 2, 3, 4), -2, 2);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT slice(array(1, 2, 3, 4), 5, 1);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT slice(array(1, 2, 3, 4), 2, 5);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT slice(array(1, 2, 3, 4), 2, 0);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT slice(array(1, 2, 3, 4), 1, -1);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT slice(array(1, 2, 3, 4), 0, 1);
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
+
+query error
+SELECT sort_array(array(1, 2, 3));
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT sort_array(array(NULL, 2, 1));
+----
+db error: ERROR: syntax error at or near "NULL"
+
+# DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
+
+query error
+SELECT sort_array(array(3, 2, 1), true);
+----
+db error: ERROR: syntax error at or near "3"
+
+
+query error
+SELECT sort_array(array(2, 1, NULL, true);
+----
+db error: ERROR: syntax error at or near "2"
+
+
+query error
+SELECT sort_array(array(NULL, 1, NULL), false);
+----
+db error: ERROR: syntax error at or near "NULL"
+
+# DOCS_TEST: example_030
+
+# DOCS_TEST_BODY
+
+query error
+SELECT transform(array(1, 2, 3), x -> x + 1);
+----
+db error: ERROR: syntax error at or near "1"
+
+
+query error
+SELECT transform(array(1, 2, 3), (x, i) -> x + i);
+----
+db error: ERROR: syntax error at or near "1"
+
+# DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
+
+query error
+SELECT zip_with(ARRAY[1, 3, 5], ARRAY['a', 'b', 'c'], (x, y) -> (y, x));
+----
+db error: ERROR: Scalar Function with name zip_with does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT zip_with(ARRAY[1, 2], ARRAY[3, 4], (x, y) -> x + y);
+----
+db error: ERROR: Scalar Function with name zip_with does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT zip_with(ARRAY['a', 'b', 'c'], ARRAY['d', 'e', 'f'], (x, y) -> concat(x, y));
+----
+db error: ERROR: Scalar Function with name zip_with does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT zip_with(ARRAY['a'], ARRAY['d', null, 'f'], (x, y) -> coalesce(x, y));
+----
+db error: ERROR: Scalar Function with name zip_with does not exist!
+Did you mean "<slt:ignore>"?

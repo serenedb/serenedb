@@ -1,0 +1,8 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement error
+COPY (⟨query⟩) TO '/dev/stdout' WITH (FORMAT csv, HEADER);
+----
+db error: ERROR: syntax error at or near "⟨query⟩"

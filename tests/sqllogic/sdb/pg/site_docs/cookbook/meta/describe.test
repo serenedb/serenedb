@@ -1,0 +1,22 @@
+control substitution on
+
+# DOCS_TEST: example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, '[2,3]', 4.5),
+    (2, '[5,8]', 9.5)
+) AS t("duck", "goose", "swan")) TO '/tmp/${__DATABASE__}_cookbook_meta_describe_example_004_1_star_trek_season_1_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| DESCRIBE TABLE 'https://blobs.duckdb.org/data/Star_Trek-Season_1.csv';
+
+# DOCS_TEST_BODY
+
+query
+DESCRIBE TABLE '/tmp/${__DATABASE__}_cookbook_meta_describe_example_004_1_star_trek_season_1_csv.csv';
+----
+column_name	column_type	null	key	default	extra
+duck	BIGINT	YES	NULL	NULL	NULL
+goose	VARCHAR	YES	NULL	NULL	NULL
+swan	DOUBLE	YES	NULL	NULL	NULL

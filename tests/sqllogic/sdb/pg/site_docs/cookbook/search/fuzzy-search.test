@@ -1,0 +1,182 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fuzzy_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE TABLE products (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR
+);
+
+statement ok
+CREATE INDEX idx_products ON products
+    USING inverted (id, name fuzzy_dict);
+
+statement ok
+INSERT INTO products VALUES
+    (1, 'cat'), (2, 'bat'), (3, 'car'),
+    (4, 'dog'), (5, 'cats'), (6, 'act');
+
+statement ok
+VACUUM (REFRESH_TABLE) products;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+-- Exact match only (distance 0)
+SELECT id, name FROM idx_products
+WHERE name @@ ts_levenshtein('cat', 0)
+ORDER BY id;
+----
+id	name
+1	cat
+
+query
+-- Distance 1: one edit away
+SELECT id, name FROM idx_products
+WHERE name @@ ts_levenshtein('cat', 1)
+ORDER BY id;
+----
+id	name
+1	cat
+2	bat
+3	car
+5	cats
+6	act
+
+query
+-- Distance 2: two edits away
+SELECT id, name FROM idx_products
+WHERE name @@ ts_levenshtein('cat', 2)
+ORDER BY id;
+----
+id	name
+1	cat
+2	bat
+3	car
+5	cats
+6	act
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+-- Disable transpositions: 'act' no longer matches 'cat'
+SELECT id, name FROM idx_products
+WHERE name @@ ts_levenshtein('cat', 1, false)
+ORDER BY id;
+----
+id	name
+1	cat
+2	bat
+3	car
+5	cats
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+-- Must start with 'ca', then fuzzy match the rest
+SELECT id, name FROM idx_products
+WHERE name @@ ts_levenshtein('t', 1, true, 'ca')
+ORDER BY id;
+----
+id	name
+1	cat
+3	car
+5	cats
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bigram_dict (
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 2,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE articles (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR
+);
+
+statement ok
+CREATE INDEX idx_articles_ngram ON articles
+    USING inverted (id, title bigram_dict);
+
+statement ok
+INSERT INTO articles VALUES
+    (1, 'hello'), (2, 'help'), (3, 'world'),
+    (4, 'held'), (5, 'hero');
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+-- Default threshold — strict matching
+SELECT id, title FROM idx_articles_ngram
+WHERE title @@ ts_ngram('hello')
+ORDER BY id;
+----
+id	title
+1	hello
+
+query
+-- Lower threshold (0.3) — matches more loosely
+SELECT id, title FROM idx_articles_ngram
+WHERE title @@ ts_ngram('hello', 0.3)
+ORDER BY id;
+----
+id	title
+1	hello
+2	help
+4	held
+
+query
+-- Threshold 0.0 — matches anything with at least one shared n-gram
+SELECT id, title FROM idx_articles_ngram
+WHERE title @@ ts_ngram('hello', 0.0)
+ORDER BY id;
+----
+id	title
+1	hello
+2	help
+4	held
+5	hero
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+-- Fuzzy match + exact filter
+SELECT id, name FROM idx_products
+WHERE name @@ ts_levenshtein('cat', 1) AND id < 4
+ORDER BY id;
+----
+id	name
+1	cat
+2	bat
+3	car

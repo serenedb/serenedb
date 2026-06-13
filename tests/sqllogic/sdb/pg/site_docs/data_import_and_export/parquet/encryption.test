@@ -1,0 +1,111 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+PRAGMA add_parquet_key('key128', '0123456789112345');
+----
+Success
+
+query
+PRAGMA add_parquet_key('key192', '012345678911234501234567');
+----
+Success
+
+query
+PRAGMA add_parquet_key('key256', '01234567891123450123456789112345');
+----
+Success
+
+query
+PRAGMA add_parquet_key('key256base64', 'MDEyMzQ1Njc4OTExMjM0NTAxMjM0NTY3ODkxMTIzNDU=');
+----
+Success
+
+# DOCS_TEST: example_002
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE tbl (
+    id INTEGER,
+    name VARCHAR,
+    col1 DOUBLE,
+    col2 DOUBLE,
+    "Some Column Name" VARCHAR,
+    i INTEGER,
+    a INTEGER,
+    b INTEGER,
+    c INTEGER,
+    number INTEGER,
+    number1 INTEGER,
+    number2 INTEGER
+);
+
+statement ok
+INSERT INTO tbl VALUES
+    (1, 'mark', 1, 2, 'alpha', 1, 10, 20, 30, 10, 100, 1000),
+    (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
+    (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
+
+# DOCS_TEST_RAW
+#| COPY tbl TO 'tbl.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY tbl TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_encryption_example_002_1_tbl_parquet.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
+
+# DOCS_TEST: example_003
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (8, 'fixture', 1.5, 2.5, 'delta', 4, 13, 23, 33, 30, 400, 4000),
+    (9, 'sample', 3.5, 4.5, 'epsilon', 5, 14, 24, 34, 40, 500, 5000)
+) AS t("id", "name", "col1", "col2", "Some Column Name", "i", "a", "b", "c", "number", "number1", "number2")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_encryption_example_003_1_tbl_parquet.parquet' (FORMAT parquet, ENCRYPTION_CONFIG {footer_key: 'key256'});
+
+# DOCS_TEST_RAW
+#| COPY tbl FROM 'tbl.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY tbl FROM '/tmp/${__DATABASE__}_data_import_and_export_parquet_encryption_example_003_1_tbl_parquet.parquet' (ENCRYPTION_CONFIG {footer_key: 'key256'});
+
+# DOCS_TEST: example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_encryption_example_004_1_tbl_parquet.parquet' (FORMAT parquet, ENCRYPTION_CONFIG {footer_key: 'key256'});
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_parquet('tbl.parquet', encryption_config = {footer_key: 'key256'});
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_parquet_encryption_example_004_1_tbl_parquet.parquet', encryption_config = {footer_key: 'key256'});
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement error
+COPY tbl TO 'tbl.parquet'
+    (ENCRYPTION_CONFIG {
+        footer_key: 'key256',
+        column_keys: {key256: ['col0', 'col1']}
+    });
+----
+db error: ERROR: Parquet encryption_config column_keys not yet implemented

@@ -1,0 +1,29 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE TEXT SEARCH DICTIONARY minhash_delim (
+    template = 'minhash',
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = ',',
+    numhashes = 2
+);
+----
+db error: ERROR: required parameter "template" was not found
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE TEXT SEARCH DICTIONARY minhash_text (
+    template = 'minhash',
+    analyzer_template = 'text',
+    analyzer_locale = 'en_US.UTF-8',
+    analyzer_case = 'lower',
+    analyzer_stemming = true,
+    numhashes = 4
+);
+----
+db error: ERROR: required parameter "template" was not found

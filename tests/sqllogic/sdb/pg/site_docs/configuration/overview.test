@@ -1,0 +1,136 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT current_setting('memory_limit') AS memlimit;
+----
+memlimit
+<slt:ignore>
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT value AS memlimit
+FROM duckdb_settings()
+WHERE name = 'memory_limit';
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+SET memory_limit = '10GB';
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+SET threads TO 1;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+SET enable_logging = true;
+
+statement ok
+SET logging_level = 'debug';
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT write_log('A new client has connected.', level := 'debug', scope := 'connection');
+----
+write_log
+NULL
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT write_log(
+        'A new duck has connected to the lake.',
+        level := 'debug',
+        scope := 'connection',
+        log_type := 'duckdb.docs.example.quack'
+    );
+----
+write_log
+NULL
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT * FROM duckdb_logs WHERE log_level = 'DEBUG';
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT * FROM duckdb_logs WHERE type = 'QueryLog';
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT * FROM duckdb_settings() WHERE name LIKE '%logging%';
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+statement ok
+SET enable_progress_bar = true;
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+statement ok
+SET default_null_order = 'nulls_last';
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT current_setting('threads') AS threads;
+----
+threads
+<slt:ignore>
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM duckdb_settings()
+WHERE name = 'threads';
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM duckdb_settings();
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+statement ok
+RESET memory_limit;

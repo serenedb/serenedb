@@ -1,0 +1,52 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| CREATE SECRET my_secret (
+#|     TYPE s3,
+#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
+#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     URL_STYLE 'path',
+#|     REGION '⟨us-east⟩',
+#|     ENDPOINT '⟨us-east⟩.object.fastlystorage.app' -- see note below
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_a8cfe5a9_001 (i INTEGER);
+
+# DOCS_TEST: example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_fastly_object_storage_import_example_002_1_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_fastly_object_storage_import_example_002_1_file_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT * FROM 's3://⟨fastly-bucket-name⟩/(file).csv';
+#|
+#| SELECT * FROM read_parquet('s3://⟨fastly-bucket-name⟩/⟨file⟩.parquet');
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_fastly_object_storage_import_example_002_1_file_csv.csv';
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+
+query
+SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_fastly_object_storage_import_example_002_1_file_parquet.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20

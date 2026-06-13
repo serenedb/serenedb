@@ -1,0 +1,28 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT '\xAA'::BLOB;
+----
+bytea
+\\xaa
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query error
+SELECT '\xAA\xAB\xAC'::BLOB;
+----
+db error: ERROR: invalid hexadecimal digit: "\\"
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'AB'::BLOB;
+----
+bytea
+\\x4142

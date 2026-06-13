@@ -1,0 +1,290 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE geometries (
+    id INTEGER,
+    geom GEOMETRY
+);
+
+statement ok
+INSERT INTO geometries VALUES
+  (1, 'POINT (30 10)'),
+  (2, 'LINESTRING (30 10, 10 30, 40 40)'),
+  (3, 'POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))'),
+  (4, 'MULTIPOINT ((10 40), (40 30), (20 20), (30 10))'),
+  (5, 'MULTILINESTRING ((10 10, 20 20, 10 40), (40 40, 30 30, 40 20))'),
+  (6, 'MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10,15 5)))'),
+  (7, 'GEOMETRYCOLLECTION (POINT(40 10), LINESTRING(10 10,20 20,10 40), POLYGON((40 40,20 45,45 30,40 40)))');
+
+query error
+SELECT * FROM geometries;
+----
+db error: ERROR: Such type is not supported
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE points (
+    id INTEGER,
+    geom GEOMETRY
+);
+
+statement ok
+INSERT INTO points VALUES
+  (1, 'POINT (30 10)'),
+  (2, 'POINT Z (30 10 5)'),
+  (3, 'POINT M (30 10 1)'),
+  (4, 'POINT ZM (30 10 5 1)');
+
+query error
+SELECT * FROM points;
+----
+db error: ERROR: Such type is not supported
+
+
+statement error
+-- But we cannot mix different vertex dimensions within the same geometry!
+INSERT INTO points VALUES
+  (5, 'MULTIPOINT (POINT (30 10), POINT Z (30 10 5))');
+----
+db error: ERROR: Failed to parse geometry: Expected number at offset 12
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+-- Disable shredding for geometry columns
+SET geometry_minimum_shredding_size = -1;
+
+statement ok
+-- Always shred geometry columns regardless of row group size
+SET geometry_minimum_shredding_size = 0;
+
+# DOCS_TEST: example_004
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS points;
+
+statement ok
+DETACH IF EXISTS geometry_db;
+
+statement ok
+DETACH IF EXISTS shredded_db;
+
+# DOCS_TEST_RAW
+#| -- Attach a persistent database with storage version v1.5
+#| ATTACH 'geometry_db.db' as geometry_db (STORAGE_VERSION 'v1.5.0');
+#|
+#| USE geometry_db;
+#|
+#| -- Disable shredding completely and create a table with 1 million 2D points
+#| SET geometry_minimum_shredding_size = -1;
+#|
+#| CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
+#| FROM range(0, 1000) AS rx(x), range(0, 1000) AS ry(y);
+#|
+#| -- Checkpoint the database to persist the data and storage layout to disk
+#| CHECKPOINT;
+#|
+#| -- Attach a second database
+#| ATTACH 'shredded_db.db' as shredded_db (STORAGE_VERSION 'v1.5.0');
+#|
+#| USE shredded_db;
+#|
+#| -- This time, set the minimum shredding size to 0 to always shred geometry columns,
+#| -- and create the same table with 1 million 2D points
+#| SET geometry_minimum_shredding_size = 0;
+#|
+#| CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
+#| FROM range(0, 1000) AS rx(x), range(0, 1000) AS ry(y);
+#|
+#| -- Checkpoint to persist the data and storage layout to disk, and apply shredding
+#| CHECKPOINT;
+#|
+#| -- Now check the storage layout and memory usage of the geometry column in both attached databases
+#| SELECT database_name, database_size FROM pragma_database_size();
+#|
+#| -- The geometry column in `geometry_db` is stored as regular GEOMETRY segments
+#| SELECT DISTINCT(segment_type) FROM pragma_storage_info('geometry_db.points');
+#|
+#| -- While the geometry column in `shredded_db` is decomposed into primitive DOUBLE segments,
+#| -- which can be compressed much more efficiently!
+#| SELECT DISTINCT(segment_type) FROM pragma_storage_info('shredded_db.points');
+
+# DOCS_TEST_BODY
+
+statement ok
+-- Attach a persistent database with storage version v1.5
+ATTACH '/tmp/${__DATABASE__}_sql_data_types_geometry_example_004_geometry_db.db' as geometry_db (STORAGE_VERSION 'v1.5.0');
+
+statement ok
+USE geometry_db;
+
+statement ok
+-- Disable shredding completely and create a table with 1 million 2D points
+SET geometry_minimum_shredding_size = -1;
+
+statement ok
+CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
+FROM range(0, 4) AS rx(x), range(0, 4) AS ry(y);
+
+statement ok
+-- Checkpoint the database to persist the data and storage layout to disk
+CHECKPOINT;
+
+statement ok
+-- Attach a second database
+ATTACH '/tmp/${__DATABASE__}_sql_data_types_geometry_example_004_shredded_db.db' as shredded_db (STORAGE_VERSION 'v1.5.0');
+
+statement ok
+USE shredded_db;
+
+statement ok
+-- This time, set the minimum shredding size to 0 to always shred geometry columns,
+-- and create the same table with 1 million 2D points
+SET geometry_minimum_shredding_size = 0;
+
+statement ok
+CREATE OR REPLACE TABLE points AS SELECT printf('POINT (%d %d)', x, y)::GEOMETRY AS geom
+FROM range(0, 4) AS rx(x), range(0, 4) AS ry(y);
+
+statement ok
+-- Checkpoint to persist the data and storage layout to disk, and apply shredding
+CHECKPOINT;
+
+statement ok
+-- Now check the storage layout and memory usage of the geometry column in both attached databases
+SELECT database_name, database_size FROM pragma_database_size();
+
+query ? rowsort
+-- The geometry column in `geometry_db` is stored as regular GEOMETRY segments
+SELECT DISTINCT(segment_type) FROM pragma_storage_info('geometry_db.points');
+----
+segment_type
+GEOMETRY
+VALIDITY
+
+
+query ? rowsort
+-- While the geometry column in `shredded_db` is decomposed into primitive DOUBLE segments,
+-- which can be compressed much more efficiently!
+SELECT DISTINCT(segment_type) FROM pragma_storage_info('shredded_db.points');
+----
+segment_type
+DOUBLE
+VALIDITY
+
+# DOCS_TEST: example_005
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS geometries;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE geometries as select 'POINT Z (30 10 5)'::GEOMETRY as geom;
+
+query error
+SELECT stats(geom) AS geom_stats FROM geometries;
+----
+db error: ERROR: Such type is not supported
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT * FROM duckdb_coordinate_systems();
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query error
+SELECT 'POINT(1 2)'::GEOMETRY('DUCK:1337') AS my_point;
+----
+db error: ERROR: Encountered unrecognized coordinate system 'DUCK:1337' when trying to create GEOMETRY type
+The coordinate system definition may be incomplete or invalid. Your options are as follows:
+* Load an extension that can identify this coordinate system
+* Provide a full coordinate system definition in e.g. "PROJJSON" or "WKT2" format
+* Set the 'ignore_unknown_crs' configuration option to drop the coordinate system from the resulting geometry type and make this error go away
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement ok
+-- Ignore any unknown CRS identifiers
+SET ignore_unknown_crs = true;
+
+query error
+select 'POINT(1 2)'::GEOMETRY('DUCK:1337') AS my_point;
+----
+db error: ERROR: Such type is not supported
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement error
+LOAD spatial;
+----
+db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/spatial.duckdb_extension" not found.
+Extension "spatial" is an existing extension.
+
+Install it first using "INSTALL spatial".
+
+
+query error
+SELECT ST_Transform('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84'), 'EPSG:3857') AS transformed;
+----
+db error: ERROR: Scalar Function with name "st_transform" is not in the catalog, but it exists in the spatial extension.
+
+This feature relies on the "spatial" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query error
+SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY, 'OGC:CRS84') AS with_crs;
+----
+db error: ERROR: Such type is not supported
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query error
+SELECT 'POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84')::GEOMETRY AS no_crs;
+----
+db error: ERROR: Such type is not supported
+
+
+query error
+SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84'), '') AS no_crs;
+----
+db error: ERROR: Such type is not supported
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT ST_CRS('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84')) AS crs;
+----
+crs
+OGC:CRS84

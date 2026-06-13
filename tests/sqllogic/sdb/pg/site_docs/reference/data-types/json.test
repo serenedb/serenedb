@@ -1,0 +1,78 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement error
+-- Create a table with JSON and JSONB columns
+CREATE TABLE documents (
+    id SERIAL PRIMARY KEY,
+    raw JSON,
+    parsed JSONB
+);
+----
+db error: ERROR: Type with name jsonb does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+-- Insert JSON data
+INSERT INTO documents VALUES
+    (1, '{"name": "Alice", "age": 30}', '{"name": "Alice", "age": 30}');
+----
+db error: ERROR: Table with name documents does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+-- Query and extract JSON fields
+SELECT
+    raw->'name' AS raw_name,
+    parsed->'age' AS parsed_age
+FROM documents;
+----
+db error: ERROR: Table with name documents does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement error
+-- Semantically equivalent outputs
+{"x": 1, "y": "10.00"}
+{"y": "10.00", "x": 1}
+----
+db error: ERROR: syntax error at or near "\{"
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE TABLE metrics (
+    id SERIAL PRIMARY KEY,
+    data JSONB
+);
+----
+db error: ERROR: Type with name jsonb does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
+INSERT INTO metrics VALUES
+    (1, '{"x": 1, "y": "10.00"}');
+----
+db error: ERROR: Table with name metrics does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+-- Efficient access using casts
+SELECT
+    data->>'x' AS x_text,
+    (data->>'x')::INT AS x_int,
+    (data->>'y')::NUMERIC AS y_numeric
+FROM metrics;
+----
+db error: ERROR: Table with name metrics does not exist!
+Did you mean "<slt:ignore>"?

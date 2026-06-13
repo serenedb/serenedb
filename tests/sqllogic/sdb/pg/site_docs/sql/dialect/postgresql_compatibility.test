@@ -1,0 +1,174 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT 1.0 / 0.0 AS x;
+----
+x
+Infinity
+
+query
+SELECT 0.0 / 0.0 AS x;
+----
+x
+NaN
+
+query
+SELECT -1.0 / 0.0 AS x;
+----
+x
+-Infinity
+
+query
+SELECT 'Infinity'::FLOAT / 'Infinity'::FLOAT AS x;
+----
+x
+NaN
+
+query
+SELECT 1.0 / 'Infinity'::FLOAT AS x;
+----
+x
+0
+
+query
+SELECT 'Infinity'::FLOAT - 'Infinity'::FLOAT AS x;
+----
+x
+NaN
+
+query
+SELECT 'Infinity'::FLOAT - 1.0 AS x;
+----
+x
+Infinity
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT 1 / 2 AS x;
+----
+x
+0
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT 1 // 2 AS x;
+----
+x
+0
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query ? rowsort
+SELECT true AS x
+UNION
+SELECT 2;
+----
+x
+1
+2
+
+# DOCS_TEST: example_005
+
+statement ok
+SET preserve_identifier_case = false;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE MyTaBLe (x INTEGER);
+
+query error db error: ERROR: Table with name MyTaBLe does not exist!
+SELECT * FROM "MyTaBLe";
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE "PreservedCase" (x INTEGER);
+
+query error db error: ERROR: Table with name preservedcase does not exist!
+SELECT * FROM PreservedCase;
+
+# DOCS_TEST: example_008
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS mytable;
+
+# DOCS_TEST_RAW
+#| SET preserve_identifier_case = false;
+#|
+#| CREATE TABLE MyTaBLe (x INTEGER);
+#|
+#| SELECT tbl FROM duckdb_tables();
+
+# DOCS_TEST_BODY
+
+statement ok
+SET preserve_identifier_case = false;
+
+statement ok
+CREATE TABLE MyTaBLe (x INTEGER);
+
+query ?
+SELECT DISTINCT table_name AS tbl
+FROM duckdb_tables()
+WHERE table_name = 'mytable';
+----
+tbl
+mytable
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT 1 == 1 AS t;
+----
+t
+t
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT ARRAY[''''];
+----
+array
+{'}
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SCHEMA myschema;
+
+statement ok
+CREATE TYPE myschema.mytype AS ENUM ('as', 'df');
+
+statement ok
+CREATE TABLE myschema.mytable (v mytype);
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+statement ok
+DESCRIBE myschema.mytable;

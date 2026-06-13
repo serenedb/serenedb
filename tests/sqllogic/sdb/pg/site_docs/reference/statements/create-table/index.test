@@ -1,0 +1,67 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE articles (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    body TEXT,
+    views INTEGER DEFAULT 0
+);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE comments (
+    id INTEGER PRIMARY KEY,
+    article_id INTEGER REFERENCES articles(id),
+    author TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE TABLE movies_external (
+    title TEXT,
+    year INTEGER,
+    rating FLOAT
+) USING EXTERNAL WITH (
+    PATH = '/data/movies.parquet'
+);
+----
+db error: ERROR: syntax error at or near "USING"
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE TABLE movies_s3 (
+    title TEXT,
+    year INTEGER,
+    rating FLOAT
+) USING EXTERNAL WITH (
+    PATH = 's3://my-bucket/data/movies.parquet',
+    FORMAT = 'Parquet',
+    S3_ACCESS_KEY = 'your-access-key',
+    S3_SECRET_KEY = 'your-secret-key',
+    S3_REGION = 'us-east-1'
+);
+----
+db error: ERROR: syntax error at or near "USING"
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE TABLE t (id INT) USING EXTERNAL WITH (HELP);
+----
+db error: ERROR: syntax error at or near "USING"

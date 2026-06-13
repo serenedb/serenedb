@@ -1,0 +1,141 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE movies (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    overview VARCHAR,
+    genre VARCHAR,
+    vote_average DOUBLE,
+    vote_count INTEGER
+);
+
+statement ok
+INSERT INTO movies VALUES
+ (1,  'Interstellar',   'A team of explorers travel through a wormhole in space in an attempt to ensure humanity survival.',              'Science Fiction', 8.4, 30708),
+ (2,  'The Martian',    'An astronaut becomes stranded on Mars and must science the hell out of surviving alone.',                       'Science Fiction', 8.0, 24000),
+ (3,  'Gravity',        'Two scientists are left adrift in space after debris destroys their shuttle during a routine spacewalk.',       'Science Fiction', 7.7, 21000),
+ (4,  'Inception',      'A thief who steals corporate secrets through dream-sharing technology is given a chance to erase his past.',    'Science Fiction', 8.4, 35000),
+ (5,  'Apollo 13',      'NASA must devise a strategy to return the crew safely to Earth after the spacecraft undergoes disaster.',        'Drama',           7.6, 12000),
+ (6,  'Hidden Figures', 'The untold story of the brilliant women who served as the brains behind the early space race at NASA.',         'Drama',           8.1, 8456),
+ (7,  'WALL-E',         'In a distant future a small waste-collecting robot embarks on a journey across space that decides humanity fate.','Animation',      8.1, 16908),
+ (8,  'Toy Story',      'A cowboy doll is profoundly threatened when a new spaceman action figure supplants him as top toy.',            'Animation',       8.0, 17000),
+ (9,  'The Notebook',   'A poor young man falls in love with a rich young woman giving her a sense of freedom.',                          'Romance',         7.8, 15000),
+ (10, 'Titanic',        'A seventeen-year-old aristocrat falls in love with a kind but poor artist aboard the ill-fated Titanic.',        'Romance',         7.9, 25000),
+ (11, 'Alien',          'During its return to Earth a commercial spaceship intercepts a distress signal and is stalked by a deadly creature.','Horror',     8.1, 12576),
+ (12, 'Gladiator',      'A former Roman general sets out to exact vengeance against the emperor who murdered his family.',                'Action',          8.2, 18000);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement ok
+CREATE INDEX movies_idx ON movies
+    USING inverted(id, title english, overview english);
+
+statement ok
+VACUUM (REFRESH_TABLE) movies;
+
+# DOCS_TEST_BODY
+
+query
+SELECT genre,
+       COUNT(*)                      AS matches,
+       ROUND(AVG(vote_average), 2)   AS avg_rating,
+       MAX(vote_average)             AS top_rated
+FROM   movies_idx
+WHERE  overview @@ 'space'
+GROUP  BY genre
+ORDER  BY matches DESC, avg_rating DESC, genre;
+----
+genre	matches	avg_rating	top_rated
+Science Fiction	2	8.05	8.4
+Animation	1	8.1	8.1
+Drama	1	8.1	8.1
+
+# DOCS_TEST: example_002
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'Interstellar',   'Science Fiction', 8.4::DOUBLE),
+    (2, 'The Martian',    'Science Fiction', 8.0::DOUBLE),
+    (3, 'Hidden Figures', 'Drama',           8.1::DOUBLE),
+    (4, 'Titanic',        'Romance',         7.9::DOUBLE),
+    (5, 'WALL-E',         'Animation',       8.1::DOUBLE),
+    (6, 'Gladiator',      'Action',          8.2::DOUBLE)
+) AS t(id, title, genre, vote_average))
+TO '/tmp/${__DATABASE__}_wmd_movies.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT genre, COUNT(*) AS films, ROUND(AVG(vote_average), 2) AS avg_rating
+#| FROM read_parquet('hf://datasets/wykonos/movies@~parquet/default/train/*.parquet')
+#| GROUP BY genre
+#| ORDER BY films DESC, genre;
+
+# DOCS_TEST_BODY
+
+query
+SELECT genre, COUNT(*) AS films, ROUND(AVG(vote_average), 2) AS avg_rating
+FROM read_parquet('/tmp/${__DATABASE__}_wmd_movies.parquet')
+GROUP BY genre
+ORDER BY films DESC, genre;
+----
+genre	films	avg_rating
+Science Fiction	2	8.2
+Action	1	8.2
+Animation	1	8.1
+Drama	1	8.1
+Romance	1	7.9
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE articles (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    body VARCHAR,
+    embedding FLOAT[4]
+);
+
+statement ok
+INSERT INTO articles VALUES
+ (1, 'Interstellar', 'a team travels through a wormhole in space to save humanity', [0.90, 0.10, 0.00, 0.20]),
+ (2, 'The Martian',  'an astronaut is stranded on mars and must survive in space',  [0.80, 0.20, 0.10, 0.10]),
+ (3, 'Gravity',      'two astronauts are left adrift in space after an accident',   [0.85, 0.15, 0.05, 0.15]),
+ (4, 'The Notebook', 'a poor young man falls in love with a rich young woman',      [0.10, 0.90, 0.20, 0.00]);
+
+statement ok
+CREATE INDEX articles_idx ON articles
+    USING inverted(id, title english, body english, embedding hnsw(metric = 'cosine'));
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+# DOCS_TEST_RAW
+#| SELECT title
+#| FROM   articles_idx
+#| WHERE  body @@ 'space'                                   -- lexical recall
+#| ORDER  BY embedding <=> ai_embed('space exploration',
+#|                                  'text-embedding-3-small', 'openai')
+#| LIMIT  3;                                                -- semantic ranking
+
+# DOCS_TEST_BODY
+
+query
+SELECT title
+FROM   articles_idx
+WHERE  body @@ 'space'
+ORDER  BY embedding <=> [0.86, 0.14, 0.04, 0.16]::FLOAT[4]
+LIMIT  3;
+----
+title
+Gravity
+Interstellar
+The Martian

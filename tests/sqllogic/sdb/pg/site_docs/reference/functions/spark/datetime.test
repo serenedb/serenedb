@@ -1,0 +1,1060 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query error
+SELECT add_months('2015-01-01', 10);
+----
+db error: ERROR: Scalar Function with name add_months does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT add_months('2015-01-30', 1);
+----
+db error: ERROR: Scalar Function with name add_months does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT add_months('2015-01-30', 0);
+----
+db error: ERROR: Scalar Function with name add_months does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT add_months('2015-01-30', -2);
+----
+db error: ERROR: Scalar Function with name add_months does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT add_months('2015-03-31', -1);
+----
+db error: ERROR: Scalar Function with name add_months does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query error
+SELECT date_trunc('YEAR', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('YYYY', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('YY', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('QUARTER', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('MONTH', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('MM', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('MON', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('WEEK', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('DAY', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('DD', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('HOUR', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('MINUTE', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('SECOND', '2015-03-05T09:32:05.359');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('MILLISECOND', '2015-03-05T09:32:05.123456');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('MICROSECOND', '2015-03-05T09:32:05.123456');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('', '2015-03-05T09:32:05.123456');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+
+query error
+SELECT date_trunc('Y', '2015-03-05T09:32:05.123456');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "date_trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	date_trunc(VARCHAR, INTERVAL) -> INTERVAL
+	date_trunc(VARCHAR, TIMESTAMP) -> TIMESTAMP
+	date_trunc(VARCHAR, TIMESTAMP WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
+	date_trunc(VARCHAR, DATE) -> TIMESTAMP
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query error
+SELECT datediff('2009-07-31', '2009-07-30');
+----
+db error: ERROR: No function matches the given name and argument types 'datediff(STRING_LITERAL, STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	datediff(VARCHAR, DATE, DATE) -> BIGINT
+	datediff(VARCHAR, TIME, TIME) -> BIGINT
+	datediff(VARCHAR, TIMESTAMP, TIMESTAMP) -> BIGINT
+	datediff(VARCHAR, TIMESTAMP WITH TIME ZONE, TIMESTAMP WITH TIME ZONE) -> BIGINT
+
+
+query error
+SELECT datediff('2009-07-30', '2009-07-31');
+----
+db error: ERROR: No function matches the given name and argument types 'datediff(STRING_LITERAL, STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	datediff(VARCHAR, DATE, DATE) -> BIGINT
+	datediff(VARCHAR, TIME, TIME) -> BIGINT
+	datediff(VARCHAR, TIMESTAMP, TIMESTAMP) -> BIGINT
+	datediff(VARCHAR, TIMESTAMP WITH TIME ZONE, TIMESTAMP WITH TIME ZONE) -> BIGINT
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query error
+SELECT dayofmonth('2009-07-30');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "dayofmonth(STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	dayofmonth(INTERVAL) -> BIGINT
+	dayofmonth(TIMESTAMP) -> BIGINT
+	dayofmonth(TIMESTAMP WITH TIME ZONE) -> BIGINT
+	dayofmonth(DATE) -> BIGINT
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query error
+SELECT dayofyear('2016-04-09');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "dayofyear(STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	dayofyear(INTERVAL) -> BIGINT
+	dayofyear(TIMESTAMP) -> BIGINT
+	dayofyear(TIMESTAMP WITH TIME ZONE) -> BIGINT
+	dayofyear(DATE) -> BIGINT
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query error
+SELECT from_unixtime(100, 'yyyy-MM-dd HH:mm:ss');
+----
+db error: ERROR: Scalar Function with name from_unixtime does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT from_unixtime(3600, 'yyyy');
+----
+db error: ERROR: Scalar Function with name from_unixtime does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT from_unixtime(9223372036854775807, "yyyy-MM-dd HH:mm:ss");
+----
+db error: ERROR: Scalar Function with name from_unixtime does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query error
+SELECT from_unixtime(100, 'yyyy-MM-dd HH:mm:ss');
+----
+db error: ERROR: Scalar Function with name from_unixtime does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT from_unixtime(3600, 'yyyy');
+----
+db error: ERROR: Scalar Function with name from_unixtime does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT from_unixtime(9223372036854775807, "yyyy-MM-dd HH:mm:ss");
+----
+db error: ERROR: Scalar Function with name from_unixtime does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query error
+SELECT from_utc_timestamp('2015-07-24 07:00:00', 'America/Los_Angeles');
+----
+db error: ERROR: Scalar Function with name from_utc_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query error
+SELECT get_timestamp('1970-01-01', 'yyyy-MM-dd);  -- timestamp `1970-01-01`
+SELECT get_timestamp('1970-01-01', 'yyyy-MM');
+SELECT get_timestamp('1970-01-01', null);
+----
+db error: ERROR: syntax error at or near "1970"
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query error
+SELECT hour('2009-07-30 12:58:59');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "hour(STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	hour(INTERVAL) -> BIGINT
+	hour(TIME) -> BIGINT
+	hour(TIMESTAMP) -> BIGINT
+	hour(TIME WITH TIME ZONE) -> BIGINT
+	hour(TIME_NS) -> BIGINT
+	hour(TIMESTAMP WITH TIME ZONE) -> BIGINT
+	hour(DATE) -> BIGINT
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT make_timestamp(2014, 12, 28, 6, 30, 45.887);
+----
+make_timestamp
+2014-12-28 06:30:45.887
+
+query error
+SELECT make_timestamp(2014, 12, 28, 6, 30, 45.887, 'CET');
+----
+db error: ERROR: No function matches the given name and argument types 'make_timestamp(INTEGER_LITERAL, INTEGER_LITERAL, INTEGER_LITERAL, INTEGER_LITERAL, INTEGER_LITERAL, DECIMAL(5,3), STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	make_timestamp(BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, DOUBLE) -> TIMESTAMP
+	make_timestamp(BIGINT) -> TIMESTAMP
+	make_timestamp(INTEGER, INTEGER, INTEGER, INTEGER, INTEGER, DOUBLE) -> TIMESTAMP
+
+
+query
+SELECT make_timestamp(2019, 6, 30, 23, 59, 60);
+----
+make_timestamp
+2019-07-01 00:00:00
+
+query
+SELECT make_timestamp(2019, 6, 30, 23, 59, 1);
+----
+make_timestamp
+2019-06-30 23:59:01
+
+query
+SELECT make_timestamp(null, 7, 22, 15, 30, 0);
+----
+make_timestamp
+NULL
+
+query error
+SELECT make_timestamp(2014, 12, 28, 6, 30, 60.000001);
+----
+db error: ERROR: date/time field value out of range
+
+
+query error
+SELECT make_timestamp(2014, 13, 28, 6, 30, 45.887);
+----
+db error: ERROR: date field value out of range: 2014\-13\-28
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query error
+SELECT make_ym_interval(1, 2);
+----
+db error: ERROR: Scalar Function with name make_ym_interval does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT make_ym_interval(1, 0);
+----
+db error: ERROR: Scalar Function with name make_ym_interval does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT make_ym_interval(-1, 1);
+----
+db error: ERROR: Scalar Function with name make_ym_interval does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT make_ym_interval(1, 100);
+----
+db error: ERROR: Scalar Function with name make_ym_interval does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT make_ym_interval(1, 12);
+----
+db error: ERROR: Scalar Function with name make_ym_interval does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT make_ym_interval(1, -12);
+----
+db error: ERROR: Scalar Function with name make_ym_interval does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT make_ym_interval(2);
+----
+db error: ERROR: Scalar Function with name make_ym_interval does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT make_ym_interval();
+----
+db error: ERROR: Scalar Function with name make_ym_interval does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query error
+SELECT minute('2009-07-30 12:58:59');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "minute(STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	minute(INTERVAL) -> BIGINT
+	minute(TIME) -> BIGINT
+	minute(TIMESTAMP) -> BIGINT
+	minute(TIME WITH TIME ZONE) -> BIGINT
+	minute(TIME_NS) -> BIGINT
+	minute(TIMESTAMP WITH TIME ZONE) -> BIGINT
+	minute(DATE) -> BIGINT
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query error
+SELECT month('2009-07-30');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "month(STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	month(INTERVAL) -> BIGINT
+	month(TIMESTAMP) -> BIGINT
+	month(TIMESTAMP WITH TIME ZONE) -> BIGINT
+	month(DATE) -> BIGINT
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query error
+SELECT months_between('1997-02-28 10:30:00', '1996-10-30', true);
+----
+db error: ERROR: Scalar Function with name months_between does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT months_between('1997-02-28 10:30:00', '1996-10-30', false);
+----
+db error: ERROR: Scalar Function with name months_between does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT months_between('1997-02-28 10:30:00', '1996-03-31 11:00:00', true);
+----
+db error: ERROR: Scalar Function with name months_between does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT months_between('1997-02-28 10:30:00', '1996-03-28 11:00:00', true);
+----
+db error: ERROR: Scalar Function with name months_between does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT months_between('1997-02-21 10:30:00', '1996-03-21 11:00:00', true);
+----
+db error: ERROR: Scalar Function with name months_between does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query error
+SELECT next_day('2015-07-23', "Mon");
+----
+db error: ERROR: Scalar Function with name next_day does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT next_day('2015-07-23', "mo");
+----
+db error: ERROR: Scalar Function with name next_day does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT next_day('2015-07-23', "Tue");
+----
+db error: ERROR: Scalar Function with name next_day does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT next_day('2015-07-23', "tu");
+----
+db error: ERROR: Scalar Function with name next_day does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT next_day('2015-07-23', "we");
+----
+db error: ERROR: Scalar Function with name next_day does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query error
+SELECT quarter('2009-07-30');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "quarter(STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	quarter(INTERVAL) -> BIGINT
+	quarter(TIMESTAMP) -> BIGINT
+	quarter(TIMESTAMP WITH TIME ZONE) -> BIGINT
+	quarter(DATE) -> BIGINT
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query error
+SELECT second('2009-07-30 12:58:59');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "second(STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	second(INTERVAL) -> BIGINT
+	second(TIME) -> BIGINT
+	second(TIMESTAMP) -> BIGINT
+	second(TIME WITH TIME ZONE) -> BIGINT
+	second(TIME_NS) -> BIGINT
+	second(TIMESTAMP WITH TIME ZONE) -> BIGINT
+	second(DATE) -> BIGINT
+
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
+query error
+SELECT timestampadd(YEAR, 1, '2030-02-28 10:00:00.500');
+----
+db error: ERROR: Scalar Function with name timestampadd does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestampadd(DAY, 1, '2020-02-29 10:00:00.500');
+----
+db error: ERROR: Scalar Function with name timestampadd does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestampadd(DAYOFYEAR, 1, '2020-02-29 10:00:00.500');
+----
+db error: ERROR: Scalar Function with name timestampadd does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestampadd(SECOND, 10, '2019-03-01 10:00:00.500');
+----
+db error: ERROR: Scalar Function with name timestampadd does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestampadd(MICROSECOND, 500, '2019-02-28 10:01:00.500999');
+----
+db error: ERROR: Scalar Function with name timestampadd does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_020
+
+# DOCS_TEST_BODY
+
+query error
+SELECT timestampdiff(YEAR, '2020-02-29 10:00:00.500', '2030-02-28 10:00:00.500');
+----
+db error: ERROR: Scalar Function with name timestampdiff does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestampdiff(DAY, '2019-01-30 10:00:00.500', '2020-02-29 10:00:00.500');
+----
+db error: ERROR: Scalar Function with name timestampdiff does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestampdiff(SECOND, '2019-02-28 10:00:00.500', '2019-03-01 10:00:00.500');
+----
+db error: ERROR: Scalar Function with name timestampdiff does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestampdiff(MICROSECOND, '2019-02-28 10:00:00.000000', '2019-02-28 10:01:00.500999');
+----
+db error: ERROR: Scalar Function with name timestampdiff does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_021
+
+# DOCS_TEST_BODY
+
+query error
+SELECT timestamp_micros(1230219000123123);
+----
+db error: ERROR: Scalar Function with name timestamp_micros does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_022
+
+# DOCS_TEST_BODY
+
+query error
+SELECT timestamp_millis(1230219000123);
+----
+db error: ERROR: Scalar Function with name timestamp_millis does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_023
+
+# DOCS_TEST_BODY
+
+query error
+SELECT timestamp_seconds(1230219000);
+----
+db error: ERROR: Scalar Function with name timestamp_seconds does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestamp_seconds(1230219000.123);
+----
+db error: ERROR: Scalar Function with name timestamp_seconds does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestamp_seconds(double(1.1234567));
+----
+db error: ERROR: Scalar Function with name timestamp_seconds does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestamp_seconds(double('inf'));
+----
+db error: ERROR: Scalar Function with name timestamp_seconds does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT timestamp_seconds(float(3.4028235E+38));
+----
+db error: ERROR: syntax error at or near "3\.4028235E\+38"
+
+
+query error
+SELECT timestamp_seconds(float('nan'));
+----
+db error: ERROR: syntax error at or near "'nan'"
+
+# DOCS_TEST: example_024
+
+# DOCS_TEST_BODY
+
+query error
+SELECT to_utc_timestamp('2015-07-24 00:00:00', 'America/Los_Angeles');
+----
+db error: ERROR: Scalar Function with name to_utc_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_025
+
+# DOCS_TEST_BODY
+
+query error
+SELECT trunc('2019-08-04', 'week');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	trunc(SMALLINT, INTEGER) -> SMALLINT
+	trunc(INTEGER, INTEGER) -> INTEGER
+	trunc(BIGINT, INTEGER) -> BIGINT
+	trunc(HUGEINT, INTEGER) -> HUGEINT
+	trunc(FLOAT, INTEGER) -> FLOAT
+	trunc(DOUBLE, INTEGER) -> DOUBLE
+	trunc(UTINYINT, INTEGER) -> UTINYINT
+	trunc(USMALLINT, INTEGER) -> USMALLINT
+	trunc(UINTEGER, INTEGER) -> UINTEGER
+	trunc(UBIGINT, INTEGER) -> UBIGINT
+	trunc(UHUGEINT, INTEGER) -> UHUGEINT
+	trunc(TINYINT, INTEGER) -> TINYINT
+
+
+query error
+SELECT trunc('2019-08-04', 'quarter');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	trunc(SMALLINT, INTEGER) -> SMALLINT
+	trunc(INTEGER, INTEGER) -> INTEGER
+	trunc(BIGINT, INTEGER) -> BIGINT
+	trunc(HUGEINT, INTEGER) -> HUGEINT
+	trunc(FLOAT, INTEGER) -> FLOAT
+	trunc(DOUBLE, INTEGER) -> DOUBLE
+	trunc(UTINYINT, INTEGER) -> UTINYINT
+	trunc(USMALLINT, INTEGER) -> USMALLINT
+	trunc(UINTEGER, INTEGER) -> UINTEGER
+	trunc(UBIGINT, INTEGER) -> UBIGINT
+	trunc(UHUGEINT, INTEGER) -> UHUGEINT
+	trunc(TINYINT, INTEGER) -> TINYINT
+
+
+query error
+SELECT trunc('2009-02-12', 'MM');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	trunc(SMALLINT, INTEGER) -> SMALLINT
+	trunc(INTEGER, INTEGER) -> INTEGER
+	trunc(BIGINT, INTEGER) -> BIGINT
+	trunc(HUGEINT, INTEGER) -> HUGEINT
+	trunc(FLOAT, INTEGER) -> FLOAT
+	trunc(DOUBLE, INTEGER) -> DOUBLE
+	trunc(UTINYINT, INTEGER) -> UTINYINT
+	trunc(USMALLINT, INTEGER) -> USMALLINT
+	trunc(UINTEGER, INTEGER) -> UINTEGER
+	trunc(UBIGINT, INTEGER) -> UBIGINT
+	trunc(UHUGEINT, INTEGER) -> UHUGEINT
+	trunc(TINYINT, INTEGER) -> TINYINT
+
+
+query error
+SELECT trunc('2015-10-27', 'YEAR');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	trunc(SMALLINT, INTEGER) -> SMALLINT
+	trunc(INTEGER, INTEGER) -> INTEGER
+	trunc(BIGINT, INTEGER) -> BIGINT
+	trunc(HUGEINT, INTEGER) -> HUGEINT
+	trunc(FLOAT, INTEGER) -> FLOAT
+	trunc(DOUBLE, INTEGER) -> DOUBLE
+	trunc(UTINYINT, INTEGER) -> UTINYINT
+	trunc(USMALLINT, INTEGER) -> USMALLINT
+	trunc(UINTEGER, INTEGER) -> UINTEGER
+	trunc(UBIGINT, INTEGER) -> UBIGINT
+	trunc(UHUGEINT, INTEGER) -> UHUGEINT
+	trunc(TINYINT, INTEGER) -> TINYINT
+
+
+query error
+SELECT trunc('2015-10-27', '');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	trunc(SMALLINT, INTEGER) -> SMALLINT
+	trunc(INTEGER, INTEGER) -> INTEGER
+	trunc(BIGINT, INTEGER) -> BIGINT
+	trunc(HUGEINT, INTEGER) -> HUGEINT
+	trunc(FLOAT, INTEGER) -> FLOAT
+	trunc(DOUBLE, INTEGER) -> DOUBLE
+	trunc(UTINYINT, INTEGER) -> UTINYINT
+	trunc(USMALLINT, INTEGER) -> USMALLINT
+	trunc(UINTEGER, INTEGER) -> UINTEGER
+	trunc(UBIGINT, INTEGER) -> UBIGINT
+	trunc(UHUGEINT, INTEGER) -> UHUGEINT
+	trunc(TINYINT, INTEGER) -> TINYINT
+
+
+query error
+SELECT trunc('2015-10-27', 'day');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "trunc(STRING_LITERAL, STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	trunc(SMALLINT, INTEGER) -> SMALLINT
+	trunc(INTEGER, INTEGER) -> INTEGER
+	trunc(BIGINT, INTEGER) -> BIGINT
+	trunc(HUGEINT, INTEGER) -> HUGEINT
+	trunc(FLOAT, INTEGER) -> FLOAT
+	trunc(DOUBLE, INTEGER) -> DOUBLE
+	trunc(UTINYINT, INTEGER) -> UTINYINT
+	trunc(USMALLINT, INTEGER) -> USMALLINT
+	trunc(UINTEGER, INTEGER) -> UINTEGER
+	trunc(UBIGINT, INTEGER) -> UBIGINT
+	trunc(UHUGEINT, INTEGER) -> UHUGEINT
+	trunc(TINYINT, INTEGER) -> TINYINT
+
+# DOCS_TEST: example_026
+
+# DOCS_TEST_BODY
+
+query error
+SELECT unix_date('1970-01-01');
+----
+db error: ERROR: Scalar Function with name unix_date does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT unix_date('1970-01-02');
+----
+db error: ERROR: Scalar Function with name unix_date does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT unix_date('1969-12-31');
+----
+db error: ERROR: Scalar Function with name unix_date does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
+
+query error
+SELECT unix_micros('1970-01-01 00:00:01');
+----
+db error: ERROR: Scalar Function with name unix_micros does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_028
+
+# DOCS_TEST_BODY
+
+query error
+SELECT unix_millis('1970-01-01 00:00:01');
+----
+db error: ERROR: Scalar Function with name unix_millis does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_029
+
+# DOCS_TEST_BODY
+
+query error
+SELECT unix_seconds('1970-01-01 00:00:01');
+----
+db error: ERROR: Scalar Function with name unix_seconds does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_030
+
+# DOCS_TEST_BODY
+
+query error
+SELECT unix_timestamp('1970-01-01');
+----
+db error: ERROR: Scalar Function with name unix_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT unix_timestamp('2024-10-01');
+----
+db error: ERROR: Scalar Function with name unix_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT unix_timestamp('-2025-02-18');
+----
+db error: ERROR: Scalar Function with name unix_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_031
+
+# DOCS_TEST_BODY
+
+query error
+SELECT unix_timestamp(CAST(0 AS TIMESTAMP));
+----
+db error: ERROR: Scalar Function with name unix_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT unix_timestamp(CAST(1739933174 AS TIMESTAMP));
+----
+db error: ERROR: Scalar Function with name unix_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT unix_timestamp(CAST(-1739933174 AS TIMESTAMP));
+----
+db error: ERROR: Scalar Function with name unix_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_032
+
+# DOCS_TEST_BODY
+
+query error
+SELECT weekday('2015-04-08');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "weekday(STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	weekday(INTERVAL) -> BIGINT
+	weekday(TIMESTAMP) -> BIGINT
+	weekday(TIMESTAMP WITH TIME ZONE) -> BIGINT
+	weekday(DATE) -> BIGINT
+
+
+query error
+SELECT weekday('2024-02-10');
+----
+db error: ERROR: Could not choose a best candidate function for the function call "weekday(STRING_LITERAL)". In order to select one, please add explicit type casts.
+	Candidate functions:
+	weekday(INTERVAL) -> BIGINT
+	weekday(TIMESTAMP) -> BIGINT
+	weekday(TIMESTAMP WITH TIME ZONE) -> BIGINT
+	weekday(DATE) -> BIGINT
+
+# DOCS_TEST: example_033
+
+# DOCS_TEST_BODY
+
+query error
+SELECT get_timestamp('2015-07-22 10:00:00', 'yyyy-MM-dd');
+----
+db error: ERROR: Scalar Function with name get_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT get_timestamp('2015-07-22 10:00:00', 'yyyy-MM-dd');
+----
+db error: ERROR: Scalar Function with name get_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT unix_timestamp('2016-04-08 00:00:00', 'yyyy-MM-dd');
+----
+db error: ERROR: Scalar Function with name unix_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT unix_timestamp('2016-04-08 00:00:00', 'yyyy-MM-dd');
+----
+db error: ERROR: Scalar Function with name unix_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+# DOCS_TEST: example_034
+
+# DOCS_TEST_BODY
+
+query error
+SELECT from_unixtime(100, '!@#$%^&*');
+----
+db error: ERROR: Scalar Function with name from_unixtime does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT from_unixtime(100, '!@#$%^&*');
+----
+db error: ERROR: Scalar Function with name from_unixtime does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT get_timestamp('1970-01-01', '!@#$%^&*');
+----
+db error: ERROR: Scalar Function with name get_timestamp does not exist!
+Did you mean "<slt:ignore>"?
+
+
+query error
+SELECT get_timestamp('1970-01-01', '!@#$%^&*');
+----
+db error: ERROR: Scalar Function with name get_timestamp does not exist!
+Did you mean "<slt:ignore>"?

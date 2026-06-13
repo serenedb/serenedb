@@ -72,13 +72,6 @@ statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted(id, title english, overview english);
 
-# DOCS_TEST: example_004
-
-# DOCS_TEST_BODY
-
-statement ok
-VACUUM (REFRESH_TABLE) movies;
-
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY

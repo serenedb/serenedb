@@ -152,5 +152,14 @@ each its own commit). For `HttpSession` (`http/session.h`) and then `PgWireSessi
    `TryAssembleFrame`/`NextFrame`/`AwaitFrame`/`FeedFrame`/`PeekTotalLength`/`CopyRecvInto` pg).
 6. Add `public: void OnSendPoison() {}` — http empty; pg `{ _copy_gate.Kick(); }`.
 7. `Start()` keeps `SendWriter().Detach()` (now the inherited one) + `Run().Detach()`.
-Then phase 3 = delete http's now-dead duplicate (already covered above since http migrates here); phases 4-7 per the
-list above.
+8. **CRITICAL (dependent-base lookup):** `Connection<Kind, …>` is templated on `Kind`, so it is a *dependent* base —
+   unqualified `_send`, `_recv`, `_socket`, `_task`, `KickSend()`, `SendWriter()`, `AwaitSendBelowHighWater()`, etc. in
+   the session body are NOT found by two-phase lookup. Rather than sprinkle `this->` over hundreds of sites, add one
+   block of `using Connection<Kind, HttpSession>::member;` declarations near the top of the derived class for every
+   inherited name the session references (`_socket _ioexec _recv _send _write_view _write_armed _write_gate
+   _send_written _send_waiter _io_broken _writer_stop _producer_gate _task _task_spawned KickSend HasUnsentBytes
+   SendBroken OverSendHighWater OnSendViewReady ArmSendWaiter DisarmSendWaiter AwaitSendBelowHighWater DrainSendOnTask
+   Flush AwaitMoreBytes SendWriter`). The compiler flags any missing `using` as an undeclared-identifier error, so
+   iterate build → add the missing `using` → rebuild until green. (`OnSendPoison` is called by the base via
+   `static_cast<Session*>` so it needs no `using`, but it must be public.) Keep the session bodies otherwise unchanged.
+Then phase 3 = delete http's now-dead duplicate (covered as http migrates here); phases 4-7 per the list above.

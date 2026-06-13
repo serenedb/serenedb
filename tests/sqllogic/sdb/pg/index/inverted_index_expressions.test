@@ -1348,7 +1348,7 @@ statement error
 CREATE INDEX inc_e_bad ON inc_e_num USING inverted(
     id, (a + b) included (bogus='value'));
 ----
-db error: ERROR: Failed to create index: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), row_group_size (int >= 1), distinct_count (bool, default false)
+db error: ERROR: Failed to create index: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), row_group_size (int >= 1), approx_distinct (bool, default false)
 
 
 statement error

@@ -169,7 +169,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   }
   auto& cw =
     OpenColumn(id, std::move(type), opts.skip_validity, opts.row_group_size,
-               opts.compression, opts.distinct_count);
+               opts.compression, opts.approx_distinct);
   if (opts.hnsw_info) {
     AttachHnsw(id, *opts.hnsw_info);
   }
@@ -179,7 +179,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                                     bool skip_validity, uint32_t row_group_size,
                                     duckdb::CompressionType compression,
-                                    bool distinct_count) {
+                                    bool approx_distinct) {
   SDB_ASSERT(row_group_size != 0);
   // Per-batch SearchSink may re-open the same id; return the existing
   // writer so batches accumulate into one footer entry.
@@ -189,7 +189,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                  existing.RowGroupSize() == row_group_size &&
                  existing.SkipValidity() == skip_validity &&
                  existing.Compression() == compression &&
-                 existing.DistinctCount() == distinct_count,
+                 existing.ApproxDistinct() == approx_distinct,
                "ColWriter::OpenColumn: re-opened id ", id,
                " with mismatched settings (type ", type.ToString(), " vs ",
                existing.Type().ToString(), ", row_group_size ", row_group_size,
@@ -197,8 +197,8 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                skip_validity, " vs ", existing.SkipValidity(), ", compression ",
                duckdb::CompressionTypeToString(compression), " vs ",
                duckdb::CompressionTypeToString(existing.Compression()),
-               ", distinct_count ", distinct_count, " vs ",
-               existing.DistinctCount(), ")");
+               ", approx_distinct ", approx_distinct, " vs ",
+               existing.ApproxDistinct(), ")");
     return existing;
   }
   EnsureOut();
@@ -208,7 +208,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
   auto* entry_ptr = entry.get();
   auto cw =
     std::make_unique<ColumnWriter>(id, type, row_group_size, *_impl->write_ctx,
-                                   *entry, skip_validity, distinct_count);
+                                   *entry, skip_validity, approx_distinct);
   cw->SetCompression(compression);
   _impl->column_entries.push_back(std::move(entry));
   _impl->column_entries_by_id.emplace(id, entry_ptr);

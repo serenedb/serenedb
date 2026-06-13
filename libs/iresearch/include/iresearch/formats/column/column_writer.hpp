@@ -22,7 +22,6 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
-#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/data_pointer.hpp>
@@ -43,7 +42,7 @@ class ColumnWriter final {
  public:
   ColumnWriter(field_id id, duckdb::LogicalType type, uint32_t row_group_size,
                WriteContext& write_ctx, FooterColumnEntry& entry,
-               bool skip_validity, bool distinct_count);
+               bool skip_validity, bool approx_distinct);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -68,7 +67,7 @@ class ColumnWriter final {
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   uint32_t RowGroupSize() const noexcept { return _row_group_size; }
   bool SkipValidity() const noexcept { return _skip_validity; }
-  bool DistinctCount() const noexcept { return _distinct_hll != nullptr; }
+  bool ApproxDistinct() const noexcept;
   duckdb::CompressionType Compression() const noexcept {
     return _forced_compression;
   }
@@ -98,7 +97,7 @@ class ColumnWriter final {
   bool _skip_validity = false;
   duckdb::CompressionType _forced_compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
-  duckdb::unique_ptr<duckdb::HyperLogLog> _distinct_hll;
+  duckdb::unique_ptr<duckdb::Vector> _hashes;
 };
 
 }  // namespace irs

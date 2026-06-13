@@ -62,7 +62,7 @@ struct ColumnOptions {
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   std::optional<HNSWInfo> hnsw_info;
-  bool distinct_count = false;
+  bool approx_distinct = false;
 };
 
 using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;

@@ -49,7 +49,7 @@ struct ColumnSerialized {
   ObjectId text_dictionary = ObjectId::none();
   bool store_values = false;
   bool indexed_term_dict = false;
-  bool distinct_count = false;
+  bool approx_distinct = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   search::Features features;

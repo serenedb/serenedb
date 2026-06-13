@@ -98,8 +98,8 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
   for (auto& [field, merged] : col2stats) {
     auto& [stats, distinct] = merged;
     if (distinct) {
-      stats->SetDistinctCount(
-        std::min<uint64_t>(distinct->Count(), live_docs_count));
+      const auto cnt = std::min<uint64_t>(distinct->Count(), live_docs_count);
+      stats->SetDistinctCount(cnt);
     }
     column_stats[field] = std::move(stats);
   }

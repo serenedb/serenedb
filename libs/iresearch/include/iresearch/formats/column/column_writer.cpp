@@ -71,7 +71,7 @@ ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
     _skip_validity{skip_validity} {
   SDB_ASSERT(_row_group_size != 0);
   if (approx_distinct) {
-    _entry->root.distinct_hll = duckdb::make_uniq<duckdb::HyperLogLog>();
+    _entry->root.distinct_hll = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
     _hashes = duckdb::make_uniq<duckdb::Vector>(duckdb::LogicalType::HASH,
                                                 _row_group_size);
   }

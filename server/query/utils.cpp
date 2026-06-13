@@ -20,20 +20,7 @@
 
 #include "query/utils.h"
 
-#include <re2/re2.h>
-
 namespace sdb::query {
-
-constexpr const char* MakeColumnCleanupPattern() {
-  static_assert(kColumnSeparator == ":",
-                "ColumnSeparator does not match ':', change the pattern");
-  return R"((.*?):(\d+))";
-}
-
-std::string CleanColumnNames(std::string text) {
-  RE2::GlobalReplace(&text, MakeColumnCleanupPattern(), "\\1");
-  return text;
-}
 
 std::string_view ToAlias(std::string_view name) {
   return name.substr(0, name.find_last_of(kColumnSeparator));

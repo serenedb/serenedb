@@ -93,12 +93,6 @@ IsolationLevel Config::GetIsolationLevel() const {
   return _client_ctx.transaction.GetIsolationLevel();
 }
 
-WriteConflictPolicy Config::GetWriteConflictPolicy() const {
-  auto value = Get("sdb_write_conflict_policy");
-  SDB_ASSERT(value);
-  return GetEnumValue<WriteConflictPolicy>(*value);
-}
-
 bool Config::GetStrictDDL() const {
   duckdb::Value value;
   auto ok = _client_ctx.TryGetCurrentSetting("sdb_strict_ddl", value);

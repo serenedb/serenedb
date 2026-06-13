@@ -633,8 +633,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
       *plan, table_entry.GetSereneDBTable()->GetId());
   }
 
-  // The session-level sdb_write_conflict_policy is applied by the binder
-  // (it rides the ON CONFLICT -> MERGE INTO rewrite).
   const auto on_conflict_action = op.on_conflict_info.action_type;
 
   const bool parallel_streaming_insert =

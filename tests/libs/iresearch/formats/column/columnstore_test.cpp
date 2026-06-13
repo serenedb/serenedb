@@ -576,7 +576,7 @@ TEST_F(IRSColumnstoreTest, PointReadCursorAcrossRowGroups) {
     auto& cw = w.OpenColumn(
       /*id=*/9, duckdb::LogicalType::BIGINT,
       /*skip_validity=*/true, /*row_group_size=*/kRowGroupSize,
-      duckdb::CompressionType::COMPRESSION_AUTO, /*distinct_count=*/false);
+      duckdb::CompressionType::COMPRESSION_AUTO, false);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
     uint64_t produced = 0;
@@ -728,7 +728,7 @@ TEST_F(IRSColumnstoreTest, RoundTripListBlob) {
     irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(
       /*id=*/77, list_type, /*skip_validity=*/false, kRowGroupSize,
-      duckdb::CompressionType::COMPRESSION_AUTO, /*distinct_count=*/false);
+      duckdb::CompressionType::COMPRESSION_AUTO, false);
 
     duckdb::Vector batch{list_type, STANDARD_VECTOR_SIZE};
     auto* entries =
@@ -950,8 +950,7 @@ TEST_F(IRSColumnstoreTest, AlternatingValidityRoundTrip) {
     irs::ColWriter w{dir, kSegmentName, Db()};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT,
                             /*skip_validity=*/false, kRowGroupSize,
-                            duckdb::CompressionType::COMPRESSION_AUTO,
-                            /*distinct_count=*/false);
+                            duckdb::CompressionType::COMPRESSION_AUTO, false);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
     auto& valid = duckdb::FlatVector::ValidityMutable(batch);

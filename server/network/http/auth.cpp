@@ -137,4 +137,35 @@ AuthResult HttpAuthenticator::Bearer(std::string_view payload) const {
   return {.status = 0, .context = std::move(*context)};
 }
 
+namespace {
+bool SecureEquals(std::string_view a, std::string_view b) {
+  // Content compare is constant time; length short-circuits (same as the
+  // Basic-password path) so the secret length can leak via timing -- fine
+  // for a static flag credential.
+  return pg::ConstantTimeEqual(
+    {reinterpret_cast<const uint8_t*>(a.data()), a.size()},
+    {reinterpret_cast<const uint8_t*>(b.data()), b.size()});
+}
+}  // namespace
+
+std::optional<AuthContext> FlagApiKeyValidator::Validate(
+  std::string_view id, std::string_view key) const {
+  // Evaluate both halves (no &&-short-circuit) so a right id + wrong key
+  // takes the same time as a wrong id.
+  const bool id_ok = SecureEquals(id, _id);
+  const bool key_ok = SecureEquals(key, _key);
+  if (id_ok && key_ok) {
+    return AuthContext{.user = _user};
+  }
+  return std::nullopt;
+}
+
+std::optional<AuthContext> FlagBearerValidator::Validate(
+  std::string_view token) const {
+  if (SecureEquals(token, _token)) {
+    return AuthContext{.user = _user};
+  }
+  return std::nullopt;
+}
+
 }  // namespace sdb::network::http

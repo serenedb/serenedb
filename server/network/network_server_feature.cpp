@@ -63,6 +63,16 @@ ABSL_FLAG(std::string, network_auth_password, "",
 ABSL_FLAG(std::string, network_auth_user, "postgres",
           "User the --network_auth_password applies to.");
 
+ABSL_FLAG(std::string, network_api_key, "",
+          "Static HTTP ApiKey credential as id:key (empty = ApiKey scheme "
+          "rejected). Authenticates as --network_auth_user. Placeholder until "
+          "a key store exists.");
+
+ABSL_FLAG(std::string, network_bearer_token, "",
+          "Static HTTP Bearer token (empty = Bearer scheme rejected). "
+          "Authenticates as --network_auth_user. Placeholder until a "
+          "service-token store exists.");
+
 ABSL_FLAG(bool, network_auth_cleartext, false,
           "Use cleartext password auth instead of SCRAM-SHA-256 (still "
           "requires TLS unless --network_allow_cleartext_without_tls).");
@@ -140,6 +150,8 @@ NetworkServerFeature::NetworkServerFeature()
     _tls_ca{absl::GetFlag(FLAGS_network_tls_ca)},
     _auth_password{absl::GetFlag(FLAGS_network_auth_password)},
     _auth_user{absl::GetFlag(FLAGS_network_auth_user)},
+    _api_key{absl::GetFlag(FLAGS_network_api_key)},
+    _bearer_token{absl::GetFlag(FLAGS_network_bearer_token)},
     _auth_cleartext{absl::GetFlag(FLAGS_network_auth_cleartext)},
     _allow_cleartext_without_tls{
       absl::GetFlag(FLAGS_network_allow_cleartext_without_tls)},
@@ -185,6 +197,27 @@ void NetworkServerFeature::start() {
     SDB_INFO(GENERAL, "network pg-wire + http auth enabled for user '",
              _auth_user, "' (", _auth_cleartext ? "cleartext" : "scram-sha-256",
              ")");
+  }
+
+  // HTTP ApiKey / Bearer are independent of Basic: each scheme is enabled by
+  // its own flag, validated against one static credential, authenticating as
+  // _auth_user. Unset => the scheme stays rejected (null validator -> 401).
+  if (!_api_key.empty()) {
+    const auto colon = _api_key.find(':');
+    if (colon == std::string::npos) {
+      SDB_FATAL(GENERAL, "--network_api_key must be 'id:key'");
+    }
+    _api_key_validator = std::make_unique<network::http::FlagApiKeyValidator>(
+      _api_key.substr(0, colon), _api_key.substr(colon + 1), _auth_user);
+    _http_context.api_keys = _api_key_validator.get();
+    SDB_INFO(GENERAL, "network http ApiKey auth enabled");
+  }
+  if (!_bearer_token.empty()) {
+    _bearer_validator =
+      std::make_unique<network::http::FlagBearerValidator>(_bearer_token,
+                                                           _auth_user);
+    _http_context.bearer = _bearer_validator.get();
+    SDB_INFO(GENERAL, "network http Bearer auth enabled");
   }
 
   _pg_context.cancel = &_cancel;

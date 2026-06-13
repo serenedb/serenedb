@@ -126,3 +126,31 @@ extract verbatim into `network/transport.h` (templated on SocketKind), each sess
 Naming/placement (per #796, applied with judgment): a greppable type (e.g. `Connection`/`Transport`) in
 `server/network/` root, no `duckdb` in its identifiers; namespace stays `sdb::network` for now (the flat-`sdb` sed is
 a coordinated tree-wide pass, not piecemeal).
+
+### Phase 2 status + remaining migration (mechanical)
+DONE: `Connection<Kind, Session>` CRTP base added to `connection.h` (`7606b3fe`) — owns `_socket`, `_ioexec`, `_recv`,
+`_send`, `_write_view`/`_write_armed`/`_write_gate`, `_send_written`, `_send_waiter`/`kSendWaiterIdle`, `_io_broken`,
+`_writer_stop`, `_producer_gate`, `_task`, `_task_spawned`; methods `KickSend`/`HasUnsentBytes`/`SendBroken`/
+`OverSendHighWater`/`OnSendViewReady`/`ArmSendWaiter`/`DisarmSendWaiter`/`AwaitSendBelowHighWater`/`DrainSendOnTask`/
+`Flush`/`AwaitMoreBytes`/`SendWriter` (fences verbatim). One CRTP hook `OnSendPoison()`.
+
+REMAINING — migrate each session (do HTTP first, smaller; build + es/http(49)+gtests; then pg, build + drivers(1455);
+each its own commit). For `HttpSession` (`http/session.h`) and then `PgWireSession` (`pg_wire_session.h`):
+1. Base-list: add `public Connection<Kind, HttpSession>,` (resp. `PgWireSession`).
+2. Ctors: replace the `_socket`/`_io`/`_ioexec` initializers with a base delegation — Tcp/non-Ssl → `Connection{exec}`;
+   Ssl/MaybeTls → `Connection{exec, *ctx.ssl}`. Keep the protocol-specific initializers (`_deadline`/`_router`/`_auth`
+   for http; `_credentials`/`_allow_cleartext`/`_cancel`/`_max_message` for pg).
+3. Delete `Close()`/`Lowest()` (base provides) and the redundant `_io` member; rewrite the one `asio_ns::post(_io, …)`
+   teardown to `asio_ns::post(_ioexec->Context(), …)`.
+4. Delete the now-inherited members: `_socket _ioexec _recv _send _write_view _write_armed _write_gate _send_written
+   kSendWaiterIdle _send_waiter _io_broken _writer_stop _task _task_spawned` (pg also `_producer_gate`). Keep everything
+   protocol-specific (http: `_deadline _router _auth _codec _dechunk _idle _conn _connection_ctx _user`; pg: `_scratch
+   _dispatch_consume _params … _copy_gate _copy_route _feeder_done _statements _portals …`).
+5. Delete the inherited methods + their out-of-line defs: `OnSendViewReady KickSend HasUnsentBytes SendBroken`
+   (`OverSendHighWater` pg) `ArmSendWaiter DisarmSendWaiter AwaitSendBelowHighWater DrainSendOnTask` (`Flush` pg)
+   `AwaitMoreBytes` (http) `SendWriter`. Keep `Run`, `SessionMain`, and all framing (`ReadHead`/`ReadBody` http;
+   `TryAssembleFrame`/`NextFrame`/`AwaitFrame`/`FeedFrame`/`PeekTotalLength`/`CopyRecvInto` pg).
+6. Add `public: void OnSendPoison() {}` — http empty; pg `{ _copy_gate.Kick(); }`.
+7. `Start()` keeps `SendWriter().Detach()` (now the inherited one) + `Run().Detach()`.
+Then phase 3 = delete http's now-dead duplicate (already covered above since http migrates here); phases 4-7 per the
+list above.

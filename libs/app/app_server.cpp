@@ -46,10 +46,7 @@ void AppServer::parseOptions(int argc, char* argv[]) {
     static constexpr CategoryRule kRules[] = {
       {"server/rest_server/database_path_feature.cpp", "server"},
       {"server/rest_server/endpoint_feature.cpp", "server"},
-      {"server/general_server/scheduler_feature.cpp", "server"},
       {"server/storage_engine/search_engine.cpp", "server"},
-      {"server/general_server/general_server_feature.cpp", "http"},
-      {"server/general_server/ssl_server_feature.cpp", "ssl"},
       {"libs/basics/log_flags.cpp", "log"},
     };
     for (const auto& [suffix, category] : kRules) {

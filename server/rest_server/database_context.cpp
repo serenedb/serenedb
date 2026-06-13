@@ -23,7 +23,7 @@
 
 #include "basics/static_strings.h"
 #include "catalog/database.h"
-#include "general_server/state.h"
+#include "catalog/server_state.h"
 
 namespace sdb {
 

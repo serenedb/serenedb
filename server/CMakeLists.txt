@@ -37,7 +37,6 @@ target_link_libraries(
         date_interface
         rocksdb_interface
         llhttp
-        nghttp2::nghttp2
         rocksdb
         duckdb_static
         Folly::folly
@@ -51,11 +50,11 @@ add_subdirectory(auth)
 add_subdirectory(catalog)
 add_subdirectory(connector)
 add_subdirectory(database)
-add_subdirectory(general_server)
 add_subdirectory(network)
 add_subdirectory(pg)
 add_subdirectory(query)
 add_subdirectory(rest_server)
+add_subdirectory(scheduler)
 add_subdirectory(storage_engine)
 add_subdirectory(rocksdb_engine_catalog)
 add_subdirectory(utils)

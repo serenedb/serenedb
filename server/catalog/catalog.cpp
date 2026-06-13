@@ -58,7 +58,6 @@
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "folly/Function.h"
-#include "general_server/scheduler.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"

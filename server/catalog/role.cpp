@@ -36,8 +36,7 @@
 #include "basics/string_utils.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
-#include "general_server/general_server_feature.h"
-#include "general_server/state.h"
+#include "catalog/server_state.h"
 
 namespace sdb::catalog {
 namespace {

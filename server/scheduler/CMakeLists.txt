@@ -1,0 +1,5 @@
+target_sources(
+    sereneserver
+    PRIVATE
+        background_scheduler.cpp
+)

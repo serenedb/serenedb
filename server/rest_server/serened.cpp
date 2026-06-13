@@ -35,14 +35,11 @@
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "duckdb_shell.hpp"
-#include "general_server/general_server_feature.h"
-#include "general_server/scheduler_feature.h"
-#include "general_server/ssl_server_feature.h"
 #include "network/network_server_feature.h"
-#include "pg/pg_feature.h"
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"
+#include "scheduler/background_scheduler.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "storage_engine/engine_feature.h"
@@ -69,18 +66,15 @@ int RunServer(int argc, char** argv) {
     // 2. Construct features in dependency order. Each ctor reads its
     //    own flags, runs validation, and sets its static gInstance
     //    pointer; Feature::instance() works from here on.
-    SslServerFeature ssl;
     DatabasePathFeature db_path;
-    SchedulerFeature scheduler;
+    BackgroundScheduler background;
     RocksDBOptionFeature rocksdb_opt;
     EngineFeature engine;
     FlushFeature flush;
     RocksDBRecoveryManager recovery;
     catalog::CatalogFeature catalog;
     search::SearchEngine search;
-    GeneralServerFeature general;
     NetworkServerFeature network;
-    pg::PostgresFeature pg;
 
     // --------------------------------------------------------------
     // Two-method lifecycle: start() does non-IO setup + spin-up of
@@ -115,20 +109,17 @@ int RunServer(int argc, char** argv) {
     //    stamped into /tmp/crash bundles so a fatal signal during
     //    boot lands with a phase tag.
     CrashHandler::SetState("starting");
-    start_one(ssl, [&] { ssl.stop(); });
-    start_one(scheduler, [&] { scheduler.stop(); });
+    start_one(background, [&] { background.stop(); });
     start_one(engine, [&] { engine.stop(); });
     // flush has no start() work; ctor already registered metrics + gInstance,
     // but stop() clears subscriptions so it needs a LIFO slot here.
     stoppers.push_back([&] { flush.stop(); });
-    // recovery + pg only have start() work (no stop counterpart): WAL replay
-    // and engine-ready assertion respectively. No teardown needed.
+    // recovery only has start() work (no stop counterpart): WAL replay. No
+    // teardown needed.
     recovery.start();
     start_one(catalog, [&] { catalog.stop(); });
     start_one(search, [&] { search.stop(); });
-    start_one(general, [&] { general.stop(); });
     start_one(network, [&] { network.stop(); });
-    pg.start();
 
     // Boot completed; emit a recognisable banner so operators tailing
     // logs (and the sdb_log smoke test) can confirm the server is up.

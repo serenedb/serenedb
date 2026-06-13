@@ -34,7 +34,9 @@
 #include "network/pg/auth.h"
 #include "network/tls_context.h"
 
-ABSL_DECLARE_FLAG(uint64_t, server_io_threads);
+ABSL_FLAG(uint64_t, server_io_threads, 0,
+          "IO threads for HTTP and pg-wire connections "
+          "(0 = max(1, cpu_count / 4)).");
 
 ABSL_FLAG(std::string, network_http_endpoint, "",
           "URL the network HTTP server listens on, e.g. "

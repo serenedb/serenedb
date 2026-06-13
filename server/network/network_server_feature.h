@@ -46,6 +46,10 @@ class NetworkServerFeature final {
   void start();
   void stop();
 
+  // The io worker pool (sockets + reused for background timers); null until
+  // start() and only when at least one endpoint is configured.
+  network::IoThreadPool* IoPool() noexcept { return _pool.get(); }
+
  private:
   std::string _endpoint;
   std::string _pg_endpoint;

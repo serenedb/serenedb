@@ -39,7 +39,6 @@
 #include "catalog/object_dependency.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"
-#include "general_server/scheduler.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/table_shard.h"

@@ -27,6 +27,8 @@
 #include <span>
 #include <yaclib/async/make.hpp>
 #include <yaclib/async/when_all.hpp>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
@@ -35,11 +37,11 @@
 #include "catalog/object.h"
 #include "catalog/types.h"
 #include "connector/key_utils.hpp"
-#include "general_server/scheduler.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
@@ -80,14 +82,10 @@ yaclib::Future<> RunChildrenTasks(std::span<std::shared_ptr<T>> tasks) {
 
 AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
   try {
+    auto& scheduler = BackgroundScheduler::instance();
     while (true) {
-      auto* scheduler = GetScheduler();
-      if (!scheduler) {
-        co_return {};
-      }
-      co_await scheduler->delay(task->GetName(), task->_delay);
-      auto r = co_await scheduler->queueWithFuture(
-        RequestLane::InternalLow,
+      co_await scheduler.Delay(task->_delay);
+      auto r = co_await scheduler.Run(
         [task] { return DropTask::ExecuteTask(std::move(task)); });
       if (r.errorNumber() == ERROR_LOCKED) {
         task->_delay = std::min(kMaxDelay, task->_delay * 2);

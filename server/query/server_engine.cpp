@@ -210,7 +210,10 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
   return kExternalTypes;
 }
 
-ABSL_DECLARE_FLAG(uint64_t, server_cpu_threads);
+ABSL_FLAG(uint64_t, server_cpu_threads, 0,
+          "DuckDB executor pool size at process start. 0 = let DuckDB "
+          "auto-detect from cpu_count. The SQL-level `SET threads = N` "
+          "continues to win at runtime.");
 
 namespace sdb::server::query {
 

@@ -79,8 +79,6 @@
 #include "connector/common.h"
 #include "connector/key_utils.hpp"
 #include "database/ticks.h"
-#include "general_server/rest_handler_factory.h"
-#include "general_server/scheduler_feature.h"
 #include "rest/version.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"

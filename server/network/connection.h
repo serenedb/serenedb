@@ -94,13 +94,13 @@ inline constexpr auto kHttpBodyReadTimeout = std::chrono::seconds{30};
 // seq_cst-fenced against ArmSendWaiter). Touch these only with both invariants
 // in mind.
 template<SocketKind Kind, typename Session>
-class Connection {
+class Transport {
  public:
-  explicit Connection(IoExecutor& exec)
+  explicit Transport(IoExecutor& exec)
     requires(Kind == SocketKind::Tcp)
     : _socket{exec.Context()}, _ioexec{&exec} {}
 
-  Connection(IoExecutor& exec, asio_ns::ssl::context& ssl)
+  Transport(IoExecutor& exec, asio_ns::ssl::context& ssl)
     requires(Kind != SocketKind::Tcp)
     : _socket{exec.Context(), ssl}, _ioexec{&exec} {}
 

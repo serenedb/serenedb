@@ -1,0 +1,106 @@
+# MERGE INTO: matched UPDATE / matched DELETE / not-matched INSERT, with and
+# without an inverted index on the target (the index forces the commit-time
+# append/delete path for every merge action).
+
+statement ok
+CREATE TABLE merge_plain(a INTEGER PRIMARY KEY, b INTEGER);
+
+statement count 3
+INSERT INTO merge_plain VALUES (1, 10), (2, 20), (3, 30);
+
+# Matched -> UPDATE, not-matched -> INSERT.
+statement ok
+MERGE INTO merge_plain t
+USING (SELECT * FROM (VALUES (2, 222), (5, 555)) AS v(a, b)) s
+ON t.a = s.a
+WHEN MATCHED THEN UPDATE SET b = s.b
+WHEN NOT MATCHED THEN INSERT VALUES (s.a, s.b);
+
+query
+SELECT a, b FROM merge_plain ORDER BY a;
+----
+a	b
+1	10
+2	222
+3	30
+5	555
+
+# Matched -> DELETE.
+statement ok
+MERGE INTO merge_plain t
+USING (SELECT * FROM (VALUES (1), (3)) AS v(a)) s
+ON t.a = s.a
+WHEN MATCHED THEN DELETE;
+
+query
+SELECT a, b FROM merge_plain ORDER BY a;
+----
+a	b
+2	222
+5	555
+
+statement ok
+DROP TABLE merge_plain;
+
+
+# Same merge actions against a table with an inverted index.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY merge_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE merge_idx(a INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX merge_idx_inv ON merge_idx USING inverted(body merge_dict);
+
+statement count 3
+INSERT INTO merge_idx VALUES (1, 'alpha one'), (2, 'beta two'), (3, 'gamma three');
+
+statement ok
+MERGE INTO merge_idx t
+USING (SELECT * FROM (VALUES (2, 'beta updated'), (5, 'epsilon five')) AS v(a, b)) s
+ON t.a = s.a
+WHEN MATCHED THEN UPDATE SET body = s.b
+WHEN NOT MATCHED THEN INSERT VALUES (s.a, s.b);
+
+statement ok
+MERGE INTO merge_idx t
+USING (SELECT * FROM (VALUES (1)) AS v(a)) s
+ON t.a = s.a
+WHEN MATCHED THEN DELETE;
+
+query
+SELECT a, body FROM merge_idx ORDER BY a;
+----
+a	body
+2	beta updated
+3	gamma three
+5	epsilon five
+
+statement ok
+VACUUM (REFRESH_TABLE) merge_idx;
+
+# Index reflects merged state: 'updated' (merged row 2) hits, 'one' (deleted
+# row 1) misses, 'epsilon' (inserted row 5) hits.
+query
+SELECT a FROM merge_idx_inv WHERE body @@ ts_phrase('updated');
+----
+a
+2
+
+query
+SELECT a FROM merge_idx_inv WHERE body @@ ts_phrase('alpha');
+----
+a
+
+query
+SELECT a FROM merge_idx_inv WHERE body @@ ts_phrase('epsilon');
+----
+a
+5
+
+statement ok
+DROP TABLE merge_idx;

@@ -199,15 +199,6 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "sdb_read_your_own_writes",
-      {
-        LogicalTypeId::BOOLEAN,
-        "Legacy no-op: queries always see the current transaction's own "
-        "writes.",
-        [] { return duckdb::Value::BOOLEAN(true); },
-      },
-    },
-    {
       "sdb_strict_ddl",
       {
         LogicalTypeId::BOOLEAN,

@@ -92,9 +92,6 @@ id	val
 
 onlyif serenedb
 statement ok
-SET sdb_read_your_own_writes = 1;
-
-statement ok
 BEGIN;
 
 statement count 1
@@ -131,9 +128,6 @@ statement ok
 ROLLBACK;
 
 onlyif serenedb
-statement ok
-SET sdb_read_your_own_writes = 0;
-
 statement ok
 INSERT INTO t_choice VALUES (10, 10), (20, 20), (30, 30);
 
@@ -2312,9 +2306,6 @@ QUERY PLAN
 
 onlyif serenedb
 statement ok
-SET sdb_read_your_own_writes = 1;
-
-statement ok
 BEGIN;
 
 statement count 2
@@ -2353,9 +2344,6 @@ statement ok
 ROLLBACK;
 
 onlyif serenedb
-statement ok
-SET sdb_read_your_own_writes = 0;
-
 statement ok
 DROP TABLE t_range;
 
@@ -6475,9 +6463,6 @@ INSERT INTO t_dml_ryow VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
 
 onlyif serenedb
 statement ok
-SET sdb_read_your_own_writes = 1;
-
-statement ok
 BEGIN;
 
 # Insert a new row; read it back to verify it is visible within the tx.
@@ -6580,9 +6565,6 @@ id	val
 5	50
 
 onlyif serenedb
-statement ok
-SET sdb_read_your_own_writes = 0;
-
 statement ok
 DROP TABLE t_dml_ryow;
 

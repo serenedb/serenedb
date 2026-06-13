@@ -236,7 +236,6 @@ schema	public	Sets the default search schema. Equivalent to setting search_path 
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max top-K) pruning never engages. Default: false (optimization on).
 sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
-sdb_read_your_own_writes	on	Legacy no-op: queries always see the current transaction's own writes.
 sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
 sdb_strict_ddl	off	When enabled, DDL inside a transaction block fails instead of committing immediately (DDL is not transactional).
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
@@ -517,7 +516,6 @@ schema	public	Sets the default search schema. Equivalent to setting search_path 
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max top-K) pruning never engages. Default: false (optimization on).
 sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
-sdb_read_your_own_writes	on	Legacy no-op: queries always see the current transaction's own writes.
 sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
 sdb_strict_ddl	off	When enabled, DDL inside a transaction block fails instead of committing immediately (DDL is not transactional).
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.

@@ -103,9 +103,6 @@ id_b	body
 # uncommitted DELETE already materializes as NULLs, and ROLLBACK restores
 # the row. (Index queries inside an explicit transaction require
 # read-your-own-writes to be off.)
-statement ok
-SET sdb_read_your_own_writes = false;
-
 
 statement ok
 BEGIN;
@@ -127,9 +124,6 @@ NULL	NULL	NULL
 statement ok
 ROLLBACK;
 
-
-statement ok
-SET sdb_read_your_own_writes = true;
 
 
 query

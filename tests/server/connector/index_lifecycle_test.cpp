@@ -28,6 +28,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -221,10 +222,11 @@ class IndexLifecycleTest : public ::testing::Test {
     _db.reset();
     std::filesystem::remove_all(_dir);
   }
-  void Open() {
+  void Open(bool checkpoint_on_shutdown = true) {
     _conn.reset();
     _db.reset();
     duckdb::DBConfig config;
+    config.options.checkpoint_on_shutdown = checkpoint_on_shutdown;
     _db =
       std::make_unique<duckdb::DuckDB>((_dir / "probe.db").string(), &config);
     RegisterProbeIndexType(*_db->instance);
@@ -334,6 +336,55 @@ TEST_F(IndexLifecycleTest, ReopenRecreatesViaCreateInstanceAndReplays) {
     }
   }
   ASSERT_EQ(vals, (std::vector<int32_t>{30}));
+}
+
+// P1a: a database closed WITHOUT a checkpoint replays the whole WAL --
+// including the CREATE INDEX itself -- and delivers every append to the
+// recreated index at first bind.
+TEST_F(IndexLifecycleTest, DirtyCloseReplaysWalAppendsIntoIndex) {
+  Open(/*checkpoint_on_shutdown=*/false);
+  Exec("CREATE TABLE t(v INTEGER)");
+  Exec("CREATE INDEX probe_idx ON t USING sdb_probe(v)");
+  Exec("INSERT INTO t VALUES (10), (20)");
+
+  Open();  // reopen; WAL of the dirty close replays
+  Log().events.clear();
+  Exec("INSERT INTO t VALUES (30)");  // first DML binds + applies buffers
+
+  std::vector<int32_t> vals;
+  for (const auto& ev : Log().events) {
+    if (ev.kind == ProbeEvent::Append) {
+      vals.insert(vals.end(), ev.values.begin(), ev.values.end());
+    }
+  }
+  std::sort(vals.begin(), vals.end());
+  ASSERT_EQ(vals, (std::vector<int32_t>{10, 20, 30}));
+}
+
+// P1b: delta exactness -- rows covered by a checkpoint are NOT redelivered;
+// only post-checkpoint appends and deletes replay after a dirty close.
+TEST_F(IndexLifecycleTest, DirtyCloseReplaysOnlyPostCheckpointDelta) {
+  Open(/*checkpoint_on_shutdown=*/false);
+  Exec("CREATE TABLE t(v INTEGER)");
+  Exec("CREATE INDEX probe_idx ON t USING sdb_probe(v)");
+  Exec("INSERT INTO t VALUES (10), (20)");
+  Exec("CHECKPOINT");
+  Exec("INSERT INTO t VALUES (30)");
+  Exec("DELETE FROM t WHERE v = 10");
+
+  Open();
+  Log().events.clear();
+  Exec("INSERT INTO t VALUES (40)");
+
+  std::vector<int32_t> appended;
+  std::vector<int32_t> deleted;
+  for (const auto& ev : Log().events) {
+    auto& out = ev.kind == ProbeEvent::Append ? appended : deleted;
+    out.insert(out.end(), ev.values.begin(), ev.values.end());
+  }
+  std::sort(appended.begin(), appended.end());
+  ASSERT_EQ(appended, (std::vector<int32_t>{30, 40}));
+  ASSERT_EQ(deleted, (std::vector<int32_t>{10}));
 }
 
 }  // namespace

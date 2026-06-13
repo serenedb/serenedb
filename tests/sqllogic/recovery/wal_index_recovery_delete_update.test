@@ -1,0 +1,102 @@
+control substitution on
+
+# Phase 2 bounded replay, mutating tail: a refresh makes the rows durable in
+# the segments. Then a DELETE and an UPDATE run with the search commit faulted
+# off, so they live only in the store WAL. After a crash, recovery replays that
+# tail (these ops are PAST the durable cursor, so they are NOT skipped) and the
+# index reflects them -- the deleted rows are gone, the updated row carries its
+# new value.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY du_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE du_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX du_idx ON du_t USING inverted(id, body du_dict);
+
+statement ok
+INSERT INTO du_t SELECT i, 'doc_' || i FROM range(0, 5000) AS t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) du_t;
+
+# Post-refresh mutations, index leg suppressed -> store WAL only.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+DELETE FROM du_t WHERE id < 100;
+
+statement ok
+UPDATE du_t SET body = 'changed' WHERE id = 2500;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection du_after
+statement ok retry 60 backoff 1s
+VACUUM (REFRESH_TABLE) du_t;
+
+connection du_after
+query
+SELECT COUNT(*) FROM du_t;
+----
+count
+4900
+
+connection du_after
+query
+SELECT COUNT(*) FROM du_idx;
+----
+count
+4900
+
+# Deleted rows are gone from the index.
+connection du_after
+query
+SELECT id FROM du_idx WHERE body @@ ts_phrase('doc_0');
+----
+id
+
+connection du_after
+query
+SELECT id FROM du_idx WHERE body @@ ts_phrase('doc_99');
+----
+id
+
+# A row just past the deleted range survives.
+connection du_after
+query
+SELECT id FROM du_idx WHERE body @@ ts_phrase('doc_100');
+----
+id
+100
+
+# The updated row carries its new value; its old value is gone.
+connection du_after
+query
+SELECT id FROM du_idx WHERE body @@ ts_phrase('changed');
+----
+id
+2500
+
+connection du_after
+query
+SELECT id FROM du_idx WHERE body @@ ts_phrase('doc_2500');
+----
+id

@@ -77,6 +77,22 @@ class Transaction : public Config {
 
   void EraseSearchTransaction(ObjectId shard_id) noexcept {
     _search_transactions.erase(shard_id);
+    _search_shards.erase(shard_id);
+  }
+
+  // Pin every staged search transaction into the iresearch flush context so a
+  // concurrent refresh waits for it to settle before committing on tick. Call
+  // at feed time (after staging this batch, BEFORE the store WAL bytes are
+  // written) so the refresh's WAL-offset durable cursor never claims a
+  // transaction whose iresearch leg has not been flushed. RegisterFlush is a
+  // no-op until an active segment exists (docs staged) and idempotent after,
+  // so registering all transactions each feed is safe and cheap.
+  void RegisterSearchFlush() noexcept {
+    for (auto& [shard_id, transaction] : _search_transactions) {
+      if (transaction) {
+        transaction->RegisterFlush();
+      }
+    }
   }
 
   void Destroy() noexcept;
@@ -114,6 +130,10 @@ class Transaction : public Config {
       if (!transaction) {
         transaction = std::make_unique<irs::IndexWriter::Transaction>(
           inverted_index_shard.GetTransaction());
+        // Keep the shard alive and reachable for Commit() without a
+        // (potentially asserting) catalog GetIndexShard re-lookup.
+        _search_shards[inverted_index_shard.GetId()] =
+          std::static_pointer_cast<search::InvertedIndexShard>(index_shard);
       }
       visit(*transaction, *index);
     }
@@ -125,6 +145,8 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId,
                           std::unique_ptr<irs::IndexWriter::Transaction>>
     _search_transactions;
+  containers::FlatHashMap<ObjectId, std::shared_ptr<search::InvertedIndexShard>>
+    _search_shards;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;

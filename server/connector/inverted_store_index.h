@@ -22,6 +22,7 @@
 
 #include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/execution/index/index_type.hpp>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -58,6 +59,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     const duckdb::vector<duckdb::column_t>& column_ids,
     const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& exprs,
     duckdb::AttachedDatabase& db, ObjectId table_id, ObjectId index_id);
+  ~InvertedStoreIndex() override;
 
   duckdb::ErrorData Append(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
                            duckdb::Vector& row_ids) override;
@@ -69,6 +71,17 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::IndexLock& l, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) override;
+
+  // Called by duckdb before each buffered WAL-replay range, with that range's
+  // store-WAL byte offset. Operations at/below the shard's durable cursor are
+  // already in the segments; we record the offset so ReplayAppend/ReplayDelete
+  // can skip them.
+  void OnReplayRange(duckdb::idx_t commit_offset) override;
+
+  // Called by duckdb after every buffered WAL-replay insert/delete for this
+  // bind has been delivered (via Append/Delete with no committing context).
+  // Commits the accumulated replay transaction into the iresearch shard.
+  void FinishReplay() override;
 
   void ResetStorage(duckdb::IndexLock&) override {}
   bool MergeIndexes(duckdb::IndexLock&, duckdb::BoundIndex&) override {
@@ -102,8 +115,28 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,
                                duckdb::Vector& row_ids);
 
+  // Replay path: a transaction held open across one ApplyBufferedReplays
+  // pass, feeding the shard delete-then-insert (idempotent against postings
+  // iresearch already made durable ahead of the last checkpoint), committed
+  // once in FinishReplay. Built lazily on the first replayed operation.
+  struct ReplaySession;
+  ReplaySession& EnsureReplaySession();
+  void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
+  void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
+
+  // Minimal IndexStorageInfo (catalog ids; postings live in the iresearch
+  // shard's own files). Shared by SerializeToDisk/SerializeToWAL.
+  duckdb::IndexStorageInfo MakeStorageInfo() const;
+  // Force the shard durable before a checkpoint truncates the store WAL; veto
+  // (throw) if the shard is out of sync. No-op at CREATE INDEX time.
+  void CheckpointBarrier() const;
+
   ObjectId _table_id;
   ObjectId _index_id;
+  std::unique_ptr<ReplaySession> _replay;
+  // Store-WAL byte offset of the replay range currently being delivered by
+  // ApplyBufferedReplays (set by OnReplayRange). 0 = unknown (don't skip).
+  duckdb::idx_t _replay_commit_offset = 0;
 };
 
 // Attaches create_instance + the build pipeline for store-table CREATE

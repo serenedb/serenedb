@@ -784,9 +784,6 @@ INSERT INTO clickclack_ryow VALUES (1, 10), (2, 20);
 
 onlyif serenedb
 statement ok
-SET sdb_read_your_own_writes = 1;
-
-statement ok
 BEGIN;
 
 statement ok
@@ -803,9 +800,6 @@ COMMIT;
 
 
 onlyif serenedb
-statement ok
-SET sdb_read_your_own_writes = 0;
-
 statement ok
 BEGIN;
 

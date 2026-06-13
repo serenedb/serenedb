@@ -21,3 +21,26 @@ CREATE TEXT SEARCH DICTIONARY english_dict (
 statement ok
 CREATE INDEX idx_docs ON documents
     USING inverted (id, title english_dict, body english_dict);
+
+# DOCS_TEST: example_002
+
+statement ok
+VACUUM (REFRESH_TABLE) documents;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id FROM idx_docs WHERE body @@ 'searching';
+----
+id
+1
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT ts_lexize('english_dict', 'running engines');
+----
+ts_lexize
+{run,engin}

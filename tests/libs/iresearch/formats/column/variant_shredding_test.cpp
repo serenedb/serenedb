@@ -72,8 +72,7 @@ void WriteVariantColumn(duckdb::DatabaseInstance& db, irs::Directory& dir,
   Writer w{dir, segment, db};
   auto& cw = w.OpenColumn(id, duckdb::LogicalType::VARIANT(),
                           /*skip_validity=*/false, row_group_size,
-                          duckdb::CompressionType::COMPRESSION_AUTO,
-                          /*distinct_count=*/false);
+                          duckdb::CompressionType::COMPRESSION_AUTO, false);
   duckdb::Connection con{db};
   auto result = con.Query(sql);
   ASSERT_FALSE(result->HasError()) << result->GetError();

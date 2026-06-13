@@ -2259,11 +2259,10 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   constexpr irs::field_id kRgStrId = 101;
   {
     irs::ColWriter w{dir, "columns_rw_typed_rg", db};
-    auto& cw_int = w.OpenColumn(kRgIntId, duckdb::LogicalType::BIGINT,
-                                /*skip_validity=*/false,
-                                /*row_group_size=*/512,
-                                duckdb::CompressionType::COMPRESSION_AUTO,
-                                /*distinct_count=*/false);
+    auto& cw_int = w.OpenColumn(
+      kRgIntId, duckdb::LogicalType::BIGINT,
+      /*skip_validity=*/false,
+      /*row_group_size=*/512, duckdb::CompressionType::COMPRESSION_AUTO, false);
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
     uint64_t produced = 0;
@@ -2277,11 +2276,10 @@ TEST_P(FormatTestCase, columns_rw_typed) {
       produced += take;
     }
 
-    auto& cw_str = w.OpenColumn(kRgStrId, duckdb::LogicalType::BLOB,
-                                /*skip_validity=*/false,
-                                /*row_group_size=*/512,
-                                duckdb::CompressionType::COMPRESSION_AUTO,
-                                /*distinct_count=*/false);
+    auto& cw_str = w.OpenColumn(
+      kRgStrId, duckdb::LogicalType::BLOB,
+      /*skip_validity=*/false,
+      /*row_group_size=*/512, duckdb::CompressionType::COMPRESSION_AUTO, false);
     for (uint64_t i = 0; i < kRgRowCount; ++i) {
       irs::bstring buf;
       irs::tests::BstringDataOutput out{buf};
@@ -2481,8 +2479,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false,
                             /*row_group_size=*/512,
-                            duckdb::CompressionType::COMPRESSION_AUTO,
-                            /*distinct_count=*/false);
+                            duckdb::CompressionType::COMPRESSION_AUTO, false);
     for (uint64_t i = 0; i < kBigRows; ++i) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       if (i % 11 == 0) {
@@ -2653,8 +2650,7 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false,
                             /*row_group_size=*/512,
-                            duckdb::CompressionType::COMPRESSION_AUTO,
-                            /*distinct_count=*/false);
+                            duckdb::CompressionType::COMPRESSION_AUTO, false);
     for (uint64_t i = 0; i < kBigRows; ++i) {
       irs::tests::AppendBlob(
         cw, static_cast<irs::doc_id_t>(i + irs::doc_limits::min()),
@@ -2850,8 +2846,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false,
                             /*row_group_size=*/512,
-                            duckdb::CompressionType::COMPRESSION_AUTO,
-                            /*distinct_count=*/false);
+                            duckdb::CompressionType::COMPRESSION_AUTO, false);
     std::string payload(kSmallPayloadSize, '\0');
     for (uint64_t i = 0; i < kBigRows; ++i) {
       std::fill(payload.begin(), payload.end(),
@@ -3037,12 +3032,11 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     irs::ColWriter w{dir, kBigSeg, db};
     auto& id_w = w.OpenColumn(
       kIdCol, duckdb::LogicalType::BLOB, /*skip_validity=*/false,
-      /*row_group_size=*/512, duckdb::CompressionType::COMPRESSION_AUTO,
-      /*distinct_count=*/false);
-    auto& name_w = w.OpenColumn(kNameCol, duckdb::LogicalType::BLOB,
-                                /*skip_validity=*/false, /*row_group_size=*/512,
-                                duckdb::CompressionType::COMPRESSION_AUTO,
-                                /*distinct_count=*/false);
+      /*row_group_size=*/512, duckdb::CompressionType::COMPRESSION_AUTO, false);
+    auto& name_w =
+      w.OpenColumn(kNameCol, duckdb::LogicalType::BLOB,
+                   /*skip_validity=*/false, /*row_group_size=*/512,
+                   duckdb::CompressionType::COMPRESSION_AUTO, false);
     for (uint64_t i = 0; i < kBigRows; ++i) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       irs::bstring id_buf;
@@ -3233,13 +3227,11 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
     auto& id_w = w.OpenColumn(kBigIdCol, duckdb::LogicalType::BLOB,
                               /*skip_validity=*/false,
                               /*row_group_size=*/512,
-                              duckdb::CompressionType::COMPRESSION_AUTO,
-                              /*distinct_count=*/false);
-    auto& name_w = w.OpenColumn(kBigNameCol, duckdb::LogicalType::BLOB,
-                                /*skip_validity=*/false,
-                                /*row_group_size=*/512,
-                                duckdb::CompressionType::COMPRESSION_AUTO,
-                                /*distinct_count=*/false);
+                              duckdb::CompressionType::COMPRESSION_AUTO, false);
+    auto& name_w = w.OpenColumn(
+      kBigNameCol, duckdb::LogicalType::BLOB,
+      /*skip_validity=*/false,
+      /*row_group_size=*/512, duckdb::CompressionType::COMPRESSION_AUTO, false);
     for (uint64_t i = 0; i < kBigRows; ++i) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       const bool with_byte = (i % 2 == 0);
@@ -3432,8 +3424,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false,
                             /*row_group_size=*/512,
-                            duckdb::CompressionType::COMPRESSION_AUTO,
-                            /*distinct_count=*/false);
+                            duckdb::CompressionType::COMPRESSION_AUTO, false);
     for (uint64_t i = 0; i < kBigRows; ++i) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       // Two gaps: at rg boundary (1024) and mid-rg (1500).
@@ -3667,16 +3658,14 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
   auto& db = ::sdb::DuckDBEngine::Instance().instance();
   {
     irs::ColWriter w{dir, "border_case_rg", db};
-    auto& dense = w.OpenColumn(kBigDenseId, duckdb::LogicalType::BLOB,
-                               /*skip_validity=*/false,
-                               /*row_group_size=*/512,
-                               duckdb::CompressionType::COMPRESSION_AUTO,
-                               /*distinct_count=*/false);
-    auto& sparse = w.OpenColumn(kBigSparseId, duckdb::LogicalType::BLOB,
-                                /*skip_validity=*/false,
-                                /*row_group_size=*/512,
-                                duckdb::CompressionType::COMPRESSION_AUTO,
-                                /*distinct_count=*/false);
+    auto& dense = w.OpenColumn(
+      kBigDenseId, duckdb::LogicalType::BLOB,
+      /*skip_validity=*/false,
+      /*row_group_size=*/512, duckdb::CompressionType::COMPRESSION_AUTO, false);
+    auto& sparse = w.OpenColumn(
+      kBigSparseId, duckdb::LogicalType::BLOB,
+      /*skip_validity=*/false,
+      /*row_group_size=*/512, duckdb::CompressionType::COMPRESSION_AUTO, false);
     // Dense: first half live.
     for (uint64_t i = 0; i < 1024; ++i) {
       irs::tests::AppendBlob(
@@ -3874,8 +3863,7 @@ TEST_P(FormatTestCase, columns_issue700) {
     auto& cw = w.OpenColumn(kBigColId, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false,
                             /*row_group_size=*/512,
-                            duckdb::CompressionType::COMPRESSION_AUTO,
-                            /*distinct_count=*/false);
+                            duckdb::CompressionType::COMPRESSION_AUTO, false);
     for (uint64_t i = 0; i < kBigRows; ++i) {
       std::string payload(1 + (i % 5), '0' + static_cast<char>(i % 10));
       irs::tests::AppendBlob(

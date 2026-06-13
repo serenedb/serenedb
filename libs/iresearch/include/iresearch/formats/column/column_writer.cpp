@@ -24,8 +24,8 @@
 
 #include <cstring>
 #include <duckdb/common/enums/compression_type.hpp>
-#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -633,8 +633,7 @@ void ColumnWriter::FlushRowGroup() {
   }
 
   if (_entry->root.distinct_hll) {
-    duckdb::VectorOperations::Hash(_staging, *_hashes,
-                                   static_cast<duckdb::idx_t>(_filled));
+    duckdb::VectorOperations::Hash(_staging, *_hashes, _filled);
     _entry->root.distinct_hll->Update(_staging, *_hashes);
   }
 

@@ -48,14 +48,15 @@ INSERT INTO snippets VALUES
 statement ok
 CREATE INDEX snippets_idx ON snippets USING inverted (id, code code_grams);
 
-query ?
-SELECT id FROM snippets_idx
-WHERE code @@ ts_all(ts_tokenize(ARRAY['for(int i=42'], 'code_grams_q'))
+query ??
+SELECT id, ts_highlight(code) AS match
+FROM snippets_idx
+WHERE code @@ ts_all(ts_lexize('code_grams_q', 'for(int i=42'))
   AND code LIKE '%for(int i=42%'
 ORDER BY id;
 ----
-id
-1
+id	match
+1	<b>for(int i=42</b>; i<n; ++i) total += data[i
 
 # DOCS_TEST: example_004
 
@@ -74,15 +75,16 @@ INSERT INTO ranked VALUES
 statement ok
 CREATE INDEX ranked_idx ON ranked USING inverted (id, code code_grams);
 
-query ?
-SELECT id FROM ranked_idx
-WHERE code @@ ts_any(ts_tokenize(ARRAY['while l < r: m = (l + r) // 2'], 'code_grams_q'), 1)
+query ??
+SELECT id, ts_highlight(code) AS match
+FROM ranked_idx
+WHERE code @@ ts_any(ts_lexize('code_grams_q', 'while l < r: m = (l + r) // 2'), 1)
 ORDER BY bm25(ranked_idx.tableoid) DESC;
 ----
-id
-1
-2
-3
+id	match
+1	<b>while l < r: m = (l + r) // 2</b>
+2	some noise prefix; <b>m = (l + r) // 2</b>
+3	much longer noise that matches nothing at all; <b>r) // 2</b>
 
 # DOCS_TEST: example_005
 

@@ -102,3 +102,27 @@ Protocol-specific *framing* (pg `RecvFramer`, http `H1Codec`) stays per-protocol
 Each phase is independently revertible and leaves the tree green; the rewrite is incremental, never a big-bang replace.
 Phase 2/3 (the shared transport + http migration) is the largest and riskiest — it is gated on both protocol suites
 plus before/after perf for each.
+
+## Progress
+- **Phase 1 DONE** (committed): error model — `ThrowDuck` → `ThrowIfError` template + one `wire_frames::ToSqlError`
+  funnel, 3-arm command-loop catch collapsed to one (`f386b709`); dead `DuckDBStatement::extracted`/`current_stmt_idx`
+  removed (`907d2057`). 1455 driver tests pass. Remaining Phase-1 scars (`_io`/ctor `_ioexec`, the 3 TaskRunner
+  awaiters, dead `CopyMessagesQueue` layer) deferred into their structural phase (2 / 7) to avoid double-touching.
+
+## Phase 2 design basis (confirmed by reading both sessions)
+`HttpSession<Kind>` (`http/session.h`) and `PgWireSession<Kind>` carry the **identical** send/recv transport surface —
+extract verbatim into `network/transport.h` (templated on SocketKind), each session embeds one:
+- **members:** `Socket<Kind> _socket`, `message::Buffer _recv`, `message::Buffer _send` (constructed with
+  `kSendFlushSize` + the `OnSendViewReady` flush callback), `message::SequenceView _write_view`,
+  `std::atomic<bool> _write_armed`, `Gate _write_gate`, `std::atomic<size_t> _send_written`,
+  `std::atomic<size_t> _send_waiter{kSendWaiterIdle}`, `std::atomic<bool> _io_broken`, `_producer_gate`, `_ioexec`.
+- **methods (verbatim, fences intact):** `SendWriter()` coroutine, `OnSendViewReady`, `KickSend`, `HasUnsentBytes`,
+  `SendBroken`, `ArmSendWaiter`/`DisarmSendWaiter`, `AwaitSendBelowHighWater`, `DrainSendOnTask`, plus the recv
+  byte-channel + watermark wait. The `_send_waiter` Dekker handshake (`ArmSendWaiter`↔`SendWriter`) and the seq_cst
+  fences move **unchanged** into the transport — this is the one place they must live afterwards.
+- protocol-specific framing stays on top: pg `RecvFramer` / `NextFrame`, http `H1Codec`. The session keeps `_task`
+  (pg) / SessionMain body and supplies the recv-consumer wake (`_task->RequestRun()` vs http's wake) — that wiring is
+  the only per-protocol divergence on the recv side.
+Naming/placement (per #796, applied with judgment): a greppable type (e.g. `Connection`/`Transport`) in
+`server/network/` root, no `duckdb` in its identifiers; namespace stays `sdb::network` for now (the flat-`sdb` sed is
+a coordinated tree-wide pass, not piecemeal).

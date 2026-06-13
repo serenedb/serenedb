@@ -309,16 +309,6 @@ class InvertedIndexShard final
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _compactions_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
-
-  enum class Error : uint8_t {
-    // inverted index shard has no issues
-    NoError = 0,
-    // inverted index shard is out of sync
-    OutOfSync = 1,
-    // inverted index shard is failed (currently not used)
-    Failed = 2,
-  };
-  std::atomic<Error> _error{Error::NoError};
 };
 
 }  // namespace sdb::search

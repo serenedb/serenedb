@@ -22,7 +22,6 @@
 #pragma once
 
 #include <atomic>
-#include <shared_mutex>
 
 #include "catalog/fwd.h"
 #include "catalog/object.h"
@@ -35,28 +34,13 @@ class Deserializer;
 
 }  // namespace duckdb
 namespace sdb {
-namespace transaction {
-
-class Methods;
-}
-
-class Index;
-class FollowerInfo;
-class DocumentIterator;
-
-struct OperationOptions;
-class Result;
 
 class TableShard : public catalog::Object {
  public:
-  static constexpr double kDefaultLockTimeout = 10.0 * 60.0;
-
   virtual ~TableShard() = default;
   std::shared_ptr<Object> Clone() const final { return nullptr; }
 
   ObjectId GetTableId() const noexcept { return GetParentId(); }
-
-  auto& GetTableLock() noexcept { return _table_lock; }
 
   void UpdateNumRows(int64_t delta) noexcept {
     _num_rows.fetch_add(delta, std::memory_order_relaxed);
@@ -77,14 +61,8 @@ class TableShard : public catalog::Object {
                       const catalog::TableStats& stats);
 
  protected:
-  ObjectId _table_id;
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};
-  // TODO: remove table lock when we have a proper create index
-  // Using std::shared_mutex instead of absl::Mutex because DataSink objects
-  // may be destroyed on a different thread than they were created on (e.g.
-  // during query cancellation), and absl::Mutex forbids cross-thread unlock.
-  std::shared_mutex _table_lock;
 };
 
 }  // namespace sdb

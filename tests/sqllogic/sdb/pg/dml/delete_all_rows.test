@@ -1,0 +1,61 @@
+# DELETE without a WHERE clause from an inverted-indexed table: every row must
+# be removed from the index via the per-row delete path (not the TRUNCATE
+# fast-path), leaving both the table and the index empty.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dar_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+
+statement ok
+CREATE TABLE dar(id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX dar_idx ON dar USING inverted(body dar_dict);
+
+
+statement count 3
+INSERT INTO dar VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dar;
+
+
+query
+SELECT count(*) AS hits FROM dar_idx WHERE body @@ ts_phrase('alpha');
+----
+hits
+1
+
+
+statement count 3
+DELETE FROM dar;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dar;
+
+
+query
+SELECT count(*) AS hits FROM dar_idx WHERE body @@ ts_phrase('alpha');
+----
+hits
+0
+
+
+query
+SELECT count(*) AS n FROM dar;
+----
+n
+0
+
+
+statement ok
+DROP TABLE dar;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY dar_dict;

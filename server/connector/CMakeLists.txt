@@ -43,6 +43,7 @@ add_library(
     duckdb_physical_sst_insert.cpp
     duckdb_physical_ctas.cpp
     duckdb_tokenizer_function.cpp
+    duckdb_subscription.cpp
     duckdb_physical_create_index.cpp
     duckdb_index_utils.cpp
     duckdb_constraint_verify.cpp

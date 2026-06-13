@@ -22,6 +22,7 @@ target_sources(
         inverted_index.cpp
         scorer_options.cpp
         tokenizer.cpp
+        subscription.cpp
 )
 
 add_subdirectory(identifiers)

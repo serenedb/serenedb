@@ -61,6 +61,7 @@ enum class ObjectType : uint8_t {
   PgSqlType,
   PgSqlView,
   Sequence,
+  Subscription,
   Table,
   // Under table - shards after their parent definition
   TableShard,

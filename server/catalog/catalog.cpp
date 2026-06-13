@@ -236,6 +236,7 @@ class OpenDatabase {
 
   Result RegisterDatabases();
   Result RegisterSchemas(ObjectId database_id);
+  Result RegisterSubscriptions(ObjectId database_id);
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
@@ -299,6 +300,11 @@ Result OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
   CollectDeletedDefinitions(database_id, DeletedScope::Database);
   auto r = RegisterSchemas(database_id);
   ClearDeletedDefinitions(DeletedScope::Database);
+
+  if (r.fail()) {
+    return r;
+  }
+  r = RegisterSubscriptions(database_id);
   return r;
 }
 
@@ -334,6 +340,19 @@ Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
       }
       DropTask::Schedule(std::move(*drop)).Detach();
       return {};
+    });
+}
+
+Result OpenDatabase::RegisterSubscriptions(ObjectId database_id) {
+  return GetServerEngine().VisitDefinitions(
+    database_id, ObjectType::Subscription,
+    [&](DefinitionKey key, std::string_view bytes) -> Result {
+      auto sub = catalog::DeserializeObject<catalog::Subscription>(
+        bytes, {.id = key.GetObjectId(), .database_id = database_id});
+      if (!sub) {
+        return Result{ERROR_INTERNAL, "Failed to read subscription definition"};
+      }
+      return _catalog.RegisterSubscription(database_id, std::move(sub));
     });
 }
 

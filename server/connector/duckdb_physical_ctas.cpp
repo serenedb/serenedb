@@ -82,10 +82,9 @@ SereneDBPhysicalCTAS::SereneDBPhysicalCTAS(
   duckdb::PhysicalPlan& plan,
   duckdb::unique_ptr<duckdb::BoundCreateTableInfo> info,
   duckdb::SchemaCatalogEntry& schema, duckdb::idx_t estimated_cardinality)
-  : duckdb::PhysicalOperator(plan,
-                             duckdb::PhysicalOperatorType::CREATE_TABLE_AS,
-                             {duckdb::LogicalType::BIGINT},
-                             estimated_cardinality),
+  : duckdb::PhysicalOperator(
+      plan, duckdb::PhysicalOperatorType::CREATE_TABLE_AS,
+      {duckdb::LogicalType::BIGINT}, estimated_cardinality),
     _info(std::move(info)),
     _schema(schema) {}
 
@@ -156,8 +155,7 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   // The store table keeps its tombstone name until RemoveTombstone renames
   // it on success.
-  state->store_conn =
-    std::make_unique<duckdb::Connection>(*context.db);
+  state->store_conn = std::make_unique<duckdb::Connection>(*context.db);
   state->appender = std::make_unique<duckdb::Appender>(
     *state->store_conn, std::string{catalog::kStoreDatabaseName}, "main",
     catalog::DroppedStoreTableName(catalog_table->GetId()));

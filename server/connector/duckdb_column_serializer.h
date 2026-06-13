@@ -33,15 +33,6 @@
 
 #include "connector/common.h"
 #include "connector/duckdb_sink_writer_base.h"
-#include "rocksdb/slice.h"
-
-namespace rocksdb {
-
-class Transaction;
-class ColumnFamilyHandle;
-class SstFileWriter;
-
-}  // namespace rocksdb
 namespace sdb::query {
 
 class Transaction;
@@ -55,23 +46,6 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
 
 class DuckDBColumnSerializer {
  public:
-  // Writes column cells into a rocksdb transaction.
-  class TxnWriter {
-   public:
-    TxnWriter(query::Transaction& sdb_txn,
-              rocksdb::ColumnFamilyHandle* cf) noexcept;
-
-    void SwitchColumn(const ColumnDescriptor& col) noexcept { _cur_col = col; }
-
-    void Write(const std::vector<rocksdb::Slice>& slices, std::string_view key);
-    void WriteNull(std::string_view key);
-
-   private:
-    rocksdb::Transaction* _txn;
-    rocksdb::ColumnFamilyHandle* _cf;
-    ColumnDescriptor _cur_col{};
-  };
-
   // No-op writer for paths that only want the per-row slice pipeline to
   // light up the inverted-index sink (e.g. indexed-expression eval). The
   // serializer's WriteColumn template duck-types this; SwitchColumn /
@@ -79,24 +53,8 @@ class DuckDBColumnSerializer {
   class NoopWriter {
    public:
     void SwitchColumn(const ColumnDescriptor&) noexcept {}
-    void Write(std::span<const rocksdb::Slice>, std::string_view) noexcept {}
+    void Write(std::span<const std::string_view>, std::string_view) noexcept {}
     void WriteNull(std::string_view) noexcept {}
-  };
-
-  // Writes column cells into an SST file.
-  class SstWriter {
-   public:
-    explicit SstWriter(rocksdb::SstFileWriter* writer) noexcept
-      : _writer{writer} {}
-
-    void SwitchColumn(const ColumnDescriptor& col) noexcept { _cur_col = col; }
-
-    void Write(const std::vector<rocksdb::Slice>& slices, std::string_view key);
-    void WriteNull(std::string_view key);
-
-   private:
-    rocksdb::SstFileWriter* _writer;
-    ColumnDescriptor _cur_col{};
   };
 
   explicit DuckDBColumnSerializer(duckdb::Allocator& allocator);
@@ -170,7 +128,7 @@ class DuckDBColumnSerializer {
                           duckdb::idx_t row_idx);
 
   void ResetForNewRow() noexcept;
-  rocksdb::Slice Finalize(std::string& output) const;
+  std::string_view Finalize(std::string& output) const;
 
  private:
   char* Allocate(size_t size);
@@ -212,7 +170,7 @@ class DuckDBColumnSerializer {
   void WriteRowSlices(Writer& writer, std::string_view key,
                       std::span<DuckDBSinkColumnWriter*> index_writers);
   duckdb::ArenaAllocator _arena;
-  std::vector<rocksdb::Slice> _row_slices;
+  std::vector<std::string_view> _row_slices;
 };
 
 }  // namespace sdb::connector

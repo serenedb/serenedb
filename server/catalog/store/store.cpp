@@ -37,29 +37,29 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
-#include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
-#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <exception>
 #include <filesystem>
 #include <initializer_list>
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
 #include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/static_strings.h"
 #include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/schema.h"
-#include "basics/down_cast.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
+#include "catalog/schema.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"
 
@@ -170,8 +170,7 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
       return false;
     }
     if (def.kind == StoreIndexDef::Kind::Plain &&
-        (it->type.HasAlias() ||
-         it->type.id() == duckdb::LogicalTypeId::ENUM)) {
+        (it->type.HasAlias() || it->type.id() == duckdb::LogicalTypeId::ENUM)) {
       // Catalog-named types (enums, composites, JSON) cannot be re-parsed
       // by the store connection during the ART build; such keys stay
       // unenforced like nested types.
@@ -213,8 +212,7 @@ std::string StoreIndexName(ObjectId index_id) {
 }
 
 StoreTableDef MakeStoreTableDef(std::string_view database,
-                                  std::string_view schema,
-                                  const Table& table) {
+                                std::string_view schema, const Table& table) {
   StoreTableDef def;
   def.name = StoreTableName(database, schema, table.GetName());
   const auto& cols = table.Columns();
@@ -315,15 +313,15 @@ void CatalogStore::WriteContext::DropStoreTable(std::string name) {
 }
 
 void CatalogStore::WriteContext::RenameStoreTable(std::string name,
-                                                   std::string new_name) {
+                                                  std::string new_name) {
   _entries.push_back({.op = Op::RenameStoreTable,
                       .store_table = {.name = std::move(name)},
                       .name_a = std::move(new_name)});
 }
 
 void CatalogStore::WriteContext::RenameStoreColumn(std::string table,
-                                                    std::string name,
-                                                    std::string new_name) {
+                                                   std::string name,
+                                                   std::string new_name) {
   _entries.push_back({.op = Op::RenameStoreColumn,
                       .store_table = {.name = std::move(table)},
                       .name_a = std::move(name),
@@ -518,8 +516,7 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           break;
         }
         case WriteContext::Op::CreateStoreTable: {
-          if (auto r = ExecuteCreateStoreTable(entry.store_table);
-              r.fail()) {
+          if (auto r = ExecuteCreateStoreTable(entry.store_table); r.fail()) {
             return r;
           }
           break;
@@ -534,10 +531,10 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           break;
         }
         case WriteContext::Op::RenameStoreTable: {
-          auto res = _conn->Query(absl::StrCat(
-            "ALTER TABLE \"", kStoreAlias, "\".main.",
-            QuotedIdent(entry.store_table.name), " RENAME TO ",
-            QuotedIdent(entry.name_a)));
+          auto res = _conn->Query(
+            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
+                         QuotedIdent(entry.store_table.name), " RENAME TO ",
+                         QuotedIdent(entry.name_a)));
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }
@@ -556,11 +553,11 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
         case WriteContext::Op::DropStoreCheck: {
           auto r = basics::SafeCall([&]() -> Result {
             auto& context = *_conn->context;
-            duckdb::AlterEntryData data{
-              std::string{kStoreAlias}, "main", entry.store_table.name,
-              duckdb::OnEntryNotFound::RETURN_NULL};
-            duckdb::DropConstraintInfo info{std::move(data), entry.name_a,
-                                            true, false};
+            duckdb::AlterEntryData data{std::string{kStoreAlias}, "main",
+                                        entry.store_table.name,
+                                        duckdb::OnEntryNotFound::RETURN_NULL};
+            duckdb::DropConstraintInfo info{std::move(data), entry.name_a, true,
+                                            false};
             auto& catalog =
               duckdb::Catalog::GetCatalog(context, std::string{kStoreAlias});
             catalog.Alter(context, info);
@@ -572,10 +569,10 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           break;
         }
         case WriteContext::Op::DropStoreNotNull: {
-          auto res = _conn->Query(absl::StrCat(
-            "ALTER TABLE \"", kStoreAlias, "\".main.",
-            QuotedIdent(entry.store_table.name), " ALTER COLUMN ",
-            QuotedIdent(entry.name_a), " DROP NOT NULL"));
+          auto res = _conn->Query(
+            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
+                         QuotedIdent(entry.store_table.name), " ALTER COLUMN ",
+                         QuotedIdent(entry.name_a), " DROP NOT NULL"));
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }
@@ -592,16 +589,17 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           }
           std::string sql;
           if (def.kind == StoreIndexDef::Kind::Inverted) {
-            sql = absl::StrCat(
-              "CREATE INDEX ", QuotedIdent(StoreIndexName(def.index_id)),
-              " ON \"", kStoreAlias, "\".main.", QuotedIdent(def.table),
-              " USING inverted(", cols, ") WITH (sdb_table_id=",
-              def.table_id.id(), ", sdb_index_id=", def.index_id.id(), ")");
+            sql = absl::StrCat("CREATE INDEX ",
+                               QuotedIdent(StoreIndexName(def.index_id)),
+                               " ON \"", kStoreAlias, "\".main.",
+                               QuotedIdent(def.table), " USING inverted(", cols,
+                               ") WITH (sdb_table_id=", def.table_id.id(),
+                               ", sdb_index_id=", def.index_id.id(), ")");
           } else {
-            sql = absl::StrCat(
-              "CREATE ", def.unique ? "UNIQUE " : "", "INDEX ",
-              QuotedIdent(StoreIndexName(def.index_id)), " ON \"", kStoreAlias,
-              "\".main.", QuotedIdent(def.table), " (", cols, ")");
+            sql = absl::StrCat("CREATE ", def.unique ? "UNIQUE " : "", "INDEX ",
+                               QuotedIdent(StoreIndexName(def.index_id)),
+                               " ON \"", kStoreAlias, "\".main.",
+                               QuotedIdent(def.table), " (", cols, ")");
           }
           auto res = _conn->Query(sql);
           if (res->HasError()) {
@@ -621,9 +619,9 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
         case WriteContext::Op::DropStoreForeignKey: {
           auto r = basics::SafeCall([&]() -> Result {
             auto& context = *_conn->context;
-            duckdb::AlterEntryData data{
-              std::string{kStoreAlias}, "main", entry.store_table.name,
-              duckdb::OnEntryNotFound::RETURN_NULL};
+            duckdb::AlterEntryData data{std::string{kStoreAlias}, "main",
+                                        entry.store_table.name,
+                                        duckdb::OnEntryNotFound::RETURN_NULL};
             duckdb::AlterForeignKeyInfo info{
               std::move(data),
               entry.name_a,
@@ -643,10 +641,10 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           break;
         }
         case WriteContext::Op::DropStoreColumn: {
-          auto res = _conn->Query(absl::StrCat(
-            "ALTER TABLE \"", kStoreAlias, "\".main.",
-            QuotedIdent(entry.store_table.name), " DROP COLUMN ",
-            QuotedIdent(entry.name_a)));
+          auto res = _conn->Query(
+            absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
+                         QuotedIdent(entry.store_table.name), " DROP COLUMN ",
+                         QuotedIdent(entry.name_a)));
           if (res->HasError()) {
             return {ERROR_INTERNAL, res->GetError()};
           }
@@ -667,8 +665,7 @@ Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
     auto retry = ExecuteCreateStoreTableImpl(def, /*with_checks=*/false);
     if (retry.ok()) {
       SDB_WARN(GENERAL, "store table \"", def.name,
-               "\": CHECK constraints were not mirrored: ",
-               r.errorMessage());
+               "\": CHECK constraints were not mirrored: ", r.errorMessage());
       return retry;
     }
   }
@@ -684,8 +681,8 @@ Result CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
       info->columns.AddColumn(duckdb::ColumnDefinition{col.name, col.type});
     }
     for (auto idx : def.not_null) {
-      info->constraints.push_back(
-        duckdb::make_uniq<duckdb::NotNullConstraint>(duckdb::LogicalIndex{idx}));
+      info->constraints.push_back(duckdb::make_uniq<duckdb::NotNullConstraint>(
+        duckdb::LogicalIndex{idx}));
     }
     if (!def.pk_columns.empty()) {
       duckdb::vector<std::string> pk;
@@ -763,8 +760,8 @@ void CatalogStore::ValidateStoreTable(const StoreTableDef& def) {
         break;
       }
       SDB_ASSERT(col.Name() == def.columns[i].name,
-                 "store table column name mismatch for ", def.name, ": ", col.Name(),
-                 " vs ", def.columns[i].name);
+                 "store table column name mismatch for ", def.name, ": ",
+                 col.Name(), " vs ", def.columns[i].name);
       SDB_ASSERT(col.Type() == def.columns[i].type,
                  "store table column type mismatch for ", def.name, ".",
                  def.columns[i].name);

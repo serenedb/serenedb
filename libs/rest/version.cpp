@@ -23,8 +23,6 @@
 
 #include <absl/strings/internal/ostringstream.h>
 #include <openssl/ssl.h>
-#include <rocksdb/convenience.h>
-#include <rocksdb/version.h>
 
 #include <charconv>
 #include <cstdint>
@@ -201,8 +199,6 @@ void Version::initialize() {
   gValues["assertions"] = "false";
 #endif
 
-  gValues["rocksdb-version"] = getRocksDBVersion();
-
 #ifdef __cplusplus
   gValues["cplusplus"] = std::to_string(__cplusplus);
 #else
@@ -362,12 +358,6 @@ std::string Version::getBoostReactorType() {
 #endif
 }
 
-// get RocksDB version
-std::string Version::getRocksDBVersion() {
-  return std::to_string(ROCKSDB_MAJOR) + "." + std::to_string(ROCKSDB_MINOR) +
-         "." + std::to_string(ROCKSDB_PATCH);
-}
-
 // get OpenSSL version
 std::string Version::getOpenSSLVersion(bool compile_time) {
   if (compile_time) {
@@ -480,8 +470,7 @@ std::string Version::getVerboseVersionString() {
 #ifdef HAVE_SERENEDB_BUILD_REPOSITORY
   version << "build " << getBuildRepository() << ", ";
 #endif
-  version << "RocksDB " << getRocksDBVersion() << ", ICU " << getICUVersion()
-          << ", " << getOpenSSLVersion(false);
+  version << "ICU " << getICUVersion() << ", " << getOpenSSLVersion(false);
 
   if (gValues.contains("build-id")) {
     version << ", build-id: " << gValues["build-id"];

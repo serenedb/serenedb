@@ -24,12 +24,12 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <span>
 #include <string>
+#include <string_view>
 
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/table_options.h"
 #include "connector/index_expression.hpp"
 #include "connector/sink_writer_base.hpp"
-#include "rocksdb/slice.h"
 
 namespace sdb::connector {
 
@@ -73,7 +73,7 @@ class DuckDBSinkIndexWriter {
 
 class DuckDBSinkColumnWriter : public DuckDBSinkIndexWriter {
  public:
-  virtual void Write(std::span<const rocksdb::Slice> /*cell_slices*/,
+  virtual void Write(std::span<const std::string_view> /*cell_slices*/,
                      std::string_view /*full_key*/) {}
 };
 

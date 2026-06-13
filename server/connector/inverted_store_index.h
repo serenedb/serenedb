@@ -21,10 +21,10 @@
 #pragma once
 
 #include <duckdb/execution/index/bound_index.hpp>
-#include <span>
-#include <vector>
 #include <duckdb/execution/index/index_type.hpp>
+#include <span>
 #include <string>
+#include <vector>
 
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
@@ -39,7 +39,6 @@ namespace sdb::catalog {
 class Table;
 
 }  // namespace sdb::catalog
-
 namespace sdb::connector {
 
 // The inverted index as a first-class index on store tables: postings live
@@ -66,11 +65,10 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                            duckdb::Vector& row_ids) override;
   void Delete(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
               duckdb::Vector& row_ids) override;
-  idx_t TryDelete(duckdb::IndexLock& l, duckdb::DataChunk& chunk,
-                  duckdb::Vector& row_ids,
-                  duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
-                  duckdb::optional_ptr<duckdb::SelectionVector>
-                    non_deleted_sel) override;
+  idx_t TryDelete(
+    duckdb::IndexLock& l, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
+    duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
+    duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) override;
 
   void ResetStorage(duckdb::IndexLock&) override {}
   bool MergeIndexes(duckdb::IndexLock&, duckdb::BoundIndex&) override {

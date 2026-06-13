@@ -97,12 +97,10 @@ class DropTask {
 
 class TableShardDrop final : public DropTask {
  public:
-  TableShardDrop(ObjectId id, ObjectId parent_id, uint64_t size)
-    : DropTask{id, parent_id}, _size{size} {}
+  TableShardDrop(ObjectId id, ObjectId parent_id) : DropTask{id, parent_id} {}
 
-  TableShardDrop(const std::shared_ptr<TableShard>& shard, ObjectId parent_id,
-                 uint64_t size)
-    : DropTask{shard, parent_id}, _size{size} {}
+  TableShardDrop(const std::shared_ptr<TableShard>& shard, ObjectId parent_id)
+    : DropTask{shard, parent_id} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("TableShardDrop(table $0 shard $1)",
@@ -114,9 +112,6 @@ class TableShardDrop final : public DropTask {
   AsyncResult Execute() final;
 
   bool AllowToDropDependencies() const noexcept final { return true; }
-
- private:
-  uint64_t _size;
 };
 
 struct IndexDrop final : public DropTask {
@@ -164,14 +159,14 @@ struct TableDrop final : public DropTask {
  public:
   static constexpr std::string_view kName = "table drop";
 
-  TableDrop(ObjectId id, ObjectId shard_id, uint64_t table_size,
+  TableDrop(ObjectId id, ObjectId shard_id,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             bool is_root = false)
     : DropTask{id, schema_id, is_root},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
-      _shard_drop{std::make_shared<TableShardDrop>(shard_id, id, table_size)} {}
+      _shard_drop{std::make_shared<TableShardDrop>(shard_id, id)} {}
 
   TableDrop(const std::shared_ptr<Table>& table,
             const std::shared_ptr<TableShard>& shard,
@@ -185,9 +180,7 @@ struct TableDrop final : public DropTask {
       _fk_referenced_store_names{std::move(fk_referenced_store_names)},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
-      _shard_drop{std::make_shared<TableShardDrop>(
-        shard, table->GetId(),
-        table->Columns().size() * shard->GetTableStats().num_rows)} {}
+      _shard_drop{std::make_shared<TableShardDrop>(shard, table->GetId())} {}
 
   // FK linkage entries must go before ANY table drop in the transaction:
   // a live back-reference makes duckdb refuse dropping the main-key table,

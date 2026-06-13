@@ -224,8 +224,8 @@ class SnapshotImpl : public Snapshot {
       auto db = GetObject<Database>(db_id);
       auto schema_obj = GetObject<Schema>(schema_id);
       SDB_ASSERT(db && schema_obj);
-      store_name = StoreTableName(db->GetName(), schema_obj->GetName(),
-                                  table->GetName());
+      store_name =
+        StoreTableName(db->GetName(), schema_obj->GetName(), table->GetName());
       for (const auto& fk : table->ForeignKeys()) {
         if (auto name = ComposeStoreTableName(fk.referenced_table)) {
           fk_referenced.push_back(std::move(*name));
@@ -451,8 +451,8 @@ class SnapshotImpl : public Snapshot {
     for (const auto& fk : table.ForeignKeys()) {
       if (fk.referenced_table.isSet()) {
         ModifyDependency(fk.referenced_table,
-                         &TableDependency::fk_referencing_tables,
-                         table.GetId(), action);
+                         &TableDependency::fk_referencing_tables, table.GetId(),
+                         action);
       }
     }
     for (const auto& c : table.CheckConstraints()) {
@@ -1310,10 +1310,9 @@ class SnapshotImpl : public Snapshot {
         if (old_col.GetId() == Column::kGeneratedPKId) {
           continue;
         }
-        auto it =
-          std::ranges::find_if(rw.table->Columns(), [&](const auto& c) {
-            return c.GetId() == old_col.GetId();
-          });
+        auto it = std::ranges::find_if(rw.table->Columns(), [&](const auto& c) {
+          return c.GetId() == old_col.GetId();
+        });
         if (it == rw.table->Columns().end()) {
           dropped_columns.emplace_back(old_col.GetName());
         }
@@ -1344,9 +1343,8 @@ class SnapshotImpl : public Snapshot {
         ctx.DropStoreColumn(store_name, std::move(name));
       }
       for (const auto& idx : surviving) {
-        if (auto def = MakeStoreIndexDef(database->GetName(),
-                                         schema_obj->GetName(), *rw.table,
-                                         *idx)) {
+        if (auto def = MakeStoreIndexDef(
+              database->GetName(), schema_obj->GetName(), *rw.table, *idx)) {
           ctx.CreateStoreIndex(std::move(*def));
         }
       }
@@ -1884,16 +1882,16 @@ Result LocalCatalog::CreateIndexImpl(
       }
       {
         auto table = clone->template GetObject<Table>(index->GetRelationId());
-        auto schema_obj = table ? clone->template GetObject<Schema>(
-                                    table->GetParentId())
-                                : nullptr;
-        auto database = schema_obj ? clone->template GetObject<Database>(
-                                       schema_obj->GetParentId())
-                                   : nullptr;
+        auto schema_obj =
+          table ? clone->template GetObject<Schema>(table->GetParentId())
+                : nullptr;
+        auto database =
+          schema_obj
+            ? clone->template GetObject<Database>(schema_obj->GetParentId())
+            : nullptr;
         if (database) {
-          if (auto def = MakeStoreIndexDef(database->GetName(),
-                                           schema_obj->GetName(), *table,
-                                           *index)) {
+          if (auto def = MakeStoreIndexDef(
+                database->GetName(), schema_obj->GetName(), *table, *index)) {
             r = _engine->Write(
               [&](auto& ctx) { ctx.CreateStoreIndex(std::move(*def)); });
             if (!r.ok()) {
@@ -2272,8 +2270,8 @@ Result LocalCatalog::CreateTable(
   auto table = std::make_shared<Table>(
     *schema_id, table_id, options.name, std::move(options.columns),
     std::move(options.pk_columns), std::move(options.check_constraints),
-    generated_pk_seq_id, options.engine,
-    std::move(options.unique_constraints), std::move(options.foreign_keys));
+    generated_pk_seq_id, options.engine, std::move(options.unique_constraints),
+    std::move(options.foreign_keys));
   if (operation_options.create_with_tombstone) {
     table->SetTombstoned(true);
   }
@@ -2304,9 +2302,8 @@ Result LocalCatalog::CreateTable(
       auto names_for = [](const Table& t, std::span<const Column::Id> ids,
                           std::vector<std::string>& out_names) {
         for (auto col_id : ids) {
-          auto it = std::ranges::find_if(t.Columns(), [&](const auto& c) {
-            return c.GetId() == col_id;
-          });
+          auto it = std::ranges::find_if(
+            t.Columns(), [&](const auto& c) { return c.GetId() == col_id; });
           if (it == t.Columns().end() || it->type.IsNested()) {
             out_names.clear();
             return;
@@ -2350,8 +2347,9 @@ Result LocalCatalog::CreateTable(
         }
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      // PutDefinition copies into the rocksdb batch, so one reused stream is
-      // enough: each view is consumed before the next serialize overwrites it.
+      // PutDefinition copies into the catalog store batch, so one reused stream
+      // is enough: each view is consumed before the next serialize overwrites
+      // it.
       duckdb::MemoryStream stream;
       return _engine->Write([&](auto& ctx) {
         ctx.PutDefinition(*schema_id, ObjectType::Table, table->GetId(),
@@ -2730,87 +2728,81 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
     store_name = StoreTableName(database->GetName(), schema, name);
   }
 
-  return Apply(_snapshot, _snapshot_mutex,
-               [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-                 auto r = clone->ReplaceObject<ResolveType::Relation>(
-                   *schema_id, name, updated);
-                 if (!r.ok()) {
-                   return r;
-                 }
+  return Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+      auto r =
+        clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
+      if (!r.ok()) {
+        return r;
+      }
 
-                 return basics::SafeCall([&] {
-                   duckdb::MemoryStream stream;
-                   auto bytes = catalog::SerializeObject(*updated, stream);
-                   return _engine->Write([&](auto& ctx) {
-                     ctx.PutDefinition(*schema_id, ObjectType::Table,
-                                       updated->GetId(), bytes);
-                     if (store_name.empty()) {
-                       return;
-                     }
-                     bool renamed_columns = false;
-                     for (const auto& old_col : table->Columns()) {
-                       if (old_col.GetId() == Column::kGeneratedPKId) {
-                         continue;
-                       }
-                       auto it = std::ranges::find_if(
-                         updated->Columns(), [&](const auto& c) {
-                           return c.GetId() == old_col.GetId();
-                         });
-                       if (it != updated->Columns().end() &&
-                           it->GetName() != old_col.GetName()) {
-                         ctx.RenameStoreColumn(store_name,
-                                               std::string{old_col.GetName()},
-                                               std::string{it->GetName()});
-                         renamed_columns = true;
-                       }
-                     }
-                     if (renamed_columns) {
-                       // Mirrored index definitions embed column names;
-                       // recreate them against the renamed table (rowid
-                       // postings and row data are untouched).
-                       auto deps = _snapshot->GetDependency<TableDependency>(
-                         updated->GetId());
-                       auto schema_obj =
-                         _snapshot->GetObject<Schema>(*schema_id);
-                       auto database = _snapshot->GetObject<Database>(
-                         database_id);
-                       if (deps && schema_obj && database) {
-                         for (auto idx_id : deps->indexes) {
-                           auto idx = _snapshot->GetObject<Index>(idx_id);
-                           if (!idx) {
-                             continue;
-                           }
-                           if (auto def = MakeStoreIndexDef(
-                                 database->GetName(), schema_obj->GetName(),
-                                 *updated, *idx)) {
-                             ctx.DropStoreIndex(idx_id);
-                             ctx.CreateStoreIndex(std::move(*def));
-                           }
-                         }
-                       }
-                     }
-                     for (const auto& oc : table->CheckConstraints()) {
-                       bool survives = std::ranges::any_of(
-                         updated->CheckConstraints(), [&](const auto& nc) {
-                           return nc.GetId() == oc.GetId();
-                         });
-                       if (survives) {
-                         continue;
-                       }
-                       if (auto idx = oc.IsNotNull(table->Columns())) {
-                         const auto& col = table->Columns()[*idx];
-                         if (col.GetId() != Column::kGeneratedPKId) {
-                           ctx.DropStoreNotNull(store_name,
-                                                std::string{col.GetName()});
-                         }
-                       } else if (oc.expr && oc.expr->HasExpr()) {
-                         ctx.DropStoreCheck(store_name,
-                                            oc.expr->GetExpr().ToString());
-                       }
-                     }
-                   });
-                 });
-               });
+      return basics::SafeCall([&] {
+        duckdb::MemoryStream stream;
+        auto bytes = catalog::SerializeObject(*updated, stream);
+        return _engine->Write([&](auto& ctx) {
+          ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
+                            bytes);
+          if (store_name.empty()) {
+            return;
+          }
+          bool renamed_columns = false;
+          for (const auto& old_col : table->Columns()) {
+            if (old_col.GetId() == Column::kGeneratedPKId) {
+              continue;
+            }
+            auto it = std::ranges::find_if(
+              updated->Columns(),
+              [&](const auto& c) { return c.GetId() == old_col.GetId(); });
+            if (it != updated->Columns().end() &&
+                it->GetName() != old_col.GetName()) {
+              ctx.RenameStoreColumn(store_name, std::string{old_col.GetName()},
+                                    std::string{it->GetName()});
+              renamed_columns = true;
+            }
+          }
+          if (renamed_columns) {
+            // Mirrored index definitions embed column names;
+            // recreate them against the renamed table (rowid
+            // postings and row data are untouched).
+            auto deps =
+              _snapshot->GetDependency<TableDependency>(updated->GetId());
+            auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
+            auto database = _snapshot->GetObject<Database>(database_id);
+            if (deps && schema_obj && database) {
+              for (auto idx_id : deps->indexes) {
+                auto idx = _snapshot->GetObject<Index>(idx_id);
+                if (!idx) {
+                  continue;
+                }
+                if (auto def = MakeStoreIndexDef(database->GetName(),
+                                                 schema_obj->GetName(),
+                                                 *updated, *idx)) {
+                  ctx.DropStoreIndex(idx_id);
+                  ctx.CreateStoreIndex(std::move(*def));
+                }
+              }
+            }
+          }
+          for (const auto& oc : table->CheckConstraints()) {
+            bool survives = std::ranges::any_of(
+              updated->CheckConstraints(),
+              [&](const auto& nc) { return nc.GetId() == oc.GetId(); });
+            if (survives) {
+              continue;
+            }
+            if (auto idx = oc.IsNotNull(table->Columns())) {
+              const auto& col = table->Columns()[*idx];
+              if (col.GetId() != Column::kGeneratedPKId) {
+                ctx.DropStoreNotNull(store_name, std::string{col.GetName()});
+              }
+            } else if (oc.expr && oc.expr->HasExpr()) {
+              ctx.DropStoreCheck(store_name, oc.expr->GetExpr().ToString());
+            }
+          }
+        });
+      });
+    });
 }
 
 Result LocalCatalog::DropRole(std::string_view role) {
@@ -3007,9 +2999,8 @@ Result LocalCatalog::RemoveTombstone(ObjectId database_id,
       if (table.GetEngine() == TableEngine::Transactional) {
         auto database = _snapshot->GetObject<Database>(database_id);
         SDB_ASSERT(database);
-        ctx.RenameStoreTable(
-          DroppedStoreTableName(*object_id),
-          StoreTableName(database->GetName(), schema, name));
+        ctx.RenameStoreTable(DroppedStoreTableName(*object_id),
+                             StoreTableName(database->GetName(), schema, name));
       }
     }
   });

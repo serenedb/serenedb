@@ -42,10 +42,6 @@
 #include "pg/pg_feature.h"
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
-#include "rest_server/flush_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "storage_engine/search_engine.h"
 
 namespace {
@@ -73,10 +69,6 @@ int RunServer(int argc, char** argv) {
     DatabasePathFeature db_path;
     catalog::CatalogStore store;
     SchedulerFeature scheduler;
-    RocksDBOptionFeature rocksdb_opt;
-    RocksDBEngineCatalog engine;
-    FlushFeature flush;
-    RocksDBRecoveryManager recovery;
     catalog::CatalogFeature catalog;
     search::SearchEngine search;
     GeneralServerFeature general;
@@ -84,15 +76,12 @@ int RunServer(int argc, char** argv) {
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency
     // order, then take them DOWN in a dependency order that is deliberately
-    // NOT the reverse of startup. The non-obvious edges: the scheduler must
-    // drain (it runs drop tasks that touch search + rocksdb) before those go
-    // down; the catalog must release the rocksdb snapshots its index shards
-    // hold BEFORE rocksdb is closed, yet must stay alive while the engine's
-    // background thread drains. DuckDBEngine brackets all of this from main().
-    // The up_* flags let DOWN skip whatever never came UP (start() threw).
+    // NOT the reverse of startup. The non-obvious edge: the scheduler must
+    // drain (it runs drop tasks that touch search) before search goes down.
+    // DuckDBEngine brackets all of this from main(). The up_* flags let DOWN
+    // skip whatever never came UP (start() threw).
     bool up_ssl = false, up_store = false, up_scheduler = false,
-         up_engine = false, up_catalog = false, up_search = false,
-         up_general = false;
+         up_catalog = false, up_search = false, up_general = false;
 
     absl::Cleanup down = [&]() noexcept {
       CrashHandler::SetState("stopping");
@@ -114,21 +103,12 @@ int RunServer(int argc, char** argv) {
       if (up_search) {
         stop("search", [&] { search.stop(); });
       }
-      if (up_engine) {
-        stop("engine", [&] {
-          engine.stop();  // drain bg threads; rocksdb stays open
-        });
-      }
       if (up_catalog) {
         stop("catalog", [&] { catalog.stop(); });
-      }
-      if (up_engine) {
-        stop("rocksdb", [&] { engine.unprepare(); });  // close rocksdb
       }
       if (up_store) {
         stop("store", [&] { store.Shutdown(); });  // detach + checkpoint
       }
-      stop("flush", [&] { flush.stop(); });
       if (up_ssl) {
         stop("ssl", [&] { ssl.stop(); });
       }
@@ -141,17 +121,13 @@ int RunServer(int argc, char** argv) {
     up_store = true;
     scheduler.start();
     up_scheduler = true;
-    engine.prepare();
-    engine.start();
-    up_engine = true;
-    recovery.start();  // WAL replay only; no teardown step
     catalog.start();
     up_catalog = true;
     search.start();
     up_search = true;
     general.start();
     up_general = true;
-    pg.start();  // engine-ready assertion only; no teardown step
+    pg.start();
 
     SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
 

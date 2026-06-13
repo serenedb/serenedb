@@ -21,7 +21,6 @@
 #include "catalog/drop_task.h"
 
 #include <absl/strings/str_cat.h>
-#include <rocksdb/options.h>
 
 #include <filesystem>
 #include <span>
@@ -35,12 +34,7 @@
 #include "catalog/object.h"
 #include "catalog/store/store.h"
 #include "catalog/types.h"
-#include "connector/key_utils.hpp"
 #include "general_server/scheduler.h"
-#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_common.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/search_engine.h"
 
@@ -114,28 +108,17 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
 
 AsyncResult TableShardDrop::Execute() {
   SDB_ASSERT(!_is_root);
-  auto& server = GetServerEngine();
-  // TODO(codeworse): Probably we should store data by table shard id, not
-  // table id. So, in that way here we would use id(not parent_id)
-  auto [start, end] = connector::key_utils::CreateTableRange(_parent_id);
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Default);
-  // Drop table data
-  // TODO(codeworse): add some parameter for large range(not just >= 1000)
-  auto r = rocksutils::RemoveLargeRange(server.db(), rocksdb::Slice{start},
-                                        rocksdb::Slice{end}, cf, true,
-                                        (_size >= 1000));
-  if (!r.ok()) {
-    return yaclib::MakeFuture<Result>(ERROR_LOCKED);
-  }
+  // Table rows live in the store table, dropped by TableDrop::Finalize;
+  // this task only exists to wait until catalog snapshots release the
+  // shard object (AllowToDrop) before storage teardown proceeds.
   return yaclib::MakeFuture<Result>();
 }
 
 Result IndexDrop::Finalize() {
   if (_type == catalog::ObjectType::InvertedIndex ||
       _type == catalog::ObjectType::SecondaryIndex) {
-    auto r = GetCatalogStore().Write(
-      [&](auto& ctx) { ctx.DropStoreIndex(_id); });
+    auto r =
+      GetCatalogStore().Write([&](auto& ctx) { ctx.DropStoreIndex(_id); });
     if (!r.ok()) {
       return r;
     }

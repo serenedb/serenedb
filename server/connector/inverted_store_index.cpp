@@ -20,19 +20,20 @@
 
 #include "connector/inverted_store_index.h"
 
-#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
-#include <duckdb/storage/data_table.hpp>
-#include <duckdb/storage/table/append_state.hpp>
 #include <absl/cleanup/cleanup.h>
+
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/storage/data_table.hpp>
+#include <duckdb/storage/table/append_state.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
 #include <string>
 #include <vector>
 
 #include "basics/assert.h"
-#include "basics/errors.h"
 #include "basics/down_cast.h"
+#include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
@@ -47,8 +48,8 @@ namespace {
 ObjectId OptionId(const duckdb::case_insensitive_map_t<duckdb::Value>& options,
                   const char* key) {
   auto it = options.find(key);
-  SDB_ENSURE(it != options.end(), ERROR_INTERNAL,
-             "store index is missing the ", key, " option");
+  SDB_ENSURE(it != options.end(), ERROR_INTERNAL, "store index is missing the ",
+             key, " option");
   return ObjectId{it->second.GetValue<uint64_t>()};
 }
 
@@ -126,9 +127,8 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
   for (duckdb::idx_t pos = 0;
        pos < chunk.ColumnCount() && pos < chunk_column_ids.size(); ++pos) {
     auto col_id = chunk_column_ids[pos];
-    auto it = std::ranges::find_if(table->Columns(), [&](const auto& c) {
-      return c.GetId() == col_id;
-    });
+    auto it = std::ranges::find_if(
+      table->Columns(), [&](const auto& c) { return c.GetId() == col_id; });
     if (it == table->Columns().end()) {
       continue;
     }
@@ -137,9 +137,9 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
   }
   if (auto indexed_exprs = writer->IndexedExpressions();
       !indexed_exprs.empty()) {
-    EvaluateAndWriteIndexedExpressions(*writer, indexed_exprs, chunk,
-                                       _table_id, chunk_column_ids,
-                                       *expr_conn.context, count, keys);
+    EvaluateAndWriteIndexedExpressions(*writer, indexed_exprs, chunk, _table_id,
+                                       chunk_column_ids, *expr_conn.context,
+                                       count, keys);
   }
   writer->Finish();
   return {};
@@ -178,9 +178,8 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   if (!conn) {
     return;
   }
-  auto writer =
-    CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(_table_id, _index_id,
-                                                       *conn);
+  auto writer = CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(
+    _table_id, _index_id, *conn);
   if (!writer) {
     return;
   }
@@ -216,8 +215,7 @@ std::string InvertedStoreIndex::ToString(duckdb::IndexLock&, bool) {
 }
 
 duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
-  duckdb::QueryContext,
-  const duckdb::case_insensitive_map_t<duckdb::Value>&) {
+  duckdb::QueryContext, const duckdb::case_insensitive_map_t<duckdb::Value>&) {
   // Postings live in the iresearch shard; one empty allocator entry keeps
   // the info IsValid() for WAL/checkpoint round-trips.
   duckdb::IndexStorageInfo info{name};
@@ -245,8 +243,8 @@ void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
     auto state = duckdb::make_uniq<InvertedStoreBuildGlobalState>();
     state->index = duckdb::make_uniq<InvertedStoreIndex>(
       input.info.index_name,
-      duckdb::TableIOManager::Get(input.table.GetStorage()),
-      input.storage_ids, input.expressions, input.table.GetStorage().db,
+      duckdb::TableIOManager::Get(input.table.GetStorage()), input.storage_ids,
+      input.expressions, input.table.GetStorage().db,
       OptionId(input.info.options, InvertedStoreIndex::kTableIdOption),
       OptionId(input.info.options, InvertedStoreIndex::kIndexIdOption));
     return std::move(state);
@@ -271,10 +269,8 @@ void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
     return duckdb::make_uniq<InvertedStoreIndex>(
       input.name, input.table_io_manager, input.column_ids,
       input.unbound_expressions, input.db,
-      OptionId(input.storage_info.options,
-               InvertedStoreIndex::kTableIdOption),
-      OptionId(input.storage_info.options,
-               InvertedStoreIndex::kIndexIdOption));
+      OptionId(input.storage_info.options, InvertedStoreIndex::kTableIdOption),
+      OptionId(input.storage_info.options, InvertedStoreIndex::kIndexIdOption));
   };
 }
 

@@ -40,12 +40,6 @@ constexpr auto kSampleData = std::to_array<PgAm>({
     .amtype = PgAm::Amtype::Table,
   },
   {
-    .oid = id::kPgAmRocksdb.id(),
-    .amname = "rocksdb",
-    .amhandler = 0,
-    .amtype = PgAm::Amtype::Table,
-  },
-  {
     .oid = id::kPgAmSecondary.id(),
     .amname = "secondary",
     .amhandler = 0,

@@ -48,8 +48,6 @@
 #include "catalog/types.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/index_shard.h"
 
 namespace sdb::connector {

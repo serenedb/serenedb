@@ -32,8 +32,7 @@ namespace sdb::connector {
 class SereneDBPhysicalProgress final : public duckdb::PhysicalOperator {
  public:
   SereneDBPhysicalProgress(duckdb::PhysicalPlan& plan,
-                           duckdb::PhysicalOperator& child,
-                           ObjectId table_id);
+                           duckdb::PhysicalOperator& child, ObjectId table_id);
 
   duckdb::OperatorResultType Execute(duckdb::ExecutionContext& context,
                                      duckdb::DataChunk& input,

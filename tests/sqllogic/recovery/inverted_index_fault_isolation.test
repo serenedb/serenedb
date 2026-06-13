@@ -83,7 +83,7 @@ SET sdb_faults = '-SearchPkFetchFault'
 
 
 statement ok
-SET sdb_faults = 'SearchRocksDBLookupFault'
+SET sdb_faults = 'SearchLookupFault'
 
 
 statement error intentional debug error
@@ -93,7 +93,7 @@ SELECT label, tag FROM doc_idx
 
 
 statement ok
-SET sdb_faults = '-SearchRocksDBLookupFault'
+SET sdb_faults = '-SearchLookupFault'
 
 
 # --- cs-only INCLUDE projection -- top-K path -------------------------
@@ -114,7 +114,7 @@ SET sdb_faults = '-SearchPkFetchFault'
 
 
 statement ok
-SET sdb_faults = 'SearchRocksDBLookupFault'
+SET sdb_faults = 'SearchLookupFault'
 
 
 query
@@ -127,7 +127,7 @@ a	100
 
 
 statement ok
-SET sdb_faults = '-SearchRocksDBLookupFault'
+SET sdb_faults = '-SearchLookupFault'
 
 
 # --- external-only projection -- streaming path -----------------------
@@ -170,7 +170,7 @@ SET sdb_faults = '-SearchPkFetchFault'
 
 
 statement ok
-SET sdb_faults = 'SearchRocksDBLookupFault'
+SET sdb_faults = 'SearchLookupFault'
 
 
 statement error intentional debug error
@@ -180,7 +180,7 @@ SELECT pk, ext_only FROM doc_idx
 
 
 statement ok
-SET sdb_faults = '-SearchRocksDBLookupFault'
+SET sdb_faults = '-SearchLookupFault'
 
 
 # Streaming + INCLUDE projection -> must touch the cs materializer.

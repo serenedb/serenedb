@@ -18,12 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_rocksdb_writer.h"
-
-#include "connector/key_encoding.h"
+#include "connector/duckdb_column_serializer.h"
 
 #include <absl/base/internal/endian.h>
-#include <rocksdb/utilities/transaction.h>
 
 #include <cmath>
 #include <iresearch/utils/bytes_utils.hpp>
@@ -32,6 +29,7 @@
 #include "basics/assert.h"
 #include "basics/string_utils.h"
 #include "connector/common.h"
+#include "connector/key_encoding.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
@@ -67,7 +65,7 @@ char* DuckDBColumnSerializer::Allocate(size_t size) {
   return reinterpret_cast<char*>(_arena.Allocate(size));
 }
 
-rocksdb::Slice DuckDBColumnSerializer::Finalize(std::string& output) const {
+std::string_view DuckDBColumnSerializer::Finalize(std::string& output) const {
   size_t total = 0;
   for (const auto& s : _row_slices) {
     total += s.size();
@@ -135,68 +133,7 @@ template size_t DuckDBColumnSerializer::WritePrimitive<duckdb::date_t>(
 template size_t DuckDBColumnSerializer::WritePrimitive<duckdb::hugeint_t>(
   const duckdb::hugeint_t&);
 
-namespace {
-
-std::string MergeSlices(const std::vector<rocksdb::Slice>& slices) {
-  size_t total = 0;
-  for (const auto& s : slices) {
-    total += s.size();
-  }
-  std::string merged;
-  merged.reserve(total);
-  for (const auto& s : slices) {
-    merged.append(s.data(), s.size());
-  }
-  return merged;
-}
-
-}  // namespace
-
-DuckDBColumnSerializer::TxnWriter::TxnWriter(
-  query::Transaction& sdb_txn, rocksdb::ColumnFamilyHandle* cf) noexcept
-  : _txn{&sdb_txn.GetRocksDBTransaction()}, _cf{cf} {}
-
-void DuckDBColumnSerializer::TxnWriter::Write(
-  const std::vector<rocksdb::Slice>& slices, std::string_view key) {
-  auto merged = MergeSlices(slices);
-  auto status = _txn->Put(_cf, rocksdb::Slice(key.data(), key.size()),
-                          rocksdb::Slice(merged));
-  if (!status.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
-  }
-}
-
-void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) {
-  auto status =
-    _txn->Put(_cf, rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
-  if (!status.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
-  }
-}
-
-void DuckDBColumnSerializer::SstWriter::Write(
-  const std::vector<rocksdb::Slice>& slices, std::string_view key) {
-  if (!_writer) {
-    return;
-  }
-  auto merged = MergeSlices(slices);
-  auto status = _writer->Put(rocksdb::Slice(key.data(), key.size()),
-                             rocksdb::Slice(merged));
-  if (!status.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "SST write failed: ", status.ToString());
-  }
-}
-
-void DuckDBColumnSerializer::SstWriter::WriteNull(std::string_view key) {
-  if (!_writer) {
-    return;
-  }
-  auto status =
-    _writer->Put(rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
-  if (!status.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "SST write failed: ", status.ToString());
-  }
-}
+namespace {}  // namespace
 
 template<typename Writer>
 void DuckDBColumnSerializer::WriteRowSlices(
@@ -214,7 +151,7 @@ void DuckDBColumnSerializer::WriteConstantColumn(
   duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
   std::span<DuckDBSinkColumnWriter*> index_writers) {
   if (duckdb::ConstantVector::IsNull(vec)) {
-    const rocksdb::Slice null_slice;
+    const std::string_view null_slice;
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       if (row_keys[row].empty()) {
         continue;
@@ -267,7 +204,7 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
   std::span<DuckDBSinkColumnWriter*> index_writers) {
   auto write_null = [&](duckdb::idx_t row) {
     writer.WriteNull(row_keys[row]);
-    const rocksdb::Slice null_slice;
+    const std::string_view null_slice;
     for (auto* iw : index_writers) {
       iw->Write({&null_slice, 1}, row_keys[row]);
     }
@@ -459,7 +396,7 @@ void DuckDBColumnSerializer::WriteColumn(
         }
         if (may_have_nulls && !validity.RowIsValid(row)) {
           writer.WriteNull(row_keys[row]);
-          const rocksdb::Slice null_slice;
+          const std::string_view null_slice;
           for (auto* iw : index_writers) {
             iw->Write({&null_slice, 1}, row_keys[row]);
           }
@@ -507,19 +444,11 @@ void DuckDBColumnSerializer::WriteColumn(
     default:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("Unsupported column type for RocksDB serialization: ",
+        ERR_MSG("Unsupported column type for column serialization: ",
                 magic_enum::enum_name(type.id())));
   }
 }
 
-template void
-DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::TxnWriter>(
-  TxnWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkColumnWriter*>, ColumnDescriptor);
-template void
-DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::SstWriter>(
-  SstWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
-  std::span<DuckDBSinkColumnWriter*>, ColumnDescriptor);
 template void
 DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::NoopWriter>(
   NoopWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
@@ -540,7 +469,7 @@ void DuckDBColumnSerializer::WriteFlatColumn(
     }
     if (may_have_nulls && !validity.RowIsValid(row)) {
       writer.WriteNull(row_keys[row]);
-      const rocksdb::Slice null_slice;
+      const std::string_view null_slice;
       for (auto* iw : index_writers) {
         iw->Write({&null_slice, 1}, row_keys[row]);
       }
@@ -567,7 +496,7 @@ void DuckDBColumnSerializer::WriteComplexColumn(
     auto idx = rdata.unified.sel->get_index(row);
     if (!rdata.unified.validity.RowIsValid(idx)) {
       writer.WriteNull(row_keys[row]);
-      const rocksdb::Slice null_slice;
+      const std::string_view null_slice;
       for (auto* iw : index_writers) {
         iw->Write({&null_slice, 1}, row_keys[row]);
       }
@@ -636,7 +565,7 @@ size_t DuckDBColumnSerializer::WriteSubVectorPrimitive(
   size_t header_size =
     irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags);
   auto* header = Allocate(header_size);
-  _row_slices[header_idx] = rocksdb::Slice(header, header_size);
+  _row_slices[header_idx] = std::string_view(header, header_size);
   irs::WriteVarint(static_cast<uint32_t>(count), header);
   auto flags = null_bytes != 0 ? ValueFlags::HaveNulls : ValueFlags::None;
   *(header++) = std::bit_cast<char>(flags);
@@ -694,7 +623,7 @@ size_t DuckDBColumnSerializer::WriteSubVectorBool(
   size_t header_size =
     irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags);
   auto* header = Allocate(header_size);
-  _row_slices[header_idx] = rocksdb::Slice(header, header_size);
+  _row_slices[header_idx] = std::string_view(header, header_size);
   irs::WriteVarint(static_cast<uint32_t>(count), header);
   auto flags = null_bytes != 0 ? ValueFlags::HaveNulls : ValueFlags::None;
   *(header++) = std::bit_cast<char>(flags);
@@ -738,7 +667,8 @@ size_t DuckDBColumnSerializer::WriteSubVectorVarchar(
   }
 
   auto* length_buf = Allocate(length_array_size);
-  _row_slices[length_slice_idx] = rocksdb::Slice(length_buf, length_array_size);
+  _row_slices[length_slice_idx] =
+    std::string_view(length_buf, length_array_size);
   for (auto len : lengths) {
     irs::WriteVarint(len, length_buf);
   }
@@ -747,7 +677,7 @@ size_t DuckDBColumnSerializer::WriteSubVectorVarchar(
                        sizeof(ValueFlags) +
                        irs::bytes_io<uint32_t>::vsize(length_array_size);
   auto* header = Allocate(header_size);
-  _row_slices[header_idx] = rocksdb::Slice(header, header_size);
+  _row_slices[header_idx] = std::string_view(header, header_size);
   irs::WriteVarint(static_cast<uint32_t>(count), header);
   auto flags = ValueFlags::HaveLength;
   if (have_nulls) {
@@ -842,7 +772,7 @@ size_t DuckDBColumnSerializer::WriteSubVector(
     }
     default:
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "Unsupported sub-vector type for RocksDB serialization: ",
+                "Unsupported sub-vector type for column serialization: ",
                 type.ToString());
       return 0;
   }
@@ -899,7 +829,7 @@ size_t DuckDBColumnSerializer::WriteListSubVector(
   size_t header_size =
     irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags);
   auto* header = Allocate(header_size);
-  _row_slices[header_idx] = rocksdb::Slice(header, header_size);
+  _row_slices[header_idx] = std::string_view(header, header_size);
   irs::WriteVarint(static_cast<uint32_t>(count), header);
   auto flags = null_bytes != 0 ? ValueFlags::HaveNulls : ValueFlags::None;
   *(header++) = std::bit_cast<char>(flags);
@@ -938,7 +868,7 @@ size_t DuckDBColumnSerializer::WriteMapValue(
   // [keys_size_varint] -- no elem_count prefix.
   auto header_size = irs::bytes_io<uint32_t>::vsize(keys_size);
   auto* header = Allocate(header_size);
-  _row_slices[header_idx] = rocksdb::Slice(header, header_size);
+  _row_slices[header_idx] = std::string_view(header, header_size);
   irs::WriteVarint(keys_size, header);
   return header_size + keys_size + vals_size;
 }
@@ -980,7 +910,8 @@ size_t DuckDBColumnSerializer::WriteStructSubVector(
   }
 
   auto* length_buf = Allocate(length_array_size);
-  _row_slices[length_slice_idx] = rocksdb::Slice(length_buf, length_array_size);
+  _row_slices[length_slice_idx] =
+    std::string_view(length_buf, length_array_size);
   for (auto len : lengths) {
     irs::WriteVarint(len, length_buf);
   }
@@ -989,7 +920,7 @@ size_t DuckDBColumnSerializer::WriteStructSubVector(
                        sizeof(ValueFlags) +
                        irs::bytes_io<uint32_t>::vsize(length_array_size);
   auto* header = Allocate(header_size);
-  _row_slices[header_idx] = rocksdb::Slice(header, header_size);
+  _row_slices[header_idx] = std::string_view(header, header_size);
   irs::WriteVarint(static_cast<uint32_t>(count), header);
   auto flags = ValueFlags::HaveLength;
   if (have_nulls) {
@@ -1157,7 +1088,7 @@ size_t DuckDBColumnSerializer::WriteStructValue(
   auto header_size =
     irs::bytes_io<uint32_t>::vsize(length_array_size) + length_array_size;
   auto* header = Allocate(header_size);
-  _row_slices[header_idx] = rocksdb::Slice(header, header_size);
+  _row_slices[header_idx] = std::string_view(header, header_size);
   irs::WriteVarint(length_array_size, header);
   for (auto len : lengths) {
     irs::WriteVarint(len, header);

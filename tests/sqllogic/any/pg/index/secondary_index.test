@@ -1047,7 +1047,7 @@ QUERY PLAN
 │           Index:          │
 │    gayazov_dual_inv_idx   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │        Projections:       │
 │            rank           │

@@ -61,7 +61,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: docs_topk_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -115,7 +115,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: docs_topk_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -160,7 +160,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: docs_topk_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -201,7 +201,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: docs_topk_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -248,7 +248,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: docs_topk_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -318,7 +318,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
 │    Index: docs_topk_idx   ││    Index: docs_topk_idx   │
-│      Lookup: rocksdb      ││      Lookup: rocksdb      │
+│       Lookup: table       ││       Lookup: table       │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
 │  ┌─────────────────────┐  ││  ┌─────────────────────┐  │
@@ -375,7 +375,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: docs_topk_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │

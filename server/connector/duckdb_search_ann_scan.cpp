@@ -94,7 +94,7 @@ bool EmitHitsChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& lstate,
     return false;
   }
   const auto take = std::min<duckdb::idx_t>(remaining, STANDARD_VECTOR_SIZE);
-  SDB_IF_FAILURE("SearchRocksDBLookupFault") {
+  SDB_IF_FAILURE("SearchLookupFault") {
     if (g.has_external_projections) {
       SDB_THROW(ERROR_DEBUG);
     }
@@ -226,7 +226,7 @@ duckdb::idx_t SearchAnnRangeLocalState::EmitChunk(duckdb::ClientContext& ctx,
   }
   const auto budget = STANDARD_VECTOR_SIZE - output_start;
   const auto take = std::min<duckdb::idx_t>(remaining, budget);
-  SDB_IF_FAILURE("SearchRocksDBLookupFault") {
+  SDB_IF_FAILURE("SearchLookupFault") {
     if (g.has_external_projections) {
       SDB_THROW(ERROR_DEBUG);
     }

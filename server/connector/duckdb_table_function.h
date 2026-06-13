@@ -55,7 +55,6 @@ struct SereneDBScanBindData;
 enum class ScanSourceKind : uint8_t {
   FullTable,
   Search,
-  SecondaryIndex,
 };
 
 struct ScanSource {
@@ -70,10 +69,6 @@ struct ScanSource {
   virtual std::unique_ptr<ScanSource> Clone() const = 0;
 
   bool IsSearchLike() const noexcept { return _kind == ScanSourceKind::Search; }
-
-  bool IsSkLike() const noexcept {
-    return _kind == ScanSourceKind::SecondaryIndex;
-  }
 
   template<typename T>
   const T& Cast() const {
@@ -175,15 +170,6 @@ struct SearchScan : ScanSource {
 
 bool WandEnabled(const catalog::InvertedIndex* index,
                  const std::optional<catalog::ScorerOptions>& scorer);
-
-struct SecondaryIndexScan : ScanSource {
-  SecondaryIndexScan() : ScanSource(ScanSourceKind::SecondaryIndex) {}
-
-  ObjectId shard_id;
-  bool is_unique = false;
-
-  std::unique_ptr<ScanSource> Clone() const final;
-};
 
 enum class ScanEntryKind : uint8_t {
   BaseTable,
@@ -297,8 +283,6 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
 inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
-
-duckdb::TableFunction CreateSKFullscanFunction();
 
 duckdb::TableFunction CreateIResearchScanFunction();
 

@@ -30,13 +30,6 @@
 #include "catalog/table_options.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
-#include "rocksdb/utilities/transaction.h"
-
-namespace rocksdb {
-
-class ColumnFamilyHandle;
-}
-
 namespace sdb {
 
 class ConnectionContext;
@@ -46,28 +39,7 @@ namespace sdb::connector {
 
 class DuckDBColumnSerializer;
 
-// Factory: create DuckDB index writers for all indexes on a table.
-//
-// Writers are created once (e.g. in GetGlobalSinkState) and reused for each
-// Sink() call. The WriteKind template selects Insert/Delete/Update writers.
-//
-// col_id_to_chunk_pos: optional override mapping Column::Id -> position in
-// the input DataChunk. If empty, table column order is assumed (for INSERT).
-// For DELETE/UPDATE, pass the actual positions of columns in the scan output.
-//
-// updated_col_ids: optional filter -- only create writers for indexes whose
-// columns overlap with this set. If empty, create writers for ALL indexes.
-// Used by UPDATE to skip indexes on non-updated columns.
 enum class DuckDBWriteKind { Insert, Delete, Update };
-
-using ColumnChunkMapping = containers::FlatHashMap<catalog::Column::Id, size_t>;
-
-template<DuckDBWriteKind Kind>
-std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
-  ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
-  const ColumnChunkMapping& col_id_to_chunk_pos = {},
-  std::span<const catalog::Column::Id> updated_col_ids = {},
-  const ColumnChunkMapping& old_col_id_to_chunk_pos = {});
 
 // Writer for ONE inverted index, identified by id -- the store-side
 // BoundIndex feeds exactly its own index. nullptr when the index is not an
@@ -76,28 +48,6 @@ template<DuckDBWriteKind Kind>
 std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
   duckdb::optional_ptr<duckdb::ClientContext> expr_context = nullptr);
-
-// Explicit instantiation declarations
-extern template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
-CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
-  ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
-  const ColumnChunkMapping& col_id_to_chunk_pos,
-  std::span<const catalog::Column::Id> updated_col_ids,
-  const ColumnChunkMapping& old_col_id_to_chunk_pos);
-
-extern template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
-CreateDuckDBIndexWriters<DuckDBWriteKind::Delete>(
-  ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
-  const ColumnChunkMapping& col_id_to_chunk_pos,
-  std::span<const catalog::Column::Id> updated_col_ids,
-  const ColumnChunkMapping& old_col_id_to_chunk_pos);
-
-extern template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
-CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
-  ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
-  const ColumnChunkMapping& col_id_to_chunk_pos,
-  std::span<const catalog::Column::Id> updated_col_ids,
-  const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
 // Catalog column positions to project for a CREATE INDEX backfill scan:
 // union of index-key columns and PK columns, sorted+deduped (== catalog

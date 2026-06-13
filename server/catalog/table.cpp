@@ -69,8 +69,8 @@ std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
   return std::make_shared<Table>(
     ctx.schema_id, ctx.id, data.name, std::move(data.columns),
     std::move(data.pk_columns), std::move(data.check_constraints),
-    data.generated_pk_seq_id, data.engine,
-    std::move(data.unique_constraints), std::move(data.foreign_keys));
+    data.generated_pk_seq_id, data.engine, std::move(data.unique_constraints),
+    std::move(data.foreign_keys));
 }
 
 void Table::Serialize(duckdb::Serializer& sink) const {

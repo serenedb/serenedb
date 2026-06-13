@@ -23,7 +23,6 @@
 
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
-#include <rocksdb/types.h>
 
 #include <atomic>
 #include <filesystem>
@@ -33,8 +32,6 @@
 #include <shared_mutex>
 
 #include "catalog/inverted_index.h"
-#include "rest_server/flush_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 
@@ -74,16 +71,10 @@ enum class CommitResult {
 };
 
 struct InvertedIndexSnapshot {
-  InvertedIndexSnapshot(irs::DirectoryReader&& index,
-                        std::shared_ptr<StorageSnapshot> rocksdb_snapshot)
-    : reader{std::move(index)}, snapshot{std::move(rocksdb_snapshot)} {}
-
-  [[nodiscard]] auto GetSequenceNumber() const noexcept {
-    return snapshot->GetSnapshot()->GetSequenceNumber();
-  }
+  explicit InvertedIndexSnapshot(irs::DirectoryReader&& index)
+    : reader{std::move(index)} {}
 
   irs::DirectoryReader reader;
-  std::shared_ptr<StorageSnapshot> snapshot;
 };
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
@@ -110,10 +101,6 @@ class Snapshot {
 
   [[nodiscard]] const auto& GetDirectoryReader() const noexcept {
     return _snapshot->reader;
-  }
-
-  [[nodiscard]] auto GetSequenceNumber() {
-    return _snapshot->GetSequenceNumber();
   }
 
  private:
@@ -257,7 +244,6 @@ class InvertedIndexShard final
                           CommitResult& code);
   Result CleanupUnsafeImpl();
 
-  RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;
   mutable std::shared_mutex _snapshot_mutex;
@@ -268,8 +254,6 @@ class InvertedIndexShard final
   TasksSettings _tasks_settings;
   absl::Mutex _mutex;
   absl::Mutex _commit_mutex;
-
-  std::shared_ptr<FlushSubscription> _flush_subscription;
 
   Tick _recovery_tick{0};
   Tick _last_committed_tick{0};

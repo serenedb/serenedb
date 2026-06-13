@@ -25,7 +25,7 @@
 #include <type_traits>
 
 #include "basics/assert.h"
-#include "rocksdb_engine_catalog/concat.h"
+#include "connector/key_concat.h"
 
 namespace sdb::connector::primary_key {
 

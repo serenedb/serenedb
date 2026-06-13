@@ -25,7 +25,6 @@
 #include <cmath>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
-
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/exceptions.h"
@@ -41,8 +40,7 @@ constexpr char kListEnd = '\x00';
 }  // namespace
 
 void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
-                       duckdb::idx_t row_idx,
-                       const duckdb::LogicalType& type) {
+                       duckdb::idx_t row_idx, const duckdb::LogicalType& type) {
   const auto idx = fmt.sel->get_index(row_idx);
   switch (type.id()) {
     case duckdb::LogicalTypeId::BOOLEAN: {

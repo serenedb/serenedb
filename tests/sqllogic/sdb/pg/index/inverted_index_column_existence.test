@@ -73,7 +73,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: ce_idx       │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 <slt:ignore>
@@ -111,7 +111,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: ce_idx       │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 <slt:ignore>
@@ -152,7 +152,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │                Index: ce_idx                │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│
@@ -203,7 +203,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │                Index: ce_idx                │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│

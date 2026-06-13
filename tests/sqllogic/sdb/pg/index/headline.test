@@ -674,7 +674,7 @@ QUERY PLAN
 │           IRESEARCH_SCAN          │
 │    ────────────────────────────   │
 │         Index: hl_docs_idx        │
-│          Lookup: rocksdb          │
+│           Lookup: table           │
 │                                   │
 │              Filter:              │
 │      ┌─────────────────────┐      │
@@ -728,7 +728,7 @@ QUERY PLAN
 │           IRESEARCH_SCAN          │
 │    ────────────────────────────   │
 │         Index: hl_docs_idx        │
-│          Lookup: rocksdb          │
+│           Lookup: table           │
 │                                   │
 │              Filter:              │
 │      ┌─────────────────────┐      │
@@ -839,7 +839,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │             Index: hl_multi_idx             │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│

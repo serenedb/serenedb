@@ -31,7 +31,7 @@
 #include "basics/identifier.h"
 #include "basics/string_utils.h"
 
-namespace sdb::rocksutils {
+namespace sdb::keyenc {
 namespace detail {
 
 template<typename T>
@@ -149,4 +149,4 @@ U Read(std::string_view in) {
   return out;
 }
 
-}  // namespace sdb::rocksutils
+}  // namespace sdb::keyenc

@@ -28,7 +28,7 @@ namespace sdb::connector::key_encoding {
 
 // Order-preserving binary encoding of column values: memcmp order of the
 // encoded bytes equals the value order. The single source of truth for the
-// scalar key format (rocksdb row keys and encoded-key index expressions
+// scalar key format (encoded row keys and encoded-key index expressions
 // share it).
 //
 // Scalars: big-endian with sign-bit flip for ints/dates/timestamps,

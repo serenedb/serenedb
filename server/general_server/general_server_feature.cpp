@@ -49,7 +49,6 @@ ABSL_FLAG(uint64_t, http_compress_response_threshold, 0,
 #include "general_server/state.h"
 #include "rest/http_response.h"
 #include "rest_server/endpoint_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 using namespace sdb::rest;
 using namespace sdb::options;

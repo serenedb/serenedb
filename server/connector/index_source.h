@@ -39,12 +39,12 @@ class ClientContext;
 namespace sdb::connector {
 
 // Each entry is stored in an arena with kPrefixGap bytes reserved IMMEDIATELY
-// BEFORE the pk bytes -- the RocksDB lookup stamps [ObjectId][Column::Id]
+// BEFORE the pk bytes -- the legacy key layout stamps [ObjectId][Column::Id]
 // into the gap region per column without a second copy. `views[i]` covers the
 // pk bytes; the gap lives at `[views[i].data() - kPrefixGap, views[i].data())`.
 struct PrimaryKeysBytes {
   // = sizeof(ObjectId) + sizeof(catalog::Column::Id) -- hardcoded to avoid a
-  // catalog dependency in this header; index_source_rocksdb.cpp asserts the
+  // catalog dependency in this header; the key builders assert the
   // match.
   static constexpr size_t kPrefixGap = 16;
 

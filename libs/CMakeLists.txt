@@ -131,29 +131,16 @@ target_compile_definitions(iresearch-static PRIVATE -DDISABLE_EXECINFO)
 ## serene
 ################################################################################
 
-set(LIB_SERVER_POSIX endpoint/endpoint_unix_domain.cpp)
-
 set(LIB_SERVER_DATE ${CMAKE_SOURCE_DIR}/third_party/date/src/tz.cpp)
 
 add_library(
     serene
     STATIC
-    ${LIB_SERVER_POSIX}
     ${LIB_SERVER_DATE}
     app/app_server.cpp
     app/init.cpp
     app/name_validator.cpp
-    endpoint/endpoint.cpp
-    endpoint/endpoint_ip.cpp
-    endpoint/endpoint_ip_v4.cpp
-    endpoint/endpoint_ip_v6.cpp
-    endpoint/endpoint_list.cpp
-    rest/common_defines.cpp
-    rest/general_request.cpp
-    rest/general_response.cpp
-    rest/http_request.cpp
-    rest/http_response.cpp
-    rest/version.cpp
+    app/version.cpp
 )
 
 target_link_libraries(

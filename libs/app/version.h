@@ -34,7 +34,6 @@
 #endif
 
 namespace sdb {
-namespace rest {
 
 struct FullVersion {
   int major;
@@ -113,5 +112,4 @@ class Version {
   static std::map<std::string, std::string> gValues;
 };
 
-}  // namespace rest
 }  // namespace sdb

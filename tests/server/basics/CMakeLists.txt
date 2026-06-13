@@ -8,7 +8,6 @@ add_executable(
     # SDB_* macro fires -- see tests_main.cpp comment.
     tests_main.cpp
     assertions_tests.cpp
-    http_request_test.cpp
     build_id_test.cpp
     string_utf8_normalize_test.cpp
     encoding_utils_test.cpp

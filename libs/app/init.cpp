@@ -36,8 +36,8 @@
 #include "basics/files.h"
 #include "basics/log.h"
 #include "basics/random/random_generator.h"
+#include "app/version.h"
 #include "basics/string_utils.h"
-#include "rest/version.h"
 #define ZLIB_COMPAT
 #include <functable.h>
 
@@ -95,14 +95,14 @@ void InitProcess(const char* argv0) {
   // Order matters:
   //   * RaiseFdLimit              soft NOFILE -> 65535 (or hard, if lower)
   //   * random::Reset             seeds the PRNGs the basics layer holds
-  //   * Version::initialize       fills the rest::Version table
+  //   * Version::initialize       fills the Version table
   //   * FUNCTABLE_INIT            picks the zlib-ng dispatch (SIMD)
   //   * InitializeSymbolizer      lets the absl crash handler symbolize
   //   * YACLIB_INIT_DEBUG         routes yaclib's debug-asserts through us
   RaiseFdLimit();
   CheckMaxMapCount();
   random::Reset();
-  rest::Version::initialize();
+  Version::initialize();
   FUNCTABLE_INIT;
   absl::InitializeSymbolizer(argv0);
   YACLIB_INIT_DEBUG([](std::string_view file, std::size_t line,

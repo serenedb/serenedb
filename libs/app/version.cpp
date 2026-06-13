@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "rest/version.h"
+#include "app/version.h"
 
 #include <absl/strings/internal/ostringstream.h>
 #include <openssl/ssl.h>
@@ -42,7 +42,6 @@
 #include "build_id/build_id.h"
 
 using namespace sdb;
-using namespace sdb::rest;
 
 std::map<std::string, std::string> Version::gValues;
 

@@ -78,8 +78,8 @@
 #include "catalog/types.h"
 #include "connector/common.h"
 #include "connector/key_utils.hpp"
+#include "app/version.h"
 #include "database/ticks.h"
-#include "rest/version.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"
 #include "rocksdb_engine_catalog/listeners/rocksdb_background_error_listener.h"
@@ -410,7 +410,7 @@ rocksdb::Options RocksDBEngineCatalog::makeOptions(bool is_new_dir) {
 }
 
 void RocksDBEngineCatalog::start() {
-  SDB_TRACE(STORAGE, "rocksdb version ", rest::Version::getRocksDBVersion(),
+  SDB_TRACE(STORAGE, "rocksdb version ", Version::getRocksDBVersion(),
             ", supported compression types: ", getCompressionSupport());
 
   _path = DatabasePathFeature::instance().subdirectoryName(

@@ -28,7 +28,6 @@
 #include "basics/assert.h"
 #include "basics/static_strings.h"
 #include "catalog/identifiers/object_id.h"
-#include "rest/request_context.h"
 
 namespace sdb {
 namespace transaction {
@@ -39,9 +38,8 @@ class Methods;
 /// Carries some information about the current
 /// context in which this thread is executed.
 /// We should strive to have it always accessible
-/// from ExecContext::CURRENT. Inherits from request
-/// context for convenience
-class ExecContext : public RequestContext {
+/// from ExecContext::CURRENT.
+class ExecContext {
  protected:
   enum class Type {
     Default,
@@ -74,7 +72,7 @@ class ExecContext : public RequestContext {
   ExecContext(const ExecContext&) = delete;
   ExecContext(ExecContext&&) = delete;
 
-  ~ExecContext() override = default;
+  virtual ~ExecContext() = default;
 
   /// Always false until post-RBAC auth lands.
   static bool isAuthEnabled();

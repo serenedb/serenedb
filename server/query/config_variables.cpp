@@ -41,7 +41,6 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/config.h"
-#include "rest/version.h"
 
 namespace sdb {
 

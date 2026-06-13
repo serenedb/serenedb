@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <yaclib/async/future.hpp>
 #include <yaclib/async/make.hpp>
 
 #include "basics/asio_ns.h"
@@ -33,7 +34,6 @@
 #include "network/http/handler.h"
 #include "network/http/router.h"
 #include "network/http/session.h"
-#include "network/http/tier0_handlers.h"
 #include "network/io_context.h"
 
 using namespace sdb;
@@ -43,18 +43,50 @@ namespace {
 using HttpAcceptor =
   network::Acceptor<network::HttpSession<network::SocketKind::Tcp>>;
 
+// Fixed-response handler: writes a constant JSON body, no DB. Keeps these
+// transport tests self-contained -- the real root/health/ping handlers (and
+// their content) are covered by the ES driver suite; here we only exercise the
+// HTTP wire (status line, keep-alive, pipelining, HEAD, chunked bodies).
+class FixedHandler final : public network::HttpHandler {
+ public:
+  explicit FixedHandler(std::string body) : _body{std::move(body)} {}
+
+  yaclib::Future<> Handle(network::RequestContext&, const network::HttpRequest&,
+                          network::http::HttpResponseWriter& writer) override {
+    writer.Json(200, _body);
+    return yaclib::MakeFuture();
+  }
+
+ private:
+  std::string _body;
+};
+
 class EchoHandler final : public network::HttpHandler {
  public:
-  yaclib::Future<network::HttpResponse> Handle(
-    const network::HttpRequest& request) override {
+  yaclib::Future<> Handle(network::RequestContext&,
+                          const network::HttpRequest& request,
+                          network::http::HttpResponseWriter& writer) override {
     std::string body;
     for (const auto buffer : request.body) {
       body.append(static_cast<const char*>(buffer.data()), buffer.size());
     }
-    return yaclib::MakeFuture(
-      network::HttpResponse::Json(200, "OK", std::move(body)));
+    writer.Json(200, body);
+    return yaclib::MakeFuture();
   }
 };
+
+void RegisterFixtures(network::HttpRouter& router) {
+  static constexpr std::string_view kRoot =
+    R"({"name":"serenedb","tagline":"You Know, for Search"})";
+  router.Add(network::HttpMethod::Get, "/",
+             std::make_unique<FixedHandler>(std::string{kRoot}));
+  router.Add(network::HttpMethod::Head, "/",
+             std::make_unique<FixedHandler>(std::string{kRoot}));
+  router.Add(network::HttpMethod::Get, "/_cluster/health",
+             std::make_unique<FixedHandler>(R"({"status":"green"})"));
+  router.Add(network::HttpMethod::Get, "/ping",
+             std::make_unique<FixedHandler>(R"({"status":"ok"})"));
+}
 
 std::string Roundtrip(const asio_ns::ip::tcp::endpoint& server,
                       std::string_view request) {
@@ -82,11 +114,11 @@ asio_ns::ip::tcp::endpoint Loopback(std::uint16_t port) {
 
 }  // namespace
 
-TEST(NetworkHttp, Tier0Endpoints) {
+TEST(NetworkHttp, RootHealthAndPing) {
   network::IoThreadPool pool{1};
   pool.Start();
   network::HttpRouter router;
-  network::RegisterTier0(router);
+  RegisterFixtures(router);
   network::HttpServerContext context{router};
   auto acceptor = std::make_shared<HttpAcceptor>(pool, Loopback(0), context);
   const auto server = Loopback(acceptor->LocalEndpoint().port());
@@ -120,7 +152,7 @@ TEST(NetworkHttp, KeepAlivePipelining) {
   network::IoThreadPool pool{1};
   pool.Start();
   network::HttpRouter router;
-  network::RegisterTier0(router);
+  RegisterFixtures(router);
   network::HttpServerContext context{router};
   auto acceptor = std::make_shared<HttpAcceptor>(pool, Loopback(0), context);
   const auto server = Loopback(acceptor->LocalEndpoint().port());
@@ -160,14 +192,14 @@ TEST(NetworkHttp, HeadHasNoBody) {
   network::IoThreadPool pool{1};
   pool.Start();
   network::HttpRouter router;
-  network::RegisterTier0(router);
+  RegisterFixtures(router);
   network::HttpServerContext context{router};
   auto acceptor = std::make_shared<HttpAcceptor>(pool, Loopback(0), context);
   const auto server = Loopback(acceptor->LocalEndpoint().port());
   acceptor->Start();
 
   const std::string head = Roundtrip(
-    server, "HEAD /ping HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
+    server, "HEAD / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n");
   const auto separator = head.find("\r\n\r\n");
   ASSERT_NE(separator, std::string::npos);
   EXPECT_EQ(head.substr(separator + 4), "");
@@ -207,7 +239,7 @@ TEST(NetworkHttp, ShutdownWithOpenKeepAliveConnection) {
   network::IoThreadPool pool{1};
   pool.Start();
   network::HttpRouter router;
-  network::RegisterTier0(router);
+  RegisterFixtures(router);
   network::HttpServerContext context{router};
   auto acceptor = std::make_shared<HttpAcceptor>(pool, Loopback(0), context);
   const auto server = Loopback(acceptor->LocalEndpoint().port());

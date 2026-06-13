@@ -23,6 +23,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <yaclib/async/future.hpp>
 #include <yaclib/async/make.hpp>
 
 #include "network/http/router.h"
@@ -32,74 +33,68 @@ using namespace sdb::network;
 
 namespace {
 
-class RecordingHandler final : public HttpHandler {
+// Identifiable handler: these tests assert which route Match() selects and what
+// params it captures, not handler execution, so Handle is an unused stub.
+class NamedHandler final : public HttpHandler {
  public:
-  RecordingHandler(std::string name, std::vector<std::string>& log)
-    : _name{std::move(name)}, _log{log} {}
+  explicit NamedHandler(std::string name) : name{std::move(name)} {}
 
-  yaclib::Future<HttpResponse> Handle(const HttpRequest& request) override {
-    _log.push_back(_name);
-    std::string body = _name;
-    for (const auto& [key, value] : request.params) {
-      body += ";" + key + "=" + value;
-    }
-    return yaclib::MakeFuture(HttpResponse::Json(200, "OK", std::move(body)));
+  yaclib::Future<> Handle(RequestContext&, const HttpRequest&,
+                          http::HttpResponseWriter&) override {
+    return yaclib::MakeFuture();
   }
 
- private:
-  std::string _name;
-  std::vector<std::string>& _log;
+  std::string name;
 };
 
-HttpResponse RunRoute(HttpRouter& router, HttpMethod method,
-                      std::string target) {
-  HttpRequest request;
+const NamedHandler* MatchRoute(HttpRouter& router, HttpMethod method,
+                               std::string target, HttpRequest& request) {
+  request = HttpRequest{};
   request.method = method;
   request.target = std::move(target);
-  return std::move(router.Route(request)).Get().Ok();
+  return static_cast<const NamedHandler*>(router.Match(request));
 }
 
 }  // namespace
 
 TEST(NetworkRouter, LiteralWildcardAndGroups) {
-  std::vector<std::string> log;
   HttpRouter router;
   router.Add(HttpMethod::Get, "/_cluster/health",
-             std::make_unique<RecordingHandler>("health", log));
+             std::make_unique<NamedHandler>("health"));
   router.Add(HttpMethod::Get, "/:index/_search",
-             std::make_unique<RecordingHandler>("search", log));
+             std::make_unique<NamedHandler>("search"));
   router.Add(HttpMethod::Post, "/:index/_doc/:id",
-             std::make_unique<RecordingHandler>("doc", log));
+             std::make_unique<NamedHandler>("doc"));
 
-  const HttpResponse health =
-    RunRoute(router, HttpMethod::Get, "/_cluster/health");
-  EXPECT_EQ(health.status, 200);
-  EXPECT_EQ(health.body, "health");
+  HttpRequest request;
 
-  const HttpResponse search =
-    RunRoute(router, HttpMethod::Get, "/my-index/_search?q=x");
-  EXPECT_EQ(search.status, 200);
-  EXPECT_EQ(search.body, "search;index=my-index");
+  const auto* health =
+    MatchRoute(router, HttpMethod::Get, "/_cluster/health", request);
+  ASSERT_NE(health, nullptr);
+  EXPECT_EQ(health->name, "health");
 
-  const HttpResponse doc = RunRoute(router, HttpMethod::Post, "/books/_doc/42");
-  EXPECT_EQ(doc.status, 200);
-  EXPECT_NE(doc.body.find("index=books"), std::string::npos);
-  EXPECT_NE(doc.body.find("id=42"), std::string::npos);
+  const auto* search =
+    MatchRoute(router, HttpMethod::Get, "/my-index/_search?q=x", request);
+  ASSERT_NE(search, nullptr);
+  EXPECT_EQ(search->name, "search");
+  EXPECT_EQ(request.Param("index"), "my-index");
+
+  const auto* doc =
+    MatchRoute(router, HttpMethod::Post, "/books/_doc/42", request);
+  ASSERT_NE(doc, nullptr);
+  EXPECT_EQ(doc->name, "doc");
+  EXPECT_EQ(request.Param("index"), "books");
+  EXPECT_EQ(request.Param("id"), "42");
 }
 
 TEST(NetworkRouter, MethodAndPathMismatch) {
-  std::vector<std::string> log;
   HttpRouter router;
   router.Add(HttpMethod::Get, "/:index/_search",
-             std::make_unique<RecordingHandler>("search", log));
+             std::make_unique<NamedHandler>("search"));
 
-  const HttpResponse wrong_method =
-    RunRoute(router, HttpMethod::Post, "/my-index/_search");
-  EXPECT_EQ(wrong_method.status, 404);
-
-  const HttpResponse wrong_path =
-    RunRoute(router, HttpMethod::Get, "/my-index/_count");
-  EXPECT_EQ(wrong_path.status, 404);
-
-  EXPECT_TRUE(log.empty());
+  HttpRequest request;
+  EXPECT_EQ(MatchRoute(router, HttpMethod::Post, "/my-index/_search", request),
+            nullptr);
+  EXPECT_EQ(MatchRoute(router, HttpMethod::Get, "/my-index/_count", request),
+            nullptr);
 }

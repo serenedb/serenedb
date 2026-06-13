@@ -29,7 +29,11 @@
 
 namespace sdb::network {
 
-template<typename Value, typename Initiate>
+// `Throwing` (the default) turns a completion error into a thrown
+// `system_error`, so the ok path reads as a plain value. `.NoThrow()` flips it:
+// await_resume yields the error_code (void ops) or {error_code, value} pair, so
+// a failure is handled by control flow instead of a try/catch around the await.
+template<typename Value, typename Initiate, bool Throwing = true>
 class [[nodiscard]] AsioAwaitable final {
   struct Empty {};
   static constexpr bool kHasValue = !std::is_void_v<Value>;
@@ -41,6 +45,11 @@ class [[nodiscard]] AsioAwaitable final {
 
   AsioAwaitable(const AsioAwaitable&) = delete;
   AsioAwaitable& operator=(const AsioAwaitable&) = delete;
+
+  // Opt out of throwing: the error is delivered as a value to handle inline.
+  AsioAwaitable<Value, Initiate, false> NoThrow() && noexcept {
+    return AsioAwaitable<Value, Initiate, false>{std::move(_initiate)};
+  }
 
   bool await_ready() const noexcept { return false; }
 
@@ -60,12 +69,18 @@ class [[nodiscard]] AsioAwaitable final {
     }
   }
 
-  Value await_resume() {
-    if (_ec) [[unlikely]] {
-      throw asio_ns::system_error{_ec};
-    }
-    if constexpr (kHasValue) {
-      return std::move(_value);
+  auto await_resume() {
+    if constexpr (Throwing) {
+      if (_ec) [[unlikely]] {
+        throw asio_ns::system_error{_ec};
+      }
+      if constexpr (kHasValue) {
+        return std::move(_value);
+      }
+    } else if constexpr (kHasValue) {
+      return std::pair<asio_ns::error_code, Value>{_ec, std::move(_value)};
+    } else {
+      return _ec;
     }
   }
 

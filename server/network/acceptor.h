@@ -76,17 +76,18 @@ class Acceptor final : public AcceptorBase,
     auto self = this->shared_from_this();
     while (_running) {
       auto connection = std::make_shared<Session>(_deps, _pool.Next());
-      try {
-        co_await AcceptInto(connection->Lowest());
-        // Sessions batch writes themselves (message::Buffer); Nagle on top
-        // only adds delayed-ACK stalls to multi-write responses.
-        connection->Lowest().set_option(asio_ns::ip::tcp::no_delay{true});
-      } catch (const std::exception&) {
+      if (co_await AcceptInto(connection->Lowest()).NoThrow()) {
+        // Accept failed: either a clean shutdown closed the acceptor, or a
+        // transient error (e.g. fd exhaustion) -- drop this attempt and retry.
         if (!_running) {
           break;
         }
         continue;
       }
+      // Sessions batch writes themselves (message::Buffer); Nagle on top only
+      // adds delayed-ACK stalls to multi-write responses.
+      asio_ns::error_code ignored;
+      connection->Lowest().set_option(asio_ns::ip::tcp::no_delay{true}, ignored);
       asio_ns::post(connection->Lowest().get_executor(),
                     [connection] { connection->Start(); });
     }

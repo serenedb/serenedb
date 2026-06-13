@@ -331,36 +331,33 @@ yaclib::Future<> HttpSession<Kind>::SendWriter() {
   auto self = this->shared_from_this();
   for (;;) {
     co_await _write_gate.Wait(*_ioexec);
-    if (_write_armed.exchange(false, std::memory_order_acq_rel)) {
-      const auto view = _write_view;
-      size_t bytes = 0;
-      for (const auto buffer : view) {
-        bytes += buffer.size();
-      }
-      try {
-        co_await _socket.Write(view);
-      } catch (const std::exception&) {
-        _io_broken.store(true, std::memory_order_release);
-        if (_task_spawned) {
-          _task->RequestRun();
-        }
-        _socket.Close();
+    if (!_write_armed.exchange(false, std::memory_order_acq_rel)) {
+      if (_writer_stop) {
         co_return {};
-      }
-      _send_written.fetch_add(bytes, std::memory_order_release);
-      _send.FlushDone();
-      std::atomic_thread_fence(std::memory_order_seq_cst);
-      const auto seen = _send_waiter.load(std::memory_order_relaxed);
-      if (seen != kSendWaiterIdle && _task_spawned &&
-          _send_written.load(std::memory_order_relaxed) > seen) {
-        _task->RequestRun();
       }
       continue;
     }
-    if (_writer_stop) {
-      co_return {};
+    auto [ec, bytes] = co_await _socket.Write(_write_view).NoThrow();
+    if (ec) [[unlikely]] {
+      break;  // client gone -- run the terminal cleanup once, below
+    }
+    _send_written.fetch_add(bytes, std::memory_order_release);
+    _send.FlushDone();
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    const auto seen = _send_waiter.load(std::memory_order_relaxed);
+    if (seen != kSendWaiterIdle && _task_spawned &&
+        _send_written.load(std::memory_order_relaxed) > seen) {
+      _task->RequestRun();
     }
   }
+  // The write failed: client is gone. Poison the send side and close so the
+  // read side notices; the SessionTask bails at its next condition re-check.
+  _io_broken.store(true, std::memory_order_release);
+  if (_task_spawned) {
+    _task->RequestRun();
+  }
+  _socket.Close();
+  co_return {};
 }
 
 template<SocketKind Kind>

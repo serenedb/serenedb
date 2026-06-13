@@ -675,3 +675,65 @@ def test_scroll(conn, corpus):
         {"query": {"match": {"title": "quick"}}})
     assert body["hits"]["total"]["value"] == 2
     assert len(body["hits"]["hits"]) == 1
+
+
+# --- _mget / exists / index-info / _cat/count -------------------------------
+
+
+def test_mget(conn, index):
+    _bulk(conn, index,
+          '{"index":{"_id":"a"}}\n{"title":"alpha","year":1}\n'
+          '{"index":{"_id":"b"}}\n{"title":"beta","year":2}\n', refresh=True)
+    status, body = _request(conn, "POST", f"/{index}/_mget",
+                            {"ids": ["a", "missing", "b"]})
+    assert status == 200
+    docs = body["docs"]
+    assert [(d["_id"], d["found"]) for d in docs] == \
+        [("a", True), ("missing", False), ("b", True)]
+    assert docs[0]["_source"] == {"title": "alpha", "year": 1}
+    assert "_source" not in docs[1]
+
+    # docs form, order preserved
+    status, body = _request(conn, "POST", f"/{index}/_mget",
+                            {"docs": [{"_id": "b"}, {"_id": "a"}]})
+    assert [d["_id"] for d in body["docs"]] == ["b", "a"]
+
+    status, body = _request(conn, "POST", "/drv_es_missing/_mget",
+                            {"ids": ["a"]})
+    assert status == 404
+    assert body["error"]["type"] == "index_not_found_exception"
+
+
+def test_doc_exists_head(conn, index):
+    _request(conn, "PUT", f"/{index}/_doc/x", {"title": "t"})
+    _request(conn, "POST", f"/{index}/_refresh")
+    for doc_id, want in [("x", 200), ("nope", 404)]:
+        conn.request("HEAD", f"/{index}/_doc/{doc_id}")
+        r = conn.getresponse()
+        r.read()
+        assert r.status == want, doc_id
+
+
+def test_index_info(conn, index):
+    status, body = _request(conn, "GET", f"/{index}")
+    assert status == 200
+    info = body[index]
+    assert set(info) == {"aliases", "mappings", "settings"}
+    assert info["mappings"] == MAPPINGS["mappings"]
+    assert info["settings"]["index"]["number_of_shards"] == "1"
+
+    status, body = _request(conn, "GET", "/drv_es_missing")
+    assert status == 404
+    assert body["error"]["type"] == "index_not_found_exception"
+
+
+def test_cat_count(conn, index):
+    conn.request("GET", "/_cat/count")
+    r = conn.getresponse()
+    text = r.read().decode()
+    assert r.status == 200
+    assert text.strip().isdigit()
+
+    status, body = _request(conn, "GET", "/_cat/count?format=json")
+    assert status == 200
+    assert "count" in body[0]

@@ -1204,6 +1204,186 @@ class IndexStatsHandler final : public HttpHandler {
   }
 };
 
+// GET|POST /{index}/_mget — multi-get by id. Body {"ids":["1","2"]} or
+// {"docs":[{"_id":"1"},...]}; index comes from the path. Returns docs in
+// request order with per-doc found flag (a missing doc is found:false, not
+// an error; a missing index 404s the whole request like other path-index
+// ops).
+class MgetHandler final : public HttpHandler {
+ public:
+  yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
+                          http::HttpResponseWriter& writer) override {
+    const auto index = request.Param("index");
+    std::vector<std::string> ids;
+    if (!ParseMgetIds(FlattenBody(request.body), ids, writer)) {
+      co_return {};
+    }
+    if (ids.empty()) {
+      WriteJson(writer, 200, R"({"docs":[]})");
+      co_return {};
+    }
+    std::string in;
+    for (size_t i = 0; i < ids.size(); ++i) {
+      absl::StrAppend(&in, i > 0 ? "," : "", SqlLiteral(ids[i]));
+    }
+    auto result = co_await RunSql(
+      ctx,
+      absl::StrCat("SELECT \"_id\", \"_source\" FROM \"es\".",
+                   SqlIdentifier(index), " WHERE \"_id\" IN (", in, ")"),
+      writer, index);
+    if (!result) {
+      co_return {};
+    }
+    containers::FlatHashMap<std::string, std::string> source_by_id;
+    source_by_id.reserve(result->RowCount());
+    for (duckdb::idx_t row = 0; row < result->RowCount(); ++row) {
+      source_by_id.emplace(result->GetValue(0, row).GetValue<std::string>(),
+                           result->GetValue(1, row).GetValue<std::string>());
+    }
+    simdjson::builder::string_builder sb;
+    sb.append_raw(R"({"docs":[)");
+    for (size_t i = 0; i < ids.size(); ++i) {
+      if (i > 0) {
+        sb.append_raw(",");
+      }
+      sb.append_raw(R"({"_index":)");
+      sb.escape_and_append_with_quotes(index);
+      sb.append_raw(R"(,"_id":)");
+      sb.escape_and_append_with_quotes(std::string_view{ids[i]});
+      const auto it = source_by_id.find(ids[i]);
+      if (it == source_by_id.end()) {
+        sb.append_raw(R"(,"found":false})");
+      } else {
+        sb.append_raw(R"(,"_version":1,"_seq_no":0,"_primary_term":1,)"
+                      R"("found":true,"_source":)");
+        sb.append_raw(std::string_view{it->second});
+        sb.append_raw("}");
+      }
+    }
+    sb.append_raw("]}");
+    WriteJson(writer, 200, std::string_view{sb.view().value()});
+    co_return {};
+  }
+
+ private:
+  static bool ParseMgetIds(const std::string& body,
+                           std::vector<std::string>& ids,
+                           http::HttpResponseWriter& writer) {
+    try {
+      simdjson::padded_string padded{body};
+      simdjson::ondemand::parser parser;
+      simdjson::ondemand::document doc;
+      if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+        WriteError(writer, 400, "parsing_exception", "malformed _mget body");
+        return false;
+      }
+      for (auto field : doc.get_object()) {
+        std::string_view key;
+        if (field.unescaped_key().get(key) != simdjson::SUCCESS) {
+          WriteError(writer, 400, "parsing_exception", "malformed _mget body");
+          return false;
+        }
+        if (key == "ids") {
+          for (auto v : field.value().get_array()) {
+            std::string_view id;
+            if (v.get_string().get(id) != simdjson::SUCCESS) {
+              WriteError(writer, 400, "illegal_argument_exception",
+                         "_mget ids must be strings");
+              return false;
+            }
+            ids.emplace_back(id);
+          }
+        } else if (key == "docs") {
+          for (auto entry : field.value().get_array()) {
+            for (auto param : entry.get_object()) {
+              std::string_view pk;
+              if (param.unescaped_key().get(pk) == simdjson::SUCCESS &&
+                  pk == "_id") {
+                std::string_view id;
+                if (param.value().get_string().get(id) == simdjson::SUCCESS) {
+                  ids.emplace_back(id);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (const std::exception& e) {
+      WriteError(writer, 400, "parsing_exception", e.what());
+      return false;
+    }
+    return true;
+  }
+};
+
+// HEAD /{index}/_doc/{id} — document existence (200 / 404, no body).
+class ExistsDocHandler final : public HttpHandler {
+ public:
+  yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
+                          http::HttpResponseWriter& writer) override {
+    const auto index = request.Param("index");
+    auto result = co_await RunSql(
+      ctx,
+      absl::StrCat("SELECT 1 FROM \"es\".", SqlIdentifier(index),
+                   " WHERE \"_id\" = ", SqlLiteral(request.Param("id")),
+                   " LIMIT 1"),
+      writer, index);
+    if (!result) {
+      co_return {};
+    }
+    if (result->RowCount() == 0) {
+      WriteError(writer, 404, "not_found", "");
+    } else {
+      WriteJson(writer, 200, "{}");
+    }
+    co_return {};
+  }
+};
+
+// GET /{index} — index info: aliases (none yet), mappings, minimal settings.
+class IndexInfoHandler final : public HttpHandler {
+ public:
+  yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
+                          http::HttpResponseWriter& writer) override {
+    const auto index = request.Param("index");
+    auto result = co_await RunSql(
+      ctx, absl::StrCat("CALL es_mapping(", SqlLiteral(index), ")"), writer,
+      index);
+    if (!result) {
+      co_return {};
+    }
+    const auto mappings = result->GetValue(0, 0).GetValue<std::string>();
+    WriteJson(
+      writer, 200,
+      absl::StrCat(R"({")", index, R"(":{"aliases":{},"mappings":)", mappings,
+                   R"(,"settings":{"index":{"number_of_shards":"1",)"
+                   R"("number_of_replicas":"0","provided_name":")",
+                   index, R"("}}}})"));
+    co_return {};
+  }
+};
+
+// GET /_cat/count [?format=json] — total doc count across ES indices.
+class CatCountHandler final : public HttpHandler {
+ public:
+  yaclib::Future<> Handle(RequestContext& ctx, const HttpRequest& request,
+                          http::HttpResponseWriter& writer) override {
+    auto result = co_await RunSql(
+      ctx, "SELECT coalesce(sum(docs_count), 0) FROM es_cat_indices()",
+      writer);
+    if (!result) {
+      co_return {};
+    }
+    const auto count = result->GetValue(0, 0).GetValue<int64_t>();
+    if (request.Query("format") == "json") {
+      WriteJson(writer, 200, absl::StrCat(R"([{"count":")", count, R"("}])"));
+    } else {
+      WriteText(writer, 200, absl::StrCat(count, "\n"));
+    }
+    co_return {};
+  }
+};
+
 }  // namespace
 
 void Register(HttpRouter& router) {
@@ -1213,6 +1393,8 @@ void Register(HttpRouter& router) {
              std::make_unique<HealthHandler>());
   router.Add(HttpMethod::Get, "/_cat/indices",
              std::make_unique<CatIndicesHandler>());
+  router.Add(HttpMethod::Get, "/_cat/count",
+             std::make_unique<CatCountHandler>());
   router.Add(HttpMethod::Post, "/_bulk", std::make_unique<BulkHandler>());
   router.Add(HttpMethod::Put, "/_bulk", std::make_unique<BulkHandler>());
   router.Add(HttpMethod::Get, "/_nodes/stats",
@@ -1244,6 +1426,7 @@ void Register(HttpRouter& router) {
              std::make_unique<DeleteIndexHandler>());
   router.Add(HttpMethod::Head, "/:index",
              std::make_unique<IndexExistsHandler>());
+  router.Add(HttpMethod::Get, "/:index", std::make_unique<IndexInfoHandler>());
   router.Add(HttpMethod::Get, "/:index/_mapping",
              std::make_unique<MappingHandler>());
   router.Add(HttpMethod::Post, "/:index/_bulk",
@@ -1257,8 +1440,14 @@ void Register(HttpRouter& router) {
              std::make_unique<DocHandler>());
   router.Add(HttpMethod::Get, "/:index/_doc/:id",
              std::make_unique<GetDocHandler>());
+  router.Add(HttpMethod::Head, "/:index/_doc/:id",
+             std::make_unique<ExistsDocHandler>());
   router.Add(HttpMethod::Get, "/:index/_source/:id",
              std::make_unique<GetSourceHandler>());
+  router.Add(HttpMethod::Get, "/:index/_mget",
+             std::make_unique<MgetHandler>());
+  router.Add(HttpMethod::Post, "/:index/_mget",
+             std::make_unique<MgetHandler>());
   router.Add(HttpMethod::Post, "/:index/_refresh",
              std::make_unique<RefreshHandler>());
   router.Add(HttpMethod::Get, "/:index/_refresh",

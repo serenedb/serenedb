@@ -625,9 +625,10 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     return nullptr;
   }
   const auto* stats = ss.snapshot->reader.GetColumnStats(col_id);
-  if (stats == nullptr || stats->GetType() != bind.column_types[column_index]) {
+  if (stats == nullptr) {
     return nullptr;
   }
+  SDB_ASSERT(stats->GetType() == bind.column_types[column_index]);
   return stats->ToUnique();
 }
 

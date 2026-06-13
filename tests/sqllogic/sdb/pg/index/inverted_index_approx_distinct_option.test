@@ -1,4 +1,4 @@
-# Per-column `distinct_count` option on INCLUDE columns. When enabled,
+# Per-column `approx_distinct` option on INCLUDE columns. When enabled,
 # the columnstore writer tracks the column's NDV in a HyperLogLog that is
 # persisted per segment, unioned across segments at scan time, and exposed
 # to the optimizer as approx_unique (used for join-order cardinality
@@ -21,8 +21,8 @@ SELECT i, i % 100, 'tag-' || (i % 7)::VARCHAR, i FROM range(10000) t(i);
 
 statement ok
 CREATE INDEX dc_t_idx ON dc_t USING inverted(pk)
-  INCLUDE (v included (distinct_count = true),
-           s included (distinct_count = true),
+  INCLUDE (v included (approx_distinct = true),
+           s included (approx_distinct = true),
            plain);
 
 statement ok
@@ -92,7 +92,7 @@ count	count
 # --- 5. Non-boolean value rejected at parse time --------------------------
 statement error
 CREATE INDEX dc_bad ON dc_t USING inverted(pk)
-  INCLUDE (v included (distinct_count = 'banana'));
+  INCLUDE (v included (approx_distinct = 'banana'));
 
 # --- 6. Unknown included option still rejected ----------------------------
 statement error

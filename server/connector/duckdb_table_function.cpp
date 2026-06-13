@@ -856,7 +856,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   if (stats == nullptr || stats->GetType() != bind.column_types[column_index]) {
     return nullptr;
   }
-  return stats->Copy().ToUnique();
+  return stats->ToUnique();
 }
 
 bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,

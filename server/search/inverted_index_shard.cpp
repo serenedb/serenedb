@@ -177,7 +177,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
         .row_group_size = entry->row_group_size,
         .compression = entry->compression,
         .hnsw_info = index.GetHNSWInfo(id),
-        .distinct_count = entry->distinct_count,
+        .approx_distinct = entry->approx_distinct,
       };
     }
     if (static_cast<catalog::Column::Id>(id) ==

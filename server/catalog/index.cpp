@@ -109,7 +109,7 @@ constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
 };
 constexpr std::string_view kCompressionField = "compression";
 constexpr std::string_view kRowGroupSizeField = "row_group_size";
-constexpr std::string_view kDistinctCountField = "distinct_count";
+constexpr std::string_view kApproxDistinctField = "approx_distinct";
 
 ResultOr<uint32_t> ParseRowGroupSize(std::string_view kind,
                                      std::string_view column_name,
@@ -519,13 +519,13 @@ Result ApplyIncludedOpclass(
         return std::move(parsed).error();
       }
       entry.row_group_size = *parsed;
-    } else if (key == kDistinctCountField) {
+    } else if (key == kApproxDistinctField) {
       auto parsed =
         GetIndexBoolOption(kIncludedKind, owner_label, key, raw_val);
       if (!parsed) {
         return std::move(parsed).error();
       }
-      entry.distinct_count = *parsed;
+      entry.approx_distinct = *parsed;
     } else {
       return {ERROR_BAD_PARAMETER,
               "Column '",
@@ -533,7 +533,7 @@ Result ApplyIncludedOpclass(
               "': unknown included option '",
               key,
               "'. Accepted options: compression (string, default 'auto'), "
-              "row_group_size (int >= 1), distinct_count (bool, default "
+              "row_group_size (int >= 1), approx_distinct (bool, default "
               "false)"};
     }
   }

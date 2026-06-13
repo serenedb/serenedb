@@ -24,6 +24,7 @@
 
 #include <cstring>
 #include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -59,7 +60,7 @@ namespace irs {
 ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
                            uint32_t row_group_size, WriteContext& write_ctx,
                            FooterColumnEntry& entry, bool skip_validity,
-                           bool distinct_count)
+                           bool approx_distinct)
   : _id{id},
     _type{std::move(type)},
     _row_group_size{row_group_size},
@@ -69,9 +70,15 @@ ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
              duckdb::VectorDataInitialization::UNINITIALIZED},
     _skip_validity{skip_validity} {
   SDB_ASSERT(_row_group_size != 0);
-  if (distinct_count) {
-    _distinct_hll = duckdb::make_uniq<duckdb::HyperLogLog>();
+  if (approx_distinct) {
+    _entry->root.distinct_hll = duckdb::make_uniq<duckdb::HyperLogLog>();
+    _hashes = duckdb::make_uniq<duckdb::Vector>(
+      duckdb::LogicalType::HASH, static_cast<duckdb::idx_t>(_row_group_size));
   }
+}
+
+bool ColumnWriter::ApproxDistinct() const noexcept {
+  return _entry->root.distinct_hll != nullptr;
 }
 
 void ColumnWriter::PadNullsTo(uint64_t start_row) {
@@ -164,9 +171,6 @@ void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
 void ColumnWriter::Finalize() {
   if (_filled > 0) {
     FlushRowGroup();
-  }
-  if (_distinct_hll) {
-    _entry->root.distinct_hll = std::move(_distinct_hll);
   }
 }
 
@@ -628,12 +632,10 @@ void ColumnWriter::FlushRowGroup() {
     return;
   }
 
-  if (_distinct_hll) {
-    duckdb::Vector hashes{duckdb::LogicalType::HASH,
-                          static_cast<duckdb::idx_t>(_filled)};
-    duckdb::VectorOperations::Hash(_staging, hashes,
+  if (_entry->root.distinct_hll) {
+    duckdb::VectorOperations::Hash(_staging, *_hashes,
                                    static_cast<duckdb::idx_t>(_filled));
-    _distinct_hll->Update(_staging, hashes);
+    _entry->root.distinct_hll->Update(_staging, *_hashes);
   }
 
   FlushNode(*_write_ctx, _type, _staging, _filled, _row_group_first_doc,

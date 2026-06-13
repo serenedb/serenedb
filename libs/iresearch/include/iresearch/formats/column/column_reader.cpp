@@ -152,7 +152,7 @@ ColumnReader::ColumnReader(
   std::unique_ptr<ColumnReader> element_child,
   std::vector<std::unique_ptr<ColumnReader>> struct_children,
   uint64_t array_size, bool fully_shredded,
-  duckdb::unique_ptr<duckdb::HyperLogLog> distinct_hll)
+  duckdb::shared_ptr<duckdb::HyperLogLog> distinct_hll)
   : _id{id},
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
@@ -236,7 +236,7 @@ ColumnReader::ColumnReader(
 ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
                            std::vector<duckdb::DataPointer> validity_pointers,
                            std::vector<VariantRgReader> variant_rgs,
-                           duckdb::unique_ptr<duckdb::HyperLogLog> distinct_hll)
+                           duckdb::shared_ptr<duckdb::HyperLogLog> distinct_hll)
   : _id{id},
     _type{std::move(type)},
     _validity_pointers{std::move(validity_pointers)},

@@ -95,7 +95,7 @@ void SerializeColumnData(duckdb::Serializer& obj,
                 });
   obj.WritePropertyWithDefault<bool>(5, "fully_shredded", node.fully_shredded,
                                      true);
-  obj.WritePropertyWithDefault<duckdb::unique_ptr<duckdb::HyperLogLog>>(
+  obj.WritePropertyWithDefault<duckdb::shared_ptr<duckdb::HyperLogLog>>(
     6, "distinct_hll", node.distinct_hll);
 }
 

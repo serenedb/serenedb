@@ -86,12 +86,12 @@ class ColumnReader final {
                std::unique_ptr<ColumnReader> element_child,
                std::vector<std::unique_ptr<ColumnReader>> struct_children,
                uint64_t array_size, bool fully_shredded,
-               duckdb::unique_ptr<duckdb::HyperLogLog> distinct_hll);
+               duckdb::shared_ptr<duckdb::HyperLogLog> distinct_hll);
 
   ColumnReader(field_id id, duckdb::LogicalType type,
                std::vector<duckdb::DataPointer> validity_pointers,
                std::vector<VariantRgReader> variant_rgs,
-               duckdb::unique_ptr<duckdb::HyperLogLog> distinct_hll);
+               duckdb::shared_ptr<duckdb::HyperLogLog> distinct_hll);
 
   ColumnReader(const ColumnReader&) = delete;
   ColumnReader& operator=(const ColumnReader&) = delete;
@@ -359,7 +359,7 @@ class ColumnReader final {
   std::vector<uint64_t> _rg_element_starts;
   std::vector<VariantRgReader> _variant_rgs;
   std::vector<uint64_t> _variant_rg_starts;
-  duckdb::unique_ptr<duckdb::HyperLogLog> _distinct_hll;
+  duckdb::shared_ptr<duckdb::HyperLogLog> _distinct_hll;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
 };
 

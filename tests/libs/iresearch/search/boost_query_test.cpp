@@ -20,6 +20,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <tuple>
+
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
@@ -87,6 +90,48 @@ class BoostQueryTestCase : public tests::IndexTestBase {
     irs::Filter::ptr f = std::move(root);
     irs::Optimize(f);
     return f;
+  }
+
+  static irs::Filter::ptr Term(std::string_view value) {
+    auto f = std::make_unique<irs::ByTerm>();
+    *f->mutable_field_id() = kContentFieldId;
+    f->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
+    return f;
+  }
+
+  static void SortByScore(std::vector<irs::ScoreDoc>& hits) {
+    std::sort(hits.begin(), hits.end(),
+              [](const irs::ScoreDoc& a, const irs::ScoreDoc& b) {
+                return std::tie(b.score, a.doc) < std::tie(a.score, b.doc);
+              });
+  }
+
+  template<typename Build>
+  void ExpectOptimizerPreservesResults(std::string_view label, Build build) {
+    auto reader = CreateIndex();
+    irs::Filter::ptr raw = build();
+    irs::Filter::ptr opt = build();
+    ASSERT_NE(nullptr, raw);
+    ASSERT_NE(nullptr, opt);
+
+    irs::TFIDF scorer{/*normalize=*/false};
+    irs::Optimize(opt, {.scorer = &scorer});
+
+    auto raw_hits = CollectAll(reader, *raw);
+    auto opt_hits = CollectAll(reader, *opt);
+    SortByScore(raw_hits);
+    SortByScore(opt_hits);
+
+    ASSERT_EQ(raw_hits.size(), opt_hits.size())
+      << "result count differs for " << label;
+    for (size_t i = 0; i < raw_hits.size(); ++i) {
+      EXPECT_EQ(raw_hits[i].doc, opt_hits[i].doc)
+        << "doc order differs at rank " << i << " for " << label
+        << " (raw score=" << raw_hits[i].score
+        << " opt score=" << opt_hits[i].score << ")";
+      EXPECT_FLOAT_EQ(raw_hits[i].score, opt_hits[i].score)
+        << "score differs at rank " << i << " for " << label;
+    }
   }
 
   // Create a single-segment index with 4 documents:
@@ -206,6 +251,85 @@ TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
   // Score ordering must be: C > B > A
   EXPECT_GT(hits[0].score, hits[1].score);
   EXPECT_GT(hits[1].score, hits[2].score);
+}
+
+TEST_P(BoostQueryTestCase, OptimizerPreservesDuplicateDisjunction) {
+  ExpectOptimizerPreservesResults("OR(open, open, source)", [] {
+    auto o = std::make_unique<irs::Or>();
+    o->add(Term("open"));
+    o->add(Term("open"));
+    o->add(Term("source"));
+    return irs::Filter::ptr{std::move(o)};
+  });
+}
+
+TEST_P(BoostQueryTestCase, OptimizerPreservesDuplicateConjunction) {
+  ExpectOptimizerPreservesResults("AND(open, source, open)", [] {
+    auto a = std::make_unique<irs::And>();
+    a->add(Term("open"));
+    a->add(Term("source"));
+    a->add(Term("open"));
+    return irs::Filter::ptr{std::move(a)};
+  });
+}
+
+TEST_P(BoostQueryTestCase, OptimizerPreservesDistinctDisjunction) {
+  ExpectOptimizerPreservesResults("OR(open, source, software)", [] {
+    auto o = std::make_unique<irs::Or>();
+    o->add(Term("open"));
+    o->add(Term("source"));
+    o->add(Term("software"));
+    return irs::Filter::ptr{std::move(o)};
+  });
+}
+
+TEST_P(BoostQueryTestCase, OptimizerPreservesMixedDistinct) {
+  auto writer = open_writer(irs::kOmCreate);
+  auto insert = [&](std::string_view content) {
+    SpaceField f{kContentFieldId};
+    f.value(content);
+    auto batch = writer->GetBatch();
+    {
+      auto d = batch.Insert();
+      EXPECT_TRUE(d.Insert(f));
+    }
+    batch.Commit();
+  };
+  insert("alpha gamma");
+  insert("alpha beta gamma delta");
+  insert("beta delta");
+  insert("alpha beta");
+  insert("gamma delta epsilon");
+  writer->RefreshCommit();
+  auto reader =
+    irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
+
+  auto build = [] {
+    auto root = std::make_unique<irs::MixedBooleanFilter>();
+    root->GetRequired().add(Term("alpha"));
+    root->GetRequired().add(Term("beta"));
+    root->GetOptional().add(Term("gamma"));
+    root->GetOptional().add(Term("delta"));
+    return irs::Filter::ptr{std::move(root)};
+  };
+  irs::Filter::ptr raw = build();
+  irs::Filter::ptr opt = build();
+  irs::TFIDF scorer{/*normalize=*/false};
+  irs::Optimize(opt, {.scorer = &scorer});
+
+  auto raw_hits = CollectAll(reader, *raw);
+  auto opt_hits = CollectAll(reader, *opt);
+  SortByScore(raw_hits);
+  SortByScore(opt_hits);
+  ASSERT_EQ(raw_hits.size(), opt_hits.size());
+  for (size_t i = 0; i < raw_hits.size(); ++i) {
+    EXPECT_EQ(raw_hits[i].doc, opt_hits[i].doc)
+      << "doc order differs at rank " << i
+      << " (raw score=" << raw_hits[i].score
+      << " opt score=" << opt_hits[i].score << ")";
+    EXPECT_FLOAT_EQ(raw_hits[i].score, opt_hits[i].score)
+      << "score differs at rank " << i;
+  }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

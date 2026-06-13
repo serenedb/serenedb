@@ -60,128 +60,128 @@ QUIET_WAIT_SECS="${PERF_QUIET_WAIT_SECS:-600}"
 SERVER_PHYS="${PERF_SERVER_PHYS:-6}"
 CLIENT_PHYS="${PERF_CLIENT_PHYS:-3}"
 phys_cores() { # emit thread_siblings_list lines sorted by first cpu
-    cat /sys/devices/system/cpu/cpu[0-9]*/topology/thread_siblings_list |
-        sort -t, -k1,1n -u
+	cat /sys/devices/system/cpu/cpu[0-9]*/topology/thread_siblings_list |
+		sort -t, -k1,1n -u
 }
 if [[ -n "${PERF_SERVER_CORES:-}" && -n "${PERF_CLIENT_CORES:-}" ]]; then
-    SERVER_CORES="${PERF_SERVER_CORES}"
-    CLIENT_CORES="${PERF_CLIENT_CORES}"
+	SERVER_CORES="${PERF_SERVER_CORES}"
+	CLIENT_CORES="${PERF_CLIENT_CORES}"
 elif [[ -n "${PERF_BENCH_CORES:-}" ]]; then
-    # Reserved set from the isolation wrapper: server takes ~2/3, clients 1/3.
-    IFS=',' read -r -a _parts <<<"${PERF_BENCH_CORES}"
-    _cpus=()
-    for _p in "${_parts[@]}"; do
-        if [[ "${_p}" == *-* ]]; then
-            for ((c = ${_p%-*}; c <= ${_p#*-}; c++)); do _cpus+=("$c"); done
-        else _cpus+=("${_p}"); fi
-    done
-    _ns=$((${#_cpus[@]} * 2 / 3))
-    SERVER_CORES="$(
-        IFS=,
-        echo "${_cpus[*]:0:_ns}"
-    )"
-    CLIENT_CORES="$(
-        IFS=,
-        echo "${_cpus[*]:_ns}"
-    )"
+	# Reserved set from the isolation wrapper: server takes ~2/3, clients 1/3.
+	IFS=',' read -r -a _parts <<<"${PERF_BENCH_CORES}"
+	_cpus=()
+	for _p in "${_parts[@]}"; do
+		if [[ "${_p}" == *-* ]]; then
+			for ((c = ${_p%-*}; c <= ${_p#*-}; c++)); do _cpus+=("$c"); done
+		else _cpus+=("${_p}"); fi
+	done
+	_ns=$((${#_cpus[@]} * 2 / 3))
+	SERVER_CORES="$(
+		IFS=,
+		echo "${_cpus[*]:0:_ns}"
+	)"
+	CLIENT_CORES="$(
+		IFS=,
+		echo "${_cpus[*]:_ns}"
+	)"
 else
-    mapfile -t _coresets < <(phys_cores)
-    _total=${#_coresets[@]}
-    ((SERVER_PHYS + CLIENT_PHYS <= _total)) || {
-        echo "need $((SERVER_PHYS + CLIENT_PHYS)) physical cores, have ${_total}" >&2
-        exit 1
-    }
-    _srv=("${_coresets[@]: -$SERVER_PHYS}")
-    _cli=("${_coresets[@]: -$((SERVER_PHYS + CLIENT_PHYS)):$CLIENT_PHYS}")
-    SERVER_CORES="$(
-        IFS=,
-        echo "${_srv[*]}"
-    )"
-    CLIENT_CORES="$(
-        IFS=,
-        echo "${_cli[*]}"
-    )"
+	mapfile -t _coresets < <(phys_cores)
+	_total=${#_coresets[@]}
+	((SERVER_PHYS + CLIENT_PHYS <= _total)) || {
+		echo "need $((SERVER_PHYS + CLIENT_PHYS)) physical cores, have ${_total}" >&2
+		exit 1
+	}
+	_srv=("${_coresets[@]: -$SERVER_PHYS}")
+	_cli=("${_coresets[@]: -$((SERVER_PHYS + CLIENT_PHYS)):$CLIENT_PHYS}")
+	SERVER_CORES="$(
+		IFS=,
+		echo "${_srv[*]}"
+	)"
+	CLIENT_CORES="$(
+		IFS=,
+		echo "${_cli[*]}"
+	)"
 fi
 cpuset_count() {
-    local n=0 part
-    local IFS=','
-    for part in $1; do
-        if [[ "${part}" == *-* ]]; then
-            n=$((n + ${part#*-} - ${part%-*} + 1))
-        else
-            n=$((n + 1))
-        fi
-    done
-    echo "${n}"
+	local n=0 part
+	local IFS=','
+	for part in $1; do
+		if [[ "${part}" == *-* ]]; then
+			n=$((n + ${part#*-} - ${part%-*} + 1))
+		else
+			n=$((n + 1))
+		fi
+	done
+	echo "${n}"
 }
 CPU_THREADS="${PERF_STORAGE_CPU_THREADS:-$(cpuset_count "${SERVER_CORES}")}"
 
 for bin in "${OLD_BIN}" "${NEW_BIN}"; do
-    [[ -x "${bin}" ]] || {
-        echo "missing binary: ${bin}" >&2
-        exit 1
-    }
+	[[ -x "${bin}" ]] || {
+		echo "missing binary: ${bin}" >&2
+		exit 1
+	}
 done
 for tool in pgbench perf psql; do
-    command -v "${tool}" >/dev/null 2>&1 || {
-        echo "${tool} not found" >&2
-        exit 1
-    }
+	command -v "${tool}" >/dev/null 2>&1 || {
+		echo "${tool} not found" >&2
+		exit 1
+	}
 done
 
 mkdir -p "${OUT_DIR}" "${BASELINE_DIR}"
 CUR_PID=""
 CUR_DATA=""
 cleanup() {
-    [[ -n "${CUR_PID}" ]] && kill -9 "${CUR_PID}" 2>/dev/null || true
-    [[ -n "${CUR_DATA}" ]] && rm -rf "${CUR_DATA}" || true
+	[[ -n "${CUR_PID}" ]] && kill -9 "${CUR_PID}" 2>/dev/null || true
+	[[ -n "${CUR_DATA}" ]] && rm -rf "${CUR_DATA}" || true
 }
 trap cleanup EXIT
 
 # Wait for a quiet machine before each measured window; proceed with a warning
 # (and record the loadavg) if it never quiets down.
 wait_quiet() {
-    local waited=0
-    while :; do
-        local load
-        load="$(awk '{print int($1)}' /proc/loadavg)"
-        ((load <= QUIET_LOAD)) && return 0
-        ((waited >= QUIET_WAIT_SECS)) && {
-            echo "  WARNING: loadavg ${load} > ${QUIET_LOAD} after ${waited}s -- measuring anyway" >&2
-            return 0
-        }
-        sleep 10
-        waited=$((waited + 10))
-    done
+	local waited=0
+	while :; do
+		local load
+		load="$(awk '{print int($1)}' /proc/loadavg)"
+		((load <= QUIET_LOAD)) && return 0
+		((waited >= QUIET_WAIT_SECS)) && {
+			echo "  WARNING: loadavg ${load} > ${QUIET_LOAD} after ${waited}s -- measuring anyway" >&2
+			return 0
+		}
+		sleep 10
+		waited=$((waited + 10))
+	done
 }
 
 PSQL=(psql -h 127.0.0.1 -p "${PORT}" -U postgres -d postgres -AtX -q)
 
 wait_up() {
-    local log="$1"
-    for _ in $(seq 1 120); do
-        if "${PSQL[@]}" -c 'SELECT 1' >/dev/null 2>&1; then return 0; fi
-        sleep 0.5
-    done
-    echo "server on :${PORT} did not come up:" >&2
-    tail -40 "${log}" >&2
-    return 1
+	local log="$1"
+	for _ in $(seq 1 120); do
+		if "${PSQL[@]}" -c 'SELECT 1' >/dev/null 2>&1; then return 0; fi
+		sleep 0.5
+	done
+	echo "server on :${PORT} did not come up:" >&2
+	tail -40 "${log}" >&2
+	return 1
 }
 
 start_serened() {
-    local srv="$1" datadir="$2"
-    taskset -c "${SERVER_CORES}" "${BENCH_BIN}" "${datadir}" \
-        --server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
-        --server_io_threads "${IO_THREADS}" \
-        --server_cpu_threads "${CPU_THREADS}" \
-        >"${OUT_DIR}/serened_${srv}.log" 2>&1 &
-    CUR_PID=$!
+	local srv="$1" datadir="$2"
+	taskset -c "${SERVER_CORES}" "${BENCH_BIN}" "${datadir}" \
+		--server_endpoints "pgsql+tcp://0.0.0.0:${PORT}" \
+		--server_io_threads "${IO_THREADS}" \
+		--server_cpu_threads "${CPU_THREADS}" \
+		>"${OUT_DIR}/serened_${srv}.log" 2>&1 &
+	CUR_PID=$!
 }
 
 stop_serened() {
-    kill -9 "${CUR_PID}" 2>/dev/null || true
-    wait "${CUR_PID}" 2>/dev/null || true
-    CUR_PID=""
+	kill -9 "${CUR_PID}" 2>/dev/null || true
+	wait "${CUR_PID}" 2>/dev/null || true
+	CUR_PID=""
 }
 
 # --- pgbench workload scripts ------------------------------------------------
@@ -219,154 +219,154 @@ EOF
 
 # run_pgb <label> <sqlfile> <mode> [clients] [extra pgbench args...]
 run_pgb() {
-    local label="$1" sqlfile="$2" mode="$3" clients="${4:-${CLIENTS}}"
-    shift 4 || true
-    local extra=("$@")
-    local pgb_log="${OUT_DIR}/pgbench_${label}.log"
-    local stat_log="${OUT_DIR}/stat_${label}.txt"
-    wait_quiet
-    # warmup
-    taskset -c "${CLIENT_CORES}" pgbench -h 127.0.0.1 -p "${PORT}" -U postgres \
-        -n -f "${sqlfile}" -M "${mode}" -c "${clients}" -j "${JOBS}" -T 2 \
-        "${extra[@]}" postgres >/dev/null 2>&1 || true
-    taskset -c "${CLIENT_CORES}" pgbench -h 127.0.0.1 -p "${PORT}" -U postgres \
-        -n -f "${sqlfile}" -M "${mode}" -c "${clients}" -j "${JOBS}" \
-        -T "${DURATION}" "${extra[@]}" postgres >"${pgb_log}" 2>&1 &
-    local pgb_pid=$!
-    perf stat -p "${CUR_PID}" -e task-clock,cycles,instructions \
-        -o "${stat_log}" -- sleep "$((DURATION - 2))" >/dev/null 2>&1 || true
-    wait "${pgb_pid}" 2>/dev/null || true
+	local label="$1" sqlfile="$2" mode="$3" clients="${4:-${CLIENTS}}"
+	shift 4 || true
+	local extra=("$@")
+	local pgb_log="${OUT_DIR}/pgbench_${label}.log"
+	local stat_log="${OUT_DIR}/stat_${label}.txt"
+	wait_quiet
+	# warmup
+	taskset -c "${CLIENT_CORES}" pgbench -h 127.0.0.1 -p "${PORT}" -U postgres \
+		-n -f "${sqlfile}" -M "${mode}" -c "${clients}" -j "${JOBS}" -T 2 \
+		"${extra[@]}" postgres >/dev/null 2>&1 || true
+	taskset -c "${CLIENT_CORES}" pgbench -h 127.0.0.1 -p "${PORT}" -U postgres \
+		-n -f "${sqlfile}" -M "${mode}" -c "${clients}" -j "${JOBS}" \
+		-T "${DURATION}" "${extra[@]}" postgres >"${pgb_log}" 2>&1 &
+	local pgb_pid=$!
+	perf stat -p "${CUR_PID}" -e task-clock,cycles,instructions \
+		-o "${stat_log}" -- sleep "$((DURATION - 2))" >/dev/null 2>&1 || true
+	wait "${pgb_pid}" 2>/dev/null || true
 
-    local tps lat txns cycles insns load
-    tps=$(awk -F'= ' '/tps = .*without initial/{print $2+0}' "${pgb_log}")
-    [[ -z "${tps}" ]] && tps=$(awk -F'= ' '/^tps =/{print $2+0; exit}' "${pgb_log}")
-    lat=$(awk -F'= ' '/latency average/{print $2+0}' "${pgb_log}")
-    txns=$(awk '/number of transactions actually processed/{print $NF+0}' "${pgb_log}")
-    cycles=$(awk '/cycles/{gsub(/[^0-9]/,"",$1); print $1; exit}' "${stat_log}" 2>/dev/null)
-    insns=$(awk '/instructions/{gsub(/[^0-9]/,"",$1); print $1; exit}' "${stat_log}" 2>/dev/null)
-    load="$(awk '{print $1}' /proc/loadavg)"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${label}" "${tps:-0}" "${lat:-0}" \
-        "${txns:-0}" "${cycles:-0}" "${insns:-0}" "${load}" >>"${OUT_DIR}/results.tsv"
-    printf '  %-26s tps=%-12s lat=%-9s load=%s\n' "${label}" "${tps:-0}" "${lat:-0}" "${load}"
+	local tps lat txns cycles insns load
+	tps=$(awk -F'= ' '/tps = .*without initial/{print $2+0}' "${pgb_log}")
+	[[ -z "${tps}" ]] && tps=$(awk -F'= ' '/^tps =/{print $2+0; exit}' "${pgb_log}")
+	lat=$(awk -F'= ' '/latency average/{print $2+0}' "${pgb_log}")
+	txns=$(awk '/number of transactions actually processed/{print $NF+0}' "${pgb_log}")
+	cycles=$(awk '/cycles/{gsub(/[^0-9]/,"",$1); print $1; exit}' "${stat_log}" 2>/dev/null)
+	insns=$(awk '/instructions/{gsub(/[^0-9]/,"",$1); print $1; exit}' "${stat_log}" 2>/dev/null)
+	load="$(awk '{print $1}' /proc/loadavg)"
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${label}" "${tps:-0}" "${lat:-0}" \
+		"${txns:-0}" "${cycles:-0}" "${insns:-0}" "${load}" >>"${OUT_DIR}/results.tsv"
+	printf '  %-26s tps=%-12s lat=%-9s load=%s\n' "${label}" "${tps:-0}" "${lat:-0}" "${load}"
 }
 
 # run_wall <label> <reps> <setup-sql> <timed-sql> <teardown-sql>
 # Wall-clocks ONE statement, median over reps; rows are tps=1/median so the
 # summary ratio machinery applies. Setup/teardown run untimed around each rep.
 run_wall() {
-    local label="$1" reps="$2" setup="$3" timed="$4" teardown="$5"
-    local times=()
-    local r s e
-    for ((r = 0; r < reps; r++)); do
-        wait_quiet
-        [[ -n "${setup}" ]] && "${PSQL[@]}" -c "${setup}" >/dev/null
-        s=$(date +%s.%N)
-        "${PSQL[@]}" -c "${timed}" >/dev/null
-        e=$(date +%s.%N)
-        [[ -n "${teardown}" ]] && "${PSQL[@]}" -c "${teardown}" >/dev/null
-        times+=("$(echo "${e} - ${s}" | bc)")
-    done
-    local med
-    med=$(printf '%s\n' "${times[@]}" | sort -n | awk -v n="${reps}" 'NR==int((n+1)/2){print}')
-    local load tps
-    load="$(awk '{print $1}' /proc/loadavg)"
-    tps=$(echo "1 / ${med}" | bc -l)
-    printf '%s\t%.4f\t%s\t1\t0\t0\t%s\n' "${label}" "${tps}" "${med}" "${load}" >>"${OUT_DIR}/results.tsv"
-    printf '  %-26s median=%-8ss (1/t=%.3f) load=%s\n' "${label}" "${med}" "${tps}" "${load}"
+	local label="$1" reps="$2" setup="$3" timed="$4" teardown="$5"
+	local times=()
+	local r s e
+	for ((r = 0; r < reps; r++)); do
+		wait_quiet
+		[[ -n "${setup}" ]] && "${PSQL[@]}" -c "${setup}" >/dev/null
+		s=$(date +%s.%N)
+		"${PSQL[@]}" -c "${timed}" >/dev/null
+		e=$(date +%s.%N)
+		[[ -n "${teardown}" ]] && "${PSQL[@]}" -c "${teardown}" >/dev/null
+		times+=("$(echo "${e} - ${s}" | bc)")
+	done
+	local med
+	med=$(printf '%s\n' "${times[@]}" | sort -n | awk -v n="${reps}" 'NR==int((n+1)/2){print}')
+	local load tps
+	load="$(awk '{print $1}' /proc/loadavg)"
+	tps=$(echo "1 / ${med}" | bc -l)
+	printf '%s\t%.4f\t%s\t1\t0\t0\t%s\n' "${label}" "${tps}" "${med}" "${load}" >>"${OUT_DIR}/results.tsv"
+	printf '  %-26s median=%-8ss (1/t=%.3f) load=%s\n' "${label}" "${med}" "${tps}" "${load}"
 }
 
 # run_recovery <srv> <datadir>: kill -9 the running server, wall-clock
 # restart-to-ready (includes search index rebuild on the new side), reps times.
 run_recovery() {
-    local srv="$1" datadir="$2"
-    local times=()
-    local r s e
-    for ((r = 0; r < REPS; r++)); do
-        wait_quiet
-        kill -9 "${CUR_PID}" 2>/dev/null || true
-        wait "${CUR_PID}" 2>/dev/null || true
-        s=$(date +%s.%N)
-        start_serened "${srv}_recovery" "${datadir}"
-        wait_up "${OUT_DIR}/serened_${srv}_recovery.log"
-        e=$(date +%s.%N)
-        times+=("$(echo "${e} - ${s}" | bc)")
-    done
-    local med load tps
-    med=$(printf '%s\n' "${times[@]}" | sort -n | awk -v n="${REPS}" 'NR==int((n+1)/2){print}')
-    load="$(awk '{print $1}' /proc/loadavg)"
-    tps=$(echo "1 / ${med}" | bc -l)
-    printf '%s\t%.4f\t%s\t1\t0\t0\t%s\n' "${srv}_recovery" "${tps}" "${med}" "${load}" >>"${OUT_DIR}/results.tsv"
-    printf '  %-26s median=%-8ss load=%s\n' "${srv}_recovery" "${med}" "${load}"
+	local srv="$1" datadir="$2"
+	local times=()
+	local r s e
+	for ((r = 0; r < REPS; r++)); do
+		wait_quiet
+		kill -9 "${CUR_PID}" 2>/dev/null || true
+		wait "${CUR_PID}" 2>/dev/null || true
+		s=$(date +%s.%N)
+		start_serened "${srv}_recovery" "${datadir}"
+		wait_up "${OUT_DIR}/serened_${srv}_recovery.log"
+		e=$(date +%s.%N)
+		times+=("$(echo "${e} - ${s}" | bc)")
+	done
+	local med load tps
+	med=$(printf '%s\n' "${times[@]}" | sort -n | awk -v n="${REPS}" 'NR==int((n+1)/2){print}')
+	load="$(awk '{print $1}' /proc/loadavg)"
+	tps=$(echo "1 / ${med}" | bc -l)
+	printf '%s\t%.4f\t%s\t1\t0\t0\t%s\n' "${srv}_recovery" "${tps}" "${med}" "${load}" >>"${OUT_DIR}/results.tsv"
+	printf '  %-26s median=%-8ss load=%s\n' "${srv}_recovery" "${med}" "${load}"
 }
 
 bench_server() {
-    local srv="$1"
-    local datadir
-    datadir="$(mktemp -d "/tmp/sdb_storage_${srv}.XXXXXX")"
-    CUR_DATA="${datadir}"
-    echo "-- ${srv} server (:${PORT}) [server cores ${SERVER_CORES}, client cores ${CLIENT_CORES}, cpu_threads=${CPU_THREADS}]"
-    start_serened "${srv}" "${datadir}"
-    wait_up "${OUT_DIR}/serened_${srv}.log"
+	local srv="$1"
+	local datadir
+	datadir="$(mktemp -d "/tmp/sdb_storage_${srv}.XXXXXX")"
+	CUR_DATA="${datadir}"
+	echo "-- ${srv} server (:${PORT}) [server cores ${SERVER_CORES}, client cores ${CLIENT_CORES}, cpu_threads=${CPU_THREADS}]"
+	start_serened "${srv}" "${datadir}"
+	wait_up "${OUT_DIR}/serened_${srv}.log"
 
-    # Seed the shared fixtures.
-    "${PSQL[@]}" \
-        -c "CREATE TABLE bench_ins (id BIGINT PRIMARY KEY, v BIGINT, pad TEXT);" \
-        -c "CREATE TABLE bench_upd (id INTEGER PRIMARY KEY, v BIGINT);" \
-        -c "INSERT INTO bench_upd SELECT x, 0 FROM generate_series(1, 100000) t(x);" \
-        -c "CREATE TABLE bench_seq (id BIGSERIAL PRIMARY KEY, v INTEGER);" \
-        >/dev/null
+	# Seed the shared fixtures.
+	"${PSQL[@]}" \
+		-c "CREATE TABLE bench_ins (id BIGINT PRIMARY KEY, v BIGINT, pad TEXT);" \
+		-c "CREATE TABLE bench_upd (id INTEGER PRIMARY KEY, v BIGINT);" \
+		-c "INSERT INTO bench_upd SELECT x, 0 FROM generate_series(1, 100000) t(x);" \
+		-c "CREATE TABLE bench_seq (id BIGSERIAL PRIMARY KEY, v INTEGER);" \
+		>/dev/null
 
-    # 1. single-row INSERT, autocommit, 1 client (fsync-per-commit probe).
-    run_pgb "${srv}_insert_1c" "${OUT_DIR}/wl/insert.sql" prepared 1
-    # 2. concurrent small writers, same table.
-    run_pgb "${srv}_insert_${CLIENTS}c" "${OUT_DIR}/wl/insert.sql" prepared "${CLIENTS}"
-    # 3. point UPDATE churn.
-    run_pgb "${srv}_update_${CLIENTS}c" "${OUT_DIR}/wl/update.sql" prepared "${CLIENTS}"
-    # 4. nextval-heavy insert.
-    run_pgb "${srv}_nextval_${CLIENTS}c" "${OUT_DIR}/wl/nextval.sql" prepared "${CLIENTS}"
+	# 1. single-row INSERT, autocommit, 1 client (fsync-per-commit probe).
+	run_pgb "${srv}_insert_1c" "${OUT_DIR}/wl/insert.sql" prepared 1
+	# 2. concurrent small writers, same table.
+	run_pgb "${srv}_insert_${CLIENTS}c" "${OUT_DIR}/wl/insert.sql" prepared "${CLIENTS}"
+	# 3. point UPDATE churn.
+	run_pgb "${srv}_update_${CLIENTS}c" "${OUT_DIR}/wl/update.sql" prepared "${CLIENTS}"
+	# 4. nextval-heavy insert.
+	run_pgb "${srv}_nextval_${CLIENTS}c" "${OUT_DIR}/wl/nextval.sql" prepared "${CLIENTS}"
 
-    # 5. bulk INSERT .. SELECT 1M rows (wall clock).
-    run_wall "${srv}_bulk_insert_1m" "${REPS}" \
-        "CREATE TABLE bench_bulk (id INTEGER PRIMARY KEY, grp INTEGER, val DOUBLE PRECISION, pad TEXT);" \
-        "INSERT INTO bench_bulk SELECT x, x % 100, x * 0.5, 'padpadpadpadpad' || x FROM generate_series(1, 1000000) t(x);" \
-        "DROP TABLE bench_bulk;"
+	# 5. bulk INSERT .. SELECT 1M rows (wall clock).
+	run_wall "${srv}_bulk_insert_1m" "${REPS}" \
+		"CREATE TABLE bench_bulk (id INTEGER PRIMARY KEY, grp INTEGER, val DOUBLE PRECISION, pad TEXT);" \
+		"INSERT INTO bench_bulk SELECT x, x % 100, x * 0.5, 'padpadpadpadpad' || x FROM generate_series(1, 1000000) t(x);" \
+		"DROP TABLE bench_bulk;"
 
-    # Scan fixture: 500k rows + plain index on grp.
-    "${PSQL[@]}" \
-        -c "CREATE TABLE bench_big (id INTEGER PRIMARY KEY, grp INTEGER, val DOUBLE PRECISION, pad TEXT);" \
-        -c "INSERT INTO bench_big SELECT x, x % 100, x * 0.5, 'padpadpadpadpad' || x FROM generate_series(1, 500000) t(x);" \
-        >/dev/null
+	# Scan fixture: 500k rows + plain index on grp.
+	"${PSQL[@]}" \
+		-c "CREATE TABLE bench_big (id INTEGER PRIMARY KEY, grp INTEGER, val DOUBLE PRECISION, pad TEXT);" \
+		-c "INSERT INTO bench_big SELECT x, x % 100, x * 0.5, 'padpadpadpadpad' || x FROM generate_series(1, 500000) t(x);" \
+		>/dev/null
 
-    # 6-8. PK point lookups / PK range sums / full-scan aggregate.
-    run_pgb "${srv}_pk_lookup" "${OUT_DIR}/wl/lookup.sql" prepared "${CLIENTS}"
-    run_pgb "${srv}_pk_range" "${OUT_DIR}/wl/range.sql" prepared "${CLIENTS}"
-    run_pgb "${srv}_fullscan_agg" "${OUT_DIR}/wl/agg.sql" prepared 2
+	# 6-8. PK point lookups / PK range sums / full-scan aggregate.
+	run_pgb "${srv}_pk_lookup" "${OUT_DIR}/wl/lookup.sql" prepared "${CLIENTS}"
+	run_pgb "${srv}_pk_range" "${OUT_DIR}/wl/range.sql" prepared "${CLIENTS}"
+	run_pgb "${srv}_fullscan_agg" "${OUT_DIR}/wl/agg.sql" prepared 2
 
-    # 9. secondary index: build (wall) + filtered count through it.
-    run_wall "${srv}_sk_build" "${REPS}" "" \
-        "CREATE INDEX bench_big_grp ON bench_big(grp);" \
-        "DROP INDEX bench_big_grp;"
-    "${PSQL[@]}" -c "CREATE INDEX bench_big_grp ON bench_big(grp);" >/dev/null
-    run_pgb "${srv}_sk_lookup" "${OUT_DIR}/wl/sk_lookup.sql" prepared "${CLIENTS}"
+	# 9. secondary index: build (wall) + filtered count through it.
+	run_wall "${srv}_sk_build" "${REPS}" "" \
+		"CREATE INDEX bench_big_grp ON bench_big(grp);" \
+		"DROP INDEX bench_big_grp;"
+	"${PSQL[@]}" -c "CREATE INDEX bench_big_grp ON bench_big(grp);" >/dev/null
+	run_pgb "${srv}_sk_lookup" "${OUT_DIR}/wl/sk_lookup.sql" prepared "${CLIENTS}"
 
-    # 10. inverted index: build over 200k texts (wall) + scored fetch.
-    "${PSQL[@]}" \
-        -c "CREATE TABLE bench_txt (id INTEGER PRIMARY KEY, body TEXT);" \
-        -c "INSERT INTO bench_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50) FROM generate_series(1, 200000) t(x);" \
-        >/dev/null
-    run_wall "${srv}_inverted_build" "${REPS}" "" \
-        "CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body);" \
-        "DROP INDEX bench_txt_idx;"
-    "${PSQL[@]}" -c "CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body);" >/dev/null
-    "${PSQL[@]}" -c "VACUUM (REFRESH_TABLE) bench_txt;" >/dev/null
-    run_pgb "${srv}_search_fetch" "${OUT_DIR}/wl/search.sql" prepared "${CLIENTS}"
+	# 10. inverted index: build over 200k texts (wall) + scored fetch.
+	"${PSQL[@]}" \
+		-c "CREATE TABLE bench_txt (id INTEGER PRIMARY KEY, body TEXT);" \
+		-c "INSERT INTO bench_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50) FROM generate_series(1, 200000) t(x);" \
+		>/dev/null
+	run_wall "${srv}_inverted_build" "${REPS}" "" \
+		"CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body);" \
+		"DROP INDEX bench_txt_idx;"
+	"${PSQL[@]}" -c "CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body);" >/dev/null
+	"${PSQL[@]}" -c "VACUUM (REFRESH_TABLE) bench_txt;" >/dev/null
+	run_pgb "${srv}_search_fetch" "${OUT_DIR}/wl/search.sql" prepared "${CLIENTS}"
 
-    # 11. recovery: kill -9, time restart-to-ready with the data above.
-    run_recovery "${srv}" "${datadir}"
+	# 11. recovery: kill -9, time restart-to-ready with the data above.
+	run_recovery "${srv}" "${datadir}"
 
-    stop_serened
-    rm -rf "${datadir}"
-    CUR_DATA=""
+	stop_serened
+	rm -rf "${datadir}"
+	CUR_DATA=""
 }
 
 : >"${OUT_DIR}/results.tsv"
@@ -377,13 +377,13 @@ echo "clients=${CLIENTS} jobs=${JOBS} dur=${DURATION}s reps=${REPS} quiet_load<=
 echo
 
 if [[ -s "${OLD_CACHE}" && "${REMEASURE_OLD}" != 1 ]]; then
-    echo "-- old: reusing cached baseline (${OLD_CACHE}); PERF_REMEASURE_OLD=1 to refresh"
-    cat "${OLD_CACHE}" >>"${OUT_DIR}/results.tsv"
+	echo "-- old: reusing cached baseline (${OLD_CACHE}); PERF_REMEASURE_OLD=1 to refresh"
+	cat "${OLD_CACHE}" >>"${OUT_DIR}/results.tsv"
 else
-    BENCH_BIN="${OLD_BIN}"
-    bench_server old
-    grep '^old_' "${OUT_DIR}/results.tsv" >"${OLD_CACHE}" &&
-        echo "  cached old baseline -> ${OLD_CACHE}"
+	BENCH_BIN="${OLD_BIN}"
+	bench_server old
+	grep '^old_' "${OUT_DIR}/results.tsv" >"${OLD_CACHE}" &&
+		echo "  cached old baseline -> ${OLD_CACHE}"
 fi
 BENCH_BIN="${NEW_BIN}"
 bench_server new

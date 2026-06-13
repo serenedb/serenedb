@@ -1,0 +1,86 @@
+control substitution on
+
+# Doc examples for the PostgreSQL section of the ATTACH AND DETACH page.
+# The `_pgscan` filename suffix tells tests/sqllogic/run.sh to bring up a real
+# postgres backend reachable at ${PGHOST}:${PGPORT}; the postgres_scanner path
+# is exercised through the pg-wire layer. Display SQL (DOCS_TEST_RAW, the `#|`
+# lines) uses the friendly alias `pg`; the runnable body uses the substituted
+# host/port/user and a per-run unique alias so concurrent runs don't collide.
+
+# DOCS_TEST: example_001
+
+statement ok
+DETACH IF EXISTS pg_${__DATABASE__};
+
+# DOCS_TEST_RAW
+#| ATTACH 'host=localhost port=5432 dbname=postgres user=postgres' AS pg (TYPE postgres);
+
+# DOCS_TEST_BODY
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__DATABASE__} (TYPE postgres);
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_shop;
+
+statement ok
+CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_shop.products (
+  id    INTEGER PRIMARY KEY,
+  name  TEXT,
+  price NUMERIC(10,2)
+);
+
+statement ok
+INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_shop.products VALUES
+  (1, 'widget', 9.99),
+  (2, 'gadget', 19.99),
+  (3, 'gizmo',  4.25);
+
+# DOCS_TEST_RAW
+#| SELECT id, name, price FROM pg.shop.products ORDER BY id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name, price FROM pg_${__DATABASE__}.${__DATABASE__}_shop.products ORDER BY id;
+----
+id	name	price
+1	widget	9.99
+2	gadget	19.99
+3	gizmo	4.25
+
+# DOCS_TEST: example_003
+
+statement ok
+DETACH IF EXISTS pg_readonly_${__DATABASE__};
+
+# DOCS_TEST_RAW
+#| ATTACH 'host=localhost port=5432 dbname=postgres user=postgres' AS pg (TYPE postgres, READ_ONLY);
+
+# DOCS_TEST_BODY
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_readonly_${__DATABASE__} (TYPE postgres, READ_ONLY);
+
+statement ok
+DETACH pg_readonly_${__DATABASE__};
+
+# DOCS_TEST: example_004
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_shop.products;
+
+statement ok
+DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_shop;
+
+# DOCS_TEST_RAW
+#| DETACH pg;
+
+# DOCS_TEST_BODY
+
+statement ok
+DETACH pg_${__DATABASE__};
+</content>
+</invoke>

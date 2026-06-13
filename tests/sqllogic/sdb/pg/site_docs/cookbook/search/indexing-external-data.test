@@ -1,48 +1,24 @@
 # DOCS_TEST: example_001
 
 statement ok
-CREATE TABLE logs_search AS SELECT * FROM (VALUES
-    (1, 1, 10, 100, 1, 2, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 'Intro to Search', 'search analytics body', 'search content', 'alien galaxy film', 'alpha', 'search', 'engineering', 'sci-fi', 'north', 'US', 'Berlin', 'widget', 'Alice', 'open', 'AAPL', 100, 10, 9.5e0, 4200, 120, 2024, 1000, 70000, 1, 500, 1, 42, DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-16 10:00:00', DATE '2025-01-15', DATE '2025-01-15', TIMESTAMP '2025-01-15 10:00:00', TIMESTAMP '2025-01-15 10:00:00', 1, 1, 1, 1, 10, 100e0, 5e-2, 1e-2, 'N', 'O', DATE '1998-09-01', DATE '1998-08-15', DATE '1998-09-05', 'DELIVER IN PERSON', 'AIR', 'first lineitem'),
-    (2, 2, 20, 200, 2, 3, 4, 2, 3, 4, 2, 2, 2, 2, 2, 2, 2, 'Scaling Analytics', 'another text body', 'analytics content', 'biggest blockbuster story', 'beta', 'analytics', 'product', 'drama', 'south', 'DE', 'Paris', 'gadget', 'Bob', 'closed', 'MSFT', 200, 20, 19.5e0, 5100, 95, 2025, 2500, 80000, 2, 700, 2, 84, DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-02 11:00:00', DATE '2025-03-01', DATE '2025-03-01', TIMESTAMP '2025-03-01 11:00:00', TIMESTAMP '2025-03-01 11:00:00', 2, 2, 2, 2, 20, 200e0, 1e-1, 2e-2, 'R', 'F', DATE '1998-09-02', DATE '1998-08-16', DATE '1998-09-06', 'TAKE BACK RETURN', 'MAIL', 'second lineitem')
-) AS t(id, i, j, k, x, y, z, a, b, c, article_id, comment_id, author_id, customer_id, order_id, product_id, employee_id, title, body, content, description, name, tag, category, genre, region, country, city, product, customer, status, symbol, amount, quantity, price, views, runtime, year, revenue, salary, grade, balance, count, value, published_at, created_at, updated_at, date, sale_date, ts, time, l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
+COPY (SELECT * FROM (VALUES
+    (1, TIMESTAMP '2025-01-01 10:00:00', 'ERROR', 'postgres', 'connection timeout to database'),
+    (2, TIMESTAMP '2025-01-01 11:00:00', 'INFO',  'api',      'startup complete'),
+    (3, TIMESTAMP '2025-01-01 12:00:00', 'ERROR', 'api',      'out of memory while indexing')
+) AS t(id, timestamp, level, service, message))
+TO '/tmp/${__DATABASE__}_ext_logs.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| CREATE TABLE logs AS
+#|     SELECT * FROM read_parquet('s3://my-bucket/logs/2025/*.parquet');
 
 # DOCS_TEST_BODY
 
-statement error
-CREATE TABLE logs (
-    id INTEGER,
-    timestamp TIMESTAMP,
-    level TEXT,
-    service TEXT,
-    message TEXT
-) USING EXTERNAL WITH (
-    PATH = 's3://my-bucket/logs/2025/*.parquet',
-    FORMAT = 'Parquet',
-    S3_ACCESS_KEY = 'your-access-key',
-    S3_SECRET_KEY = 'your-secret-key',
-    S3_REGION = 'us-east-1'
-);
-----
-db error: ERROR: syntax error at or near "USING"
+statement ok
+CREATE TABLE logs AS
+    SELECT * FROM read_parquet('/tmp/${__DATABASE__}_ext_logs.parquet');
 
 # DOCS_TEST: example_002
-
-# DOCS_TEST_BODY
-
-statement error
-CREATE TABLE articles (
-    id INTEGER,
-    title TEXT,
-    body TEXT,
-    category TEXT
-) USING EXTERNAL WITH (
-    PATH = '/data/articles.parquet',
-    FORMAT = 'Parquet'
-);
-----
-db error: ERROR: syntax error at or near "USING"
-
-# DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
@@ -54,74 +30,59 @@ CREATE TEXT SEARCH DICTIONARY english_dict (
     stemming = true,
     accent = false,
     frequency = true,
-    position = true
+    position = true,
+    offset = true
 );
 
-# DOCS_TEST: example_004
-
-statement ok
-DROP TABLE IF EXISTS logs;
-
-statement ok
-CREATE TABLE logs (id INTEGER, timestamp TIMESTAMP, level VARCHAR, service VARCHAR, message VARCHAR);
-
-statement ok
-INSERT INTO logs VALUES
-    (1, TIMESTAMP '2025-01-01 10:00:00', 'ERROR', 'postgres', 'connection timeout'),
-    (2, TIMESTAMP '2025-01-01 11:00:00', 'INFO', 'api', 'startup complete');
+# DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-statement error
-CREATE INDEX logs_search ON logs
-    USING inverted (id, timestamp, level, service, message english_dict);
-----
-db error: ERROR: Failed to create index: Column timestamp has unsupported kind TIMESTAMP and can not be indexed
-
+statement ok
+CREATE INDEX logs_idx ON logs
+    USING inverted (id, level, service, message english_dict);
 
 statement ok
-VACUUM (UPDATE_INDEXES) logs;
+VACUUM (REFRESH_TABLE) logs;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+-- Full-text search ranked by relevance
+SELECT id, level, message
+FROM logs_idx
+WHERE message @@ ts_phrase('connection timeout')
+ORDER BY BM25(logs_idx.tableoid) DESC, id;
+----
+id	level	message
+1	ERROR	connection timeout to database
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-query error
--- Full-text search
-SELECT id, timestamp, message
-FROM logs_search
-WHERE PHRASE(message, 'connection timeout')
-ORDER BY BM25() DESC
-LIMIT 20;
-----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
-
-
-query error
+query
 -- Combine search with exact filters
-SELECT id, timestamp, level, message
-FROM logs_search
-WHERE PHRASE(message, 'out of memory') AND level = 'ERROR'
-ORDER BY timestamp DESC;
-----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
-
-
-query error
--- Fuzzy matching for typo tolerance
-SELECT id, service, message
-FROM logs_search
-WHERE LEVENSHTEIN_MATCH(service, 'postgre', 1)
+SELECT id, level, message
+FROM logs_idx
+WHERE message @@ ts_phrase('out of memory') AND level @@ 'ERROR'
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name levenshtein_match does not exist!
-Did you mean "<slt:ignore>"?
+id	level	message
+3	ERROR	out of memory while indexing
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
-statement ok
-VACUUM (UPDATE_INDEXES) logs;
+query
+-- Typo-tolerant matching on a non-text column
+SELECT id, service, message
+FROM logs_idx
+WHERE service @@ ts_levenshtein('postgre', 1)
+ORDER BY id;
+----
+id	service	message
+1	postgres	connection timeout to database

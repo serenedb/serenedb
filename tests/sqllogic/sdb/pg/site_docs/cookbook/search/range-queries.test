@@ -35,83 +35,87 @@ CREATE TEXT SEARCH DICTIONARY basic_dict (
 );
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY exact_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = true,
-    frequency = true,
-    position = true
-);
-
-statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
 
 statement ok
-CREATE INDEX movies_exact_idx ON movies
-    USING inverted (id, title exact_dict, description exact_dict);
+VACUUM (REFRESH_TABLE) movies;
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_GT(genre, 'drama')
+WHERE genre @@ ts_gt('drama')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_gt does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+1	The Matrix	sci-fi
+2	The Matrix Reloaded	sci-fi
+3	The Matrix Revolutions	sci-fi
+5	Harry Potter and the Order of the Phoenix	fantasy
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_LTE(genre, 'comedy')
+WHERE genre @@ ts_le('comedy')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_lte does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+4	Jurassic Park	adventure
+6	Scary Movie	comedy
+10	The Grand Budapest Hotel	comedy
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_GTE(genre, 'comedy') AND TERM_LTE(genre, 'fantasy')
+WHERE genre @@ ts_ge('comedy') AND genre @@ ts_le('fantasy')
 ORDER BY genre, id;
 ----
-db error: ERROR: Scalar Function with name term_gte does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+6	Scary Movie	comedy
+10	The Grand Budapest Hotel	comedy
+9	Café Society	drama
+5	Harry Potter and the Order of the Phoenix	fantasy
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE NOT TERM_LTE(genre, 'drama')
+WHERE NOT (genre @@ ts_le('drama'))
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_lte does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+1	The Matrix	sci-fi
+2	The Matrix Reloaded	sci-fi
+3	The Matrix Revolutions	sci-fi
+5	Harry Potter and the Order of the Phoenix	fantasy
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_GTE(genre, 'sci-fi') AND PHRASE(description, 'galaxy')
+WHERE genre @@ ts_ge('sci-fi') AND description @@ ts_phrase('galaxy')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_gte does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi

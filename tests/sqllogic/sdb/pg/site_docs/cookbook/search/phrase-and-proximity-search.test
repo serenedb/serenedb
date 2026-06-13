@@ -35,128 +35,122 @@ CREATE TEXT SEARCH DICTIONARY basic_dict (
 );
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY exact_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = true,
-    frequency = true,
-    position = true
-);
-
-statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
 
 statement ok
-CREATE INDEX movies_exact_idx ON movies
-    USING inverted (id, title exact_dict, description exact_dict);
+VACUUM (REFRESH_TABLE) movies;
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title
 FROM movies_idx
-WHERE PHRASE(description, 'biggest blockbuster')
+WHERE description @@ ts_phrase('biggest blockbuster')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+4	Jurassic Park
+6	Scary Movie
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title
 FROM movies_idx
-WHERE PHRASE(description, 'the war against its controllers');
+WHERE description @@ ts_phrase('the war against its controllers');
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+1	The Matrix
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title
 FROM movies_idx
-WHERE PHRASE(description, 'alien') AND PHRASE(description, 'galaxy')
+WHERE description @@ ts_phrase('alien') AND description @@ ts_phrase('galaxy')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+7	Star Trek: The Motion Picture
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title
 FROM movies_idx
-WHERE PHRASE(description, 'computer hacker') OR PHRASE(description, 'serial killer')
+WHERE description @@ ts_phrase('computer hacker') OR description @@ ts_phrase('serial killer')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+1	The Matrix
+6	Scary Movie
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title
 FROM movies_idx
-WHERE PHRASE(title, 'the matrix') AND PHRASE(description, 'machine')
+WHERE title @@ ts_phrase('the matrix') AND description @@ ts_phrase('machine')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+2	The Matrix Reloaded
+3	The Matrix Revolutions
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_EQ(genre, 'sci-fi') AND PHRASE(description, 'galaxy')
+WHERE genre @@ 'sci-fi' AND description @@ ts_phrase('galaxy')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_eq does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT genre, COUNT(*) AS matches, AVG(runtime) AS avg_runtime
 FROM movies_idx
-WHERE PHRASE(description, 'film')
+WHERE description @@ ts_phrase('film')
 GROUP BY genre
-ORDER BY matches DESC;
+ORDER BY matches DESC, genre;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+genre	matches	avg_runtime
+drama	1	96
 
 # DOCS_TEST: example_008
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT genre,
        COUNT(*) AS count,
        MIN(year) AS earliest,
        MAX(year) AS latest
 FROM movies_idx
-WHERE PHRASE(description, 'biggest blockbuster')
-GROUP BY genre;
+WHERE description @@ ts_phrase('biggest blockbuster')
+GROUP BY genre
+ORDER BY genre;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+genre	count	earliest	latest
+adventure	1	1993	1993
+comedy	1	2000	2000
 
 # DOCS_TEST: example_009
 

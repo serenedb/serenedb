@@ -115,7 +115,7 @@ FROM meet_results
 WINDOW w AS (PARTITION BY event ORDER BY datetime)
 ORDER BY ALL
 ----
-db error: ERROR: syntax error at or near "\("
+db error: ERROR: syntax error at or near "("
 
 # DOCS_TEST: example_009
 

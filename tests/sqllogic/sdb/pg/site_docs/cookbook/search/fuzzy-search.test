@@ -14,7 +14,7 @@ CREATE TEXT SEARCH DICTIONARY fuzzy_dict (
 statement ok
 CREATE TABLE products (
     id INTEGER PRIMARY KEY,
-    name TEXT
+    name VARCHAR
 );
 
 statement ok
@@ -27,65 +27,77 @@ INSERT INTO products VALUES
     (4, 'dog'), (5, 'cats'), (6, 'act');
 
 statement ok
-VACUUM (UPDATE_INDEXES) products;
+VACUUM (REFRESH_TABLE) products;
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
-query error
+query
 -- Exact match only (distance 0)
 SELECT id, name FROM idx_products
-WHERE LEVENSHTEIN_MATCH(name, 'cat', 0)
+WHERE name @@ ts_levenshtein('cat', 0)
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name levenshtein_match does not exist!
-Did you mean "<slt:ignore>"?
+id	name
+1	cat
 
-
-query error
+query
 -- Distance 1: one edit away
 SELECT id, name FROM idx_products
-WHERE LEVENSHTEIN_MATCH(name, 'cat', 1)
+WHERE name @@ ts_levenshtein('cat', 1)
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name levenshtein_match does not exist!
-Did you mean "<slt:ignore>"?
+id	name
+1	cat
+2	bat
+3	car
+5	cats
+6	act
 
-
-query error
+query
 -- Distance 2: two edits away
 SELECT id, name FROM idx_products
-WHERE LEVENSHTEIN_MATCH(name, 'cat', 2)
+WHERE name @@ ts_levenshtein('cat', 2)
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name levenshtein_match does not exist!
-Did you mean "<slt:ignore>"?
+id	name
+1	cat
+2	bat
+3	car
+5	cats
+6	act
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-query error
+query
+-- Disable transpositions: 'act' no longer matches 'cat'
 SELECT id, name FROM idx_products
-WHERE LEVENSHTEIN_MATCH(name, 'cat', 1, false)
+WHERE name @@ ts_levenshtein('cat', 1, false)
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name levenshtein_match does not exist!
-Did you mean "<slt:ignore>"?
+id	name
+1	cat
+2	bat
+3	car
+5	cats
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-query error
+query
 -- Must start with 'ca', then fuzzy match the rest
 SELECT id, name FROM idx_products
-WHERE LEVENSHTEIN_MATCH(name, 't', 1, true, 64, 'ca')
+WHERE name @@ ts_levenshtein('t', 1, true, 'ca')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name levenshtein_match does not exist!
-Did you mean "<slt:ignore>"?
+id	name
+1	cat
+3	car
+5	cats
 
 # DOCS_TEST: example_005
 
@@ -103,7 +115,7 @@ CREATE TEXT SEARCH DICTIONARY bigram_dict (
 statement ok
 CREATE TABLE articles (
     id INTEGER PRIMARY KEY,
-    title TEXT
+    title VARCHAR
 );
 
 statement ok
@@ -116,60 +128,55 @@ INSERT INTO articles VALUES
     (4, 'held'), (5, 'hero');
 
 statement ok
-VACUUM (UPDATE_INDEXES) articles;
+VACUUM (REFRESH_TABLE) articles;
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
-query error
--- Default threshold (0.7) — strict matching
+query
+-- Default threshold — strict matching
 SELECT id, title FROM idx_articles_ngram
-WHERE NGRAM_MATCH(title, 'hello')
+WHERE title @@ ts_ngram('hello')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name ngram_match does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+1	hello
 
-
-query error
+query
 -- Lower threshold (0.3) — matches more loosely
 SELECT id, title FROM idx_articles_ngram
-WHERE NGRAM_MATCH(title, 'hello', 0.3)
+WHERE title @@ ts_ngram('hello', 0.3)
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name ngram_match does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+1	hello
+2	help
+4	held
 
-
-query error
+query
 -- Threshold 0.0 — matches anything with at least one shared n-gram
 SELECT id, title FROM idx_articles_ngram
-WHERE NGRAM_MATCH(title, 'hello', 0.0)
+WHERE title @@ ts_ngram('hello', 0.0)
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name ngram_match does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+1	hello
+2	help
+4	held
+5	hero
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
-query error
+query
 -- Fuzzy match + exact filter
 SELECT id, name FROM idx_products
-WHERE LEVENSHTEIN_MATCH(name, 'cat', 1) AND id < 4
+WHERE name @@ ts_levenshtein('cat', 1) AND id < 4
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name levenshtein_match does not exist!
-Did you mean "<slt:ignore>"?
-
-
-query error
--- Fuzzy match + phrase search
-SELECT id, title FROM idx_articles_ngram
-WHERE NGRAM_MATCH(title, 'hello', 0.3) AND PHRASE(title, 'world')
-ORDER BY id;
-----
-db error: ERROR: Scalar Function with name ngram_match does not exist!
-Did you mean "<slt:ignore>"?
+id	name
+1	cat
+2	bat
+3	car

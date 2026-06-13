@@ -35,109 +35,105 @@ CREATE TEXT SEARCH DICTIONARY basic_dict (
 );
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY exact_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = true,
-    frequency = true,
-    position = true
-);
-
-statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
 
 statement ok
-CREATE INDEX movies_exact_idx ON movies
-    USING inverted (id, title exact_dict, description exact_dict);
+VACUUM (REFRESH_TABLE) movies;
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_LIKE(genre, 'sci%')
+WHERE genre @@ ts_like('sci%')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_like does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+1	The Matrix	sci-fi
+2	The Matrix Reloaded	sci-fi
+3	The Matrix Revolutions	sci-fi
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_LIKE(genre, '%dy')
+WHERE genre @@ ts_like('%dy')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_like does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+6	Scary Movie	comedy
+10	The Grand Budapest Hotel	comedy
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_LIKE(genre, '%vent%')
+WHERE genre @@ ts_like('%vent%')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_like does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+4	Jurassic Park	adventure
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_LIKE(genre, 'co_edy')
+WHERE genre @@ ts_like('co_edy')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_like does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+6	Scary Movie	comedy
+10	The Grand Budapest Hotel	comedy
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title
 FROM movies_idx
-WHERE TERM_LIKE(description, 'h_____')
+WHERE description @@ ts_like('h_____')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_like does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+1	The Matrix
+9	Café Society
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title
 FROM movies_idx
-WHERE TERM_LIKE(description, 'block%')
+WHERE description @@ ts_like('block%')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_like does not exist!
-Did you mean "<slt:ignore>"?
+id	title
+4	Jurassic Park
+6	Scary Movie
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT id, title, genre
 FROM movies_idx
-WHERE TERM_LIKE(genre, 'sci%') AND PHRASE(description, 'alien')
+WHERE genre @@ ts_like('sci%') AND description @@ ts_phrase('alien')
 ORDER BY id;
 ----
-db error: ERROR: Scalar Function with name term_like does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre
+7	Star Trek: The Motion Picture	sci-fi

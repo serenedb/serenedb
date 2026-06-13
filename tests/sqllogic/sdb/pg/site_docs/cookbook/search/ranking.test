@@ -35,179 +35,161 @@ CREATE TEXT SEARCH DICTIONARY basic_dict (
 );
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY exact_dict (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'none',
-    stemming = false,
-    accent = true,
-    frequency = true,
-    position = true
-);
-
-statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
 
 statement ok
-CREATE INDEX movies_exact_idx ON movies
-    USING inverted (id, title exact_dict, description exact_dict);
+VACUUM (REFRESH_TABLE) movies;
 
 # DOCS_TEST_BODY
 
-query error
-SELECT id, title, BM25() AS relevance
+query
+SELECT id, title, BM25(movies_idx.tableoid) AS relevance
 FROM movies_idx
-WHERE PHRASE(description, 'alien')
-ORDER BY BM25() DESC;
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title	relevance
+7	Star Trek: The Motion Picture	3.2757118
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
-query error
-SELECT id, title, BM25(1.2, 0.75) AS relevance
+query
+SELECT id, title, BM25(movies_idx.tableoid, 1.2, 0.75) AS relevance
 FROM movies_idx
-WHERE PHRASE(description, 'galaxy')
-ORDER BY BM25(1.2, 0.75) DESC;
+WHERE description @@ ts_phrase('galaxy')
+ORDER BY relevance DESC, id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title	relevance
+7	Star Trek: The Motion Picture	2.4358742
+8	Alien	2.4358742
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-query error
-SELECT id, title, BM25(0.5, 0) AS relevance
+query
+SELECT id, title, BM25(movies_idx.tableoid, 0.5, 0) AS relevance
 FROM movies_idx
-WHERE PHRASE(description, 'alien')
-ORDER BY BM25(0.5, 0) DESC;
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title	relevance
+7	Star Trek: The Motion Picture	1.9924302
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-query error
-SELECT id, title, BM25(2.0, 0.75) AS relevance
+query
+SELECT id, title, BM25(movies_idx.tableoid, 2.0, 0.75) AS relevance
 FROM movies_idx
-WHERE PHRASE(description, 'film')
-ORDER BY BM25(2.0, 0.75) DESC;
+WHERE description @@ ts_phrase('film')
+ORDER BY relevance DESC, id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title	relevance
+9	Café Society	3.8228743
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-query error
--- BM15: ignore document length differences
-SELECT id, title, BM25(1.2, 0) AS relevance
+query
+-- BM15: no length normalization (b = 0)
+SELECT id, title, BM25(movies_idx.tableoid, 1.2, 0) AS relevance
 FROM movies_idx
-WHERE PHRASE(description, 'alien')
-ORDER BY BM25(1.2, 0) DESC;
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
-
-
-query error
--- BM11: strongly favor shorter documents
-SELECT id, title, BM25(1.2, 1) AS relevance
-FROM movies_idx
-WHERE PHRASE(description, 'alien')
-ORDER BY BM25(1.2, 1) DESC;
-----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title	relevance
+7	Star Trek: The Motion Picture	1.9924302
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
-query error
-SELECT id, title, genre, BM25() AS relevance
+query
+SELECT id, title, genre, BM25(movies_idx.tableoid) AS relevance
 FROM movies_idx
-WHERE PHRASE(description, 'film') AND TERM_EQ(genre, 'drama')
-ORDER BY BM25() DESC;
+WHERE description @@ ts_phrase('film') AND genre @@ 'drama'
+ORDER BY relevance DESC, id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title	genre	relevance
+9	Café Society	drama	3.2757118
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
-query error
-SELECT genre, COUNT(*) AS matches, AVG(BM25()) AS avg_relevance
-FROM movies_idx
-WHERE PHRASE(description, 'biggest blockbuster')
+query
+SELECT genre, COUNT(*) AS matches, ROUND(AVG(relevance)::NUMERIC, 3) AS avg_relevance
+FROM (
+    SELECT genre, BM25(movies_idx.tableoid) AS relevance
+    FROM movies_idx
+    WHERE description @@ ts_phrase('biggest blockbuster')
+) ranked
 GROUP BY genre
-ORDER BY avg_relevance DESC;
+ORDER BY avg_relevance DESC, genre;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+genre	matches	avg_relevance
+adventure	1	4.872
+comedy	1	4.872
 
 # DOCS_TEST: example_008
 
 # DOCS_TEST_BODY
 
-query error
-SELECT id, title, BM25() AS relevance
+query
+SELECT id, title, BM25(movies_idx.tableoid) AS relevance
 FROM movies_idx
-WHERE PHRASE(description, 'alien')
-ORDER BY BM25() DESC, id
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id
 LIMIT 10 OFFSET 0;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title	relevance
+7	Star Trek: The Motion Picture	3.2757118
 
 # DOCS_TEST: example_009
 
 # DOCS_TEST_BODY
 
-query error
-SELECT id, title, TFIDF() AS relevance
+query
+SELECT id, title, TFIDF(movies_idx.tableoid) AS relevance
 FROM movies_idx
-WHERE PHRASE(description, 'alien')
-ORDER BY TFIDF() DESC;
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title	relevance
+7	Star Trek: The Motion Picture	1.8718022
 
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY
 
-query error
-SELECT id, title, TFIDF(true) AS relevance
+query
+SELECT id, title, TFIDF(movies_idx.tableoid, true) AS relevance
 FROM movies_idx
-WHERE PHRASE(description, 'alien')
-ORDER BY TFIDF(true) DESC;
+WHERE description @@ ts_phrase('alien')
+ORDER BY relevance DESC, id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title	relevance
+7	Star Trek: The Motion Picture	1.8718022
 
 # DOCS_TEST: example_011
 
 # DOCS_TEST_BODY
 
-query error
-SELECT id, title, BM25() AS relevance, runtime,
-       BM25() * LOG(runtime + 1) AS custom_score
+query
+SELECT id, title, BM25(movies_idx.tableoid) AS relevance, runtime,
+       BM25(movies_idx.tableoid) * LOG(runtime + 1) AS custom_score
 FROM movies_idx
-WHERE PHRASE(description, 'alien')
-ORDER BY custom_score DESC;
+WHERE description @@ ts_phrase('alien')
+ORDER BY custom_score DESC, id;
 ----
-db error: ERROR: Scalar Function with name phrase does not exist!
-Did you mean "<slt:ignore>"?
+id	title	relevance	runtime	custom_score
+7	Star Trek: The Motion Picture	3.2757118	132	6.957125828299511
 
 # DOCS_TEST: example_012
 

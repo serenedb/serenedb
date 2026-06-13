@@ -99,14 +99,14 @@ QUERY PLAN
 └───────────────────────────┘
 
 
-query I
+query
 SELECT SUM(small) FROM vedernikoff_idx;
 ----
 sum
 3
 
 
-query I
+query
 SELECT SUM(big) FROM vedernikoff_idx;
 ----
 sum
@@ -114,7 +114,7 @@ sum
 
 
 # NULL flags from the validity side: IS NULL must not be folded away.
-query III
+query
 SELECT MIN(small), MAX(small), COUNT(*) FILTER (WHERE small IS NULL)
 FROM vedernikoff_idx;
 ----
@@ -122,7 +122,7 @@ min	max	count
 -7	10	1
 
 
-query TTI
+query
 SELECT MIN(s), MAX(s), COUNT(*) FILTER (WHERE s IS NULL)
 FROM vedernikoff_idx;
 ----
@@ -132,7 +132,7 @@ aa	zz	1
 
 # The exact statistics the scan serves to the optimizer, asserted
 # directly: min/max from the rowgroup stats, has_null from validity.
-query T
+query
 SELECT stats(small)::VARCHAR AS small_stats FROM vedernikoff_idx LIMIT 1;
 ----
 small_stats
@@ -140,14 +140,14 @@ small_stats
 
 
 # A column without NULLs must not over-claim has_null.
-query T
+query
 SELECT stats(big)::VARCHAR AS big_stats FROM vedernikoff_idx LIMIT 1;
 ----
 big_stats
 {'has_no_null': true, 'has_null': false, 'max': 4611686018427387904, 'min': 4611686018427387904}
 
 
-query T
+query
 SELECT stats(s)::VARCHAR AS s_stats FROM vedernikoff_idx LIMIT 1;
 ----
 s_stats
@@ -162,14 +162,14 @@ statement ok
 VACUUM (REFRESH_TABLE) vedernikoff
 
 
-query T
+query
 SELECT stats(small)::VARCHAR AS small_stats FROM vedernikoff_idx LIMIT 1;
 ----
 small_stats
 {'has_no_null': true, 'has_null': true, 'max': 100, 'min': -7}
 
 
-query T
+query
 SELECT stats(big)::VARCHAR AS big_stats FROM vedernikoff_idx LIMIT 1;
 ----
 big_stats

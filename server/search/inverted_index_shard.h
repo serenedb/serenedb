@@ -108,6 +108,24 @@ class Snapshot {
   InvertedIndexSnapshotPtr _snapshot;
 };
 
+// Durable WAL cursor packing: store-WAL generation (checkpoint iteration) in
+// the high bits, byte offset within that generation in the low bits, so a
+// single uint64 orders correctly across generations and within one. The 40-bit
+// offset field bounds a generation to 1 TiB of WAL -- far above any checkpoint
+// threshold. Used to bound recovery replay to the index's un-durable tail.
+inline constexpr int kWalCursorOffsetBits = 40;
+inline constexpr uint64_t kWalCursorOffsetMask =
+  (uint64_t{1} << kWalCursorOffsetBits) - 1;
+inline uint64_t PackWalCursor(uint64_t generation, uint64_t offset) noexcept {
+  return (generation << kWalCursorOffsetBits) | (offset & kWalCursorOffsetMask);
+}
+inline uint64_t WalCursorGeneration(uint64_t packed) noexcept {
+  return packed >> kWalCursorOffsetBits;
+}
+inline uint64_t WalCursorOffset(uint64_t packed) noexcept {
+  return packed & kWalCursorOffsetMask;
+}
+
 // Physical representation of a search index(catalog::Index)
 // Used for creating writers/readers and managing index lifecycle
 class InvertedIndexShard final
@@ -218,6 +236,26 @@ class InvertedIndexShard final
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 
+  // Durable WAL cursor (store-table WAL generation + byte offset, packed) read
+  // back from the segment meta at open. Recovery replays only operations PAST
+  // it (operations at/below are already durable in the segments). The refresh
+  // stamps it conservatively (see CommitUnsafeImpl); the boundary overlap is
+  // absorbed idempotently by FinishReplay's delete-then-insert.
+  uint64_t GetRecoveryWalCursor() const noexcept {
+    return _recovery_wal_cursor;
+  }
+
+  // The index lost a committed transaction's rows (an iresearch tick commit
+  // failed after the store transaction was already durable). The shard keeps
+  // serving, but the clean-shutdown checkpoint is suppressed so the next
+  // boot rebuilds it from the store table.
+  void MarkOutOfSync() noexcept {
+    _out_of_sync.store(true, std::memory_order_relaxed);
+  }
+  bool IsOutOfSync() const noexcept {
+    return _out_of_sync.load(std::memory_order_relaxed);
+  }
+
   enum class Phase : uint8_t {
     Creating,
     Recovering,
@@ -257,6 +295,13 @@ class InvertedIndexShard final
 
   Tick _recovery_tick{0};
   Tick _last_committed_tick{0};
+  // Durable store-WAL cursor (packed gen<<40|offset). Captured from the store
+  // WAL at refresh -> _pending_wal_cursor -> stamped into the segment meta.
+  // _recovery_wal_cursor is read back from the meta at open (the recovery skip
+  // bound).
+  uint64_t _pending_wal_cursor{0};
+  uint64_t _recovery_wal_cursor{0};
+  std::atomic<bool> _out_of_sync{false};
   int64_t _iceberg_snapshot_id{0};
   Phase _phase{Phase::Creating};
 

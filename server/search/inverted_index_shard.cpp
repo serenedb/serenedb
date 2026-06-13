@@ -26,6 +26,10 @@
 #include <absl/time/time.h>
 
 #include <chrono>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/storage/block_manager.hpp>
+#include <duckdb/storage/storage_manager.hpp>
 #include <filesystem>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -48,6 +52,7 @@
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/scorer_options.h"
+#include "catalog/store/store.h"
 #include "query/transaction.h"
 #include "search/task.h"
 #include "search/tick_domain.h"
@@ -58,15 +63,22 @@ namespace sdb::search {
 namespace {
 
 bool ReadCommitMeta(irs::bytes_view payload, Tick& tick,
-                    int64_t& iceberg_snapshot_id) noexcept {
-  // [tick:8][iceberg_snapshot_id:8]; 0 = not pinned.
-  constexpr size_t kExpectedSize = 2 * sizeof(uint64_t);
-  if (payload.size() != kExpectedSize) {
+                    int64_t& iceberg_snapshot_id,
+                    uint64_t& wal_cursor) noexcept {
+  // [tick:8][iceberg_snapshot_id:8] optionally followed by [wal_cursor:8].
+  // Older segments lack the wal_cursor (0 = no durable bound => replay all).
+  constexpr size_t kBaseSize = 2 * sizeof(uint64_t);
+  constexpr size_t kWithCursorSize = 3 * sizeof(uint64_t);
+  if (payload.size() != kBaseSize && payload.size() != kWithCursorSize) {
     return false;
   }
   tick = absl::big_endian::Load64(payload.data());
   iceberg_snapshot_id = static_cast<int64_t>(
     absl::big_endian::Load64(payload.data() + sizeof(uint64_t)));
+  wal_cursor =
+    payload.size() == kWithCursorSize
+      ? absl::big_endian::Load64(payload.data() + 2 * sizeof(uint64_t))
+      : 0;
   return true;
 }
 
@@ -217,6 +229,12 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
       absl::big_endian::FromHost(static_cast<uint64_t>(_iceberg_snapshot_id));
     out.append(reinterpret_cast<const irs::byte_type*>(&iceberg_be),
                sizeof(iceberg_be));
+    // Durable WAL cursor: the max committed store-WAL position captured before
+    // this refresh's flush watermark (see CommitUnsafeImpl). Recovery replays
+    // only operations past it.
+    uint64_t cursor_be = absl::big_endian::FromHost(_pending_wal_cursor);
+    out.append(reinterpret_cast<const irs::byte_type*>(&cursor_be),
+               sizeof(cursor_be));
     return true;
   };
 
@@ -237,7 +255,8 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   if (path_exists) {
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (!payload.empty()) {
-      if (!ReadCommitMeta(payload, _recovery_tick, _iceberg_snapshot_id)) {
+      if (!ReadCommitMeta(payload, _recovery_tick, _iceberg_snapshot_id,
+                          _recovery_wal_cursor)) {
         SDB_WARN(SEARCH, "Failed to read commit meta from inverted index '",
                  GetId().id(), "'");
       }
@@ -448,6 +467,21 @@ Result InvertedIndexShard::CommitUnsafeImpl(
       commit_lock.lock();
     }
 
+    // Capture the durable WAL cursor BEFORE the flush watermark. Read the store
+    // WAL position (generation + byte offset) directly: RegisterSearchFlush (at
+    // feed time) guarantees this refresh waits for every transaction whose WAL
+    // bytes are already written, so everything at/below this offset is flushed
+    // here -> a safe durable cursor. Conservative: registered transactions with
+    // a higher offset get flushed too but aren't claimed, and the recovery
+    // boundary overlap is absorbed idempotently by FinishReplay's
+    // delete-then-insert.
+    if (auto store =
+          duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
+            .GetDatabase(std::string{catalog::kStoreDatabaseName})) {
+      auto& sm = store->GetStorageManager();
+      _pending_wal_cursor = PackWalCursor(
+        sm.GetBlockManager().GetCheckpointIteration(), sm.GetWALSize());
+    }
     const auto before_commit = TickDomain::Instance().Current();
     SDB_ASSERT(_last_committed_tick <= before_commit);
     absl::Cleanup commit_guard = [&, last = _last_committed_tick]() noexcept {

@@ -26,6 +26,7 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 
 #include "basics/assert.h"
+#include "basics/log.h"
 #include "catalog/catalog.h"
 #include "search/tick_domain.h"
 #include "storage_engine/table_shard.h"
@@ -92,8 +93,23 @@ Result Transaction::Commit() {
 
     std::move(rollback).Cancel();
 
-    for (auto& search_transaction : _search_transactions) {
-      search_transaction.second->Commit(last_tick);
+    for (auto& [shard_id, search_transaction] : _search_transactions) {
+      auto shard_it = _search_shards.find(shard_id);
+      auto* inverted =
+        shard_it != _search_shards.end() ? shard_it->second.get() : nullptr;
+      if (search_transaction->Commit(last_tick)) {
+        continue;
+      }
+      // The store transaction is already durable; losing the index leg
+      // silently would diverge the index forever. Mark the shard so the
+      // clean-shutdown checkpoint is suppressed and the next boot rebuilds
+      // it from the store table.
+      SDB_ERROR(SEARCH, "search index commit failed for shard '", shard_id.id(),
+                "' at tick ", last_tick,
+                "; the index will be rebuilt from the store on next boot");
+      if (inverted) {
+        inverted->MarkOutOfSync();
+      }
     }
   }
   ApplyTableStatsDiffs();
@@ -131,6 +147,7 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
 void Transaction::Destroy() noexcept {
   DropCatalogSnapshot();
   _search_transactions.clear();
+  _search_shards.clear();
   _table_rows_deltas.clear();
   _search_snapshots.clear();
   _had_query_in_transaction = false;

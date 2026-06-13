@@ -188,7 +188,8 @@ stop_serened() {
 mkdir -p "${OUT_DIR}/wl"
 cat >"${OUT_DIR}/wl/insert.sql" <<'EOF'
 \set id random(1, 999999999999)
-INSERT INTO bench_ins (id, v, pad) VALUES (:id, :id % 1000, 'padpadpadpadpad');
+\set v random(0, 999)
+INSERT INTO bench_ins (id, v, pad) VALUES ((:id)::BIGINT, (:v)::BIGINT, 'padpadpadpadpad');
 EOF
 cat >"${OUT_DIR}/wl/update.sql" <<'EOF'
 \set id random(1, 100000)
@@ -351,13 +352,14 @@ bench_server() {
 
 	# 10. inverted index: build over 200k texts (wall) + scored fetch.
 	"${PSQL[@]}" \
+		-c "CREATE TEXT SEARCH DICTIONARY bench_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);" \
 		-c "CREATE TABLE bench_txt (id INTEGER PRIMARY KEY, body TEXT);" \
 		-c "INSERT INTO bench_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50) FROM generate_series(1, 200000) t(x);" \
 		>/dev/null
 	run_wall "${srv}_inverted_build" "${REPS}" "" \
-		"CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body);" \
+		"CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body bench_dict);" \
 		"DROP INDEX bench_txt_idx;"
-	"${PSQL[@]}" -c "CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body);" >/dev/null
+	"${PSQL[@]}" -c "CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body bench_dict);" >/dev/null
 	"${PSQL[@]}" -c "VACUUM (REFRESH_TABLE) bench_txt;" >/dev/null
 	run_pgb "${srv}_search_fetch" "${OUT_DIR}/wl/search.sql" prepared "${CLIENTS}"
 

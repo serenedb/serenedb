@@ -1,0 +1,141 @@
+# Constraints, generated columns, and ON CONFLICT on a table that ALSO carries
+# an inverted index, so every write drives the commit-time search-index sink.
+# NOT NULL / CHECK error texts embed the (per-test random) database name, so
+# those use a bare `statement error`.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cwi_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+
+# --- NOT NULL + CHECK with an inverted index present ---
+
+statement ok
+CREATE TABLE cwi_con(a INTEGER PRIMARY KEY, body TEXT NOT NULL, n INTEGER CHECK (n > 0));
+
+statement ok
+CREATE INDEX cwi_con_inv ON cwi_con USING inverted(body cwi_dict);
+
+statement count 1
+INSERT INTO cwi_con VALUES (1, 'valid row', 5);
+
+statement error
+INSERT INTO cwi_con VALUES (2, NULL, 5);
+
+statement error
+INSERT INTO cwi_con VALUES (3, 'bad check', -1);
+
+statement ok
+VACUUM (REFRESH_TABLE) cwi_con;
+
+# Only the valid row is indexed; the two rejected rows never reached it.
+query
+SELECT a FROM cwi_con_inv WHERE body @@ ts_phrase('valid row');
+----
+a
+1
+
+query
+SELECT count(*) FROM cwi_con;
+----
+count
+1
+
+statement ok
+DROP TABLE cwi_con;
+
+
+# --- UNIQUE secondary index alongside the inverted index ---
+
+statement ok
+CREATE TABLE cwi_uniq(a INTEGER PRIMARY KEY, code TEXT, body TEXT);
+
+statement ok
+CREATE UNIQUE INDEX cwi_uniq_code ON cwi_uniq(code);
+
+statement ok
+CREATE INDEX cwi_uniq_inv ON cwi_uniq USING inverted(body cwi_dict);
+
+statement count 1
+INSERT INTO cwi_uniq VALUES (1, 'A', 'first body');
+
+statement error
+INSERT INTO cwi_uniq VALUES (2, 'A', 'dup body');
+
+statement ok
+DROP TABLE cwi_uniq;
+
+
+# --- STORED generated column, itself indexed ---
+
+statement ok
+CREATE TABLE cwi_gen(a INTEGER PRIMARY KEY, b TEXT, up TEXT GENERATED ALWAYS AS (upper(b)) STORED);
+
+statement ok
+CREATE INDEX cwi_gen_inv ON cwi_gen USING inverted(up cwi_dict);
+
+statement count 1
+INSERT INTO cwi_gen(a, b) VALUES (1, 'hello world');
+
+statement count 1
+UPDATE cwi_gen SET b = 'goodbye world' WHERE a = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) cwi_gen;
+
+# The generated column recomputed on UPDATE and the index followed: the new
+# upper-cased value matches, the old one does not.
+query
+SELECT a FROM cwi_gen_inv WHERE up @@ ts_phrase('GOODBYE');
+----
+a
+1
+
+query
+SELECT a FROM cwi_gen_inv WHERE up @@ ts_phrase('HELLO');
+----
+a
+
+statement ok
+DROP TABLE cwi_gen;
+
+
+# --- ON CONFLICT DO UPDATE / DO NOTHING with an inverted index ---
+
+statement ok
+CREATE TABLE cwi_oc(a INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX cwi_oc_inv ON cwi_oc USING inverted(body cwi_dict);
+
+statement count 1
+INSERT INTO cwi_oc VALUES (1, 'original text');
+
+statement count 1
+INSERT INTO cwi_oc VALUES (1, 'replaced text') ON CONFLICT (a) DO UPDATE SET body = 'replaced text';
+
+statement count 0
+INSERT INTO cwi_oc VALUES (1, 'ignored text') ON CONFLICT DO NOTHING;
+
+statement ok
+VACUUM (REFRESH_TABLE) cwi_oc;
+
+query
+SELECT a FROM cwi_oc_inv WHERE body @@ ts_phrase('replaced text');
+----
+a
+1
+
+query
+SELECT a FROM cwi_oc_inv WHERE body @@ ts_phrase('original');
+----
+a
+
+query
+SELECT a FROM cwi_oc_inv WHERE body @@ ts_phrase('ignored');
+----
+a
+
+statement ok
+DROP TABLE cwi_oc;

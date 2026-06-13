@@ -303,9 +303,6 @@ statement ok
 VACUUM (REFRESH_TABLE) table_numeric_idx;
 
 statement ok
-SET sdb_read_your_own_writes = 1;
-
-statement ok
 BEGIN;
 
 # In-transaction search is allowed: postings hold committed rows only, so the
@@ -330,9 +327,6 @@ statement ok
 VACUUM (REFRESH_TABLE) table_numeric_idx;
 
 statement ok
-SET sdb_read_your_own_writes = 0;
-
-statement ok
 BEGIN;
 
 statement count 3
@@ -351,9 +345,6 @@ statement ok
 COMMIT;
 
 # restore default
-statement ok
-SET sdb_read_your_own_writes = 1;
-
 statement ok
 DROP TABLE table_numeric_idx;
 

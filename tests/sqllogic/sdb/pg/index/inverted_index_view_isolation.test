@@ -28,9 +28,6 @@ statement ok
 CREATE INDEX pq_idx ON pq_v USING inverted(id, body view_iso_en);
 
 connection reader
-statement ok
-SET sdb_read_your_own_writes = 0;
-
 
 connection reader
 statement ok

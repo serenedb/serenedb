@@ -144,13 +144,14 @@ void WriteRowDescription(message::Buffer& out,
                          std::span<const std::string> names,
                          std::span<const sdb::pg::VarFormat> formats) {
   const auto num_fields = static_cast<uint16_t>(types.size());
-  const auto aliases = query::ToAliases(names);
   const auto start = out.GetUncommittedSize();
   auto* prefix = out.GetContiguousData(7);
   const auto default_format =
     formats.empty() ? sdb::pg::VarFormat::Text : formats[0];
   for (uint16_t i = 0; i < num_fields; ++i) {
-    out.WriteUncommitted({aliases[i].data(), aliases[i].size()});
+    // ToAlias is a pure view (substr of the name); write it straight out,
+    // no per-query vector<string> of owned copies.
+    out.WriteUncommitted(query::ToAlias(names[i]));
     out.WriteUncommitted(kNul);
     absl::big_endian::Store32(out.GetContiguousData(4), 0);
     absl::big_endian::Store16(out.GetContiguousData(2), 0);

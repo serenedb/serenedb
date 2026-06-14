@@ -172,11 +172,18 @@ void Sink(duckdb::ExecutionContext&, duckdb::FunctionData&,
   // Each row is int16 field-count followed by the per-field
   // int32-length-prefixed binary values the serializers emit (the same encoding
   // as a binary DataRow). The bytes go to the handle as the raw, unframed
-  // PGCOPY stream.
+  // PGCOPY stream. Drain at a fixed block so peak staging memory stays bounded
+  // to ~one block regardless of chunk/value size, rather than holding the whole
+  // chunk (the sync-sink equivalent of the wire send buffer's flush threshold).
+  constexpr size_t kFileBlock = 256u * 1024;
   for (duckdb::idx_t row = 0; row < rows; ++row) {
     absl::big_endian::Store16(g.file_buffer->GetContiguousData(2), columns);
     for (uint16_t column = 0; column < columns; ++column) {
       g.serializers[column](g.ctx, decoded[column], row);
+    }
+    if (g.file_buffer->GetUncommittedSize() >= kFileBlock) {
+      g.file_buffer->Commit(false);
+      DrainToHandle(*g.file_buffer, *g.handle);
     }
   }
   g.file_buffer->Commit(false);

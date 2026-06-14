@@ -49,6 +49,29 @@ void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
                     std::span<const sdb::pg::SerializationFunction> serializers,
                     sdb::pg::SerializationContext& context);
 
+// COPY ... TO STDOUT (FORMAT binary): encode the whole chunk as PGCOPY rows
+// (int16 field-count + per-field int32-len/-1 + binary bytes -- the binary
+// serializers, same as binary DataRow but without the 'D'/length header)
+// wrapped in a single CopyData ('d') frame. One frame per chunk wraps a whole
+// number of rows, so a chain of these frames is always a valid PGCOPY row run.
+void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
+                    std::span<const sdb::pg::SerializationFunction> serializers,
+                    sdb::pg::SerializationContext& context);
+
+// CopyOutResponse for a COPY TO STDOUT: overall format 0 (text) or 1 (binary),
+// with 0 per-column formats. Sent by the session before the first CopyData.
+void WriteCopyOutResponse(message::Buffer& out, bool binary);
+
+// The 19-byte PGCOPY header as its own CopyData frame (start of a binary COPY
+// TO STDOUT stream).
+void WriteCopyBinaryHeader(message::Buffer& out);
+
+// The int16 -1 PGCOPY trailer as its own CopyData frame (end of the rows).
+void WriteCopyBinaryTrailer(message::Buffer& out);
+
+// CopyDone ('c'): ends the CopyData stream after the trailer.
+void WriteCopyDone(message::Buffer& out);
+
 // Like WriteDataChunk but serializes only rows [begin, end) of the chunk, used
 // by Execute max_rows paging when a fetched chunk holds more rows than the
 // client's limit. Fetch() returns flat chunks, so an arbitrary row sub-range

@@ -44,7 +44,6 @@
 #include "pg/copy_in_bridge.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
-#include "pg/protocol.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 
@@ -56,16 +55,6 @@ namespace {
 constexpr std::array<uint8_t, 19> kPgCopyHeader{
   'P',  'G', 'C', 'O', 'P', 'Y', '\n', 0xFF, '\r', '\n',
   0x00, 0,   0,   0,   0,   0,   0,    0,    0};
-
-// Frame `payload_size` bytes already appended after a 5-byte prefix as a
-// CopyData ('d') message: backpatch type + length (length excludes the type
-// byte, includes the 4 length bytes -- matches CopyOutFileHandle::DoWrite).
-void FinishCopyData(message::Buffer& send, uint8_t* prefix, size_t before) {
-  prefix[0] = PQ_MSG_COPY_DATA;
-  absl::big_endian::Store32(
-    prefix + 1, static_cast<int32_t>(send.GetUncommittedSize() - before - 1));
-  send.Commit(false);
-}
 
 struct PgBinaryCopyBindData final : public duckdb::FunctionData {
   explicit PgBinaryCopyBindData(duckdb::vector<duckdb::LogicalType> types)
@@ -81,13 +70,12 @@ struct PgBinaryCopyBindData final : public duckdb::FunctionData {
   duckdb::vector<duckdb::LogicalType> sql_types;
 };
 
-// TO target is exactly one of two transports. Wire: `send` points at the
-// connection send buffer, framing each PGCOPY chunk as a CopyData message.
-// File: `handle` is a plain DuckDB FileHandle and `file_buffer` is a private
-// staging buffer the serializers write into; after each chunk its committed
-// bytes are drained to the handle as the raw, unframed PGCOPY stream.
+// TO target is a file (or real stdout): `handle` is a plain DuckDB FileHandle
+// and `file_buffer` is a private staging buffer the serializers write into;
+// after each chunk its committed bytes are drained to the handle as the raw,
+// unframed PGCOPY stream. (pg-wire STDOUT no longer routes through this
+// CopyFunction -- the session runs it through the wire collector.)
 struct PgBinaryCopyGlobalState final : public duckdb::GlobalFunctionData {
-  message::Buffer* send = nullptr;
   duckdb::unique_ptr<duckdb::FileHandle> handle;
   duckdb::unique_ptr<message::Buffer> file_buffer;
   sdb::pg::SerializationContext ctx;
@@ -125,50 +113,15 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   auto& bdata = bind_data.Cast<PgBinaryCopyBindData>();
   auto result = duckdb::make_uniq<PgBinaryCopyGlobalState>();
 
-  // pg-wire STDOUT: frame the PGCOPY stream as CopyData and write straight to
-  // the connection send buffer. Requires a server-side wire connection.
+  // pg-wire STDOUT is owned by the session's wire collector (parallel + PGCOPY
+  // CopyData framing), so it never reaches this CopyFunction. If it somehow
+  // does, the session failed to route it -- fail clearly rather than emit an
+  // unframed PGCOPY stream into a send buffer that expects CopyData.
   if (file_path == "/dev/stdout") {
-    auto* state = context.registered_state
-                    ->Get<SereneDBClientState>(kSereneDBClientStateKey)
-                    .get();
-    if (!state) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("COPY ... TO STDOUT (FORMAT binary) is only valid "
-                "on a server-side PostgreSQL wire connection"));
-    }
-    auto& conn = state->GetConnectionContext();
-    auto* send = conn.GetSendBuffer();
-    if (!send) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("COPY ... TO STDOUT (FORMAT binary) requires a PG "
-                "wire connection (transport not attached)"));
-    }
-    result->send = send;
-    result->ctx.buffer = send;
-    sdb::pg::FillContext(conn, result->ctx);
-    result->serializers.reserve(bdata.sql_types.size());
-    for (const auto& type : bdata.sql_types) {
-      result->serializers.push_back(sdb::pg::GetSerialization(
-        type, sdb::pg::VarFormat::Binary, result->ctx));
-    }
-
-    // CopyOutResponse, overall format = binary (1), 0 columns.
-    auto* response = send->GetContiguousData(8);
-    response[0] = PQ_MSG_COPY_OUT_RESPONSE;
-    absl::big_endian::Store32(response + 1, 7);
-    response[5] = 1;
-    absl::big_endian::Store16(response + 6, 0);
-    send->Commit(false);
-
-    // The PGCOPY header as its own CopyData frame.
-    const auto before = send->GetUncommittedSize();
-    auto* prefix = send->GetContiguousData(5);
-    send->WriteUncommitted({reinterpret_cast<const char*>(kPgCopyHeader.data()),
-                            kPgCopyHeader.size()});
-    FinishCopyData(*send, prefix, before);
-    return result;
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("COPY ... TO STDOUT (FORMAT binary) must be routed through the "
+              "pg-wire collector, not the binary CopyFunction"));
   }
 
   // File (or real stdout): write the raw PGCOPY stream through a plain DuckDB
@@ -218,21 +171,8 @@ void Sink(duckdb::ExecutionContext&, duckdb::FunctionData&,
 
   // Each row is int16 field-count followed by the per-field
   // int32-length-prefixed binary values the serializers emit (the same encoding
-  // as a binary DataRow). On the wire path this is wrapped in one CopyData
-  // frame per chunk; on the file path the same bytes go to the handle unframed.
-  if (g.send) {
-    const auto before = g.send->GetUncommittedSize();
-    auto* prefix = g.send->GetContiguousData(5);
-    for (duckdb::idx_t row = 0; row < rows; ++row) {
-      absl::big_endian::Store16(g.send->GetContiguousData(2), columns);
-      for (uint16_t column = 0; column < columns; ++column) {
-        g.serializers[column](g.ctx, decoded[column], row);
-      }
-    }
-    FinishCopyData(*g.send, prefix, before);
-    return;
-  }
-
+  // as a binary DataRow). The bytes go to the handle as the raw, unframed
+  // PGCOPY stream.
   for (duckdb::idx_t row = 0; row < rows; ++row) {
     absl::big_endian::Store16(g.file_buffer->GetContiguousData(2), columns);
     for (uint16_t column = 0; column < columns; ++column) {
@@ -249,18 +189,6 @@ void Combine(duckdb::ExecutionContext&, duckdb::FunctionData&,
 void Finalize(duckdb::ClientContext&, duckdb::FunctionData&,
               duckdb::GlobalFunctionData& gstate) {
   auto& g = gstate.Cast<PgBinaryCopyGlobalState>();
-  if (g.send) {
-    // Trailer: int16 -1 (its own CopyData frame), then CopyDone.
-    const auto before = g.send->GetUncommittedSize();
-    auto* prefix = g.send->GetContiguousData(5);
-    absl::big_endian::Store16(g.send->GetContiguousData(2),
-                              static_cast<int16_t>(-1));
-    FinishCopyData(*g.send, prefix, before);
-    static constexpr uint8_t kCopyDone[5] = {PQ_MSG_COPY_DONE, 0, 0, 0, 4};
-    g.send->Write({reinterpret_cast<const char*>(kCopyDone), 5}, false);
-    return;
-  }
-
   // File: raw int16 -1 trailer, then close the handle.
   absl::big_endian::Store16(g.file_buffer->GetContiguousData(2),
                             static_cast<int16_t>(-1));

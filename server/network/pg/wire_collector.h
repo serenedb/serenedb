@@ -87,6 +87,12 @@ class WireSinkContext {
   // template the lstates clone (buffer/types_cache filled per lstate).
   std::vector<sdb::pg::VarFormat> formats;
   sdb::pg::SerializationContext proto;
+  // COPY ... TO STDOUT (FORMAT binary): the sink emits PGCOPY rows wrapped in
+  // CopyData frames (one frame per chunk) instead of pg DataRow messages. The
+  // session brackets the stream with CopyOutResponse + header before, and the
+  // PGCOPY trailer + CopyDone after; mode selection / chain splice are shared
+  // with SELECT, so COPY inherits Direct/Ordered/Unordered + zero-copy.
+  bool copy_binary = false;
 
   // --- filled by the collector ---
   Mode mode = Mode::Direct;
@@ -111,6 +117,7 @@ class WireSinkContext {
   void Reset() {
     context.reset();
     proto = sdb::pg::SerializationContext{};
+    copy_binary = false;
     mode = Mode::Direct;
     rows.store(0, std::memory_order_relaxed);
     direct_committed.store(0, std::memory_order_relaxed);

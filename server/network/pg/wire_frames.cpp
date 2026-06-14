@@ -23,6 +23,7 @@
 #include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
+#include <array>
 #include <cstdint>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -125,6 +126,83 @@ void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
                     std::span<const sdb::pg::SerializationFunction> serializers,
                     sdb::pg::SerializationContext& context) {
   WriteDataChunkRange(out, chunk, serializers, context, 0, chunk.size());
+}
+
+namespace {
+
+// PGCOPY header: 11-byte signature, int32 flags (0), int32 header-extension
+// length (0).
+constexpr std::array<uint8_t, 19> kPgCopyHeader{
+  'P',  'G', 'C', 'O', 'P', 'Y', '\n', 0xFF, '\r', '\n',
+  0x00, 0,   0,   0,   0,   0,   0,    0,    0};
+
+}  // namespace
+
+void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
+                    std::span<const sdb::pg::SerializationFunction> serializers,
+                    sdb::pg::SerializationContext& context) {
+  const auto rows = chunk.size();
+  if (rows == 0) {
+    return;
+  }
+  const auto columns = static_cast<uint16_t>(chunk.ColumnCount());
+  std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded(columns);
+  for (uint16_t column = 0; column < columns; ++column) {
+    duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[column], rows,
+                                             decoded[column]);
+  }
+  // One CopyData frame per chunk: a 5-byte prefix ('d' + int32 length), then the
+  // PGCOPY rows. The prefix is backpatched after the rows are serialized.
+  const auto start = out.GetUncommittedSize();
+  auto* prefix = out.GetContiguousData(5);
+  for (duckdb::idx_t row = 0; row < rows; ++row) {
+    absl::big_endian::Store16(out.GetContiguousData(2), columns);
+    for (uint16_t column = 0; column < columns; ++column) {
+      serializers[column](context, decoded[column], row);
+    }
+  }
+  prefix[0] = PQ_MSG_COPY_DATA;
+  absl::big_endian::Store32(
+    prefix + 1, static_cast<int32_t>(out.GetUncommittedSize() - start - 1));
+  out.Commit(false);
+}
+
+void WriteCopyOutResponse(message::Buffer& out, bool binary) {
+  auto* data = out.GetContiguousData(8);
+  data[0] = PQ_MSG_COPY_OUT_RESPONSE;
+  absl::big_endian::Store32(data + 1, 7);  // length: format(1)+cols(2)+self(4)
+  data[5] = binary ? 1 : 0;                // overall format
+  absl::big_endian::Store16(data + 6, 0);  // column count
+  out.Commit(false);
+}
+
+void WriteCopyBinaryHeader(message::Buffer& out) {
+  const auto start = out.GetUncommittedSize();
+  auto* prefix = out.GetContiguousData(5);
+  out.WriteUncommitted({reinterpret_cast<const char*>(kPgCopyHeader.data()),
+                        kPgCopyHeader.size()});
+  prefix[0] = PQ_MSG_COPY_DATA;
+  absl::big_endian::Store32(
+    prefix + 1, static_cast<int32_t>(out.GetUncommittedSize() - start - 1));
+  out.Commit(false);
+}
+
+void WriteCopyBinaryTrailer(message::Buffer& out) {
+  const auto start = out.GetUncommittedSize();
+  auto* prefix = out.GetContiguousData(5);
+  absl::big_endian::Store16(out.GetContiguousData(2),
+                            static_cast<int16_t>(-1));
+  prefix[0] = PQ_MSG_COPY_DATA;
+  absl::big_endian::Store32(
+    prefix + 1, static_cast<int32_t>(out.GetUncommittedSize() - start - 1));
+  out.Commit(false);
+}
+
+void WriteCopyDone(message::Buffer& out) {
+  auto* data = out.GetContiguousData(5);
+  data[0] = PQ_MSG_COPY_DONE;
+  absl::big_endian::Store32(data + 1, 4);
+  out.Commit(false);
 }
 
 void WriteParameterStatus(message::Buffer& out, std::string_view name,

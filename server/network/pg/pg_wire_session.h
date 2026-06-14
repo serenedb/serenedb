@@ -40,8 +40,13 @@
 #include <duckdb/main/query_result.hpp>
 #include <duckdb/main/valid_checker.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/expression/star_expression.hpp>
 #include <duckdb/parser/parsed_data/copy_info.hpp>
+#include <duckdb/parser/query_node/select_node.hpp>
 #include <duckdb/parser/statement/copy_statement.hpp>
+#include <duckdb/parser/statement/select_statement.hpp>
+#include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <duckdb/transaction/transaction_context.hpp>
 #include <memory>
@@ -197,6 +202,48 @@ inline bool IsBinaryCopy(const duckdb::SQLStatement& statement) {
   return copy.info && copy.info->format == "binary";
 }
 
+// COPY ... TO STDOUT (FORMAT binary): the patched parser rewrites STDOUT to
+// "/dev/stdout". This case bypasses the binary CopyFunction entirely -- the
+// inner query runs through the SELECT wire collector (parallel, zero-copy,
+// SELECT ordering), framed as PGCOPY CopyData by the session.
+inline bool IsCopyToStdoutBinary(const duckdb::SQLStatement& statement) {
+  if (statement.type != duckdb::StatementType::COPY_STATEMENT) {
+    return false;
+  }
+  const auto& copy = statement.Cast<duckdb::CopyStatement>();
+  return copy.info && !copy.info->is_from && copy.info->format == "binary" &&
+         copy.info->file_path == "/dev/stdout";
+}
+
+// The runnable inner query for a COPY ... TO. `select_statement` is the parsed
+// source SELECT for `COPY (query) TO`; for `COPY table TO` it is null until
+// bind, so synthesize `SELECT [cols|*] FROM [catalog.][schema.]table` exactly
+// as Binder::Bind(CopyStatement) does. Consumes the CopyStatement's nodes.
+inline duckdb::unique_ptr<duckdb::SQLStatement> ExtractCopyToQuery(
+  duckdb::CopyStatement& copy) {
+  auto select = duckdb::make_uniq<duckdb::SelectStatement>();
+  if (copy.info->select_statement) {
+    select->node = std::move(copy.info->select_statement);
+    return std::move(select);
+  }
+  auto ref = duckdb::make_uniq<duckdb::BaseTableRef>();
+  ref->catalog_name = copy.info->catalog;
+  ref->schema_name = copy.info->schema;
+  ref->table_name = copy.info->table;
+  auto node = duckdb::make_uniq<duckdb::SelectNode>();
+  node->from_table = std::move(ref);
+  if (copy.info->select_list.empty()) {
+    node->select_list.push_back(duckdb::make_uniq<duckdb::StarExpression>());
+  } else {
+    for (auto& name : copy.info->select_list) {
+      node->select_list.push_back(
+        duckdb::make_uniq<duckdb::ColumnRefExpression>(name));
+    }
+  }
+  select->node = std::move(node);
+  return std::move(select);
+}
+
 // The GUCs reported to the client via ParameterStatus: once at startup
 // (SendStartupBurst) and again whenever a command changes one
 // (ReportChangedParameters), matching postgres's GUC_REPORT set.
@@ -320,6 +367,8 @@ class PgWireSession : public Transport<Kind, PgWireSession<Kind>>,
     duckdb::PendingQueryResult& pending, WireSinkContext* wire = nullptr);
   yaclib::Future<> RunSimpleQuery(std::string_view query);
   yaclib::Future<> RunCopyFromStdin(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement);
+  yaclib::Future<> RunCopyToStdout(
     duckdb::unique_ptr<duckdb::SQLStatement> statement);
   yaclib::Future<> RunCopyInFeeder(sdb::pg::CopyInBridge& bridge,
                                    bool is_binary);
@@ -1090,6 +1139,12 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       co_await RunCopyFromStdin(std::move(statement));
       continue;
     }
+    if (IsCopyToStdoutBinary(*statement)) {
+      // Runs the inner query through the wire collector (parallel + PGCOPY
+      // framing), instead of the single-threaded binary CopyFunction.
+      co_await RunCopyToStdout(std::move(statement));
+      continue;
+    }
     auto prepared = _conn->Prepare(std::move(statement));
     ThrowIfError(*prepared);
     const auto return_type = prepared->GetStatementProperties().return_type;
@@ -1246,6 +1301,49 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
   co_return {};
 }
 
+// COPY ... TO STDOUT (FORMAT binary): runs the COPY's inner query through the
+// SAME wire collector SELECT uses (parallel + zero-copy + SELECT ordering),
+// but with the collector framing rows as PGCOPY CopyData instead of DataRow.
+// The session brackets the stream: CopyOutResponse + the PGCOPY header before
+// PendingQuery (arming hands the _send producer role to the direct-mode sink,
+// and workers may run it inside PendingQuery -- so the header must already be
+// committed), the trailer + CopyDone + the COPY-N tag after the drive.
+template<SocketKind Kind>
+yaclib::Future<> PgWireSession<Kind>::RunCopyToStdout(
+  duckdb::unique_ptr<duckdb::SQLStatement> statement) {
+  auto& copy = statement->Cast<duckdb::CopyStatement>();
+  auto inner = ExtractCopyToQuery(copy);
+  auto prepared = _conn->Prepare(std::move(inner));
+  ThrowIfError(*prepared);
+
+  // CopyOutResponse (binary) + the PGCOPY 19-byte header as a CopyData frame,
+  // both before arming/PendingQuery (see comment above).
+  WriteCopyOutResponse(_send, true);
+  WriteCopyBinaryHeader(_send);
+
+  static constexpr std::array<sdb::pg::VarFormat, 1> kAllBinary{
+    sdb::pg::VarFormat::Binary};
+  auto wire = MakeWireContext(kAllBinary);
+  wire->copy_binary = true;
+  duckdb::vector<duckdb::Value> params;
+  auto pending = PendingQueryEnsured(*prepared, params, wire);
+  ThrowIfError(*pending);
+  const auto status = co_await DriveQuery(*pending, wire.get());
+  ThrowIfDriveFailed(*pending, status);
+  co_await FinishWireDrain(*wire);
+  auto result = pending->Execute();
+  ThrowIfError(*result);
+
+  // Trailer (int16 -1 CopyData frame) + CopyDone close the stream, then the
+  // COPY N tag (postgres reports COPY, not SELECT, for COPY TO STDOUT).
+  WriteCopyBinaryTrailer(_send);
+  WriteCopyDone(_send);
+  WriteCommandComplete(
+    _send,
+    absl::StrCat("COPY ", wire->rows.load(std::memory_order_relaxed)));
+  co_return {};
+}
+
 template<SocketKind Kind>
 yaclib::Future<> PgWireSession<Kind>::RunCopyInFeeder(
   sdb::pg::CopyInBridge& bridge, bool is_binary) {
@@ -1387,7 +1485,10 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     WriteEmptyFrame(_send, PQ_MSG_PARSE_COMPLETE);
     return;
   }
-  if (IsCopyFromStdin(*extracted[0])) {
+  if (IsCopyFromStdin(*extracted[0]) || IsCopyToStdoutBinary(*extracted[0])) {
+    // COPY FROM STDIN defers because the CSV sniff would open /dev/stdin before
+    // the feeder is live; COPY TO STDOUT binary defers so it runs through the
+    // wire collector at Execute rather than the single-threaded CopyFunction.
     statement->deferred_copy = std::move(extracted[0]);
     WriteEmptyFrame(_send, PQ_MSG_PARSE_COMPLETE);
     return;
@@ -1681,11 +1782,17 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     portal = &it->second;
   }
   if (portal->stmt && portal->stmt->deferred_copy) {
-    // Deferred COPY FROM STDIN: now safe to bind -- RunCopyFromStdin brings the
-    // feeder live before the sniff. Consume the stashed statement so a stray
+    // Deferred COPY: now safe to run. Consume the stashed statement so a stray
     // re-Execute (or a second portal bound to it) gets a clean "not bound"
     // error rather than re-running the COPY.
-    co_await RunCopyFromStdin(std::move(portal->stmt->deferred_copy));
+    auto deferred = std::move(portal->stmt->deferred_copy);
+    if (IsCopyToStdoutBinary(*deferred)) {
+      co_await RunCopyToStdout(std::move(deferred));
+    } else {
+      // COPY FROM STDIN: RunCopyFromStdin brings the feeder live before the
+      // sniff.
+      co_await RunCopyFromStdin(std::move(deferred));
+    }
     co_return {};
   }
   if (portal->stmt && portal->stmt->empty) {

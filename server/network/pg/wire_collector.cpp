@@ -107,7 +107,13 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
     }
 
     auto& out = *lstate.sctx.buffer;
-    WriteDataChunk(out, chunk, lstate.serializers, lstate.sctx);
+    if (ctx.copy_binary) {
+      // PGCOPY rows in one CopyData frame per chunk (whole rows per frame);
+      // the session emits the header before and the trailer/CopyDone after.
+      WriteCopyChunk(out, chunk, lstate.serializers, lstate.sctx);
+    } else {
+      WriteDataChunk(out, chunk, lstate.serializers, lstate.sctx);
+    }
     ctx.rows.fetch_add(chunk.size(), std::memory_order_relaxed);
 
     if (ctx.mode == WireSinkContext::Mode::Direct) {

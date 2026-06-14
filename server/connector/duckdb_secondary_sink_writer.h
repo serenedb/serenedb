@@ -131,6 +131,29 @@ class DuckDBSecondarySinkWriteBase : public DuckDBSinkIndexWriter,
     return has_null;
   }
 
+  // Shared by the insert and update writers: build the SK entry for the current
+  // row and Put it, enforcing uniqueness first for a unique index. Non-virtual
+  // so each writer's final Write() inlines it -- no per-row dispatch cost.
+  void WriteSK(std::string_view full_key) {
+    rocksdb::Slice value;
+    bool has_null = BuildSK(full_key, value);
+    if constexpr (Unique) {
+      if (!has_null) {
+        rocksdb::PinnableSlice existing;
+        auto gs = _trx.GetForUpdate(rocksdb::ReadOptions{}, _key_buffer,
+                                    &existing);
+        if (gs.ok()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+            ERR_MSG("duplicate key value violates unique constraint on "
+                    "secondary index"));
+        }
+      }
+    }
+    auto s = _trx.Put(_key_buffer, value);
+    SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
+  }
+
   // For DELETE / UPDATE-OLD lookups using a (possibly different) sk_columns
   // mapping: caller passes the matching pre-built formats span, so we keep
   // `sk_columns` and `sk_formats` paired.
@@ -179,23 +202,7 @@ class DuckDBSecondarySinkInsertWriter final
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_pk) final {
-    rocksdb::Slice value;
-    bool has_null = this->BuildSK(full_pk, value);
-    if constexpr (Unique) {
-      if (!has_null) {
-        rocksdb::PinnableSlice existing;
-        auto gs = this->_trx.GetForUpdate(rocksdb::ReadOptions{},
-                                          this->_key_buffer, &existing);
-        if (gs.ok()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-            ERR_MSG("duplicate key value violates unique constraint on "
-                    "secondary index"));
-        }
-      }
-    }
-    auto s = this->_trx.Put(this->_key_buffer, value);
-    SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
+    this->WriteSK(full_pk);
   }
 };
 
@@ -253,23 +260,7 @@ class DuckDBSecondarySinkUpdateWriter final
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
-    rocksdb::Slice value;
-    bool has_null = this->BuildSK(full_key, value);
-    if constexpr (Unique) {
-      if (!has_null) {
-        rocksdb::PinnableSlice existing;
-        auto gs = this->_trx.GetForUpdate(rocksdb::ReadOptions{},
-                                          this->_key_buffer, &existing);
-        if (gs.ok()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-            ERR_MSG("duplicate key value violates unique constraint on "
-                    "secondary index"));
-        }
-      }
-    }
-    auto s = this->_trx.Put(this->_key_buffer, value);
-    SDB_ASSERT(s.ok(), "Secondary index Put failed: ", s.ToString());
+    this->WriteSK(full_key);
   }
 
   void DeleteRow(std::string_view encoded_pk) final {

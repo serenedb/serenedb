@@ -68,6 +68,11 @@
 namespace sdb::catalog {
 namespace {
 
+Result FailedToDeserialize(std::string_view object_type) {
+  return Result{ERROR_INTERNAL,
+                absl::StrCat("Failed to read ", object_type, " definition")};
+}
+
 // In case of recovery the ColumnExpr shouldn't be parsed
 struct DropTableOptions {
   uint64_t columns;
@@ -290,7 +295,7 @@ Result OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
   auto db =
     catalog::DeserializeObject<catalog::Database>(bytes, {.id = database_id});
   if (!db) {
-    return Result{ERROR_INTERNAL, "Failed to read database definition"};
+    return FailedToDeserialize("database");
   }
   if (auto r = _catalog.RegisterDatabase(db); !r.ok()) {
     return r;
@@ -347,7 +352,7 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
                  .schema_id = schema_id,
                });
       if (!function) {
-        return Result{ERROR_INTERNAL, "Failed to read function definition"};
+        return FailedToDeserialize("function");
       }
       return _catalog.RegisterFunction(db_id, schema_id, std::move(function));
     });
@@ -364,7 +369,7 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
                                                        .schema_id = schema_id,
                                                      });
       if (!tokenizer) {
-        return Result{ERROR_INTERNAL, "Failed to read tokenizer definition"};
+        return FailedToDeserialize("tokenizer");
       }
       return _catalog.RegisterTokenizer(db_id, schema_id, std::move(tokenizer));
     });
@@ -378,7 +383,7 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
       auto view = catalog::DeserializeObject<PgSqlView>(
         bytes, {.id = view_id, .database_id = db_id, .schema_id = schema_id});
       if (!view) {
-        return Result{ERROR_INTERNAL, "Failed to read view definition"};
+        return FailedToDeserialize("view");
       }
       if (auto r = _catalog.RegisterView(schema_id, std::move(view)); !r.ok()) {
         return r;
@@ -403,7 +408,7 @@ Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
                                                       .schema_id = schema_id,
                                                     });
       if (!seq) {
-        return Result{ERROR_INTERNAL, "Failed to read sequence definition"};
+        return FailedToDeserialize("sequence");
       }
       if (seq->GetOwnerTableId().isSet() != owned) {
         return Result{};
@@ -428,7 +433,7 @@ Result OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
                                                        .schema_id = schema_id,
                                                      });
       if (!type) {
-        return Result{ERROR_INTERNAL, "Failed to read type definition"};
+        return FailedToDeserialize("type");
       }
       return _catalog.RegisterType(db_id, schema_id, std::move(type));
     });
@@ -497,7 +502,7 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
           bytes,
           {.id = table_id, .database_id = db_id, .schema_id = schema_id});
         if (!table) {
-          return Result{ERROR_INTERNAL, "Failed to read table definition"};
+          return FailedToDeserialize("table");
         }
         return AddTable(db_id, schema_id, table_id, std::move(table));
       }
@@ -523,7 +528,7 @@ Result OpenDatabase::AddRoles() {
     [&](DefinitionKey, std::string_view bytes) -> Result {
       auto role = catalog::DeserializeObject<catalog::Role>(bytes, {});
       if (!role) {
-        return Result{ERROR_INTERNAL, "Failed to read role definition"};
+        return FailedToDeserialize("role");
       }
 
       return _catalog.RegisterRole(std::move(role));
@@ -567,7 +572,7 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
     index = catalog::DeserializeObject<InvertedIndex>(bytes, ctx);
   }
   if (!index) {
-    return Result{ERROR_INTERNAL, "Failed to read index definition"};
+    return FailedToDeserialize("index");
   }
   if (auto r = _catalog.RegisterIndex(database_id, schema_id, index); !r.ok()) {
     return r;
@@ -597,7 +602,7 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   auto schema =
     catalog::DeserializeObject<catalog::Schema>(bytes, {.database_id = db_id});
   if (!schema) {
-    return Result{ERROR_INTERNAL, "Failed to read schema definition"};
+    return FailedToDeserialize("schema");
   }
 
   if (auto r = _catalog.RegisterSchema(db_id, std::move(schema)); !r.ok()) {

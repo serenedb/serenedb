@@ -196,7 +196,10 @@ struct CopyOutFileHandle final : public duckdb::FileHandle {
     SendCopyResponse(_send_buffer, PQ_MSG_COPY_OUT_RESPONSE);
   }
 
-  ~CopyOutFileHandle() final = default;
+  // DuckDB's copy-to operator destroys the handle at end of execution without
+  // an explicit Close(), so emit the terminating CopyDone here. Idempotent via
+  // _closed, so an explicit Close() followed by destruction still sends it once.
+  ~CopyOutFileHandle() final { Close(); }
 
   void Close() final {
     if (_closed) {

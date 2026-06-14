@@ -190,7 +190,7 @@ ObjectId LookupDatabaseId(const catalog::Snapshot& snapshot,
 }
 
 void RefreshInvertedShard(search::InvertedIndexShard& inverted) {
-  std::ignore = std::move(inverted.CommitWait()).Get().Ok();
+  inverted.Refresh();
 }
 
 void CompactInvertedShard(search::InvertedIndexShard& inverted) {

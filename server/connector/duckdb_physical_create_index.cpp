@@ -658,8 +658,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
 
     auto& inverted_shard =
       basics::downCast<search::InvertedIndexShard>(*gstate.index_shard);
-    auto future = inverted_shard.CommitWait();
-    std::ignore = std::move(future).Get().Ok();
+    inverted_shard.Refresh();
     SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
     inverted_shard.FinishCreation();
   }

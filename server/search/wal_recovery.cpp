@@ -156,12 +156,9 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
   // The replay committed the delta into each shard's writer, but the shard's
   // query snapshot is only refreshed by a background commit. Force it now so
   // the recovered rows are searchable the instant the server accepts queries.
-  std::vector<yaclib::Future<>> commits;
-  commits.reserve(recovering_shards.size());
   for (auto& shard : recovering_shards) {
-    commits.emplace_back(shard->CommitWait());
+    shard->Refresh();
   }
-  yaclib::Wait(commits.begin(), commits.end());
 
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);

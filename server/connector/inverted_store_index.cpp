@@ -152,8 +152,7 @@ InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession() {
   if (_replay) {
     return *_replay;
   }
-  auto snapshot =
-    catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   SDB_ENSURE(snapshot, ERROR_INTERNAL,
              "inverted index replay: no catalog snapshot");
   auto index_shard = snapshot->GetIndexShard(_index_id);
@@ -556,8 +555,7 @@ void InvertedStoreIndex::CheckpointBarrier() const {
   // checkpoint is skipped/aborted and the WAL is retained -- a restart replays
   // the delta, an explicit REINDEX clears it. Resolved from the GLOBAL snapshot
   // (checkpoint runs with no connection).
-  auto snapshot =
-    catalog::GetCatalog().GetCatalogSnapshot();
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   if (!snapshot) {
     return;
   }
@@ -577,7 +575,7 @@ void InvertedStoreIndex::CheckpointBarrier() const {
              _index_id.id(),
              " is out of sync with its store table; refusing to checkpoint "
              "(WAL retained for replay; REINDEX to clear)");
-  std::ignore = std::move(shard.CommitWait()).Get().Ok();
+  shard.Refresh();
 }
 
 duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(

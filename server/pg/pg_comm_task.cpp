@@ -303,8 +303,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
     // Pin the catalog snapshot at connection time -- all operations
     // on this connection use the same snapshot until statement/transaction end.
-    auto snapshot =
-      catalog::GetCatalog().GetCatalogSnapshot();
+    auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
     auto database = snapshot->GetDatabase(DatabaseName());
     if (!database) {
       return SendError(
@@ -1280,16 +1279,9 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
         // Fall through to fetch first chunk
       } break;
       case duckdb::PendingExecutionResult::RESULT_NOT_READY:
-        // This thread executed a task; more remain -- keep driving.
-        return ProcessState::More;
       case duckdb::PendingExecutionResult::NO_TASKS_AVAILABLE:
-        // No task is runnable on this thread right now (the query's tasks are
-        // in flight on other threads). Yield this thread back to the pool and
-        // re-queue ourselves instead of busy-polling -- otherwise enough
-        // concurrent comm tasks spin here and starve the very tasks that would
-        // finish their queries (livelock under load).
-        _feature.ScheduleProcessWakeup(weak_from_this());
-        return ProcessState::Wait;
+        // More work needed -- continue polling
+        return ProcessState::More;
       case duckdb::PendingExecutionResult::BLOCKED:
         // Blocked -- callback was registered by ExecuteTask.
         return ProcessState::Wait;

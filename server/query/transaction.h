@@ -57,6 +57,13 @@ class Transaction : public Config {
   // Pre-rollback counterpart -- restores all SET values.
   void PreRollback() noexcept;
 
+  // Commit the search-index leg synchronously with the store table changes:
+  // called inside the engine commit, after store durability but before the
+  // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
+  // un-committed in-flight batch. Idempotent -- a no-op once the staged
+  // transactions have been committed (or when there were none).
+  void CommitSearch() noexcept;
+
   Result Commit();
 
   Result Rollback();

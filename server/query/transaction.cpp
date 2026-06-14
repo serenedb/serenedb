@@ -66,52 +66,63 @@ void Transaction::PreCommit() noexcept {
 
 void Transaction::PreRollback() noexcept { RollbackVariables(); }
 
-Result Transaction::Commit() {
-  if (!_search_transactions.empty()) {
+void Transaction::CommitSearch() noexcept {
+  if (_search_transactions.empty()) {
+    return;
+  }
+  for (auto& search_transaction : _search_transactions) {
+    // Tie the iresearch transaction's active segment to the current flush
+    // context so a background index commit that starts now waits for this
+    // transaction to settle before committing "on tick".
+    search_transaction.second->RegisterFlush();
+  }
+  absl::Cleanup rollback = [&] {
     for (auto& search_transaction : _search_transactions) {
-      // Tie the iresearch transaction's active segment to the current flush
-      // context so a background index commit that starts now waits for this
-      // transaction to settle before committing "on tick".
-      search_transaction.second->RegisterFlush();
+      search_transaction.second->Abort();
     }
-    absl::Cleanup rollback = [&] {
-      for (auto& search_transaction : _search_transactions) {
-        search_transaction.second->Abort();
-      }
-      Destroy();
-    };
+    _search_transactions.clear();
+    _search_shards.clear();
+  };
 
-    // Reserve a tick range covering every writer's query (Remove/Replace)
-    // count, so that per writer first_tick = last_tick - queries stays
-    // strictly above its previously committed tick.
-    uint64_t max_queries = 0;
-    for (const auto& [id, trx] : _search_transactions) {
-      max_queries = std::max<uint64_t>(max_queries, trx->GetQueries());
+  // Reserve a tick range covering every writer's query (Remove/Replace)
+  // count, so that per writer first_tick = last_tick - queries stays
+  // strictly above its previously committed tick.
+  uint64_t max_queries = 0;
+  for (const auto& [id, trx] : _search_transactions) {
+    max_queries = std::max<uint64_t>(max_queries, trx->GetQueries());
+  }
+  const auto last_tick =
+    search::TickDomain::Instance().Advance(max_queries + 1);
+
+  std::move(rollback).Cancel();
+
+  for (auto& [shard_id, search_transaction] : _search_transactions) {
+    auto shard_it = _search_shards.find(shard_id);
+    auto* inverted =
+      shard_it != _search_shards.end() ? shard_it->second.get() : nullptr;
+    if (search_transaction->Commit(last_tick)) {
+      continue;
     }
-    const auto last_tick =
-      search::TickDomain::Instance().Advance(max_queries + 1);
-
-    std::move(rollback).Cancel();
-
-    for (auto& [shard_id, search_transaction] : _search_transactions) {
-      auto shard_it = _search_shards.find(shard_id);
-      auto* inverted =
-        shard_it != _search_shards.end() ? shard_it->second.get() : nullptr;
-      if (search_transaction->Commit(last_tick)) {
-        continue;
-      }
-      // The store transaction is already durable; losing the index leg
-      // silently would diverge the index forever. Mark the shard so the
-      // clean-shutdown checkpoint is suppressed and the next boot rebuilds
-      // it from the store table.
-      SDB_ERROR(SEARCH, "search index commit failed for shard '", shard_id.id(),
-                "' at tick ", last_tick,
-                "; the index will be rebuilt from the store on next boot");
-      if (inverted) {
-        inverted->MarkOutOfSync();
-      }
+    // The store transaction is already durable; losing the index leg
+    // silently would diverge the index forever. Mark the shard so the
+    // clean-shutdown checkpoint is suppressed and the next boot rebuilds
+    // it from the store table.
+    SDB_ERROR(SEARCH, "search index commit failed for shard '", shard_id.id(),
+              "' at tick ", last_tick,
+              "; the index will be rebuilt from the store on next boot");
+    if (inverted) {
+      inverted->MarkOutOfSync();
     }
   }
+  _search_transactions.clear();
+  _search_shards.clear();
+}
+
+Result Transaction::Commit() {
+  // Normally already settled inside the engine commit (TransactionFlushChanges,
+  // before the in-commit checkpoint); this is a no-op then, and the fallback
+  // for transactions that did not commit the store database.
+  CommitSearch();
   ApplyTableStatsDiffs();
   Destroy();
 

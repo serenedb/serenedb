@@ -126,9 +126,8 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
 
   const auto schema_id = index.GetParentId();
-  const auto db_id = catalog::GetCatalog()
-                       .GetCatalogSnapshot()
-                       ->GetDatabaseId(index);
+  const auto db_id =
+    catalog::GetCatalog().GetCatalogSnapshot()->GetDatabaseId(index);
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
   std::filesystem::path path =
@@ -229,7 +228,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     out.append(reinterpret_cast<const irs::byte_type*>(&iceberg_be),
                sizeof(iceberg_be));
     // Durable WAL cursor: the max committed store-WAL position captured before
-    // this refresh's flush watermark (see CommitUnsafeImpl). Recovery replays
+    // this refresh's flush watermark (see RefreshUnsafeImpl). Recovery replays
     // only operations past it.
     uint64_t cursor_be = absl::big_endian::FromHost(_pending_wal_cursor);
     out.append(reinterpret_cast<const irs::byte_type*>(&cursor_be),
@@ -336,10 +335,9 @@ void InvertedIndexShard::ScheduleCommit(absl::Duration delay) {
   std::move(task).Schedule(delay).Detach();
 }
 
-yaclib::Future<> InvertedIndexShard::CommitWait() {
-  RefreshTask task{shared_from_this(), true};
-  _state->pending_commits.fetch_add(1, std::memory_order_release);
-  return std::move(task).Schedule();
+void InvertedIndexShard::Refresh() {
+  RefreshResult code = RefreshResult::Undefined;
+  std::ignore = RefreshUnsafe(/*wait=*/true, nullptr, code);
 }
 
 InvertedIndexShard::Stats InvertedIndexShard::UpdateStatsUnsafe(
@@ -395,10 +393,10 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CompactUnsafe(
   return {std::move(result), time_ms};
 }
 
-InvertedIndexShard::ResultWithTime InvertedIndexShard::CommitUnsafe(
-  bool wait, const irs::ProgressReportCallback& progress, CommitResult& code) {
+InvertedIndexShard::ResultWithTime InvertedIndexShard::RefreshUnsafe(
+  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
   auto begin = std::chrono::steady_clock::now();
-  auto result = CommitUnsafeImpl(wait, progress, code);
+  auto result = RefreshUnsafeImpl(wait, progress, code);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
@@ -445,9 +443,9 @@ Result InvertedIndexShard::CompactUnsafeImpl(
   return {};
 }
 
-Result InvertedIndexShard::CommitUnsafeImpl(
-  bool wait, const irs::ProgressReportCallback& progress, CommitResult& code) {
-  code = CommitResult::NoChanges;
+Result InvertedIndexShard::RefreshUnsafeImpl(
+  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
+  code = RefreshResult::NoChanges;
 
   try {
     std::unique_lock commit_lock{_commit_mutex, std::try_to_lock};
@@ -456,7 +454,7 @@ Result InvertedIndexShard::CommitUnsafeImpl(
         SDB_TRACE(SEARCH, "Commit for Search index '", GetId().id(),
                   "' is already in progress, skipping");
 
-        code = CommitResult::InProgress;
+        code = RefreshResult::InProgress;
         return {};
       }
 
@@ -517,7 +515,7 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     }
     SDB_ASSERT(_phase != Phase::Active ||
                _last_committed_tick == before_commit);
-    code = CommitResult::Done;
+    code = RefreshResult::Done;
 
     // update reader
     SDB_ASSERT(GetInvertedIndexSnapshot());

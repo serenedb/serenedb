@@ -47,21 +47,24 @@ class CopyInBridge {
   int64_t Read(char* out, int64_t n) {
     int64_t total = 0;
     while (total < n) {
-      if (_len == 0) {
-        if (_eof) {
-          break;
-        }
+      // Same per-frame latch as Window(): wait for and consume exactly one
+      // _data_ready Set per frame, gated by _armed -- NOT the live _len, which
+      // races (the feeder can publish the next frame before the worker re-checks
+      // _len, leaving a _data_ready Set unconsumed so the next Publish/Finish
+      // double-Sets and corrupts the event -> SIGSEGV).
+      if (_armed) {
         if (_err) {
           std::rethrow_exception(_err);
         }
         _data_ready.Wait();
         _data_ready.Reset();
-        if (_len == 0) {
-          if (_err) {
-            std::rethrow_exception(_err);
-          }
-          break;  // _eof
+        _armed = false;
+      }
+      if (_len == 0) {  // EOF (Finish left _len 0) or error
+        if (_err) {
+          std::rethrow_exception(_err);
         }
+        break;
       }
       const auto take = static_cast<size_t>(
         std::min<int64_t>(n - total, static_cast<int64_t>(_len)));
@@ -70,6 +73,7 @@ class CopyInBridge {
       _len -= take;
       total += static_cast<int64_t>(take);
       if (_len == 0) {
+        _armed = true;
         _want_more.Set();  // ask the feeder for the next frame
       }
     }
@@ -81,22 +85,18 @@ class CopyInBridge {
   // (CopyDone). Rethrows the feeder's error if one was set. The parser decodes
   // straight out of this span and calls Consume() as it advances.
   //
-  // Unlike Read's racy `_len == 0` test, the wait here is gated by an explicit
-  // per-frame `_borrow_armed` latch (set at construction and whenever Consume
-  // drains a frame), so Window() consumes the feeder's `_data_ready` Set
-  // exactly once per frame REGARDLESS of how much parser work runs between
-  // draining a frame and asking for the next. That determinism is what keeps
-  // Publish / Finish from ever re-Setting an already-signalled `_data_ready`
-  // (the bug a live-`_len` test hits when the feeder publishes before the
-  // worker re-checks).
+  // The wait is gated by the per-frame `_armed` latch (shared with Read; set at
+  // construction and whenever Consume/Read drains a frame), so it consumes the
+  // feeder's `_data_ready` Set exactly once per frame REGARDLESS of how much
+  // parser work runs between draining a frame and asking for the next.
   std::span<const char> Window() {
-    if (_borrow_armed) {
+    if (_armed) {
       if (_err) {
         std::rethrow_exception(_err);
       }
       _data_ready.Wait();
       _data_ready.Reset();
-      _borrow_armed = false;
+      _armed = false;
       if (_len == 0 && _err) {
         std::rethrow_exception(_err);
       }
@@ -112,7 +112,7 @@ class CopyInBridge {
     _ptr += n;
     _len -= n;
     if (_len == 0) {
-      _borrow_armed = true;
+      _armed = true;
       _want_more.Set();
     }
   }
@@ -154,10 +154,12 @@ class CopyInBridge {
   size_t _len = 0;
   bool _eof = false;
   bool _aborted = false;
-  // Borrow-API latch (Window/Consume only): true means the next Window() must
-  // wait for and consume one `_data_ready` Set. Armed at start (first frame)
-  // and re-armed each time Consume drains a frame.
-  bool _borrow_armed = true;
+  // Per-frame latch shared by both worker paths (Read and Window/Consume): true
+  // means the next Read/Window must wait for and consume exactly one
+  // `_data_ready` Set. Armed at start (first frame) and re-armed each time a
+  // frame fully drains. Gating on this instead of the live `_len` is what avoids
+  // the double-Set race that SIGSEGV'd under load.
+  bool _armed = true;
   std::exception_ptr _err;
 };
 

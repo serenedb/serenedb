@@ -234,21 +234,23 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
   auto& segment = rdr[0];
 
   // empty query
-  CheckQuery(irs::ByTerms(), Docs{}, Costs{0}, rdr);
+  CheckQuery(*tests::Optimized(irs::ByTerms()), Docs{}, Costs{0}, rdr);
 
   // empty field
-  CheckQuery(MakeFilter(kEmptyFieldId, {{"xyz", 0.5f}}), Docs{}, Costs{0}, rdr);
+  CheckQuery(*tests::Optimized(MakeFilter(kEmptyFieldId, {{"xyz", 0.5f}})),
+             Docs{}, Costs{0}, rdr);
 
   // invalid field
-  CheckQuery(MakeFilter(kInvalidFieldId, {{"xyz", 0.5f}}), Docs{}, Costs{0},
-             rdr);
+  CheckQuery(*tests::Optimized(MakeFilter(kInvalidFieldId, {{"xyz", 0.5f}})),
+             Docs{}, Costs{0}, rdr);
 
   // invalid term
-  CheckQuery(MakeFilter(kSameId, {{"invalid_term", 0.5f}}), Docs{}, Costs{0},
-             rdr);
+  CheckQuery(*tests::Optimized(MakeFilter(kSameId, {{"invalid_term", 0.5f}})),
+             Docs{}, Costs{0}, rdr);
 
   // no value requested to match
-  CheckQuery(MakeFilter(kDuplicatedId, {}), Docs{}, Costs{0}, rdr);
+  CheckQuery(*tests::Optimized(MakeFilter(kDuplicatedId, {})), Docs{}, Costs{0},
+             rdr);
 
   // match all
   {
@@ -256,7 +258,7 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     std::iota(std::begin(result), std::end(result), irs::doc_limits::min());
     Costs costs{result.size()};
     const auto filter = MakeFilter(kSameId, {{"xyz", 1.f}});
-    CheckQuery(filter, result, costs, rdr);
+    CheckQuery(*tests::Optimized(filter), result, costs, rdr);
 
     // test visit
     tests::EmptyFilterVisitor visitor;
@@ -276,7 +278,7 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
     std::iota(std::begin(result), std::end(result), irs::doc_limits::min());
     Costs costs{result.size()};
     const auto filter = MakeFilter(kSameId, {{"invalid", 1.f}}, 0);
-    CheckQuery(filter, result, costs, rdr);
+    CheckQuery(*tests::Optimized(filter), result, costs, rdr);
 
     // test visit
     tests::EmptyFilterVisitor visitor;
@@ -474,7 +476,7 @@ TEST_P(TermsFilterTestCase, min_match) {
     const Costs costs{0, 0, 0, 0};
     const auto filter = MakeFilter(
       kFieldsSchemaId, {{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 3);
-    CheckQuery(filter, result, costs, rdr);
+    CheckQuery(*tests::Optimized(filter), result, costs, rdr);
   }
 
   {
@@ -535,7 +537,8 @@ TEST_P(TermsFilterTestCase, min_match) {
     const auto filter = MakeFilter(
       kFieldsSchemaId, {{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 0);
 
-    CheckQuery(filter, std::span{&impl, 1}, result, rdr[0]);
+    CheckQuery(*tests::Optimized(filter, impl.get()), std::span{&impl, 1},
+               result, rdr[0]);
     ASSERT_EQ(3, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats

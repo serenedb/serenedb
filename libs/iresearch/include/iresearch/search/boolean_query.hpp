@@ -46,14 +46,9 @@ class BooleanQuery : public Filter::Query {
   score_t Boost() const noexcept final { return _boost; }
 
   void prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
-               queries_t queries, size_t exclude_start);
-
-  void prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
-               std::span<const Filter* const> incl,
-               std::span<const Filter* const> excl);
+               queries_t queries);
 
   iterator begin() const { return _queries.begin(); }
-  iterator excl_begin() const { return begin() + _excl; }
   iterator end() const { return _queries.end(); }
 
   bool empty() const { return _queries.empty(); }
@@ -66,14 +61,33 @@ class BooleanQuery : public Filter::Query {
   ScoreMergeType merge_type() const noexcept { return _merge_type; }
 
  private:
-  // 0..excl_-1 - included queries
-  // excl_..queries.end() - excluded queries
   queries_t _queries;
-  // index of the first excluded query
-  size_t _excl = 0;
   ScoreMergeType _merge_type = ScoreMergeType::Sum;
   score_t _boost = kNoBoost;
 };
+
+class ExclusionQuery : public Filter::Query {
+ public:
+  ExclusionQuery(Query::ptr include, Query::ptr exclude) noexcept
+    : _include{std::move(include)}, _exclude{std::move(exclude)} {}
+
+  DocIterator::ptr execute(const ExecutionContext& ctx) const final;
+
+  void visit(const SubReader& segment, PreparedStateVisitor& visitor,
+             score_t boost) const final {
+    _include->visit(segment, visitor, boost);
+  }
+
+  score_t Boost() const noexcept final { return _include->Boost(); }
+
+ private:
+  Query::ptr _include;
+  Query::ptr _exclude;
+};
+
+Filter::Query::ptr PrepareExclusion(const PrepareContext& ctx,
+                                    const Filter* include,
+                                    const Filter* exclude);
 
 // Represent a set of queries joint by "And"
 class AndQuery : public BooleanQuery {
@@ -117,8 +131,7 @@ class BoostQuery : public Filter::Query {
     return {};
   }
 
-  void Prepare(const PrepareContext& ctx, const BooleanFilter& req,
-               const Or& opt);
+  void Prepare(const PrepareContext& ctx, const Filter& req, const Filter& opt);
 
  private:
   Query::ptr _req;

@@ -22,6 +22,8 @@
 
 #include "filter_test_case_base.hpp"
 #include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/automaton_filter.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -67,10 +69,14 @@ Filter MakeFilter(irs::field_id field, std::string_view term) {
   return q;
 }
 
-// Resolves a wildcard pattern into its concrete filter (ByTerm / ByPrefix /
-// ByWildcard), mirroring how callers build wildcard filters in production.
+// Resolves a wildcard pattern into its concrete executable filter
+// (ByTerm / ByPrefix / AutomatonFilter), mirroring how callers build and
+// optimize wildcard filters in production.
 irs::Filter::ptr MakeWildcard(irs::field_id field, std::string_view term) {
-  return irs::CreateByWildcard(field, irs::ViewCast<irs::byte_type>(term));
+  auto filter =
+    irs::CreateByWildcard(field, irs::ViewCast<irs::byte_type>(term));
+  irs::Optimize(filter);
+  return filter;
 }
 
 }  // namespace
@@ -106,9 +112,9 @@ TEST(by_wildcard_test, boost) {
 
   // no boost
   {
-    irs::ByWildcard q = MakeFilter(kFieldId, "bar*");
+    irs::Filter::ptr q = MakeWildcard(kFieldId, "bar*");
 
-    auto prepared = q.prepare({
+    auto prepared = q->prepare({
       .index = irs::SubReader::empty(),
       .memory = counter,
     });
@@ -122,10 +128,12 @@ TEST(by_wildcard_test, boost) {
   {
     irs::score_t boost = 1.5f;
 
-    irs::ByWildcard q = MakeFilter(kFieldId, "bar*");
-    q.boost(boost);
+    irs::Filter::ptr q = irs::CreateByWildcard(
+      kFieldId, irs::ViewCast<irs::byte_type>(std::string_view("bar*")), 1024,
+      boost);
+    irs::Optimize(q);
 
-    auto prepared = q.prepare({
+    auto prepared = q->prepare({
       .index = irs::SubReader::empty(),
       .memory = counter,
     });
@@ -596,7 +604,7 @@ TEST_P(WildcardFilterTestCase, visit) {
     auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
     tests::EmptyFilterVisitor visitor;
     auto automaton = irs::FromWildcard(term);
-    auto field_visitor = irs::ByWildcard::visitor(automaton);
+    auto field_visitor = irs::AutomatonFilter::visitor(automaton);
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
@@ -613,7 +621,7 @@ TEST_P(WildcardFilterTestCase, visit) {
     auto prefix = irs::ViewCast<irs::byte_type>(std::string_view("ab%"));
     tests::EmptyFilterVisitor visitor;
     auto automaton = irs::FromWildcard(prefix);
-    auto field_visitor = irs::ByWildcard::visitor(automaton);
+    auto field_visitor = irs::AutomatonFilter::visitor(automaton);
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
@@ -634,7 +642,7 @@ TEST_P(WildcardFilterTestCase, visit) {
     auto wildcard = irs::ViewCast<irs::byte_type>(std::string_view("a_c%"));
     tests::EmptyFilterVisitor visitor;
     auto automaton = irs::FromWildcard(wildcard);
-    auto field_visitor = irs::ByWildcard::visitor(automaton);
+    auto field_visitor = irs::AutomatonFilter::visitor(automaton);
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());

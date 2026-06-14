@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <span>
 #include <vector>
 
 #include "iresearch/search/all_docs_provider.hpp"
@@ -75,18 +76,13 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
     _filters.erase(_filters.begin() + to, _filters.end());
   }
 
-  Query::ptr PrepareImpl(const PrepareContext& ctx, uint32_t min_match) const;
+  std::vector<Filter::ptr>& mutable_filters() noexcept { return _filters; }
 
  protected:
   bool equals(const Filter& rhs) const noexcept final;
 
-  virtual Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                                    std::vector<const Filter*>& excl,
+  virtual Query::ptr PrepareBoolean(std::span<const Filter::ptr> filters,
                                     const PrepareContext& ctx) const = 0;
-
-  void GroupFilters(AllDocsProvider::Ptr& all_docs_zero_boost,
-                    std::vector<const Filter*>& incl,
-                    std::vector<const Filter*>& excl) const;
 
   std::vector<Filter::ptr> _filters;
   ScoreMergeType _merge_type = ScoreMergeType::Sum;
@@ -100,8 +96,7 @@ class And final : public BooleanFilter {
   TypeInfo::type_id type() const noexcept final { return irs::Type<And>::id(); }
 
  protected:
-  Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                            std::vector<const Filter*>& excl,
+  Query::ptr PrepareBoolean(std::span<const Filter::ptr> filters,
                             const PrepareContext& ctx) const final;
 };
 
@@ -122,26 +117,71 @@ class Or final : public BooleanFilter {
   TypeInfo::type_id type() const noexcept final { return irs::Type<Or>::id(); }
 
  protected:
-  Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                            std::vector<const Filter*>& excl,
+  Query::ptr PrepareBoolean(std::span<const Filter::ptr> filters,
                             const PrepareContext& ctx) const final;
 
  private:
   uint32_t _min_match_count{1};
 };
 
-// Represents negation
-class Not : public FilterWithType<Not>, public AllDocsProvider {
+class Exclusion : public FilterWithType<Exclusion> {
+ public:
+  const Filter* include() const { return _include.get(); }
+  const Filter* exclude() const { return _exclude.get(); }
+
+  template<typename T>
+  const T* exclude() const {
+    return sdb::basics::downCast<T>(_exclude.get());
+  }
+
+  template<typename T, typename... Args>
+  T& include(Args&&... args) {
+    static_assert(std::is_base_of_v<irs::Filter, T>);
+    _include = std::make_unique<T>(std::forward<Args>(args)...);
+    return sdb::basics::downCast<T>(*_include);
+  }
+
+  template<typename T, typename... Args>
+  T& exclude(Args&&... args) {
+    static_assert(std::is_base_of_v<irs::Filter, T>);
+    _exclude = std::make_unique<T>(std::forward<Args>(args)...);
+    return sdb::basics::downCast<T>(*_exclude);
+  }
+
+  Filter& include(Filter::ptr filter) {
+    SDB_ASSERT(filter);
+    _include = std::move(filter);
+    return *_include;
+  }
+
+  Filter& exclude(Filter::ptr filter) {
+    SDB_ASSERT(filter);
+    _exclude = std::move(filter);
+    return *_exclude;
+  }
+
+  bool empty() const { return _exclude == nullptr; }
+
+  Filter::ptr& mutable_include() noexcept { return _include; }
+  Filter::ptr& mutable_exclude() noexcept { return _exclude; }
+
+  Query::ptr prepare(const PrepareContext& ctx) const final;
+
+ protected:
+  bool equals(const irs::Filter& rhs) const noexcept final;
+
+ private:
+  Filter::ptr _include;
+  Filter::ptr _exclude;
+};
+
+class Not final : public FilterWithType<Not> {
  public:
   Not() = default;
   explicit Not(Filter::ptr filter) : _filter{std::move(filter)} {}
 
-  const Filter* filter() const { return _filter.get(); }
-
-  template<typename T>
-  const T* filter() const {
-    return sdb::basics::downCast<T>(_filter.get());
-  }
+  const Filter* filter() const noexcept { return _filter.get(); }
+  Filter::ptr& mutable_filter() noexcept { return _filter; }
 
   template<typename T, typename... Args>
   T& filter(Args&&... args) {
@@ -149,9 +189,6 @@ class Not : public FilterWithType<Not>, public AllDocsProvider {
     _filter = std::make_unique<T>(std::forward<Args>(args)...);
     return sdb::basics::downCast<T>(*_filter);
   }
-
-  void clear() { _filter.reset(); }
-  bool empty() const { return nullptr == _filter; }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 

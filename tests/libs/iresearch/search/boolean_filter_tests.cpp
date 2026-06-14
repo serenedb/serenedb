@@ -32,6 +32,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/exclusion.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -541,7 +542,8 @@ TEST(boolean_query_boost, and_filter) {
   {
     irs::And root;
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     ASSERT_EQ(irs::kNoBoost, prep->Boost());
   }
@@ -553,7 +555,8 @@ TEST(boolean_query_boost, and_filter) {
     irs::And root;
     root.boost(value);
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     ASSERT_EQ(irs::kNoBoost, prep->Boost());
   }
@@ -571,8 +574,8 @@ TEST(boolean_query_boost, and_filter) {
       node.boost(value);
     }
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    auto prep = tests::OptimizedPrepare(
+      std::move(root), {.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
@@ -603,8 +606,8 @@ TEST(boolean_query_boost, and_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    auto prep = tests::OptimizedPrepare(
+      std::move(root), {.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
@@ -803,7 +806,8 @@ TEST(boolean_query_boost, or_filter) {
   {
     irs::Or root;
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     ASSERT_EQ(irs::kNoBoost, prep->Boost());
   }
@@ -815,7 +819,8 @@ TEST(boolean_query_boost, or_filter) {
     irs::Or root;
     root.boost(value);
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     ASSERT_EQ(irs::kNoBoost, prep->Boost());
   }
@@ -833,8 +838,8 @@ TEST(boolean_query_boost, or_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    auto prep = tests::OptimizedPrepare(
+      std::move(root), {.index = irs::SubReader::empty(), .scorer = &sort});
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
 
@@ -864,8 +869,8 @@ TEST(boolean_query_boost, or_filter) {
     }
     root.boost(value);
 
-    auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+    auto prep = tests::OptimizedPrepare(
+      std::move(root), {.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
@@ -1312,14 +1317,14 @@ TEST(boolean_query_estimation, or_filter) {
     irs::Or root;
     root.add<detail::Estimated>().est = 100;
     root.add<detail::Estimated>().est = 320;
-    root.add<irs::Not>().filter<detail::Estimated>().est = 3;
+    root.add<irs::Exclusion>().exclude<detail::Estimated>().est = 3;
     root.add<detail::Unestimated>();
     root.add<detail::Estimated>().est = 10;
     root.add<detail::Unestimated>();
     root.add<detail::Estimated>().est = 7;
     root.add<detail::Estimated>().est = 100;
-    root.add<irs::Not>().filter<detail::Unestimated>();
-    root.add<irs::Not>().filter<detail::Estimated>().est = 0;
+    root.add<irs::Exclusion>().exclude<detail::Unestimated>();
+    root.add<irs::Exclusion>().exclude<detail::Estimated>().est = 0;
     root.add<detail::Unestimated>();
 
     // we need order to suppress optimization
@@ -1358,7 +1363,8 @@ TEST(boolean_query_estimation, or_filter) {
   {
     irs::Or root;
 
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     auto docs = prep->execute({.segment = irs::SubReader::empty()});
     ASSERT_EQ(0, irs::CostAttr::extract(*docs));
@@ -1446,14 +1452,14 @@ TEST(boolean_query_estimation, and_filter) {
     irs::And root;
     root.add<detail::Estimated>().est = 100;
     root.add<detail::Estimated>().est = 320;
-    root.add<irs::Not>().filter<detail::Estimated>().est = 3;
+    root.add<irs::Exclusion>().exclude<detail::Estimated>().est = 3;
     root.add<detail::Unestimated>();
     root.add<detail::Estimated>().est = 10;
     root.add<detail::Unestimated>();
     root.add<detail::Estimated>().est = 7;
     root.add<detail::Estimated>().est = 100;
-    root.add<irs::Not>().filter<detail::Unestimated>();
-    root.add<irs::Not>().filter<detail::Estimated>().est = 0;
+    root.add<irs::Exclusion>().exclude<detail::Unestimated>();
+    root.add<irs::Exclusion>().exclude<detail::Estimated>().est = 0;
     root.add<detail::Unestimated>();
 
     auto prep = root.prepare({.index = irs::SubReader::empty()});
@@ -1468,13 +1474,14 @@ TEST(boolean_query_estimation, and_filter) {
       }
     }
 
-    ASSERT_EQ(7, irs::CostAttr::extract(*docs));
+    ASSERT_EQ(0, irs::CostAttr::extract(*docs));
   }
 
   // empty case
   {
     irs::And root;
-    auto prep = root.prepare({.index = irs::SubReader::empty()});
+    auto prep = tests::OptimizedPrepare(std::move(root),
+                                        {.index = irs::SubReader::empty()});
 
     auto docs = prep->execute({.segment = irs::SubReader::empty()});
     ASSERT_EQ(0, irs::CostAttr::extract(*docs));
@@ -14889,7 +14896,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> expected{2, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
 
       // cost
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
@@ -14909,7 +14917,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> excluded{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
@@ -14927,7 +14936,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> excluded{1, 5, 6, 12, 29};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
         result.push_back(it.value());
@@ -14945,7 +14955,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
         result.push_back(it.value());
@@ -14962,7 +14973,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> excluded{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
@@ -14981,7 +14993,8 @@ TEST(exclusion_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+      irs::ExclusionIterator it(MakeScoreAdapter(included),
+                                MakeScoreAdapter(excluded));
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
@@ -15009,7 +15022,8 @@ TEST(exclusion_test, seek) {
       {45, 45},
       {43, 45},
       {57, irs::doc_limits::eof()}};
-    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+    irs::ExclusionIterator it(MakeScoreAdapter(included),
+                              MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15026,7 +15040,8 @@ TEST(exclusion_test, seek) {
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
       {6, irs::doc_limits::eof()},
       {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
-    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+    irs::ExclusionIterator it(MakeScoreAdapter(included),
+                              MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15047,7 +15062,8 @@ TEST(exclusion_test, seek) {
       {13, irs::doc_limits::eof()},
       {45, irs::doc_limits::eof()},
       {57, irs::doc_limits::eof()}};
-    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+    irs::ExclusionIterator it(MakeScoreAdapter(included),
+                              MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15067,7 +15083,8 @@ TEST(exclusion_test, seek) {
       {irs::doc_limits::invalid(), 11},
       {45, 45},
       {57, irs::doc_limits::eof()}};
-    irs::Exclusion it(MakeScoreAdapter(included), MakeScoreAdapter(excluded));
+    irs::ExclusionIterator it(MakeScoreAdapter(included),
+                              MakeScoreAdapter(excluded));
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
@@ -15168,14 +15185,14 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
 
   // empty query
   {
-    CheckQuery(irs::Or(), Docs{}, rdr);
+    CheckQuery(*tests::Optimized(irs::Or()), Docs{}, rdr);
   }
 
   {
     irs::Or root;
     Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
-    CheckQuery(root, Docs{22}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{22}, rdr);
   }
 
   // name=W OR name=Z
@@ -15184,7 +15201,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldName, "W");  // 23
     Append<irs::ByTerm>(root, kFieldName, "C");  // 3
 
-    CheckQuery(root, Docs{3, 23}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{3, 23}, rdr);
   }
 
   // name=A OR name=Q OR name=Z
@@ -15194,7 +15211,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
     Append<irs::ByTerm>(root, kFieldName, "Z");  // 26
 
-    CheckQuery(root, Docs{1, 17, 26}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 17, 26}, rdr);
   }
 
   // name=A OR name=Q OR same!=xyz
@@ -15202,12 +15219,12 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     irs::Or root;
     Append<irs::ByTerm>(root, kFieldName, "A");  // 1
     Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
-    root.add<irs::Or>().add<irs::Not>().filter<irs::ByTerm>() =
+    root.add<irs::Or>().add<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldSame,
                               "xyz");  // none (not within an OR must be
                                        // wrapped inside a single-branch OR)
 
-    CheckQuery(root, Docs{1, 17}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 17}, rdr);
   }
 
   // (name=A OR name=Q) OR same!=xyz
@@ -15215,12 +15232,12 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     irs::Or root;
     Append<irs::ByTerm>(root, kFieldName, "A");  // 1
     Append<irs::ByTerm>(root, kFieldName, "Q");  // 17
-    root.add<irs::Or>().add<irs::Not>().filter<irs::ByTerm>() =
+    root.add<irs::Or>().add<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldSame,
                               "xyz");  // none (not within an OR must be
                                        // wrapped inside a single-branch OR)
 
-    CheckQuery(root, Docs{1, 17}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 17}, rdr);
   }
 
   // name=A OR name=Q OR name=Z OR same=invalid_term OR invalid_field=V
@@ -15232,7 +15249,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
     Append<irs::ByTerm>(root, kFieldInvalid, "V");
 
-    CheckQuery(root, Docs{1, 17, 26}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 17, 26}, rdr);
   }
 
   // search : all terms
@@ -15244,10 +15261,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldSame, "xyz");  // 1..32
     Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
 
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      *tests::Optimized(std::move(root)),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // min match count == 0
@@ -15256,10 +15274,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     root.min_match_count(0);
     Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      *tests::Optimized(std::move(root)),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // min match count == 0
@@ -15267,10 +15286,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     irs::Or root;
     root.min_match_count(0);
 
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      *tests::Optimized(std::move(root)),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // min match count is geater than a number of conditions
@@ -15283,7 +15303,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
     root.min_match_count(root.size() + 1);
 
-    CheckQuery(root, Docs{}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{}, rdr);
   }
 
   // name=A OR false
@@ -15292,13 +15312,13 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldName, "A");  // 1
     root.add<irs::Empty>();
 
-    CheckQuery(root, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 
   // name!=A OR false
   {
     irs::Or root;
-    root.add<irs::Not>().filter<irs::ByTerm>() =
+    root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldName, "A");  // 1
     root.add<irs::Empty>();
 
@@ -15311,7 +15331,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
   // Not with impossible name!=A OR same="NOT POSSIBLE"
   {
     irs::Or root;
-    root.add<irs::Not>().filter<irs::ByTerm>() =
+    root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldName, "A");  // 1
     Append<irs::ByTerm>(root, kFieldSame, "NOT POSSIBLE");
     CheckQuery(
@@ -15329,7 +15349,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     root.add<irs::All>();
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(5);
-    CheckQuery(root, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 
   // optimization should adjust min_match same but with score to check scored
@@ -15343,7 +15363,8 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(5);
     irs::Scorer::ptr sort{std::make_unique<sort::CustomSort>()};
-    CheckQuery(root, std::span{&sort, 1}, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), std::span{&sort, 1}, Docs{1},
+               rdr);
   }
 
   // optimization should adjust min_match
@@ -15363,10 +15384,11 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     root.add<irs::All>();
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");
     root.min_match_count(3);
-    CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                          12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                          23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-               rdr);
+    CheckQuery(
+      *tests::Optimized(std::move(root)),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // scored
@@ -15390,7 +15412,8 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
                   12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
                   23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
 
-    CheckQuery(root, std::span{&sort, 1}, expected, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), std::span{&sort, 1},
+               expected, rdr);
   }
 }
 
@@ -15421,7 +15444,7 @@ TEST_P(BooleanFilterTestCase, and_schemas) {
     irs::And root;
     Append<irs::ByTerm>(root, kFieldNameUpper, "Product");
     Append<irs::ByTerm>(root, kFieldSource, "AdventureWor3ks2014");
-    CheckQuery(root, Docs{}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{}, rdr);
   }
 }
 
@@ -15437,7 +15460,7 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
 
   // empty query
   {
-    CheckQuery(irs::And(), Docs{}, rdr);
+    CheckQuery(*tests::Optimized(irs::And()), Docs{}, rdr);
   }
 
   // name=V
@@ -15445,7 +15468,7 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
     irs::And root;
     Append<irs::ByTerm>(root, kFieldName, "V");  // 22
 
-    CheckQuery(root, Docs{22}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{22}, rdr);
   }
 
   // duplicated=abcd AND same=xyz
@@ -15453,7 +15476,8 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
     irs::And root;
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
     Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
-    CheckQuery(root, Docs{1, 5, 11, 21, 27, 31}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 5, 11, 21, 27, 31},
+               rdr);
   }
 
   // duplicated=abcd AND same=xyz AND name=A
@@ -15462,7 +15486,7 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
     Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
     Append<irs::ByTerm>(root, kFieldName, "A");           // 1
-    CheckQuery(root, Docs{1}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 
   // duplicated=abcd AND same=xyz AND name=B
@@ -15471,7 +15495,7 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
     Append<irs::ByTerm>(root, kFieldDuplicated, "abcd");  // 1,5,11,21,27,31
     Append<irs::ByTerm>(root, kFieldSame, "xyz");         // 1..32
     Append<irs::ByTerm>(root, kFieldName, "B");           // 2
-    CheckQuery(root, Docs{}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{}, rdr);
   }
 }
 
@@ -15493,8 +15517,8 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
                                            20, 19, 18, 17, 16, 15, 14, 13, 12,
                                            10, 9,  8,  7,  6,  4,  3,  2};
 
-    irs::Not not_node;
-    not_node.filter<irs::ByTerm>() =
+    irs::Exclusion not_node;
+    not_node.exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(column_name, "abcd");
 
     size_t collector_finish_count = 0;
@@ -15579,7 +15603,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
                                            10, 9,  8,  7,  6,  4,  3,  2};
 
     irs::And root;
-    root.add<irs::Not>().filter<irs::ByTerm>() =
+    root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(column_name, "abcd");
 
     size_t collector_finish_count = 0;
@@ -15604,7 +15628,8 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
       *score = cur_doc;
     };
 
-    auto prepared_filter = root.prepare({.index = *rdr, .scorer = &sort});
+    auto prepared_filter = tests::OptimizedPrepare(
+      std::move(root), {.index = *rdr, .scorer = &sort});
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
     ASSERT_EQ(1, rdr->size());
@@ -15657,37 +15682,43 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
 
   // empty query
   {
-    CheckQuery(irs::Not(), Docs{}, rdr);
+    CheckQuery(
+      *tests::Optimized(irs::Exclusion()),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // single not statement - empty result
   {
-    irs::Not root;
-    root.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
+    irs::Exclusion root;
+    root.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
 
-    CheckQuery(root, Docs{}, rdr);
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{}, rdr);
   }
 
   // duplicated=abcd AND (NOT ( NOT name=A ))
   {
     irs::And root;
     root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-    root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
-      MakeFilter<irs::ByTerm>(kFieldName, "A");
-    CheckQuery(root, Docs{1}, rdr);
+    root.add<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 
   // duplicated=abcd AND (NOT ( NOT (NOT (NOT ( NOT name=A )))))
   {
     irs::And root;
     root.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-    root.add<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
-    CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
+    root.add<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{5, 11, 21, 27, 31},
+               rdr);
   }
 
   // * AND NOT *
@@ -15695,15 +15726,19 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
     {
       irs::And root;
       root.add<irs::All>();
-      root.add<irs::Not>().filter<irs::All>();
-      CheckQuery(root, Docs{}, rdr);
+      root.add<irs::Exclusion>().exclude<irs::All>();
+      CheckQuery(*tests::Optimized(std::move(root)), Docs{}, rdr);
     }
 
     {
       irs::Or root;
       root.add<irs::All>();
-      root.add<irs::Not>().filter<irs::All>();
-      CheckQuery(root, Docs{}, rdr);
+      root.add<irs::Exclusion>().exclude<irs::All>();
+      CheckQuery(
+        *tests::Optimized(std::move(root)),
+        Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+        rdr);
     }
 
   }  // namespace tests
@@ -15714,45 +15749,23 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::And root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
+      CheckQuery(*tests::Optimized(std::move(root)), Docs{5, 11, 21, 27, 31},
+                 rdr);
     }
 
     {
       irs::Or root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
-                            13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                            24, 25, 26, 27, 28, 29, 30, 31, 32},
-                 rdr);
-    }
-    // check 'all' filter added for Not nodes does not affects score
-    {
-      irs::Or root;
-      auto& left_branch = root.add<irs::And>();
-      // this three filters fire at same doc so it will get score = 3
-      Append<irs::ByTerm>(left_branch, kFieldName, "A");
-      Append<irs::ByTerm>(left_branch, kFieldDuplicated, "abcd");
-      Append<irs::ByTerm>(left_branch, kFieldSame, "xyz");
-
-      auto& right_branch = root.add<irs::And>();
-      Append<irs::ByTerm>(right_branch, kFieldName, "B");  // +1 score
-      auto& sub = right_branch.add<irs::Or>();    // this OR we actually test
-      Append<irs::ByTerm>(sub, kFieldName, "B");  // +1 score
-      // will exclude some docs (but A will stay) and produce 'all'
-      sub.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>(kFieldPrefix, "abcde");
-      // will exclude some docs (but A will stay) and produce another 'all'
-      sub.add<irs::Not>().filter<irs::ByTerm>() =
-        MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      // if 'all' will add at least 1 to score totals score will be 3 and
-      // expected order will break
-      irs::Scorer::ptr sort{std::make_unique<tests::sort::Boost>()};
-      CheckQuery(root, std::span{&sort, 1}, Docs{2, 1}, rdr);
+      CheckQuery(
+        *tests::Optimized(std::move(root)),
+        Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+        rdr);
     }
   }
 
@@ -15762,25 +15775,27 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::And root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      CheckQuery(root, Docs{5, 11, 21, 27, 31}, rdr);
+      CheckQuery(*tests::Optimized(std::move(root)), Docs{5, 11, 21, 27, 31},
+                 rdr);
     }
 
     {
       irs::Or root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
-                            13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                            24, 25, 26, 27, 28, 29, 30, 31, 32},
-                 rdr);
+      CheckQuery(
+        *tests::Optimized(std::move(root)),
+        Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+        rdr);
     }
   }
 
@@ -15790,25 +15805,26 @@ TEST_P(BooleanFilterTestCase, not_sequential) {
       irs::And root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "E");
-      CheckQuery(root, Docs{11, 21, 27, 31}, rdr);
+      CheckQuery(*tests::Optimized(std::move(root)), Docs{11, 21, 27, 31}, rdr);
     }
 
     {
       irs::Or root;
       root.add<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldName, "A");
-      root.add<irs::Not>().filter<irs::ByTerm>() =
+      root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
         MakeFilter<irs::ByTerm>(kFieldPrefix, "abcd");
-      CheckQuery(root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
-                            13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                            24, 25, 26, 27, 28, 29, 30, 31, 32},
-                 rdr);
+      CheckQuery(
+        *tests::Optimized(std::move(root)),
+        Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+        rdr);
     }
   }
 }
@@ -15831,21 +15847,23 @@ TEST_P(BooleanFilterTestCase, not_and_conjunction_regression) {
   }
   auto rdr = open_reader();
 
-  irs::Not root;
-  auto& conj = root.filter<irs::And>();
+  irs::Exclusion root;
+  auto& conj = root.exclude<irs::And>();
   conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz");
   conj.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
 
   // duplicated=abcd matches {1, 5, 11, 21, 27, 31}; same=xyz matches
   // all 32 docs; the And matches the abcd set; Not is the complement.
-  CheckQuery(root, Docs{2,  3,  4,  6,  7,  8,  9,  10, 12, 13, 14, 15, 16,
-                        17, 18, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 32},
+  irs::Filter::ptr optimized = tests::Optimized(std::move(root));
+  CheckQuery(*optimized,
+             Docs{2,  3,  4,  6,  7,  8,  9,  10, 12, 13, 14, 15, 16,
+                  17, 18, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 32},
              rdr);
 
   // Also exercise seek() across the result set -- this is the path
   // that drove the SQL-side crash, since the table scan repeatedly
   // re-enters Exclusion::converge with the next incl doc.
-  auto prepared = root.prepare({.index = rdr});
+  auto prepared = optimized->prepare({.index = rdr});
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({.segment = sub});
     for (irs::doc_id_t target : {2, 5, 6, 11, 12, 21, 22, 27, 28, 31, 32}) {
@@ -15870,21 +15888,26 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
 
   // empty query
   {
-    CheckQuery(irs::Not(), Docs{}, rdr);
+    CheckQuery(
+      *tests::Optimized(irs::Exclusion()),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
   }
 
   // single not statement - empty result
   {
-    irs::Not not_node;
-    not_node.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldSame, "xyz"),
+    irs::Exclusion not_node;
+    not_node.exclude<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldSame, "xyz"),
 
     CheckQuery(not_node, Docs{}, rdr);
   }
 
   // single not statement - all docs
   {
-    irs::Not not_node;
-    not_node.filter<irs::ByTerm>() =
+    irs::Exclusion not_node;
+    not_node.exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldSame, "invalid_term"),
 
     CheckQuery(not_node, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
@@ -15895,25 +15918,118 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential) {
 
   // (NOT (NOT name=A))
   {
-    irs::Not not_node;
-    not_node.filter<irs::Not>().filter<irs::ByTerm>() =
+    irs::Exclusion not_node;
+    not_node.exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldName, "A");
     CheckQuery(not_node, Docs{1}, rdr);
   }
 
   // (NOT (NOT (NOT (NOT (NOT name=A)))))
   {
-    irs::Not not_node;
-    not_node.filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::Not>()
-      .filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    irs::Exclusion not_node;
+    not_node.exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::Exclusion>()
+      .exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
 
     CheckQuery(not_node, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
                               13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
                               24, 25, 26, 27, 28, 29, 30, 31, 32},
                rdr);
+  }
+}
+
+TEST_P(BooleanFilterTestCase, exclusion_sequential) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    irs::Exclusion root;
+    CheckQuery(
+      *tests::Optimized(std::move(root)),
+      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(
+      root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
+                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.include<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 5, 11, 21, 27, 31},
+               rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.include<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
+    root.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{5, 11, 21, 27, 31},
+               rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.include<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
+    auto& any = root.exclude<irs::Or>();
+    any.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "A");
+    any.add<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldName, "E");
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{11, 21, 27, 31}, rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
+  }
+
+  {
+    irs::And root;
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");
+    root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(
+      root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
+                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
+  }
+
+  {
+    irs::And root;
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");
+    root.add<irs::Exclusion>().exclude<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(
+      root, Docs{2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
+                 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+      rdr);
+  }
+
+  {
+    irs::Exclusion root;
+    root.include<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldDuplicated, "abcd");
+    root.exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
+      MakeFilter<irs::ByTerm>(kFieldName, "A");
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{1}, rdr);
   }
 }
 
@@ -15946,8 +16062,8 @@ TEST_P(BooleanFilterTestCase, mixed) {
         Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
-      CheckQuery(root, Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31},
-                 rdr);
+      CheckQuery(*tests::Optimized(std::move(root)),
+                 Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31}, rdr);
     }
 
     // ((same=xyz AND duplicated=abcd) OR (same=xyz AND duplicated=vczc)) AND
@@ -15976,7 +16092,7 @@ TEST_P(BooleanFilterTestCase, mixed) {
         }
       }
 
-      CheckQuery(root, Docs{24}, rdr);
+      CheckQuery(*tests::Optimized(std::move(root)), Docs{24}, rdr);
     }
 
     // ((same=xyz AND duplicated=abcd) OR (name=A or name=C or NAME=P or
@@ -16027,8 +16143,8 @@ TEST_P(BooleanFilterTestCase, mixed) {
         }
       }
 
-      CheckQuery(root, Docs{1, 2, 3, 5, 8, 11, 14, 16, 17, 19, 21, 24, 27, 31},
-                 rdr);
+      CheckQuery(*tests::Optimized(std::move(root)),
+                 Docs{1, 2, 3, 5, 8, 11, 14, 16, 17, 19, 21, 24, 27, 31}, rdr);
     }
 
     // (same=xyz AND duplicated=abcd) OR (same=xyz AND duplicated=vczc) AND *
@@ -16052,10 +16168,11 @@ TEST_P(BooleanFilterTestCase, mixed) {
         Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
-      CheckQuery(root, Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
-                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                            23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-                 rdr);
+      CheckQuery(
+        *tests::Optimized(std::move(root)),
+        Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
+             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+        rdr);
     }
 
     // (same=xyz AND duplicated=abcd) OR (same=xyz AND duplicated=vczc) OR NOT
@@ -16064,7 +16181,7 @@ TEST_P(BooleanFilterTestCase, mixed) {
       irs::Or root;
 
       // NOT *
-      root.add<irs::Not>().filter<irs::All>();
+      root.add<irs::Exclusion>().exclude<irs::All>();
 
       // same=xyz AND duplicated=abcd
       {
@@ -16080,7 +16197,8 @@ TEST_P(BooleanFilterTestCase, mixed) {
         Append<irs::ByTerm>(child, kFieldDuplicated, "vczc");
       }
 
-      CheckQuery(root, Docs{}, rdr);
+      CheckQuery(*tests::Optimized(std::move(root)),
+                 Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31}, rdr);
     }
   }
 }
@@ -16116,7 +16234,8 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
 
     irs::TFIDF tfidf_scorer;
 
-    auto prepared = root.prepare({.index = *rdr, .scorer = &tfidf_scorer});
+    auto prepared = tests::OptimizedPrepare(
+      std::move(root), {.index = *rdr, .scorer = &tfidf_scorer});
     ASSERT_NE(nullptr, prepared);
 
     std::vector<irs::doc_id_t> expected_docs{
@@ -16148,36 +16267,95 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
   }
 }
 
-TEST(Not_test, ctor) {
-  irs::Not q;
-  ASSERT_EQ(irs::Type<irs::Not>::id(), q.type());
-  ASSERT_EQ(nullptr, q.filter());
+TEST(Exclusion_test, ctor) {
+  irs::Exclusion q;
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), q.type());
+  ASSERT_EQ(nullptr, q.include());
+  ASSERT_EQ(nullptr, q.exclude());
+  ASSERT_TRUE(q.empty());
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 }
 
-TEST(Not_test, equal) {
+TEST(Exclusion_test, equal) {
   {
-    irs::Not lhs, rhs;
+    irs::Exclusion lhs, rhs;
     ASSERT_EQ(lhs, rhs);
   }
 
   {
-    irs::Not lhs;
-    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    irs::Exclusion lhs;
+    lhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
 
-    irs::Not rhs;
-    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    irs::Exclusion rhs;
+    rhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
     ASSERT_EQ(lhs, rhs);
   }
 
   {
-    irs::Not lhs;
-    lhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    irs::Exclusion lhs;
+    lhs.include<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbcd, "def");
+    lhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
 
-    irs::Not rhs;
-    rhs.filter<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbcd, "def");
+    irs::Exclusion rhs;
+    rhs.include<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbcd, "def");
+    rhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    ASSERT_EQ(lhs, rhs);
+  }
+
+  {
+    irs::Exclusion lhs;
+    lhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+
+    irs::Exclusion rhs;
+    rhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbcd, "def");
     ASSERT_NE(lhs, rhs);
   }
+
+  {
+    irs::Exclusion lhs;
+    lhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+
+    irs::Exclusion rhs;
+    rhs.include<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    rhs.exclude<irs::ByTerm>() = MakeFilter<irs::ByTerm>(kFieldAbc, "def");
+    ASSERT_NE(lhs, rhs);
+  }
+}
+
+TEST(Not_helper_test, shape) {
+  auto inner =
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldAbc, "def"));
+  const auto* inner_raw = inner.get();
+
+  irs::Filter::ptr filter = std::make_unique<irs::Not>(std::move(inner));
+  ASSERT_NE(nullptr, filter);
+  ASSERT_EQ(irs::Type<irs::Not>::id(), filter->type());
+
+  const auto* not_filter = dynamic_cast<const irs::Not*>(filter.get());
+  ASSERT_NE(nullptr, not_filter);
+  ASSERT_EQ(inner_raw, not_filter->filter());
+}
+
+TEST(Not_helper_test, equal) {
+  irs::Not expected{
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldAbc, "def"))};
+
+  irs::Not filter{
+    std::make_unique<irs::ByTerm>(MakeFilter<irs::ByTerm>(kFieldAbc, "def"))};
+  ASSERT_EQ(expected, filter);
+}
+
+TEST(Not_helper_test, optimize_double_negation) {
+  auto root = std::make_unique<irs::And>();
+  root->add(std::make_unique<irs::Not>(
+    std::make_unique<irs::Not>(std::make_unique<irs::ByTerm>(
+      MakeFilter<irs::ByTerm>(kFieldTestField, "test_term")))));
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  auto prepared = filter->prepare({.index = irs::SubReader::empty()});
+  ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
 }
 
 TEST(And_test, ctor) {
@@ -16238,17 +16416,21 @@ TEST(And_test, equal) {
 }
 
 TEST(And_test, optimize_double_negation) {
-  irs::And root;
-  root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
+  auto root = std::make_unique<irs::And>();
+  root->add<irs::Exclusion>().exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
     MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  auto prepared = filter->prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
 }
 
 TEST(And_test, prepare_empty_filter) {
-  irs::And root;
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
+  irs::Filter::ptr root = std::make_unique<irs::And>();
+  irs::Optimize(root);
+  auto prepared = root->prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, prepared);
   ASSERT_EQ(typeid(irs::Filter::Query::empty().get()), typeid(prepared.get()));
 }
@@ -16259,7 +16441,8 @@ TEST(And_test, optimize_single_node) {
     irs::And root;
     Append<irs::ByTerm>(root, kFieldTestField, "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = tests::OptimizedPrepare(std::move(root),
+                                            {.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 
@@ -16269,7 +16452,8 @@ TEST(And_test, optimize_single_node) {
     root.add<irs::And>().add<irs::And>().add<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = tests::OptimizedPrepare(std::move(root),
+                                            {.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 }
@@ -16280,7 +16464,8 @@ TEST(And_test, optimize_all_filters) {
     irs::And root;
     root.add<irs::All>().boost(5.f);
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = tests::OptimizedPrepare(std::move(root),
+                                            {.index = irs::SubReader::empty()});
     ASSERT_EQ(
       typeid(irs::All().prepare({.index = irs::SubReader::empty()}).get()),
       typeid(prepared.get()));
@@ -16289,12 +16474,14 @@ TEST(And_test, optimize_all_filters) {
 
   // multiple `all` filters
   {
-    irs::And root;
-    root.add<irs::All>().boost(5.f);
-    root.add<irs::All>().boost(2.f);
-    root.add<irs::All>().boost(3.f);
+    auto root = std::make_unique<irs::And>();
+    root->add<irs::All>().boost(5.f);
+    root->add<irs::All>().boost(2.f);
+    root->add<irs::All>().boost(3.f);
+    irs::Filter::ptr f = std::move(root);
+    irs::Optimize(f);
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = f->prepare({.index = irs::SubReader::empty()});
     ASSERT_EQ(
       typeid(irs::All().prepare({.index = irs::SubReader::empty()}).get()),
       typeid(prepared.get()));
@@ -16303,14 +16490,16 @@ TEST(And_test, optimize_all_filters) {
 
   // multiple `all` filters + term filter
   {
-    irs::And root;
-    root.add<irs::All>().boost(5.f);
-    root.add<irs::All>().boost(2.f);
-    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
+    auto root = std::make_unique<irs::And>();
+    root->add<irs::All>().boost(5.f);
+    root->add<irs::All>().boost(2.f);
+    Append<irs::ByTerm>(*root, kFieldTestField, "test_term");
+    irs::Filter::ptr f = std::move(root);
 
     tests::sort::Boost sort{};
+    irs::Optimize(f, {.scorer = &sort});
     auto prepared =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+      f->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
     ASSERT_EQ(8.f, prepared->Boost());
   }
@@ -16318,11 +16507,13 @@ TEST(And_test, optimize_all_filters) {
   // `all` filter + term filter
   {
     tests::sort::Boost sort{};
-    irs::And root;
-    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
-    root.add<irs::All>().boost(5.f);
+    auto root = std::make_unique<irs::And>();
+    Append<irs::ByTerm>(*root, kFieldTestField, "test_term");
+    root->add<irs::All>().boost(5.f);
+    irs::Filter::ptr f = std::move(root);
+    irs::Optimize(f, {.scorer = &sort});
     auto prepared =
-      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+      f->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
     ASSERT_EQ(6.f, prepared->Boost());
   }
@@ -16332,17 +16523,20 @@ TEST(And_test, not_boosted) {
   tests::sort::Boost sort{};
   irs::And root;
   {
-    auto& neg = root.add<irs::Not>();
-    auto& node = neg.filter<detail::Boosted>();
-    node.docs = {5, 6};
-    node.boost(4);
+    auto& neg = root.add<irs::Exclusion>();
+    {
+      auto& node = neg.include<detail::Boosted>();
+      node.docs = {1};
+      node.boost(5);
+    }
+    {
+      auto& node = neg.exclude<detail::Boosted>();
+      node.docs = {5, 6};
+      node.boost(4);
+    }
   }
-  {
-    auto& node = root.add<detail::Boosted>();
-    node.docs = {1};
-    node.boost(5);
-  }
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  auto prep = tests::OptimizedPrepare(
+    std::move(root), {.index = irs::SubReader::empty(), .scorer = &sort});
   auto docs =
     prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
   const auto& scr = docs->PrepareScore({
@@ -16419,11 +16613,14 @@ TEST(Or_test, equal) {
 }
 
 TEST(Or_test, optimize_double_negation) {
-  irs::Or root;
-  root.add<irs::Not>().filter<irs::Not>().filter<irs::ByTerm>() =
+  auto root = std::make_unique<irs::Or>();
+  root->add<irs::Exclusion>().exclude<irs::Exclusion>().exclude<irs::ByTerm>() =
     MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
-  auto prepared = root.prepare({.index = irs::SubReader::empty()});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  auto prepared = filter->prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
 }
 
@@ -16433,7 +16630,8 @@ TEST(Or_test, optimize_single_node) {
     irs::Or root;
     Append<irs::ByTerm>(root, kFieldTestField, "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = tests::OptimizedPrepare(std::move(root),
+                                            {.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 
@@ -16443,32 +16641,35 @@ TEST(Or_test, optimize_single_node) {
     root.add<irs::Or>().add<irs::Or>().add<irs::ByTerm>() =
       MakeFilter<irs::ByTerm>(kFieldTestField, "test_term");
 
-    auto prepared = root.prepare({.index = irs::SubReader::empty()});
+    auto prepared = tests::OptimizedPrepare(std::move(root),
+                                            {.index = irs::SubReader::empty()});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
   }
 }
 
 TEST(Or_test, optimize_all_unscored) {
-  irs::Or root;
+  auto root = std::make_unique<irs::Or>();
   detail::Boosted::gExecuteCount = 0;
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {1};
   }
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {2};
   }
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {3};
   }
-  root.add<irs::All>();
-  root.add<irs::Empty>();
-  root.add<irs::All>();
-  root.add<irs::Empty>();
+  root->add<irs::All>();
+  root->add<irs::Empty>();
+  root->add<irs::All>();
+  root->add<irs::Empty>();
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
 
-  auto prep = root.prepare({.index = irs::SubReader::empty()});
+  auto prep = filter->prepare({.index = irs::SubReader::empty()});
 
   prep->execute({.segment = irs::SubReader::empty()});
   ASSERT_EQ(
@@ -16476,26 +16677,29 @@ TEST(Or_test, optimize_all_unscored) {
 }
 
 TEST(Or_test, optimize_all_scored) {
-  irs::Or root;
+  auto root = std::make_unique<irs::Or>();
   detail::Boosted::gExecuteCount = 0;
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {1};
   }
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {2};
   }
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {3};
   }
-  root.add<irs::All>();
-  root.add<irs::Empty>();
-  root.add<irs::All>();
-  root.add<irs::Empty>();
+  root->add<irs::All>();
+  root->add<irs::Empty>();
+  root->add<irs::All>();
+  root->add<irs::Empty>();
   tests::sort::Boost sort{};
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scorer = &sort});
+  auto prep =
+    filter->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
   prep->execute({.segment = irs::SubReader::empty()});
   ASSERT_EQ(3,
@@ -16505,12 +16709,15 @@ TEST(Or_test, optimize_all_scored) {
 
 TEST(Or_test, optimize_only_all_boosted) {
   tests::sort::Boost sort{};
-  irs::Or root;
-  root.boost(2);
-  root.add<irs::All>().boost(3);
-  root.add<irs::All>().boost(5);
+  auto root = std::make_unique<irs::Or>();
+  root->boost(2);
+  root->add<irs::All>().boost(3);
+  root->add<irs::All>().boost(5);
 
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scorer = &sort});
+  auto prep =
+    filter->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
   prep->execute({.segment = irs::SubReader::empty()});
   ASSERT_EQ(16, prep->Boost());
@@ -16518,19 +16725,22 @@ TEST(Or_test, optimize_only_all_boosted) {
 
 TEST(Or_test, boosted_not) {
   tests::sort::Boost sort{};
-  irs::Or root;
+  auto root = std::make_unique<irs::Or>();
   {
-    auto& neg = root.add<irs::Not>();
-    auto& node = neg.filter<detail::Boosted>();
+    auto& neg = root->add<irs::Exclusion>();
+    auto& node = neg.exclude<detail::Boosted>();
     node.docs = {5, 6};
     node.boost(4);
   }
   {
-    auto& node = root.add<detail::Boosted>();
+    auto& node = root->add<detail::Boosted>();
     node.docs = {1};
     node.boost(5);
   }
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scorer = &sort});
+  auto prep =
+    filter->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
   auto docs =
     prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
   const auto& scr = docs->PrepareScore({

@@ -20,6 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "basics/down_cast.h"
 #include "basics/misc.hpp"
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
@@ -27,6 +28,7 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -80,6 +82,23 @@ irs::ByEditDistance MakeFilter(const std::string_view& field,
   return q;
 }
 
+irs::Filter::ptr Lower(irs::ByEditDistance filter) {
+  irs::Filter::ptr ptr =
+    std::make_unique<irs::ByEditDistance>(std::move(filter));
+  irs::Optimize(ptr);
+  return ptr;
+}
+
+irs::Filter::ptr MakeLevenshtein(const std::string_view& field,
+                                 const std::string_view term,
+                                 irs::byte_type max_distance = 0,
+                                 size_t max_terms = 0,
+                                 bool with_transpositions = false,
+                                 const std::string_view prefix = "") {
+  return Lower(MakeFilter(field, term, max_distance, max_terms,
+                          with_transpositions, prefix));
+}
+
 }  // namespace
 
 class LevenshteinFilterTestCase : public tests::FilterTestCaseBase {};
@@ -128,10 +147,11 @@ TEST(by_edit_distance_test, boost) {
     q.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
 
-    auto prepared = q.prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
+    auto prepared = Lower(std::move(q))
+                      ->prepare({
+                        .index = irs::SubReader::empty(),
+                        .memory = counter,
+                      });
     ASSERT_EQ(irs::kNoBoost, prepared->Boost());
   }
   EXPECT_EQ(counter.current, 0);
@@ -148,10 +168,11 @@ TEST(by_edit_distance_test, boost) {
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
     q.boost(boost);
 
-    auto prepared = q.prepare({
-      .index = irs::SubReader::empty(),
-      .memory = counter,
-    });
+    auto prepared = Lower(std::move(q))
+                      ->prepare({
+                        .index = irs::SubReader::empty(),
+                        .memory = counter,
+                      });
     ASSERT_EQ(boost, prepared->Boost());
   }
   EXPECT_EQ(counter.current, 0);
@@ -168,8 +189,8 @@ TEST(by_edit_distance_test, test_type_of_prepared_query) {
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
-    auto rhs = MakeFilter("foo", "bar")
-                 .prepare({
+    auto rhs = MakeLevenshtein("foo", "bar")
+                 ->prepare({
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
@@ -195,7 +216,7 @@ TEST_P(ByEditDistanceTestCase, test_order) {
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   // empty query
-  CheckQuery(irs::ByEditDistance(), Docs{}, Costs{0}, rdr);
+  CheckQuery(*Lower({}), Docs{}, Costs{0}, rdr);
 
   {
     Docs docs{28, 29};
@@ -219,7 +240,7 @@ TEST_P(ByEditDistanceTestCase, test_order) {
       finish_docs_with_term += term->docs_with_term;
     };
 
-    CheckQuery(MakeFilter("title", "", 1, 0, false), order, docs, rdr);
+    CheckQuery(*MakeLevenshtein("title", "", 1, 0, false), order, docs, rdr);
     ASSERT_EQ(1, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -247,7 +268,7 @@ TEST_P(ByEditDistanceTestCase, test_order) {
       finish_docs_with_term += term->docs_with_term;
     };
 
-    CheckQuery(MakeFilter("title", "", 1, 10, false), order, docs, rdr);
+    CheckQuery(*MakeLevenshtein("title", "", 1, 10, false), order, docs, rdr);
     ASSERT_EQ(1, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -275,7 +296,7 @@ TEST_P(ByEditDistanceTestCase, test_order) {
       finish_docs_with_term += term->docs_with_term;
     };
 
-    CheckQuery(MakeFilter("title", "", 1, 1, false), order, docs, rdr);
+    CheckQuery(*MakeLevenshtein("title", "", 1, 1, false), order, docs, rdr);
     ASSERT_EQ(1, finish_count);
     ASSERT_GT(finish_docs_with_field, 0u);  // scorer collected field stats
     ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats
@@ -293,35 +314,35 @@ TEST_P(ByEditDistanceTestCase, test_filter) {
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
   // empty query
-  CheckQuery(irs::ByEditDistance(), Docs{}, Costs{0}, rdr);
-  CheckQuery(MakeFilter("title", "", 0, 0, false), Docs{}, Costs{0}, rdr);
+  CheckQuery(*Lower({}), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 0, 0, false), Docs{}, Costs{0}, rdr);
 
   //////////////////////////////////////////////////////////////////////////////
   /// Levenshtein and Damerau-Levenshtein with prefix
   //////////////////////////////////////////////////////////////////////////////
   // distance 0 (term query)
-  CheckQuery(MakeFilter("title", "", 0, 1024, false, "aaaw"), Docs{32},
+  CheckQuery(*MakeLevenshtein("title", "", 0, 1024, false, "aaaw"), Docs{32},
              Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "w", 0, 1024, false, "aaa"), Docs{32},
+  CheckQuery(*MakeLevenshtein("title", "w", 0, 1024, false, "aaa"), Docs{32},
              Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "w", 0, 1024, true, "aaa"), Docs{32}, Costs{1},
-             rdr);
-  CheckQuery(MakeFilter("title", "", 0, 1024, false, ""), Docs{}, Costs{0},
-             rdr);
+  CheckQuery(*MakeLevenshtein("title", "w", 0, 1024, true, "aaa"), Docs{32},
+             Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 0, 1024, false, ""), Docs{},
+             Costs{0}, rdr);
   // distance 1
-  CheckQuery(MakeFilter("title", "aa", 1, 1024, false, "aaabbba"), Docs{9, 10},
-             Costs{2}, rdr);
-  CheckQuery(MakeFilter("title", "", 1, 1024, false, ""), Docs{28, 29},
+  CheckQuery(*MakeLevenshtein("title", "aa", 1, 1024, false, "aaabbba"),
+             Docs{9, 10}, Costs{2}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 1, 1024, false, ""), Docs{28, 29},
              Costs{2}, rdr);
   // distance 2
-  CheckQuery(MakeFilter("title", "ca", 2, 1024, false, "b"), Docs{29, 30},
+  CheckQuery(*MakeLevenshtein("title", "ca", 2, 1024, false, "b"), Docs{29, 30},
              Costs{2}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 2, 1024, false, "aa"),
+  CheckQuery(*MakeLevenshtein("title", "aa", 2, 1024, false, "aa"),
              Docs{5, 7, 13, 16, 19, 27, 32}, Costs{7}, rdr);
   // distance 3
-  CheckQuery(MakeFilter("title", "", 3, 1024, false, "aaa"),
+  CheckQuery(*MakeLevenshtein("title", "", 3, 1024, false, "aaa"),
              Docs{5, 7, 13, 16, 19, 32}, Costs{6}, rdr);
-  CheckQuery(MakeFilter("title", "", 3, 1024, true, "aaa"),
+  CheckQuery(*MakeLevenshtein("title", "", 3, 1024, true, "aaa"),
              Docs{5, 7, 13, 16, 19, 32}, Costs{6}, rdr);
 
   //////////////////////////////////////////////////////////////////////////////
@@ -329,40 +350,51 @@ TEST_P(ByEditDistanceTestCase, test_filter) {
   //////////////////////////////////////////////////////////////////////////////
 
   // distance 0 (term query)
-  CheckQuery(MakeFilter("title", "aa", 0, 1024), Docs{27}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 0, 0), Docs{27}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 0, 10), Docs{27}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 0, 0), Docs{27}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 0, 10), Docs{17}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 0, 0), Docs{17}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "aa", 0, 1024), Docs{27}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "aa", 0, 0), Docs{27}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "aa", 0, 10), Docs{27}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "aa", 0, 0), Docs{27}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 0, 10), Docs{17}, Costs{1},
+             rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 0, 0), Docs{17}, Costs{1},
+             rdr);
 
   // distance 1
-  CheckQuery(MakeFilter("title", "", 1, 1024), Docs{28, 29}, Costs{2}, rdr);
-  CheckQuery(MakeFilter("title", "", 1, 0), Docs{28, 29}, Costs{2}, rdr);
-  CheckQuery(MakeFilter("title", "", 1, 1), Docs{29}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 1, 1024), Docs{27, 28}, Costs{2}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 1, 0), Docs{27, 28}, Costs{2}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 1, 1024), Docs{17}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 0, 1024), Docs{17}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 1, 1024), Docs{28, 29}, Costs{2},
+             rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 1, 0), Docs{28, 29}, Costs{2}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 1, 1), Docs{29}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "aa", 1, 1024), Docs{27, 28}, Costs{2},
+             rdr);
+  CheckQuery(*MakeLevenshtein("title", "aa", 1, 0), Docs{27, 28}, Costs{2},
+             rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 1, 1024), Docs{17}, Costs{1},
+             rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 0, 1024), Docs{17}, Costs{1},
+             rdr);
 
   // distance 2
-  CheckQuery(MakeFilter("title", "", 2, 1024), Docs{27, 28, 29}, Costs{3}, rdr);
-  CheckQuery(MakeFilter("title", "", 2, 0), Docs{27, 28, 29}, Costs{3}, rdr);
-  CheckQuery(MakeFilter("title", "", 2, 1), Docs{29}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "", 2, 2), Docs{28, 29}, Costs{2}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 2, 1024), Docs{27, 28, 29, 30, 32},
+  CheckQuery(*MakeLevenshtein("title", "", 2, 1024), Docs{27, 28, 29}, Costs{3},
+             rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 2, 0), Docs{27, 28, 29}, Costs{3},
+             rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 2, 1), Docs{29}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 2, 2), Docs{28, 29}, Costs{2}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "aa", 2, 1024), Docs{27, 28, 29, 30, 32},
              Costs{5}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 2, 0), Docs{27, 28, 29, 30, 32},
+  CheckQuery(*MakeLevenshtein("title", "aa", 2, 0), Docs{27, 28, 29, 30, 32},
              Costs{5}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 2, 1024), Docs{17}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 2, 0), Docs{17}, Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 2, 1024), Docs{17}, Costs{1},
+             rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 2, 0), Docs{17}, Costs{1},
+             rdr);
 
   // distance 3
-  CheckQuery(MakeFilter("title", "", 3, 1024), Docs{27, 28, 29, 30, 31},
+  CheckQuery(*MakeLevenshtein("title", "", 3, 1024), Docs{27, 28, 29, 30, 31},
              Costs{5}, rdr);
-  CheckQuery(MakeFilter("title", "", 3, 0), Docs{27, 28, 29, 30, 31}, Costs{5},
-             rdr);
-  CheckQuery(MakeFilter("title", "aaaa", 3, 10),
+  CheckQuery(*MakeLevenshtein("title", "", 3, 0), Docs{27, 28, 29, 30, 31},
+             Costs{5}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "aaaa", 3, 10),
              Docs{
                5,
                7,
@@ -378,7 +410,7 @@ TEST_P(ByEditDistanceTestCase, test_filter) {
                32,
              },
              Costs{12}, rdr);
-  CheckQuery(MakeFilter("title", "aaaa", 3, 0),
+  CheckQuery(*MakeLevenshtein("title", "aaaa", 3, 0),
              Docs{
                5,
                7,
@@ -394,81 +426,86 @@ TEST_P(ByEditDistanceTestCase, test_filter) {
                32,
              },
              Costs{12}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 3, 1024),
+  CheckQuery(*MakeLevenshtein("title", "ababab", 3, 1024),
              Docs{3, 5, 7, 13, 14, 15, 16, 17, 32}, Costs{9}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 3, 0),
+  CheckQuery(*MakeLevenshtein("title", "ababab", 3, 0),
              Docs{3, 5, 7, 13, 14, 15, 16, 17, 32}, Costs{9}, rdr);
 
   // distance 4
-  CheckQuery(MakeFilter("title", "", 4, 1024), Docs{27, 28, 29, 30, 31, 32},
-             Costs{6}, rdr);
-  CheckQuery(MakeFilter("title", "", 4, 0), Docs{27, 28, 29, 30, 31, 32},
+  CheckQuery(*MakeLevenshtein("title", "", 4, 1024),
+             Docs{27, 28, 29, 30, 31, 32}, Costs{6}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 4, 0), Docs{27, 28, 29, 30, 31, 32},
              Costs{6}, rdr);
   CheckQuery(
-    MakeFilter("title", "ababab", 4, 1024),
+    *MakeLevenshtein("title", "ababab", 4, 1024),
     Docs{3, 4, 5, 6, 7, 10, 13, 14, 15, 16, 17, 18, 19, 21, 27, 30, 32, 34},
     Costs{18}, rdr);
   CheckQuery(
-    MakeFilter("title", "ababab", 4, 0),
+    *MakeLevenshtein("title", "ababab", 4, 0),
     Docs{3, 4, 5, 6, 7, 10, 13, 14, 15, 16, 17, 18, 19, 21, 27, 30, 32, 34},
     Costs{18}, rdr);
 
   // default provider doesn't support Levenshtein distances > 4
-  CheckQuery(MakeFilter("title", "", 5, 1024), Docs{}, Costs{0}, rdr);
-  CheckQuery(MakeFilter("title", "", 5, 0), Docs{}, Costs{0}, rdr);
-  CheckQuery(MakeFilter("title", "", 6, 1024), Docs{}, Costs{0}, rdr);
-  CheckQuery(MakeFilter("title", "", 6, 0), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 5, 1024), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 5, 0), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 6, 1024), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 6, 0), Docs{}, Costs{0}, rdr);
 
   //////////////////////////////////////////////////////////////////////////////
   /// Damerau-Levenshtein
   //////////////////////////////////////////////////////////////////////////////
 
   // distance 0 (term query)
-  CheckQuery(MakeFilter("title", "aa", 0, 1024, true), Docs{27}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 0, 0, true), Docs{27}, Costs{1}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 0, 1024, true), Docs{17}, Costs{1},
+  CheckQuery(*MakeLevenshtein("title", "aa", 0, 1024, true), Docs{27}, Costs{1},
              rdr);
-  CheckQuery(MakeFilter("title", "ababab", 0, 0, true), Docs{17}, Costs{1},
+  CheckQuery(*MakeLevenshtein("title", "aa", 0, 0, true), Docs{27}, Costs{1},
              rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 0, 1024, true), Docs{17},
+             Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 0, 0, true), Docs{17},
+             Costs{1}, rdr);
 
   // distance 1
-  CheckQuery(MakeFilter("title", "", 1, 1024, true), Docs{28, 29}, Costs{2},
+  CheckQuery(*MakeLevenshtein("title", "", 1, 1024, true), Docs{28, 29},
+             Costs{2}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 1, 0, true), Docs{28, 29}, Costs{2},
              rdr);
-  CheckQuery(MakeFilter("title", "", 1, 0, true), Docs{28, 29}, Costs{2}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 1, 1024, true), Docs{27, 28}, Costs{2},
-             rdr);
-  CheckQuery(MakeFilter("title", "aa", 1, 0, true), Docs{27, 28}, Costs{2},
-             rdr);
-  CheckQuery(MakeFilter("title", "ababab", 1, 1024, true), Docs{17}, Costs{1},
-             rdr);
-  CheckQuery(MakeFilter("title", "ababab", 1, 0, true), Docs{17}, Costs{1},
-             rdr);
+  CheckQuery(*MakeLevenshtein("title", "aa", 1, 1024, true), Docs{27, 28},
+             Costs{2}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "aa", 1, 0, true), Docs{27, 28},
+             Costs{2}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 1, 1024, true), Docs{17},
+             Costs{1}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 1, 0, true), Docs{17},
+             Costs{1}, rdr);
 
   // distance 2
-  CheckQuery(MakeFilter("title", "aa", 2, 1024, true), Docs{27, 28, 29, 30, 32},
-             Costs{5}, rdr);
-  CheckQuery(MakeFilter("title", "aa", 2, 0, true), Docs{27, 28, 29, 30, 32},
-             Costs{5}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 2, 1024, true), Docs{17, 18},
+  CheckQuery(*MakeLevenshtein("title", "aa", 2, 1024, true),
+             Docs{27, 28, 29, 30, 32}, Costs{5}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "aa", 2, 0, true),
+             Docs{27, 28, 29, 30, 32}, Costs{5}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 2, 1024, true), Docs{17, 18},
              Costs{2}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 2, 0, true), Docs{17, 18}, Costs{2},
-             rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 2, 0, true), Docs{17, 18},
+             Costs{2}, rdr);
 
   // distance 3
-  CheckQuery(MakeFilter("title", "", 3, 1024, true), Docs{27, 28, 29, 30, 31},
-             Costs{5}, rdr);
-  CheckQuery(MakeFilter("title", "", 3, 0, true), Docs{27, 28, 29, 30, 31},
-             Costs{5}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 3, 1024, true),
+  CheckQuery(*MakeLevenshtein("title", "", 3, 1024, true),
+             Docs{27, 28, 29, 30, 31}, Costs{5}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 3, 0, true),
+             Docs{27, 28, 29, 30, 31}, Costs{5}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "ababab", 3, 1024, true),
              Docs{3, 5, 7, 13, 14, 15, 16, 17, 18, 32}, Costs{10}, rdr);
-  CheckQuery(MakeFilter("title", "ababab", 3, 0, true),
+  CheckQuery(*MakeLevenshtein("title", "ababab", 3, 0, true),
              Docs{3, 5, 7, 13, 14, 15, 16, 17, 18, 32}, Costs{10}, rdr);
 
   // default provider doesn't support Damerau-Levenshtein distances > 3
-  CheckQuery(MakeFilter("title", "", 4, 1024, true), Docs{}, Costs{0}, rdr);
-  CheckQuery(MakeFilter("title", "", 4, 0, true), Docs{}, Costs{0}, rdr);
-  CheckQuery(MakeFilter("title", "", 5, 1024, true), Docs{}, Costs{0}, rdr);
-  CheckQuery(MakeFilter("title", "", 5, 0, true), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 4, 1024, true), Docs{}, Costs{0},
+             rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 4, 0, true), Docs{}, Costs{0}, rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 5, 1024, true), Docs{}, Costs{0},
+             rdr);
+  CheckQuery(*MakeLevenshtein("title", "", 5, 0, true), Docs{}, Costs{0}, rdr);
 }
 
 TEST_P(ByEditDistanceTestCase, bm25) {
@@ -543,11 +580,12 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = filter.prepare({
-      .index = *index,
-      .memory = counter,
-      .scorer = order.front().get(),
-    });
+    auto prepared = Lower(std::move(filter))
+                      ->prepare({
+                        .index = *index,
+                        .memory = counter,
+                        .scorer = order.front().get(),
+                      });
     ASSERT_NE(nullptr, prepared);
 
     auto docs =
@@ -593,11 +631,12 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = filter.prepare({
-      .index = *index,
-      .memory = counter,
-      .scorer = order.front().get(),
-    });
+    auto prepared = Lower(std::move(filter))
+                      ->prepare({
+                        .index = *index,
+                        .memory = counter,
+                        .scorer = order.front().get(),
+                      });
     ASSERT_NE(nullptr, prepared);
 
     fetcher.Clear();
@@ -645,11 +684,12 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = filter.prepare({
-      .index = *index,
-      .memory = counter,
-      .scorer = order.front().get(),
-    });
+    auto prepared = Lower(std::move(filter))
+                      ->prepare({
+                        .index = *index,
+                        .memory = counter,
+                        .scorer = order.front().get(),
+                      });
     ASSERT_NE(nullptr, prepared);
 
     fetcher.Clear();
@@ -698,11 +738,12 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = filter.prepare({
-      .index = *index,
-      .memory = counter,
-      .scorer = order.front().get(),
-    });
+    auto prepared = Lower(std::move(filter))
+                      ->prepare({
+                        .index = *index,
+                        .memory = counter,
+                        .scorer = order.front().get(),
+                      });
     ASSERT_NE(nullptr, prepared);
 
     fetcher.Clear();
@@ -771,11 +812,12 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = filter.prepare({
-      .index = *index,
-      .memory = counter,
-      .scorer = order.front().get(),
-    });
+    auto prepared = Lower(std::move(filter))
+                      ->prepare({
+                        .index = *index,
+                        .memory = counter,
+                        .scorer = order.front().get(),
+                      });
     ASSERT_NE(nullptr, prepared);
 
     fetcher.Clear();
@@ -846,11 +888,12 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    auto prepared = filter.prepare({
-      .index = *index,
-      .memory = counter,
-      .scorer = order.front().get(),
-    });
+    auto prepared = Lower(std::move(filter))
+                      ->prepare({
+                        .index = *index,
+                        .memory = counter,
+                        .scorer = order.front().get(),
+                      });
     ASSERT_NE(nullptr, prepared);
 
     fetcher.Clear();
@@ -919,7 +962,6 @@ TEST_P(ByEditDistanceTestCase, visit) {
     add_segment(gen);
   }
   const irs::field_id field = kPrefixId;
-  const auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
   // read segment
   auto index = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, index.size());
@@ -929,16 +971,12 @@ TEST_P(ByEditDistanceTestCase, visit) {
   ASSERT_NE(nullptr, reader);
 
   {
-    irs::ByEditDistanceOptions opts;
-    opts.term = term;
-    opts.max_distance = 0;
-    opts.provider = nullptr;
-    opts.with_transpositions = false;
+    auto lowered = Lower(MakeFilter("prefix", "abc", 0));
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), lowered->type());
+    const auto& filter = sdb::basics::downCast<irs::ByTerm>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByEditDistance::visitor(opts);
-    ASSERT_TRUE(field_visitor);
-    field_visitor(segment, *reader, visitor);
+    irs::ByTerm::visit(segment, *reader, filter.options().term, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(1, visitor.visit_calls_counter());
     ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
@@ -948,14 +986,15 @@ TEST_P(ByEditDistanceTestCase, visit) {
   }
 
   {
-    irs::ByEditDistanceOptions opts;
-    opts.term = term;
-    opts.max_distance = 1;
-    opts.provider = irs::DefaultPDP;
-    opts.with_transpositions = false;
+    auto lowered = Lower(MakeFilter("prefix", "abc", 1));
+    ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+              lowered->type());
+    const auto& filter =
+      sdb::basics::downCast<irs::LevenshteinAutomatonFilter>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByEditDistance::visitor(opts);
+    auto field_visitor =
+      irs::LevenshteinAutomatonFilter::visitor(filter.options());
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
@@ -981,15 +1020,15 @@ TEST_P(ByEditDistanceTestCase, visit) {
 
   // with prefix
   {
-    irs::ByEditDistanceOptions opts;
-    opts.term = irs::ViewCast<irs::byte_type>(std::string_view("c"));
-    opts.max_distance = 2;
-    opts.provider = irs::DefaultPDP;
-    opts.with_transpositions = false;
-    opts.prefix = irs::ViewCast<irs::byte_type>(std::string_view("ab"));
+    auto lowered = Lower(MakeFilter("prefix", "c", 2, 0, false, "ab"));
+    ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+              lowered->type());
+    const auto& filter =
+      sdb::basics::downCast<irs::LevenshteinAutomatonFilter>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByEditDistance::visitor(opts);
+    auto field_visitor =
+      irs::LevenshteinAutomatonFilter::visitor(filter.options());
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());

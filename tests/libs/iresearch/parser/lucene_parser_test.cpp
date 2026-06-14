@@ -42,6 +42,10 @@ namespace {
 // string.
 constexpr irs::field_id kFieldId = 1;
 
+const irs::Or* NotOr(const irs::Not& filter) {
+  return &sdb::basics::downCast<irs::Or>(*filter.filter());
+}
+
 void AssertTerm(const irs::Filter& f, irs::field_id field,
                 std::string_view value, float boost = 0.0f) {
   const auto& term = sdb::basics::downCast<irs::ByTerm>(f);
@@ -309,13 +313,13 @@ TEST_F(LuceneParserTest, MixedPlusMinusOperators) {
   ASSERT_EQ(4, RequiredRoot().size());
   AssertTerm(RequiredRoot()[0], kFieldId, "foo");
   const auto& not1 = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not1_or = not1.filter<irs::Or>();
+  const auto* not1_or = NotOr(not1);
   ASSERT_NE(nullptr, not1_or);
   ASSERT_EQ(1, not1_or->size());
   AssertTerm((*not1_or)[0], kFieldId, "bar");
   AssertTerm(RequiredRoot()[2], kFieldId, "foobar");
   const auto& not2 = sdb::basics::downCast<irs::Not>(RequiredRoot()[3]);
-  const auto* not2_or = not2.filter<irs::Or>();
+  const auto* not2_or = NotOr(not2);
   ASSERT_NE(nullptr, not2_or);
   ASSERT_EQ(1, not2_or->size());
   AssertTerm((*not2_or)[0], kFieldId, "foobaz");
@@ -333,7 +337,7 @@ TEST_F(LuceneParserTest, MixedPlusMinusWithImplicitOr) {
   AssertTerm(RequiredRoot()[0], kFieldId, "foo");
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "baz");
@@ -420,7 +424,7 @@ TEST_F(LuceneParserTest, PlusMinusWithGroups) {
 
   // Second: Not(baz)
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "baz");
@@ -450,7 +454,7 @@ TEST_F(LuceneParserTest, ComplexMixedQuery) {
 
   // Third: Not(e)
   const auto& not_e = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
-  const auto* not_or = not_e.filter<irs::Or>();
+  const auto* not_or = NotOr(not_e);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "e");
@@ -485,7 +489,7 @@ TEST_F(LuceneParserTest, ComplexMixedQueryGrouped) {
   AssertTerm(group_cd.GetOptional()[1], kFieldId, "d");
 
   const auto& not_e = sdb::basics::downCast<irs::Not>(group2_req[1]);
-  const auto* not_or = not_e.filter<irs::Or>();
+  const auto* not_or = NotOr(not_e);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "e");
@@ -497,7 +501,7 @@ TEST_F(LuceneParserTest, NotOperator) {
   ASSERT_EQ(1, RequiredRoot().size());
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* inner_or = not_filter.filter<irs::Or>();
+  const auto* inner_or = NotOr(not_filter);
   ASSERT_NE(nullptr, inner_or);
   ASSERT_EQ(1, inner_or->size());
 
@@ -510,7 +514,7 @@ TEST_F(LuceneParserTest, MinusOperator) {
   ASSERT_EQ(1, RequiredRoot().size());
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* inner_or = not_filter.filter<irs::Or>();
+  const auto* inner_or = NotOr(not_filter);
   ASSERT_NE(nullptr, inner_or);
   ASSERT_EQ(1, inner_or->size());
 
@@ -697,7 +701,7 @@ TEST_F(LuceneParserTest, NotBetweenTerms) {
   AssertTerm(OptionalRoot()[0], kFieldId, "guinea");
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "pig");
@@ -712,7 +716,7 @@ TEST_F(LuceneParserTest, MinusBetweenTerms) {
   AssertTerm(OptionalRoot()[0], kFieldId, "guinea");
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "pig");
@@ -768,7 +772,7 @@ TEST_F(LuceneParserTest, NotBeforeAnd) {
   ASSERT_EQ(2, RequiredRoot().size());
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "a");
@@ -785,7 +789,7 @@ TEST_F(LuceneParserTest, AndBeforeNot) {
   AssertTerm(RequiredRoot()[0], kFieldId, "a");
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "b");
@@ -801,7 +805,7 @@ TEST_F(LuceneParserTest, NotBetweenMultipleTerms) {
   AssertTerm(OptionalRoot()[1], kFieldId, "c");
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "b");
@@ -816,7 +820,7 @@ TEST_F(LuceneParserTest, AndWithMinusModifier) {
   AssertTerm(RequiredRoot()[0], kFieldId, "a");
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "b");
@@ -841,19 +845,19 @@ TEST_F(LuceneParserTest, ComplexAndNotChain) {
   AssertTerm(RequiredRoot()[0], kFieldId, "a");
 
   const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_b_or = not_b.filter<irs::Or>();
+  const auto* not_b_or = NotOr(not_b);
   ASSERT_NE(nullptr, not_b_or);
   ASSERT_EQ(1, not_b_or->size());
   AssertTerm((*not_b_or)[0], kFieldId, "b");
 
   const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
-  const auto* not_c_or = not_c.filter<irs::Or>();
+  const auto* not_c_or = NotOr(not_c);
   ASSERT_NE(nullptr, not_c_or);
   ASSERT_EQ(1, not_c_or->size());
   AssertTerm((*not_c_or)[0], kFieldId, "c");
 
   const auto& not_d = sdb::basics::downCast<irs::Not>(RequiredRoot()[3]);
-  const auto* not_d_or = not_d.filter<irs::Or>();
+  const auto* not_d_or = NotOr(not_d);
   ASSERT_NE(nullptr, not_d_or);
   ASSERT_EQ(1, not_d_or->size());
   AssertTerm((*not_d_or)[0], kFieldId, "d");
@@ -868,17 +872,17 @@ TEST_F(LuceneParserTest, MinusAndChain) {
   ASSERT_EQ(3, RequiredRoot().size());
 
   const auto& not_a = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_a_or = not_a.filter<irs::Or>();
+  const auto* not_a_or = NotOr(not_a);
   ASSERT_NE(nullptr, not_a_or);
   AssertTerm((*not_a_or)[0], kFieldId, "a");
 
   const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_b_or = not_b.filter<irs::Or>();
+  const auto* not_b_or = NotOr(not_b);
   ASSERT_NE(nullptr, not_b_or);
   AssertTerm((*not_b_or)[0], kFieldId, "b");
 
   const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
-  const auto* not_c_or = not_c.filter<irs::Or>();
+  const auto* not_c_or = NotOr(not_c);
   ASSERT_NE(nullptr, not_c_or);
   AssertTerm((*not_c_or)[0], kFieldId, "c");
 }
@@ -892,7 +896,7 @@ TEST_F(LuceneParserTest, OrWithMinusModifier) {
   AssertTerm(OptionalRoot()[0], kFieldId, "a");
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "b");
@@ -915,13 +919,13 @@ TEST_F(LuceneParserTest, MinusOrChain) {
   ASSERT_EQ(2, RequiredRoot().size());
 
   const auto& not_a = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_a_or = not_a.filter<irs::Or>();
+  const auto* not_a_or = NotOr(not_a);
   ASSERT_NE(nullptr, not_a_or);
   ASSERT_EQ(1, not_a_or->size());
   AssertTerm((*not_a_or)[0], kFieldId, "a");
 
   const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_b_or = not_b.filter<irs::Or>();
+  const auto* not_b_or = NotOr(not_b);
   ASSERT_NE(nullptr, not_b_or);
   ASSERT_EQ(1, not_b_or->size());
   AssertTerm((*not_b_or)[0], kFieldId, "b");
@@ -936,13 +940,13 @@ TEST_F(LuceneParserTest, OrWithMultipleMinusModifiers) {
   AssertTerm(OptionalRoot()[0], kFieldId, "a");
 
   const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_b_or = not_b.filter<irs::Or>();
+  const auto* not_b_or = NotOr(not_b);
   ASSERT_NE(nullptr, not_b_or);
   ASSERT_EQ(1, not_b_or->size());
   AssertTerm((*not_b_or)[0], kFieldId, "b");
 
   const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_c_or = not_c.filter<irs::Or>();
+  const auto* not_c_or = NotOr(not_c);
   ASSERT_NE(nullptr, not_c_or);
   ASSERT_EQ(1, not_c_or->size());
   AssertTerm((*not_c_or)[0], kFieldId, "c");
@@ -979,7 +983,7 @@ TEST_F(LuceneParserTest, AndWithMinusThenOr) {
   AssertTerm(RequiredRoot()[0], kFieldId, "a");
 
   const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_b_or = not_b.filter<irs::Or>();
+  const auto* not_b_or = NotOr(not_b);
   ASSERT_NE(nullptr, not_b_or);
   ASSERT_EQ(1, not_b_or->size());
   AssertTerm((*not_b_or)[0], kFieldId, "b");
@@ -994,7 +998,7 @@ TEST_F(LuceneParserTest, OrWithMinusThenAnd) {
   ASSERT_TRUE(OptionalRoot().empty());
 
   const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_b_or = not_b.filter<irs::Or>();
+  const auto* not_b_or = NotOr(not_b);
   ASSERT_NE(nullptr, not_b_or);
   ASSERT_EQ(1, not_b_or->size());
   AssertTerm((*not_b_or)[0], kFieldId, "b");
@@ -1013,7 +1017,7 @@ TEST_F(LuceneParserTest, ComplexMixedAndOrWithModifiers) {
   AssertTerm(RequiredRoot()[1], kFieldId, "b");
 
   const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
-  const auto* not_c_or = not_c.filter<irs::Or>();
+  const auto* not_c_or = NotOr(not_c);
   ASSERT_NE(nullptr, not_c_or);
   ASSERT_EQ(1, not_c_or->size());
   AssertTerm((*not_c_or)[0], kFieldId, "c");
@@ -1030,7 +1034,7 @@ TEST_F(LuceneParserTest, PlusOrMinusAnd) {
   AssertTerm(RequiredRoot()[0], kFieldId, "a");
 
   const auto& not_b = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_b_or = not_b.filter<irs::Or>();
+  const auto* not_b_or = NotOr(not_b);
   ASSERT_NE(nullptr, not_b_or);
   ASSERT_EQ(1, not_b_or->size());
   AssertTerm((*not_b_or)[0], kFieldId, "b");
@@ -1050,7 +1054,7 @@ TEST_F(LuceneParserTest, AndOrAndFlat) {
   AssertTerm(RequiredRoot()[1], kFieldId, "b");
 
   const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
-  const auto* not_c_or = not_c.filter<irs::Or>();
+  const auto* not_c_or = NotOr(not_c);
   ASSERT_NE(nullptr, not_c_or);
   ASSERT_EQ(1, not_c_or->size());
   AssertTerm((*not_c_or)[0], kFieldId, "c");
@@ -1079,12 +1083,12 @@ TEST_F(LuceneParserTest, AllExcluded) {
   ASSERT_EQ(2, RequiredRoot().size());
 
   const auto& not1 = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not1_or = not1.filter<irs::Or>();
+  const auto* not1_or = NotOr(not1);
   ASSERT_NE(nullptr, not1_or);
   AssertTerm((*not1_or)[0], kFieldId, "a");
 
   const auto& not2 = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not2_or = not2.filter<irs::Or>();
+  const auto* not2_or = NotOr(not2);
   ASSERT_NE(nullptr, not2_or);
   AssertTerm((*not2_or)[0], kFieldId, "b");
 }
@@ -1157,7 +1161,7 @@ TEST_F(LuceneParserTest, NotGroup) {
   ASSERT_EQ(1, RequiredRoot().size());
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
 
@@ -1230,7 +1234,7 @@ TEST_F(LuceneParserTest, PlusAndMinusGroup) {
   ASSERT_EQ(2, group1.GetOptional().size());
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   const auto& group2 =
@@ -1294,7 +1298,7 @@ TEST_F(LuceneParserTest, NestedGroupsWithModifiers) {
   ASSERT_EQ(2, inner.GetOptional().size());
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[1]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   AssertTerm((*not_or)[0], kFieldId, "d");
 }
@@ -1430,7 +1434,7 @@ TEST_F(LuceneParserTest, ExclamationNot) {
   ASSERT_EQ(1, RequiredRoot().size());
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   AssertTerm((*not_or)[0], kFieldId, "hello");
@@ -1578,7 +1582,7 @@ TEST_F(LuceneParserTest, NotAndGroup) {
   ASSERT_EQ(1, RequiredRoot().size());
 
   const auto& not_filter = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
 
@@ -1603,7 +1607,7 @@ TEST_F(LuceneParserTest, ModifiersInsideFieldGroup) {
 
   const auto& not_filter =
     sdb::basics::downCast<irs::Not>(group.GetRequired()[1]);
-  const auto* not_or = not_filter.filter<irs::Or>();
+  const auto* not_or = NotOr(not_filter);
   ASSERT_NE(nullptr, not_or);
   AssertTerm((*not_or)[0], kFieldId, "b");
 }
@@ -1708,7 +1712,7 @@ TEST_F(LuceneParserTest, DeeplyNestedNotGroups) {
 
   // Outer: Not(group)
   const auto& outer_not = sdb::basics::downCast<irs::Not>(RequiredRoot()[0]);
-  const auto* outer_or = outer_not.filter<irs::Or>();
+  const auto* outer_or = NotOr(outer_not);
   ASSERT_NE(nullptr, outer_or);
   ASSERT_EQ(1, outer_or->size());
 
@@ -1720,7 +1724,7 @@ TEST_F(LuceneParserTest, DeeplyNestedNotGroups) {
 
   const auto& inner_not =
     sdb::basics::downCast<irs::Not>(middle.GetRequired()[0]);
-  const auto* inner_or = inner_not.filter<irs::Or>();
+  const auto* inner_or = NotOr(inner_not);
   ASSERT_NE(nullptr, inner_or);
   ASSERT_EQ(1, inner_or->size());
 
@@ -1746,7 +1750,7 @@ TEST_F(LuceneParserTest, ComplexMultiFieldNested) {
   ASSERT_EQ(2, g1.GetRequired().size());
   AssertTerm(g1.GetRequired()[0], kFieldId, "hello");
   const auto& not_world = sdb::basics::downCast<irs::Not>(g1.GetRequired()[1]);
-  const auto* nw_or = not_world.filter<irs::Or>();
+  const auto* nw_or = NotOr(not_world);
   ASSERT_NE(nullptr, nw_or);
   AssertTerm((*nw_or)[0], kFieldId, "world");
 

@@ -1,0 +1,298 @@
+statement ok
+CREATE TABLE fo_low (id INTEGER PRIMARY KEY, name VARCHAR, t VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fo_low_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE INDEX fo_low_idx ON fo_low USING inverted(id, name, t fo_low_en);
+
+statement ok
+INSERT INTO fo_low VALUES
+  (1, 'alpha',  'alpha beta gamma'),
+  (2, 'alpino', 'beta gamma delta'),
+  (3, 'gamma',  'gamma delta alpha'),
+  (4, 'alfa',   'delta alpha beta');
+
+statement ok
+VACUUM (REFRESH_TABLE) fo_low;
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ (ts_like('alpha'));
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││   name(string) =  ││  │
+│  ││        alpha      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ (ts_like('alp%'));
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    STARTS_WITH    ││  │
+│  ││    ────────────   ││  │
+│  ││ name(string) 'alp'││  │
+│  ││     limit=1024    ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ (ts_like('a_pha'));
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     AUTOMATON     ││  │
+│  ││    ────────────   ││  │
+│  ││ name(string) a_pha││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_regexp('alpha');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││   name(string) =  ││  │
+│  ││        alpha      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_regexp('al.ha');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││     AUTOMATON     ││  │
+│  ││    ────────────   ││  │
+│  ││ name(string) al.ha││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_levenshtein('alpha', 0);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││   name(string) =  ││  │
+│  ││        alpha      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_levenshtein('lpha', 0, false, 'a');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││   name(string) =  ││  │
+│  ││        alpha      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_levenshtein('alpha', 1);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││LEVENSHTEIN_AU...  ││  │
+│  ││    ────────────   ││  │
+│  ││   name(string)    ││  │
+│  ││ 'alpha' max_terms ││  │
+│  ││       =1024       ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE t @@ (ts_like('alpha') ## 'beta');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││       PHRASE      ││  │
+│  ││    ────────────   ││  │
+│  ││ t(string) = <Term ││  │
+│  ││ :alpha(0, 0); Term││  │
+│  ││   :beta(1, 1); >  ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE t @@ (ts_like('al%') ## 'beta');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││       PHRASE      ││  │
+│  ││    ────────────   ││  │
+│  ││    t(string) =    ││  │
+│  ││ <Prefix:al(0, 0); ││  │
+│  ││ Term:beta(1, 1); >││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE t @@ ts_ngram('alpha', 0.5);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││  NGRAM_SIMILARITY ││  │
+│  ││    ────────────   ││  │
+│  ││  t(string) ngrams ││  │
+│  ││ =alpha threshold=0││  │
+│  ││         .5        ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘

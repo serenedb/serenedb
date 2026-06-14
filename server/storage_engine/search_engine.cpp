@@ -41,6 +41,7 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/formats/formats.hpp>
+#include <iresearch/search/filter_optimizer.hpp>
 
 #include "app/app_server.h"
 #include "basics/down_cast.h"
@@ -115,6 +116,7 @@ SearchEngine::SearchEngine()
     &fast_text::CreateModel<fasttext::ImmutableFastText>);
 
   irs::formats::Init();
+  irs::InitOptimizeRules();
 
   gInstance = this;
 }

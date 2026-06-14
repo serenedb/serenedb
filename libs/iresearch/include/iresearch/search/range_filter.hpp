@@ -78,6 +78,9 @@ class ByRange : public FilterWithField<ByRangeOptions> {
                     FilterVisitor& visitor);
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
+    SDB_ASSERT(options().range.min_type == BoundType::Unbounded ||
+               options().range.max_type == BoundType::Unbounded ||
+               options().range.min != options().range.max);
     return prepare(ctx.Boost(Boost()), field_id(), options().range,
                    options().scored_terms_limit);
   }

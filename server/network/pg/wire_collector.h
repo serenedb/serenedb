@@ -31,7 +31,7 @@
 #include "absl/container/inlined_vector.h"
 #include "basics/message_buffer.h"
 #include "network/connection.h"
-#include "network/pg/task_runner.h"
+#include "network/task_runner.h"
 #include "pg/serialize.h"
 
 namespace duckdb {

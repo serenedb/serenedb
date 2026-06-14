@@ -73,7 +73,7 @@
 #include "network/pg/auth.h"
 #include "network/pg/cancel_registry.h"
 #include "network/pg/pg_frame_codec.h"
-#include "network/pg/task_runner.h"
+#include "network/task_runner.h"
 #include "network/pg/wire_collector.h"
 #include "network/pg/wire_frames.h"
 #include "network/socket.h"

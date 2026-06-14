@@ -52,7 +52,7 @@
 #include "network/http/response_writer.h"
 #include "network/http/router.h"
 #include "network/io_executor.h"
-#include "network/pg/task_runner.h"
+#include "network/task_runner.h"
 #include "network/socket.h"
 #include "pg/connection_context.h"
 
@@ -70,7 +70,7 @@ struct HttpServerContext {
 
 // The v2 session model (the pg-wire shape): RecvLoop and SendWriter are
 // io-pinned byte pumps; SessionMain -- parsing, routing, HANDLERS -- runs as
-// a duckdb task (pg::TaskRunner), so handlers drive queries inline and block
+// a duckdb task (TaskRunner), so handlers drive queries inline and block
 // on backpressure without ever occupying an io thread. _recv is the io->duck
 // byte channel (watermark-published), _send runs write-behind (committed
 // bytes auto-flush at kSendFlushSize; the callback arms the writer).

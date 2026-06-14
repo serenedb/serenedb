@@ -33,7 +33,7 @@
 
 #include "basics/duckdb_engine.h"
 #include "network/io_context.h"
-#include "network/pg/task_runner.h"
+#include "network/task_runner.h"
 
 using namespace sdb;
 
@@ -42,7 +42,7 @@ namespace {
 // Hosted coroutine: begins on a duck worker, drives one query with
 // Yield/Park exactly like the session's DriveQuery, then parks until an
 // external RequestRun releases it.
-yaclib::Future<> HostedBody(network::pg::TaskRunner& task,
+yaclib::Future<> HostedBody(network::TaskRunner& task,
                             duckdb::PendingQueryResult& pending,
                             std::atomic<int>& phase, std::thread::id test_tid) {
   co_await task.Begin();
@@ -85,7 +85,7 @@ TEST(NetworkTaskRunner, DrivesQueryAndParksOffTestThread) {
     duckdb::TaskScheduler::GetScheduler(DuckDBEngine::Instance().instance());
   network::IoThreadPool pool{1};
   pool.Start();
-  network::pg::TaskRunner task{scheduler, pool.Next()};
+  network::TaskRunner task{scheduler, pool.Next()};
 
   std::atomic<int> phase{0};
   auto future = HostedBody(task, *pending, phase, std::this_thread::get_id());

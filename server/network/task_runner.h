@@ -28,7 +28,7 @@
 
 #include "network/io_executor.h"
 
-namespace sdb::network::pg {
+namespace sdb::network {
 
 // Hosts ONE endless coroutine as a duckdb::Task on the DuckDB scheduler --
 // the pg session's duck-side half. The coroutine never migrates executors:
@@ -195,4 +195,4 @@ class TaskRunner final : public duckdb::Task {
   std::atomic<uint8_t> _run{kParked};
 };
 
-}  // namespace sdb::network::pg
+}  // namespace sdb::network

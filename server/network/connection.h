@@ -34,7 +34,7 @@
 #include "basics/message_buffer.h"
 #include "network/gate.h"
 #include "network/io_context.h"
-#include "network/pg/task_runner.h"
+#include "network/task_runner.h"
 #include "network/socket.h"
 
 namespace sdb::network {
@@ -266,7 +266,7 @@ class Transport {
 
   // Hosts the session's SessionMain coroutine as a duckdb::Task; emplaced by the
   // session right before spawning. By value -- no per-connection heap alloc.
-  std::optional<pg::TaskRunner> _task;
+  std::optional<TaskRunner> _task;
   // Set once SessionMain is detached and _task->Begin() captured the job; gates
   // RequestRun wakes from io-side code.
   bool _task_spawned = false;

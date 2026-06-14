@@ -5,7 +5,11 @@
 # them near 400 MB/s and masks server-side serialization differences. This
 # client just counts bytes (multi-GB/s), so the server stays the bottleneck.
 #
-# usage: wire_serialize_drain.py PORT {text|binary} REPS SETUP QUERY LABEL
+# usage: wire_serialize_drain.py PORT MODE REPS SETUP QUERY LABEL
+# MODE = text|binary       -- drain the SELECT result (Bind result-format 0/1).
+#      | copy_text|copy_binary -- drain COPY (QUERY) TO STDOUT (FORMAT text|binary)
+#        as a simple query, so SELECT-serialize vs COPY-serialize are measured the
+#        same way (raw bytes to RFQ, server-bound -- neither decodes rows).
 # SETUP ("" = none) runs as a simple-protocol Query first (e.g. SET ...).
 # Output (stdout, one line): LABEL <median_s> <MB> <MB/s> <status>
 import socket
@@ -15,7 +19,9 @@ import sys
 import time
 
 PORT = int(sys.argv[1])
-FMT = {"text": 0, "binary": 1}[sys.argv[2]]
+MODE = sys.argv[2]
+COPY = MODE.startswith("copy_")
+FMT = 1 if MODE.endswith("binary") else 0
 REPS = int(sys.argv[3])
 SETUP = sys.argv[4]
 QUERY = sys.argv[5]
@@ -81,15 +87,21 @@ def extended_query(sock):
     sock.sendall(msg)
 
 
+def simple_copy_query(sock):
+    fmt = "binary" if FMT else "text"
+    q = f"COPY ({QUERY}) TO STDOUT (FORMAT {fmt})".encode()
+    sock.sendall(b"Q" + struct.pack("!i", 5 + len(q)) + q + b"\x00")
+
+
 def scan_error(chunk):
     # The response head is small control frames (ParseComplete/BindComplete/
-    # ErrorResponse) before the DataRow flood; walking frames in the first
-    # chunk is enough to catch a serialization-unsupported error.
+    # CopyOutResponse/ErrorResponse) before the DataRow/CopyData flood; walking
+    # frames in the first chunk is enough to catch a serialization error.
     off = 0
     while off + 5 <= len(chunk):
         typ = chunk[off : off + 1]
         (ln,) = struct.unpack("!i", chunk[off + 1 : off + 5])
-        if typ == b"D":
+        if typ in (b"D", b"d", b"H"):  # DataRow / CopyData / CopyOutResponse
             return None
         if typ == b"E":
             end = min(off + 1 + ln, len(chunk))
@@ -99,7 +111,10 @@ def scan_error(chunk):
 
 
 def drain_once(sock):
-    extended_query(sock)
+    if COPY:
+        simple_copy_query(sock)
+    else:
+        extended_query(sock)
     total = 0
     tail = b""
     error = None

@@ -375,13 +375,17 @@ run_serialize() {
 		echo "  serialize: setup failed (see ${log})" >&2
 		return 0
 	fi
-	local typ fmt out
+	local typ fmt out lbl
 	for typ in "${SER_TYPES[@]}"; do
-		for fmt in text binary; do
+		for fmt in text binary copy_text copy_binary; do
+			case "${fmt}" in
+			copy_*) lbl="${srv}_copy_${typ}_${fmt#copy_}" ;;
+			*) lbl="${srv}_ser_${typ}_${fmt}" ;;
+			esac
 			out=$(python3 "${ROOT}/scripts/perf/wire_serialize_drain.py" "${port}" "${fmt}" 3 \
 				"set preserve_insertion_order=false" \
 				"SELECT * FROM ser.main.t_${typ}" \
-				"${srv}_ser_${typ}_${fmt}" 2>>"${log}") || out="${srv}_ser_${typ}_${fmt}	0	0	0	ERROR: client failed"
+				"${lbl}" 2>>"${log}") || out="${lbl}	0	0	0	ERROR: client failed"
 			local label med mb mbps status
 			IFS=$'\t' read -r label med mb mbps status <<<"${out}"
 			printf '%s\t%s\t%s\t%s\t0\t0\n' "${label}" "${mbps}" "${med}" "${mb}" >>"${OUT_DIR}/results.tsv"

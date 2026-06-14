@@ -38,6 +38,7 @@
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
+#include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -461,6 +462,18 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
+  irs::analysis::SparseNGramTokenizer::Options BuildSparseNGram(
+    std::string_view prefix,
+    const irs::analysis::SparseNGramTokenizer::Options* parent) {
+    irs::analysis::SparseNGramTokenizer::Options opts;
+    int parent_len = parent ? parent->max_ngram_length : 0;
+    opts.max_ngram_length = Resolve<tokenizer_options::kMaxNgramLength>(
+      prefix, parent ? &parent_len : nullptr);
+    opts.covering = Resolve<tokenizer_options::kCovering>(
+      prefix, parent ? &parent->covering : nullptr);
+    return opts;
+  }
+
   irs::analysis::SegmentationTokenizer::Options BuildSegmentation(
     std::string_view prefix,
     const irs::analysis::SegmentationTokenizer::Options* parent) {
@@ -796,6 +809,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == NGramTokenizerBase::type_name()) {
       out.config = BuildNGram(
         prefix, ParentOptions<NGramTokenizerBase::Options>(parent_cfg));
+    } else if (type == SparseNGramTokenizer::type_name()) {
+      out.config = BuildSparseNGram(
+        prefix, ParentOptions<SparseNGramTokenizer::Options>(parent_cfg));
     } else if (type == NearestNeighborsTokenizer::type_name()) {
       out.config = BuildNearestNeighbors(
         prefix, ParentOptions<NearestNeighborsTokenizer::Options>(parent_cfg));

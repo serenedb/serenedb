@@ -24,6 +24,7 @@ End-to-end demos that show what SereneDB does, against real data, in scripts you
 | [demo3](demo3/) | **Elastic-grade FTS tour** -- phrase + slop, boolean, prefix / wildcard / regex / fuzzy, ngram, four scoring models, byte-range highlights, plus a complex composite query and a `##`-chained mixed-part phrase | IMDb reviews on Hugging Face (~100k reviews, two analyzers in one index) |
 | [demo4](demo4/) | **Hybrid vector + FTS** -- one index with BM25 and HNSW cosine ANN; vector top-K, range search, text+vector hybrid | Qdrant dbpedia-entities (~100k abstracts, 1536-dim OpenAI embeddings) |
 | [demo5](demo5/) | **Self-embedding semantic search** -- `ai_embed(...)` at ingest and query time against any OpenAI-compatible endpoint | neuralwork/arxiver (arXiv ML abstracts, Gemini 3072-dim embeddings) |
+| [demo6](demo6/) | **Code search + statistics with sparse ngrams** -- GitHub-style substring + fuzzy code search via the `sparse_ngram` tokenizer, BM25 over statements, per-problem runtime/memory statistics aggregated from index INCLUDE columns | UNION ALL views over open-r1/codeforces + deepmind/code_contests (~15k problems) and ~45k accepted submissions (open-r1 `selected_accepted`), all CC-BY-4.0 |
 
 ## Running a demo
 

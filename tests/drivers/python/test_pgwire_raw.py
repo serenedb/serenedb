@@ -133,6 +133,18 @@ def tags(msgs):
     return [p for t, p in msgs if t == "C"]
 
 
+def first_field(msgs):
+    """First column of the first DataRow as raw bytes (text format)."""
+    r = rows(msgs)[0]
+    (ncols,) = struct.unpack("!H", r[:2])
+    assert ncols >= 1, r
+    (ln,) = struct.unpack("!i", r[2:6])
+    return r[6 : 6 + ln]
+
+
+PGCOPY_SIGNATURE = b"PGCOPY\n\xff\r\n\x00"
+
+
 @pytest.fixture()
 def conn():
     c = WireConn()
@@ -245,6 +257,94 @@ def test_copy_from_stdin_extended(conn):
         assert b"2" in rows(m)[0] and b"one" in rows(m)[0]
     finally:
         conn.run("drop table if exists smoke_copy_ext")
+
+
+def test_copy_to_stdout_extended(conn):
+    # COPY ... TO STDOUT over the extended protocol: Parse/Bind/Execute must
+    # route to the wire collector and emit CopyOutResponse(H) + CopyData(d) +
+    # CopyDone(c) + CommandComplete("COPY N"), not a normal RowDescription path.
+    conn.run("drop table if exists smoke_copy_to_ext")
+    assert "E" not in types(conn.run("create table smoke_copy_to_ext(a int, b text)"))
+    try:
+        conn.run("insert into smoke_copy_to_ext values (1,'one'),(2,'two')")
+        conn.parse("", "copy smoke_copy_to_ext to stdout")
+        conn.bind("", "")
+        conn.execute("")
+        conn.sync()
+        m = conn.drain_to_ready()
+        t = types(m)
+        assert "E" not in t, errors(m)
+        assert "H" in t and "c" in t, t  # CopyOutResponse + CopyDone
+        assert any(b"COPY 2" in tg for tg in tags(m)), tags(m)
+        # the row values flow through the CopyData stream (delimiter/header are
+        # the DuckDB-native text format's concern, covered in test_copy.py)
+        body = b"".join(p for tt, p in m if tt == "d")
+        assert b"one" in body and b"two" in body, body
+    finally:
+        conn.run("drop table if exists smoke_copy_to_ext")
+
+
+def test_copy_to_stdout_binary_extended(conn):
+    conn.run("drop table if exists smoke_copy_tobin_ext")
+    assert "E" not in types(conn.run("create table smoke_copy_tobin_ext(a int, b text)"))
+    try:
+        conn.run(
+            "insert into smoke_copy_tobin_ext values (1,'one'),(2,'two'),(3,'three')"
+        )
+        conn.parse("", "copy smoke_copy_tobin_ext to stdout (format binary)")
+        conn.bind("", "")
+        conn.execute("")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), errors(m)
+        assert "H" in types(m) and "c" in types(m), types(m)
+        blob = b"".join(p for t, p in m if t == "d")
+        assert blob.startswith(PGCOPY_SIGNATURE), blob[:11]
+        assert blob.endswith(b"\xff\xff"), "PGCOPY -1 trailer"
+        assert any(b"COPY 3" in tg for tg in tags(m)), tags(m)
+    finally:
+        conn.run("drop table if exists smoke_copy_tobin_ext")
+
+
+def test_copy_binary_round_trip_extended(conn):
+    # Full binary COPY both directions over the EXTENDED protocol: TO STDOUT
+    # (FORMAT BINARY) produces the PGCOPY stream and FROM STDIN (FORMAT BINARY)
+    # loads it back unchanged, including a NULL. Exercises both the deferred
+    # COPY-FROM bind-at-Execute path and the extended COPY-TO routing.
+    conn.run("drop table if exists smoke_bin_src_ext")
+    conn.run("drop table if exists smoke_bin_dst_ext")
+    assert "E" not in types(conn.run("create table smoke_bin_src_ext(x int, label text)"))
+    assert "E" not in types(conn.run("create table smoke_bin_dst_ext(x int, label text)"))
+    try:
+        conn.run("insert into smoke_bin_src_ext values (1,'one'),(2,null),(3,'three')")
+        conn.parse("", "copy smoke_bin_src_ext to stdout (format binary)")
+        conn.bind("", "")
+        conn.execute("")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert "E" not in types(m), errors(m)
+        blob = b"".join(p for t, p in m if t == "d")
+        assert blob.startswith(PGCOPY_SIGNATURE) and blob.endswith(b"\xff\xff")
+
+        conn.parse("", "copy smoke_bin_dst_ext from stdin (format binary)")
+        conn.bind("", "")
+        conn.execute("")
+        assert conn.read_msg()[0] == "1"  # ParseComplete
+        assert conn.read_msg()[0] == "2"  # BindComplete
+        assert conn.read_msg()[0] == "G"  # CopyInResponse before Sync
+        conn.send("d", blob)
+        conn.send("c")
+        conn.sync()
+        m = conn.drain_to_ready()
+        assert any(b"COPY 3" in t for t in tags(m)), types(m)
+
+        assert first_field(conn.run("select count(*) from smoke_bin_dst_ext")) == b"3"
+        assert first_field(conn.run("select sum(x) from smoke_bin_dst_ext")) == b"6"
+        # the NULL label survived the round trip (count(label) skips NULLs)
+        assert first_field(conn.run("select count(label) from smoke_bin_dst_ext")) == b"2"
+    finally:
+        conn.run("drop table if exists smoke_bin_src_ext")
+        conn.run("drop table if exists smoke_bin_dst_ext")
 
 
 def test_simple_protocol_empty_multi_and_copy(conn):

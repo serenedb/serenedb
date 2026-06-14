@@ -126,8 +126,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
 
   const auto schema_id = index.GetParentId();
-  const auto db_id = catalog::CatalogFeature::instance()
-                       .Global()
+  const auto db_id = catalog::GetCatalog()
                        .GetCatalogSnapshot()
                        ->GetDatabaseId(index);
   const auto index_id = index.GetId();

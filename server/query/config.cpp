@@ -112,7 +112,7 @@ std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
   if (_snapshot) {
     return _snapshot;
   }
-  _snapshot = catalog::CatalogFeature::instance().Global().GetCatalogSnapshot();
+  _snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   SDB_ASSERT(_snapshot);
   return _snapshot;
 }

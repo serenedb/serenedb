@@ -153,7 +153,7 @@ InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession() {
     return *_replay;
   }
   auto snapshot =
-    catalog::CatalogFeature::instance().Global().GetCatalogSnapshot();
+    catalog::GetCatalog().GetCatalogSnapshot();
   SDB_ENSURE(snapshot, ERROR_INTERNAL,
              "inverted index replay: no catalog snapshot");
   auto index_shard = snapshot->GetIndexShard(_index_id);
@@ -557,7 +557,7 @@ void InvertedStoreIndex::CheckpointBarrier() const {
   // the delta, an explicit REINDEX clears it. Resolved from the GLOBAL snapshot
   // (checkpoint runs with no connection).
   auto snapshot =
-    catalog::CatalogFeature::instance().Global().GetCatalogSnapshot();
+    catalog::GetCatalog().GetCatalogSnapshot();
   if (!snapshot) {
     return;
   }

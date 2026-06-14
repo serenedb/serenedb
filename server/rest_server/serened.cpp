@@ -69,7 +69,6 @@ int RunServer(int argc, char** argv) {
     DatabasePathFeature db_path;
     catalog::CatalogStore store;
     SchedulerFeature scheduler;
-    catalog::CatalogFeature catalog;
     search::SearchEngine search;
     GeneralServerFeature general;
     pg::PostgresFeature pg;
@@ -104,7 +103,7 @@ int RunServer(int argc, char** argv) {
         stop("search", [&] { search.stop(); });
       }
       if (up_catalog) {
-        stop("catalog", [&] { catalog.stop(); });
+        stop("catalog", [&] { catalog::ShutdownCatalog(); });
       }
       if (up_store) {
         stop("store", [&] { store.Shutdown(); });  // detach + checkpoint
@@ -121,7 +120,7 @@ int RunServer(int argc, char** argv) {
     up_store = true;
     scheduler.start();
     up_scheduler = true;
-    catalog.start();
+    catalog::InitCatalog();
     up_catalog = true;
     search.start();
     up_search = true;

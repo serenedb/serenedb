@@ -63,7 +63,7 @@ struct CTASGlobalState final : public duckdb::GlobalSinkState {
     }
     if (!finalized && !table_name.empty()) {
       try {
-        auto& catalog = catalog::CatalogFeature::instance().Global();
+        auto& catalog = catalog::GetCatalog();
         std::ignore =
           catalog.DropTable(database_name, schema_name, table_name, true);
       } catch (...) {
@@ -120,7 +120,7 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // CTAS has no PK/UNIQUE constraints -- pkColumns stays empty, so the
   // Table constructor wires up a generated PK sequence.
 
-  auto& catalog_impl = catalog::CatalogFeature::instance().Global();
+  auto& catalog_impl = catalog::GetCatalog();
 
   bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
@@ -192,7 +192,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
   // recovery must drop it. Name kept from the SST-ingest era.
   SDB_IF_FAILURE("crash_sst_sink_after_ingest") { SDB_IMMEDIATE_ABORT(); }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
-  auto& catalog = catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::GetCatalog();
   auto r = catalog.RemoveTombstone(gstate.database_id, gstate.schema_name,
                                    gstate.table_name);
   if (!r.ok()) {

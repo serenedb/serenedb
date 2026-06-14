@@ -229,7 +229,7 @@ Result DropFunctionByKind(catalog::LogicalCatalog& catalog,
 }  // namespace
 
 void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
-  auto& catalog = catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::GetCatalog();
 
   Result r;
   switch (info.type) {

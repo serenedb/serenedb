@@ -342,8 +342,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
               return col.GetName() == pk_name;
             });
             if (it == options.columns.end()) {
-              throw duckdb::CatalogException(
-                "column \"%s\" named in key does not exist", pk_name);
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                ERR_MSG("column \"", pk_name, "\" named in key does not exist"));
             }
             append_pk(it->GetId());
           }
@@ -389,8 +390,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     if (if_not_exists) {
       return nullptr;
     }
-    throw duckdb::CatalogException("relation \"%s\" already exists",
-                                   table_info.table);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", table_info.table, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
@@ -422,8 +424,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   } else if (idx_type_str == "inverted") {
     index_type = catalog::ObjectType::InvertedIndex;
   } else {
-    throw duckdb::CatalogException("access method \"%s\" does not exist",
-                                   info.index_type);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG("access method \"", info.index_type, "\" does not exist"));
   }
 
   // Build CreateIndexColumn vector from DuckDB info.
@@ -446,13 +449,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
         }
       }
       if (!cat_col) {
-        throw duckdb::CatalogException("column \"%s\" not found in table",
-                                       col_name);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+          ERR_MSG("column \"", col_name, "\" not found in table"));
       }
       idx_columns.emplace_back(cat_col, cat_col->GetName());
     } else {
-      throw duckdb::CatalogException(
-        "Expression-based index columns are not supported");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("Expression-based index columns are not supported"));
     }
   }
 
@@ -501,8 +506,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     if (if_not_exists) {
       return nullptr;
     }
-    throw duckdb::CatalogException("relation \"%s\" already exists",
-                                   info.index_name);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", info.index_name, "\" already exists"));
   }
   if (!create_result.ok()) {
     SDB_THROW(std::move(create_result));
@@ -560,9 +566,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
         if (merged_info->macros[i]->types == new_macro->types) {
           if (!replace) {
             // Plain CREATE FUNCTION: duplicate signature is an error.
-            throw duckdb::CatalogException(
-              "function \"%s\" already exists with same argument types",
-              info.name);
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_DUPLICATE_FUNCTION),
+              ERR_MSG("function \"", info.name,
+                      "\" already exists with same argument types"));
           }
           // CREATE OR REPLACE: swap in the new overload.
           merged_info->macros[i] = new_macro->Copy();
@@ -596,7 +603,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
     }
-    throw duckdb::CatalogException("relation \"%s\" already exists", info.name);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                    ERR_MSG("relation \"", info.name, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
@@ -625,10 +633,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
       return nullptr;
     }
     if (replace) {
-      throw duckdb::CatalogException("\"%s\" is not a view", info.view_name);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                      ERR_MSG("\"", info.view_name, "\" is not a view"));
     }
-    throw duckdb::CatalogException("relation \"%s\" already exists",
-                                   info.view_name);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+      ERR_MSG("relation \"", info.view_name, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));

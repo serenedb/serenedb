@@ -163,8 +163,10 @@ void SereneDBClientState::Register(
       auto& conn_ctx = GetSereneDBContext(ctx);
       if (conn_ctx.IsExplicitTransaction() && conn_ctx.HasRocksDBSnapshot() &&
           level != conn_ctx.GetIsolationLevel()) {
-        throw duckdb::InvalidInputException(
-          "SET TRANSACTION ISOLATION LEVEL must be called before any query");
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+          ERR_MSG(
+            "SET TRANSACTION ISOLATION LEVEL must be called before any query"));
       }
     };
 }
@@ -188,7 +190,7 @@ void SereneDBClientState::TransactionCommit(
   auto r = _connection_ctx->Commit();
   if (!r.ok()) {
     throw duckdb::TransactionException("SereneDB commit failed: %s",
-                                       std::string{r.errorMessage()});
+                                       r.errorMessage());
   }
 }
 
@@ -197,7 +199,7 @@ void SereneDBClientState::TransactionRollback(
   auto r = _connection_ctx->Rollback();
   if (!r.ok()) {
     throw duckdb::TransactionException("SereneDB rollback failed: %s",
-                                       std::string{r.errorMessage()});
+                                       r.errorMessage());
   }
 }
 

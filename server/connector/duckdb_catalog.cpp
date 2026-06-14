@@ -1141,8 +1141,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     } else if (type == "secondary" || type == "inverted") {
       create_index_info->index_type = std::move(type);
     } else {
-      throw duckdb::CatalogException("access method \"%s\" does not exist",
-                                     idx_type);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG(absl::StrCat("access method \"", idx_type,
+                             "\" does not exist")));
     }
   }
 

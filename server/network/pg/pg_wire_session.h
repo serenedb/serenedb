@@ -144,6 +144,18 @@ void ThrowIfError(Result& result) {
   }
 }
 
+// Rethrow a driven pending query's error iff the drive failed -- the executor
+// signaled EXECUTION_ERROR, or the result captured one. Same typed rethrow as
+// ThrowIfError; the single post-DriveQuery error boundary shared by the simple,
+// extended, and COPY handlers.
+inline void ThrowIfDriveFailed(duckdb::PendingQueryResult& pending,
+                               duckdb::PendingExecutionResult status) {
+  if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
+      pending.HasError()) {
+    pending.GetErrorObject().Throw();
+  }
+}
+
 // Parse/Bind/Describe/Execute/Close/Flush. An error in one of these arms
 // ignore-till-Sync; an error in simple Query (self-syncing) does not.
 inline bool IsExtended(char type) {
@@ -1096,12 +1108,9 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
       auto pending = PendingQueryEnsured(*prepared, params, wire);
       ThrowIfError(*pending);
       const auto status = co_await DriveQuery(*pending, wire.get());
-      if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
-          pending->HasError()) {
-        // Partial rows may already be out; the error response after them is
-        // exactly postgres's mid-stream error behavior.
-        pending->GetErrorObject().Throw();
-      }
+      // Partial rows may already be out; the error response after them is
+      // exactly postgres's mid-stream error behavior.
+      ThrowIfDriveFailed(*pending, status);
       co_await FinishWireDrain(*wire);
       auto result = pending->Execute();
       ThrowIfError(*result);
@@ -1114,10 +1123,7 @@ yaclib::Future<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     auto pending = PendingQueryEnsured(*prepared, params);
     ThrowIfError(*pending);
     const auto status = co_await DriveQuery(*pending);
-    if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
-        pending->HasError()) {
-      pending->GetErrorObject().Throw();
-    }
+    ThrowIfDriveFailed(*pending, status);
     auto result = pending->Execute();
     ThrowIfError(*result);
     WriteCommandTag(*prepared, *result, return_type);
@@ -1215,10 +1221,7 @@ yaclib::Future<> PgWireSession<Kind>::RunCopyFromStdin(
     auto pending = PendingQueryEnsured(*prepared, params);
     ThrowIfError(*pending);
     const auto status = co_await DriveQuery(*pending);
-    if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
-        pending->HasError()) {
-      pending->GetErrorObject().Throw();
-    }
+    ThrowIfDriveFailed(*pending, status);
     result = pending->Execute();
     ThrowIfError(*result);
   } catch (...) {
@@ -1711,10 +1714,7 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
         *portal->stmt->prepared, portal->bind_info.param_values, wire);
       ThrowIfError(*portal->pending);
       const auto status = co_await DriveQuery(*portal->pending, wire.get());
-      if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
-          portal->pending->HasError()) {
-        portal->pending->GetErrorObject().Throw();
-      }
+      ThrowIfDriveFailed(*portal->pending, status);
       co_await FinishWireDrain(*wire);
       portal->result = portal->pending->Execute();
       ThrowIfError(*portal->result);
@@ -1730,10 +1730,7 @@ yaclib::Future<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
                                           portal->bind_info.param_values);
     ThrowIfError(*portal->pending);
     const auto status = co_await DriveQuery(*portal->pending);
-    if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR ||
-        portal->pending->HasError()) {
-      portal->pending->GetErrorObject().Throw();
-    }
+    ThrowIfDriveFailed(*portal->pending, status);
     portal->result = portal->pending->Execute();
     ThrowIfError(*portal->result);
     portal->started = true;

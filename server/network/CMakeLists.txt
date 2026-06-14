@@ -15,7 +15,7 @@ target_sources(
         pg/pg_frame_codec.cpp
         pg/wire_frames.cpp
         pg/wire_collector.cpp
-        pg/auth.cpp
+        credentials.cpp
         server.cpp
 )
 

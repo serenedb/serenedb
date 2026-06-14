@@ -72,7 +72,7 @@ class Server final {
   network::pg::CancelRegistry _cancel;
   std::optional<asio_ns::ssl::context> _ssl;
   // Temporary config-based auth source (RBAC will replace it via the seam).
-  std::unique_ptr<network::pg::CredentialProvider> _credentials;
+  std::unique_ptr<network::CredentialProvider> _credentials;
   std::unique_ptr<network::http::ApiKeyValidator> _api_key_validator;
   std::unique_ptr<network::http::BearerValidator> _bearer_validator;
   std::unique_ptr<network::IoThreadPool> _pool;

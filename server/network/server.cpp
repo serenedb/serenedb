@@ -31,7 +31,7 @@
 #include "basics/number_of_cores.h"
 #include "network/http/es/handlers.h"
 #include "network/http/test/handlers.h"
-#include "network/pg/auth.h"
+#include "network/credentials.h"
 #include "network/tls_context.h"
 
 ABSL_FLAG(uint64_t, server_io_threads, 0,
@@ -98,12 +98,12 @@ namespace {
 
 // Throwaway credential source: one user from the config flags. The colleague's
 // RBAC will provide a real CredentialProvider via the same seam.
-class ConfigCredentialProvider final : public network::pg::CredentialProvider {
+class ConfigCredentialProvider final : public network::CredentialProvider {
  public:
-  ConfigCredentialProvider(std::string user, network::pg::Credential credential)
+  ConfigCredentialProvider(std::string user, network::Credential credential)
     : _user{std::move(user)}, _credential{std::move(credential)} {}
 
-  std::optional<network::pg::Credential> LookupCredential(
+  std::optional<network::Credential> LookupCredential(
     std::string_view username) const override {
     if (username == _user) {
       return _credential;
@@ -113,7 +113,7 @@ class ConfigCredentialProvider final : public network::pg::CredentialProvider {
 
  private:
   std::string _user;
-  network::pg::Credential _credential;
+  network::Credential _credential;
 };
 
 asio_ns::ip::tcp::endpoint ParseEndpoint(const std::string& url) {
@@ -181,10 +181,10 @@ void Server::start() {
   }
 
   if (!_auth_password.empty()) {
-    network::pg::Credential credential;
+    network::Credential credential;
     credential.cleartext = _auth_password;
     if (!_auth_cleartext) {
-      credential.scram = network::pg::BuildScramVerifier(_auth_password);
+      credential.scram = network::BuildScramVerifier(_auth_password);
       if (!credential.scram) {
         SDB_FATAL(GENERAL, "could not build SCRAM verifier for auth");
       }

@@ -24,7 +24,7 @@
 #include <string>
 #include <string_view>
 
-#include "network/pg/auth.h"
+#include "network/credentials.h"
 
 namespace sdb::network::http {
 
@@ -93,7 +93,7 @@ struct AuthResult {
 // the pg session's unconfigured-server behavior.
 class HttpAuthenticator {
  public:
-  HttpAuthenticator(const pg::CredentialProvider* credentials,
+  HttpAuthenticator(const network::CredentialProvider* credentials,
                     const ApiKeyValidator* api_keys,
                     const BearerValidator* bearer)
     : _credentials{credentials}, _api_keys{api_keys}, _bearer{bearer} {}
@@ -107,7 +107,7 @@ class HttpAuthenticator {
   AuthResult ApiKey(std::string_view payload) const;
   AuthResult Bearer(std::string_view payload) const;
 
-  const pg::CredentialProvider* _credentials;
+  const network::CredentialProvider* _credentials;
   const ApiKeyValidator* _api_keys;
   const BearerValidator* _bearer;
 };

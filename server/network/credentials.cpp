@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "network/pg/auth.h"
+#include "network/credentials.h"
 
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -31,7 +31,7 @@
 // SCRAM-SHA-256 crypto (RFC 5802) over OpenSSL -- the same primitives libpq's
 // scram-common wraps. SASLprep (RFC 4013) is not applied: ASCII passwords are
 // unaffected; non-ASCII normalization is a follow-up.
-namespace sdb::network::pg {
+namespace sdb::network {
 namespace {
 
 constexpr char kB64[] =
@@ -242,4 +242,4 @@ std::array<uint8_t, kScramKeyLen> ScramServerSignature(
   return signature;
 }
 
-}  // namespace sdb::network::pg
+}  // namespace sdb::network

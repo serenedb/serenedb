@@ -28,7 +28,7 @@
 #include <string_view>
 #include <vector>
 
-namespace sdb::network::pg {
+namespace sdb::network {
 
 inline constexpr int kScramKeyLen = 32;  // SCRAM_SHA_256_KEY_LEN
 
@@ -97,4 +97,4 @@ std::array<uint8_t, kScramKeyLen> ScramServerSignature(
 // Constant-time equality.
 bool ConstantTimeEqual(std::span<const uint8_t> a, std::span<const uint8_t> b);
 
-}  // namespace sdb::network::pg
+}  // namespace sdb::network

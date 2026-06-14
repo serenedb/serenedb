@@ -63,7 +63,7 @@ struct HttpServerContext {
   asio_ns::ssl::context* ssl = nullptr;
   // Same credential store as the pg endpoint (one user database for both
   // protocols); null => trust, matching the pg session.
-  const pg::CredentialProvider* credentials = nullptr;
+  const CredentialProvider* credentials = nullptr;
   const http::ApiKeyValidator* api_keys = nullptr;
   const http::BearerValidator* bearer = nullptr;
 };

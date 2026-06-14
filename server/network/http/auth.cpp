@@ -67,7 +67,7 @@ AuthResult HttpAuthenticator::Authenticate(
 }
 
 AuthResult HttpAuthenticator::Basic(std::string_view payload) const {
-  const auto decoded = pg::Base64Decode(payload);
+  const auto decoded = network::Base64Decode(payload);
   if (!decoded) {
     return {.status = kUnauthorized};
   }
@@ -89,7 +89,7 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload) const {
   if (credential->cleartext) {
     const auto& expected = *credential->cleartext;
     if (password.size() == expected.size() &&
-        pg::ConstantTimeEqual(
+        network::ConstantTimeEqual(
           {reinterpret_cast<const uint8_t*>(password.data()), password.size()},
           {reinterpret_cast<const uint8_t*>(expected.data()),
            expected.size()})) {
@@ -98,7 +98,7 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload) const {
     return {.status = kUnauthorized};
   }
   if (credential->scram &&
-      pg::VerifyCleartextAgainstScram(*credential->scram, password)) {
+      network::VerifyCleartextAgainstScram(*credential->scram, password)) {
     return {.status = 0, .context = {.user = std::string{user}}};
   }
   return {.status = kUnauthorized};
@@ -108,7 +108,7 @@ AuthResult HttpAuthenticator::ApiKey(std::string_view payload) const {
   if (_api_keys == nullptr) {
     return {.status = kUnauthorized};
   }
-  const auto decoded = pg::Base64Decode(payload);
+  const auto decoded = network::Base64Decode(payload);
   if (!decoded) {
     return {.status = kUnauthorized};
   }
@@ -143,7 +143,7 @@ bool SecureEquals(std::string_view a, std::string_view b) {
   // Content compare is constant time; length short-circuits (same as the
   // Basic-password path) so the secret length can leak via timing -- fine
   // for a static flag credential.
-  return pg::ConstantTimeEqual(
+  return network::ConstantTimeEqual(
     {reinterpret_cast<const uint8_t*>(a.data()), a.size()},
     {reinterpret_cast<const uint8_t*>(b.data()), b.size()});
 }

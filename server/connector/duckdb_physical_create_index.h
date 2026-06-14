@@ -41,7 +41,7 @@ class SereneDBSchemaEntry;
 // Lifecycle:
 //   Sink:               receive data chunks, write to index shard (backfill)
 //   GetGlobalSinkState: create index in catalog with tombstone
-//   Finalize:           CommitWait (inverted) + RemoveTombstone
+//   Finalize:           Refresh (inverted) + RemoveTombstone
 //   On error:           destructor drops the index (rollback)
 class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
  public:

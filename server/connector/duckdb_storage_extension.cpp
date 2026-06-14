@@ -48,7 +48,6 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
-
   if (info.path.empty()) {
     // CREATE DATABASE: create new database in SereneDB catalog
     auto state = context.registered_state->Get<SereneDBClientState>(

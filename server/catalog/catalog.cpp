@@ -647,7 +647,9 @@ ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
 }
 
 namespace {
+
 std::shared_ptr<LogicalCatalog> g_catalog;
+
 }  // namespace
 
 void InitCatalog() {

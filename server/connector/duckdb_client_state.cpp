@@ -22,6 +22,7 @@
 
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <utility>
@@ -31,6 +32,7 @@
 #include "basics/debugging.h"
 #include "basics/system-compiler.h"
 #include "catalog/database.h"
+#include "catalog/store/store.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_progress.h"
 #include "pg/connection_context.h"
@@ -202,6 +204,19 @@ void SereneDBClientState::TransactionPreCommit(
   // can succeed via their normal set_local path.
   _connection_ctx->PreCommit();
   tls_committing_ctx = _connection_ctx.get();
+}
+
+void SereneDBClientState::TransactionFlushChanges(duckdb::AttachedDatabase& db,
+                                                  duckdb::ClientContext&) {
+  // Commit the search-index leg synchronously with the store table changes:
+  // this fires after the store database's changes are durable but before the
+  // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
+  // un-committed in-flight batch. Only the store database carries indexed
+  // tables, so settle on its commit.
+  if (db.GetName() != catalog::kStoreDatabaseName) {
+    return;
+  }
+  _connection_ctx->CommitSearch();
 }
 
 void SereneDBClientState::TransactionPreRollback(

@@ -35,14 +35,14 @@ namespace sdb::search {
 
 void RefreshTask::Finalize(
   std::shared_ptr<search::InvertedIndexShard> inverted_index_shard,
-  CommitResult res) {
+  RefreshResult res) {
   static constexpr size_t kMaxNonEmptyCommits = 10;
   static constexpr size_t kMaxPendingCompactions = 3;
 
-  if (res != CommitResult::NoChanges) {
+  if (res != RefreshResult::NoChanges) {
     _state->pending_commits.fetch_add(1, std::memory_order_release);
 
-    if (res == CommitResult::Done) {
+    if (res == RefreshResult::Done) {
       _state->noop_commit_count.store(0, std::memory_order_release);
       _state->noop_compaction_count.store(0, std::memory_order_release);
 
@@ -86,7 +86,7 @@ void RefreshTask::operator()() {
   auto id = data->GetId();
   _state->pending_commits.fetch_sub(1, std::memory_order_release);
 
-  auto code = CommitResult::Undefined;
+  auto code = RefreshResult::Undefined;
   absl::Cleanup reschedule = [&code, data, this]() noexcept {
     try {
       Finalize(std::move(data), code);
@@ -112,7 +112,7 @@ void RefreshTask::operator()() {
   // TODO(phase5-follow-up): Currently `refresh_interval_ms` defaults to 0
   // (not set on CREATE INDEX by our DuckDB path), which disables background
   // sync entirely -- inserts never become searchable. A synchronous
-  // CommitWait() caller still expects a commit to happen, so always commit
+  // Refresh() caller still expects a commit to happen, so always commit
   // when `_wait` is set even if background scheduling is off.
   if (absl::ZeroDuration() == _refresh_interval_msec && !_wait) {
     std::move(reschedule).Cancel();
@@ -122,7 +122,7 @@ void RefreshTask::operator()() {
   }
 
   SDB_IF_FAILURE("SearchRefreshTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
-  auto [res, timeMs] = data->CommitUnsafe(_wait, nullptr, code);
+  auto [res, timeMs] = data->RefreshUnsafe(_wait, nullptr, code);
 
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful sync of Search index '", id.id(),

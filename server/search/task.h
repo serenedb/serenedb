@@ -102,7 +102,7 @@ class RefreshTask : public Task {
   void operator()();
   void Finalize(
     std::shared_ptr<search::InvertedIndexShard> inverted_index_shard,
-    CommitResult res);
+    RefreshResult res);
 
  private:
   absl::Duration _refresh_interval_msec{};

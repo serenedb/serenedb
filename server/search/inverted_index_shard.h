@@ -63,7 +63,7 @@ struct TasksSettings {
   size_t writebuffer_size_max{};
 };
 
-enum class CommitResult {
+enum class RefreshResult {
   Undefined = 0,
   NoChanges,
   InProgress,
@@ -189,9 +189,9 @@ class InvertedIndexShard final
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction);
 
-  ResultWithTime CommitUnsafe(bool wait,
-                              const irs::ProgressReportCallback& progress,
-                              CommitResult& code);
+  ResultWithTime RefreshUnsafe(bool wait,
+                               const irs::ProgressReportCallback& progress,
+                               RefreshResult& code);
 
   ResultWithTime CleanupUnsafe();
   Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
@@ -199,7 +199,7 @@ class InvertedIndexShard final
   void ScheduleCompaction(absl::Duration delay);
   void ScheduleCommit(absl::Duration delay);
 
-  yaclib::Future<> CommitWait();
+  void Refresh();
 
   ObjectId GetId() const noexcept { return _id; }
   auto GetState() const noexcept { return _state; }
@@ -239,7 +239,7 @@ class InvertedIndexShard final
   // Durable WAL cursor (store-table WAL generation + byte offset, packed) read
   // back from the segment meta at open. Recovery replays only operations PAST
   // it (operations at/below are already durable in the segments). The refresh
-  // stamps it conservatively (see CommitUnsafeImpl); the boundary overlap is
+  // stamps it conservatively (see RefreshUnsafeImpl); the boundary overlap is
   // absorbed idempotently by FinishReplay's delete-then-insert.
   uint64_t GetRecoveryWalCursor() const noexcept {
     return _recovery_wal_cursor;
@@ -277,9 +277,9 @@ class InvertedIndexShard final
   Result CompactUnsafeImpl(const irs::CompactionPolicy& policy,
                            const irs::MergeWriter::FlushProgress& progress,
                            bool& empty_compaction);
-  Result CommitUnsafeImpl(bool wait,
-                          const irs::ProgressReportCallback& progress,
-                          CommitResult& code);
+  Result RefreshUnsafeImpl(bool wait,
+                           const irs::ProgressReportCallback& progress,
+                           RefreshResult& code);
   Result CleanupUnsafeImpl();
 
   SearchEngine& _search;

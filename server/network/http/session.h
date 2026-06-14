@@ -76,7 +76,8 @@ struct HttpServerContext {
 // bytes auto-flush at kSendFlushSize; the callback arms the writer).
 template<SocketKind Kind>
 class HttpSession final
-  : public std::enable_shared_from_this<HttpSession<Kind>>,
+  : public Transport<Kind, HttpSession<Kind>>,
+    public std::enable_shared_from_this<HttpSession<Kind>>,
     public http::ResponseSink,
     public RequestContext {
  public:
@@ -84,30 +85,26 @@ class HttpSession final
 
   HttpSession(HttpServerContext& ctx, IoExecutor& exec)
     requires(Kind != SocketKind::Ssl)
-    : _socket{exec.Context()},
+    : Transport<Kind, HttpSession<Kind>>{exec},
       _io{exec.Context()},
-      _ioexec{&exec},
       _deadline{exec.Context()},
       _router{ctx.router},
       _auth{ctx.credentials, ctx.api_keys, ctx.bearer} {}
 
   HttpSession(HttpServerContext& ctx, IoExecutor& exec)
     requires(Kind == SocketKind::Ssl)
-    : _socket{exec.Context(), *ctx.ssl},
+    : Transport<Kind, HttpSession<Kind>>{exec, *ctx.ssl},
       _io{exec.Context()},
-      _ioexec{&exec},
       _deadline{exec.Context()},
       _router{ctx.router},
       _auth{ctx.credentials, ctx.api_keys, ctx.bearer} {}
 
   void Start() {
     Run().Detach();
-    SendWriter().Detach();
+    this->SendWriter().Detach();
   }
 
-  void Close() noexcept { _socket.Close(); }
-
-  asio_ns::ip::tcp::socket& Lowest() noexcept { return _socket.Lowest(); }
+  void OnSendPoison() {}
 
   // --- http::ResponseSink (handler-side backpressure) ----------------------
   yaclib::Future<> Drain() override { return AwaitSendBelowHighWater(); }
@@ -211,76 +208,37 @@ class HttpSession final
   std::string_view User() const override { return _user; }
 
  private:
+  using Transport<Kind, HttpSession<Kind>>::_socket;
+  using Transport<Kind, HttpSession<Kind>>::_ioexec;
+  using Transport<Kind, HttpSession<Kind>>::_recv;
+  using Transport<Kind, HttpSession<Kind>>::_send;
+  using Transport<Kind, HttpSession<Kind>>::_write_gate;
+  using Transport<Kind, HttpSession<Kind>>::_write_view;
+  using Transport<Kind, HttpSession<Kind>>::_write_armed;
+  using Transport<Kind, HttpSession<Kind>>::_send_written;
+  using Transport<Kind, HttpSession<Kind>>::_send_waiter;
+  using Transport<Kind, HttpSession<Kind>>::_io_broken;
+  using Transport<Kind, HttpSession<Kind>>::_writer_stop;
+  using Transport<Kind, HttpSession<Kind>>::_producer_gate;
+  using Transport<Kind, HttpSession<Kind>>::_task;
+  using Transport<Kind, HttpSession<Kind>>::_task_spawned;
+  using Transport<Kind, HttpSession<Kind>>::KickSend;
+  using Transport<Kind, HttpSession<Kind>>::HasUnsentBytes;
+  using Transport<Kind, HttpSession<Kind>>::SendBroken;
+  using Transport<Kind, HttpSession<Kind>>::OnSendViewReady;
+  using Transport<Kind, HttpSession<Kind>>::ArmSendWaiter;
+  using Transport<Kind, HttpSession<Kind>>::DisarmSendWaiter;
+  using Transport<Kind, HttpSession<Kind>>::AwaitSendBelowHighWater;
+  using Transport<Kind, HttpSession<Kind>>::DrainSendOnTask;
+  using Transport<Kind, HttpSession<Kind>>::AwaitMoreBytes;
+  using Transport<Kind, HttpSession<Kind>>::SendWriter;
+
   // io-pinned: TLS handshake, then the byte pump feeding _recv; arms the
   // per-read deadline (keep-alive idle between requests, body timeout
   // within one -- SessionMain publishes the phase).
   yaclib::Future<> Run();
-  // io-pinned: parked until a committed flush arms a view, then drives
-  // async_write + FlushDone chains, overlapping SessionMain's work.
-  yaclib::Future<> SendWriter();
   // duck-side: the request loop. Parse -> body -> auth -> route -> handler.
   yaclib::Future<> SessionMain();
-
-  void OnSendViewReady(message::SequenceView view) {
-    _write_view = view;
-    _write_armed.store(true, std::memory_order_release);
-    _write_gate.Kick();
-  }
-
-  void KickSend() {
-    if (_send.GetUncommittedSize() != 0 || HasUnsentBytes()) {
-      _send.Commit(true);
-    }
-  }
-  bool HasUnsentBytes() const {
-    return _send.TotalCommitted() !=
-           _send_written.load(std::memory_order_acquire);
-  }
-  bool SendBroken() const { return _io_broken.load(std::memory_order_acquire); }
-
-  void ArmSendWaiter() {
-    _send_waiter.store(_send_written.load(std::memory_order_relaxed),
-                       std::memory_order_relaxed);
-    std::atomic_thread_fence(std::memory_order_seq_cst);
-  }
-  void DisarmSendWaiter() {
-    _send_waiter.store(kSendWaiterIdle, std::memory_order_relaxed);
-  }
-
-  yaclib::Future<> AwaitSendBelowHighWater() {
-    ArmSendWaiter();
-    while (_send.TotalCommitted() -
-               _send_written.load(std::memory_order_acquire) >
-             kSendHighWater &&
-           !SendBroken()) {
-      co_await _task->Park();
-    }
-    DisarmSendWaiter();
-    co_return {};
-  }
-
-  yaclib::Future<> DrainSendOnTask() {
-    KickSend();
-    ArmSendWaiter();
-    while (HasUnsentBytes() && !SendBroken()) {
-      co_await _task->Park();
-    }
-    DisarmSendWaiter();
-    co_return {};
-  }
-
-  // Parks the SessionTask until RecvLoop commits bytes beyond `seen` (false =
-  // connection broken). The watermark refresh in ReadableSize pairs with
-  // RecvLoop's CommitWrite + RequestRun.
-  yaclib::Future<bool> AwaitMoreBytes(size_t seen) {
-    while (_recv.ReadableSize() <= seen) {
-      if (SendBroken()) {
-        co_return false;
-      }
-      co_await _task->Park();
-    }
-    co_return true;
-  }
 
   // Incremental llhttp feed over the recv channel. Returns the head event or
   // nullopt when the connection died mid-parse.
@@ -289,33 +247,14 @@ class HttpSession final
   // view over _recv). Returns false when the connection died / parse failed.
   yaclib::Future<bool> ReadBody(HttpRequest& request, size_t& pinned_body);
 
-  Socket<Kind> _socket;
   asio_ns::io_context& _io;
-  IoExecutor* _ioexec;
   asio_ns::steady_timer _deadline;
   HttpRouter& _router;
   http::HttpAuthenticator _auth;
   H1Codec _codec;
 
-  message::Buffer _recv{kReadBlock, kBufferMaxGrowth};
-  message::Buffer _send{
-    kReadBlock, kBufferMaxGrowth, kSendFlushSize,
-    [this](message::SequenceView view) { OnSendViewReady(view); }};
   message::Buffer _dechunk{kReadBlock, kBufferMaxGrowth};
 
-  message::SequenceView _write_view;
-  std::atomic<bool> _write_armed{false};
-  Gate _write_gate;
-  std::atomic<size_t> _send_written{0};
-  static constexpr size_t kSendWaiterIdle = std::numeric_limits<size_t>::max();
-  std::atomic<size_t> _send_waiter{kSendWaiterIdle};
-  std::atomic<bool> _io_broken{false};
-  bool _writer_stop = false;
-
-  // Hosts SessionMain on the duckdb scheduler; emplaced by Run before the
-  // pump starts.
-  std::optional<pg::TaskRunner> _task;
-  bool _task_spawned = false;
   // Read-deadline phase for RecvLoop: idle (between requests, generous
   // keep-alive timeout) vs mid-request (strict header/body timeout).
   std::atomic<bool> _idle{true};
@@ -325,40 +264,6 @@ class HttpSession final
   std::shared_ptr<ConnectionContext> _connection_ctx;
   std::string _user;
 };
-
-template<SocketKind Kind>
-yaclib::Future<> HttpSession<Kind>::SendWriter() {
-  auto self = this->shared_from_this();
-  for (;;) {
-    co_await _write_gate.Wait(*_ioexec);
-    if (!_write_armed.exchange(false, std::memory_order_acq_rel)) {
-      if (_writer_stop) {
-        co_return {};
-      }
-      continue;
-    }
-    auto [ec, bytes] = co_await _socket.Write(_write_view).NoThrow();
-    if (ec) [[unlikely]] {
-      break;  // client gone -- run the terminal cleanup once, below
-    }
-    _send_written.fetch_add(bytes, std::memory_order_release);
-    _send.FlushDone();
-    std::atomic_thread_fence(std::memory_order_seq_cst);
-    const auto seen = _send_waiter.load(std::memory_order_relaxed);
-    if (seen != kSendWaiterIdle && _task_spawned &&
-        _send_written.load(std::memory_order_relaxed) > seen) {
-      _task->RequestRun();
-    }
-  }
-  // The write failed: client is gone. Poison the send side and close so the
-  // read side notices; the SessionTask bails at its next condition re-check.
-  _io_broken.store(true, std::memory_order_release);
-  if (_task_spawned) {
-    _task->RequestRun();
-  }
-  _socket.Close();
-  co_return {};
-}
 
 template<SocketKind Kind>
 yaclib::Future<> HttpSession<Kind>::Run() {

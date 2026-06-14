@@ -20,48 +20,19 @@
 
 #include "catalog/sequence.h"
 
-#include <absl/base/internal/endian.h>
-#include <rocksdb/db.h>
-#include <rocksdb/options.h>
-#include <rocksdb/slice.h>
-#include <rocksdb/status.h>
-
-#include <cstring>
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-#include <string>
 
 #include "basics/assert.h"
 #include "basics/exceptions.h"
 #include "basics/serializer.h"
-#include "basics/static_strings.h"
-#include "basics/string_utils.h"
-#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "rocksdb_engine_catalog/rocksdb_format.h"
-#include "rocksdb_engine_catalog/rocksdb_utils.h"
+#include "catalog/store/store.h"
 
 namespace sdb::catalog {
-namespace {
-
-std::string CounterKey(ObjectId id) {
-  std::string key;
-  rocksutils::Uint64ToPersistent(key, id.id());
-  return key;
-}
-
-rocksdb::ColumnFamilyHandle* CounterCF() {
-  return RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Sequences);
-}
-
-}  // namespace
 
 Sequence::Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts)
   : Object{schema_id, id, opts.name, ObjectType::Sequence},
-    _options{std::move(opts)},
-    _db{GetServerEngine().db()->GetBaseDB()},
-    _cf{CounterCF()} {
+    _options{std::move(opts)} {
   auto seed = _options.Seed();
   _cnt.store(seed, std::memory_order_release);
   _cache_begin.store(seed + 1, std::memory_order_release);
@@ -89,17 +60,21 @@ std::shared_ptr<Object> Sequence::Clone() const {
 }
 
 uint64_t Sequence::LoadFromDb() const {
-  auto key = CounterKey(GetId());
-  std::string raw;
-  auto s = _db->Get(rocksdb::ReadOptions{}, _cf, key, &raw);
-  if (s.IsNotFound()) {
-    return 0;
+  auto& store = GetCatalogStore();
+  uint64_t value = 0;
+  if (store.TryGetBootSequenceValue(GetId(), value)) {
+    return value;
   }
-  if (!s.ok()) {
-    SDB_THROW(rocksutils::ConvertStatus(s));
+  if (auto r = store.GetSequenceValue(GetId(), value); !r.ok()) {
+    SDB_THROW(std::move(r));
   }
-  SDB_ASSERT(raw.size() == sizeof(uint64_t));
-  return rocksutils::UintFromPersistentLittleEndian<uint64_t>(raw.data());
+  return value;
+}
+
+void Sequence::Persist(uint64_t value) {
+  if (auto r = GetCatalogStore().PutSequenceValue(GetId(), value); !r.ok()) {
+    SDB_THROW(std::move(r));
+  }
 }
 
 uint64_t Sequence::ReserveCached(uint64_t count) {
@@ -113,13 +88,9 @@ uint64_t Sequence::ReserveCached(uint64_t count) {
 }
 
 uint64_t Sequence::AdvanceCounter(uint64_t count) {
-  std::string operand;
-  rocksutils::UintToPersistentLittleEndian<uint64_t>(operand, count);
-  rocksdb::WriteOptions opts;
-  auto s = _db->Merge(opts, _cf, CounterKey(GetId()), operand);
-  if (!s.ok()) {
-    SDB_THROW(rocksutils::ConvertStatus(s));
-  }
+  absl::MutexLock lock{&_cnt_mtx};
+  const auto cur = _cnt.load(std::memory_order_acquire);
+  Persist(cur + count);
   return _cnt.fetch_add(count, std::memory_order_acq_rel) + 1;
 }
 
@@ -136,7 +107,6 @@ uint64_t Sequence::Reserve(uint64_t count) {
   if (_options.cache > 1) {
     return ReserveCached(count);
   }
-  absl::ReaderMutexLock lock{&_cnt_mtx};
   return AdvanceCounter(count);
 }
 
@@ -151,13 +121,8 @@ uint64_t Sequence::RefillCache(uint64_t count) {
   }
 
   uint64_t refill = std::max(count, _options.cache);
-  std::string operand;
-  rocksutils::UintToPersistentLittleEndian<uint64_t>(operand, refill);
-  rocksdb::WriteOptions opts;
-  auto s = _db->Merge(opts, _cf, CounterKey(GetId()), operand);
-  if (!s.ok()) {
-    SDB_THROW(rocksutils::ConvertStatus(s));
-  }
+  const auto cur = _cnt.load(std::memory_order_acquire);
+  Persist(cur + refill);
   auto old_cnt = _cnt.fetch_add(refill, std::memory_order_acq_rel);
   uint64_t new_base = old_cnt + 1;
   _cache_end.store(old_cnt + refill, std::memory_order_release);
@@ -168,16 +133,8 @@ uint64_t Sequence::RefillCache(uint64_t count) {
 uint64_t Sequence::Read() const { return _cnt.load(std::memory_order_acquire); }
 
 void Sequence::Write(uint64_t value) {
-  std::string encoded;
-  rocksutils::UintToPersistentLittleEndian<uint64_t>(encoded, value);
-  auto key = CounterKey(GetId());
-
   absl::MutexLock lock{&_cnt_mtx};
-  rocksdb::WriteOptions opts;
-  auto s = _db->Put(opts, _cf, key, encoded);
-  if (!s.ok()) {
-    SDB_THROW(rocksutils::ConvertStatus(s));
-  }
+  Persist(value);
   _cnt.store(value, std::memory_order_release);
   _cache_end.store(value, std::memory_order_release);
   _cache_begin.store(value + 1, std::memory_order_release);

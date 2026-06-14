@@ -42,32 +42,23 @@ EXPLAIN UPDATE single_pk SET a = 200, b = 200 WHERE a = 2;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│             #2            │
-│                           │
-│          ~0 rows          │
+│           UPDATE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │            200            │
 │            200            │
-│             a             │
+│           rowid           │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: single_pk     │
-│       Filter: (a=2)       │
-│       Projections: a      │
+│   Type: Sequential Scan   │
+│      Filters: (a = 2)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -79,6 +70,14 @@ UPDATE single_pk SET a = 42, a = 100500 WHERE b = 10;
 db error: ERROR: <slt:ignore>ultiple assignments to same column "a"
 
 
+onlyif serenedb # native constraint error
+statement error
+UPDATE single_pk SET a = 42;
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "42"
+
+
+skipif serenedb # Postgres error
 statement error
 UPDATE single_pk SET a = 42;
 ----
@@ -248,6 +247,14 @@ CREATE TABLE dup_test (a INTEGER PRIMARY KEY, b INTEGER);
 statement count 2
 INSERT INTO dup_test VALUES (1, 10), (2, 20);
 
+onlyif serenedb # native constraint error
+statement error
+UPDATE dup_test SET a = 2 WHERE a = 1;
+----
+db error: ERROR: Duplicate key "a: 2" violates primary key constraint.
+
+
+skipif serenedb # Postgres error
 statement error
 UPDATE dup_test SET a = 2 WHERE a = 1;
 ----
@@ -484,6 +491,14 @@ CREATE TABLE multi_pk2 (a INTEGER, b INTEGER, c VARCHAR, PRIMARY KEY(a, b));
 statement ok
 INSERT INTO multi_pk2 VALUES (1,1, 'a'), (1,2, 'b');
 
+onlyif serenedb # native constraint error
+statement error
+UPDATE multi_pk2 SET a = 1, b = 2 WHERE a = 1 AND b = 1;
+----
+db error: ERROR: Duplicate key "a: 1, b: 2" violates primary key constraint.
+
+
+skipif serenedb # Postgres error
 statement error
 UPDATE multi_pk2 SET a = 1, b = 2 WHERE a = 1 AND b = 1;
 ----
@@ -510,6 +525,6 @@ query
 SELECT * FROM multi_pk2 ORDER BY a;
 ----
 a	b	c
-1	1	c
 1	2	b
+1	1	c
 3	3	a

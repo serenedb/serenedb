@@ -94,8 +94,6 @@
 #include "general_server/state.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/sql_utils.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
@@ -181,6 +179,28 @@ class SnapshotImpl : public Snapshot {
     return drop_task;
   }
 
+  // Store-table name of `table_id` ("db.schema.table"), or nullopt when
+  // the id is unset (self-referencing FK) or not resolvable.
+  std::optional<std::string> ComposeStoreTableName(ObjectId table_id) const {
+    if (!table_id.isSet()) {
+      return std::nullopt;
+    }
+    auto table = GetObject<Table>(table_id);
+    if (!table) {
+      return std::nullopt;
+    }
+    auto schema_obj = GetObject<Schema>(table->GetParentId());
+    if (!schema_obj) {
+      return std::nullopt;
+    }
+    auto db = GetObject<Database>(schema_obj->GetParentId());
+    if (!db) {
+      return std::nullopt;
+    }
+    return StoreTableName(db->GetName(), schema_obj->GetName(),
+                          table->GetName());
+  }
+
   std::shared_ptr<TableDrop> CreateTableDrop(
     ObjectId db_id, ObjectId schema_id, const std::shared_ptr<Table>& table,
     bool is_root) {
@@ -197,9 +217,24 @@ class SnapshotImpl : public Snapshot {
     auto owned_sequences =
       table_deps->owned_sequences | std::ranges::to<std::vector>();
 
-    return std::make_shared<TableDrop>(table, shard, std::move(indexes),
-                                       std::move(owned_sequences), schema_id,
-                                       is_root);
+    std::string store_name;
+    std::vector<std::string> fk_referenced;
+    if (table->GetEngine() == TableEngine::Transactional &&
+        !table->Tombstoned()) {
+      auto db = GetObject<Database>(db_id);
+      auto schema_obj = GetObject<Schema>(schema_id);
+      SDB_ASSERT(db && schema_obj);
+      store_name =
+        StoreTableName(db->GetName(), schema_obj->GetName(), table->GetName());
+      for (const auto& fk : table->ForeignKeys()) {
+        if (auto name = ComposeStoreTableName(fk.referenced_table)) {
+          fk_referenced.push_back(std::move(*name));
+        }
+      }
+    }
+    return std::make_shared<TableDrop>(
+      table, shard, std::move(indexes), std::move(owned_sequences), schema_id,
+      std::move(store_name), std::move(fk_referenced), is_root);
   }
 
   std::shared_ptr<IndexDrop> CreateIndexDrop(
@@ -411,6 +446,13 @@ class SnapshotImpl : public Snapshot {
               database_id, schema_id, ref.catalog, ref.schema, ref.name),
             &PgSqlTypeDependency::column_defaults, col.GetId(), action);
         }
+      }
+    }
+    for (const auto& fk : table.ForeignKeys()) {
+      if (fk.referenced_table.isSet()) {
+        ModifyDependency(fk.referenced_table,
+                         &TableDependency::fk_referencing_tables, table.GetId(),
+                         action);
       }
     }
     for (const auto& c : table.CheckConstraints()) {
@@ -1207,24 +1249,133 @@ class SnapshotImpl : public Snapshot {
       .ComputePlan();
   }
 
-  void CommitDropPlan(RocksDBEngineCatalog::CatalogWriteContext& ctx,
+  // Plan for ALTER TABLE DROP COLUMN: rewrite the owning table without the
+  // column and cascade-drop every index covering it (PG column->index cascade).
+  // The column has no dependency edges of its own, so this is built directly
+  // rather than seeded into DropEmitter (which walks a seed's dependents).
+  DropPlan ComputeColumnDropPlan(ObjectId table_id, ObjectId col_id) const {
+    DropPlan plan;
+    auto table = GetObject<Table>(table_id);
+    SDB_ASSERT(table);
+    auto& rw = plan.table_rewrites[table_id];
+    rw.schema_id = table->GetParentId();
+    rw.table = table->DropColumn(col_id);
+    if (auto td = GetDependency<TableDependency>(table_id)) {
+      for (auto idx_id : td->indexes) {
+        auto idx = GetObject<Index>(idx_id);
+        if (idx && absl::c_contains(idx->GetColumnIds(), col_id)) {
+          plan.index_drops.push_back(idx_id);
+        }
+      }
+    }
+    return plan;
+  }
+
+  void CommitDropPlan(CatalogStore::WriteContext& ctx,
                       const DropPlan& plan) const {
     duckdb::MemoryStream stream;
+    // Store-side index drops precede the column ALTERs below: a covering
+    // index must be gone before its column can be dropped, and enforcement
+    // (UNIQUE) must stop the moment the drop commits. The async task only
+    // sweeps shards and definitions.
+    for (auto idx_id : plan.index_drops) {
+      if (auto idx = GetObject<Index>(idx_id)) {
+        ctx.WriteTombstone(idx->GetRelationId(), idx_id);
+        ctx.DropStoreIndex(idx_id);
+      }
+    }
     for (const auto& [tid, rw] : plan.table_rewrites) {
       ctx.PutDefinition(rw.schema_id, ObjectType::Table, tid,
                         catalog::SerializeObject(*rw.table, stream));
+      // Cascades can drop columns of surviving tables (e.g. a column whose
+      // dependency lived in the dropped schema) -- the store table follows.
+      if (rw.table->GetEngine() != TableEngine::Transactional ||
+          rw.table->Tombstoned()) {
+        continue;
+      }
+      auto old_table = GetObject<Table>(tid);
+      if (!old_table) {
+        continue;
+      }
+      auto schema_obj = GetObject<Schema>(rw.schema_id);
+      SDB_ASSERT(schema_obj);
+      auto database = GetObject<Database>(schema_obj->GetParentId());
+      SDB_ASSERT(database);
+      auto store_name = StoreTableName(
+        database->GetName(), schema_obj->GetName(), old_table->GetName());
+      for (const auto& fk : old_table->ForeignKeys()) {
+        auto kept =
+          std::ranges::any_of(rw.table->ForeignKeys(), [&](const auto& f) {
+            return f.referenced_table == fk.referenced_table &&
+                   f.columns == fk.columns;
+          });
+        if (kept) {
+          continue;
+        }
+        if (auto referenced = ComposeStoreTableName(fk.referenced_table)) {
+          ctx.DropStoreForeignKey(*referenced, store_name);
+          ctx.DropStoreForeignKey(store_name, *referenced);
+        }
+      }
+      auto rewritten = MakeStoreTableDef(database->GetName(),
+                                         schema_obj->GetName(), *rw.table);
+      if (rewritten.columns.empty()) {
+        // Dropping the last column is refused by ALTER; recreate instead
+        // (PG keeps the zero-column table). TODO(M2): rows must survive
+        // this once the store tables hold the data.
+        ctx.DropStoreTable(store_name);
+        ctx.CreateStoreTable(std::move(rewritten));
+        continue;
+      }
+      std::vector<std::string> dropped_columns;
+      for (const auto& old_col : old_table->Columns()) {
+        if (old_col.GetId() == Column::kGeneratedPKId) {
+          continue;
+        }
+        auto it = std::ranges::find_if(rw.table->Columns(), [&](const auto& c) {
+          return c.GetId() == old_col.GetId();
+        });
+        if (it == rw.table->Columns().end()) {
+          dropped_columns.emplace_back(old_col.GetName());
+        }
+      }
+      if (dropped_columns.empty()) {
+        continue;
+      }
+      // Surviving store indexes block the ALTER whenever they cover a
+      // column positioned after the dropped one; recreate them around the
+      // drop (data lives in the rows / iresearch, so rebuilds are cheap
+      // and inverted instances carry no state of their own).
+      std::vector<std::shared_ptr<Index>> surviving;
+      if (auto table_deps = GetDependency<TableDependency>(tid)) {
+        for (auto idx_id : table_deps->indexes) {
+          if (std::ranges::find(plan.index_drops, idx_id) !=
+              plan.index_drops.end()) {
+            continue;
+          }
+          if (auto idx = GetObject<Index>(idx_id)) {
+            surviving.push_back(std::move(idx));
+          }
+        }
+      }
+      for (const auto& idx : surviving) {
+        ctx.DropStoreIndex(idx->GetId());
+      }
+      for (auto& name : dropped_columns) {
+        ctx.DropStoreColumn(store_name, std::move(name));
+      }
+      for (const auto& idx : surviving) {
+        if (auto def = MakeStoreIndexDef(
+              database->GetName(), schema_obj->GetName(), *rw.table, *idx)) {
+          ctx.CreateStoreIndex(std::move(*def));
+        }
+      }
     }
     for (const auto& [schema_id, view_id] : plan.view_drops) {
       ctx.DropDefinition(schema_id, ObjectType::PgSqlView, view_id);
     }
     for (const auto& [schema_id, fn_id] : plan.function_drops) {
       ctx.DropDefinition(schema_id, ObjectType::PgSqlFunction, fn_id);
-    }
-    // Recovery anchor for cascade-dropped indexes (column->index cascade).
-    for (auto idx_id : plan.index_drops) {
-      if (auto idx = GetObject<Index>(idx_id)) {
-        ctx.WriteTombstone(idx->GetRelationId(), idx_id);
-      }
     }
   }
 
@@ -1529,7 +1680,7 @@ std::string DropPlan::FormatDependentsDetail(const Snapshot& snap,
 }
 
 LocalCatalog::LocalCatalog()
-  : _snapshot(std::make_shared<SnapshotImpl>()), _engine{&GetServerEngine()} {}
+  : _snapshot(std::make_shared<SnapshotImpl>()), _engine{&GetCatalogStore()} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
   SDB_INFO(GENERAL, "Register role ", role->GetName());
@@ -1619,9 +1770,8 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
       duckdb::MemoryStream stream;
       {
         auto bytes = catalog::SerializeObject(*database, stream);
-        auto r =
-          _engine->CreateDefinition(id::kInstance, ObjectType::Database,
-                                    database_id, [&](bool) { return bytes; });
+        auto r = _engine->CreateDefinition(id::kInstance, ObjectType::Database,
+                                           database_id, bytes);
 
         if (!r.ok()) {
           return r;
@@ -1635,9 +1785,8 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
       r = clone->RegisterObject(schema, database_id, false);
       SDB_ASSERT(r.ok());
       auto bytes = catalog::SerializeObject(*schema, stream);
-      return _engine->CreateDefinition(
-        database_id, ObjectType::Schema, schema->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+      return _engine->CreateDefinition(database_id, ObjectType::Schema,
+                                       schema->GetId(), bytes);
     },
     [&](auto clone) {
       clone->UnregisterObject(database, id::kInstance, true);
@@ -1656,9 +1805,8 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*schema, stream);
-      return _engine->CreateDefinition(
-        database_id, ObjectType::Schema, schema->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+      return _engine->CreateDefinition(database_id, ObjectType::Schema,
+                                       schema->GetId(), bytes);
     },
     [&](auto clone) { clone->UnregisterObject(schema, database_id, true); });
 }
@@ -1675,9 +1823,8 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
       }
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*role, stream);
-      return _engine->CreateDefinition(
-        id::kInstance, ObjectType::Role, role->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+      return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
+                                       role->GetId(), bytes);
     },
     [&](auto& clone) { clone->UnregisterObject(role, id::kInstance, true); });
 
@@ -1741,8 +1888,7 @@ Result LocalCatalog::CreateIndexImpl(
       {  // Write index definition
         auto bytes = catalog::SerializeObject(*index, stream);
         r = _engine->CreateDefinition(index->GetRelationId(), index->GetType(),
-                                      index->GetId(),
-                                      [&](bool) { return bytes; });
+                                      index->GetId(), bytes);
         if (!r.ok()) {
           return r;
         }
@@ -1751,10 +1897,29 @@ Result LocalCatalog::CreateIndexImpl(
         auto bytes = catalog::SerializeObject(**shard, stream);
 
         r = _engine->CreateDefinition(index->GetId(), shard_type,
-                                      (*shard)->GetId(),
-                                      [&](bool) { return bytes; });
+                                      (*shard)->GetId(), bytes);
         if (!r.ok()) {
           return r;
+        }
+      }
+      {
+        auto table = clone->template GetObject<Table>(index->GetRelationId());
+        auto schema_obj =
+          table ? clone->template GetObject<Schema>(table->GetParentId())
+                : nullptr;
+        auto database =
+          schema_obj
+            ? clone->template GetObject<Database>(schema_obj->GetParentId())
+            : nullptr;
+        if (database) {
+          if (auto def = MakeStoreIndexDef(
+                database->GetName(), schema_obj->GetName(), *table, *index)) {
+            r = _engine->Write(
+              [&](auto& ctx) { ctx.CreateStoreIndex(std::move(*def)); });
+            if (!r.ok()) {
+              return r;
+            }
+          }
         }
       }
       return Result{};
@@ -1831,11 +1996,6 @@ Result LocalCatalog::CreateSecondaryIndex(
     if (it == resolved->columns.end()) {
       return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
                     "\" does not exist"};
-    }
-    if (it->store_mode == ColumnStoreMode::kIndexOnly) {
-      return Result{ERROR_BAD_PARAMETER, "cannot include column \"", c.name,
-                    "\" in a secondary index: column has sdb_indexonly "
-                    "storage and is only readable through an inverted index"};
     }
     c.catalog_column = &*it;
   }
@@ -1943,9 +2103,8 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
                             std::string_view{bytes});
         });
       }
-      return _engine->CreateDefinition(
-        *schema_id, ObjectType::PgSqlView, view->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+      return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlView,
+                                       view->GetId(), bytes);
     },
     [&](auto clone) {
       if (!existed_id.isSet()) {
@@ -2042,9 +2201,8 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
                             function->GetId(), std::string_view{bytes});
         });
       }
-      return _engine->CreateDefinition(
-        *schema_id, ObjectType::PgSqlFunction, function->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+      return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlFunction,
+                                       function->GetId(), bytes);
     },
     [&](auto clone) {
       if (!existed_id.isSet()) {
@@ -2059,10 +2217,35 @@ Result LocalCatalog::CreateTable(
   if (auto r = TableNameValidator::validateName(options.name); !r.ok()) {
     return r;
   }
-  for (auto pk_id : options.pk_columns) {
-    auto col = absl::c_find_if(
-      options.columns, [&](const auto& c) { return c.GetId() == pk_id; });
-    SDB_ASSERT(col != options.columns.end());
+  // Uniqueness keys are enforced by the store table's DuckDB ART, which cannot
+  // index nested types. Reject a nested-type key column up front with a clear
+  // error instead of silently creating the table with the constraint dropped
+  // (the store-side names_for clears it otherwise). Scalar key types are
+  // handled natively by the ART.
+  auto reject_nested_key = [&](std::span<const Column::Id> ids,
+                               std::string_view what) -> Result {
+    for (auto col_id : ids) {
+      auto col = absl::c_find_if(
+        options.columns, [&](const auto& c) { return c.GetId() == col_id; });
+      SDB_ASSERT(col != options.columns.end());
+      if (col->type.IsNested()) {
+        return Result{ERROR_BAD_PARAMETER,
+                      what,
+                      " column \"",
+                      col->GetName(),
+                      "\" has unsupported nested type ",
+                      col->type.ToString()};
+      }
+    }
+    return {};
+  };
+  if (auto r = reject_nested_key(options.pk_columns, "primary key"); !r.ok()) {
+    return r;
+  }
+  for (const auto& unique : options.unique_constraints) {
+    if (auto r = reject_nested_key(unique, "unique constraint"); !r.ok()) {
+      return r;
+    }
   }
   auto sequence_specs = std::move(options.sequences);
 
@@ -2134,11 +2317,59 @@ Result LocalCatalog::CreateTable(
   auto table = std::make_shared<Table>(
     *schema_id, table_id, options.name, std::move(options.columns),
     std::move(options.pk_columns), std::move(options.check_constraints),
-    generated_pk_seq_id);
+    generated_pk_seq_id, options.engine, std::move(options.unique_constraints),
+    std::move(options.foreign_keys));
   if (operation_options.create_with_tombstone) {
     table->SetTombstoned(true);
   }
   auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
+
+  std::optional<StoreTableDef> store_table;
+  if (table->GetEngine() == TableEngine::Transactional) {
+    auto database = _snapshot->GetObject<Database>(database_id);
+    SDB_ASSERT(database);
+    store_table = MakeStoreTableDef(database->GetName(), schema, *table);
+    for (const auto& fk : table->ForeignKeys()) {
+      StoreForeignKey out;
+      const Table* referenced = nullptr;
+      if (!fk.referenced_table.isSet()) {
+        referenced = table.get();
+        out.referenced_table = store_table->name;
+      } else {
+        auto ref_obj = _snapshot->GetObject<Table>(fk.referenced_table);
+        if (!ref_obj || ref_obj->GetEngine() != TableEngine::Transactional) {
+          continue;
+        }
+        auto ref_schema = _snapshot->GetObject<Schema>(ref_obj->GetParentId());
+        SDB_ASSERT(ref_schema);
+        out.referenced_table = StoreTableName(
+          database->GetName(), ref_schema->GetName(), ref_obj->GetName());
+        referenced = ref_obj.get();
+      }
+      auto names_for = [](const Table& t, std::span<const Column::Id> ids,
+                          std::vector<std::string>& out_names) {
+        for (auto col_id : ids) {
+          auto it = std::ranges::find_if(
+            t.Columns(), [&](const auto& c) { return c.GetId() == col_id; });
+          if (it == t.Columns().end() || it->type.IsNested()) {
+            out_names.clear();
+            return;
+          }
+          out_names.emplace_back(it->GetName());
+        }
+      };
+      names_for(*table, fk.columns, out.columns);
+      names_for(*referenced, fk.referenced_columns, out.referenced_columns);
+      if (!out.columns.empty() && !out.referenced_columns.empty()) {
+        store_table->foreign_keys.push_back(std::move(out));
+      }
+    }
+    if (operation_options.create_with_tombstone) {
+      // Not-yet-committed (CTAS) tables live under the dropped name; commit
+      // renames to the public name (RemoveTombstone), failure drops by id.
+      store_table->name = DroppedStoreTableName(table->GetId());
+    }
+  }
 
   return Apply(
     _snapshot, _snapshot_mutex,
@@ -2163,8 +2394,9 @@ Result LocalCatalog::CreateTable(
         }
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      // PutDefinition copies into the rocksdb batch, so one reused stream is
-      // enough: each view is consumed before the next serialize overwrites it.
+      // PutDefinition copies into the catalog store batch, so one reused stream
+      // is enough: each view is consumed before the next serialize overwrites
+      // it.
       duckdb::MemoryStream stream;
       return _engine->Write([&](auto& ctx) {
         ctx.PutDefinition(*schema_id, ObjectType::Table, table->GetId(),
@@ -2176,6 +2408,9 @@ Result LocalCatalog::CreateTable(
           ctx.PutDefinition(*schema_id, ObjectType::Sequence, seq->GetId(),
                             catalog::SerializeObject(*seq, stream));
           ctx.PutSequence(seq->GetId(), seq->Options().Seed());
+        }
+        if (store_table) {
+          ctx.CreateStoreTable(std::move(*store_table));
         }
       });
     },
@@ -2202,9 +2437,8 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
       }
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*dict, stream);
-      return _engine->CreateDefinition(
-        *schema_id, ObjectType::Tokenizer, dict->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+      return _engine->CreateDefinition(*schema_id, ObjectType::Tokenizer,
+                                       dict->GetId(), bytes);
     },
     [&](auto& clone) {
       return clone->UnregisterObject(dict, *schema_id, true);
@@ -2232,15 +2466,17 @@ Result LocalCatalog::CreateType(ObjectId database_id, std::string_view schema,
 
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*type, stream);
-      return _engine->CreateDefinition(
-        *schema_id, ObjectType::PgSqlType, type->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+      return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlType,
+                                       type->GetId(), bytes);
     },
     [&](auto clone) { clone->UnregisterObject(type, *schema_id, true); });
 }
 
 template<typename T>
-Result LocalCatalog::RenameObjectImpl(ObjectId schema_id, std::string_view name,
+Result LocalCatalog::RenameObjectImpl(ObjectId schema_id,
+                                      std::string_view database_name,
+                                      std::string_view schema_name,
+                                      std::string_view name,
                                       std::string_view new_name,
                                       std::shared_ptr<T> object) {
   constexpr auto kResolveType = std::is_same_v<T, PgSqlFunction>
@@ -2277,9 +2513,20 @@ Result LocalCatalog::RenameObjectImpl(ObjectId schema_id, std::string_view name,
         parent_id = schema_id;
       }
 
-      return _engine->CreateDefinition(
-        parent_id, new_object->GetType(), new_object->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+      if constexpr (std::is_same_v<T, Table>) {
+        if (new_object->GetEngine() == TableEngine::Transactional &&
+            !new_object->Tombstoned()) {
+          return _engine->Write([&](auto& ctx) {
+            ctx.PutDefinition(parent_id, new_object->GetType(),
+                              new_object->GetId(), bytes);
+            ctx.RenameStoreTable(
+              StoreTableName(database_name, schema_name, name),
+              StoreTableName(database_name, schema_name, new_name));
+          });
+        }
+      }
+      return _engine->CreateDefinition(parent_id, new_object->GetType(),
+                                       new_object->GetId(), bytes);
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
       auto current = clone->GetObject<T>(new_object->GetId());
@@ -2324,7 +2571,10 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
                   pg::ToPgObjectTypeName(type)};
   }
 
-  return RenameObjectImpl<T>(*schema_id, name, new_name, std::move(typed));
+  auto database = _snapshot->GetObject<Database>(database_id);
+  SDB_ASSERT(database);
+  return RenameObjectImpl<T>(*schema_id, database->GetName(), schema, name,
+                             new_name, std::move(typed));
 }
 
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
@@ -2368,17 +2618,21 @@ Result LocalCatalog::RenameRelation(ObjectId database_id,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
+  auto database = _snapshot->GetObject<Database>(database_id);
+  SDB_ASSERT(database);
   switch (object->GetType()) {
     case ObjectType::Table:
-      return RenameObjectImpl<Table>(*schema_id, name, new_name,
+      return RenameObjectImpl<Table>(*schema_id, database->GetName(), schema,
+                                     name, new_name,
                                      std::static_pointer_cast<Table>(object));
     case ObjectType::PgSqlView:
       return RenameObjectImpl<PgSqlView>(
-        *schema_id, name, new_name,
+        *schema_id, database->GetName(), schema, name, new_name,
         std::static_pointer_cast<PgSqlView>(object));
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
-      return RenameObjectImpl<Index>(*schema_id, name, new_name,
+      return RenameObjectImpl<Index>(*schema_id, database->GetName(), schema,
+                                     name, new_name,
                                      std::static_pointer_cast<Index>(object));
     default:
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
@@ -2415,9 +2669,8 @@ Result LocalCatalog::ChangeRole(std::string_view name,
       }
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*new_role_ptr, stream);
-      return _engine->CreateDefinition(
-        id::kInstance, ObjectType::Role, new_role_ptr->GetId(),
-        [&](bool) { return std::string_view{bytes}; });
+      return _engine->CreateDefinition(id::kInstance, ObjectType::Role,
+                                       new_role_ptr->GetId(), bytes);
     },
     [&](const std::shared_ptr<SnapshotImpl>& clone) {
       auto obj = clone->GetObject<Role>(new_role_ptr->GetId());
@@ -2475,8 +2728,7 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
                  duckdb::MemoryStream stream;
                  auto bytes = catalog::SerializeObject(*updated, stream);
                  return _engine->CreateDefinition(
-                   *schema_id, ObjectType::PgSqlView, updated->GetId(),
-                   [&](bool) { return std::string_view{bytes}; });
+                   *schema_id, ObjectType::PgSqlView, updated->GetId(), bytes);
                });
 }
 
@@ -2515,22 +2767,109 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
     return {};
   }
 
-  return Apply(_snapshot, _snapshot_mutex,
-               [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-                 auto r = clone->ReplaceObject<ResolveType::Relation>(
-                   *schema_id, name, updated);
-                 if (!r.ok()) {
-                   return r;
-                 }
+  std::string store_name;
+  if (updated->GetEngine() == TableEngine::Transactional &&
+      !updated->Tombstoned()) {
+    auto database = _snapshot->GetObject<Database>(database_id);
+    SDB_ASSERT(database);
+    store_name = StoreTableName(database->GetName(), schema, name);
+  }
 
-                 return basics::SafeCall([&] {
-                   duckdb::MemoryStream stream;
-                   auto bytes = catalog::SerializeObject(*updated, stream);
-                   return _engine->CreateDefinition(
-                     *schema_id, ObjectType::Table, updated->GetId(),
-                     [&](bool) { return std::string_view{bytes}; });
-                 });
-               });
+  return Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+      auto r =
+        clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
+      if (!r.ok()) {
+        return r;
+      }
+
+      return basics::SafeCall([&] {
+        duckdb::MemoryStream stream;
+        auto bytes = catalog::SerializeObject(*updated, stream);
+        return _engine->Write([&](auto& ctx) {
+          ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
+                            bytes);
+          if (store_name.empty()) {
+            return;
+          }
+          bool renamed_columns = false;
+          for (const auto& old_col : table->Columns()) {
+            if (old_col.GetId() == Column::kGeneratedPKId) {
+              continue;
+            }
+            auto it = std::ranges::find_if(
+              updated->Columns(),
+              [&](const auto& c) { return c.GetId() == old_col.GetId(); });
+            if (it != updated->Columns().end() &&
+                it->GetName() != old_col.GetName()) {
+              ctx.RenameStoreColumn(store_name, std::string{old_col.GetName()},
+                                    std::string{it->GetName()});
+              renamed_columns = true;
+            }
+          }
+          // Newly added columns -> mirror to the store table. A constant
+          // DEFAULT backfills existing rows; the store handler retries without
+          // it when the expression calls a facade-only function.
+          for (const auto& new_col : updated->Columns()) {
+            if (new_col.GetId() == Column::kGeneratedPKId) {
+              continue;
+            }
+            auto existed = std::ranges::any_of(
+              table->Columns(),
+              [&](const auto& c) { return c.GetId() == new_col.GetId(); });
+            if (existed) {
+              continue;
+            }
+            std::string default_sql;
+            if (new_col.expr && new_col.expr->HasExpr()) {
+              default_sql = new_col.expr->GetExpr().ToString();
+            }
+            ctx.AddStoreColumn(store_name, std::string{new_col.GetName()},
+                               new_col.type.ToString(), std::move(default_sql));
+          }
+          if (renamed_columns) {
+            // Mirrored index definitions embed column names;
+            // recreate them against the renamed table (rowid
+            // postings and row data are untouched).
+            auto deps =
+              _snapshot->GetDependency<TableDependency>(updated->GetId());
+            auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
+            auto database = _snapshot->GetObject<Database>(database_id);
+            if (deps && schema_obj && database) {
+              for (auto idx_id : deps->indexes) {
+                auto idx = _snapshot->GetObject<Index>(idx_id);
+                if (!idx) {
+                  continue;
+                }
+                if (auto def = MakeStoreIndexDef(database->GetName(),
+                                                 schema_obj->GetName(),
+                                                 *updated, *idx)) {
+                  ctx.DropStoreIndex(idx_id);
+                  ctx.CreateStoreIndex(std::move(*def));
+                }
+              }
+            }
+          }
+          for (const auto& oc : table->CheckConstraints()) {
+            bool survives = std::ranges::any_of(
+              updated->CheckConstraints(),
+              [&](const auto& nc) { return nc.GetId() == oc.GetId(); });
+            if (survives) {
+              continue;
+            }
+            if (auto idx = oc.IsNotNull(table->Columns())) {
+              const auto& col = table->Columns()[*idx];
+              if (col.GetId() != Column::kGeneratedPKId) {
+                ctx.DropStoreNotNull(store_name, std::string{col.GetName()});
+              }
+            } else if (oc.expr && oc.expr->HasExpr()) {
+              ctx.DropStoreCheck(store_name, oc.expr->GetExpr().ToString());
+            }
+          }
+        });
+      });
+    });
 }
 
 Result LocalCatalog::DropRole(std::string_view role) {
@@ -2574,6 +2913,8 @@ Result LocalCatalog::DropDatabase(std::string_view name,
       auto wr = _engine->Write([&](auto& ctx) {
         ctx.WriteTombstone(id::kInstance, *database_id);
         clone->CommitDropPlan(ctx, plan);
+        task->EmitStoreFkCleanups(ctx);
+        task->EmitStoreDrops(ctx);
       });
       if (!wr.ok()) {
         return wr;
@@ -2617,6 +2958,8 @@ Result LocalCatalog::DropSchema(std::string_view database,
       auto wr = _engine->Write([&](auto& ctx) {
         ctx.WriteTombstone(*database_id, *schema_id);
         clone->CommitDropPlan(ctx, plan);
+        task->EmitStoreFkCleanups(ctx);
+        task->EmitStoreDrops(ctx);
       });
       if (!wr.ok()) {
         return wr;
@@ -2672,6 +3015,8 @@ Result LocalCatalog::DropTable(std::string_view database,
       auto wr = _engine->Write([&](auto& ctx) {
         ctx.WriteTombstone(*schema_id, *table_id);
         clone->CommitDropPlan(ctx, plan);
+        task->EmitStoreFkCleanups(ctx);
+        task->EmitStoreDrops(ctx);
       });
       if (!wr.ok()) {
         return wr;
@@ -2682,6 +3027,165 @@ Result LocalCatalog::DropTable(std::string_view database,
       SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
       DropTask::Schedule(std::move(task)).Detach();
       return Result{};
+    });
+}
+
+Result LocalCatalog::DropTableColumn(ObjectId database_id,
+                                     std::string_view schema,
+                                     std::string_view table,
+                                     std::string_view column, bool if_exists) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto table_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, table);
+  if (!table_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
+  auto object = _snapshot->GetObject(*table_id);
+  if (!object || object->GetType() != ObjectType::Table) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                  object ? pg::ToPgObjectTypeName(object->GetType()) : ""};
+  }
+  auto table_ptr = basics::downCast<Table>(std::move(object));
+  auto col_it = absl::c_find_if(table_ptr->Columns(), [&](const Column& c) {
+    return c.GetName() == column;
+  });
+  if (col_it == table_ptr->Columns().end()) {
+    if (if_exists) {
+      return {};
+    }
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto col_id = col_it->GetId();
+
+  auto plan = _snapshot->ComputeColumnDropPlan(*table_id, col_id);
+
+  return Apply(
+    _snapshot, _snapshot_mutex, [&](std::shared_ptr<SnapshotImpl>& clone) {
+      auto wr =
+        _engine->Write([&](auto& ctx) { clone->CommitDropPlan(ctx, plan); });
+      if (!wr.ok()) {
+        return wr;
+      }
+      clone->ApplyDropPlan(database_id, plan);
+      return Result{};
+    });
+}
+
+Result LocalCatalog::ChangeColumnType(ObjectId database_id,
+                                      std::string_view schema,
+                                      std::string_view table,
+                                      std::string_view column,
+                                      duckdb::LogicalType new_type,
+                                      std::string using_sql) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto table_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, table);
+  if (!table_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
+  auto object = _snapshot->GetObject(*table_id);
+  if (!object || object->GetType() != ObjectType::Table) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                  object ? pg::ToPgObjectTypeName(object->GetType()) : ""};
+  }
+  auto table_ptr = basics::downCast<Table>(std::move(object));
+  auto col_it = absl::c_find_if(table_ptr->Columns(), [&](const Column& c) {
+    return c.GetName() == column;
+  });
+  if (col_it == table_ptr->Columns().end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto col_id = col_it->GetId();
+
+  // The index stores values of the column's old type; a type change would
+  // leave them inconsistent. Reject and let the user drop the index first.
+  if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
+    for (auto idx_id : td->indexes) {
+      auto idx = _snapshot->GetObject<Index>(idx_id);
+      if (idx && absl::c_contains(idx->GetColumnIds(), col_id)) {
+        return Result{ERROR_BAD_PARAMETER,
+                      "cannot alter type of column \"",
+                      column,
+                      "\" because index \"",
+                      idx->GetName(),
+                      "\" depends on it; drop the index first"};
+      }
+    }
+  }
+
+  std::shared_ptr<Table> updated;
+  if (auto r = table_ptr->ChangeColumnType(updated, column, new_type);
+      !r.ok()) {
+    return r;
+  }
+
+  std::string store_name;
+  if (updated->GetEngine() == TableEngine::Transactional &&
+      !updated->Tombstoned()) {
+    auto database = _snapshot->GetObject<Database>(database_id);
+    SDB_ASSERT(database);
+    store_name = StoreTableName(database->GetName(), schema, table);
+  }
+  std::string type_sql = new_type.ToString();
+
+  return Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+      auto rr =
+        clone->ReplaceObject<ResolveType::Relation>(*schema_id, table, updated);
+      if (!rr.ok()) {
+        return rr;
+      }
+      return basics::SafeCall([&] {
+        duckdb::MemoryStream stream;
+        auto bytes = catalog::SerializeObject(*updated, stream);
+        return _engine->Write([&](auto& ctx) {
+          ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
+                            bytes);
+          if (store_name.empty()) {
+            return;
+          }
+          // The store blocks ALTER COLUMN TYPE while any index depends on the
+          // table; drop the mirrored store indexes, change the type, then
+          // recreate them (the data lives in the rows / iresearch, so the
+          // rebuild carries no state of its own).
+          std::vector<StoreIndexDef> recreate;
+          auto deps = _snapshot->GetDependency<TableDependency>(*table_id);
+          auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
+          auto database = _snapshot->GetObject<Database>(database_id);
+          if (deps && schema_obj && database) {
+            for (auto idx_id : deps->indexes) {
+              auto idx = _snapshot->GetObject<Index>(idx_id);
+              if (!idx) {
+                continue;
+              }
+              if (auto def =
+                    MakeStoreIndexDef(database->GetName(),
+                                      schema_obj->GetName(), *updated, *idx)) {
+                ctx.DropStoreIndex(idx_id);
+                recreate.push_back(std::move(*def));
+              }
+            }
+          }
+          ctx.ChangeStoreColumnType(store_name, std::string{column}, type_sql,
+                                    using_sql);
+          for (auto& def : recreate) {
+            ctx.CreateStoreIndex(std::move(def));
+          }
+        });
+      });
     });
 }
 
@@ -2714,8 +3218,18 @@ Result LocalCatalog::RemoveTombstone(ObjectId database_id,
     tombstone_parent = *schema_id;
   }
 
-  auto r = _engine->DropDefinition(tombstone_parent, ObjectType::Tombstone,
-                                   *object_id);
+  auto r = _engine->Write([&](auto& ctx) {
+    ctx.DropDefinition(tombstone_parent, ObjectType::Tombstone, *object_id);
+    if (object->GetType() == ObjectType::Table) {
+      auto& table = basics::downCast<Table>(*object);
+      if (table.GetEngine() == TableEngine::Transactional) {
+        auto database = _snapshot->GetObject<Database>(database_id);
+        SDB_ASSERT(database);
+        ctx.RenameStoreTable(DroppedStoreTableName(*object_id),
+                             StoreTableName(database->GetName(), schema, name));
+      }
+    }
+  });
 
   // Unlike most catalog operations that clone the snapshot, here we modify the
   // object in-place because the tombstone flag is simple in-memory state.
@@ -2756,7 +3270,12 @@ Result LocalCatalog::DropIndex(std::string_view database,
                       pg::ToPgObjectTypeName(obj->GetType())};
       }
       auto index = basics::downCast<Index>(std::move(obj));
-      if (auto r = _engine->WriteTombstone(index->GetRelationId(), *index_id);
+      // Store-side index drop is synchronous: UNIQUE enforcement must stop
+      // when DROP INDEX commits, not when the async sweep runs.
+      if (auto r = _engine->Write([&](auto& ctx) {
+            ctx.WriteTombstone(index->GetRelationId(), *index_id);
+            ctx.DropStoreIndex(*index_id);
+          });
           !r.ok()) {
         return r;
       }

@@ -25,7 +25,6 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
-#include "rocksdb/sst_file_writer.h"
 
 namespace sdb::connector::key_utils {
 
@@ -58,12 +57,5 @@ inline std::string_view ExtractRowKey(std::string_view full_key) {
   SDB_ASSERT(full_key.size() > sizeof(ObjectId) + sizeof(catalog::Column::Id));
   return full_key.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
 }
-
-// creates range covering all rows of all columns of the table
-std::pair<std::string, std::string> CreateTableRange(ObjectId id);
-
-// creates range covering all rows of specific column of the table
-std::pair<std::string, std::string> CreateTableColumnRange(
-  ObjectId id, catalog::Column::Id column_oid);
 
 }  // namespace sdb::connector::key_utils

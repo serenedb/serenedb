@@ -81,6 +81,11 @@ CREATE TABLE invoker(val integer CONSTRAINT invoker_bound CHECK (val > 0), name 
 statement ok
 INSERT INTO invoker VALUES (10, 'babsky');
 
+onlyif serenedb # native CHECK error embeds the per-test store table name
+statement error
+INSERT INTO invoker VALUES (-1, 'kostya');
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO invoker VALUES (-1, 'kostya');
 ----

@@ -1,0 +1,66 @@
+control substitution on
+
+statement ok
+CREATE TABLE fk_parent(id INTEGER PRIMARY KEY, name TEXT);
+
+
+statement ok
+CREATE TABLE fk_child(id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES fk_parent(id));
+
+
+statement ok
+INSERT INTO fk_parent VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+INSERT INTO fk_child VALUES (10, 1), (20, 2);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, parent_id FROM fk_child ORDER BY id;
+----
+id parent_id
+10 1
+20 2
+
+
+# FK constraint metadata survived recovery: a child pointing at a missing
+# parent is still rejected.
+connection after_crash
+statement error
+INSERT INTO fk_child VALUES (30, 999);
+----
+db error: ERROR: Violates foreign key constraint because key "id: 999" does not exist in the referenced table
+
+
+# A valid child insert still works post-recovery.
+connection after_crash
+statement ok
+INSERT INTO fk_child VALUES (30, 1);
+
+
+# The parent is still protected from deletion while referenced.
+connection after_crash
+statement error
+DELETE FROM fk_parent WHERE id = 1;
+----
+db error: ERROR: Violates foreign key constraint because key "parent_id: 1" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation
+
+
+connection after_crash
+statement ok
+DROP TABLE fk_child;
+
+
+connection after_crash
+statement ok
+DROP TABLE fk_parent;

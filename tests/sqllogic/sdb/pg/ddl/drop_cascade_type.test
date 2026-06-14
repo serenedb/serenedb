@@ -339,9 +339,6 @@ DROP TYPE shred_pair_kind CASCADE;
 # The unrelated NOT-NULL check on `n` survives -- inserting NULL still fails.
 statement error
 INSERT INTO shred_pair_t VALUES ('x', NULL);
-----
-db error: ERROR: new row for relation "shred_pair_t" violates check constraint "shred_pair_t_n_check"
-<slt:ignore>
 
 
 statement count 1

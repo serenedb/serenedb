@@ -40,12 +40,6 @@
 
 namespace sdb::catalog {
 
-// NOLINTBEGIN
-enum class ColumnStoreMode : uint8_t {
-  kNormal = 0,
-  kIndexOnly = 1,
-};
-
 // Persistent on-disk catalog format.
 class Column final : public Object {
  public:
@@ -57,10 +51,6 @@ class Column final : public Object {
   };
 
   using Id = ObjectId;
-
-  bool IsIndexOnly() const noexcept {
-    return store_mode == ColumnStoreMode::kIndexOnly;
-  }
 
   static constexpr uint64_t kMaxRealIdValue =
     std::numeric_limits<uint64_t>::max() - 1'000'000;
@@ -113,7 +103,6 @@ class Column final : public Object {
   duckdb::LogicalType type;
   std::shared_ptr<ColumnExpr> expr;
   GeneratedType generated_type = GeneratedType::kNone;
-  ColumnStoreMode store_mode = ColumnStoreMode::kNormal;
 };
 
 inline std::shared_ptr<Object> Column::Clone() const {
@@ -147,6 +136,23 @@ class CheckConstraint final : public Object {
 
 using persistence::TableStats;
 
+// Which engine owns the table's row data. Both kinds are first-class and
+// coexist: Transactional tables live as store tables in the engine's
+// single-file database; Fast is reserved for the eventually-consistent
+// iresearch-only table engine.
+enum class TableEngine : uint8_t {
+  Transactional = 0,
+  Fast = 1,
+};
+
+// One FOREIGN KEY of a table: `columns` (on the owning table) reference
+// `referenced_columns` of `referenced_table`, which must be its PRIMARY KEY.
+struct TableForeignKey {
+  std::vector<Column::Id> columns;
+  ObjectId referenced_table;
+  std::vector<Column::Id> referenced_columns;
+};
+
 struct CreateTableOptions {
   // LocalCatalog resolves the sequence name (mangling on collision), stamps
   // owner_table_id, and installs the column's nextval default.
@@ -160,6 +166,9 @@ struct CreateTableOptions {
   std::vector<Column::Id> pk_columns;
   std::vector<CheckConstraint> check_constraints;
   std::vector<SerialSequenceOption> sequences;
+  std::vector<std::vector<Column::Id>> unique_constraints;
+  std::vector<TableForeignKey> foreign_keys;
+  TableEngine engine = TableEngine::Transactional;
 };
 // NOLINTEND
 

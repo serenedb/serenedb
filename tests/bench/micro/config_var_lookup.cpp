@@ -82,7 +82,6 @@ static constexpr std::string_view kLowerKeys[] = {
   "intervalstyle",
   "timezone",
   "sdb_write_conflict_policy",
-  "sdb_read_your_own_writes",
   "default_transaction_isolation",
   "transaction_isolation",
   // --- kVeloxVariableDescription (118 keys) ---
@@ -219,7 +218,7 @@ static constexpr std::string_view kCanonicalKeys[] = {
   "integer_datetimes", "scram_iterations", "server_encoding",
   "server_version", "standard_conforming_strings",
   "DateStyle", "IntervalStyle", "TimeZone",
-  "sdb_write_conflict_policy", "sdb_read_your_own_writes",
+  "sdb_write_conflict_policy",
   "default_transaction_isolation", "transaction_isolation",
   "query_max_memory_per_node", "session_timezone",
   "adjust_timestamp_to_session_timezone", "expression.eval_simplified",
@@ -348,7 +347,7 @@ constexpr auto kFrozenLower =
     {"server_encoding", 11}, {"server_version", 12},
     {"standard_conforming_strings", 13}, {"datestyle", 14},
     {"intervalstyle", 15}, {"timezone", 16},
-    {"sdb_write_conflict_policy", 17}, {"sdb_read_your_own_writes", 18},
+    {"sdb_write_conflict_policy", 17},
     {"default_transaction_isolation", 19}, {"transaction_isolation", 20},
     {"query_max_memory_per_node", 21}, {"session_timezone", 22},
     {"adjust_timestamp_to_session_timezone", 23},
@@ -508,7 +507,7 @@ constexpr auto kFrozenIcase =
       {"server_encoding", 11}, {"server_version", 12},
       {"standard_conforming_strings", 13}, {"DateStyle", 14},
       {"IntervalStyle", 15}, {"TimeZone", 16},
-      {"sdb_write_conflict_policy", 17}, {"sdb_read_your_own_writes", 18},
+      {"sdb_write_conflict_policy", 17},
       {"default_transaction_isolation", 19}, {"transaction_isolation", 20},
       {"query_max_memory_per_node", 21}, {"session_timezone", 22},
       {"adjust_timestamp_to_session_timezone", 23},
@@ -647,7 +646,7 @@ static constexpr Value kTrivialValues[] = {
   84,  85,  86,  87,  88,  89,  90,  91,  92,  93,  94,  95,  96,  97,
   98,  99,  100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
   112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125,
-  126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138,
+  126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137,
 };
 static_assert(std::size(kTrivialValues) == kN);
 

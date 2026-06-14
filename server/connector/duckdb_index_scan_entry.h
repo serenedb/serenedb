@@ -148,41 +148,12 @@ class TableSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
 
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
-  duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
-  duckdb::virtual_column_map_t GetVirtualColumns() const final;
-
   const std::shared_ptr<catalog::Table>& GetSereneDBTable() const {
     return _sdb_table;
   }
 
  private:
   std::shared_ptr<catalog::Table> _sdb_table;
-};
-
-class ViewSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
- public:
-  ViewSecondaryIndexScanEntry(
-    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-    duckdb::CreateTableInfo& info,
-    std::shared_ptr<const catalog::PgSqlView> sdb_view,
-    std::vector<size_t> indexed_col_indices, ObjectId sk_shard_id,
-    bool sk_unique);
-
-  duckdb::TableFunction GetScanFunction(
-    duckdb::ClientContext& context,
-    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
-
-  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
-
-  duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
-  duckdb::virtual_column_map_t GetVirtualColumns() const final;
-
-  const std::shared_ptr<const catalog::PgSqlView>& GetSereneDBView() const {
-    return _sdb_view;
-  }
-
- private:
-  std::shared_ptr<const catalog::PgSqlView> _sdb_view;
 };
 
 }  // namespace sdb::connector

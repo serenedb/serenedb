@@ -20,7 +20,11 @@
 
 #include "pg/pg_catalog/pg_class.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <deque>
+#include <duckdb/main/connection.hpp>
+#include <duckdb/main/database.hpp>
 #include <string>
 
 #include "app/app_server.h"
@@ -29,6 +33,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/local_catalog.h"
 #include "catalog/sequence.h"
+#include "catalog/store/store.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "pg/pg_catalog/fwd.h"
@@ -112,7 +117,37 @@ PgClass MakeBaseRow(ObjectId schema_id, const catalog::Object& object) {
 
 void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
                      std::deque<std::string>& pk_index_names,
-                     const catalog::Snapshot& catalog) {
+                     const catalog::Snapshot& catalog,
+                     duckdb::ClientContext& context) {
+  // Store-table row counts ride a scratch connection: the native plane has
+  // no per-table counter yet. TODO(M2): maintain a commit-time counter.
+  std::optional<duckdb::Connection> store_conn;
+  auto count_store_rows = [&](const catalog::Table& table,
+                              std::string_view db_name,
+                              std::string_view schema_name) -> float {
+    if (table.GetEngine() != catalog::TableEngine::Transactional ||
+        table.Tombstoned()) {
+      return 0.0F;
+    }
+    if (!store_conn) {
+      store_conn.emplace(*context.db);
+    }
+    auto store_name =
+      catalog::StoreTableName(db_name, schema_name, table.GetName());
+    auto result = store_conn->Query(
+      absl::StrCat("SELECT count(*) FROM \"", catalog::kStoreDatabaseName,
+                   "\".main.\"", store_name, "\""));
+    if (result->HasError()) {
+      return 0.0F;
+    }
+    auto chunk = result->Fetch();
+    if (!chunk || chunk->size() == 0) {
+      return 0.0F;
+    }
+    return static_cast<float>(chunk->GetValue(0, 0).GetValue<int64_t>());
+  };
+  auto database = catalog.GetDatabase(database_id);
+  SDB_ASSERT(database);
   for (const auto& schema : catalog.GetSchemas(database_id)) {
     const auto schema_id = schema->GetId();
 
@@ -123,9 +158,8 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       row.relnatts = static_cast<int16_t>(table->Columns().size());
       row.relchecks = static_cast<int16_t>(table->CheckConstraints().size());
       row.relhasindex = catalog.HasIndexes(table->GetId());
-      auto shard = catalog.GetTableShard(table->GetId());
-      SDB_ASSERT(shard);
-      row.reltuples = static_cast<float>(shard->GetTableStats().num_rows);
+      row.reltuples =
+        count_store_rows(*table, database->GetName(), schema->GetName());
       values.push_back(std::move(row));
     }
 
@@ -217,7 +251,8 @@ catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   std::vector<PgClass> values;
   std::deque<std::string> pk_index_names;
   auto catalog = _config.EnsureCatalogSnapshot();
-  RetrieveObjects(GetDatabaseId(), values, pk_index_names, *catalog);
+  RetrieveObjects(GetDatabaseId(), values, pk_index_names, *catalog,
+                  _config.GetClientContext());
 
   {
     VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {

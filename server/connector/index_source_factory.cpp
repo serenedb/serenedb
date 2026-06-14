@@ -27,9 +27,8 @@
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
-#include "connector/index_source_rocksdb.h"
 #include "connector/index_source_view_file.h"
-#include "connector/index_source_view_rocksdb.h"
+#include "connector/index_source_view_table.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -40,7 +39,6 @@ namespace sdb::connector {
 
 std::unique_ptr<IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
-  const rocksdb::Snapshot* snapshot, rocksdb::Transaction* txn,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids) {
@@ -67,10 +65,10 @@ std::unique_ptr<IndexSource> MakeIndexSource(
         }
       }
     }
-    if (catalog::IsRocksPK(fp->pk_spec)) {
-      return std::make_unique<ViewRocksDBIndexSource>(
+    if (fp->catalog_ref && fp->pk_spec == catalog::PkSpec::DuckDBRowId) {
+      return std::make_unique<ViewTableIndexSource>(
         context, std::move(*fp), projected_columns, projected_types,
-        bind_column_ids, snapshot, txn);
+        bind_column_ids);
     }
     if (catalog::IsGlobPK(fp->pk_spec)) {
       return std::make_unique<ViewFileGlobIndexSource>(
@@ -81,9 +79,12 @@ std::unique_ptr<IndexSource> MakeIndexSource(
       context, std::move(*fp), projected_columns, projected_types,
       bind_column_ids);
   }
-  return std::make_unique<RocksDBIndexSource>(
-    bind_data.RelationId(), snapshot, projected_columns, projected_types,
-    bind_column_ids, txn);
+  const auto& tbd = bind_data.As<TableScanBindData>();
+  SDB_ASSERT(tbd.table);
+  SDB_ASSERT(tbd.table_entry);
+  return std::make_unique<TableRowIdIndexSource>(
+    context, *tbd.table_entry, *tbd.table, projected_columns, projected_types,
+    bind_column_ids);
 }
 
 }  // namespace sdb::connector

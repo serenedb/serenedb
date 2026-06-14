@@ -21,6 +21,7 @@ target_sources(
         secondary_index.cpp
         inverted_index.cpp
         scorer_options.cpp
+        store/store.cpp
         tokenizer.cpp
 )
 

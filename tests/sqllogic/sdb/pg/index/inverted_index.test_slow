@@ -133,11 +133,11 @@ FROM
   generate_series(1, 100) as cutelooked_team(boss);
 
 statement count 100000
-COPY csv_idx_src TO '/tmp/${__DATABASE__}_csv_idx_slow.csv';
+COPY csv_idx_src TO '${__TEST_DIR__}/csv_idx_slow.csv';
 
 statement ok
 CREATE VIEW csv_idx_ext AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_csv_idx_slow.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/csv_idx_slow.csv');
 
 statement ok
 CREATE INDEX csv_idx_ext_facts ON csv_idx_ext USING inverted(fact test_english, dept test_english);
@@ -181,11 +181,11 @@ SELECT
 FROM generate_series(1, 10000) AS s(n);
 
 statement count 10000
-COPY dense_pq_slow_src TO '/tmp/${__DATABASE__}_dense_pq_slow.parquet' (FORMAT PARQUET);
+COPY dense_pq_slow_src TO '${__TEST_DIR__}/dense_pq_slow.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW dense_pq_slow_ext AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_dense_pq_slow.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/dense_pq_slow.parquet');
 
 statement ok
 CREATE INDEX dense_pq_slow_idx ON dense_pq_slow_ext USING inverted(fact test_english, division test_english);
@@ -243,11 +243,11 @@ SELECT
 FROM generate_series(1, 10000) AS s(n);
 
 statement count 10000
-COPY dense_csv_slow_src TO '/tmp/${__DATABASE__}_dense_csv_slow.csv';
+COPY dense_csv_slow_src TO '${__TEST_DIR__}/dense_csv_slow.csv';
 
 statement ok
 CREATE VIEW dense_csv_slow_ext AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_dense_csv_slow.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/dense_csv_slow.csv');
 
 statement ok
 CREATE INDEX dense_csv_slow_idx ON dense_csv_slow_ext USING inverted(content test_english, region test_english);
@@ -303,11 +303,11 @@ SELECT
 FROM generate_series(1, 10000) AS s(n);
 
 statement count 10000
-COPY json_idx_src TO '/tmp/${__DATABASE__}_json_idx_slow.jsonl' (FORMAT json);
+COPY json_idx_src TO '${__TEST_DIR__}/json_idx_slow.jsonl' (FORMAT json);
 
 statement ok
 CREATE VIEW json_idx_ext AS
-  SELECT * FROM read_json('/tmp/${__DATABASE__}_json_idx_slow.jsonl');
+  SELECT * FROM read_json('${__TEST_DIR__}/json_idx_slow.jsonl');
 
 statement ok
 CREATE INDEX json_idx_ext_facts ON json_idx_ext USING inverted(fact test_english, dept test_english);

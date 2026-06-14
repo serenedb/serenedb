@@ -38,6 +38,7 @@
 #include "catalog/index.h"
 #include "catalog/object_dependency.h"
 #include "catalog/schema.h"
+#include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "general_server/scheduler.h"
 #include "search/inverted_index_shard.h"
@@ -96,12 +97,10 @@ class DropTask {
 
 class TableShardDrop final : public DropTask {
  public:
-  TableShardDrop(ObjectId id, ObjectId parent_id, uint64_t size)
-    : DropTask{id, parent_id}, _size{size} {}
+  TableShardDrop(ObjectId id, ObjectId parent_id) : DropTask{id, parent_id} {}
 
-  TableShardDrop(const std::shared_ptr<TableShard>& shard, ObjectId parent_id,
-                 uint64_t size)
-    : DropTask{shard, parent_id}, _size{size} {}
+  TableShardDrop(const std::shared_ptr<TableShard>& shard, ObjectId parent_id)
+    : DropTask{shard, parent_id} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("TableShardDrop(table $0 shard $1)",
@@ -113,9 +112,6 @@ class TableShardDrop final : public DropTask {
   AsyncResult Execute() final;
 
   bool AllowToDropDependencies() const noexcept final { return true; }
-
- private:
-  uint64_t _size;
 };
 
 struct IndexDrop final : public DropTask {
@@ -163,26 +159,53 @@ struct TableDrop final : public DropTask {
  public:
   static constexpr std::string_view kName = "table drop";
 
-  TableDrop(ObjectId id, ObjectId shard_id, uint64_t table_size,
+  TableDrop(ObjectId id, ObjectId shard_id,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             bool is_root = false)
     : DropTask{id, schema_id, is_root},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
-      _shard_drop{std::make_shared<TableShardDrop>(shard_id, id, table_size)} {}
+      _shard_drop{std::make_shared<TableShardDrop>(shard_id, id)} {}
 
   TableDrop(const std::shared_ptr<Table>& table,
             const std::shared_ptr<TableShard>& shard,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
+            std::string store_name,
+            std::vector<std::string> fk_referenced_store_names,
             bool is_root = false)
     : DropTask{table, schema_id, is_root},
+      _store_name{std::move(store_name)},
+      _fk_referenced_store_names{std::move(fk_referenced_store_names)},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
-      _shard_drop{std::make_shared<TableShardDrop>(
-        shard, table->GetId(),
-        table->Columns().size() * shard->GetTableStats().num_rows)} {}
+      _shard_drop{std::make_shared<TableShardDrop>(shard, table->GetId())} {}
+
+  // FK linkage entries must go before ANY table drop in the transaction:
+  // a live back-reference makes duckdb refuse dropping the main-key table,
+  // and the cascade emission order is arbitrary. Removing both directions
+  // up front makes the drops order-independent.
+  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const {
+    if (_store_name.empty()) {
+      return;
+    }
+    for (const auto& referenced : _fk_referenced_store_names) {
+      ctx.DropStoreForeignKey(referenced, _store_name);
+      ctx.DropStoreForeignKey(_store_name, referenced);
+    }
+  }
+
+  // Drops the store table synchronously in the same transaction that
+  // tombstones the drop, freeing the public name immediately (renames are
+  // unsafe for FK-involved tables: duckdb keeps back-references by name).
+  // No-op when the table has no store table (Fast engine) or lives under
+  // the dropped name (CTAS); Finalize's drop-by-id covers the latter.
+  void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
+    if (!_store_name.empty()) {
+      ctx.DropStoreTable(_store_name);
+    }
+  }
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("TableDrop(schema $0 table $1)", _parent_id.id(),
@@ -204,6 +227,8 @@ struct TableDrop final : public DropTask {
   }
 
  private:
+  std::string _store_name;
+  std::vector<std::string> _fk_referenced_store_names;
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
   std::vector<ObjectId> _owned_sequences;
   std::shared_ptr<TableShardDrop> _shard_drop;
@@ -226,6 +251,17 @@ struct SchemaDrop final : public DropTask {
   }
 
   std::string_view GetName() const noexcept final { return "schema drop"; }
+
+  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const {
+    for (const auto& table : _tables) {
+      table->EmitStoreFkCleanups(ctx);
+    }
+  }
+  void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
+    for (const auto& table : _tables) {
+      table->EmitStoreDrops(ctx);
+    }
+  }
 
   AsyncResult Execute() final;
   Result Finalize();
@@ -258,6 +294,17 @@ struct DatabaseDrop final : public DropTask {
   }
 
   std::string_view GetName() const noexcept final { return "database drop"; }
+
+  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const {
+    for (const auto& schema : _schemas) {
+      schema->EmitStoreFkCleanups(ctx);
+    }
+  }
+  void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
+    for (const auto& schema : _schemas) {
+      schema->EmitStoreDrops(ctx);
+    }
+  }
 
   AsyncResult Execute() final;
   Result Finalize();

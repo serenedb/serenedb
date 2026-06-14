@@ -26,7 +26,7 @@
 #include <optional>
 
 #include "basics/result.h"
-#include "rocksdb_filter.hpp"  // ComparisonOp
+#include "comparison_op.hpp"
 
 namespace sdb::connector {
 

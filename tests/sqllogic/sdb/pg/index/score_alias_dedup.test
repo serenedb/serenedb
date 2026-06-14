@@ -71,7 +71,7 @@ QUERY PLAN
 │           Index:          │
 │   vedernikoff_alias_idx   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -154,7 +154,7 @@ QUERY PLAN
 │           Index:          │
 │   vedernikoff_alias_idx   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -248,7 +248,7 @@ QUERY PLAN
 │           Index:          │
 │ deadinside_alias_idx (ANN)│
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 2          │
 │          Dims: 3          │
 │                           │
@@ -367,7 +367,7 @@ QUERY PLAN
 │           Index:          │
 │   vedernikoff_alias_idx   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -425,7 +425,7 @@ QUERY PLAN
 │           Index:          │
 │   vedernikoff_alias_idx   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │

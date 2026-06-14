@@ -64,26 +64,18 @@ b	200
 
 
 # --- cs-only INCLUDE projection -- streaming path ---------------------
-# label + tag are both INCLUDE'd. The streaming path must:
-#   - skip per-batch SegmentPkSequentialFetcher::Fetch
-#     (so SearchPkFetchFault is dormant);
-#   - skip IndexSource::Materialize
-#     (so SearchRocksDBLookupFault is dormant);
-#   - go through ColumnstoreMaterializer::SelectByDocIds
-#     (so SearchIncludeFetchFault *would* trip if armed -- not armed here).
+# label + tag are both INCLUDE'd, but store-table reads always fetch row
+# visibility (postings can outlive rows), so the PK fetch and the rowid
+# materializer both run even for covered projections.
 
 statement ok
 SET sdb_faults = 'SearchPkFetchFault'
 
 
-query
+statement error intentional debug error
 SELECT label, tag FROM doc_idx
   WHERE body @@ ts_phrase('alpha')
   ORDER BY label;
-----
-label	tag
-a	100
-b	200
 
 
 statement ok
@@ -91,39 +83,30 @@ SET sdb_faults = '-SearchPkFetchFault'
 
 
 statement ok
-SET sdb_faults = 'SearchRocksDBLookupFault'
+SET sdb_faults = 'SearchLookupFault'
 
 
-query
+statement error intentional debug error
 SELECT label, tag FROM doc_idx
   WHERE body @@ ts_phrase('alpha')
   ORDER BY label;
-----
-label	tag
-a	100
-b	200
 
 
 statement ok
-SET sdb_faults = '-SearchRocksDBLookupFault'
+SET sdb_faults = '-SearchLookupFault'
 
 
 # --- cs-only INCLUDE projection -- top-K path -------------------------
-# ORDER BY ts_rank ... LIMIT k drives the score_top_k path. With only
-# INCLUDE'd columns projected, the precomputed PK collection block
-# (LookupSegmentsValues) must be skipped.
+# The visibility fetch collects PKs on the top-K path too.
 
 statement ok
 SET sdb_faults = 'SearchPkFetchFault'
 
 
-query
+statement error intentional debug error
 SELECT label, tag FROM doc_idx
   WHERE body @@ ts_phrase('alpha')
   ORDER BY BM25(doc_idx.tableoid) DESC LIMIT 1;
-----
-label	tag
-a	100
 
 
 statement ok
@@ -131,7 +114,7 @@ SET sdb_faults = '-SearchPkFetchFault'
 
 
 statement ok
-SET sdb_faults = 'SearchRocksDBLookupFault'
+SET sdb_faults = 'SearchLookupFault'
 
 
 query
@@ -144,7 +127,7 @@ a	100
 
 
 statement ok
-SET sdb_faults = '-SearchRocksDBLookupFault'
+SET sdb_faults = '-SearchLookupFault'
 
 
 # --- external-only projection -- streaming path -----------------------
@@ -187,7 +170,7 @@ SET sdb_faults = '-SearchPkFetchFault'
 
 
 statement ok
-SET sdb_faults = 'SearchRocksDBLookupFault'
+SET sdb_faults = 'SearchLookupFault'
 
 
 statement error intentional debug error
@@ -197,7 +180,7 @@ SELECT pk, ext_only FROM doc_idx
 
 
 statement ok
-SET sdb_faults = '-SearchRocksDBLookupFault'
+SET sdb_faults = '-SearchLookupFault'
 
 
 # Streaming + INCLUDE projection -> must touch the cs materializer.

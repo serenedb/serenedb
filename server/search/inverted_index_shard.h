@@ -23,7 +23,6 @@
 
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
-#include <rocksdb/types.h>
 
 #include <atomic>
 #include <filesystem>
@@ -33,8 +32,6 @@
 #include <shared_mutex>
 
 #include "catalog/inverted_index.h"
-#include "rest_server/flush_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 
@@ -66,7 +63,7 @@ struct TasksSettings {
   size_t writebuffer_size_max{};
 };
 
-enum class CommitResult {
+enum class RefreshResult {
   Undefined = 0,
   NoChanges,
   InProgress,
@@ -74,16 +71,10 @@ enum class CommitResult {
 };
 
 struct InvertedIndexSnapshot {
-  InvertedIndexSnapshot(irs::DirectoryReader&& index,
-                        std::shared_ptr<StorageSnapshot> rocksdb_snapshot)
-    : reader{std::move(index)}, snapshot{std::move(rocksdb_snapshot)} {}
-
-  [[nodiscard]] auto GetSequenceNumber() const noexcept {
-    return snapshot->GetSnapshot()->GetSequenceNumber();
-  }
+  explicit InvertedIndexSnapshot(irs::DirectoryReader&& index)
+    : reader{std::move(index)} {}
 
   irs::DirectoryReader reader;
-  std::shared_ptr<StorageSnapshot> snapshot;
 };
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
@@ -112,14 +103,28 @@ class Snapshot {
     return _snapshot->reader;
   }
 
-  [[nodiscard]] auto GetSequenceNumber() {
-    return _snapshot->GetSequenceNumber();
-  }
-
  private:
   std::shared_ptr<const InvertedIndexShard> _inverted_index_shard;
   InvertedIndexSnapshotPtr _snapshot;
 };
+
+// Durable WAL cursor packing: store-WAL generation (checkpoint iteration) in
+// the high bits, byte offset within that generation in the low bits, so a
+// single uint64 orders correctly across generations and within one. The 40-bit
+// offset field bounds a generation to 1 TiB of WAL -- far above any checkpoint
+// threshold. Used to bound recovery replay to the index's un-durable tail.
+inline constexpr int kWalCursorOffsetBits = 40;
+inline constexpr uint64_t kWalCursorOffsetMask =
+  (uint64_t{1} << kWalCursorOffsetBits) - 1;
+inline uint64_t PackWalCursor(uint64_t generation, uint64_t offset) noexcept {
+  return (generation << kWalCursorOffsetBits) | (offset & kWalCursorOffsetMask);
+}
+inline uint64_t WalCursorGeneration(uint64_t packed) noexcept {
+  return packed >> kWalCursorOffsetBits;
+}
+inline uint64_t WalCursorOffset(uint64_t packed) noexcept {
+  return packed & kWalCursorOffsetMask;
+}
 
 // Physical representation of a search index(catalog::Index)
 // Used for creating writers/readers and managing index lifecycle
@@ -184,9 +189,9 @@ class InvertedIndexShard final
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction);
 
-  ResultWithTime CommitUnsafe(bool wait,
-                              const irs::ProgressReportCallback& progress,
-                              CommitResult& code);
+  ResultWithTime RefreshUnsafe(bool wait,
+                               const irs::ProgressReportCallback& progress,
+                               RefreshResult& code);
 
   ResultWithTime CleanupUnsafe();
   Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
@@ -194,7 +199,7 @@ class InvertedIndexShard final
   void ScheduleCompaction(absl::Duration delay);
   void ScheduleCommit(absl::Duration delay);
 
-  yaclib::Future<> CommitWait();
+  void Refresh();
 
   ObjectId GetId() const noexcept { return _id; }
   auto GetState() const noexcept { return _state; }
@@ -231,6 +236,26 @@ class InvertedIndexShard final
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 
+  // Durable WAL cursor (store-table WAL generation + byte offset, packed) read
+  // back from the segment meta at open. Recovery replays only operations PAST
+  // it (operations at/below are already durable in the segments). The refresh
+  // stamps it conservatively (see RefreshUnsafeImpl); the boundary overlap is
+  // absorbed idempotently by FinishReplay's delete-then-insert.
+  uint64_t GetRecoveryWalCursor() const noexcept {
+    return _recovery_wal_cursor;
+  }
+
+  // The index lost a committed transaction's rows (an iresearch tick commit
+  // failed after the store transaction was already durable). The shard keeps
+  // serving, but the clean-shutdown checkpoint is suppressed so the next
+  // boot rebuilds it from the store table.
+  void MarkOutOfSync() noexcept {
+    _out_of_sync.store(true, std::memory_order_relaxed);
+  }
+  bool IsOutOfSync() const noexcept {
+    return _out_of_sync.load(std::memory_order_relaxed);
+  }
+
   enum class Phase : uint8_t {
     Creating,
     Recovering,
@@ -252,12 +277,11 @@ class InvertedIndexShard final
   Result CompactUnsafeImpl(const irs::CompactionPolicy& policy,
                            const irs::MergeWriter::FlushProgress& progress,
                            bool& empty_compaction);
-  Result CommitUnsafeImpl(bool wait,
-                          const irs::ProgressReportCallback& progress,
-                          CommitResult& code);
+  Result RefreshUnsafeImpl(bool wait,
+                           const irs::ProgressReportCallback& progress,
+                           RefreshResult& code);
   Result CleanupUnsafeImpl();
 
-  RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;
   mutable std::shared_mutex _snapshot_mutex;
@@ -269,10 +293,15 @@ class InvertedIndexShard final
   absl::Mutex _mutex;
   absl::Mutex _commit_mutex;
 
-  std::shared_ptr<FlushSubscription> _flush_subscription;
-
   Tick _recovery_tick{0};
   Tick _last_committed_tick{0};
+  // Durable store-WAL cursor (packed gen<<40|offset). Captured from the store
+  // WAL at refresh -> _pending_wal_cursor -> stamped into the segment meta.
+  // _recovery_wal_cursor is read back from the meta at open (the recovery skip
+  // bound).
+  uint64_t _pending_wal_cursor{0};
+  uint64_t _recovery_wal_cursor{0};
+  std::atomic<bool> _out_of_sync{false};
   int64_t _iceberg_snapshot_id{0};
   Phase _phase{Phase::Creating};
 
@@ -280,16 +309,6 @@ class InvertedIndexShard final
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _compactions_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
-
-  enum class Error : uint8_t {
-    // inverted index shard has no issues
-    NoError = 0,
-    // inverted index shard is out of sync
-    OutOfSync = 1,
-    // inverted index shard is failed (currently not used)
-    Failed = 2,
-  };
-  std::atomic<Error> _error{Error::NoError};
 };
 
 }  // namespace sdb::search

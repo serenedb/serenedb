@@ -3,7 +3,7 @@ hash-threshold 100
 # `${__DATABASE__}` resolves to the per-test database the runner creates.
 control substitution on
 
-# Coverage test for VACUUM (REFRESH_*|COMPACT_*|SYNC_STATS_*|COMPACT_ROCKSDB).
+# Coverage test for VACUUM (REFRESH_*|COMPACT_*|SYNC_STATS_*).
 # Drives every scope variant on real data and locks down the error paths
 # (missing/extra arguments, over-qualified names, missing objects, mixed
 # extension + standard options, conflicting extension options).
@@ -162,9 +162,9 @@ count
 1
 
 
-# Note: REFRESH_ALL / COMPACT_ALL / SYNC_STATS_ALL / COMPACT_ROCKSDB are
-# instance-wide and would touch other tests' per-test databases under the
-# shared sqllogic runner, so their success paths live in
+# Note: REFRESH_ALL / COMPACT_ALL / SYNC_STATS_ALL are instance-wide and
+# would touch other tests' per-test databases under the shared sqllogic
+# runner, so their success paths live in
 # tests/sqllogic/recovery/vacuum_global.test (one serened instance per test).
 # Their argument-validation errors are still covered below.
 
@@ -291,9 +291,8 @@ count
 
 
 # ---------------------------------------------------------------------------
-# SYNC_STATS_* -- placeholder ops that must not error while rocksdb-backed
-# tables are still around. SYNC_STATS_ALL and COMPACT_ROCKSDB are instance-wide
-# and live in tests/sqllogic/recovery/vacuum_global.test.
+# SYNC_STATS_* -- placeholder stats-sync ops. SYNC_STATS_ALL is
+# instance-wide and lives in tests/sqllogic/recovery/vacuum_global.test.
 # ---------------------------------------------------------------------------
 
 statement ok
@@ -401,11 +400,6 @@ VACUUM (SYNC_STATS_ALL) docs;
 ----
 db error: ERROR: VACUUM (sync_stats_all) does not take an argument
 
-
-statement error
-VACUUM (COMPACT_ROCKSDB) docs;
-----
-db error: ERROR: VACUUM (compact_rocksdb) does not take an argument
 
 
 # Over-qualified database / schema arguments.

@@ -28,6 +28,8 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
+#include <duckdb/main/connection.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -35,11 +37,13 @@
 #include "basics/build.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/secondary_index.h"
+#include "catalog/store/store.h"
+#include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
 
 namespace sdb::connector {
@@ -227,9 +231,68 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 // --- Size functions ---
 // Ported from server/pg/functions/size.cpp
 
+// Store-table row count as the size proxy: the native engine keeps no
+// cheap per-table byte size (one shared file), and PG callers mostly test
+// emptiness. TODO(M2): commit-time byte accounting.
+int64_t StoreTableSizeProxy(duckdb::ClientContext& context,
+                            const catalog::Snapshot& snapshot,
+                            const catalog::Object& rel) {
+  auto table = snapshot.GetObject<catalog::Table>(rel.GetId());
+  if (!table || table->GetEngine() != catalog::TableEngine::Transactional ||
+      table->Tombstoned()) {
+    return 0;
+  }
+  auto schema = snapshot.GetObject<catalog::Schema>(table->GetParentId());
+  if (!schema) {
+    return 0;
+  }
+  auto database = snapshot.GetDatabase(schema->GetParentId());
+  if (!database) {
+    return 0;
+  }
+  duckdb::Connection conn(*context.db);
+  auto store_name = catalog::StoreTableName(
+    database->GetName(), schema->GetName(), table->GetName());
+  auto result = conn.Query(absl::StrCat("SELECT count(*) FROM \"",
+                                        catalog::kStoreDatabaseName,
+                                        "\".main.\"", store_name, "\""));
+  if (result->HasError()) {
+    return 0;
+  }
+  auto chunk = result->Fetch();
+  if (!chunk || chunk->size() == 0) {
+    return 0;
+  }
+  return chunk->GetValue(0, 0).GetValue<int64_t>();
+}
+
 // Helper: get fork size for a relation OID.
+int64_t StoreSchemaSize(duckdb::ClientContext& context,
+                        const catalog::Snapshot& snapshot, ObjectId database_id,
+                        std::string_view schema_name) {
+  int64_t total = 0;
+  for (auto& rel : snapshot.GetRelations(database_id, schema_name)) {
+    if (rel->GetType() != catalog::ObjectType::Table) {
+      continue;
+    }
+    total += StoreTableSizeProxy(context, snapshot, *rel);
+  }
+  return total;
+}
+
+int64_t StoreDatabaseSize(duckdb::ClientContext& context,
+                          const catalog::Snapshot& snapshot,
+                          ObjectId database_id) {
+  int64_t total = 0;
+  for (auto& schema : snapshot.GetSchemas(database_id)) {
+    total += StoreSchemaSize(context, snapshot, database_id, schema->GetName());
+  }
+  return total;
+}
+
 // Ported from server/pg/functions/size.cpp GetRelationForkSize.
-int64_t GetRelationForkSize(const catalog::Snapshot& snapshot, uint64_t oid,
+int64_t GetRelationForkSize(duckdb::ClientContext& context,
+                            const catalog::Snapshot& snapshot, uint64_t oid,
                             std::string_view fork, bool table_only = false) {
   auto rel = snapshot.GetObject(ObjectId{oid});
   if (!rel) {
@@ -245,12 +308,16 @@ int64_t GetRelationForkSize(const catalog::Snapshot& snapshot, uint64_t oid,
   }
   switch (rel->GetType()) {
     case catalog::ObjectType::Table:
-      return static_cast<int64_t>(GetServerEngine().GetTableSize(rel->GetId()));
+      return StoreTableSizeProxy(context, snapshot, *rel);
     case catalog::ObjectType::SecondaryIndex: {
-      auto shard = snapshot.GetIndexShard(rel->GetId());
-      SDB_ASSERT(shard);
-      return static_cast<int64_t>(
-        GetServerEngine().GetTableSize(shard->GetId()));
+      // Native ART indexes live inside the store file; report the table
+      // row count as the proxy.
+      auto index = snapshot.GetObject<catalog::SecondaryIndex>(rel->GetId());
+      if (!index) {
+        return 0;
+      }
+      auto table = snapshot.GetObject(index->GetRelationId());
+      return table ? StoreTableSizeProxy(context, snapshot, *table) : 0;
     }
     case catalog::ObjectType::InvertedIndex: {
       auto shard = snapshot.GetIndexShard(rel->GetId());
@@ -282,8 +349,7 @@ void PgDatabaseSizeNameFunction(duckdb::DataChunk& args,
         throw duckdb::CatalogException("database \"%s\" does not exist",
                                        std::string{db_name});
       }
-      return static_cast<int64_t>(
-        GetServerEngine().GetDatabaseSize(*snapshot, database->GetId()));
+      return StoreDatabaseSize(context, *snapshot, database->GetId());
     });
 }
 
@@ -310,8 +376,7 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
         throw duckdb::CatalogException("database with OID %lld does not exist",
                                        oid);
       }
-      return static_cast<int64_t>(
-        GetServerEngine().GetDatabaseSize(*snapshot, database->GetId()));
+      return StoreDatabaseSize(context, *snapshot, database->GetId());
     });
 }
 
@@ -332,8 +397,7 @@ void PgSchemaSizeNameFunction(duckdb::DataChunk& args,
         throw duckdb::CatalogException("schema \"%s\" does not exist",
                                        std::string{schema_name});
       }
-      return static_cast<int64_t>(GetServerEngine().GetSchemaSize(
-        *snapshot, database_id, std::string{schema_name}));
+      return StoreSchemaSize(context, *snapshot, database_id, schema_name);
     });
 }
 
@@ -353,8 +417,8 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
         throw duckdb::CatalogException("schema with OID %lld does not exist",
                                        oid);
       }
-      return static_cast<int64_t>(GetServerEngine().GetSchemaSize(
-        *snapshot, schema->GetParentId(), schema->GetName()));
+      return StoreSchemaSize(context, *snapshot, schema->GetParentId(),
+                             schema->GetName());
     });
 }
 
@@ -476,7 +540,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       auto snap = ctx.EnsureCatalogSnapshot();
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationForkSize(*snap, static_cast<uint64_t>(oid), "main");
+          return GetRelationForkSize(state.GetContext(), *snap,
+                                     static_cast<uint64_t>(oid), "main");
         });
     }});
 
@@ -493,7 +558,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
         args.data[0], args.data[1], result, args.size(),
         [&](int64_t oid, duckdb::string_t fork) -> int64_t {
           std::string_view f{fork.GetData(), fork.GetSize()};
-          return GetRelationForkSize(*snap, static_cast<uint64_t>(oid), f);
+          return GetRelationForkSize(state.GetContext(), *snap,
+                                     static_cast<uint64_t>(oid), f);
         });
     }});
 
@@ -508,8 +574,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       auto snap = ctx.EnsureCatalogSnapshot();
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationForkSize(*snap, static_cast<uint64_t>(oid), "main",
-                                     true);
+          return GetRelationForkSize(state.GetContext(), *snap,
+                                     static_cast<uint64_t>(oid), "main", true);
         });
     }});
 
@@ -524,7 +590,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       auto snap = ctx.EnsureCatalogSnapshot();
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationForkSize(*snap, static_cast<uint64_t>(oid), "main");
+          return GetRelationForkSize(state.GetContext(), *snap,
+                                     static_cast<uint64_t>(oid), "main");
         });
     }});
 

@@ -14,9 +14,6 @@
 	path = third_party/llvm-project
 	url = https://github.com/serenedb/llvm-project.git
 	shallow = true
-[submodule "third_party/rocksdb"]
-	path = third_party/rocksdb
-	url = https://github.com/serenedb/rocksdb.git
 	shallow = true
 [submodule "third_party/folly"]
 	path = third_party/folly

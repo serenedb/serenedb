@@ -21,7 +21,6 @@
 #include "catalog/drop_task.h"
 
 #include <absl/strings/str_cat.h>
-#include <rocksdb/options.h>
 
 #include <filesystem>
 #include <span>
@@ -33,14 +32,9 @@
 #include "basics/errors.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "catalog/store/store.h"
 #include "catalog/types.h"
-#include "connector/key_utils.hpp"
 #include "general_server/scheduler.h"
-#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_common.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "rocksdb_engine_catalog/rocksdb_types.h"
-#include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/search_engine.h"
 
@@ -114,25 +108,22 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
 
 AsyncResult TableShardDrop::Execute() {
   SDB_ASSERT(!_is_root);
-  auto& server = GetServerEngine();
-  // TODO(codeworse): Probably we should store data by table shard id, not
-  // table id. So, in that way here we would use id(not parent_id)
-  auto [start, end] = connector::key_utils::CreateTableRange(_parent_id);
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Default);
-  // Drop table data
-  // TODO(codeworse): add some parameter for large range(not just >= 1000)
-  auto r = rocksutils::RemoveLargeRange(server.db(), rocksdb::Slice{start},
-                                        rocksdb::Slice{end}, cf, true,
-                                        (_size >= 1000));
-  if (!r.ok()) {
-    return yaclib::MakeFuture<Result>(ERROR_LOCKED);
-  }
+  // Table rows live in the store table, dropped by TableDrop::Finalize;
+  // this task only exists to wait until catalog snapshots release the
+  // shard object (AllowToDrop) before storage teardown proceeds.
   return yaclib::MakeFuture<Result>();
 }
 
 Result IndexDrop::Finalize() {
-  auto& server = GetServerEngine();
+  if (_type == catalog::ObjectType::InvertedIndex ||
+      _type == catalog::ObjectType::SecondaryIndex) {
+    auto r =
+      GetCatalogStore().Write([&](auto& ctx) { ctx.DropStoreIndex(_id); });
+    if (!r.ok()) {
+      return r;
+    }
+  }
+  auto& server = GetCatalogStore();
   auto shard_type = catalog::IndexShardType(_type);
   auto r = server.DropEntry(_id, shard_type);
   if (!r.ok()) {
@@ -155,7 +146,11 @@ AsyncResult IndexDrop::Execute() {
   if (_type == catalog::ObjectType::InvertedIndex && _is_root) {
     r = RemoveIndexShards(_db_id, _schema_id, _parent_id, _id);
   }
-  if (!r.ok() || !Finalize().ok()) {
+  if (r.ok()) {
+    r = Finalize();
+  }
+  if (!r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     return yaclib::MakeFuture<Result>(ERROR_LOCKED);
   }
   return yaclib::MakeFuture<Result>();
@@ -163,7 +158,7 @@ AsyncResult IndexDrop::Execute() {
 
 Result TableDrop::Finalize() {
   SDB_IF_FAILURE("crash_before_seq_counter_wipe") { SDB_IMMEDIATE_ABORT(); }
-  auto& server = GetServerEngine();
+  auto& server = GetCatalogStore();
   // Indexes, shards.
   auto r = server.DropEntry(_id);
   if (!r.ok()) {
@@ -179,6 +174,7 @@ Result TableDrop::Finalize() {
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
     }
+    ctx.DropStoreTable(catalog::DroppedStoreTableName(_id));
   });
 }
 
@@ -188,25 +184,30 @@ AsyncResult TableDrop::Execute() {
     ObjectId schema_id = _parent_id;
     auto r = RemoveIndexShards(db_id, schema_id, _id);
     if (!r.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
       co_return Result{ERROR_LOCKED};
     }
   }
   co_await RunChildrenTasks(std::span{_indexes});
   auto r = co_await Schedule(_shard_drop);
-  if (!r.ok() || !Finalize().ok()) {
+  if (r.ok()) {
+    r = Finalize();
+  }
+  if (!r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     co_return Result{ERROR_LOCKED};
   }
   co_return {};
 }
 
 Result SchemaDrop::Finalize() {
-  auto& server = GetServerEngine();
-  // Standalone seq counter rows -- DropEntry only sweeps Definitions CF.
-  auto r =
-    server.VisitDefinitions(_id, catalog::ObjectType::Sequence,
-                            [&](DefinitionKey key, std::string_view) -> Result {
-                              return server.DropSequence(key.GetObjectId());
-                            });
+  auto& server = GetCatalogStore();
+  // Standalone seq counter rows -- DropEntry only sweeps definition rows.
+  auto r = server.VisitDefinitions(
+    _id, catalog::ObjectType::Sequence,
+    [&](CatalogStore::Key key, std::string_view) -> Result {
+      return server.DropSequence(key.id);
+    });
   if (!r.ok()) {
     return r;
   }
@@ -229,18 +230,20 @@ AsyncResult SchemaDrop::Execute() {
   if (_is_root) {
     auto r = RemoveIndexShards(_parent_id, _id);
     if (!r.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
       co_return Result{ERROR_LOCKED};
     }
   }
   co_await RunChildrenTasks(std::span{_tables});
-  if (!Finalize().ok()) {
+  if (auto r = Finalize(); !r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     co_return Result{ERROR_LOCKED};
   }
   co_return {};
 }
 
 Result DatabaseDrop::Finalize() {
-  auto& server = GetServerEngine();
+  auto& server = GetCatalogStore();
   // Range-delete schema Definitions under db. Per-schema standalone-seq
   // counter wipes already ran inside each SchemaDrop::Finalize above.
   auto r = server.DropEntry(_id, catalog::ObjectType::Schema);
@@ -259,10 +262,12 @@ AsyncResult DatabaseDrop::Execute() {
   SDB_ASSERT(_is_root);
   auto r = RemoveIndexShards(_id);
   if (!r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     co_return Result{ERROR_LOCKED};
   }
   co_await RunChildrenTasks(std::span{_schemas});
-  if (!Finalize().ok()) {
+  if (auto r = Finalize(); !r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     co_return Result{ERROR_LOCKED};
   }
   co_return {};

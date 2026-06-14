@@ -57,24 +57,20 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│        (score > 50)       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  ROCKSDB_SK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
-│      Filter: (cat=20)     │
-│        Unique: true       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            cat            │
 │           score           │
 │            pid            │
 │            code           │
+│                           │
+│          Filters:         │
+│         (cat = 20)        │
+│        (score > 50)       │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -117,17 +113,21 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_SK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
-│     Filter: (code=200)    │
-│        Unique: true       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            cat            │
 │            code           │
 │            pid            │
 │           score           │
+│                           │
+│          Filters:         │
+│ optional: (cat IN (10, 20,│
+│            30))           │
+│        (code = 200)       │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -162,19 +162,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│       (score > 100)       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_PK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│          Filter:          │
-│      {pid=(2, +inf)}      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            pid            │
@@ -182,7 +173,11 @@ QUERY PLAN
 │            cat            │
 │            code           │
 │                           │
-│          ~4 rows          │
+│          Filters:         │
+│         (pid > 2)         │
+│       (score > 100)       │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘
 
 
@@ -204,23 +199,20 @@ EXPLAIN SELECT * FROM t_choice WHERE pid = 1 AND cat = 10;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│         (cat = 10)        │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
-│      Filter: (pid=1)      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            pid            │
 │            cat            │
 │            code           │
 │           score           │
+│                           │
+│          Filters:         │
+│         (pid = 1)         │
+│         (cat = 10)        │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -254,25 +246,20 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│ ((pid = 1) OR (pid = 2) OR│
-│         (pid = 3))        │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  ROCKSDB_SK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
-│     Filter: (code=200)    │
-│        Unique: true       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            pid            │
 │            code           │
 │            cat            │
 │           score           │
+│                           │
+│          Filters:         │
+│         (pid <= 3)        │
+│        (code = 200)       │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -295,24 +282,20 @@ EXPLAIN SELECT * FROM t_choice WHERE pid > 2 AND cat = 30;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│         (pid > 2)         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  ROCKSDB_SK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
-│      Filter: (cat=30)     │
-│        Unique: true       │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │            pid            │
 │            cat            │
 │            code           │
 │           score           │
+│                           │
+│          Filters:         │
+│         (pid > 2)         │
+│         (cat = 30)        │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -347,15 +330,13 @@ QUERY PLAN
 │            code           │
 │           score           │
 │                           │
-│          ~4 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_SK_RANGES_SCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│          Filter:          │
-│ {score=150, cat=(5, +inf)}│
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │           score           │
@@ -363,5 +344,8 @@ QUERY PLAN
 │            pid            │
 │            code           │
 │                           │
-│          ~4 rows          │
+│          Filters:         │
+│       (score = 150)       │
+│                           │
+│           ~1 row          │
 └───────────────────────────┘

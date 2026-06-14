@@ -37,31 +37,15 @@
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
-#include "connector/duckdb_pk_full_scan.hpp"
-#include "connector/duckdb_pk_point_lookup.hpp"
-#include "connector/duckdb_pk_range_scan.hpp"
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_full_scan.hpp"
-#include "connector/duckdb_sk_full_scan.hpp"
-#include "connector/duckdb_sk_point_lookup.hpp"
-#include "connector/duckdb_sk_range_scan.hpp"
 #include "connector/duckdb_table_entry.h"
 #include "connector/optimizer/iresearch_plan.h"
-#include "connector/optimizer/rocksdb_plan.h"
-#include "connector/rocksdb_filter.hpp"
 #include "connector/search_filter_printer.hpp"
 #include "functions/search.h"
 #include "pg/connection_context.h"
 #include "search/inverted_index_shard.h"
-
-#define SDB_ROCKSDB_SCAN_SOURCE_KINDS  \
-  case ScanSourceKind::FullTable:      \
-  case ScanSourceKind::SecondaryIndex: \
-  case ScanSourceKind::PkPoint:        \
-  case ScanSourceKind::PkRange:        \
-  case ScanSourceKind::SkPoint:        \
-  case ScanSourceKind::SkRange
 
 namespace sdb::connector {
 namespace {
@@ -69,7 +53,6 @@ namespace {
 void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.column_ids = src.column_ids;
   dst.column_types = src.column_types;
-  dst.is_create_index = src.is_create_index;
   dst.table_entry = src.table_entry;
   dst.entry_kind = src.entry_kind;
   dst.inverted_index = src.inverted_index;
@@ -132,18 +115,6 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
     switch (scan_source->Kind()) {
       case ScanSourceKind::Search:
         return InvertedIndexCardinality(*this);
-      case ScanSourceKind::PkPoint: {
-        const auto& pk = scan_source->Cast<PkPointScan>();
-        const auto n = std::min<duckdb::idx_t>(pk.points.size(), num_rows);
-        return duckdb::make_uniq<duckdb::NodeStatistics>(n, n);
-      }
-      case ScanSourceKind::SkPoint: {
-        const auto& sk = scan_source->Cast<SkPointScan>();
-        if (sk.is_unique) {
-          const auto n = std::min<duckdb::idx_t>(sk.points.size(), num_rows);
-          return duckdb::make_uniq<duckdb::NodeStatistics>(n, n);
-        }
-      } break;
       default:
         break;
     }
@@ -319,10 +290,6 @@ std::unique_ptr<ScanSource> FullTableScan::Clone() const {
   return std::make_unique<FullTableScan>();
 }
 
-std::unique_ptr<ScanSource> SecondaryIndexScan::Clone() const {
-  return std::make_unique<SecondaryIndexScan>(*this);
-}
-
 std::unique_ptr<ScanSource> SearchScan::Clone() const {
   return std::make_unique<SearchScan>(*this);
 }
@@ -338,22 +305,6 @@ bool WandEnabled(const catalog::InvertedIndex* index,
   return topk && topk == scorer;
 }
 
-std::unique_ptr<ScanSource> PkPointScan::Clone() const {
-  return std::make_unique<PkPointScan>(*this);
-}
-
-std::unique_ptr<ScanSource> PkRangeScan::Clone() const {
-  return std::make_unique<PkRangeScan>(*this);
-}
-
-std::unique_ptr<ScanSource> SkPointScan::Clone() const {
-  return std::make_unique<SkPointScan>(*this);
-}
-
-std::unique_ptr<ScanSource> SkRangeScan::Clone() const {
-  return std::make_unique<SkRangeScan>(*this);
-}
-
 static std::string ColumnNameFor(const SereneDBScanBindData& bind,
                                  catalog::Column::Id col_id) {
   auto name = bind.ColumnNameById(col_id);
@@ -361,109 +312,6 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
     return std::string{name};
   }
   return absl::StrCat("col", col_id);
-}
-
-static std::string FormatResolvedPoint(
-  const ResolvedPoint& point, const SereneDBScanBindData& bind,
-  std::span<const catalog::Column::Id> column_ids) {
-  std::string out = "(";
-  for (size_t i = 0; i < point.size(); ++i) {
-    if (i) {
-      absl::StrAppend(&out, ", ");
-    }
-    absl::StrAppend(&out, ColumnNameFor(bind, column_ids[i]), "=",
-                    point[i].ToString());
-  }
-  absl::StrAppend(&out, ")");
-  return out;
-}
-
-static std::string FormatResolvedRange(
-  const ResolvedRange& range, const SereneDBScanBindData& bind,
-  std::span<const catalog::Column::Id> column_ids) {
-  std::string out = "{";
-  for (size_t i = 0; i < range.prefix.size(); ++i) {
-    if (i) {
-      absl::StrAppend(&out, ", ");
-    }
-    absl::StrAppend(&out, ColumnNameFor(bind, column_ids[i]), "=",
-                    range.prefix[i].ToString());
-  }
-  const auto range_col_idx = range.prefix.size();
-  if (range_col_idx < column_ids.size()) {
-    if (!range.prefix.empty()) {
-      absl::StrAppend(&out, ", ");
-    }
-    absl::StrAppend(&out, ColumnNameFor(bind, column_ids[range_col_idx]), "=",
-                    range.range_column.toString());
-  }
-  absl::StrAppend(&out, "}");
-  return out;
-}
-
-template<typename PointsOrRanges, typename FormatOne>
-static std::string FormatClaimList(const PointsOrRanges& items,
-                                   FormatOne&& format_one) {
-  std::string out;
-  for (size_t i = 0; i < items.size(); ++i) {
-    if (i) {
-      absl::StrAppend(&out, "\n");
-    }
-    absl::StrAppend(&out, format_one(items[i]));
-  }
-  return out;
-}
-
-void PkPointScan::AppendSummary(
-  const SereneDBScanBindData& bind,
-  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
-  if (points.empty()) {
-    return;
-  }
-  auto cols = std::span<const catalog::Column::Id>(column_ids);
-  out.insert("Filter", FormatClaimList(points, [&](const ResolvedPoint& pt) {
-               return FormatResolvedPoint(pt, bind, cols);
-             }));
-}
-
-void PkRangeScan::AppendSummary(
-  const SereneDBScanBindData& bind,
-  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
-  if (ranges.empty()) {
-    return;
-  }
-  auto cols = std::span<const catalog::Column::Id>(column_ids);
-  out.insert("Filter", FormatClaimList(ranges, [&](const ResolvedRange& rr) {
-               return FormatResolvedRange(rr, bind, cols);
-             }));
-}
-
-void SkPointScan::AppendSummary(
-  const SereneDBScanBindData& bind,
-  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
-  if (!points.empty()) {
-    auto cols = std::span<const catalog::Column::Id>(column_ids);
-    out.insert("Filter", FormatClaimList(points, [&](const ResolvedPoint& pt) {
-                 return FormatResolvedPoint(pt, bind, cols);
-               }));
-  }
-  if (is_unique) {
-    out.insert("Unique", "true");
-  }
-}
-
-void SkRangeScan::AppendSummary(
-  const SereneDBScanBindData& bind,
-  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
-  if (!ranges.empty()) {
-    auto cols = std::span<const catalog::Column::Id>(column_ids);
-    out.insert("Filter", FormatClaimList(ranges, [&](const ResolvedRange& rr) {
-                 return FormatResolvedRange(rr, bind, cols);
-               }));
-  }
-  if (is_unique) {
-    out.insert("Unique", "true");
-  }
 }
 
 void SearchScan::AppendSummary(
@@ -730,7 +578,6 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   func.projection_pushdown = true;
   // TODO: Use filter_pushdown, filter_prune instead of RBO approach for
   // indexes/primary keys
-  // TODO: Use sampling_pushdown for sampling from rocksdb/etc
   // TODO: Use late_materialization instead of our materialization approach for
   // indexes/primary keys
   // TODO: Better order preservation types for different scan strategies, e.g.,
@@ -739,70 +586,6 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
   // TODO: We can init_global on schedule for some scan types, with
   // global_initialization, but why?
-}
-
-void FullTablePushdownComplexFilter(
-  duckdb::ClientContext& context, duckdb::LogicalGet& get,
-  duckdb::FunctionData* bind_data,
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
-  optimizer::IResearchPushdownComplexFilter(context, get, bind_data, filters);
-  optimizer::RocksDBPushdownComplexFilter(context, get, bind_data, filters);
-}
-
-duckdb::TableFunction CreateTableFullscanFunction() {
-  duckdb::TableFunction func{
-    "rocksdb_table_fullscan", {}, PKFullScanFunction, SereneDBScanBind,
-    PKFullScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  func.pushdown_complex_filter = &FullTablePushdownComplexFilter;
-  return func;
-}
-
-duckdb::TableFunction CreatePKPointsLookupFunction() {
-  duckdb::TableFunction func{
-    "rocksdb_pk_points_lookup", {}, PKPointLookupFunction, SereneDBScanBind,
-    PKPointLookupInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  return func;
-}
-
-duckdb::TableFunction CreatePKRangesScanFunction() {
-  duckdb::TableFunction func{
-    "rocksdb_pk_ranges_scan", {}, PKRangeScanFunction, SereneDBScanBind,
-    PKRangeScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  return func;
-}
-
-duckdb::TableFunction CreateSKFullscanFunction() {
-  duckdb::TableFunction func{
-    "rocksdb_sk_fullscan", {}, SKFullScanFunction, SereneDBScanBind,
-    SKFullScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  func.pushdown_complex_filter = &optimizer::RocksDBPushdownComplexFilter;
-  return func;
-}
-
-duckdb::TableFunction CreateSKPointsLookupFunction() {
-  duckdb::TableFunction func{
-    "rocksdb_sk_points_lookup", {}, SKPointLookupFunction, SereneDBScanBind,
-    SKPointLookupInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  return func;
-}
-
-duckdb::TableFunction CreateSKRangesScanFunction() {
-  duckdb::TableFunction func{
-    "rocksdb_sk_ranges_scan", {}, SKRangeScanFunction, SereneDBScanBind,
-    SKRangeScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  return func;
 }
 
 namespace {
@@ -847,14 +630,17 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   auto& bind_data = const_cast<SereneDBScanBindData&>(
     input.bind_data->Cast<SereneDBScanBindData>());
 
+  // Table-backed postings can outlive rows (search ticks commit
+  // independently of the table snapshot); counts must go through the
+  // row-visibility fetch, so the raw-postings shortcut is views-only.
   bind_data.scan_source->Cast<SearchScan>().count_only =
-    IsCountOnlyScan(bind_data, input);
+    bind_data.IsViewBacked() && IsCountOnlyScan(bind_data, input);
 
   switch (bind_data.scan_source->Kind()) {
     case ScanSourceKind::Search:
       return IsAnnScan(bind_data) ? SearchAnnScanInitGlobal(context, input)
                                   : SearchFullScanInitGlobal(context, input);
-    SDB_ROCKSDB_SCAN_SOURCE_KINDS:
+    case ScanSourceKind::FullTable:
       SDB_UNREACHABLE();
   }
 }
@@ -868,7 +654,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       return IsAnnScan(bind_data)
                ? SearchAnnScanInitLocal(context, input, global_state)
                : SearchFullScanInitLocal(context, input, global_state);
-    SDB_ROCKSDB_SCAN_SOURCE_KINDS:
+    case ScanSourceKind::FullTable:
       SDB_UNREACHABLE();
   }
 }
@@ -882,7 +668,7 @@ void IResearchScanFunction(duckdb::ClientContext& context,
       return IsAnnScan(bind_data)
                ? SearchAnnScanFunction(context, data, output)
                : SearchFullScanFunction(context, data, output);
-    SDB_ROCKSDB_SCAN_SOURCE_KINDS:
+    case ScanSourceKind::FullTable:
       SDB_UNREACHABLE();
   }
 }

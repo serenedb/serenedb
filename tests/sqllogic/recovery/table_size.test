@@ -112,6 +112,8 @@ query error connection closed
 SELECT 1;
 
 
+# reltuples is computed live from the store table, so it survives the
+# restart.
 connection after_reboot
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT reltuples FROM pg_class WHERE relname = 't';

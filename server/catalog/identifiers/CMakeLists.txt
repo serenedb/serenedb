@@ -1,1 +1,1 @@
-target_sources(sereneserver PRIVATE shard_id.cpp)
+# Identifier types are header-only; no sources to compile.

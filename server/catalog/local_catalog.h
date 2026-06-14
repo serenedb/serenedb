@@ -35,16 +35,12 @@
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/sequence.h"
+#include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
 #include "catalog/user_type.h"
 #include "storage_engine/table_shard.h"
-
-namespace sdb {
-
-class RocksDBEngineCatalog;
-}
 
 namespace sdb::catalog {
 
@@ -144,6 +140,13 @@ class LocalCatalog final : public LogicalCatalog,
                    std::string_view name, bool cascade) final;
   Result DropIndex(std::string_view database, std::string_view schema,
                    std::string_view name, bool cascade) final;
+  Result DropTableColumn(ObjectId database_id, std::string_view schema,
+                         std::string_view table, std::string_view column,
+                         bool if_exists) final;
+  Result ChangeColumnType(ObjectId database_id, std::string_view schema,
+                          std::string_view table, std::string_view column,
+                          duckdb::LogicalType new_type,
+                          std::string using_sql) final;
 
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                          std::string_view name) final;
@@ -161,13 +164,14 @@ class LocalCatalog final : public LogicalCatalog,
                           std::string_view name, std::string_view new_name);
 
   template<typename T>
-  Result RenameObjectImpl(ObjectId schema_id, std::string_view name,
+  Result RenameObjectImpl(ObjectId schema_id, std::string_view database_name,
+                          std::string_view schema_name, std::string_view name,
                           std::string_view new_name, std::shared_ptr<T> object);
 
   mutable absl::Mutex _mutex;
   mutable std::shared_mutex _snapshot_mutex;
   std::shared_ptr<const SnapshotImpl> _snapshot;
-  RocksDBEngineCatalog* _engine;
+  CatalogStore* _engine;
 };
 
 }  // namespace sdb::catalog

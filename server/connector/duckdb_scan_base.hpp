@@ -42,10 +42,6 @@
 #include "connector/offsets_writer.hpp"
 #include "connector/pk_batch_helpers.h"
 #include "connector/search_pk_lookup.h"
-#include "rocksdb/iterator.h"
-#include "rocksdb/slice.h"
-#include "rocksdb/snapshot.h"
-#include "rocksdb/utilities/transaction.h"
 
 namespace irs {
 
@@ -60,10 +56,6 @@ struct SereneDBScanBindData;
 // Holds the fields shared across every scan strategy: isolation context,
 // projection mapping, virtual column metadata, and the termination flag.
 struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
-  // Isolation: exactly one of txn / snapshot is set.
-  rocksdb::Transaction* txn = nullptr;
-  const rocksdb::Snapshot* snapshot = nullptr;
-
   // Maps output column index -> bind_data column index.
   // INVALID_INDEX marks virtual columns (rowid, tableoid, score).
   std::vector<duckdb::idx_t> projected_columns;
@@ -73,7 +65,7 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   // Same shape as `projected_columns` but with INCLUDE'd columnstore
   // slots reset to INVALID_INDEX. Pass this (not `projected_columns`)
-  // to `MakeIndexSource` so RocksDB does not double-materialize columns
+  // to `MakeIndexSource` so the source does not double-materialize columns
   // the cs overlay will overwrite. Default: copy of projected_columns
   // (no behavior change until `ClassifyColumnstoreProjections` runs).
   std::vector<duckdb::idx_t> external_projected_columns;
@@ -109,16 +101,13 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   // Cached IndexSource adapter for the table being scanned: holds whatever
   // bind/session state the per-source materialiser needs (file-backed: a
-  // bound MultiFileBindData + lookup gstate; rocksdb: small projection +
-  // snapshot/txn). Lazy-built via MakeIndexSource on first use; reused
-  // across batches.
+  // bound MultiFileBindData + lookup gstate). Lazy-built via MakeIndexSource
+  // on first use; reused across batches.
   // shared_ptr (not unique_ptr) so derived-state destructors don't need
   // IndexSource's complete type -- the deleter is type-erased.
   std::shared_ptr<IndexSource> index_source;
 
   duckdb::idx_t MaxThreads() const override { return 1; }
-
-  ~CommonScanGlobalState() override;
 };
 
 struct CommonScanLocalState : public duckdb::LocalTableFunctionState {
@@ -133,11 +122,6 @@ struct SegDocBufferedScanLocalState : public CommonScanLocalState {
   PkLookupBuffers pk_lookup;
   size_t current_idx = 0;
   const SereneDBScanBindData* bind_data = nullptr;
-};
-
-struct PKScanGlobalState : public CommonScanGlobalState {
-  std::string upper_bound_data;
-  std::vector<rocksdb::Slice> upper_bound_slices;
 };
 
 void InitCommonState(CommonScanGlobalState& state,
@@ -202,12 +186,6 @@ void ForEachSegmentRun(const View& view, F&& body) {
     body(seg_id, begin, view.subview(begin, i - begin));
   }
 }
-
-// Read generated PK int64 values from RocksDB iterator keys into output.
-// Key format: [ObjectId(8)][ColumnId(8)][PK int64 big-endian XOR 0x80].
-duckdb::idx_t ReadGeneratedPKFromKeys(rocksdb::Iterator& it,
-                                      duckdb::Vector& output,
-                                      duckdb::idx_t max_rows);
 
 // DuckDB get_metrics callback: writes produced_rows from CommonScanGlobalState
 // into input.operator_metrics.rows_scanned.
@@ -325,9 +303,9 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   if (g.has_external_projections) {
     SDB_ASSERT(l.bind_data);
     if (!l.index_source) {
-      l.index_source = MakeIndexSource(
-        ctx, *l.bind_data, g.snapshot, g.txn, g.external_projected_columns,
-        g.projected_types, l.bind_data->column_ids);
+      l.index_source =
+        MakeIndexSource(ctx, *l.bind_data, g.external_projected_columns,
+                        g.projected_types, l.bind_data->column_ids);
     }
     if (std::holds_alternative<std::monostate>(l.pk_batch)) {
       l.pk_batch = l.index_source->CreatePkBatch();
@@ -359,18 +337,21 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   return num_rows;
 }
 
+// Returns the rows remaining in `output` (transactional sources filter
+// rows the caller's transaction cannot see).
 template<typename Gstate, typename Lstate>
-void FinalizeBatch(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
-                   duckdb::DataChunk& output, duckdb::idx_t collected) {
+duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
+                            duckdb::DataChunk& output,
+                            duckdb::idx_t collected) {
   if (collected == 0 || !g.has_external_projections) {
-    return;
+    return collected;
   }
   SDB_ASSERT(l.index_source);
   SDB_ASSERT(std::visit(
     absl::Overload{[](std::monostate) { return false; },
                    [&](auto& pk) { return PrimaryKeysSize(pk) == collected; }},
     l.pk_batch));
-  l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
+  return l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
 }
 
 template<typename Gstate, typename Lstate>
@@ -410,22 +391,8 @@ void RunStreamingScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
     SDB_ASSERT(seg.live_docs_count() != 0);
     l.StartSegment(ctx, seg, seg_idx, g);
   }
-  FinalizeBatch(ctx, g, l, output, collected);
+  collected = FinalizeBatch(ctx, g, l, output, collected);
   output.SetChildCardinality(collected);
 }
-
-// Builds the scan column list and populates state.upper_bound_data and
-// state.upper_bound_slices. Must be called after InitCommonState.
-// Returns per-column prefix keys (one per scan column, same order).
-std::vector<std::string> InitPKScanColumns(
-  PKScanGlobalState& state, const SereneDBScanBindData& bind_data);
-
-// Shared scan body for PK full-scan and range-scan functions.
-// `iterators` is passed explicitly (not stored in PKScanGlobalState) so each
-// derived state can declare it last and guarantee correct destruction order.
-void PKScanFunctionImpl(
-  CommonScanGlobalState& gstate,
-  std::vector<std::unique_ptr<rocksdb::Iterator>>& iterators,
-  duckdb::DataChunk& output);
 
 }  // namespace sdb::connector

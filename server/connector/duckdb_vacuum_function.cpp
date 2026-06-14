@@ -28,7 +28,6 @@
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
 
 namespace sdb::connector {
@@ -46,7 +45,6 @@ enum class Action : uint8_t {
   Refresh,
   Compact,
   SyncStats,
-  CompactRocksdb,
 };
 
 struct Verb {
@@ -70,7 +68,6 @@ std::optional<Verb> ParseOption(std::string_view option) {
     {"sync_stats_schema", {Action::SyncStats, Scope::Schema}},
     {"sync_stats_database", {Action::SyncStats, Scope::Database}},
     {"sync_stats_all", {Action::SyncStats, Scope::All}},
-    {"compact_rocksdb", {Action::CompactRocksdb, Scope::All}},
   };
   for (const auto& [name, verb] : kVerbs) {
     if (option == name) {
@@ -193,7 +190,7 @@ ObjectId LookupDatabaseId(const catalog::Snapshot& snapshot,
 }
 
 void RefreshInvertedShard(search::InvertedIndexShard& inverted) {
-  std::ignore = std::move(inverted.CommitWait()).Get().Ok();
+  inverted.Refresh();
 }
 
 void CompactInvertedShard(search::InvertedIndexShard& inverted) {
@@ -299,16 +296,10 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
 
 void DispatchSyncStats(const catalog::Snapshot& snapshot, Scope scope,
                        const ResolvedName& target) {
-  auto& engine = GetServerEngine();
+  // Shard stats are no longer persisted; the verb only validates its
+  // target until native table stats replace it entirely.
   auto sync_table = [&](ObjectId table_id) {
-    auto shard = snapshot.GetTableShard(table_id);
-    if (!shard) {
-      return;
-    }
-    if (auto r = engine.SyncTableShard(*shard); !r.ok()) {
-      throw duckdb::InternalException("SyncTableShard failed: %s",
-                                      r.errorMessage());
-    }
+    std::ignore = snapshot.GetTableShard(table_id);
   };
   auto sync_schema = [&](ObjectId db_id, std::string_view schema) {
     for (auto& table : snapshot.GetTables(db_id, schema)) {
@@ -386,11 +377,6 @@ void VacuumExecute(duckdb::ClientContext& context,
     case Action::SyncStats:
       DispatchSyncStats(*snapshot, verb->scope, target);
       break;
-    case Action::CompactRocksdb: {
-      auto& engine = GetServerEngine();
-      std::ignore = std::move(engine.compactAll(true, true)).Get().Ok();
-      break;
-    }
   }
 
   output.SetCardinality(0);

@@ -48,8 +48,6 @@
 #include "catalog/types.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/index_shard.h"
 
 namespace sdb::connector {
@@ -341,6 +339,18 @@ struct LogicalCatalog {
                            std::string_view name, bool cascade) = 0;
   virtual Result DropIndex(std::string_view database, std::string_view schema,
                            std::string_view name, bool cascade) = 0;
+  // ALTER TABLE DROP COLUMN: rewrites the table without the column and
+  // cascade-drops any index that covers it (PostgreSQL column->index cascade).
+  virtual Result DropTableColumn(ObjectId database_id, std::string_view schema,
+                                 std::string_view table,
+                                 std::string_view column, bool if_exists) = 0;
+  // ALTER TABLE ALTER COLUMN TYPE. `using_sql` is the USING cast text (empty
+  // for the implicit cast). Rejected if the column participates in an index.
+  virtual Result ChangeColumnType(ObjectId database_id, std::string_view schema,
+                                  std::string_view table,
+                                  std::string_view column,
+                                  duckdb::LogicalType new_type,
+                                  std::string using_sql) = 0;
 
   virtual Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                                  std::string_view name) = 0;
@@ -350,38 +360,10 @@ struct LogicalCatalog {
   virtual std::shared_ptr<const Snapshot> GetCatalogSnapshot() const = 0;
 };
 
-class CatalogFeature final {
- public:
-  inline static CatalogFeature* gInstance = nullptr;
-  static CatalogFeature& instance() noexcept { return *gInstance; }
-
-  CatalogFeature();
-  ~CatalogFeature();
-
-  void start();
-  void stop();
-
-  Result Open();
-
-  LogicalCatalog& Global() const noexcept {
-    SDB_ASSERT(_global, "Global catalog is not initialized");
-    return *_global;
-  }
-
-  LogicalCatalog& Local() const noexcept {
-    SDB_ASSERT(_local, "Local catalog is not initialized");
-    return *_local;
-  }
-
-#ifdef SDB_GTEST
-  auto& GlobalPtr() noexcept { return _global; }
-  auto& LocalPtr() noexcept { return _local; }
-#endif
-
- private:
-  std::shared_ptr<LogicalCatalog> _global;
-  std::shared_ptr<LogicalCatalog> _local;
-};
+// Builds the single in-process catalog, loads boot state, bootstraps the
+// default role, and attaches the databases. Throws on failure.
+void InitCatalog();
+void ShutdownCatalog();
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name);

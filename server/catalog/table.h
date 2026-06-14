@@ -37,7 +37,10 @@ class Table final : public Object {
   Table(ObjectId schema_id, ObjectId id, std::string_view name,
         std::vector<Column> columns, std::vector<Column::Id> pk_columns,
         std::vector<CheckConstraint> check_constraints,
-        ObjectId generated_pk_seq_id);
+        ObjectId generated_pk_seq_id,
+        TableEngine engine = TableEngine::Transactional,
+        std::vector<std::vector<Column::Id>> unique_constraints = {},
+        std::vector<TableForeignKey> foreign_keys = {});
 
   static std::shared_ptr<Table> Deserialize(duckdb::Deserializer& src,
                                             ReadContext ctx);
@@ -47,6 +50,9 @@ class Table final : public Object {
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }
   const auto& CheckConstraints() const noexcept { return _check_constraints; }
+  TableEngine GetEngine() const noexcept { return _engine; }
+  const auto& UniqueConstraints() const noexcept { return _unique_constraints; }
+  const auto& ForeignKeys() const noexcept { return _foreign_keys; }
 
   // Id of the auto-generated PK sequence (created when the table has no
   // explicit PK). Unset for tables with an explicit PK. Look it up via
@@ -63,12 +69,22 @@ class Table final : public Object {
   std::shared_ptr<Table> DropCheckConstraint(ObjectId constraint_id) const;
   std::shared_ptr<Table> DropColumnDefault(Column::Id column_id) const;
   std::shared_ptr<Table> DropColumn(Column::Id column_id) const;
+  std::shared_ptr<Table> DropForeignKeysReferencing(
+    ObjectId referenced_table) const;
+  Result AddColumn(std::shared_ptr<Table>& result, Column column,
+                   bool if_not_exists) const;
+  Result ChangeColumnType(std::shared_ptr<Table>& result,
+                          std::string_view column_name,
+                          duckdb::LogicalType new_type) const;
 
  private:
   std::vector<Column> _columns;
   std::vector<Column::Id> _pk_columns;
   std::vector<CheckConstraint> _check_constraints;
   ObjectId _generated_pk_seq_id;
+  TableEngine _engine = TableEngine::Transactional;
+  std::vector<std::vector<Column::Id>> _unique_constraints;
+  std::vector<TableForeignKey> _foreign_keys;
 };
 
 }  // namespace sdb::catalog

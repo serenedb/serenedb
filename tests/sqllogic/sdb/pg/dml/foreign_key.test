@@ -1,0 +1,108 @@
+# FOREIGN KEY constraints: enforcement on insert/delete, the unsupported
+# referential-action error, and the same with an inverted index on the child.
+
+statement ok
+CREATE TABLE fk_parent(id INTEGER PRIMARY KEY, label TEXT);
+
+statement ok
+CREATE TABLE fk_child(id INTEGER PRIMARY KEY, p INTEGER REFERENCES fk_parent(id));
+
+statement count 2
+INSERT INTO fk_parent VALUES (1, 'one'), (2, 'two');
+
+statement count 1
+INSERT INTO fk_child VALUES (10, 1);
+
+# Inserting a child row referencing a missing parent key is rejected.
+statement error
+INSERT INTO fk_child VALUES (11, 99);
+----
+db error: ERROR: Violates foreign key constraint because key "id: 99" does not exist in the referenced table
+
+
+# Deleting a still-referenced parent is rejected (default RESTRICT).
+statement error
+DELETE FROM fk_parent WHERE id = 1;
+----
+db error: ERROR: Violates foreign key constraint because key "p: 1" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation
+
+
+# An unreferenced parent deletes fine.
+statement count 1
+DELETE FROM fk_parent WHERE id = 2;
+
+# NULL child reference is allowed (no parent required).
+statement count 1
+INSERT INTO fk_child VALUES (12, NULL);
+
+statement ok
+DROP TABLE fk_child;
+
+statement ok
+DROP TABLE fk_parent;
+
+
+# Referential actions (CASCADE / SET NULL / SET DEFAULT) are not supported.
+statement ok
+CREATE TABLE fk_p2(id INTEGER PRIMARY KEY);
+
+statement error
+CREATE TABLE fk_c2(id INTEGER PRIMARY KEY, p INTEGER REFERENCES fk_p2(id) ON DELETE CASCADE);
+----
+db error: ERROR: FOREIGN KEY constraints cannot use CASCADE, SET NULL or SET DEFAULT
+
+
+statement ok
+DROP TABLE fk_p2;
+
+
+# FK enforcement with an inverted index on the child table -- the index feeds
+# at commit and must not interfere with constraint checking.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fk_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE fk_parent_i(id INTEGER PRIMARY KEY);
+
+statement ok
+CREATE TABLE fk_child_i(id INTEGER PRIMARY KEY, p INTEGER REFERENCES fk_parent_i(id), body TEXT);
+
+statement ok
+CREATE INDEX fk_child_i_inv ON fk_child_i USING inverted(body fk_dict);
+
+statement count 1
+INSERT INTO fk_parent_i VALUES (1);
+
+statement count 1
+INSERT INTO fk_child_i VALUES (10, 1, 'valid child row');
+
+# Rejected: missing parent key. The index must not have picked up the row.
+statement error
+INSERT INTO fk_child_i VALUES (11, 77, 'orphan child row');
+----
+db error: ERROR: Violates foreign key constraint because key "id: 77" does not exist in the referenced table
+
+
+statement ok
+VACUUM (REFRESH_TABLE) fk_child_i;
+
+query
+SELECT id FROM fk_child_i_inv WHERE body @@ ts_phrase('valid child');
+----
+id
+10
+
+# The rejected row's terms are absent from the index.
+query
+SELECT id FROM fk_child_i_inv WHERE body @@ ts_phrase('orphan child');
+----
+id
+
+statement ok
+DROP TABLE fk_child_i;
+
+statement ok
+DROP TABLE fk_parent_i;

@@ -1,0 +1,118 @@
+control substitution on
+
+# COPY FROM a file into a table that carries an inverted index. COPY drives a
+# bulk write path (optimistic data writer / ROW_GROUP_DATA in the WAL),
+# distinct from row-at-a-time INSERT, so this pins that COPY'd rows still feed
+# the inverted index sink: after a refresh they are searchable and INCLUDE
+# columns round-trip. A 4000-row COPY exercises the multi-vector bulk path.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cpi_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+
+statement ok
+CREATE TABLE cpi_src(id INTEGER, body TEXT, n INTEGER);
+
+
+statement count 3
+INSERT INTO cpi_src VALUES (1, 'alpha bravo', 10), (2, 'charlie delta', 20), (3, 'echo alpha', 30);
+
+
+statement ok
+COPY cpi_src TO '${__TEST_DIR__}/cpi.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE cpi_t(id INTEGER PRIMARY KEY, body TEXT, n INTEGER);
+
+
+statement ok
+CREATE INDEX cpi_idx ON cpi_t USING inverted(body cpi_dict) INCLUDE (n);
+
+
+statement count 3
+COPY cpi_t FROM '${__TEST_DIR__}/cpi.parquet' (FORMAT PARQUET);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpi_t;
+
+
+# COPY'd rows are indexed: search finds them and the INCLUDE column round-trips.
+query
+SELECT id, n FROM cpi_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id	n
+1	10
+3	30
+
+
+query
+SELECT id, n FROM cpi_idx WHERE body @@ ts_phrase('charlie') ORDER BY id;
+----
+id	n
+2	20
+
+
+# Larger COPY: 4000 rows through the bulk path.
+statement ok
+COPY (SELECT i AS id, 'doc word ' || i AS body, i AS n FROM range(0, 4000) AS t(i))
+  TO '${__TEST_DIR__}/cpi_big.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE cpi_big(id INTEGER PRIMARY KEY, body TEXT, n INTEGER);
+
+
+statement ok
+CREATE INDEX cpi_big_idx ON cpi_big USING inverted(body cpi_dict) INCLUDE (n);
+
+
+statement count 4000
+COPY cpi_big FROM '${__TEST_DIR__}/cpi_big.parquet' (FORMAT PARQUET);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpi_big;
+
+
+query
+SELECT count(*) FROM cpi_big_idx;
+----
+count
+4000
+
+
+# 'word' appears in every COPY'd row -- the term spans the whole bulk load.
+query
+SELECT count(*) FROM cpi_big_idx WHERE body @@ ts_phrase('word');
+----
+count
+4000
+
+
+# A single bulk-loaded row is correctly indexed and its INCLUDE value matches.
+query
+SELECT n FROM cpi_big_idx WHERE body @@ ts_phrase('word') AND id = 1234;
+----
+n
+1234
+
+
+statement ok
+DROP TABLE cpi_big;
+
+
+statement ok
+DROP TABLE cpi_t;
+
+
+statement ok
+DROP TABLE cpi_src;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY cpi_dict;

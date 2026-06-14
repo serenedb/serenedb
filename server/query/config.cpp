@@ -93,15 +93,9 @@ IsolationLevel Config::GetIsolationLevel() const {
   return _client_ctx.transaction.GetIsolationLevel();
 }
 
-WriteConflictPolicy Config::GetWriteConflictPolicy() const {
-  auto value = Get("sdb_write_conflict_policy");
-  SDB_ASSERT(value);
-  return GetEnumValue<WriteConflictPolicy>(*value);
-}
-
-bool Config::GetReadYourOwnWrites() const {
+bool Config::GetStrictDDL() const {
   duckdb::Value value;
-  auto ok = _client_ctx.TryGetCurrentSetting("sdb_read_your_own_writes", value);
+  auto ok = _client_ctx.TryGetCurrentSetting("sdb_strict_ddl", value);
   SDB_ASSERT(ok && !value.IsNull());
   return duckdb::BooleanValue::Get(value);
 }
@@ -118,7 +112,7 @@ std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
   if (_snapshot) {
     return _snapshot;
   }
-  _snapshot = catalog::CatalogFeature::instance().Global().GetCatalogSnapshot();
+  _snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   SDB_ASSERT(_snapshot);
   return _snapshot;
 }

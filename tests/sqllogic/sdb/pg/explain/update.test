@@ -7,9 +7,10 @@ EXPLAIN select * from t;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │          Table: t         │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │          column1          │
@@ -24,32 +25,10 @@ EXPLAIN UPDATE t SET column2 = 42 WHERE column1 = 'foo';
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           UPDATE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│                           │
-│          ~0 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             42            │
-│          column1          │
-│                           │
-│          ~0 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
-│    ────────────────────   │
-│          Table: t         │
-│   Filter: (column1=foo)   │
-│    Projections: column1   │
-│                           │
-│          ~0 rows          │
+│        EMPTY_RESULT       │
 └───────────────────────────┘
 
 
@@ -58,32 +37,22 @@ EXPLAIN UPDATE t SET column2 = column2 + 1;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│                           │
-│          ~0 rows          │
+│           UPDATE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │       (column2 + 1)       │
-│          column1          │
+│           rowid           │
 │                           │
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │          Table: t         │
-│                           │
-│        Projections:       │
-│          column2          │
-│          column1          │
+│   Type: Sequential Scan   │
+│    Projections: column2   │
 │                           │
 │          ~0 rows          │
 └───────────────────────────┘

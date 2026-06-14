@@ -32,19 +32,12 @@ namespace duckdb {
 class ClientContext;
 
 }  // namespace duckdb
-namespace rocksdb {
-
-class Snapshot;
-class Transaction;
-
-}  // namespace rocksdb
 namespace sdb::connector {
 
 struct SereneDBScanBindData;
 
 std::unique_ptr<IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
-  const rocksdb::Snapshot* snapshot, rocksdb::Transaction* txn,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids);

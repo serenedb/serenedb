@@ -75,10 +75,6 @@ class Version {
 
   // get boost reactor type
   static std::string getBoostReactorType();
-
-  // get RocksDB version
-  static std::string getRocksDBVersion();
-
   // get OpenSSL version
   static std::string getOpenSSLVersion(bool compile_time);
 

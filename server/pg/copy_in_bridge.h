@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <span>
 #include <yaclib/algo/one_shot_event.hpp>
 #include <yaclib/exe/executor.hpp>
 
@@ -75,6 +76,47 @@ class CopyInBridge {
     return total;
   }
 
+  // Zero-copy borrow: block until the next CopyData frame is published, then
+  // hand back a view into the recv buffer. An empty span is clean EOF
+  // (CopyDone). Rethrows the feeder's error if one was set. The parser decodes
+  // straight out of this span and calls Consume() as it advances.
+  //
+  // Unlike Read's racy `_len == 0` test, the wait here is gated by an explicit
+  // per-frame `_borrow_armed` latch (set at construction and whenever Consume
+  // drains a frame), so Window() consumes the feeder's `_data_ready` Set
+  // exactly once per frame REGARDLESS of how much parser work runs between
+  // draining a frame and asking for the next. That determinism is what keeps
+  // Publish / Finish from ever re-Setting an already-signalled `_data_ready`
+  // (the bug a live-`_len` test hits when the feeder publishes before the
+  // worker re-checks).
+  std::span<const char> Window() {
+    if (_borrow_armed) {
+      if (_err) {
+        std::rethrow_exception(_err);
+      }
+      _data_ready.Wait();
+      _data_ready.Reset();
+      _borrow_armed = false;
+      if (_len == 0 && _err) {
+        std::rethrow_exception(_err);
+      }
+    }
+    return {_ptr, _len};  // empty span == EOF (Finish set _eof, left _len 0)
+  }
+
+  // Advance past `n` borrowed bytes; when the current frame fully drains,
+  // re-arm the borrow latch and fire the want-more handshake so the feeder
+  // advances to the next CopyData frame (which the next Window() will wait
+  // for).
+  void Consume(size_t n) noexcept {
+    _ptr += n;
+    _len -= n;
+    if (_len == 0) {
+      _borrow_armed = true;
+      _want_more.Set();
+    }
+  }
+
   // ---- io feeder side (coroutine) ----
   // Publish a borrowed view of the current CopyData payload, wake the worker.
   void Publish(const char* data, size_t len) noexcept {
@@ -112,6 +154,10 @@ class CopyInBridge {
   size_t _len = 0;
   bool _eof = false;
   bool _aborted = false;
+  // Borrow-API latch (Window/Consume only): true means the next Window() must
+  // wait for and consume one `_data_ready` Set. Armed at start (first frame)
+  // and re-armed each time Consume drains a frame.
+  bool _borrow_armed = true;
   std::exception_ptr _err;
 };
 

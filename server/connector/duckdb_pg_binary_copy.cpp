@@ -39,7 +39,9 @@
 
 #include "basics/message_buffer.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
+#include "pg/copy_in_bridge.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
@@ -126,20 +128,22 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   // pg-wire STDOUT: frame the PGCOPY stream as CopyData and write straight to
   // the connection send buffer. Requires a server-side wire connection.
   if (file_path == "/dev/stdout") {
-    auto* state =
-      context.registered_state->Get<SereneDBClientState>(
-        kSereneDBClientStateKey).get();
+    auto* state = context.registered_state
+                    ->Get<SereneDBClientState>(kSereneDBClientStateKey)
+                    .get();
     if (!state) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("COPY ... TO STDOUT (FORMAT binary) is only valid "
-                              "on a server-side PostgreSQL wire connection"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("COPY ... TO STDOUT (FORMAT binary) is only valid "
+                "on a server-side PostgreSQL wire connection"));
     }
     auto& conn = state->GetConnectionContext();
     auto* send = conn.GetSendBuffer();
     if (!send) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("COPY ... TO STDOUT (FORMAT binary) requires a PG "
-                              "wire connection (transport not attached)"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("COPY ... TO STDOUT (FORMAT binary) requires a PG "
+                "wire connection (transport not attached)"));
     }
     result->send = send;
     result->ctx.buffer = send;
@@ -178,9 +182,9 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   result->file_buffer =
     duckdb::make_uniq<message::Buffer>(64u * 1024, 1u << 20);
   result->ctx.buffer = result->file_buffer.get();
-  if (auto* state =
-        context.registered_state->Get<SereneDBClientState>(
-          kSereneDBClientStateKey).get()) {
+  if (auto* state = context.registered_state
+                      ->Get<SereneDBClientState>(kSereneDBClientStateKey)
+                      .get()) {
     sdb::pg::FillContext(state->GetConnectionContext(), result->ctx);
   }
   result->serializers.reserve(bdata.sql_types.size());
@@ -214,8 +218,8 @@ void Sink(duckdb::ExecutionContext&, duckdb::FunctionData&,
 
   // Each row is int16 field-count followed by the per-field
   // int32-length-prefixed binary values the serializers emit (the same encoding
-  // as a binary DataRow). On the wire path this is wrapped in one CopyData frame
-  // per chunk; on the file path the same bytes go to the handle unframed.
+  // as a binary DataRow). On the wire path this is wrapped in one CopyData
+  // frame per chunk; on the file path the same bytes go to the handle unframed.
   if (g.send) {
     const auto before = g.send->GetUncommittedSize();
     auto* prefix = g.send->GetContiguousData(5);
@@ -279,12 +283,152 @@ struct PgBinaryCopyFromBindData final : public duckdb::TableFunctionData {
   std::string file_path;
 };
 
+// Zero-copy byte source: the parser decodes the PGCOPY stream STRAIGHT into the
+// output Vector out of the source's current view. `View()` returns the bytes on
+// hand (blocking/refilling when empty; empty == clean EOF). `Advance(n)`
+// consumes within the current view. `Fill(dst, len)` copies a value that
+// straddles a view boundary into `dst` (a small stack temp for fixed-width, or
+// the string heap slot for varchar) -- the only copies are the unavoidable
+// across-boundary stitch and the varchar materialization into its final heap.
+struct ByteSource {
+  virtual ~ByteSource() = default;
+  // Current view; blocks/refills if empty. Empty == clean EOF.
+  virtual std::string_view View() = 0;
+  // Consume `n` bytes of the current view (n <= View().size()).
+  virtual void Advance(size_t n) = 0;
+  // Copy exactly `len` bytes into `dst`, spanning views as needed. Returns the
+  // number actually copied (< len only at premature EOF).
+  virtual size_t Fill(char* dst, size_t len) = 0;
+  // Block until EOF, releasing remaining bytes. Used after the PGCOPY trailer
+  // to keep the pg-stdin bridge in lock-step with the feeder until CopyDone.
+  virtual void DrainToEof() = 0;
+};
+
 struct PgBinaryCopyFromGlobalState final
   : public duckdb::GlobalTableFunctionState {
-  duckdb::unique_ptr<duckdb::FileHandle> handle;
+  std::unique_ptr<ByteSource> source;
   std::shared_ptr<const catalog::Snapshot> snapshot;
   bool header_done = false;
   bool finished = false;
+};
+
+// pg-stdin source: borrows the recv-buffer view the CopyInBridge holds. The
+// common case decodes straight out of the live bridge window (zero-copy) and
+// Advance drives the bridge in lock-step -- one want-more per drained CopyData
+// frame. A value that straddles a frame boundary is decoded ACROSS it: the
+// fixed/var Fill loop pulls each frame's remainder and Consumes it, so
+// want-more still fires once per frame. There is NO field-level scratch and NO
+// re-expose-remainder in the source.
+class BridgeByteSource final : public ByteSource {
+ public:
+  explicit BridgeByteSource(sdb::pg::CopyInBridge& bridge) : _bridge{bridge} {}
+
+  std::string_view View() final {
+    if (_view.empty()) {
+      const auto next = _bridge.Window();
+      _view = {next.data(), next.size()};
+    }
+    return _view;
+  }
+
+  void Advance(size_t n) final {
+    if (n == 0) {
+      return;  // never Consume(0): it could fire a spurious want-more
+    }
+    _view.remove_prefix(n);
+    _bridge.Consume(n);
+  }
+
+  size_t Fill(char* dst, size_t len) final {
+    size_t done = 0;
+    while (done < len) {
+      auto v = View();
+      if (v.empty()) {
+        break;  // premature EOF
+      }
+      const auto take = std::min(len - done, v.size());
+      std::memcpy(dst + done, v.data(), take);
+      done += take;
+      Advance(take);
+    }
+    return done;
+  }
+
+  void DrainToEof() final {
+    for (;;) {
+      auto v = View();
+      if (v.empty()) {
+        return;  // feeder reached CopyDone
+      }
+      Advance(v.size());
+    }
+  }
+
+ private:
+  sdb::pg::CopyInBridge& _bridge;
+  std::string_view _view;
+};
+
+// file / real-stdin source: one block-buffered read per `kBlock`, hands views
+// straight into the block (zero-copy) and refills when exhausted. A value that
+// straddles two blocks is decoded across them via Fill (no field-level
+// scratch).
+class HandleByteSource final : public ByteSource {
+ public:
+  explicit HandleByteSource(duckdb::unique_ptr<duckdb::FileHandle> handle)
+    : _handle{std::move(handle)}, _block(kBlock) {}
+
+  std::string_view View() final {
+    if (_view.empty()) {
+      const auto read = FillBlock();
+      _view = {_block.data(), static_cast<size_t>(read)};
+    }
+    return _view;
+  }
+
+  void Advance(size_t n) final { _view.remove_prefix(n); }
+
+  size_t Fill(char* dst, size_t len) final {
+    size_t done = 0;
+    while (done < len) {
+      auto v = View();
+      if (v.empty()) {
+        break;
+      }
+      const auto take = std::min(len - done, v.size());
+      std::memcpy(dst + done, v.data(), take);
+      done += take;
+      Advance(take);
+    }
+    return done;
+  }
+
+  void DrainToEof() final {
+    _view = {};
+    while (FillBlock() != 0) {
+    }
+  }
+
+ private:
+  static constexpr size_t kBlock = 64u * 1024;
+
+  // Read one full block into `_block`; returns bytes read (0 = EOF).
+  int64_t FillBlock() {
+    int64_t total = 0;
+    while (total < static_cast<int64_t>(kBlock)) {
+      const auto read = _handle->Read(
+        _block.data() + total, static_cast<duckdb::idx_t>(kBlock - total));
+      if (read <= 0) {
+        break;
+      }
+      total += read;
+    }
+    return total;
+  }
+
+  duckdb::unique_ptr<duckdb::FileHandle> _handle;
+  std::vector<char> _block;
+  std::string_view _view;
 };
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
@@ -314,41 +458,129 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
         ERR_MSG("COPY ... FROM STDIN (FORMAT binary) is only valid "
                 "on a server-side PostgreSQL wire connection"));
     }
-    result->snapshot = state->GetConnectionContext().EnsureCatalogSnapshot();
-  } else if (state) {
+    auto& conn = state->GetConnectionContext();
+    result->snapshot = conn.EnsureCatalogSnapshot();
+    // pg-stdin: borrow the recv-buffer view the bridge already holds; skip the
+    // FileHandle (and its per-field memcpy) entirely. Binary COPY opens stdin
+    // once with copy_stdin_no_replay set, so nothing else reads the handle, and
+    // the session has already sent CopyInResponse.
+    auto* bridge = conn.GetCopyInBridge();
+    if (!bridge) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("COPY ... FROM STDIN (FORMAT binary) requires a PG wire "
+                "connection (transport not attached)"));
+    }
+    result->source = std::make_unique<BridgeByteSource>(*bridge);
+    return result;
+  }
+  if (state) {
     result->snapshot = state->GetConnectionContext().EnsureCatalogSnapshot();
   }
-  result->handle = duckdb::FileSystem::GetFileSystem(context).OpenFile(
-    bind.file_path, duckdb::FileFlags::FILE_FLAGS_READ);
+  // file / real-stdin: block-buffered reader over the OS FileHandle.
+  result->source = std::make_unique<HandleByteSource>(
+    duckdb::FileSystem::GetFileSystem(context).OpenFile(
+      bind.file_path, duckdb::FileFlags::FILE_FLAGS_READ));
   return result;
 }
 
-// The COPY bridge blocks until n bytes are available, so this returns n except
-// at end of stream (CopyDone), where it returns the remaining count.
-int64_t ReadFull(duckdb::FileHandle& handle, char* dst, int64_t n) {
-  int64_t total = 0;
-  while (total < n) {
-    const auto read =
-      handle.Read(dst + total, static_cast<duckdb::idx_t>(n - total));
-    if (read <= 0) {
-      break;
-    }
-    total += read;
+// Read a fixed-width big-endian field straight from `field` (a span that holds
+// the whole value) into a flat vector slot, byteswapping into native order.
+template<typename Wire, typename Store>
+void FlatStoreInt(duckdb::Vector& vec, duckdb::idx_t row, const char* field) {
+  duckdb::FlatVector::GetDataMutable<Store>(vec)[row] =
+    static_cast<Store>(absl::big_endian::Load<Wire>(field));
+}
+
+// Decode one non-null fixed-width binary field directly into a flat vector from
+// a contiguous `field` span (len bytes). Returns true if handled; false means
+// the type is not fast-pathed, or the field length does not match the wire
+// width, so the caller must fall back to the Value path. Fast set: bool,
+// int2/int4/int8, float4/float8. (OID-family BIGINT travels as 4 bytes -> not
+// fast-pathed.)
+bool FlatDecodeFixed(duckdb::Vector& vec, const duckdb::LogicalType& type,
+                     duckdb::idx_t row, const char* field, int32_t len) {
+  switch (type.id()) {
+    using enum duckdb::LogicalTypeId;
+    case BOOLEAN:
+      if (len != 1) {
+        return false;
+      }
+      duckdb::FlatVector::GetDataMutable<bool>(vec)[row] = field[0] != 0;
+      return true;
+    case SMALLINT:
+      if (len != static_cast<int32_t>(sizeof(int16_t))) {
+        return false;
+      }
+      FlatStoreInt<int16_t, int16_t>(vec, row, field);
+      return true;
+    case INTEGER:
+      if (len != static_cast<int32_t>(sizeof(int32_t))) {
+        return false;
+      }
+      FlatStoreInt<int32_t, int32_t>(vec, row, field);
+      return true;
+    case BIGINT:
+      if (sdb::pg::IsOidLike(type) ||
+          len != static_cast<int32_t>(sizeof(int64_t))) {
+        return false;  // 4-byte OID on the wire -> defer to the Value path
+      }
+      FlatStoreInt<int64_t, int64_t>(vec, row, field);
+      return true;
+    case FLOAT:
+      if (len != static_cast<int32_t>(sizeof(float))) {
+        return false;
+      }
+      FlatStoreInt<float, float>(vec, row, field);
+      return true;
+    case DOUBLE:
+      if (len != static_cast<int32_t>(sizeof(double))) {
+        return false;
+      }
+      FlatStoreInt<double, double>(vec, row, field);
+      return true;
+    default:
+      return false;
   }
-  return total;
+}
+
+bool IsFastVar(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::VARCHAR ||
+         type.id() == duckdb::LogicalTypeId::BLOB;
+}
+
+bool IsFastFixed(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    using enum duckdb::LogicalTypeId;
+    case BOOLEAN:
+    case SMALLINT:
+    case INTEGER:
+    case FLOAT:
+    case DOUBLE:
+      return true;
+    case BIGINT:
+      return !sdb::pg::IsOidLike(type);
+    default:
+      return false;
+  }
 }
 
 void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
               duckdb::DataChunk& output) {
   auto& g = input.global_state->Cast<PgBinaryCopyFromGlobalState>();
   const auto& bind = input.bind_data->Cast<PgBinaryCopyFromBindData>();
+  auto& source = *g.source;
   if (g.finished) {
     output.SetCardinality(0);
     return;
   }
+
   if (!g.header_done) {
+    // PGCOPY header: 11-byte signature, int32 flags, int32 header-extension
+    // length, then `ext` extension bytes. Decode straight from the source view,
+    // spanning boundaries via Fill where needed.
     char header[19];
-    const auto got = ReadFull(*g.handle, header, sizeof(header));
+    const auto got = source.Fill(header, sizeof(header));
     if (got == 0) {  // empty stream
       g.finished = true;
       output.SetCardinality(0);
@@ -359,26 +591,27 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
                       ERR_MSG("COPY FROM STDIN: invalid PGCOPY signature"));
     }
-    const auto ext =
-      static_cast<int32_t>(absl::big_endian::Load32(header + 15));
-    for (int32_t left = ext; left > 0;) {
-      char scratch[256];
-      const auto take = std::min<int32_t>(left, sizeof(scratch));
-      if (ReadFull(*g.handle, scratch, take) < take) {
+    auto ext = static_cast<int32_t>(absl::big_endian::Load32(header + 15));
+    while (ext > 0) {
+      auto v = source.View();
+      if (v.empty()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
                         ERR_MSG("COPY FROM STDIN: truncated PGCOPY header"));
       }
-      left -= take;
+      const auto take = std::min<int32_t>(ext, static_cast<int32_t>(v.size()));
+      source.Advance(static_cast<size_t>(take));
+      ext -= take;
     }
     g.header_done = true;
   }
 
   const auto columns = bind.sql_types.size();
-  std::string field;
+  std::string field;  // reused only by the slow fallback path
   duckdb::idx_t row = 0;
   for (; row < STANDARD_VECTOR_SIZE; ++row) {
+    // Row header: int16 field count.
     char count_bytes[2];
-    const auto got = ReadFull(*g.handle, count_bytes, 2);
+    const auto got = source.Fill(count_bytes, sizeof(count_bytes));
     if (got == 0) {  // end of stream without an explicit -1 trailer
       g.finished = true;
       break;
@@ -391,12 +624,10 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
       static_cast<int16_t>(absl::big_endian::Load16(count_bytes));
     if (fields == -1) {  // PGCOPY trailer
       // Drain to EOF (the feeder's CopyDone) before finishing. The COPY bridge
-      // is strict lock-step: this final blocking Read parks the worker until
+      // is strict lock-step: this final blocking wait parks the worker until
       // the feeder reaches Finish, so the worker does not race ahead of the
       // feeder (which would corrupt the shared want-more event).
-      char drain[64];
-      while (ReadFull(*g.handle, drain, sizeof(drain)) > 0) {
-      }
+      source.DrainToEof();
       g.finished = true;
       break;
     }
@@ -407,28 +638,102 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
     }
     for (duckdb::idx_t column = 0; column < columns; ++column) {
       char len_bytes[4];
-      if (ReadFull(*g.handle, len_bytes, 4) < 4) {
+      if (source.Fill(len_bytes, sizeof(len_bytes)) < 4) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
                         ERR_MSG("COPY FROM STDIN: truncated field length"));
       }
       const auto len =
         static_cast<int32_t>(absl::big_endian::Load32(len_bytes));
-      if (len == -1) {
-        output.SetValue(column, row, duckdb::Value{bind.sql_types[column]});
+      const auto& type = bind.sql_types[column];
+      auto& vec = output.data[column];
+      if (len == -1) {  // SQL NULL
+        duckdb::FlatVector::SetNull(vec, row, true);
         continue;
       }
       if (len < 0) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
                         ERR_MSG("COPY FROM STDIN: negative field length"));
       }
-      field.resize(static_cast<size_t>(len));
-      if (ReadFull(*g.handle, field.data(), len) < len) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                        ERR_MSG("COPY FROM STDIN: truncated field value"));
+      const auto ulen = static_cast<size_t>(len);
+
+      // Fast path: varchar/blob -- allocate the string's FINAL heap slot and
+      // fill it straight from the input (one memcpy when the view holds it,
+      // piece-by-piece across boundaries). The fill IS the materialization.
+      if (IsFastVar(type)) {
+        auto str = duckdb::StringVector::EmptyString(vec, ulen);
+        auto* dst = str.GetDataWriteable();
+        auto v = source.View();
+        if (v.size() >= ulen) {
+          std::memcpy(dst, v.data(), ulen);  // whole field in view
+          source.Advance(ulen);
+        } else if (source.Fill(dst, ulen) < ulen) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+                          ERR_MSG("COPY FROM STDIN: truncated field value"));
+        }
+        str.Finalize();
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] = str;
+        continue;
+      }
+
+      // Fast path: fixed-width -- when the whole field is in view, decode +
+      // byteswap straight from it (no copy); otherwise stitch the <=8 bytes
+      // into a stack temp across the boundary, then decode from that.
+      if (IsFastFixed(type) && len <= 8) {
+        auto v = source.View();
+        if (v.size() >= ulen) {
+          if (FlatDecodeFixed(vec, type, row, v.data(), len)) {
+            source.Advance(ulen);
+            continue;
+          }
+        } else {
+          char tmp[8];
+          if (source.Fill(tmp, ulen) < ulen) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+                            ERR_MSG("COPY FROM STDIN: truncated field value"));
+          }
+          if (FlatDecodeFixed(vec, type, row, tmp, len)) {
+            continue;
+          }
+          // Length mismatch: fall through to the Value path with the bytes we
+          // already pulled into `tmp`.
+          field.assign(tmp, ulen);
+          auto value =
+            sdb::pg::DeserializeParameter(type, sdb::pg::VarFormat::Binary,
+                                          {field.data(), ulen}, *g.snapshot);
+          if (!value) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
+              ERR_MSG("COPY FROM STDIN: invalid binary value in column ",
+                      column + 1));
+          }
+          output.SetValue(column, row, std::move(*value));
+          continue;
+        }
+      }
+
+      // Slow fallback: types not fast-pathed (decimal, timestamp, arrays,
+      // structs, ...) need a contiguous span for DeserializeParameter, which
+      // copies the bytes into the resulting Value. One memcpy when the view
+      // holds it (deserialize then Advance), across boundaries otherwise.
+      auto v = source.View();
+      const char* span;
+      bool advance_after = false;
+      if (v.size() >= ulen) {
+        span = v.data();
+        advance_after = true;
+      } else {
+        field.resize(ulen);
+        if (source.Fill(field.data(), ulen) < ulen) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+                          ERR_MSG("COPY FROM STDIN: truncated field value"));
+        }
+        span = field.data();
       }
       auto value = sdb::pg::DeserializeParameter(
-        bind.sql_types[column], sdb::pg::VarFormat::Binary,
-        {field.data(), static_cast<size_t>(len)}, *g.snapshot);
+        type, sdb::pg::VarFormat::Binary, {span, ulen}, *g.snapshot);
+      if (advance_after) {
+        source.Advance(ulen);
+      }
       if (!value) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),

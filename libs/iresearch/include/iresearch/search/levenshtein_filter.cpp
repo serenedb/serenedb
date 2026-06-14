@@ -209,50 +209,7 @@ Filter::Query::ptr PrepareLevenshteinFilter(
 }  // namespace
 
 field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions& opts) {
-  return ExecuteLevenshtein(
-    opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
-    opts.term,
-    [] -> field_visitor {
-      return [](const SubReader&, const TermReader&, FilterVisitor&) {};
-    },
-    [&opts] -> field_visitor {
-      // must copy term as it may point to temporary string
-      return [target = opts.prefix + opts.term](const SubReader& segment,
-                                                const TermReader& field,
-                                                FilterVisitor& visitor) {
-        return ByTerm::visit(segment, field, target, visitor);
-      };
-    },
-    [](const ParametricDescription& d, const bytes_view prefix,
-       const bytes_view term) -> field_visitor {
-      struct AutomatonContext : util::Noncopyable {
-        AutomatonContext(const ParametricDescription& d, bytes_view prefix,
-                         bytes_view term)
-          : acceptor(MakeLevenshteinAutomaton(d, prefix, term)),
-            matcher(MakeAutomatonMatcher(acceptor)) {}
-
-        automaton acceptor;
-        automaton_table_matcher matcher;
-      };
-
-      auto ctx = std::make_shared<AutomatonContext>(d, prefix, term);
-
-      if (!Validate(ctx->acceptor)) {
-        return [](const SubReader&, const TermReader&, FilterVisitor&) {};
-      }
-
-      const auto utf8_term_size =
-        std::max(1U, static_cast<uint32_t>(utf8_utils::Length(prefix) +
-                                           utf8_utils::Length(term)));
-      const uint8_t max_distance = d.max_distance() + 1;
-
-      return [ctx = std::move(ctx), utf8_term_size, max_distance](
-               const SubReader& segment, const TermReader& field,
-               FilterVisitor& visitor) mutable {
-        return VisitImpl(segment, field, max_distance, utf8_term_size,
-                         ctx->matcher, visitor);
-      };
-    });
+  SDB_UNREACHABLE();
 }
 
 Filter::Query::ptr ByEditDistance::prepare(const PrepareContext&) const {

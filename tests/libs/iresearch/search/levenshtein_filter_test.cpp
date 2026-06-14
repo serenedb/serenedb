@@ -20,6 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "basics/down_cast.h"
 #include "basics/misc.hpp"
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
@@ -961,7 +962,6 @@ TEST_P(ByEditDistanceTestCase, visit) {
     add_segment(gen);
   }
   const irs::field_id field = kPrefixId;
-  const auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
   // read segment
   auto index = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, index.size());
@@ -971,16 +971,12 @@ TEST_P(ByEditDistanceTestCase, visit) {
   ASSERT_NE(nullptr, reader);
 
   {
-    irs::ByEditDistanceOptions opts;
-    opts.term = term;
-    opts.max_distance = 0;
-    opts.provider = nullptr;
-    opts.with_transpositions = false;
+    auto lowered = Lower(MakeFilter("prefix", "abc", 0));
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), lowered->type());
+    const auto& filter = sdb::basics::downCast<irs::ByTerm>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByEditDistance::visitor(opts);
-    ASSERT_TRUE(field_visitor);
-    field_visitor(segment, *reader, visitor);
+    irs::ByTerm::visit(segment, *reader, filter.options().term, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(1, visitor.visit_calls_counter());
     ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
@@ -990,14 +986,15 @@ TEST_P(ByEditDistanceTestCase, visit) {
   }
 
   {
-    irs::ByEditDistanceOptions opts;
-    opts.term = term;
-    opts.max_distance = 1;
-    opts.provider = irs::DefaultPDP;
-    opts.with_transpositions = false;
+    auto lowered = Lower(MakeFilter("prefix", "abc", 1));
+    ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+              lowered->type());
+    const auto& filter =
+      sdb::basics::downCast<irs::LevenshteinAutomatonFilter>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByEditDistance::visitor(opts);
+    auto field_visitor =
+      irs::LevenshteinAutomatonFilter::visitor(filter.options());
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
@@ -1023,15 +1020,15 @@ TEST_P(ByEditDistanceTestCase, visit) {
 
   // with prefix
   {
-    irs::ByEditDistanceOptions opts;
-    opts.term = irs::ViewCast<irs::byte_type>(std::string_view("c"));
-    opts.max_distance = 2;
-    opts.provider = irs::DefaultPDP;
-    opts.with_transpositions = false;
-    opts.prefix = irs::ViewCast<irs::byte_type>(std::string_view("ab"));
+    auto lowered = Lower(MakeFilter("prefix", "c", 2, 0, false, "ab"));
+    ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+              lowered->type());
+    const auto& filter =
+      sdb::basics::downCast<irs::LevenshteinAutomatonFilter>(*lowered);
 
     tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByEditDistance::visitor(opts);
+    auto field_visitor =
+      irs::LevenshteinAutomatonFilter::visitor(filter.options());
     ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());

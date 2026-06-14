@@ -207,42 +207,63 @@ inline constexpr auto kReportParams = std::to_array<std::string_view>({
 });
 
 template<SocketKind Kind>
-class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
+class PgWireSession : public Transport<Kind, PgWireSession<Kind>>,
+                      public std::enable_shared_from_this<PgWireSession<Kind>> {
  public:
   using Deps = PgServerContext;
 
   PgWireSession(PgServerContext& ctx, IoExecutor& exec)
     requires(Kind == SocketKind::Tcp)
-    : _socket{exec.Context()},
+    : Transport<Kind, PgWireSession<Kind>>{exec},
       _io{exec.Context()},
       _credentials{ctx.credentials},
       _allow_cleartext{ctx.allow_cleartext_without_tls},
       _cancel{ctx.cancel},
-      _max_message{ctx.max_message_bytes} {
-    _ioexec = &exec;
-  }
+      _max_message{ctx.max_message_bytes} {}
 
   PgWireSession(PgServerContext& ctx, IoExecutor& exec)
     requires(Kind == SocketKind::MaybeTls)
-    : _socket{exec.Context(), *ctx.ssl},
+    : Transport<Kind, PgWireSession<Kind>>{exec, *ctx.ssl},
       _io{exec.Context()},
       _credentials{ctx.credentials},
       _allow_cleartext{ctx.allow_cleartext_without_tls},
       _cancel{ctx.cancel},
-      _max_message{ctx.max_message_bytes} {
-    _ioexec = &exec;
-  }
+      _max_message{ctx.max_message_bytes} {}
 
   void Start() {
-    SendWriter().Detach();
+    this->SendWriter().Detach();
     Run().Detach();
   }
 
-  void Close() noexcept { _socket.Close(); }
-
-  asio_ns::ip::tcp::socket& Lowest() noexcept { return _socket.Lowest(); }
+  void OnSendPoison() { _copy_gate.Kick(); }
 
  private:
+  using Transport<Kind, PgWireSession<Kind>>::_socket;
+  using Transport<Kind, PgWireSession<Kind>>::_ioexec;
+  using Transport<Kind, PgWireSession<Kind>>::_recv;
+  using Transport<Kind, PgWireSession<Kind>>::_send;
+  using Transport<Kind, PgWireSession<Kind>>::_write_gate;
+  using Transport<Kind, PgWireSession<Kind>>::_write_view;
+  using Transport<Kind, PgWireSession<Kind>>::_write_armed;
+  using Transport<Kind, PgWireSession<Kind>>::_send_written;
+  using Transport<Kind, PgWireSession<Kind>>::_send_waiter;
+  using Transport<Kind, PgWireSession<Kind>>::_io_broken;
+  using Transport<Kind, PgWireSession<Kind>>::_writer_stop;
+  using Transport<Kind, PgWireSession<Kind>>::_producer_gate;
+  using Transport<Kind, PgWireSession<Kind>>::_task;
+  using Transport<Kind, PgWireSession<Kind>>::_task_spawned;
+  using Transport<Kind, PgWireSession<Kind>>::KickSend;
+  using Transport<Kind, PgWireSession<Kind>>::HasUnsentBytes;
+  using Transport<Kind, PgWireSession<Kind>>::SendBroken;
+  using Transport<Kind, PgWireSession<Kind>>::OverSendHighWater;
+  using Transport<Kind, PgWireSession<Kind>>::OnSendViewReady;
+  using Transport<Kind, PgWireSession<Kind>>::ArmSendWaiter;
+  using Transport<Kind, PgWireSession<Kind>>::DisarmSendWaiter;
+  using Transport<Kind, PgWireSession<Kind>>::AwaitSendBelowHighWater;
+  using Transport<Kind, PgWireSession<Kind>>::DrainSendOnTask;
+  using Transport<Kind, PgWireSession<Kind>>::Flush;
+  using Transport<Kind, PgWireSession<Kind>>::SendWriter;
+
   // A decoded wire frame. `payload` is a borrowed view: into _recv when the
   // frame arrived contiguous (recv_consume = frame length, the caller consumes
   // it after processing), or into _scratch when the frame was split across recv
@@ -255,46 +276,6 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   };
 
   yaclib::Future<> Run();
-  // Drains: forces a flush of everything committed and awaits until the socket
-  // accepted it all (or the connection broke). For paths that must not proceed
-  // before the bytes are out -- TLS upgrade, close-with-error, teardown.
-  yaclib::Future<> Flush();
-  // Kicks the send writer without waiting -- the hot path. Response bytes
-  // drain to the socket concurrently with whatever the session does next.
-  void KickSend() {
-    if (_send.GetUncommittedSize() != 0 || HasUnsentBytes()) {
-      _send.Commit(true);
-    }
-  }
-  bool HasUnsentBytes() const {
-    return _send.TotalCommitted() !=
-           _send_written.load(std::memory_order_acquire);
-  }
-  bool SendBroken() const { return _io_broken.load(std::memory_order_acquire); }
-  // Session-side producer check: only valid when the session owns the _send
-  // producer role (always, except during a direct-mode wire drive -- there
-  // the sink publishes wire->direct_committed instead).
-  bool OverSendHighWater() const {
-    return _send.TotalCommitted() -
-             _send_written.load(std::memory_order_acquire) >
-           kSendHighWater;
-  }
-  // Duck-side parks of the SessionTask: pause while the client is slower than
-  // the serializer / until everything committed reached the socket. Woken by
-  // SendWriter's RequestRun; spurious wakes re-check the condition.
-  void ArmSendWaiter();
-  void DisarmSendWaiter();
-  yaclib::Future<> AwaitSendBelowHighWater();
-  yaclib::Future<> DrainSendOnTask();
-  // io-pinned writer: parked until a committed flush arms a view, then drives
-  // async_write + FlushDone chains. All socket writes happen here (TLS-safe),
-  // overlapping the SessionTask's encoding/execution.
-  yaclib::Future<> SendWriter();
-  void OnSendViewReady(message::SequenceView view) {
-    _write_view = view;
-    _write_armed.store(true, std::memory_order_release);
-    _write_gate.Kick();
-  }
   // Sync frame-assembly core over _recv (the io->duck receive channel:
   // RecvLoop produces bytes, the current consumer assembles frames bounded by
   // the channel watermark). Returns a frame if one is complete, nullopt when
@@ -370,7 +351,6 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
                                      duckdb::StatementReturnType return_type,
                                      uint64_t max_rows);
 
-  Socket<Kind> _socket;
   asio_ns::io_context& _io;
   const CredentialProvider* _credentials = nullptr;
   bool _allow_cleartext = false;
@@ -378,30 +358,6 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   std::shared_ptr<CancelToken> _cancel_token;
   uint64_t _cancel_key = 0;
   uint32_t _max_message = kDefaultMaxMessageBytes;
-  message::Buffer _recv{kReadBlock, kBufferMaxGrowth};
-  // Write-behind: committed bytes auto-flush at kSendFlushSize; the callback
-  // arms a view and kicks the io-pinned SendWriter, so encoding the next rows
-  // overlaps the socket write of earlier ones (the buffer's FlushStart /
-  // FlushDone SPSC machinery -- the old server's proven send path).
-  message::Buffer _send{
-    kReadBlock, kBufferMaxGrowth, kSendFlushSize,
-    [this](message::SequenceView view) { OnSendViewReady(view); }};
-  // SendWriter state. _write_view/_write_armed are handed off strictly
-  // alternately (SendData -> write -> FlushDone -> maybe SendData), so a
-  // single slot suffices; _send_written is the writer's progress counter
-  // paired with _send.TotalCommitted() for drain/backpressure.
-  message::SequenceView _write_view;
-  std::atomic<bool> _write_armed{false};
-  Gate _write_gate;
-  Gate _producer_gate;
-  std::atomic<size_t> _send_written{0};
-  // Writer-progress wake handshake: the _send_written value the SessionTask
-  // had seen when it armed interest, kSendWaiterIdle = not interested (the
-  // default; recv-parked sessions then never pay a wake per flush).
-  static constexpr size_t kSendWaiterIdle = std::numeric_limits<size_t>::max();
-  std::atomic<size_t> _send_waiter{kSendWaiterIdle};
-  std::atomic<bool> _io_broken{false};
-  bool _writer_stop = false;
   std::string _scratch;
   // The current command frame's pending _recv consume. Normally the command
   // loop applies it after the handler; COPY FROM STDIN consumes it early (so
@@ -416,119 +372,16 @@ class PgWireSession : public std::enable_shared_from_this<PgWireSession<Kind>> {
   std::shared_ptr<ConnectionContext> _connection_ctx;
   // Reused across queries (Reset per query); see MakeWireContext.
   std::shared_ptr<WireSinkContext> _wire_ctx;
-  // Hosts SessionMain as a duckdb::Task on the scheduler. Emplaced by RecvLoop
-  // right before spawning; by value -- no per-connection heap alloc.
-  std::optional<TaskRunner> _task;
-  // Set (on the io thread) once SessionMain is detached and _task->Begin()
-  // captured the job; gates RequestRun wakes from io-side code.
-  bool _task_spawned = false;
   // True while a COPY FROM STDIN feeder owns the recv consumer role: RecvLoop
   // then kicks _copy_gate instead of RequestRun.
   std::atomic<bool> _copy_route{false};
   Gate _copy_gate;
   std::atomic<bool> _feeder_done{false};
-  // Non-owning: points to this session's io worker, which IS the IoExecutor.
-  IoExecutor* _ioexec = nullptr;
   containers::NodeHashMap<std::string, sdb::pg::DuckDBStatement> _statements;
   containers::NodeHashMap<std::string, Portal> _portals;
   sdb::pg::DuckDBStatement _anon_statement;
   Portal _anon_portal;
 };
-
-template<SocketKind Kind>
-yaclib::Future<> PgWireSession<Kind>::Flush() {
-  KickSend();
-  while (HasUnsentBytes() && !SendBroken()) {
-    co_await _producer_gate.Wait(*_ioexec);
-  }
-  co_return {};
-}
-
-// The fence orders the waiter-store before the caller's condition re-check
-// loads (the writer fences between its progress-store and the waiter-load);
-// one side always sees the other, so parking after a final re-check is safe.
-template<SocketKind Kind>
-void PgWireSession<Kind>::ArmSendWaiter() {
-  _send_waiter.store(_send_written.load(std::memory_order_relaxed),
-                     std::memory_order_relaxed);
-  std::atomic_thread_fence(std::memory_order_seq_cst);
-}
-
-template<SocketKind Kind>
-void PgWireSession<Kind>::DisarmSendWaiter() {
-  _send_waiter.store(kSendWaiterIdle, std::memory_order_relaxed);
-}
-
-template<SocketKind Kind>
-yaclib::Future<> PgWireSession<Kind>::AwaitSendBelowHighWater() {
-  ArmSendWaiter();
-  while (_send.TotalCommitted() -
-             _send_written.load(std::memory_order_acquire) >
-           kSendHighWater &&
-         !SendBroken()) {
-    co_await _task->Park();
-  }
-  DisarmSendWaiter();
-  co_return {};
-}
-
-template<SocketKind Kind>
-yaclib::Future<> PgWireSession<Kind>::DrainSendOnTask() {
-  KickSend();
-  ArmSendWaiter();
-  while (HasUnsentBytes() && !SendBroken()) {
-    co_await _task->Park();
-  }
-  DisarmSendWaiter();
-  co_return {};
-}
-
-template<SocketKind Kind>
-yaclib::Future<> PgWireSession<Kind>::SendWriter() {
-  auto self = this->shared_from_this();
-  for (;;) {
-    co_await _write_gate.Wait(*_ioexec);
-    if (!_write_armed.exchange(false, std::memory_order_acq_rel)) {
-      if (_writer_stop) {
-        co_return {};
-      }
-      continue;  // spurious (racing kicks coalesced) -- park again
-    }
-    auto [ec, bytes] = co_await _socket.Write(_write_view).NoThrow();
-    if (ec) [[unlikely]] {
-      break;  // client gone -- run the terminal cleanup once, below
-    }
-    _send_written.fetch_add(bytes, std::memory_order_release);
-    // May immediately re-arm via the send callback -- the pending kick is
-    // consumed by the next Wait.
-    _send.FlushDone();
-    // Wake whichever side waits on drain: RecvLoop's startup-phase Flush (gate)
-    // or the SessionTask (RequestRun) -- but only when the session declared
-    // interest in writer progress (ArmSendWaiter): the common request/response
-    // flow parks on recv and an unconditional wake here costs a full no-op
-    // session frame on a worker per flush. Dekker pair with ArmSendWaiter:
-    // progress-store then waiter-load here, waiter-store then progress-load
-    // there, so a wake is never lost.
-    _producer_gate.Kick();
-    std::atomic_thread_fence(std::memory_order_seq_cst);
-    const auto seen = _send_waiter.load(std::memory_order_relaxed);
-    if (seen != kSendWaiterIdle && _task_spawned &&
-        _send_written.load(std::memory_order_relaxed) > seen) {
-      _task->RequestRun();
-    }
-  }
-  // The write failed: client is gone. Poison the send side, wake every parked
-  // waiter, and close so the read side notices; the SessionTask bails at its
-  // next condition re-check.
-  _io_broken.store(true, std::memory_order_release);
-  _producer_gate.Kick();
-  _copy_gate.Kick();
-  if (_task_spawned) {
-    _task->RequestRun();
-  }
-  _socket.Close();
-  co_return {};
-}
 
 template<SocketKind Kind>
 void PgWireSession<Kind>::CopyRecvInto(uint8_t* dst, size_t n) {

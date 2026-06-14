@@ -48,7 +48,6 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
-  auto& catalog_feature = catalog::CatalogFeature::instance();
 
   if (info.path.empty()) {
     // CREATE DATABASE: create new database in SereneDB catalog
@@ -66,7 +65,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
       SDB_THROW(std::move(r));
     }
     // Re-fetch snapshot to see the new database
-    auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
+    auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
     auto database = snapshot->GetDatabase(name);
     if (!database) {
       THROW_SQL_ERROR(
@@ -82,7 +81,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("database \"", name, "\" not found"));
   }
-  auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   auto database = snapshot->GetDatabase(ObjectId{id});
   if (!database) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),

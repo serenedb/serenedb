@@ -146,7 +146,11 @@ AsyncResult IndexDrop::Execute() {
   if (_type == catalog::ObjectType::InvertedIndex && _is_root) {
     r = RemoveIndexShards(_db_id, _schema_id, _parent_id, _id);
   }
-  if (!r.ok() || !Finalize().ok()) {
+  if (r.ok()) {
+    r = Finalize();
+  }
+  if (!r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     return yaclib::MakeFuture<Result>(ERROR_LOCKED);
   }
   return yaclib::MakeFuture<Result>();
@@ -180,12 +184,17 @@ AsyncResult TableDrop::Execute() {
     ObjectId schema_id = _parent_id;
     auto r = RemoveIndexShards(db_id, schema_id, _id);
     if (!r.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
       co_return Result{ERROR_LOCKED};
     }
   }
   co_await RunChildrenTasks(std::span{_indexes});
   auto r = co_await Schedule(_shard_drop);
-  if (!r.ok() || !Finalize().ok()) {
+  if (r.ok()) {
+    r = Finalize();
+  }
+  if (!r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     co_return Result{ERROR_LOCKED};
   }
   co_return {};
@@ -221,11 +230,13 @@ AsyncResult SchemaDrop::Execute() {
   if (_is_root) {
     auto r = RemoveIndexShards(_parent_id, _id);
     if (!r.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
       co_return Result{ERROR_LOCKED};
     }
   }
   co_await RunChildrenTasks(std::span{_tables});
-  if (!Finalize().ok()) {
+  if (auto r = Finalize(); !r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     co_return Result{ERROR_LOCKED};
   }
   co_return {};
@@ -251,10 +262,12 @@ AsyncResult DatabaseDrop::Execute() {
   SDB_ASSERT(_is_root);
   auto r = RemoveIndexShards(_id);
   if (!r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     co_return Result{ERROR_LOCKED};
   }
   co_await RunChildrenTasks(std::span{_schemas});
-  if (!Finalize().ok()) {
+  if (auto r = Finalize(); !r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     co_return Result{ERROR_LOCKED};
   }
   co_return {};

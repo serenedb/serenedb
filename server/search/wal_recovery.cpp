@@ -49,7 +49,7 @@ namespace {
 // applies the operations buffered during this boot's WAL replay
 // (InvertedStoreIndex::Append/Delete with no committing context), feeding the
 // post-checkpoint delta into the iresearch shard. The shards must already be
-// loaded (this runs after CatalogFeature::start) so the index's replay path
+// loaded (this runs after InitCatalog) so the index's replay path
 // can resolve them.
 void BindStoreTableIndexes(duckdb::ClientContext& context,
                            std::string_view database_name,
@@ -70,8 +70,7 @@ void BindStoreTableIndexes(duckdb::ClientContext& context,
 void InitInvertedIndexes(bool skip_wal_recovery) {
   auto begin = std::chrono::steady_clock::now();
 
-  auto& catalog_feature = catalog::CatalogFeature::instance();
-  auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   SDB_ASSERT(snapshot);
 
   // Recovery is delta-based: duckdb's WAL replay buffered every store-table

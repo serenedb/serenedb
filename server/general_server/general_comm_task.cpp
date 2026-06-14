@@ -89,8 +89,7 @@ std::shared_ptr<catalog::Database> LookupDatabaseFromRequest(
     req.setDatabaseName(StaticStrings::kDefaultDatabase);
   }
 
-  return catalog::CatalogFeature::instance()
-    .Global()
+  return catalog::GetCatalog()
     .GetCatalogSnapshot()
     ->GetDatabase(req.databaseName());
 }

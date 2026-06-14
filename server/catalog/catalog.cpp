@@ -637,8 +637,7 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
 
 template<typename T>
 ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
-  auto& catalog = catalog::CatalogFeature::instance().Global();
-  auto database = catalog.GetCatalogSnapshot()->GetDatabase(key);
+  auto database = GetCatalog().GetCatalogSnapshot()->GetDatabase(key);
   if (!database) [[unlikely]] {
     return std::unexpected<Result>(std::in_place,
                                    ERROR_SERVER_DATABASE_NOT_FOUND,
@@ -647,58 +646,42 @@ ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   return database;
 }
 
-CatalogFeature::CatalogFeature() { gInstance = this; }
+namespace {
+std::shared_ptr<LogicalCatalog> g_catalog;
+}  // namespace
 
-CatalogFeature::~CatalogFeature() { gInstance = nullptr; }
+void InitCatalog() {
+  g_catalog = std::make_shared<LocalCatalog>();
 
-void CatalogFeature::start() {
-  auto catalog = std::make_shared<LocalCatalog>();
-  _global = catalog;
-  _local = std::move(catalog);
-
-  auto r = Open();
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-}
-
-void CatalogFeature::stop() {
-  _local.reset();
-  _global.reset();
-}
-
-Result CatalogFeature::Open() {
   if (auto r = GetCatalogStore().LoadBootState(); !r.ok()) {
-    return r;
+    SDB_THROW(std::move(r));
   }
   irs::Finally release_boot = [] noexcept {
     GetCatalogStore().ReleaseBootState();
   };
 
-  OpenDatabase open_db{Local()};
+  OpenDatabase open_db{GetCatalog()};
   if (auto r = open_db.AddRoles(); !r.ok()) {
-    return r;
+    SDB_THROW(std::move(r));
   }
 
   // Bootstrap the default `postgres` role on first start. AddRoles() has
   // already loaded any persisted roles; if none exist we mint the root user
-  // and persist it via Local().CreateRole(), which persists it so it
-  // survives across restarts. RBAC isn't implemented yet, so the password is
-  // empty and auth checks are skipped.
-  if (Local().GetCatalogSnapshot()->GetRoles().empty()) {
+  // and persist it via CreateRole(), which persists it so it survives across
+  // restarts. RBAC isn't implemented yet, so the password is empty and auth
+  // checks are skipped.
+  if (GetCatalog().GetCatalogSnapshot()->GetRoles().empty()) {
     auto root = Role::NewUser(StaticStrings::kDefaultUser, "", id::kRootUser);
-    if (auto br = Local().CreateRole(std::move(root)); !br.ok()) {
-      return br;
+    if (auto br = GetCatalog().CreateRole(std::move(root)); !br.ok()) {
+      SDB_THROW(std::move(br));
     }
   }
 
-  auto r = open_db();
-
-  if (!r.ok()) {
+  if (auto r = open_db(); !r.ok()) {
     SDB_FATAL(GENERAL, "Failed to open database, ", r.errorMessage());
   }
 
-  if (auto fr = Local().FinalizeLoad(); !fr.ok()) {
+  if (auto fr = GetCatalog().FinalizeLoad(); !fr.ok()) {
     SDB_FATAL(GENERAL, "FinalizeLoad failed: ", fr.errorMessage());
   }
 
@@ -721,9 +704,9 @@ Result CatalogFeature::Open() {
       }
     }
   }
-
-  return r;
 }
+
+void ShutdownCatalog() { g_catalog.reset(); }
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id) {
   return GetDatabaseImpl(database_id);
@@ -734,7 +717,8 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
 }
 
 LogicalCatalog& GetCatalog() {
-  return catalog::CatalogFeature::instance().Local();
+  SDB_ASSERT(g_catalog, "Catalog is not initialized");
+  return *g_catalog;
 }
 
 }  // namespace sdb::catalog

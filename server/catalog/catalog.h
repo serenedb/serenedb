@@ -360,38 +360,10 @@ struct LogicalCatalog {
   virtual std::shared_ptr<const Snapshot> GetCatalogSnapshot() const = 0;
 };
 
-class CatalogFeature final {
- public:
-  inline static CatalogFeature* gInstance = nullptr;
-  static CatalogFeature& instance() noexcept { return *gInstance; }
-
-  CatalogFeature();
-  ~CatalogFeature();
-
-  void start();
-  void stop();
-
-  Result Open();
-
-  LogicalCatalog& Global() const noexcept {
-    SDB_ASSERT(_global, "Global catalog is not initialized");
-    return *_global;
-  }
-
-  LogicalCatalog& Local() const noexcept {
-    SDB_ASSERT(_local, "Local catalog is not initialized");
-    return *_local;
-  }
-
-#ifdef SDB_GTEST
-  auto& GlobalPtr() noexcept { return _global; }
-  auto& LocalPtr() noexcept { return _local; }
-#endif
-
- private:
-  std::shared_ptr<LogicalCatalog> _global;
-  std::shared_ptr<LogicalCatalog> _local;
-};
+// Builds the single in-process catalog, loads boot state, bootstraps the
+// default role, and attaches the databases. Throws on failure.
+void InitCatalog();
+void ShutdownCatalog();
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name);

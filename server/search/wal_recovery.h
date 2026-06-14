@@ -22,7 +22,7 @@
 
 namespace sdb::search {
 
-// Called once from SearchEngine::start, after CatalogFeature has loaded
+// Called once from SearchEngine::start, after InitCatalog has loaded
 // every shard and after the search thread pools have started.
 void InitInvertedIndexes(bool skip_wal_recovery);
 

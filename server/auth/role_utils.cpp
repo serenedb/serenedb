@@ -25,15 +25,13 @@
 namespace sdb::auth {
 
 std::vector<std::shared_ptr<catalog::Role>> GetRoles() {
-  return catalog::CatalogFeature::instance()
-    .Global()
+  return catalog::GetCatalog()
     .GetCatalogSnapshot()
     ->GetRoles();
 }
 
 std::shared_ptr<catalog::Role> GetRole(std::string_view name) {
-  return catalog::CatalogFeature::instance()
-    .Global()
+  return catalog::GetCatalog()
     .GetCatalogSnapshot()
     ->GetRole(name);
 }

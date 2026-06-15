@@ -195,7 +195,7 @@ COPY (SELECT * FROM (VALUES
 #| CREATE TABLE ontime AS
 #|     SELECT * FROM read_csv('flights.csv');
 #|
-#| DESCRIBE ontime;
+#| DESCRIBE TABLE ontime;
 
 # DOCS_TEST_BODY
 
@@ -203,12 +203,14 @@ statement ok
 CREATE TABLE ontime AS
     SELECT * FROM read_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_overview_example_008_1_flights_csv.csv');
 
-query error
-DESCRIBE ontime;
+query
+DESCRIBE TABLE ontime;
 ----
-db error: ERROR: unrecognized configuration parameter "ontime"
-
-Did you mean: "TimeZone"
+column_name	column_type	null	key	default	extra
+flightdate	DATE	YES	NULL	NULL	NULL
+uniquecarrier	VARCHAR	YES	NULL	NULL	NULL
+origincityname	VARCHAR	YES	NULL	NULL	NULL
+destcityname	VARCHAR	YES	NULL	NULL	NULL
 
 # DOCS_TEST: example_009
 

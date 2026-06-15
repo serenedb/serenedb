@@ -48,11 +48,16 @@ delimiter	quote	escape	newlinedelimiter	comment	skiprows	hasheader	columns	datef
 
 # DOCS_TEST: example_003
 
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_003_my_file_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| SELECT Prompt FROM sniff_csv('my_file.csv');
+
 # DOCS_TEST_BODY
 
-statement error
--- use line mode in CLI to get the full command
-.mode line
-SELECT Prompt FROM sniff_csv('my_file.csv');
-----
-db error: ERROR: syntax error at or near "\."
+statement ok
+SELECT Prompt FROM sniff_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_003_my_file_csv.csv');

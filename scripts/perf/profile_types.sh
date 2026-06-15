@@ -151,7 +151,7 @@ profile_one() {
 	# stays cheap (dwarf would be 100+MB per profile).
 	run_loop "${table}" "${expr}"
 	sleep 1
-	perf record -F 999 --call-graph fp --pid="${pid}" --inherit \
+	perf record -F 999 --pid="${pid}" --inherit \
 		-o "${data}" -- sleep "${DURATION}"
 	kill_loop
 	# Flat top-symbols report.

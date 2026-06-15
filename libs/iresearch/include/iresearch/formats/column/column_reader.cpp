@@ -150,10 +150,6 @@ class MmapSegmentBuffer final : public duckdb::FileBuffer {
   std::shared_ptr<IndexInput> _mapping;
 };
 
-inline bool MmapWrapAligned(const byte_type* data) noexcept {
-  return reinterpret_cast<uintptr_t>(data) % 64 == 0;
-}
-
 void PrefetchMmapRange(const byte_type* data, size_t size) noexcept {
 #ifdef __linux__
   static const uintptr_t kPageMask =
@@ -166,9 +162,9 @@ void PrefetchMmapRange(const byte_type* data, size_t size) noexcept {
 }
 
 duckdb::block_id_t NextMmapBlockId() noexcept {
-  static std::atomic<duckdb::block_id_t> next{MAXIMUM_BLOCK +
-                                              (duckdb::block_id_t{1} << 40)};
-  return next.fetch_add(1, std::memory_order_relaxed);
+  static std::atomic<duckdb::block_id_t> gNext{MAXIMUM_BLOCK +
+                                               (duckdb::block_id_t{1} << 40)};
+  return gNext.fetch_add(1, std::memory_order_relaxed);
 }
 
 duckdb::shared_ptr<duckdb::BlockHandle> WrapMmapPointer(
@@ -181,7 +177,7 @@ duckdb::shared_ptr<duckdb::BlockHandle> WrapMmapPointer(
   }
   const auto* direct =
     in->ReadStable(static_cast<uint64_t>(p.block_pointer.block_id), byte_size);
-  if (!direct || !MmapWrapAligned(direct)) {
+  if (!direct) {
     return nullptr;
   }
   auto& bm = duckdb::BufferManager::GetBufferManager(db);
@@ -466,8 +462,7 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
       }
     }
     handle = prebuilt;
-  } else if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size);
-             direct && MmapWrapAligned(direct)) {
+  } else if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size)) {
     PrefetchMmapRange(direct, byte_size);
     handle = duckdb::make_shared_ptr<duckdb::BlockHandle>(
       bm.GetTemporaryBlockManager(), NextMmapBlockId(),

@@ -96,7 +96,6 @@ sleep 10
 check "service recovered after crash" $EXEC systemctl is-active --quiet serenedb
 
 echo "=== apt remove ==="
-$EXEC systemctl stop serenedb
 $EXEC apt-get remove -y serenedb
 check "binary removed" $EXEC test ! -f /usr/bin/serened
 check "data dir preserved after remove" $EXEC test -d /var/lib/serenedb

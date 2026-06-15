@@ -171,8 +171,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   }
 
   auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
-    gstate.table_shard,
-    [&] { return gstate.search_shard->GetTransaction(); });
+    gstate.table_shard, [&] { return gstate.search_shard->GetTransaction(); });
 
   SearchSinkDeleteBaseImpl remover{trx};
   remover.InitImpl(num_rows);
@@ -209,8 +208,8 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   const uint64_t pk_base =
     uses_generated_pk ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
                       : 0;
-  // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not changed.
-  // Looks not big win now. But for future optimizations.
+  // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not
+  // changed. Looks not big win now. But for future optimizations.
   WriteChunkToSearchSink(*gstate.insert_sink, new_row, gstate.column_ids,
                          gstate.new_pk_columns, gstate.table_key,
                          uses_generated_pk, pk_base);

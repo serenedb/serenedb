@@ -117,27 +117,7 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
                          std::move(itrs), std::forward<Args>(args)...);
 }
 
-}  // namespace
-
-DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
-  if (empty()) {
-    return DocIterator::empty();
-  }
-  return execute(ctx, begin(), end());
-}
-
-DocIterator::ptr ExclusionQuery::execute(const ExecutionContext& old) const {
-  ExecutionContext ctx{old};
-  // TODO(mbkkt) enable back?
-  ctx.wand.wand_enabled = false;
-
-  auto incl = _include->execute(ctx);
-
-  auto excl = _exclude->execute(ctx);
-  if (doc_limits::eof(excl->value())) {
-    return incl;
-  }
-
+DocIterator::ptr WrapExclusion(DocIterator::ptr incl, DocIterator::ptr excl) {
   using TermWithFreq = PostingIteratorBase<
     IteratorTraitsImpl<FormatTraits128, true, false, false>>;
   using TermWithoutFreq = PostingIteratorBase<
@@ -171,6 +151,33 @@ DocIterator::ptr ExclusionQuery::execute(const ExecutionContext& old) const {
   }
 }
 
+}  // namespace
+
+DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
+  if (empty()) {
+    return DocIterator::empty();
+  }
+  return execute(ctx, begin(), end());
+}
+
+DocIterator::ptr ExclusionQuery::execute(const ExecutionContext& old) const {
+  ExecutionContext ctx{old};
+  // TODO(mbkkt) enable back?
+  ctx.wand.wand_enabled = false;
+
+  auto incl = _include->execute(ctx);
+
+  for (const auto& exclude : _excludes) {
+    auto excl = exclude->execute(ctx);
+    if (doc_limits::eof(excl->value())) {
+      continue;
+    }
+    incl = WrapExclusion(std::move(incl), std::move(excl));
+  }
+
+  return incl;
+}
+
 void BooleanQuery::visit(const SubReader& segment,
                          PreparedStateVisitor& visitor, score_t boost) const {
   boost *= _boost;
@@ -194,9 +201,9 @@ void BooleanQuery::prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
 }
 
 Filter::Query::ptr PrepareExclusion(const PrepareContext& ctx,
-                                    const Filter* include,
-                                    const Filter* exclude) {
-  SDB_ASSERT(exclude);
+                                    const Filter::ptr& include,
+                                    std::span<const Filter::ptr> excludes) {
+  SDB_ASSERT(!excludes.empty());
   Filter::Query::ptr incl;
   if (include == nullptr) {
     auto all = AllDocsProvider::Default(kNoBoost);
@@ -206,11 +213,17 @@ Filter::Query::ptr PrepareExclusion(const PrepareContext& ctx,
   }
 
   // exclusion part does not affect scoring at all
-  auto excl = exclude->prepare({
+  const PrepareContext excl_ctx{
     .index = ctx.index,
     .memory = ctx.memory,
     .ctx = ctx.ctx,
-  });
+  };
+  std::vector<Filter::Query::ptr> excl;
+  excl.reserve(excludes.size());
+  for (const auto& exclude : excludes) {
+    SDB_ASSERT(exclude);
+    excl.emplace_back(exclude->prepare(excl_ctx));
+  }
 
   return memory::make_tracked<ExclusionQuery>(ctx.memory, std::move(incl),
                                               std::move(excl));

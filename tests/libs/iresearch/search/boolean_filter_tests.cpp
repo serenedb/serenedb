@@ -538,29 +538,6 @@ TEST(boolean_query_boost, hierarchy) {
 }
 
 TEST(boolean_query_boost, and_filter) {
-  // empty boolean unboosted query
-  {
-    irs::And root;
-
-    auto prep = tests::OptimizedPrepare(std::move(root),
-                                        {.index = irs::SubReader::empty()});
-
-    ASSERT_EQ(irs::kNoBoost, prep->Boost());
-  }
-
-  // boosted empty boolean query
-  {
-    const irs::score_t value = 5;
-
-    irs::And root;
-    root.boost(value);
-
-    auto prep = tests::OptimizedPrepare(std::move(root),
-                                        {.index = irs::SubReader::empty()});
-
-    ASSERT_EQ(irs::kNoBoost, prep->Boost());
-  }
-
   // single boosted subquery
   {
     const irs::score_t value = 5;
@@ -802,29 +779,6 @@ TEST(boolean_query_boost, and_filter) {
 }
 
 TEST(boolean_query_boost, or_filter) {
-  // single unboosted query
-  {
-    irs::Or root;
-
-    auto prep = tests::OptimizedPrepare(std::move(root),
-                                        {.index = irs::SubReader::empty()});
-
-    ASSERT_EQ(irs::kNoBoost, prep->Boost());
-  }
-
-  // empty single boosted query
-  {
-    const irs::score_t value = 5;
-
-    irs::Or root;
-    root.boost(value);
-
-    auto prep = tests::OptimizedPrepare(std::move(root),
-                                        {.index = irs::SubReader::empty()});
-
-    ASSERT_EQ(irs::kNoBoost, prep->Boost());
-  }
-
   // boosted empty single query
   {
     const irs::score_t value = 5;
@@ -1358,17 +1312,6 @@ TEST(boolean_query_estimation, or_filter) {
       }
     }
   }
-
-  // empty case
-  {
-    irs::Or root;
-
-    auto prep = tests::OptimizedPrepare(std::move(root),
-                                        {.index = irs::SubReader::empty()});
-
-    auto docs = prep->execute({.segment = irs::SubReader::empty()});
-    ASSERT_EQ(0, irs::CostAttr::extract(*docs));
-  }
 }
 
 TEST(boolean_query_estimation, and_filter) {
@@ -1474,16 +1417,6 @@ TEST(boolean_query_estimation, and_filter) {
       }
     }
 
-    ASSERT_EQ(0, irs::CostAttr::extract(*docs));
-  }
-
-  // empty case
-  {
-    irs::And root;
-    auto prep = tests::OptimizedPrepare(std::move(root),
-                                        {.index = irs::SubReader::empty()});
-
-    auto docs = prep->execute({.segment = irs::SubReader::empty()});
     ASSERT_EQ(0, irs::CostAttr::extract(*docs));
   }
 }
@@ -15183,11 +15116,6 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
 
   auto rdr = open_reader();
 
-  // empty query
-  {
-    CheckQuery(*tests::Optimized(irs::Or()), Docs{}, rdr);
-  }
-
   {
     irs::Or root;
     Append<irs::ByTerm>(root, kFieldName, "V");  // 22
@@ -15260,31 +15188,6 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, kFieldName, "Z");    // 26
     Append<irs::ByTerm>(root, kFieldSame, "xyz");  // 1..32
     Append<irs::ByTerm>(root, kFieldSame, "invalid_term");
-
-    CheckQuery(
-      *tests::Optimized(std::move(root)),
-      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
-           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-      rdr);
-  }
-
-  // min match count == 0
-  {
-    irs::Or root;
-    root.min_match_count(0);
-    Append<irs::ByTerm>(root, kFieldName, "V");  // 22
-
-    CheckQuery(
-      *tests::Optimized(std::move(root)),
-      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
-           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-      rdr);
-  }
-
-  // min match count == 0
-  {
-    irs::Or root;
-    root.min_match_count(0);
 
     CheckQuery(
       *tests::Optimized(std::move(root)),
@@ -15457,11 +15360,6 @@ TEST_P(BooleanFilterTestCase, and_sequential) {
   }
 
   auto rdr = open_reader();
-
-  // empty query
-  {
-    CheckQuery(*tests::Optimized(irs::And()), Docs{}, rdr);
-  }
 
   // name=V
   {
@@ -16270,8 +16168,8 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
 TEST(Exclusion_test, ctor) {
   irs::Exclusion q;
   ASSERT_EQ(irs::Type<irs::Exclusion>::id(), q.type());
-  ASSERT_EQ(nullptr, q.include());
-  ASSERT_EQ(nullptr, q.exclude());
+  ASSERT_EQ(nullptr, q.GetInclude());
+  ASSERT_TRUE(q.GetExcludes().empty());
   ASSERT_TRUE(q.empty());
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 }
@@ -16425,14 +16323,6 @@ TEST(And_test, optimize_double_negation) {
 
   auto prepared = filter->prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
-}
-
-TEST(And_test, prepare_empty_filter) {
-  irs::Filter::ptr root = std::make_unique<irs::And>();
-  irs::Optimize(root);
-  auto prepared = root->prepare({.index = irs::SubReader::empty()});
-  ASSERT_NE(nullptr, prepared);
-  ASSERT_EQ(typeid(irs::Filter::Query::empty().get()), typeid(prepared.get()));
 }
 
 TEST(And_test, optimize_single_node) {

@@ -94,9 +94,12 @@ Filter::Query::ptr Or::PrepareBoolean(std::span<const Filter::ptr> filters,
 
 Filter::Query::ptr Exclusion::prepare(const PrepareContext& ctx) const {
   const PrepareContext sub_ctx = ctx.Boost(Boost());
-  SDB_ASSERT(_exclude != nullptr);
+  const auto& excludes = GetExcludes();
+  SDB_ASSERT(!excludes.empty());
+  SDB_ASSERT(std::ranges::all_of(
+    excludes, [](const Filter::ptr& excl) { return excl != nullptr; }));
 
-  return PrepareExclusion(sub_ctx, _include.get(), _exclude.get());
+  return PrepareExclusion(sub_ctx, GetInclude(), excludes);
 }
 
 bool Exclusion::equals(const irs::Filter& rhs) const noexcept {
@@ -108,8 +111,8 @@ bool Exclusion::equals(const irs::Filter& rhs) const noexcept {
     return (lhs == nullptr && rhs == nullptr) ||
            (lhs != nullptr && rhs != nullptr && *lhs == *rhs);
   };
-  return same(_include, typed_rhs._include) &&
-         same(_exclude, typed_rhs._exclude);
+  return same(GetInclude(), typed_rhs.GetInclude()) &&
+         std::ranges::equal(GetExcludes(), typed_rhs.GetExcludes(), same);
 }
 
 Filter::Query::ptr Not::prepare(const PrepareContext&) const {

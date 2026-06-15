@@ -28,41 +28,37 @@ namespace irs {
 class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
                                  public AllDocsProvider {
  public:
+  auto& GetRequired() const noexcept {
+    SDB_VERIFY(RequiredSlot()->type() == irs::Type<And>::id());
+    return sdb::basics::downCast<And>(*RequiredSlot());
+  }
+  auto& GetOptional() const noexcept {
+    SDB_VERIFY(OptionalSlot()->type() == irs::Type<Or>::id());
+    return sdb::basics::downCast<Or>(*OptionalSlot());
+  }
+
   MixedBooleanFilter() : MixedBooleanFilter({}, {}) {}
 
   MixedBooleanFilter(std::vector<Filter::ptr> required,
                      std::vector<Filter::ptr> optional)
-    : _and{std::make_unique<And>()}, _or{std::make_unique<Or>()} {
-    auto& and_node = sdb::basics::downCast<And>(*_and);
-    for (auto& filter : required) {
-      and_node.add(std::move(filter));
-    }
-    auto& or_node = sdb::basics::downCast<Or>(*_or);
-    for (auto& filter : optional) {
-      or_node.add(std::move(filter));
-    }
-  }
+    : _filters{{std::make_unique<And>(std::move(required)),
+                std::make_unique<Or>(std::move(optional))}} {}
 
   MixedBooleanFilter(MixedBooleanFilter&&) = default;
   MixedBooleanFilter& operator=(MixedBooleanFilter&&) = default;
 
-  auto& GetRequired(this auto& self) noexcept {
-    SDB_VERIFY(self._and->type() == irs::Type<And>::id());
-    return sdb::basics::downCast<And>(*self._and);
-  }
-  auto& GetOptional(this auto& self) noexcept {
-    SDB_VERIFY(self._or->type() == irs::Type<Or>::id());
-    return sdb::basics::downCast<Or>(*self._or);
-  }
-
-  Filter::ptr& RequiredSlot() noexcept { return _and; }
-  Filter::ptr& OptionalSlot() noexcept { return _or; }
+  const Filter::ptr& RequiredSlot() const noexcept { return _filters[0]; }
+  const Filter::ptr& OptionalSlot() const noexcept { return _filters[1]; }
+  Filter::ptr& RequiredSlot() noexcept { return _filters[0]; }
+  Filter::ptr& OptionalSlot() noexcept { return _filters[1]; }
 
   bool empty() const noexcept {
-    return HasNoClauses(*_and) && HasNoClauses(*_or);
+    return HasNoClauses(*RequiredSlot()) && HasNoClauses(*OptionalSlot());
   }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
+
+  std::span<Filter::ptr> GetChildren() final { return _filters; }
 
  private:
   static bool HasNoClauses(const Filter& filter) noexcept {
@@ -75,8 +71,8 @@ class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
 
   bool equals(const Filter& rhs) const noexcept final;
 
-  Filter::ptr _and;
-  Filter::ptr _or;
+  // [_required, _optional]
+  std::array<Filter::ptr, 2> _filters;
 };
 
 }  // namespace irs

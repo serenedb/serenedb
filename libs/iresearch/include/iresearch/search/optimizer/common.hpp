@@ -37,11 +37,8 @@ inline bool IsAllDocs(const Filter& filter) noexcept {
 template<typename T>
 std::unique_ptr<T> MakeBoolean(std::vector<Filter::ptr> children,
                                ScoreMergeType merge_type) {
-  auto node = std::make_unique<T>();
+  auto node = std::make_unique<T>(std::move(children));
   node->merge_type(merge_type);
-  for (auto& child : children) {
-    node->add(std::move(child));
-  }
   return node;
 }
 

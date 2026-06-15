@@ -293,19 +293,19 @@ FilterNode BuildNode(const Filter& filter, const FieldResolver& field) {
   }
   if (type == Type<Exclusion>::id()) {
     const auto& f = downCast<const Exclusion>(filter);
-    const auto* incl = f.include();
-    const auto* excl = f.exclude();
+    const auto& incl = f.GetInclude();
+    const auto excludes = f.GetExcludes();
     // A pure negation (implicit all-docs include) reads better as NOT[X].
     if (incl == nullptr) {
       FilterNode node{.label = "NOT"};
-      if (excl != nullptr) {
+      for (const auto& excl : excludes) {
         node.children.push_back(BuildNode(*excl, field));
       }
       return node;
     }
     FilterNode node{.label = "EXCLUSION"};
     node.children.push_back(BuildNode(*incl, field));
-    if (excl != nullptr) {
+    for (const auto& excl : excludes) {
       node.children.push_back(BuildNode(*excl, field));
     }
     return node;

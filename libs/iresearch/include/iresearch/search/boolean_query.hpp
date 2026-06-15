@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <span>
 #include <vector>
 
 #include "iresearch/search/exclusion.hpp"
@@ -68,8 +69,8 @@ class BooleanQuery : public Filter::Query {
 
 class ExclusionQuery : public Filter::Query {
  public:
-  ExclusionQuery(Query::ptr include, Query::ptr exclude) noexcept
-    : _include{std::move(include)}, _exclude{std::move(exclude)} {}
+  ExclusionQuery(Query::ptr include, std::vector<Query::ptr> excludes) noexcept
+    : _include{std::move(include)}, _excludes{std::move(excludes)} {}
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final;
 
@@ -82,12 +83,12 @@ class ExclusionQuery : public Filter::Query {
 
  private:
   Query::ptr _include;
-  Query::ptr _exclude;
+  std::vector<Query::ptr> _excludes;
 };
 
 Filter::Query::ptr PrepareExclusion(const PrepareContext& ctx,
-                                    const Filter* include,
-                                    const Filter* exclude);
+                                    const Filter::ptr& include,
+                                    std::span<const Filter::ptr> excludes);
 
 // Represent a set of queries joint by "And"
 class AndQuery : public BooleanQuery {

@@ -26,10 +26,10 @@ namespace irs {
 
 Filter::Query::ptr MixedBooleanFilter::prepare(
   const PrepareContext& ctx) const {
-  SDB_ASSERT(!HasNoClauses(*_and));
-  SDB_ASSERT(!HasNoClauses(*_or));
+  SDB_ASSERT(!HasNoClauses(*RequiredSlot()));
+  SDB_ASSERT(!HasNoClauses(*OptionalSlot()));
   auto q = memory::make_tracked<BoostQuery>(ctx.memory);
-  q->Prepare(ctx, *_and, *_or);
+  q->Prepare(ctx, *RequiredSlot(), *OptionalSlot());
   return q;
 }
 
@@ -38,7 +38,8 @@ bool MixedBooleanFilter::equals(const Filter& rhs) const noexcept {
     return false;
   }
   const auto& typed_rhs = sdb::basics::downCast<MixedBooleanFilter>(rhs);
-  return *_and == *typed_rhs._and && *_or == *typed_rhs._or;
+  return RequiredSlot() == typed_rhs.RequiredSlot() &&
+         OptionalSlot() == typed_rhs.OptionalSlot();
 }
 
 }  // namespace irs

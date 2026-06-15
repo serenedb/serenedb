@@ -108,8 +108,7 @@ bool NotLowerRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
 bool ExclusionRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& node = sdb::basics::downCast<Exclusion>(*slot);
   auto& incl = node.mutable_include();
-  auto& excl = node.mutable_exclude();
-  if (excl) {
+  if (!node.mutable_excludes().empty()) {
     return false;
   }
   if (!incl) {
@@ -126,21 +125,18 @@ bool ExclusionRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
 bool ExclusionDoubleNegationRule::Apply(Filter::ptr& slot,
                                         const OptimizeContext& ctx) {
   auto& node = sdb::basics::downCast<Exclusion>(*slot);
-  if (node.mutable_include()) {
+  if (node.mutable_include() || node.mutable_excludes().size() != 1) {
     return false;
   }
-  Filter::ptr* inner = &node.mutable_exclude();
-  if (!*inner) {
-    return false;
-  }
+  Filter::ptr* inner = &node.mutable_excludes()[0];
   bool negated = true;
   size_t depth = 0;
   while ((*inner)->type() == Type<Exclusion>::id()) {
     auto& ex = sdb::basics::downCast<Exclusion>(**inner);
-    if (ex.mutable_include() || !ex.mutable_exclude()) {
+    if (ex.mutable_include() || ex.mutable_excludes().size() != 1) {
       break;
     }
-    inner = &ex.mutable_exclude();
+    inner = &ex.mutable_excludes()[0];
     negated = !negated;
     ++depth;
   }

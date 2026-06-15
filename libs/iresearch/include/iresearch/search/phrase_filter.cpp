@@ -83,19 +83,10 @@ struct GetVisitor {
       return ByPrefix::visit(segment, field, term, visitor);
     };
   }
-
-  field_visitor operator()(const ByWildcardOptions&) const {
-    SDB_UNREACHABLE();
-    return {};
-  }
+  field_visitor operator()(const auto&) const { SDB_UNREACHABLE(); }
 
   field_visitor operator()(const AutomatonOptions& part) const {
     return AutomatonFilter::visitor(part.acceptor);
-  }
-
-  field_visitor operator()(const ByEditDistanceOptions&) const {
-    SDB_UNREACHABLE();
-    return {};
   }
 
   field_visitor operator()(const LevenshteinAutomatonOptions& part) const {
@@ -120,11 +111,6 @@ struct GetVisitor {
         return ByRange::visit(segment, field, *range, visitor);
       };
   }
-
-  field_visitor operator()(const ByRegexpOptions&) const {
-    SDB_UNREACHABLE();
-    return {};
-  }
 };
 
 struct PrepareVisitor : util::Noncopyable {
@@ -136,19 +122,11 @@ struct PrepareVisitor : util::Noncopyable {
     return ByPrefix::prepare(ctx, id, part.term, part.scored_terms_limit);
   }
 
-  Filter::Query::ptr operator()(const ByWildcardOptions&) const {
-    SDB_UNREACHABLE();
-    return {};
-  }
+  Filter::Query::ptr operator()(const auto&) const { SDB_UNREACHABLE(); }
 
   auto operator()(const AutomatonOptions& part) const {
     return PrepareAutomatonFilter(ctx, id, part.acceptor,
                                   part.scored_terms_limit);
-  }
-
-  Filter::Query::ptr operator()(const ByEditDistanceOptions&) const {
-    SDB_UNREACHABLE();
-    return {};
   }
 
   auto operator()(const LevenshteinAutomatonOptions& part) const {
@@ -159,11 +137,6 @@ struct PrepareVisitor : util::Noncopyable {
 
   auto operator()(const ByRangeOptions& part) const {
     return ByRange::prepare(ctx, id, part.range, part.scored_terms_limit);
-  }
-
-  Filter::Query::ptr operator()(const ByRegexpOptions&) const {
-    SDB_UNREACHABLE();
-    return {};
   }
 
   PrepareVisitor(const PrepareContext& ctx, irs::field_id id) noexcept

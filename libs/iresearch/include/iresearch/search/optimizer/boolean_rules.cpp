@@ -109,14 +109,6 @@ struct ByTermsRule {
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
 };
 
-struct OrMinMatchZeroRule {
-  static constexpr std::string_view kName = "or_min_match_zero";
-  static constexpr std::array kTargets{Type<Or>::id()};
-  static constexpr bool kEnable = true;
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
-};
-
 struct OrUnsatRule {
   static constexpr std::string_view kName = "or_unsat";
   static constexpr std::array kTargets{Type<Or>::id()};
@@ -128,14 +120,6 @@ struct OrUnsatRule {
 struct OrAllRequiredRule {
   static constexpr std::string_view kName = "or_all_required";
   static constexpr std::array kTargets{Type<Or>::id()};
-  static constexpr bool kEnable = true;
-
-  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
-};
-
-struct EmptyAndRule {
-  static constexpr std::string_view kName = "empty_and";
-  static constexpr std::array kTargets{Type<And>::id()};
   static constexpr bool kEnable = true;
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
@@ -242,8 +226,7 @@ bool AndExclusionCoalesceRule::Apply(Filter::ptr& slot,
            sdb::basics::downCast<Not>(*child).filter() != nullptr;
   };
   const auto is_coalescable_exclusion = [&](const Filter::ptr& child) {
-    return child->type() == Type<Exclusion>::id() &&
-           !(child->BoostImpl() != kNoBoost && ctx.scorer != nullptr);
+    return child->type() == Type<Exclusion>::id();
   };
 
   const size_t coalescable = absl::c_count_if(children, [&](const auto& child) {
@@ -258,7 +241,7 @@ bool AndExclusionCoalesceRule::Apply(Filter::ptr& slot,
         return true;
       }
       return is_coalescable_exclusion(child) &&
-             sdb::basics::downCast<Exclusion>(*child).exclude() != nullptr;
+             !sdb::basics::downCast<Exclusion>(*child).GetExcludes().empty();
     });
   if (!produces_exclude) {
     return false;
@@ -277,7 +260,7 @@ bool AndExclusionCoalesceRule::Apply(Filter::ptr& slot,
       if (auto& incl = ex.mutable_include(); incl) {
         includes.emplace_back(std::move(incl));
       }
-      if (auto& excl = ex.mutable_exclude(); excl) {
+      for (auto& excl : ex.mutable_excludes()) {
         excludes.emplace_back(std::move(excl));
       }
     } else {
@@ -285,25 +268,16 @@ bool AndExclusionCoalesceRule::Apply(Filter::ptr& slot,
     }
   }
 
-  auto exclude = excludes.size() == 1
-                   ? std::move(excludes.front())
-                   : MakeBoolean<Or>(std::move(excludes), ScoreMergeType::Sum);
-
-  if (includes.empty()) {
-    auto exclusion = std::make_unique<Exclusion>();
-    exclusion->exclude(std::move(exclude));
-    exclusion->boost(node.Boost());
-    slot = std::move(exclusion);
-    return true;
-  }
-
-  auto include = includes.size() == 1
-                   ? std::move(includes.front())
-                   : MakeBoolean<And>(std::move(includes), node.merge_type());
-
   auto exclusion = std::make_unique<Exclusion>();
-  exclusion->include(std::move(include));
-  exclusion->exclude(std::move(exclude));
+  if (!includes.empty()) {
+    auto include = includes.size() == 1
+                     ? std::move(includes.front())
+                     : MakeBoolean<And>(std::move(includes), node.merge_type());
+    exclusion->include(std::move(include));
+  }
+  for (auto& exclude : excludes) {
+    exclusion->exclude(std::move(exclude));
+  }
   exclusion->boost(node.Boost());
   slot = std::move(exclusion);
   return true;
@@ -349,7 +323,7 @@ bool AndAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     slot = node.MakeAllDocsFilter(node.Boost() * all_boost);
     return true;
   }
-  if (ctx.scorer != nullptr && node.size() - all_count == 1) {
+  if (node.size() - all_count == 1) {
     auto& children = node.mutable_filters();
     const auto it = absl::c_find_if(
       children, [](const auto& child) { return !IsAllDocs(*child); });
@@ -360,13 +334,11 @@ bool AndAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
       return true;
     }
   }
-  if (ctx.scorer != nullptr && all_count < 2) {
+  if (all_count < 2) {
     return false;
   }
   EraseAllDocs(node);
-  if (ctx.scorer != nullptr) {
-    node.mutable_filters().emplace_back(node.MakeAllDocsFilter(all_boost));
-  }
+  node.mutable_filters().emplace_back(node.MakeAllDocsFilter(all_boost));
   return true;
 }
 
@@ -380,9 +352,11 @@ bool OrAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   if (all_count == 0) {
     return false;
   }
-  if (ctx.scorer == nullptr && min_match <= all_count) {
-    slot = node.MakeAllDocsFilter(kNoBoost);
-    return true;
+  if (min_match <= all_count) {
+    if (ctx.scorer == nullptr || all_count == node.size()) {
+      slot = node.MakeAllDocsFilter(node.Boost() * all_boost);
+      return true;
+    }
   }
   if (all_count < 2) {
     return false;
@@ -462,16 +436,6 @@ bool ByTermsRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   return true;
 }
 
-bool OrMinMatchZeroRule::Apply(Filter::ptr& slot,
-                               const OptimizeContext& /*ctx*/) {
-  auto& node = sdb::basics::downCast<Or>(*slot);
-  if (node.min_match_count() != 0) {
-    return false;
-  }
-  slot = node.MakeAllDocsFilter(node.Boost());
-  return true;
-}
-
 bool OrUnsatRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   const auto& node = sdb::basics::downCast<Or>(*slot);
   const auto min_match = node.min_match_count();
@@ -492,14 +456,6 @@ bool OrAllRequiredRule::Apply(Filter::ptr& slot,
   auto replacement = MakeBoolean<And>(std::move(children), node.merge_type());
   replacement->boost(node.Boost());
   slot = std::move(replacement);
-  return true;
-}
-
-bool EmptyAndRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
-  if (!sdb::basics::downCast<And>(*slot).empty()) {
-    return false;
-  }
-  slot = std::make_unique<Empty>();
   return true;
 }
 
@@ -539,10 +495,8 @@ void InitBooleanRules() {
   RegisterRule<OrAllFoldRule>();
   RegisterRule<SingleChildRule>();
   RegisterRule<ByTermsRule>();
-  RegisterRule<OrMinMatchZeroRule>();
   RegisterRule<OrUnsatRule>();
   RegisterRule<OrAllRequiredRule>();
-  RegisterRule<EmptyAndRule>();
   RegisterRule<MixedDegenerateRule>();
 }
 

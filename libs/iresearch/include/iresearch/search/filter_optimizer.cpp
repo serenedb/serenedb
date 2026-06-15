@@ -33,35 +33,6 @@
 namespace irs {
 namespace {
 
-template<typename Visitor>
-void EnumerateChildSlots(Filter& node, Visitor&& visit) {
-  const auto tid = node.type();
-
-  if (tid == Type<And>::id() || tid == Type<Or>::id()) {
-    for (auto& slot :
-         sdb::basics::downCast<BooleanFilter>(node).mutable_filters()) {
-      visit(slot);
-    }
-  } else if (tid == Type<Exclusion>::id()) {
-    auto& node_ex = sdb::basics::downCast<Exclusion>(node);
-    if (auto& inc = node_ex.mutable_include(); inc) {
-      visit(inc);
-    }
-    if (auto& exc = node_ex.mutable_exclude(); exc) {
-      visit(exc);
-    }
-  } else if (tid == Type<Not>::id()) {
-    if (auto& inner = sdb::basics::downCast<Not>(node).mutable_filter();
-        inner) {
-      visit(inner);
-    }
-  } else if (tid == Type<MixedBooleanFilter>::id()) {
-    auto& mixed = sdb::basics::downCast<MixedBooleanFilter>(node);
-    visit(mixed.RequiredSlot());
-    visit(mixed.OptionalSlot());
-  }
-}
-
 auto& RuleRegistry() {
   static sdb::containers::FlatHashMap<TypeInfo::type_id, std::vector<RuleDesc>>
     gRules;
@@ -87,28 +58,6 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
 }
 
-void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
-  struct Frame {
-    Filter::ptr* slot;
-    bool children_visited;
-  };
-
-  absl::InlinedVector<Frame, 16> stack;
-  stack.push_back({&root, false});
-  while (!stack.empty()) {
-    auto& frame = stack.back();
-    if (frame.children_visited) {
-      RunRules(*frame.slot, ctx);
-      stack.pop_back();
-      continue;
-    }
-    frame.children_visited = true;
-    EnumerateChildSlots(**frame.slot, [&](Filter::ptr& child) {
-      stack.push_back({&child, false});
-    });
-  }
-}
-
 }  // namespace
 
 void RegisterRule(RuleDesc rule) {
@@ -130,8 +79,27 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
   if (!root) {
     return;
   }
+  struct Frame {
+    Filter::ptr* slot;
+    bool children_visited;
+  };
 
-  RunPass(root, ctx);
+  absl::InlinedVector<Frame, 16> stack;
+  stack.emplace_back(&root, false);
+  while (!stack.empty()) {
+    auto& frame = stack.back();
+    if (frame.children_visited) {
+      RunRules(*frame.slot, ctx);
+      stack.pop_back();
+      continue;
+    }
+    frame.children_visited = true;
+    for (auto& child : (**frame.slot).GetChildren()) {
+      if (child) {
+        stack.emplace_back(&child, false);
+      }
+    }
+  }
 }
 
 }  // namespace irs

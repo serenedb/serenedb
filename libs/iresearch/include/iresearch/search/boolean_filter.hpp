@@ -34,6 +34,10 @@ namespace irs {
 // Represents user-side boolean filter as the container for other filters
 class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
  public:
+  BooleanFilter() = default;
+  BooleanFilter(std::vector<Filter::ptr> filters)
+    : _filters{std::move(filters)} {}
+
   auto begin() const { return _filters.begin(); }
   auto end() const { return _filters.end(); }
 
@@ -78,6 +82,8 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
 
   std::vector<Filter::ptr>& mutable_filters() noexcept { return _filters; }
 
+  std::span<Filter::ptr> GetChildren() final { return _filters; }
+
  protected:
   bool equals(const Filter& rhs) const noexcept final;
 
@@ -91,6 +97,9 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
 // Represents conjunction
 class And final : public BooleanFilter {
  public:
+  And() = default;
+  And(std::vector<Filter::ptr> filters) : BooleanFilter{std::move(filters)} {}
+
   Query::ptr prepare(const PrepareContext& ctx) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<And>::id(); }
@@ -103,6 +112,9 @@ class And final : public BooleanFilter {
 // Represents disjunction
 class Or final : public BooleanFilter {
  public:
+  Or() = default;
+  Or(std::vector<Filter::ptr> filters) : BooleanFilter{std::move(filters)} {}
+
   // Return minimum number of subqueries which must be satisfied
   size_t min_match_count() const { return _min_match_count; }
 
@@ -126,53 +138,60 @@ class Or final : public BooleanFilter {
 
 class Exclusion : public FilterWithType<Exclusion> {
  public:
-  const Filter* include() const { return _include.get(); }
-  const Filter* exclude() const { return _exclude.get(); }
-
-  template<typename T>
-  const T* exclude() const {
-    return sdb::basics::downCast<T>(_exclude.get());
+  const Filter::ptr& GetInclude() const {
+    SDB_ASSERT(_filters.size() >= 1);
+    return _filters[0];
   }
 
   template<typename T, typename... Args>
   T& include(Args&&... args) {
     static_assert(std::is_base_of_v<irs::Filter, T>);
-    _include = std::make_unique<T>(std::forward<Args>(args)...);
-    return sdb::basics::downCast<T>(*_include);
+    SDB_ASSERT(_filters.size() == 1);
+    _filters[0] = std::make_unique<T>(std::forward<Args>(args)...);
+    return sdb::basics::downCast<T>(*_filters[0]);
   }
 
   template<typename T, typename... Args>
   T& exclude(Args&&... args) {
     static_assert(std::is_base_of_v<irs::Filter, T>);
-    _exclude = std::make_unique<T>(std::forward<Args>(args)...);
-    return sdb::basics::downCast<T>(*_exclude);
+    auto& slot =
+      _filters.emplace_back(std::make_unique<T>(std::forward<Args>(args)...));
+    return sdb::basics::downCast<T>(*slot);
   }
 
   Filter& include(Filter::ptr filter) {
     SDB_ASSERT(filter);
-    _include = std::move(filter);
-    return *_include;
+    SDB_ASSERT(_filters.size() >= 1);
+    _filters[0] = std::move(filter);
+    return *_filters[0];
   }
 
   Filter& exclude(Filter::ptr filter) {
     SDB_ASSERT(filter);
-    _exclude = std::move(filter);
-    return *_exclude;
+    return *_filters.emplace_back(std::move(filter));
   }
 
-  bool empty() const { return _exclude == nullptr; }
+  bool empty() const { return _filters.size() == 1; }
 
-  Filter::ptr& mutable_include() noexcept { return _include; }
-  Filter::ptr& mutable_exclude() noexcept { return _exclude; }
+  Filter::ptr& mutable_include() noexcept { return _filters[0]; }
+  std::span<Filter::ptr> mutable_excludes() noexcept {
+    return GetChildren().subspan(1);
+  }
+
+  std::span<const Filter::ptr> GetExcludes() const {
+    return std::span{_filters}.subspan(1);
+  }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
+
+  std::span<Filter::ptr> GetChildren() final { return std::span{_filters}; }
 
  protected:
   bool equals(const irs::Filter& rhs) const noexcept final;
 
  private:
-  Filter::ptr _include;
-  Filter::ptr _exclude;
+  // [include, excludes[0], excludes[1], ...]
+  std::vector<Filter::ptr> _filters{1};
 };
 
 class Not final : public FilterWithType<Not> {
@@ -191,6 +210,8 @@ class Not final : public FilterWithType<Not> {
   }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
+
+  std::span<Filter::ptr> GetChildren() final { return {&_filter, 1}; }
 
  protected:
   bool equals(const irs::Filter& rhs) const noexcept final;

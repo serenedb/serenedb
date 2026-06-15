@@ -31,6 +31,7 @@
 namespace duckdb {
 
 class DataChunk;
+class HyperLogLog;
 
 }  // namespace duckdb
 namespace irs {
@@ -78,6 +79,8 @@ class ColumnWriter final {
 
   void Finalize();
 
+  void SetDistinctHll(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
+
   // Pad `_filled` up to `target_row` with null entries. Used by merge to
   // span the doc-id range of a source that has no row in this column
   // (so doc-id indexed reads stay aligned across sources).
@@ -95,6 +98,7 @@ class ColumnWriter final {
   uint64_t _filled = 0;
   uint64_t _row_group_first_doc = 0;
   bool _skip_validity = false;
+  bool _approx_distinct = false;
   duckdb::CompressionType _forced_compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   duckdb::unique_ptr<duckdb::Vector> _hashes;

@@ -21,7 +21,9 @@
 #include <gtest/gtest.h>
 
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/main/database.hpp>
@@ -1201,6 +1203,222 @@ TEST_F(IRSColumnstoreTest, MergeIntoTwoSegmentsWithDeletes) {
     cursor.FetchRow(i, out, 0);
     EXPECT_EQ(outd[0], expected[i]) << "merged row=" << i;
   }
+}
+
+uint64_t ReferenceDistinctCount(const std::vector<int64_t>& values) {
+  duckdb::HyperLogLog hll;
+  duckdb::Vector v{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+  duckdb::Vector h{duckdb::LogicalType::HASH, STANDARD_VECTOR_SIZE};
+  auto* d = duckdb::FlatVector::GetDataMutable<int64_t>(v);
+  for (size_t i = 0; i < values.size(); ++i) {
+    d[i] = values[i];
+  }
+  duckdb::VectorOperations::Hash(v, h, values.size());
+  hll.Update(v, h);
+  return hll.Count();
+}
+
+TEST_F(IRSColumnstoreTest, MergeIntoReusesDistinctHll) {
+  irs::MemoryDirectory dir{};
+  constexpr irs::field_id kId = 9;
+  constexpr uint64_t kRowsA = 40;
+  constexpr uint64_t kRowsB = 50;
+
+  irs::ColumnOptionsProvider column_options =
+    [](irs::field_id) -> irs::ColumnOptions {
+    return {.approx_distinct = true};
+  };
+
+  {
+    irs::ColWriter w{dir, "src_a", Db(), &column_options};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
+    duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
+    for (duckdb::idx_t k = 0; k < kRowsA; ++k) {
+      data[k] = static_cast<int64_t>(k % 5);
+    }
+    cw.Append(0, batch, kRowsA);
+    w.Commit(kRowsA);
+  }
+  {
+    irs::ColWriter w{dir, "src_b", Db(), &column_options};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
+    duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
+    for (duckdb::idx_t k = 0; k < kRowsB; ++k) {
+      data[k] = static_cast<int64_t>((k % 5) + 3);
+    }
+    cw.Append(0, batch, kRowsB);
+    w.Commit(kRowsB);
+  }
+
+  irs::ColReader ra{dir, "src_a", Db()};
+  irs::ColReader rb{dir, "src_b", Db()};
+  ASSERT_NE(ra.Column(kId)->DistinctHll(), nullptr);
+  ASSERT_NE(rb.Column(kId)->DistinctHll(), nullptr);
+
+  {
+    irs::ColWriter w{dir, "merged", Db(), &column_options};
+    irs::MergeSource sources[2] = {
+      {.reader = nullptr,
+       .col_reader = &ra,
+       .mask = nullptr,
+       .alive_count = kRowsA},
+      {.reader = nullptr,
+       .col_reader = &rb,
+       .mask = nullptr,
+       .alive_count = kRowsB},
+    };
+    irs::MergeInto(sources, w, &column_options);
+    w.Commit(kRowsA + kRowsB);
+  }
+
+  irs::ColReader r{dir, std::string{"merged"}, Db()};
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  const auto* hll = col->DistinctHll();
+  ASSERT_NE(hll, nullptr);
+  EXPECT_EQ(hll->Count(), ReferenceDistinctCount({0, 1, 2, 3, 4, 5, 6, 7}));
+}
+
+TEST_F(IRSColumnstoreTest, MergeIntoRebuildsDistinctHllWithDeletes) {
+  irs::MemoryDirectory dir{};
+  constexpr irs::field_id kId = 9;
+  constexpr uint64_t kRowsA = 8;
+  constexpr uint64_t kRowsB = 8;
+
+  irs::ColumnOptionsProvider column_options =
+    [](irs::field_id) -> irs::ColumnOptions {
+    return {.approx_distinct = true};
+  };
+
+  {
+    irs::ColWriter w{dir, "src_a", Db(), &column_options};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
+    duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
+    for (duckdb::idx_t k = 0; k < kRowsA; ++k) {
+      data[k] = static_cast<int64_t>(k);
+    }
+    cw.Append(0, batch, kRowsA);
+    w.Commit(kRowsA);
+  }
+  {
+    irs::ColWriter w{dir, "src_b", Db(), &column_options};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
+    duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
+    for (duckdb::idx_t k = 0; k < kRowsB; ++k) {
+      data[k] = static_cast<int64_t>(100 + k);
+    }
+    cw.Append(0, batch, kRowsB);
+    w.Commit(kRowsB);
+  }
+
+  irs::ColReader ra{dir, "src_a", Db()};
+  irs::ColReader rb{dir, "src_b", Db()};
+
+  irs::DocumentMask mask_a{{irs::IResourceManager::gNoop}};
+  for (uint64_t off = 1; off < kRowsA; off += 2) {
+    mask_a.insert(static_cast<irs::doc_id_t>(irs::doc_limits::min() + off));
+  }
+  irs::DocumentMask mask_b{{irs::IResourceManager::gNoop}};
+  for (uint64_t off = 1; off < kRowsB; off += 2) {
+    mask_b.insert(static_cast<irs::doc_id_t>(irs::doc_limits::min() + off));
+  }
+  const uint64_t alive_a = kRowsA - mask_a.size();
+  const uint64_t alive_b = kRowsB - mask_b.size();
+
+  {
+    irs::ColWriter w{dir, "merged", Db(), &column_options};
+    irs::MergeSource sources[2] = {
+      {.reader = nullptr,
+       .col_reader = &ra,
+       .mask = &mask_a,
+       .alive_count = alive_a},
+      {.reader = nullptr,
+       .col_reader = &rb,
+       .mask = &mask_b,
+       .alive_count = alive_b},
+    };
+    irs::MergeInto(sources, w, &column_options);
+    w.Commit(alive_a + alive_b);
+  }
+
+  irs::ColReader r{dir, std::string{"merged"}, Db()};
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  const auto* hll = col->DistinctHll();
+  ASSERT_NE(hll, nullptr);
+  EXPECT_EQ(hll->Count(),
+            ReferenceDistinctCount({0, 2, 4, 6, 100, 102, 104, 106}));
+}
+
+TEST_F(IRSColumnstoreTest, MergeIntoMixedDistinctHll) {
+  irs::MemoryDirectory dir{};
+  constexpr irs::field_id kId = 9;
+  constexpr uint64_t kRowsA = 4;
+  constexpr uint64_t kRowsB = 6;
+
+  irs::ColumnOptionsProvider column_options =
+    [](irs::field_id) -> irs::ColumnOptions {
+    return {.approx_distinct = true};
+  };
+
+  {
+    irs::ColWriter w{dir, "src_a", Db(), &column_options};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
+    duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
+    for (duckdb::idx_t k = 0; k < kRowsA; ++k) {
+      data[k] = static_cast<int64_t>(k);
+    }
+    cw.Append(0, batch, kRowsA);
+    w.Commit(kRowsA);
+  }
+  {
+    irs::ColWriter w{dir, "src_b", Db(), &column_options};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
+    duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
+    for (duckdb::idx_t k = 0; k < kRowsB; ++k) {
+      data[k] = static_cast<int64_t>(10 + k);
+    }
+    cw.Append(0, batch, kRowsB);
+    w.Commit(kRowsB);
+  }
+
+  irs::ColReader ra{dir, "src_a", Db()};
+  irs::ColReader rb{dir, "src_b", Db()};
+
+  irs::DocumentMask mask_b{{irs::IResourceManager::gNoop}};
+  for (uint64_t off = 1; off < kRowsB; off += 2) {
+    mask_b.insert(static_cast<irs::doc_id_t>(irs::doc_limits::min() + off));
+  }
+  const uint64_t alive_b = kRowsB - mask_b.size();
+
+  {
+    irs::ColWriter w{dir, "merged", Db(), &column_options};
+    irs::MergeSource sources[2] = {
+      {.reader = nullptr,
+       .col_reader = &ra,
+       .mask = nullptr,
+       .alive_count = kRowsA},
+      {.reader = nullptr,
+       .col_reader = &rb,
+       .mask = &mask_b,
+       .alive_count = alive_b},
+    };
+    irs::MergeInto(sources, w, &column_options);
+    w.Commit(kRowsA + alive_b);
+  }
+
+  irs::ColReader r{dir, std::string{"merged"}, Db()};
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  const auto* hll = col->DistinctHll();
+  ASSERT_NE(hll, nullptr);
+  EXPECT_EQ(hll->Count(), ReferenceDistinctCount({0, 1, 2, 3, 10, 12, 14}));
 }
 
 // Merge consults the IndexWriter callback (provider B), not whatever the

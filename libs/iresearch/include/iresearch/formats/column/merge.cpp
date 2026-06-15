@@ -23,8 +23,10 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <algorithm>
+#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <vector>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -36,6 +38,50 @@
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
 
 namespace irs {
+
+namespace {
+
+class HLLMerger {
+ public:
+  void Init() {
+    _hll = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
+    _hashes = duckdb::make_uniq<duckdb::Vector>(duckdb::LogicalType::HASH,
+                                                STANDARD_VECTOR_SIZE);
+  }
+
+  void MergeWithoutDelete(const ColumnReader& col) {
+    const auto* src = col.DistinctHll();
+    SDB_ASSERT(src);
+    _hll->Merge(*src);
+  }
+
+  void MergeWithDelete(const duckdb::Vector& values,
+                       const duckdb::SelectionVector& sel,
+                       duckdb::idx_t count) {
+    // Hash only the survivors (a no-copy view of `values` through `sel`), then
+    // drop the null ones, packing the rest to the front so Update sees them.
+    duckdb::Vector survivors{values, sel, count};
+    duckdb::VectorOperations::Hash(survivors, *_hashes, count);
+    auto* h = duckdb::FlatVector::GetDataMutable<duckdb::hash_t>(*_hashes);
+    const auto& validity = duckdb::FlatVector::Validity(values);
+    duckdb::idx_t kept = 0;
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      if (validity.RowIsValid(sel.get_index(i))) {
+        h[kept++] = h[i];
+      }
+    }
+    duckdb::FlatVector::SetSize(*_hashes, kept);
+    _hll->Update(*_hashes);
+  }
+
+  duckdb::shared_ptr<duckdb::HyperLogLog> Get() && { return std::move(_hll); }
+
+ private:
+  duckdb::shared_ptr<duckdb::HyperLogLog> _hll;
+  duckdb::unique_ptr<duckdb::Vector> _hashes;
+};
+
+}  // namespace
 
 void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                const ColumnOptionsProvider* column_options) {
@@ -61,12 +107,18 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     const auto opts = (column_options && *column_options)
                         ? (*column_options)(field_id_v)
                         : ColumnOptions{};
-    auto& cw = output.OpenColumn(field_id_v, first_col->Type(),
-                                 opts.skip_validity, opts.row_group_size,
-                                 opts.compression, opts.approx_distinct);
+
+    auto& cw =
+      output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
+                        opts.row_group_size, opts.compression, false);
 
     if (opts.hnsw_info) {
       output.AttachHnsw(field_id_v, *opts.hnsw_info);
+    }
+
+    HLLMerger hll;
+    if (opts.approx_distinct) {
+      hll.Init();
     }
 
     uint64_t out_doc = 0;
@@ -85,12 +137,16 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       SDB_ASSERT(col->Type() == first_col->Type(),
                  "schema evolution between merge sources not supported");
       const auto* mask = s.mask;
+      const bool has_mask = mask && !mask->empty();
+
+      if (opts.approx_distinct && !has_mask) {
+        hll.MergeWithoutDelete(*col);
+      }
 
       ReadContext src_ctx{*src};
       auto state = MakeMaterializeState(*col, src_ctx);
       duckdb::Vector batch{col->Type(), STANDARD_VECTOR_SIZE,
                            duckdb::VectorDataInitialization::UNINITIALIZED};
-      const bool has_mask = mask && !mask->empty();
       duckdb::SelectionVector sel;
       if (has_mask) {
         sel.Initialize(STANDARD_VECTOR_SIZE);
@@ -118,6 +174,9 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
           }
           if (kept > 0) {
             cw.Append(out_doc, batch, sel, kept);
+            if (opts.approx_distinct) {
+              hll.MergeWithDelete(batch, sel, kept);
+            }
             out_doc += kept;
           }
         }
@@ -127,6 +186,10 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
         cw.PadNullsTo(source_target);
         out_doc = source_target;
       }
+    }
+
+    if (opts.approx_distinct) {
+      cw.SetDistinctHll(std::move(hll).Get());
     }
   }
 }

@@ -68,7 +68,8 @@ ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
     _entry{&entry},
     _staging{_type, _row_group_size,
              duckdb::VectorDataInitialization::UNINITIALIZED},
-    _skip_validity{skip_validity} {
+    _skip_validity{skip_validity},
+    _approx_distinct{approx_distinct} {
   SDB_ASSERT(_row_group_size != 0);
   if (approx_distinct) {
     _entry->root.distinct_hll = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
@@ -77,8 +78,10 @@ ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
   }
 }
 
-bool ColumnWriter::ApproxDistinct() const noexcept {
-  return _entry->root.distinct_hll != nullptr;
+bool ColumnWriter::ApproxDistinct() const noexcept { return _approx_distinct; }
+
+void ColumnWriter::SetDistinctHll(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
+  _entry->root.distinct_hll = std::move(hll);
 }
 
 void ColumnWriter::PadNullsTo(uint64_t start_row) {
@@ -168,11 +171,7 @@ void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
   }
 }
 
-void ColumnWriter::Finalize() {
-  if (_filled > 0) {
-    FlushRowGroup();
-  }
-}
+void ColumnWriter::Finalize() { FlushRowGroup(); }
 
 namespace {
 
@@ -632,7 +631,7 @@ void ColumnWriter::FlushRowGroup() {
     return;
   }
 
-  if (_entry->root.distinct_hll) {
+  if (_approx_distinct) {
     duckdb::VectorOperations::Hash(_staging, *_hashes, _filled);
     _entry->root.distinct_hll->Update(_staging, *_hashes);
   }

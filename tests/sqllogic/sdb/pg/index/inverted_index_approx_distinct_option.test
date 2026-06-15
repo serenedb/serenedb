@@ -99,6 +99,75 @@ statement error
 CREATE INDEX dc_bad2 ON dc_t USING inverted(pk)
   INCLUDE (v included (ndv = true));
 
+# --- 7. NDV survives consolidation. Clean segments reuse the persisted
+#       per-segment sketch (the merge writer unions the HyperLogLogs instead
+#       of re-hashing); a segment carrying deletes can't reuse its sketch
+#       (an HLL can't subtract), so the merge rebuilds it from survivors. ---
+statement ok
+CREATE TABLE dc_compact (pk INTEGER PRIMARY KEY, v BIGINT)
+
+statement ok
+CREATE INDEX dc_compact_idx ON dc_compact USING inverted(pk)
+  INCLUDE (v included (approx_distinct = true))
+
+# Three segments with overlapping values; union NDV = 7 ({1..7}).
+statement ok
+INSERT INTO dc_compact VALUES (1, 1), (2, 2), (3, 3)
+
+statement ok
+VACUUM (REFRESH_TABLE) dc_compact
+
+statement ok
+INSERT INTO dc_compact VALUES (4, 3), (5, 4), (6, 5)
+
+statement ok
+VACUUM (REFRESH_TABLE) dc_compact
+
+statement ok
+INSERT INTO dc_compact VALUES (7, 5), (8, 6), (9, 7)
+
+statement ok
+VACUUM (REFRESH_TABLE) dc_compact
+
+query
+SELECT (stats(v)).approx_unique::BIGINT AS ndv FROM dc_compact_idx LIMIT 1;
+----
+ndv
+7
+
+# Compacting clean segments takes the reuse path; NDV is unchanged.
+statement ok
+VACUUM (COMPACT_TABLE) dc_compact
+
+query
+SELECT (stats(v)).approx_unique::BIGINT AS ndv FROM dc_compact_idx LIMIT 1;
+----
+ndv
+7
+
+# Delete two whole values, add a new one in a fresh segment, then compact.
+# The masked source forces a rebuild from survivors: {1,2,3,4,5,8} = 6.
+statement ok
+DELETE FROM dc_compact WHERE v IN (6, 7)
+
+statement ok
+INSERT INTO dc_compact VALUES (10, 8)
+
+statement ok
+VACUUM (COMPACT_TABLE) dc_compact
+
+query
+SELECT (stats(v)).approx_unique::BIGINT AS ndv FROM dc_compact_idx LIMIT 1;
+----
+ndv
+6
+
+statement ok
+DROP INDEX dc_compact_idx
+
+statement ok
+DROP TABLE dc_compact
+
 # Cleanup
 statement ok
 DROP INDEX dc_t_idx

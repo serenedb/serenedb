@@ -20,8 +20,8 @@
 
 #include "connector/duckdb_physical_search_truncate.h"
 
-#include <duckdb/common/types/data_chunk.hpp>
 #include <cstdint>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <memory>
 
 #include "basics/assert.h"

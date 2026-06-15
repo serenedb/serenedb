@@ -63,4 +63,4 @@ CREATE VIEW view1(a) AS SELECT 42;
 # DOCS_TEST_BODY
 
 statement ok
-SELECT sql FROM duckdb_views() WHERE view_name = 'view1';
+SELECT definition FROM pg_views WHERE viewname = 'view1';

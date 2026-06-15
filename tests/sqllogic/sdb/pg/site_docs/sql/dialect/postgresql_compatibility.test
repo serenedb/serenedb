@@ -89,8 +89,12 @@ SET preserve_identifier_case = false;
 statement ok
 CREATE TABLE MyTaBLe (x INTEGER);
 
-query error db error: ERROR: Table with name MyTaBLe does not exist!
+query error
 SELECT * FROM "MyTaBLe";
+----
+db error: ERROR: Table with name MyTaBLe does not exist!
+Did you mean "mytable"?
+
 
 # DOCS_TEST: example_006
 
@@ -99,8 +103,12 @@ SELECT * FROM "MyTaBLe";
 statement ok
 CREATE TABLE "PreservedCase" (x INTEGER);
 
-query error db error: ERROR: Table with name preservedcase does not exist!
+query error
 SELECT * FROM PreservedCase;
+----
+db error: ERROR: Table with name preservedcase does not exist!
+Did you mean "PreservedCase"?
+
 
 # DOCS_TEST: example_008
 
@@ -148,10 +156,10 @@ t
 # DOCS_TEST_BODY
 
 query
-SELECT ARRAY[''''];
+SELECT (['a''b'])::VARCHAR AS escaped;
 ----
-array
-{'}
+escaped
+['a\\'b']
 
 # DOCS_TEST: example_011
 
@@ -175,3 +183,23 @@ DESCRIBE myschema.mytable;
 ----
 column_name	column_type	null	key	default	extra
 v	mytype	YES	NULL	NULL	NULL
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query
+SELECT regexp_extract('abc', 'x') AS result, regexp_extract('abc', 'x') IS NULL AS is_null;
+----
+result	is_null
+(empty)	f
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query error
+SELECT to_date('2024-01-01', 'YYYY-MM-DD');
+----
+db error: ERROR: Scalar Function with name to_date does not exist!
+Did you mean "to_days"?

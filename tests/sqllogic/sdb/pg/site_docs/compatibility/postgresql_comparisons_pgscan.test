@@ -3,12 +3,11 @@ control substitution on
 # Doc examples for the "Behavioral Differences from PostgreSQL" section of the
 # compatibility/core-sql-compatibility page. The `_pgscan` suffix tells
 # tests/sqllogic/run.sh to bring up a real postgres backend at ${PGHOST}:${PGPORT}.
-# Each expression is checked on BOTH engines in one result set: the PostgreSQL
-# column runs it on the attached postgres via postgres_query(); the SereneDB
-# column evaluates it locally. COALESCE(TRY(...), 'error') turns a local
-# evaluation error into the literal 'error'. The three casts that PostgreSQL
-# itself rejects are written as a literal 'error' (postgres_query would abort the
-# whole statement, and TRY cannot wrap a scalar subquery).
+# Comparisons run each expression on BOTH engines: the PostgreSQL side via
+# postgres_query() on the attached postgres, the SereneDB side locally
+# (COALESCE(TRY(...), 'error') turns a local evaluation error into 'error').
+# The PostgreSQL-side errors are asserted live via `query error`, so the doc's
+# claims about PostgreSQL's behavior are verified rather than hand-written.
 
 # DOCS_TEST: example_001
 
@@ -45,6 +44,82 @@ Expression	PostgreSQL	SereneDB
 true = 'true'	true	true
 true = 1	error	true
 'true' = 1	error	error
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| -- PostgreSQL's array-to-text leaves the quote unescaped (compare with SereneDB's escaped list cast)
+#| SELECT r AS "PostgreSQL" FROM postgres_query('pg', 'SELECT (ARRAY[''a''''b''])::text r');
+
+# DOCS_TEST_BODY
+
+query
+SELECT r AS "PostgreSQL" FROM postgres_query('pg_${__DATABASE__}', 'SELECT (ARRAY[''a''''b''])::text AS r');
+----
+PostgreSQL
+{a'b}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_RAW
+#| -- PostgreSQL errors on division by zero but matches IEEE 754 for infinity operations
+#| SELECT '1.0 / 0.0' AS "Expression", 'error' AS "PostgreSQL", (1.0 / 0.0)::text AS "SereneDB"
+#| UNION ALL SELECT '0.0 / 0.0',  'error',                                                                         (0.0 / 0.0)::text
+#| UNION ALL SELECT '-1.0 / 0.0', 'error',                                                                         (-1.0 / 0.0)::text
+#| UNION ALL SELECT '''Infinity''::FLOAT - ''Infinity''::FLOAT', (SELECT r FROM postgres_query('pg', 'SELECT (''Infinity''::float8 - ''Infinity''::float8)::text r')), ('Infinity'::FLOAT - 'Infinity'::FLOAT)::text
+#| UNION ALL SELECT '1.0 / ''Infinity''::FLOAT',                 (SELECT r FROM postgres_query('pg', 'SELECT (1.0 / ''Infinity''::float8)::text r')),                  (1.0 / 'Infinity'::FLOAT)::text
+#| UNION ALL SELECT '''Infinity''::FLOAT - 1.0',                 (SELECT r FROM postgres_query('pg', 'SELECT (''Infinity''::float8 - 1.0)::text r')),                  ('Infinity'::FLOAT - 1.0)::text;
+
+# DOCS_TEST_BODY
+
+query
+SELECT '1.0 / 0.0' AS "Expression", 'error' AS "PostgreSQL", (1.0 / 0.0)::text AS "SereneDB"
+UNION ALL SELECT '0.0 / 0.0', 'error', (0.0 / 0.0)::text
+UNION ALL SELECT '-1.0 / 0.0', 'error', (-1.0 / 0.0)::text
+UNION ALL SELECT '''Infinity''::FLOAT - ''Infinity''::FLOAT', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (''Infinity''::float8 - ''Infinity''::float8)::text AS r')), ('Infinity'::FLOAT - 'Infinity'::FLOAT)::text
+UNION ALL SELECT '1.0 / ''Infinity''::FLOAT', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (1.0 / ''Infinity''::float8)::text AS r')), (1.0 / 'Infinity'::FLOAT)::text
+UNION ALL SELECT '''Infinity''::FLOAT - 1.0', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (''Infinity''::float8 - 1.0)::text AS r')), ('Infinity'::FLOAT - 1.0)::text;
+----
+Expression	PostgreSQL	SereneDB
+1.0 / 0.0	error	inf
+0.0 / 0.0	error	-nan
+-1.0 / 0.0	error	-inf
+'Infinity'::FLOAT - 'Infinity'::FLOAT	NaN	-nan
+1.0 / 'Infinity'::FLOAT	0	0
+'Infinity'::FLOAT - 1.0	Infinity	inf
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| -- PostgreSQL rejects a UNION of boolean and integer
+#| SELECT * FROM postgres_query('pg', 'SELECT true UNION SELECT 1');
+
+# DOCS_TEST_BODY
+
+query error UNION types boolean and integer cannot be matched
+SELECT * FROM postgres_query('pg_${__DATABASE__}', 'SELECT true UNION SELECT 1');
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_RAW
+#| -- PostgreSQL has no == operator
+#| SELECT * FROM postgres_query('pg', 'SELECT 1 == 1');
+
+# DOCS_TEST_BODY
+
+query error operator does not exist: integer == integer
+SELECT * FROM postgres_query('pg_${__DATABASE__}', 'SELECT 1 == 1');
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_RAW
+#| -- PostgreSQL does not resolve the unqualified type name (SereneDB resolves it in the table's schema)
+#| CALL postgres_execute('pg', 'CREATE TABLE mytable (v mytype)');
+
+# DOCS_TEST_BODY
+
+statement error type "mytype" does not exist
+CALL postgres_execute('pg_${__DATABASE__}', 'CREATE TABLE mytable_${__DATABASE__} (v mytype)');
 
 statement ok
 DETACH pg_${__DATABASE__};

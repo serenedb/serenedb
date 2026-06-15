@@ -869,9 +869,9 @@ bool TryClaimSearchFilter(
 
   irs::Filter::ptr root = std::move(root_and);
   std::unique_ptr<irs::Scorer> scorer;
-  if (!scan.vector_scorer &&
-      bind_data.entry_kind != connector::ScanEntryKind::BaseTable) {
-    scorer = catalog::MakeScorer({});
+  if (!scan.vector_scorer && (scan.text_scorer || scan.EmitOffsets())) {
+    scorer = scan.text_scorer ? catalog::MakeScorer(*scan.text_scorer)
+                              : catalog::MakeScorer({});
   }
   irs::Optimize(root, {.scorer = scorer.get()});
 

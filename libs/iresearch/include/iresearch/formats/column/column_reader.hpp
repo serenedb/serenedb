@@ -372,8 +372,8 @@ class ColumnReader final {
   std::vector<uint64_t> _variant_rg_starts;
   std::vector<duckdb::shared_ptr<duckdb::BlockHandle>> _data_blocks;
   std::vector<duckdb::shared_ptr<duckdb::BlockHandle>> _validity_blocks;
-  mutable std::unique_ptr<std::atomic<bool>[]> _data_advised;
-  mutable std::unique_ptr<std::atomic<bool>[]> _validity_advised;
+  mutable std::vector<std::atomic<bool>> _data_advised;
+  mutable std::vector<std::atomic<bool>> _validity_advised;
 };
 
 std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,

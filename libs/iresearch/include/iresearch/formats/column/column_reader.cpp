@@ -320,9 +320,8 @@ ColumnReader::ColumnReader(
   }
   _data_blocks = WrapMmapPointers(source, _data_pointers);
   _validity_blocks = WrapMmapPointers(source, _validity_pointers);
-  _data_advised = std::make_unique<std::atomic<bool>[]>(_data_blocks.size());
-  _validity_advised =
-    std::make_unique<std::atomic<bool>[]>(_validity_blocks.size());
+  _data_advised = std::vector<std::atomic<bool>>(_data_blocks.size());
+  _validity_advised = std::vector<std::atomic<bool>>(_validity_blocks.size());
 }
 
 ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
@@ -358,8 +357,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
   _row_count = total;
   _data_offsets.push_back(0);
   _validity_blocks = WrapMmapPointers(source, _validity_pointers);
-  _validity_advised =
-    std::make_unique<std::atomic<bool>[]>(_validity_blocks.size());
+  _validity_advised = std::vector<std::atomic<bool>>(_validity_blocks.size());
 }
 
 RgWindow ColumnReader::Locate(uint64_t row_pos, RgWindow hint) const noexcept {

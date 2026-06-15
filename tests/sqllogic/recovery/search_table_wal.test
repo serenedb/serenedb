@@ -525,3 +525,59 @@ a	b
 connection upd_g_after
 statement ok
 DROP TABLE upd_g;
+
+
+###############################################################################
+# 9. TRUNCATE -> the wipe survives recovery replay. The baseline is published;
+#    the TRUNCATE's marker is fsynced into the WAL but crashes before the
+#    iresearch Clear runs, so recovery must re-apply the Clear (dropping the
+#    on-disk baseline) from the bodyless TRUNCATE op.
+###############################################################################
+
+connection upd_g_after
+statement ok
+CREATE TABLE trunc_t (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+connection upd_g_after
+statement ok
+INSERT INTO trunc_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
+
+connection upd_g_after
+statement ok
+VACUUM (REFRESH_TABLE) trunc_t;
+
+connection upd_g_after
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection upd_g_after
+statement error connection closed
+TRUNCATE trunc_t;
+
+# --- restart: recovery replays the TRUNCATE marker -> Clear -> empty table ---
+connection trunc_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) AS n FROM trunc_t;
+----
+n
+0
+
+# Re-insert after the recovered truncate works.
+connection trunc_after
+statement ok
+INSERT INTO trunc_t VALUES (7, 'seven');
+
+connection trunc_after
+statement ok
+VACUUM (REFRESH_TABLE) trunc_t;
+
+connection trunc_after
+query
+SELECT id, b FROM trunc_t ORDER BY id;
+----
+id	b
+7	seven
+
+connection trunc_after
+statement ok
+DROP TABLE trunc_t;

@@ -141,10 +141,55 @@ count
 2
 
 
-statement error
+# TRUNCATE (autocommit) wipes the table via an iresearch Clear. Unlike
+# INSERT/DELETE, the empty state is visible IMMEDIATELY -- no VACUUM needed
+# (Clear resets the writer; new snapshots see the empty index at once).
+statement ok
 TRUNCATE search_dml;
+
+query
+SELECT COUNT(*) FROM search_dml;
 ----
-db error: ERROR: TRUNCATE on a search-backed table is not yet supported
+count
+0
+
+# Re-insert after a truncate works; an insert still needs a refresh to publish.
+statement ok
+INSERT INTO search_dml VALUES (5, 'five'), (6, 'six');
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+query
+SELECT a, b FROM search_dml ORDER BY a;
+----
+a	b
+5	five
+6	six
+
+# TRUNCATE inside a transaction degrades to a per-row DELETE (a writer-level
+# Clear can't coexist with same-txn writes), so it composes with a following
+# INSERT and -- like any delete -- publishes only after VACUUM.
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE search_dml;
+
+statement ok
+INSERT INTO search_dml VALUES (9, 'nine');
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+query
+SELECT a, b FROM search_dml ORDER BY a;
+----
+a	b
+9	nine
 
 
 # All access methods rejected (including USING inverted -- iresearch on

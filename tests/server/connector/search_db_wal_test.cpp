@@ -82,6 +82,8 @@ struct Collected {
     chunks;
   // (tick, table_id, pks) per replayed DELETE op, in order.
   std::vector<std::tuple<uint64_t, uint64_t, std::vector<std::string>>> deletes;
+  // (tick, table_id) per replayed TRUNCATE op, in order.
+  std::vector<std::tuple<uint64_t, uint64_t>> truncates;
 };
 
 SearchDbWal::ReplayCallback MakeCollector(Collected& out) {
@@ -110,6 +112,17 @@ SearchDbWal::DeleteReplayCallback MakeDeleteCollector(Collected& out) {
 // No-op delete sink for the insert-only tests.
 SearchDbWal::DeleteReplayCallback NoDeletes() {
   return [](uint64_t, ObjectId, std::span<const std::string_view>) {};
+}
+
+SearchDbWal::TruncateReplayCallback MakeTruncateCollector(Collected& out) {
+  return [&out](uint64_t tick, ObjectId table_id) {
+    out.truncates.emplace_back(tick, table_id.id());
+  };
+}
+
+// No-op truncate sink for tests that don't exercise TRUNCATE.
+SearchDbWal::TruncateReplayCallback NoTruncates() {
+  return [](uint64_t, ObjectId) {};
 }
 
 // Replay hooks: every shard exists and nothing is durable yet (committed 0).
@@ -172,6 +185,13 @@ class SearchDbWalTest : public ::testing::Test {
     return SearchDbWal::ShardSection{ObjectId{table_id},
                                      std::span<const SearchDbWal::Op>{ops}};
   }
+  // One section with a single (bodyless) TRUNCATE op.
+  SearchDbWal::ShardSection TruncateSection(uint64_t table_id) {
+    auto& ops = _op_pools.emplace_back();
+    ops.push_back(SearchDbWal::Op{nullptr, {}, {}, {}, /*truncate=*/true});
+    return SearchDbWal::ShardSection{ObjectId{table_id},
+                                     std::span<const SearchDbWal::Op>{ops}};
+  }
 
   std::unique_ptr<duckdb::FileSystem> _fs;
   std::filesystem::path _dir;
@@ -189,9 +209,9 @@ TEST_F(SearchDbWalTest, InlineRoundTrip) {
   }
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes()),
-    1u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            1u);
 
   ASSERT_EQ(got.chunks.size(), 1u);
   EXPECT_EQ(std::get<0>(got.chunks[0]), 1u);  // tick
@@ -211,7 +231,7 @@ TEST_F(SearchDbWalTest, DeleteRoundTrip) {
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
   EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
-                         MakeDeleteCollector(got)),
+                         MakeDeleteCollector(got), NoTruncates()),
             1u);
   EXPECT_TRUE(got.chunks.empty());
   ASSERT_EQ(got.deletes.size(), 1u);
@@ -240,7 +260,7 @@ TEST_F(SearchDbWalTest, InsertAndDeleteInOneSection) {
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
   EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
-                         MakeDeleteCollector(got)),
+                         MakeDeleteCollector(got), NoTruncates()),
             1u);
   ASSERT_EQ(got.chunks.size(), 1u);
   EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{10, 20}));
@@ -271,9 +291,9 @@ TEST_F(SearchDbWalTest, ReferenceRoundTrip) {
   }
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes()),
-    1u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            1u);
 
   ASSERT_EQ(got.chunks.size(), 2u);
   EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{1, 2}));
@@ -297,9 +317,9 @@ TEST_F(SearchDbWalTest, ReferenceRoundTripCompressed) {
   }
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes()),
-    1u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            1u);
   ASSERT_EQ(got.chunks.size(), 1u);
   EXPECT_EQ(std::get<2>(got.chunks[0]), vals);
 }
@@ -320,9 +340,9 @@ TEST_F(SearchDbWalTest, MultiShardOneRecordIsAtomic) {
 
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes()),
-    1u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            1u);
   ASSERT_EQ(got.chunks.size(), 2u);
   EXPECT_EQ(std::get<1>(got.chunks[0]), 100u);
   EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{10}));
@@ -347,9 +367,9 @@ TEST_F(SearchDbWalTest, RecoverySkipsConsumedPerShard) {
   auto committed_of = [](ObjectId table_id) -> uint64_t {
     return table_id.id() == 100 ? 1 : 0;  // 100 already durable at tick 1
   };
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), committed_of, MakeCollector(got), NoDeletes()),
-    1u);
+  EXPECT_EQ(wal2.Recover(AllExist(), committed_of, MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            1u);
   ASSERT_EQ(got.chunks.size(), 1u);
   EXPECT_EQ(std::get<1>(got.chunks[0]), 200u);
   EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{20}));
@@ -365,9 +385,9 @@ TEST_F(SearchDbWalTest, RecoverySkipsDroppedShard) {
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
   auto none_exist = [](ObjectId) { return false; };  // table dropped
-  EXPECT_EQ(
-    wal2.Recover(none_exist, CommittedAll(0), MakeCollector(got), NoDeletes()),
-    1u);
+  EXPECT_EQ(wal2.Recover(none_exist, CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            1u);
   EXPECT_TRUE(got.chunks.empty());
 }
 
@@ -389,9 +409,9 @@ TEST_F(SearchDbWalTest, TornTailIgnored) {
   }
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes()),
-    2u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            2u);
   ASSERT_EQ(got.chunks.size(), 2u);
   EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{10}));
   EXPECT_EQ(std::get<2>(got.chunks[1]), (std::vector<int32_t>{20}));
@@ -413,9 +433,9 @@ TEST_F(SearchDbWalTest, TickAndSegIdContinueOnReopen) {
   }
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes()),
-    1u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            1u);
   // tick and per-table seg_id both continue past the recovered max.
   auto cdc = MakeIntCdc(Alloc(), {6});
   auto sec = InlineSection(2, *cdc);
@@ -450,9 +470,9 @@ TEST_F(SearchDbWalTest, TickSpanReservesBand) {
   }
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes()),
-    4u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            4u);
   ASSERT_EQ(got.chunks.size(), 2u);
   EXPECT_EQ(std::get<0>(got.chunks[0]), 3u);  // first record's band-top tick
   EXPECT_EQ(std::get<0>(got.chunks[1]), 4u);
@@ -470,9 +490,9 @@ TEST_F(SearchDbWalTest, OrphanChunkSweptOnRecover) {
   EXPECT_TRUE(std::filesystem::exists(ChunkPath(2, 1)));
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes()),
-    0u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            0u);
   EXPECT_TRUE(got.chunks.empty());
   EXPECT_FALSE(std::filesystem::exists(ChunkPath(2, 1)));
 }
@@ -693,7 +713,7 @@ TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
     Collected got;
     SearchDbWal wal2(Fs(), _dir);
     EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
-                           NoDeletes()),
+                           NoDeletes(), NoTruncates()),
               1u);
     ASSERT_EQ(got.chunks.size(), 1u);
     EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{7, 8, 9}));
@@ -718,7 +738,7 @@ TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
     Collected got;
     SearchDbWal wal2(Fs(), _dir);
     EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
-                           NoDeletes()),
+                           NoDeletes(), NoTruncates()),
               1u);
     ASSERT_EQ(got.chunks.size(), 1u);
     EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{3, 4}));
@@ -760,7 +780,8 @@ TEST_F(SearchDbWalTest, InlinePkBaseAlignedToAppendsNotChunks) {
   Collected got;
   {
     SearchDbWal wal2(Fs(), _dir);
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes());
+    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes(),
+                 NoTruncates());
   }
   // Each append's rows must come back tagged with its own base (pk = base +
   // row).
@@ -792,9 +813,9 @@ TEST_F(SearchDbWalTest, MultipleInlineOpsOneSection) {
   }
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes()),
-    1u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            1u);
   ASSERT_EQ(got.chunks.size(), 2u);
   EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{10, 11}));
   EXPECT_EQ(std::get<3>(got.chunks[0]), 1000u);
@@ -829,9 +850,9 @@ TEST_F(SearchDbWalTest, MixedInlineAndReferenceOps) {
   }
   Collected got;
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(
-    wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got), NoDeletes()),
-    1u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates()),
+            1u);
   ASSERT_EQ(got.chunks.size(), 2u);
   // INLINE op first (manifest order), then the REFERENCE op's chunk.
   EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{10, 11}));
@@ -879,10 +900,32 @@ TEST_F(SearchDbWalTest, InterleavedInsertDeleteReplayInManifestOrder) {
     order.push_back(absl::StrFormat("D%s", pks.front()));
   };
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), insert_cb, delete_cb),
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), insert_cb, delete_cb,
+                         NoTruncates()),
             1u);
 
   EXPECT_EQ(order, (std::vector<std::string>{"I10", "Dd1", "I20", "Dd2"}));
+}
+
+// A TRUNCATE op round-trips as a bodyless marker: replay fires only the
+// truncate callback (no insert/delete) with the record tick + table id. The
+// replayer turns that into an iresearch Clear.
+TEST_F(SearchDbWalTest, TruncateRoundTrip) {
+  {
+    SearchDbWal wal(Fs(), _dir);
+    auto sec = TruncateSection(/*table=*/5);
+    EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1), 1u);
+  }
+  Collected got;
+  SearchDbWal wal2(Fs(), _dir);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         MakeDeleteCollector(got), MakeTruncateCollector(got)),
+            1u);
+  EXPECT_TRUE(got.chunks.empty());
+  EXPECT_TRUE(got.deletes.empty());
+  ASSERT_EQ(got.truncates.size(), 1u);
+  EXPECT_EQ(std::get<0>(got.truncates[0]), 1u);  // tick
+  EXPECT_EQ(std::get<1>(got.truncates[0]), 5u);  // table_id
 }
 
 }  // namespace

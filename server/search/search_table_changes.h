@@ -29,29 +29,24 @@
 #include <string>
 #include <vector>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "search/search_db_wal.h"
 
 namespace sdb::search {
 
-// Per-search-table, per-transaction ordered op manifest. Statement order is
-// preserved so recovery reproduces the live single-trx `_queries` ordering
-// between inserts and deletes (delete-then-reinsert, interleaved INSERT/DELETE,
-// ...). Consecutive inserts -- inline OR bulk -- accumulate into one insert
-// run; only a DELETE seals the run, so the next insert starts a fresh one.
+// Per-search-table, per-transaction ordered op manifest.
 struct LocalTableChangesEntry {
-  // One op in the manifest. A DELETE op has `delete_pks`; otherwise it is an
-  // insert run carrying inline rows (`collection` + per-chunk generated-PK
-  // bases) and/or bulk chunk-file refs (`seg_ids`) -- inline and bulk inserts
-  // share one run since neither seals it.
   struct Op {
     std::unique_ptr<duckdb::ColumnDataCollection> collection;
     std::unique_ptr<std::vector<SearchDbWal::InlinePk>> pk_segments;
     std::vector<uint64_t> seg_ids;
     std::vector<std::string> delete_pks;
+    bool truncate = false;
 
     bool IsDelete() const noexcept { return !delete_pks.empty(); }
+    bool IsTruncate() const noexcept { return truncate; }
   };
 
   std::vector<Op> ops;
@@ -96,10 +91,26 @@ struct LocalTableChangesEntry {
     ops.emplace_back().delete_pks.assign(pks.begin(), pks.end());
   }
 
+  // Append a TRUNCATE op (wipe the shard). Autocommit-only, so it is the sole
+  // op in the transaction; it still seals any current run defensively.
+  void AppendTruncate() { ops.emplace_back().truncate = true; }
+
+  // A TRUNCATE is always the sole op (autocommit-only), so the first op decides
+  // it; assert that invariant.
+  bool HasTruncate() const noexcept {
+    if (ops.empty() || !ops.front().IsTruncate()) {
+      return false;
+    }
+    SDB_ASSERT(ops.size() == 1,
+               "TRUNCATE must be the only op in its transaction");
+    return true;
+  }
+
  private:
-  // The insert run to append to: reuse the last op unless it's a DELETE.
+  // The insert run to append to: reuse the last op unless it's a DELETE or
+  // TRUNCATE (both seal the run).
   Op& CurrentInsertRun() {
-    if (ops.empty() || ops.back().IsDelete()) {
+    if (ops.empty() || ops.back().IsDelete() || ops.back().IsTruncate()) {
       ops.emplace_back();
     }
     return ops.back();

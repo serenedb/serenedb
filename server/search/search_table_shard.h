@@ -64,6 +64,14 @@ class SearchTableShard final : public TableShard {
     _wal->OnShardCommit(GetTableId(), _last_committed_tick);
   }
 
+  void Clear(uint64_t tick) {
+    SDB_ASSERT(_writer);
+    _writer->Clear(tick);
+    if (tick > _last_committed_tick) {
+      _last_committed_tick = tick;
+    }
+  }
+
   SearchDbWal& Wal() noexcept {
     SDB_ASSERT(_wal);
     return *_wal;

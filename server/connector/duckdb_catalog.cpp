@@ -66,6 +66,7 @@
 #include "connector/duckdb_physical_insert.h"
 #include "connector/duckdb_physical_search_delete.h"
 #include "connector/duckdb_physical_search_insert.h"
+#include "connector/duckdb_physical_search_truncate.h"
 #include "connector/duckdb_physical_search_update.h"
 #include "connector/duckdb_physical_sst_insert.h"
 #include "connector/duckdb_physical_truncate.h"
@@ -743,6 +744,14 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   auto sdb_table = table_entry.GetSereneDBTable();
 
   if (op.is_truncate && context.transaction.IsAutoCommit()) {
+    auto shard =
+      GetSereneDBContext(context).EnsureCatalogSnapshot()->GetTableShard(
+        sdb_table->GetId());
+    SDB_ASSERT(shard);
+    if (shard->GetStorage() == catalog::StorageKind::kSearch) {
+      return planner.Make<SereneDBSearchTruncate>(std::move(sdb_table),
+                                                  op.estimated_cardinality);
+    }
     return planner.Make<SereneDBPhysicalTruncate>(std::move(sdb_table),
                                                   op.estimated_cardinality);
   }

@@ -104,6 +104,15 @@ void SearchTableTransaction::AddSearchDeletes(
   _changes[shard->GetTableId()].AppendDeletes(pks);
 }
 
+void SearchTableTransaction::AddSearchTruncate(
+  const std::shared_ptr<TableShard>& shard) {
+  auto& w = _writes[shard->GetTableId()];
+  if (!w.shard) {
+    w.shard = shard;
+  }
+  _changes[shard->GetTableId()].AppendTruncate();
+}
+
 void SearchTableTransaction::RegisterFlush() noexcept {
   for (auto& [table_id, w] : _writes) {
     for (auto& trx : w.transactions) {
@@ -142,6 +151,13 @@ void SearchTableTransaction::Commit() {
       trx.Commit(tick);
       tick -= trx.GetQueries() + 1;
     }
+    // TRUNCATE: wipe the shard after the WAL fsync (the cleared state publishes
+    // at the next RefreshCommit, like inserts). Solitary, so no trx above it;
+    // Clear at the record tick (band top) so the published tick reaches it.
+    auto cit = _changes.find(table_id);
+    if (cit != _changes.end() && cit->second.HasTruncate()) {
+      basics::downCast<SearchTableShard>(*w.shard).Clear(record_tick);
+    }
   }
 }
 
@@ -158,16 +174,26 @@ uint64_t SearchTableTransaction::AppendCommit() {
   for (auto& [table_id, w] : _writes) {
     SDB_ASSERT(wal == &basics::downCast<SearchTableShard>(*w.shard).Wal(),
                "all search shards in a txn must share one database WAL");
-    tick_span = std::max(tick_span, ShardTickSpan(w));
-    auto& ops = op_lists.emplace_back();
-    // Walk the table's ordered manifest in statement order. An insert run emits
-    // an INLINE op (if it buffered rows) and/or a REFERENCE op (its bulk chunk
-    // files); a delete run emits a DELETE op. Recovery replays this exact order
-    // into one trx, reproducing the live single-trx `_queries` ordering.
     auto cit = _changes.find(table_id);
     SDB_ASSERT(cit != _changes.end(),
                "search shard with a trx but no manifest ops");
+    // A TRUNCATE adds no trx but needs one tick for its Clear at the band top.
+    // HasTruncate() also asserts it is the manifest's sole op.
+    uint64_t shard_span =
+      ShardTickSpan(w) + (cit->second.HasTruncate() ? 1 : 0);
+    tick_span = std::max(tick_span, shard_span);
+    auto& ops = op_lists.emplace_back();
+    // Walk the table's ordered manifest in statement order. An insert run emits
+    // an INLINE op (if it buffered rows) and/or a REFERENCE op (its bulk chunk
+    // files); a delete run emits a DELETE op; a TRUNCATE emits a bodyless
+    // TRUNCATE op (and, being solitary, ends the walk). Recovery replays this
+    // exact order into one trx, reproducing the live single-trx `_queries`
+    // ordering.
     for (const auto& op : cit->second.ops) {
+      if (op.IsTruncate()) {
+        ops.push_back(SearchDbWal::Op{nullptr, {}, {}, {}, /*truncate=*/true});
+        break;
+      }
       if (op.IsDelete()) {
         ops.push_back(SearchDbWal::Op{
           nullptr, {}, {}, std::span<const std::string>{op.delete_pks}});

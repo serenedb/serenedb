@@ -53,6 +53,7 @@ namespace {
 constexpr uint8_t kKindInline = 0;
 constexpr uint8_t kKindReference = 1;
 constexpr uint8_t kKindDelete = 2;
+constexpr uint8_t kKindTruncate = 3;
 
 constexpr uint8_t kChunkCodecNone = 0;
 constexpr uint8_t kChunkCodecZstd = 1;
@@ -417,10 +418,12 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
     payload.Write<uint32_t>(static_cast<uint32_t>(s.ops.size()));
     for (const auto& op : s.ops) {
       SDB_ASSERT((op.inline_data != nullptr) + (!op.seg_ids.empty()) +
-                     (!op.delete_pks.empty()) ==
+                     (!op.delete_pks.empty()) + op.truncate ==
                    1,
-                 "op must be exactly one of INLINE / REFERENCE / DELETE");
-      const uint8_t kind = op.inline_data        ? kKindInline
+                 "op must be exactly one of INLINE / REFERENCE / DELETE / "
+                 "TRUNCATE");
+      const uint8_t kind = op.truncate           ? kKindTruncate
+                           : op.inline_data      ? kKindInline
                            : !op.seg_ids.empty() ? kKindReference
                                                  : kKindDelete;
       payload.Write<uint8_t>(kind);
@@ -453,7 +456,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
             _active_chunk_bytes += sz;
           }
         }
-      } else {  // kKindDelete
+      } else if (kind == kKindDelete) {
         payload.Write<uint32_t>(static_cast<uint32_t>(op.delete_pks.size()));
         for (const auto& pk : op.delete_pks) {
           payload.Write<uint32_t>(static_cast<uint32_t>(pk.size()));
@@ -574,14 +577,20 @@ void SearchDbWal::RunGc() {
             auto kind = c.Read<uint8_t>();
             if (kind == kKindInline) {
               auto seg_count = c.Read<uint32_t>();
-              c.ReadBlob(seg_count * 2 * sizeof(uint64_t));  // (base, count) x
+              c.ReadBlob(seg_count * 2 * sizeof(uint64_t));
               auto inline_len = c.Read<uint64_t>();
               c.ReadBlob(inline_len);
-            } else {
+            } else if (kind == kKindReference) {
               auto seg_count = c.Read<uint32_t>();
               for (uint32_t k = 0; k < seg_count; ++k) {
                 uint64_t sid = c.Read<uint64_t>();
                 chunk_paths.push_back(ChunkDir(h.table_id) / ChunkName(sid));
+              }
+            } else if (kind == kKindDelete) {
+              auto pk_count = c.Read<uint32_t>();
+              for (uint32_t i = 0; i < pk_count; ++i) {
+                auto len = c.Read<uint32_t>();
+                c.ReadBlob(len);
               }
             }
           }
@@ -603,7 +612,8 @@ void SearchDbWal::RunGc() {
 uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
                               const ShardCommittedFn& committed_of,
                               const ReplayCallback& insert_cb,
-                              const DeleteReplayCallback& delete_cb) {
+                              const DeleteReplayCallback& delete_cb,
+                              const TruncateReplayCallback& truncate_cb) {
   std::lock_guard<std::mutex> lock(_append_mu);
   uint64_t max_tick = 0;
   std::unordered_set<std::string> referenced;  // surviving chunk-file paths
@@ -668,8 +678,8 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
                                 insert_cb(tick, tid, pk_base, chunk);
                               });
             }
-          } else {  // kKindDelete: consume the PK list either way; collect and
-                    // replay only if live
+          } else if (kind == kKindDelete) {
+            // Consume the PK list either way; collect and replay only if live.
             auto pk_count = c.Read<uint32_t>();
             delete_pks.clear();
             if (live) {
@@ -685,6 +695,10 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
             }
             if (live) {
               delete_cb(tick, tid, delete_pks);
+            }
+          } else {  // kKindTruncate: no body; wipe the shard if live
+            if (live) {
+              truncate_cb(tick, tid);
             }
           }
         }

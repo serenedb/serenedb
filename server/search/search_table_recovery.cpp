@@ -126,9 +126,12 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     auto ensure_ctx = [&](ObjectId table_id) -> ReplayCtx& {
       auto [cit, inserted] = ctxs.try_emplace(table_id);
       auto& ctx = cit->second;
+      auto& info = shards.at(table_id);
       if (inserted) {
-        auto& info = shards.at(table_id);
         ctx.trx = info.search->GetTransaction();
+      }
+
+      if (!ctx.insert_sink) {
         ctx.insert_sink =
           connector::MakeSearchTableInsertSink(ctx.trx, info.column_ids);
         ctx.delete_sink =
@@ -160,7 +163,23 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       ctx.delete_sink->FinishImpl();
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-    wal.Recover(exists_of, committed_of, replay, replay_delete);
+    // TRUNCATE wipes the shard as of `tick`. Clear rolls back the open trx
+    // (discarding any pre-truncate replayed inserts -- superseded by the
+    // truncate) and drops on-disk published data <= tick; drop the sinks first
+    // so nothing pins the trx, then start a fresh trx. Post-truncate ops (in
+    // later records) lazily rebuild the sinks via ensure_ctx; if the truncate
+    // is last, Finalize commits the empty trx so the cleared state publishes.
+    auto replay_truncate = [&](uint64_t tick, ObjectId table_id) {
+      auto& info = shards.at(table_id);
+      auto& ctx = ensure_ctx(table_id);
+      ctx.insert_sink.reset();
+      ctx.delete_sink.reset();
+      info.search->Clear(tick);
+      ctx.trx = info.search->GetTransaction();
+      ctx.max_tick = std::max(ctx.max_tick, tick);
+    };
+    wal.Recover(exists_of, committed_of, replay, replay_delete,
+                replay_truncate);
 
     // Finalize each replayed shard outside Recover() so Commit()'s locking + GC
     // are safe.

@@ -93,6 +93,8 @@ class SearchTableTransaction {
   void AddSearchDeletes(const std::shared_ptr<TableShard>& shard,
                         std::span<const std::string> pks);
 
+  void AddSearchTruncate(const std::shared_ptr<TableShard>& shard);
+
   template<typename Factory>
   std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
     ObjectId shard_id, Factory&& make_reader) {

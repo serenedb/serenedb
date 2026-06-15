@@ -53,6 +53,7 @@ add_library(
     duckdb_vacuum_function.cpp
     duckdb_truncate_function.cpp
     duckdb_physical_truncate.cpp
+    duckdb_physical_search_truncate.cpp
     duckdb_physical_delete.cpp
     duckdb_physical_search_delete.cpp
     duckdb_physical_update.cpp

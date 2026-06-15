@@ -27,6 +27,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/bm25.hpp"
+#include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
@@ -1049,6 +1050,100 @@ TEST_P(ByEditDistanceTestCase, visit) {
     }
 
     visitor.reset();
+  }
+}
+
+static void AppendPrefix(irs::And& root, std::string_view field,
+                         std::string_view term) {
+  auto& prefix = root.add<irs::ByPrefix>();
+  *prefix.mutable_field_id() = FieldIdFor(field);
+  prefix.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+}
+
+TEST(by_edit_distance_test, fuse_prefix_into_levenshtein) {
+  {
+    irs::And root;
+    AppendPrefix(root, "title", "aa");
+    root.add<irs::ByEditDistance>(MakeFilter("title", "aaaa", 2, 0));
+    auto optimized = tests::Optimized(std::move(root));
+    ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+              optimized->type());
+    ASSERT_EQ(*optimized, *MakeLevenshtein("title", "aa", 2, 0, false, "aa"));
+  }
+  {
+    irs::And root;
+    AppendPrefix(root, "title", "aaa");
+    root.add<irs::ByEditDistance>(MakeFilter("title", "ab", 1, 0, false, "aa"));
+    auto optimized = tests::Optimized(std::move(root));
+    ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+              optimized->type());
+    ASSERT_EQ(*optimized, *MakeLevenshtein("title", "b", 1, 0, false, "aaa"));
+  }
+  {
+    irs::And root;
+    AppendPrefix(root, "title", "aa");
+    root.add<irs::ByEditDistance>(MakeFilter("title", "b", 1, 0, false, "aaa"));
+    auto optimized = tests::Optimized(std::move(root));
+    ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+              optimized->type());
+    ASSERT_EQ(*optimized, *MakeLevenshtein("title", "b", 1, 0, false, "aaa"));
+  }
+}
+
+TEST(by_edit_distance_test, fuse_prefix_multiple) {
+  irs::And root;
+  AppendPrefix(root, "title", "aa");
+  root.add<irs::ByEditDistance>(MakeFilter("title", "aaaa", 2, 0));
+  root.add<irs::ByEditDistance>(MakeFilter("title", "aab", 1, 0));
+  auto optimized = tests::Optimized(std::move(root));
+  ASSERT_EQ(irs::Type<irs::And>::id(), optimized->type());
+  auto& node = sdb::basics::downCast<irs::And>(*optimized);
+  ASSERT_EQ(2, node.size());
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), node[0].type());
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), node[1].type());
+}
+
+TEST(by_edit_distance_test, fuse_prefix_non_matching) {
+  irs::And root;
+  AppendPrefix(root, "title", "zz");
+  root.add<irs::ByEditDistance>(MakeFilter("title", "aaaa", 2, 0));
+  auto optimized = tests::Optimized(std::move(root));
+  ASSERT_EQ(irs::Type<irs::And>::id(), optimized->type());
+  auto& node = sdb::basics::downCast<irs::And>(*optimized);
+  ASSERT_EQ(2, node.size());
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), node[0].type());
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), node[1].type());
+}
+
+TEST(by_edit_distance_test, fuse_prefix_different_field) {
+  irs::And root;
+  AppendPrefix(root, "title", "aa");
+  root.add<irs::ByEditDistance>(MakeFilter("body", "aaaa", 2, 0));
+  auto optimized = tests::Optimized(std::move(root));
+  ASSERT_EQ(irs::Type<irs::And>::id(), optimized->type());
+  ASSERT_EQ(2, sdb::basics::downCast<irs::And>(*optimized).size());
+}
+
+TEST_P(ByEditDistanceTestCase, fuse_prefix) {
+  {
+    tests::JsonDocGenerator gen(resource("levenshtein_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader(irs::tests::DefaultReaderOptions());
+
+  {
+    irs::And root;
+    AppendPrefix(root, "title", "aa");
+    root.add<irs::ByEditDistance>(MakeFilter("title", "aaaa", 2, 1024));
+    CheckQuery(*tests::Optimized(std::move(root)),
+               Docs{5, 7, 13, 16, 19, 27, 32}, rdr);
+  }
+  {
+    irs::And root;
+    AppendPrefix(root, "title", "aaa");
+    root.add<irs::ByEditDistance>(MakeFilter("title", "aaaw", 0, 1024));
+    CheckQuery(*tests::Optimized(std::move(root)), Docs{32}, rdr);
   }
 }
 

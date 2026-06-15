@@ -18,28 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "mixed_boolean_filter.hpp"
+#pragma once
 
-#include "iresearch/search/boolean_query.hpp"
+namespace irs::optimizer {
 
-namespace irs {
+void InitLevenshteinPrefixRules();
 
-Filter::Query::ptr MixedBooleanFilter::prepare(
-  const PrepareContext& ctx) const {
-  SDB_ASSERT(!HasNoClauses(*RequiredSlot()));
-  SDB_ASSERT(!HasNoClauses(*OptionalSlot()));
-  auto q = memory::make_tracked<BoostQuery>(ctx.memory);
-  q->Prepare(ctx, *RequiredSlot(), *OptionalSlot());
-  return q;
-}
-
-bool MixedBooleanFilter::equals(const Filter& rhs) const noexcept {
-  if (!Filter::equals(rhs)) {
-    return false;
-  }
-  const auto& typed_rhs = sdb::basics::downCast<MixedBooleanFilter>(rhs);
-  return *RequiredSlot() == *typed_rhs.RequiredSlot() &&
-         *OptionalSlot() == *typed_rhs.OptionalSlot();
-}
-
-}  // namespace irs
+}  // namespace irs::optimizer

@@ -25,6 +25,7 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/optimizer/boolean_rules.hpp"
+#include "iresearch/search/optimizer/levenshtein_prefix_rules.hpp"
 #include "iresearch/search/optimizer/lowering_rules.hpp"
 #include "iresearch/search/optimizer/negation_rules.hpp"
 #include "iresearch/search/optimizer/range_rules.hpp"
@@ -33,15 +34,22 @@
 namespace irs {
 namespace {
 
-auto& RuleRegistry() {
-  static sdb::containers::FlatHashMap<TypeInfo::type_id, std::vector<RuleDesc>>
-    gRules;
+using Registry =
+  sdb::containers::FlatHashMap<TypeInfo::type_id, std::vector<RuleDesc>>;
+
+Registry& OptimizationRules() {
+  static Registry gRules;
   return gRules;
 }
 
-void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
+Registry& LoweringRules() {
+  static Registry gRules;
+  return gRules;
+}
+
+void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
+              const Registry& rules) {
   bool changed = true;
-  const auto& rules = RuleRegistry();
   while (changed) {
     changed = false;
     const auto it = rules.find(slot->type());
@@ -58,27 +66,8 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
 }
 
-}  // namespace
-
-void RegisterRule(RuleDesc rule) {
-  for (const auto tid : rule.targets) {
-    RuleRegistry()[tid].push_back(rule);
-  }
-}
-
-void InitOptimizeRules() {
-  SDB_ASSERT(RuleRegistry().empty());
-  optimizer::InitBooleanRules();
-  optimizer::InitNegationRules();
-  optimizer::InitTermsRules();
-  optimizer::InitRangeRules();
-  optimizer::InitLoweringRules();
-}
-
-void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
-  if (!root) {
-    return;
-  }
+void RunPass(Filter::ptr& root, const OptimizeContext& ctx,
+             const Registry& rules) {
   struct Frame {
     Filter::ptr* slot;
     bool children_visited;
@@ -89,7 +78,7 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
   while (!stack.empty()) {
     auto& frame = stack.back();
     if (frame.children_visited) {
-      RunRules(*frame.slot, ctx);
+      RunRules(*frame.slot, ctx, rules);
       stack.pop_back();
       continue;
     }
@@ -100,6 +89,34 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
       }
     }
   }
+}
+
+}  // namespace
+
+void RegisterRule(RuleDesc rule) {
+  auto& registry =
+    rule.kind == RuleKind::Lowering ? LoweringRules() : OptimizationRules();
+  for (const auto tid : rule.targets) {
+    registry[tid].push_back(rule);
+  }
+}
+
+void InitOptimizeRules() {
+  SDB_ASSERT(OptimizationRules().empty() && LoweringRules().empty());
+  optimizer::InitBooleanRules();
+  optimizer::InitNegationRules();
+  optimizer::InitTermsRules();
+  optimizer::InitRangeRules();
+  optimizer::InitLevenshteinPrefixRules();
+  optimizer::InitLoweringRules();
+}
+
+void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
+  if (!root) {
+    return;
+  }
+  RunPass(root, ctx, OptimizationRules());
+  RunPass(root, ctx, LoweringRules());
 }
 
 }  // namespace irs

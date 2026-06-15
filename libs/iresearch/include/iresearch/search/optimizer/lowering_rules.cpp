@@ -121,6 +121,14 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
                  std::ceil(static_cast<float_t>(terms_count) * threshold)),
                size_t{1}, terms_count);
   if (ctx.scorer == nullptr && min_match == 1) {
+    if (terms_count == 1) {
+      auto by_term = std::make_unique<ByTerm>();
+      *by_term->mutable_field_id() = node.field_id();
+      by_term->mutable_options()->term = ngrams.front();
+      by_term->boost(node.Boost());
+      slot = std::move(by_term);
+      return true;
+    }
     auto by_terms = std::make_unique<ByTerms>();
     *by_terms->mutable_field_id() = node.field_id();
     auto* options = by_terms->mutable_options();
@@ -147,11 +155,11 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
 }
 
 void InitLoweringRules() {
-  RegisterRule<WildcardLowerRule>();
-  RegisterRule<RegexpLowerRule>();
-  RegisterRule<EditDistanceLowerRule>();
-  RegisterRule<PhraseLowerRule>();
-  RegisterRule<NGramSimilarityLowerRule>();
+  RegisterRule<WildcardLowerRule, RuleKind::Lowering>();
+  RegisterRule<RegexpLowerRule, RuleKind::Lowering>();
+  RegisterRule<EditDistanceLowerRule, RuleKind::Lowering>();
+  RegisterRule<PhraseLowerRule, RuleKind::Lowering>();
+  RegisterRule<NGramSimilarityLowerRule, RuleKind::Lowering>();
 }
 
 }  // namespace irs::optimizer

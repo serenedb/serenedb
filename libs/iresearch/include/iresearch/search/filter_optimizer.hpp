@@ -22,6 +22,7 @@
 
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <string_view>
 
@@ -33,10 +34,13 @@ struct OptimizeContext {
   const Scorer* scorer = nullptr;
 };
 
+enum class RuleKind : uint8_t { Optimization, Lowering };
+
 struct RuleDesc {
   std::string_view name;
   std::span<const TypeInfo::type_id> targets;
   bool (*apply)(Filter::ptr& slot, const OptimizeContext& ctx);
+  RuleKind kind = RuleKind::Optimization;
 };
 
 template<typename Rule>
@@ -49,14 +53,21 @@ concept RuleLike = requires {
   } -> std::convertible_to<bool (*)(Filter::ptr&, const OptimizeContext&)>;
 };
 
+template<typename Rule>
+consteval RuleKind RuleKindOf() {
+  if constexpr (requires { Rule::kKind; }) {
+    return Rule::kKind;
+  } else {
+    return RuleKind::Optimization;
+  }
+}
+
 void RegisterRule(RuleDesc rule);
 
-template<RuleLike Rule>
+template<RuleLike Rule, RuleKind Kind = RuleKind::Optimization>
 void RegisterRule() {
-  if constexpr (Rule::kEnable) {
-    auto r = RuleDesc{Rule::kName, Rule::kTargets, &Rule::Apply};
-    RegisterRule(std::move(r));
-  }
+  auto r = RuleDesc{Rule::kName, Rule::kTargets, &Rule::Apply, Kind};
+  RegisterRule(std::move(r));
 }
 
 void InitOptimizeRules();

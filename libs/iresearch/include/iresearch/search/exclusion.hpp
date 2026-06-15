@@ -57,14 +57,27 @@ class ExclusionIterator : public DocIterator {
     if (doc != target) {
       return doc;
     }
-    auto excl = _excl.value();
-    if (excl < doc) {
-      excl = _excl.LazySeek(doc);
+    if constexpr (requires { _excl.begin(); }) {
+      for (auto& it : _excl) {
+        auto excl = it.value();
+        if (excl < doc) {
+          excl = it.LazySeek(doc);
+        }
+        if (excl == doc) {
+          return doc + 1;
+        }
+        SDB_ASSERT(excl > doc);
+      }
+    } else {
+      auto excl = _excl.value();
+      if (excl < doc) {
+        excl = _excl.LazySeek(doc);
+      }
+      if (excl == doc) {
+        return doc + 1;
+      }
+      SDB_ASSERT(excl > doc);
     }
-    if (excl == doc) {
-      return doc + 1;
-    }
-    SDB_ASSERT(excl > doc);
     return _doc = doc;
   }
 
@@ -94,14 +107,27 @@ class ExclusionIterator : public DocIterator {
       return _doc = incl;
     }
 
-    auto excl = _excl.value();
-    if (excl < incl) {
-      excl = _excl.LazySeek(incl);
+    if constexpr (requires { _excl.begin(); }) {
+      for (auto& it : _excl) {
+        auto excl = it.value();
+        if (excl < incl) {
+          excl = it.LazySeek(incl);
+        }
+        if (excl == incl) {
+          return advance();
+        }
+        SDB_ASSERT(excl > incl);
+      }
+    } else {
+      auto excl = _excl.value();
+      if (excl < incl) {
+        excl = _excl.LazySeek(incl);
+      }
+      if (excl == incl) {
+        return advance();
+      }
+      SDB_ASSERT(excl > incl);
     }
-    if (excl == incl) {
-      return advance();
-    }
-    SDB_ASSERT(excl > incl);
 
     return _doc = incl;
   }

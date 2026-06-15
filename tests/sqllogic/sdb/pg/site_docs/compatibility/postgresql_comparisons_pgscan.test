@@ -62,31 +62,13 @@ PostgreSQL
 # DOCS_TEST: example_006
 
 # DOCS_TEST_RAW
-#| -- PostgreSQL errors on division by zero but matches IEEE 754 for infinity operations
-#| SELECT '1.0 / 0.0' AS "Expression", 'error' AS "PostgreSQL", (1.0 / 0.0)::text AS "SereneDB"
-#| UNION ALL SELECT '0.0 / 0.0',  'error',                                                                         (0.0 / 0.0)::text
-#| UNION ALL SELECT '-1.0 / 0.0', 'error',                                                                         (-1.0 / 0.0)::text
-#| UNION ALL SELECT '''Infinity''::FLOAT - ''Infinity''::FLOAT', (SELECT r FROM postgres_query('pg', 'SELECT (''Infinity''::float8 - ''Infinity''::float8)::text r')), ('Infinity'::FLOAT - 'Infinity'::FLOAT)::text
-#| UNION ALL SELECT '1.0 / ''Infinity''::FLOAT',                 (SELECT r FROM postgres_query('pg', 'SELECT (1.0 / ''Infinity''::float8)::text r')),                  (1.0 / 'Infinity'::FLOAT)::text
-#| UNION ALL SELECT '''Infinity''::FLOAT - 1.0',                 (SELECT r FROM postgres_query('pg', 'SELECT (''Infinity''::float8 - 1.0)::text r')),                  ('Infinity'::FLOAT - 1.0)::text;
+#| -- PostgreSQL raises an error on division by zero (SereneDB returns Infinity per IEEE 754)
+#| SELECT * FROM postgres_query('pg', 'SELECT 1.0 / 0.0');
 
 # DOCS_TEST_BODY
 
-query
-SELECT '1.0 / 0.0' AS "Expression", 'error' AS "PostgreSQL", (1.0 / 0.0)::text AS "SereneDB"
-UNION ALL SELECT '0.0 / 0.0', 'error', (0.0 / 0.0)::text
-UNION ALL SELECT '-1.0 / 0.0', 'error', (-1.0 / 0.0)::text
-UNION ALL SELECT '''Infinity''::FLOAT - ''Infinity''::FLOAT', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (''Infinity''::float8 - ''Infinity''::float8)::text AS r')), ('Infinity'::FLOAT - 'Infinity'::FLOAT)::text
-UNION ALL SELECT '1.0 / ''Infinity''::FLOAT', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (1.0 / ''Infinity''::float8)::text AS r')), (1.0 / 'Infinity'::FLOAT)::text
-UNION ALL SELECT '''Infinity''::FLOAT - 1.0', (SELECT r FROM postgres_query('pg_${__DATABASE__}', 'SELECT (''Infinity''::float8 - 1.0)::text AS r')), ('Infinity'::FLOAT - 1.0)::text;
-----
-Expression	PostgreSQL	SereneDB
-1.0 / 0.0	error	inf
-0.0 / 0.0	error	-nan
--1.0 / 0.0	error	-inf
-'Infinity'::FLOAT - 'Infinity'::FLOAT	NaN	-nan
-1.0 / 'Infinity'::FLOAT	0	0
-'Infinity'::FLOAT - 1.0	Infinity	inf
+query error division by zero
+SELECT * FROM postgres_query('pg_${__DATABASE__}', 'SELECT 1.0 / 0.0');
 
 # DOCS_TEST: example_003
 

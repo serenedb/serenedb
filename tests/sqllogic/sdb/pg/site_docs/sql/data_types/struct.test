@@ -45,10 +45,10 @@ s
 # DOCS_TEST_BODY
 
 query
-SELECT {'yes': 'duck', 'maybe': 'goose', 'huh': NULL, 'no': 'heron'} AS s;
+SELECT {'yes': 'alpha', 'maybe': 'beta', 'huh': NULL, 'no': 'gamma'} AS s;
 ----
 s
-(duck,goose,,heron)
+(alpha,beta,,gamma)
 
 # DOCS_TEST: example_006
 

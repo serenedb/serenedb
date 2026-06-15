@@ -33,7 +33,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 
@@ -55,14 +55,8 @@ std::unique_ptr<IndexSource> MakeIndexSource(
     }
     // Re-bind must target the same manifest as CREATE INDEX did.
     if (vbd.inverted_index) {
-      auto cat_snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
-      if (auto shard =
-            cat_snapshot->GetIndexShard(vbd.inverted_index->GetId())) {
-        if (shard->GetType() == catalog::ObjectType::InvertedIndex) {
-          fp->pinned_iceberg_snapshot_id =
-            basics::downCast<const search::InvertedIndexShard>(*shard)
-              .GetIcebergSnapshotId();
-        }
+      if (auto storage = vbd.inverted_index->GetData()) {
+        fp->pinned_iceberg_snapshot_id = storage->GetIcebergSnapshotId();
       }
     }
     if (fp->catalog_ref && fp->pk_spec == catalog::PkSpec::DuckDBRowId) {

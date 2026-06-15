@@ -48,12 +48,14 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include "basics/lifecycle.h"
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
+#include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
+#include "catalog/inverted_index.h"
 #include "catalog/search_common.h"
 #include "catalog/view.h"
 #include "rest_server/database_path_feature.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
 
@@ -120,7 +122,7 @@ SearchEngine::SearchEngine()
 
 SearchEngine::~SearchEngine() { gInstance = nullptr; }
 
-SearchEngine& GetSearchEngine() { return SearchEngine::instance(); }
+SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
 
 void SearchEngine::start() {
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
@@ -175,11 +177,6 @@ bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
 
 std::tuple<size_t, size_t, size_t> SearchEngine::stats(ThreadGroup id) const {
   return _thread_pools->Get(id).stats();
-}
-
-std::pair<size_t, size_t> SearchEngine::limits(ThreadGroup id) const {
-  auto threads = _thread_pools->Get(id).threads();
-  return {threads, threads};
 }
 
 std::filesystem::path SearchEngine::GetPersistedPath(

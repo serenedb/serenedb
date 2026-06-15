@@ -41,9 +41,7 @@
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "general_server/scheduler.h"
-#include "search/inverted_index_shard.h"
-#include "storage_engine/index_shard.h"
-#include "storage_engine/table_shard.h"
+#include "search/inverted_index_storage.h"
 namespace sdb::catalog {
 
 using AsyncResult = yaclib::Future<Result>;
@@ -95,25 +93,6 @@ class DropTask {
   std::weak_ptr<Object> _object;
 };
 
-class TableShardDrop final : public DropTask {
- public:
-  TableShardDrop(ObjectId id, ObjectId parent_id) : DropTask{id, parent_id} {}
-
-  TableShardDrop(const std::shared_ptr<TableShard>& shard, ObjectId parent_id)
-    : DropTask{shard, parent_id} {}
-
-  std::string GetContext() const noexcept final {
-    return absl::Substitute("TableShardDrop(table $0 shard $1)",
-                            _parent_id.id(), _id.id());
-  }
-
-  std::string_view GetName() const noexcept final { return "table shard drop"; }
-
-  AsyncResult Execute() final;
-
-  bool AllowToDropDependencies() const noexcept final { return true; }
-};
-
 struct IndexDrop final : public DropTask {
  public:
   IndexDrop(ObjectId id, ObjectType type, ObjectId db_id, ObjectId schema_id,
@@ -123,23 +102,24 @@ struct IndexDrop final : public DropTask {
       _schema_id{schema_id},
       _type{type} {}
 
-  IndexDrop(const std::shared_ptr<Index>& index,
-            std::shared_ptr<IndexShard> shard, ObjectId db_id,
-            ObjectId schema_id, ObjectId table_id, bool is_root = false)
+  IndexDrop(const std::shared_ptr<Index>& index, ObjectId db_id,
+            ObjectId schema_id, ObjectId table_id,
+            std::weak_ptr<search::InvertedIndexStorage> data,
+            bool is_root = false)
     : DropTask{index, table_id, is_root},
       _db_id{db_id},
       _schema_id{schema_id},
       _type{index->GetType()},
-      _shard{std::move(shard)} {}
+      _data{std::move(data)} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("IndexDrop(schema $0 index $1)", _parent_id.id(),
                             _id.id());
   }
 
-  bool AllowToDropDependencies() const noexcept final {
-    return _shard.expired();
-  }
+  // The store-index DROP is the gate; the inverted index's iresearch storage is
+  // drained inside Execute (weak_ptr wait) before the directory removal.
+  bool AllowToDropDependencies() const noexcept final { return true; }
 
   std::string_view GetName() const noexcept final { return "index drop"; }
 
@@ -152,24 +132,21 @@ struct IndexDrop final : public DropTask {
   ObjectId _db_id;
   ObjectId _schema_id;
   ObjectType _type;
-  std::weak_ptr<IndexShard> _shard;
+  std::weak_ptr<search::InvertedIndexStorage> _data;
 };
 
 struct TableDrop final : public DropTask {
  public:
   static constexpr std::string_view kName = "table drop";
 
-  TableDrop(ObjectId id, ObjectId shard_id,
-            std::vector<std::shared_ptr<IndexDrop>> indexes,
+  TableDrop(ObjectId id, std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             bool is_root = false)
     : DropTask{id, schema_id, is_root},
       _indexes{std::move(indexes)},
-      _owned_sequences{std::move(owned_sequences)},
-      _shard_drop{std::make_shared<TableShardDrop>(shard_id, id)} {}
+      _owned_sequences{std::move(owned_sequences)} {}
 
   TableDrop(const std::shared_ptr<Table>& table,
-            const std::shared_ptr<TableShard>& shard,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             std::string store_name,
@@ -179,8 +156,7 @@ struct TableDrop final : public DropTask {
       _store_name{std::move(store_name)},
       _fk_referenced_store_names{std::move(fk_referenced_store_names)},
       _indexes{std::move(indexes)},
-      _owned_sequences{std::move(owned_sequences)},
-      _shard_drop{std::make_shared<TableShardDrop>(shard, table->GetId())} {}
+      _owned_sequences{std::move(owned_sequences)} {}
 
   // FK linkage entries must go before ANY table drop in the transaction:
   // a live back-reference makes duckdb refuse dropping the main-key table,
@@ -218,12 +194,10 @@ struct TableDrop final : public DropTask {
   Result Finalize();
 
   bool AllowToDropDependencies() const noexcept final {
-    return absl::c_all_of(_indexes,
-                          [](const auto& index) {
-                            SDB_ASSERT(index);
-                            return index->AllowToDrop();
-                          }) &&
-           (!_shard_drop || _shard_drop->AllowToDrop());
+    return absl::c_all_of(_indexes, [](const auto& index) {
+      SDB_ASSERT(index);
+      return index->AllowToDrop();
+    });
   }
 
  private:
@@ -231,7 +205,6 @@ struct TableDrop final : public DropTask {
   std::vector<std::string> _fk_referenced_store_names;
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
   std::vector<ObjectId> _owned_sequences;
-  std::shared_ptr<TableShardDrop> _shard_drop;
 };
 
 struct SchemaDrop final : public DropTask {

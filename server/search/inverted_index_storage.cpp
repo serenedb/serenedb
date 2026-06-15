@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
@@ -84,11 +84,11 @@ bool ReadCommitMeta(irs::bytes_view payload, Tick& tick,
 
 }  // namespace
 
-std::filesystem::path InvertedIndexShard::GetPath(ObjectId db_id,
+std::filesystem::path InvertedIndexStorage::GetPath(ObjectId db_id,
                                                   ObjectId schema_id,
                                                   ObjectId table_id,
                                                   ObjectId index_id,
-                                                  ObjectId shard_id) {
+                                                  ObjectId storage_id) {
   SDB_ASSERT(db_id.isSet());
   auto path = search::GetSearchEngine().GetPersistedPath(db_id);
   if (schema_id.isSet()) {
@@ -102,22 +102,22 @@ std::filesystem::path InvertedIndexShard::GetPath(ObjectId db_id,
     SDB_ASSERT(table_id.isSet());
     path /= absl::StrCat(index_id);
   }
-  if (shard_id.isSet()) {
+  if (storage_id.isSet()) {
     SDB_ASSERT(index_id.isSet());
-    path /= absl::StrCat(shard_id);
+    path /= absl::StrCat(storage_id);
   }
   return path;
 }
 
-std::shared_ptr<InvertedIndexShard> InvertedIndexShard::Create(
+std::shared_ptr<InvertedIndexStorage> InvertedIndexStorage::Create(
   ObjectId id, const catalog::InvertedIndex& index, bool is_new) {
-  return std::make_shared<InvertedIndexShard>(id, index, is_new);
+  return std::make_shared<InvertedIndexStorage>(id, index, is_new);
 }
 
-InvertedIndexShard::InvertedIndexShard(ObjectId id,
+InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
                                        const catalog::InvertedIndex& index,
                                        bool is_new)
-  : IndexShard{id, index.GetId(), catalog::ObjectType::InvertedIndexShard},
+  : _index_id{index.GetId()},
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()} {
   const auto& options = index.GetOptions();
@@ -138,14 +138,15 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {
     SDB_THROW(ERROR_INTERNAL, "Failed to check existence of path '",
-              path.string(), "' while initializing data store '", _id,
+              path.string(), "' while initializing data store '", _index_id,
               "': ", ec.message());
   }
   if (!path_exists) {
     std::filesystem::create_directories(path, ec);
     if (ec) {
       SDB_THROW(ERROR_INTERNAL, "Failed to create directory '", path.string(),
-                "' while initializing data store '", _id, "': ", ec.message());
+                "' while initializing data store '", _index_id,
+                "': ", ec.message());
     }
   }
   auto codec = irs::formats::Get("1_5simd");
@@ -264,9 +265,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   _snapshot = std::make_shared<InvertedIndexSnapshot>(std::move(reader));
 }
 
-void InvertedIndexShard::Serialize(duckdb::Serializer& /*sink*/) const {}
-
-void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
+void InvertedIndexStorage::TruncateCommit(TruncateGuard&& guard, Tick tick,
                                         query::Transaction* user_txn)
   ABSL_NO_THREAD_SAFETY_ANALYSIS {
   SDB_IF_FAILURE("SereneSearchTruncateFailure") { SDB_THROW(ERROR_DEBUG); }
@@ -274,7 +273,7 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
   SDB_ASSERT(_writer);
 
   // If we're inside a user transaction, drop its per-conn iresearch staging
-  // for this shard (the new-arch analog of the old SearchTrxState cookie
+  // for this storage (the new-arch analog of the old SearchTrxState cookie
   // cleanup). Throws away pending operations -- Clear will overwrite them
   // anyway -- and forces release of any active segment context so the
   // _writer->Clear below doesn't deadlock waiting for it.
@@ -321,26 +320,26 @@ void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
   }
 }
 
-void InvertedIndexShard::ScheduleCompaction(absl::Duration delay) {
+void InvertedIndexStorage::ScheduleCompaction(absl::Duration delay) {
   CompactionTask task{shared_from_this(), [] { return /* TODO */ true; }};
 
   _state->pending_compactions.fetch_add(1, std::memory_order_release);
   std::move(task).Schedule(delay).Detach();
 }
 
-void InvertedIndexShard::ScheduleCommit(absl::Duration delay) {
+void InvertedIndexStorage::ScheduleCommit(absl::Duration delay) {
   RefreshTask task{shared_from_this(), false};
 
   _state->pending_commits.fetch_add(1, std::memory_order_release);
   std::move(task).Schedule(delay).Detach();
 }
 
-void InvertedIndexShard::Refresh() {
+void InvertedIndexStorage::Refresh() {
   RefreshResult code = RefreshResult::Undefined;
   std::ignore = RefreshUnsafe(/*wait=*/true, nullptr, code);
 }
 
-InvertedIndexShard::Stats InvertedIndexShard::UpdateStatsUnsafe(
+InvertedIndexStorage::Stats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
   SDB_ASSERT(inverted_index_snapshot);
   auto& reader = inverted_index_snapshot->reader;
@@ -360,7 +359,7 @@ InvertedIndexShard::Stats InvertedIndexShard::UpdateStatsUnsafe(
   return stats;
 }
 
-InvertedIndexShard::ResultWithTime InvertedIndexShard::CleanupUnsafe() {
+InvertedIndexStorage::ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
   auto begin = std::chrono::steady_clock::now();
   auto result = CleanupUnsafeImpl();
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -369,7 +368,7 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CleanupUnsafe() {
   return {std::move(result), time_ms};
 }
 
-Result InvertedIndexShard::CleanupUnsafeImpl() {
+Result InvertedIndexStorage::CleanupUnsafeImpl() {
   try {
     irs::directory_utils::RemoveAllUnreferenced(*_dir);
   } catch (const std::exception& e) {
@@ -382,7 +381,7 @@ Result InvertedIndexShard::CleanupUnsafeImpl() {
   return {};
 }
 
-InvertedIndexShard::ResultWithTime InvertedIndexShard::CompactUnsafe(
+InvertedIndexStorage::ResultWithTime InvertedIndexStorage::CompactUnsafe(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction) {
   auto begin = std::chrono::steady_clock::now();
@@ -393,7 +392,7 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CompactUnsafe(
   return {std::move(result), time_ms};
 }
 
-InvertedIndexShard::ResultWithTime InvertedIndexShard::RefreshUnsafe(
+InvertedIndexStorage::ResultWithTime InvertedIndexStorage::RefreshUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
   auto begin = std::chrono::steady_clock::now();
   auto result = RefreshUnsafeImpl(wait, progress, code);
@@ -407,7 +406,7 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::RefreshUnsafe(
   return {std::move(result), time_ms};
 }
 
-Result InvertedIndexShard::CompactUnsafeImpl(
+Result InvertedIndexStorage::CompactUnsafeImpl(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction) {
   empty_compaction = false;
@@ -443,7 +442,7 @@ Result InvertedIndexShard::CompactUnsafeImpl(
   return {};
 }
 
-Result InvertedIndexShard::RefreshUnsafeImpl(
+Result InvertedIndexStorage::RefreshUnsafeImpl(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
   code = RefreshResult::NoChanges;
 
@@ -546,7 +545,7 @@ Result InvertedIndexShard::RefreshUnsafeImpl(
   return {};
 }
 
-void InvertedIndexShard::FinishCreation() {
+void InvertedIndexStorage::FinishCreation() {
   std::lock_guard lock{_commit_mutex};
   if (_phase == Phase::Active) {
     return;
@@ -554,11 +553,11 @@ void InvertedIndexShard::FinishCreation() {
   _phase = Phase::Active;
 }
 
-void InvertedIndexShard::RecoveryCommit(Tick tick) {
+void InvertedIndexStorage::RecoveryCommit(Tick tick) {
   _last_committed_tick = tick;
 }
 
-InvertedIndexShard::Stats InvertedIndexShard::GetStats() const {
+InvertedIndexStorage::Stats InvertedIndexStorage::GetStats() const {
   auto snapshot = GetInvertedIndexSnapshot();
   if (!snapshot) {
     return {};

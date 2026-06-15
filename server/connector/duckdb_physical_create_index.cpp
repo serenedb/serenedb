@@ -61,8 +61,7 @@
 #include "pg/errcodes.h"
 #include "pg/progress_tracker.h"
 #include "pg/sql_exception_macro.h"
-#include "search/inverted_index_shard.h"
-#include "storage_engine/secondary_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 namespace {
@@ -106,7 +105,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::vector<std::string> row_keys;
   duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
 
-  std::shared_ptr<IndexShard> index_shard;
+  std::shared_ptr<search::InvertedIndexStorage> index_storage;
   std::shared_ptr<const catalog::Snapshot> snapshot_for_providers;
   std::shared_ptr<catalog::Index> index_for_providers;
 
@@ -351,19 +350,21 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   if (state->progress) {
     state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
   }
-  auto shard = snapshot->GetIndexShard(catalog_index->GetId());
-  SDB_ASSERT(shard);
-  state->index_shard = shard;
+  // Inverted indexes carry their iresearch storage (bound in CreateIndexImpl);
+  // secondary indexes do not, so this is null for them.
+  auto inverted =
+    snapshot->GetObject<catalog::InvertedIndex>(catalog_index->GetId());
+  auto storage = inverted ? inverted->GetData() : nullptr;
+  state->index_storage = storage;
 
-  if (shard->GetType() == catalog::ObjectType::InvertedIndex) {
-    auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
+  if (storage) {
     // Must be set before StartTasks so the first Commit's meta_payload records
     // it.
     if (auto it = _info->options.find("_sdb_iceberg_snapshot_id");
         it != _info->options.end()) {
-      inverted_shard.SetIcebergSnapshotId(it->second.GetValue<int64_t>());
+      storage->SetIcebergSnapshotId(it->second.GetValue<int64_t>());
     }
-    inverted_shard.StartTasks();
+    storage->StartTasks();
   }
 
   auto* table_ptr = TableOrNull();
@@ -459,20 +460,19 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   }
   auto* gstate_ptr =
     sink_state ? &sink_state->Cast<CreateIndexGlobalState>() : nullptr;
-  if (!gstate_ptr || !gstate_ptr->created || !gstate_ptr->index_shard ||
+  if (!gstate_ptr || !gstate_ptr->created || !gstate_ptr->index_storage ||
       !gstate_ptr->index_for_providers) {
     return duckdb::make_uniq<duckdb::LocalSinkState>();
   }
   auto& gstate = *gstate_ptr;
 
-  auto& inverted_shard =
-    basics::downCast<search::InvertedIndexShard>(*gstate.index_shard);
+  auto& inverted_storage = *gstate.index_storage;
   const auto& inverted_index =
     basics::downCast<const catalog::InvertedIndex>(*gstate.index_for_providers);
 
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-    inverted_shard.GetTransaction());
+    inverted_storage.GetTransaction());
   lstate->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
     duckdb::BufferAllocator::Get(context.client));
 
@@ -649,18 +649,17 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
 
   if (gstate.index_type == catalog::ObjectType::InvertedIndex &&
-      gstate.index_shard) {
+      gstate.index_storage) {
     if (gstate.progress) {
       gstate.progress->SetPhase(pg::create_index_progress::Phase::Committing);
     }
     gstate.writer.reset();
     gstate.search_trx.reset();
 
-    auto& inverted_shard =
-      basics::downCast<search::InvertedIndexShard>(*gstate.index_shard);
-    inverted_shard.Refresh();
+    auto& inverted_storage = *gstate.index_storage;
+    inverted_storage.Refresh();
     SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
-    inverted_shard.FinishCreation();
+    inverted_storage.FinishCreation();
   }
 
   if (gstate.progress) {

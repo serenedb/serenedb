@@ -119,7 +119,7 @@ class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
 
 class SecondaryIndexScanEntry : public SereneDBIndexScanEntry {
  public:
-  ObjectId GetSecondaryIndexShardId() const { return _sk_shard_id; }
+  ObjectId GetSecondaryIndexId() const { return _secondary_index_id; }
   bool IsUnique() const { return _sk_unique; }
 
  protected:
@@ -127,9 +127,9 @@ class SecondaryIndexScanEntry : public SereneDBIndexScanEntry {
                           duckdb::SchemaCatalogEntry& schema,
                           duckdb::CreateTableInfo& info,
                           std::vector<size_t> indexed_col_indices,
-                          ObjectId sk_shard_id, bool sk_unique);
+                          ObjectId secondary_index_id, bool sk_unique);
 
-  ObjectId _sk_shard_id;
+  ObjectId _secondary_index_id;
   bool _sk_unique;
 };
 
@@ -140,7 +140,7 @@ class TableSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
                                duckdb::CreateTableInfo& info,
                                std::shared_ptr<catalog::Table> sdb_table,
                                std::vector<size_t> indexed_col_indices,
-                               ObjectId sk_shard_id, bool sk_unique);
+                               ObjectId secondary_index_id, bool sk_unique);
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,

@@ -39,7 +39,7 @@
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "connector/inverted_store_index.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
 
 namespace sdb::search {
@@ -48,7 +48,7 @@ namespace {
 // Trigger duckdb to bind the inverted indexes on one store table. Binding
 // applies the operations buffered during this boot's WAL replay
 // (InvertedStoreIndex::Append/Delete with no committing context), feeding the
-// post-checkpoint delta into the iresearch shard. The shards must already be
+// post-checkpoint delta into the iresearch storage. The storages must already be
 // loaded (this runs after InitCatalog) so the index's replay path
 // can resolve them.
 void BindStoreTableIndexes(duckdb::ClientContext& context,
@@ -75,7 +75,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
 
   // Recovery is delta-based: duckdb's WAL replay buffered every store-table
   // insert/delete since the last checkpoint against the (unbound) inverted
-  // index; binding the index now replays exactly that delta into the shard.
+  // index; binding the index now replays exactly that delta into the storage.
   // No table rebuild -- recovery cost is O(WAL), not O(table).
   struct TableCoord {
     std::string database_name;
@@ -84,8 +84,8 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
   };
   std::vector<TableCoord> tables_to_bind;
   absl::flat_hash_set<ObjectId> seen_tables;
-  std::vector<std::shared_ptr<InvertedIndexShard>> recovering_shards;
-  std::vector<std::shared_ptr<InvertedIndexShard>> static_shards;
+  std::vector<std::shared_ptr<InvertedIndexStorage>> recovering_storages;
+  std::vector<std::shared_ptr<InvertedIndexStorage>> static_storages;
 
   for (const auto& database : snapshot->GetDatabases()) {
     for (const auto& schema : snapshot->GetSchemas(database->GetId())) {
@@ -94,12 +94,12 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         if (idx->GetType() != catalog::ObjectType::InvertedIndex) {
           continue;
         }
-        auto inv_shard = basics::downCast<InvertedIndexShard>(
-          snapshot->GetIndexShard(idx->GetId()));
-        SDB_ASSERT(inv_shard);
+        auto inv_storage =
+          basics::downCast<const catalog::InvertedIndex>(*idx).GetData();
+        SDB_ASSERT(inv_storage);
         // Keep ordinals monotone across restarts.
-        TickDomain::Instance().SeedAtLeast(inv_shard->GetRecoveryTick());
-        inv_shard->StartTasks();
+        TickDomain::Instance().SeedAtLeast(inv_storage->GetRecoveryTick());
+        inv_storage->StartTasks();
 
         // View-backed indexes are static -- the view body doesn't change at
         // runtime, so the persisted index is already current.
@@ -107,12 +107,12 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         const bool table_backed =
           relation && relation->GetType() == catalog::ObjectType::Table;
         if (skip_wal_recovery || !table_backed) {
-          static_shards.push_back(std::move(inv_shard));
+          static_storages.push_back(std::move(inv_storage));
           continue;
         }
 
-        inv_shard->StartRecovery();
-        recovering_shards.push_back(std::move(inv_shard));
+        inv_storage->StartRecovery();
+        recovering_storages.push_back(std::move(inv_storage));
         const auto table_id = relation->GetId();
         if (seen_tables.insert(table_id).second) {
           tables_to_bind.push_back(TableCoord{
@@ -124,11 +124,11 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
   }
 
   irs::Finally finish_recovering = [&] noexcept {
-    for (auto& shard : static_shards) {
-      shard->FinishCreation();
+    for (auto& storage : static_storages) {
+      storage->FinishCreation();
     }
-    for (auto& shard : recovering_shards) {
-      shard->FinishCreation();
+    for (auto& storage : recovering_storages) {
+      storage->FinishCreation();
     }
   };
 
@@ -138,7 +138,7 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
 
   // One scratch connection drives the binds; BindIndexes applies the buffered
   // replays synchronously (InvertedStoreIndex::FinishReplay commits the delta
-  // into the shard). The bind path resolves the catalog through the
+  // into the storage). The bind path resolves the catalog through the
   // connection's transaction, so an explicit transaction must be active.
   auto conn = DuckDBEngine::Instance().CreateConnection();
   conn->BeginTransaction();
@@ -153,17 +153,17 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
                           coord.schema_name, coord.table_name);
   }
 
-  // The replay committed the delta into each shard's writer, but the shard's
+  // The replay committed the delta into each storage's writer, but the storage's
   // query snapshot is only refreshed by a background commit. Force it now so
   // the recovered rows are searchable the instant the server accepts queries.
-  for (auto& shard : recovering_shards) {
-    shard->Refresh();
+  for (auto& storage : recovering_storages) {
+    storage->Refresh();
   }
 
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);
   SDB_INFO(SEARCH, "search index recovery: bound ", tables_to_bind.size(),
-           " table(s), ", recovering_shards.size(), " inverted index(es) in ",
+           " table(s), ", recovering_storages.size(), " inverted index(es) in ",
            absl::FormatDuration(duration));
 }
 

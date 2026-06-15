@@ -23,6 +23,7 @@
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
+#include <atomic>
 #include <expected>
 #include <functional>
 #include <memory>
@@ -55,7 +56,6 @@
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_entry_cache.h"
-#include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {
 
@@ -182,12 +182,8 @@ struct Snapshot {
     return {};
   }
 
-  std::shared_ptr<TableShard> GetTableShard(ObjectId id) const;
-  std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByRelation(
-    ObjectId relation_id) const;
   std::vector<std::shared_ptr<Index>> GetIndexesByRelation(
     ObjectId relation_id) const;
-  std::shared_ptr<IndexShard> GetIndexShard(ObjectId index_id) const;
 
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
@@ -197,16 +193,8 @@ struct Snapshot {
     }
     if constexpr (std::is_same_v<T, Object>) {
       return obj;
-    } else if constexpr (std::is_same_v<T, TableShard>) {
-      if (obj->GetType() != ObjectType::TableShard) {
-        return nullptr;
-      }
     } else if constexpr (std::is_same_v<T, Index>) {
       if (!IsIndex(obj->GetType())) {
-        return nullptr;
-      }
-    } else if constexpr (std::is_same_v<T, IndexShard>) {
-      if (!IsIndexShard(obj->GetType())) {
         return nullptr;
       }
     } else {
@@ -352,24 +340,6 @@ struct Snapshot {
   bool _in_load = true;
 };
 
-template<typename V>
-void VisitTableShards(const Snapshot& snapshot, ObjectId database_id,
-                      std::string_view schema, V&& v) {
-  for (auto& rel : snapshot.GetRelations(database_id, schema)) {
-    if (rel->GetType() != ObjectType::Table) {
-      continue;
-    }
-
-    auto table = basics::downCast<Table>(rel);
-    auto shard = snapshot.GetTableShard(table->GetId());
-    if (!shard) {
-      continue;
-    }
-    // SDB_ENSURE(shard, ERROR_INTERNAL);
-    v(shard);
-  }
-}
-
 using IndexFactory =
   absl::FunctionRef<ResultOr<std::shared_ptr<Index>>(const Object*)>;
 
@@ -391,10 +361,8 @@ class Catalog final {
                       std::shared_ptr<PgSqlType> type);
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                        std::shared_ptr<Table> table);
-  Result RegisterTableShard(std::shared_ptr<TableShard> shard);
   Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
                        std::shared_ptr<Index> index);
-  Result RegisterIndexShard(std::shared_ptr<IndexShard> shard);
 
   Result CreateDatabase(std::shared_ptr<Database> database);
   Result CreateRole(std::shared_ptr<Role> role);

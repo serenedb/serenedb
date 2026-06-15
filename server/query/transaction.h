@@ -28,7 +28,7 @@
 #include "basics/result.h"
 #include "catalog/catalog.h"
 #include "query/config.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::query {
 
@@ -68,10 +68,6 @@ class Transaction : public Config {
 
   Result Rollback();
 
-  void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
-    _table_rows_deltas[table_id] += delta;
-  }
-
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
   // ISOLATION LEVEL changes.
@@ -82,9 +78,9 @@ class Transaction : public Config {
 
   search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(ObjectId index_id);
 
-  void EraseSearchTransaction(ObjectId shard_id) noexcept {
-    _search_transactions.erase(shard_id);
-    _search_shards.erase(shard_id);
+  void EraseSearchTransaction(ObjectId index_id) noexcept {
+    _search_transactions.erase(index_id);
+    _search_storages.erase(index_id);
   }
 
   // Pin every staged search transaction into the iresearch flush context so a
@@ -95,7 +91,7 @@ class Transaction : public Config {
   // no-op until an active segment exists (docs staged) and idempotent after,
   // so registering all transactions each feed is safe and cheap.
   void RegisterSearchFlush() noexcept {
-    for (auto& [shard_id, transaction] : _search_transactions) {
+    for (auto& [index_id, transaction] : _search_transactions) {
       if (transaction) {
         transaction->RegisterFlush();
       }
@@ -104,8 +100,6 @@ class Transaction : public Config {
 
   void Destroy() noexcept;
 
-  catalog::TableStats GetTableStats(ObjectId table_id) const;
-
   template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
                                  Filter&& filter = nullptr) {
@@ -113,9 +107,7 @@ class Transaction : public Config {
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
                catalog::ObjectType::Table);
 
-    for (auto index_shard : snapshot->GetIndexShardsByRelation(table_id)) {
-      auto index =
-        snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
+    for (auto& index : snapshot->GetIndexesByRelation(table_id)) {
       SDB_ASSERT(index);
 
       if constexpr (!std::is_same_v<std::decay_t<Filter>, std::nullptr_t>) {
@@ -125,38 +117,35 @@ class Transaction : public Config {
         }
       }
 
-      if (index_shard->GetType() != catalog::ObjectType::InvertedIndexShard) {
+      if (index->GetType() != catalog::ObjectType::InvertedIndex) {
         // Secondary indexes are native ART on the store table; nothing to
         // feed here.
         continue;
       }
-      auto& inverted_index_shard =
-        basics::downCast<search::InvertedIndexShard>(*index_shard);
-      _search_transactions.try_emplace(inverted_index_shard.GetId(), nullptr);
-      auto& transaction = _search_transactions[inverted_index_shard.GetId()];
+      auto storage =
+        basics::downCast<const catalog::InvertedIndex>(*index).GetData();
+      SDB_ASSERT(storage);
+      _search_transactions.try_emplace(index->GetId(), nullptr);
+      auto& transaction = _search_transactions[index->GetId()];
       if (!transaction) {
         transaction = std::make_unique<irs::IndexWriter::Transaction>(
-          inverted_index_shard.GetTransaction());
-        // Keep the shard alive and reachable for Commit() without a
-        // (potentially asserting) catalog GetIndexShard re-lookup.
-        _search_shards[inverted_index_shard.GetId()] =
-          std::static_pointer_cast<search::InvertedIndexShard>(index_shard);
+          storage->GetTransaction());
+        // Keep the storage alive and reachable for Commit() without a catalog
+        // re-lookup.
+        _search_storages[index->GetId()] = storage;
       }
       visit(*transaction, *index);
     }
   }
 
  private:
-  void ApplyTableStatsDiffs() noexcept;
-
   containers::FlatHashMap<ObjectId,
                           std::unique_ptr<irs::IndexWriter::Transaction>>
     _search_transactions;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<search::InvertedIndexShard>>
-    _search_shards;
+  containers::FlatHashMap<ObjectId, std::shared_ptr<search::InvertedIndexStorage>>
+    _search_storages;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
-  containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
   bool _had_query_in_transaction = false;
 };
 

@@ -34,8 +34,6 @@
 
 namespace sdb {
 
-class IndexShard;
-
 namespace catalog {
 
 inline constexpr std::string_view kIncludedKind = "included";
@@ -91,9 +89,6 @@ class Index : public Object {
   virtual std::vector<Column::Id> GetReferencedColumnIds() const = 0;
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
-
-  virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, ObjectId id) const = 0;
 
   virtual ~Index() = default;
 

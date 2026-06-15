@@ -31,7 +31,7 @@
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 namespace {

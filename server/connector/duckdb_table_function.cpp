@@ -34,6 +34,7 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 
+#include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
@@ -45,7 +46,7 @@
 #include "connector/search_filter_printer.hpp"
 #include "functions/search.h"
 #include "pg/connection_context.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 namespace {
@@ -102,24 +103,12 @@ bool TableScanBindData::Equals(const duckdb::FunctionData& other) const {
 }
 
 duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
-  duckdb::ClientContext& context) const {
-  auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  auto shard = snapshot->GetTableShard(table->GetId());
-  if (!shard) {
-    return nullptr;
+  duckdb::ClientContext&) const {
+  if (scan_source && scan_source->Kind() == ScanSourceKind::Search) {
+    return InvertedIndexCardinality(*this);
   }
-  const auto num_rows =
-    static_cast<duckdb::idx_t>(shard->GetTableStats().num_rows);
-  if (scan_source) {
-    switch (scan_source->Kind()) {
-      case ScanSourceKind::Search:
-        return InvertedIndexCardinality(*this);
-      default:
-        break;
-    }
-  }
-  return duckdb::make_uniq<duckdb::NodeStatistics>(num_rows, num_rows);
+  // No row-count statistics are tracked; let the optimizer use its defaults.
+  return nullptr;
 }
 
 ObjectId TableScanBindData::RelationId() const { return table->GetId(); }

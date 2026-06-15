@@ -28,7 +28,7 @@
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 namespace {
@@ -189,15 +189,15 @@ ObjectId LookupDatabaseId(const catalog::Snapshot& snapshot,
   return db->GetId();
 }
 
-void RefreshInvertedShard(search::InvertedIndexShard& inverted) {
+void RefreshInvertedStorage(search::InvertedIndexStorage& inverted) {
   inverted.Refresh();
 }
 
-void CompactInvertedShard(search::InvertedIndexShard& inverted) {
+void CompactInvertedStorage(search::InvertedIndexStorage& inverted) {
   static const auto kPolicy = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
-  RefreshInvertedShard(inverted);
+  RefreshInvertedStorage(inverted);
   for (size_t pass = 0; pass < 8; ++pass) {
     bool empty_compaction = false;
     const auto [res, _] =
@@ -206,37 +206,40 @@ void CompactInvertedShard(search::InvertedIndexShard& inverted) {
       throw duckdb::InternalException("compact_index: compaction failed: %s",
                                       res.errorMessage());
     }
-    RefreshInvertedShard(inverted);
+    RefreshInvertedStorage(inverted);
     if (empty_compaction) {
       break;
     }
   }
 }
 
-void ForEachInvertedShard(
+void ForEachInvertedStorage(
   const catalog::Snapshot& snapshot, ObjectId relation_id,
-  absl::FunctionRef<void(search::InvertedIndexShard&)> v) {
-  for (auto& shard : snapshot.GetIndexShardsByRelation(relation_id)) {
-    if (!shard || shard->GetType() != catalog::ObjectType::InvertedIndexShard) {
+  absl::FunctionRef<void(search::InvertedIndexStorage&)> v) {
+  for (auto& index : snapshot.GetIndexesByRelation(relation_id)) {
+    if (!index || index->GetType() != catalog::ObjectType::InvertedIndex) {
       continue;
     }
-    v(basics::downCast<search::InvertedIndexShard>(*shard));
+    if (auto storage =
+          basics::downCast<const catalog::InvertedIndex>(*index).GetData()) {
+      v(*storage);
+    }
   }
 }
 
 void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
                       Scope scope, const ResolvedName& target) {
-  auto apply = [action](search::InvertedIndexShard& s) {
+  auto apply = [action](search::InvertedIndexStorage& s) {
     if (action == Action::Refresh) {
-      RefreshInvertedShard(s);
+      RefreshInvertedStorage(s);
     } else {
-      CompactInvertedShard(s);
+      CompactInvertedStorage(s);
     }
   };
 
   auto walk_schema = [&](ObjectId db_id, std::string_view schema) {
     for (auto& table : snapshot.GetTables(db_id, schema)) {
-      ForEachInvertedShard(snapshot, table->GetId(), apply);
+      ForEachInvertedStorage(snapshot, table->GetId(), apply);
     }
   };
 
@@ -254,12 +257,12 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
             index->GetName() != target.object) {
           continue;
         }
-        auto shard = snapshot.GetIndexShard(index->GetId());
-        if (!shard ||
-            shard->GetType() != catalog::ObjectType::InvertedIndexShard) {
+        auto storage =
+          basics::downCast<const catalog::InvertedIndex>(*index).GetData();
+        if (!storage) {
           continue;
         }
-        apply(basics::downCast<search::InvertedIndexShard>(*shard));
+        apply(*storage);
         return;
       }
       throw duckdb::CatalogException("inverted index '%s' not found.",
@@ -272,7 +275,7 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
         throw duckdb::CatalogException("relation '%s' not found.",
                                        target.object);
       }
-      ForEachInvertedShard(snapshot, table->GetId(), apply);
+      ForEachInvertedStorage(snapshot, table->GetId(), apply);
     } break;
     case Scope::Schema: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
@@ -296,10 +299,10 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
 
 void DispatchSyncStats(const catalog::Snapshot& snapshot, Scope scope,
                        const ResolvedName& target) {
-  // Shard stats are no longer persisted; the verb only validates its
+  // Storage stats are no longer persisted; the verb only validates its
   // target until native table stats replace it entirely.
   auto sync_table = [&](ObjectId table_id) {
-    std::ignore = snapshot.GetTableShard(table_id);
+    std::ignore = snapshot.GetObject(table_id);
   };
   auto sync_schema = [&](ObjectId db_id, std::string_view schema) {
     for (auto& table : snapshot.GetTables(db_id, schema)) {

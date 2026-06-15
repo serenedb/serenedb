@@ -67,8 +67,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
-#include "search/inverted_index_shard.h"
-#include "storage_engine/secondary_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 namespace {
@@ -528,14 +527,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   auto catalog_index =
     new_snapshot->GetRelation(database_id, name, info.index_name);
   if (catalog_index) {
-    auto shard = new_snapshot->GetIndexShard(catalog_index->GetId());
-    if (shard && shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
-      auto& inverted_shard =
-        basics::downCast<search::InvertedIndexShard>(*shard);
-      inverted_shard.StartTasks();
+    auto inverted =
+      new_snapshot->GetObject<catalog::InvertedIndex>(catalog_index->GetId());
+    auto storage = inverted ? inverted->GetData() : nullptr;
+    if (storage) {
+      storage->StartTasks();
       // No backfill yet -- mark creation as finished so background commits
       // register the flush subscription and run periodically.
-      inverted_shard.FinishCreation();
+      storage->FinishCreation();
     }
   }
   return nullptr;

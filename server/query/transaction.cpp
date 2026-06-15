@@ -29,7 +29,6 @@
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "search/tick_domain.h"
-#include "storage_engine/table_shard.h"
 
 namespace sdb::query {
 
@@ -81,7 +80,7 @@ void Transaction::CommitSearch() noexcept {
       search_transaction.second->Abort();
     }
     _search_transactions.clear();
-    _search_shards.clear();
+    _search_storages.clear();
   };
 
   // Reserve a tick range covering every writer's query (Remove/Replace)
@@ -96,18 +95,18 @@ void Transaction::CommitSearch() noexcept {
 
   std::move(rollback).Cancel();
 
-  for (auto& [shard_id, search_transaction] : _search_transactions) {
-    auto shard_it = _search_shards.find(shard_id);
+  for (auto& [index_id, search_transaction] : _search_transactions) {
+    auto storage_it = _search_storages.find(index_id);
     auto* inverted =
-      shard_it != _search_shards.end() ? shard_it->second.get() : nullptr;
+      storage_it != _search_storages.end() ? storage_it->second.get() : nullptr;
     if (search_transaction->Commit(last_tick)) {
       continue;
     }
     // The store transaction is already durable; losing the index leg
-    // silently would diverge the index forever. Mark the shard so the
+    // silently would diverge the index forever. Mark the storage so the
     // clean-shutdown checkpoint is suppressed and the next boot rebuilds
     // it from the store table.
-    SDB_ERROR(SEARCH, "search index commit failed for shard '", shard_id.id(),
+    SDB_ERROR(SEARCH, "search index commit failed for index '", index_id.id(),
               "' at tick ", last_tick,
               "; the index will be rebuilt from the store on next boot");
     if (inverted) {
@@ -115,7 +114,7 @@ void Transaction::CommitSearch() noexcept {
     }
   }
   _search_transactions.clear();
-  _search_shards.clear();
+  _search_storages.clear();
 }
 
 Result Transaction::Commit() {
@@ -123,7 +122,6 @@ Result Transaction::Commit() {
   // before the in-commit checkpoint); this is a no-op then, and the fallback
   // for transactions that did not commit the store database.
   CommitSearch();
-  ApplyTableStatsDiffs();
   Destroy();
 
   return {};
@@ -142,14 +140,12 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {
-    auto index_shard = EnsureCatalogSnapshot()->GetIndexShard(index_id);
-    SDB_ASSERT(index_shard);
-    SDB_ASSERT(index_shard->GetType() ==
-               catalog::ObjectType::InvertedIndexShard);
-    auto& inverted_index_shard =
-      basics::downCast<search::InvertedIndexShard>(*index_shard.get());
-    it = _search_snapshots
-           .emplace(index_id, inverted_index_shard.GetInvertedIndexSnapshot())
+    auto index =
+      EnsureCatalogSnapshot()->GetObject<catalog::InvertedIndex>(index_id);
+    SDB_ASSERT(index);
+    auto storage = index->GetData();
+    SDB_ASSERT(storage);
+    it = _search_snapshots.emplace(index_id, storage->GetInvertedIndexSnapshot())
            .first;
   }
   return it->second;
@@ -158,39 +154,9 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
 void Transaction::Destroy() noexcept {
   DropCatalogSnapshot();
   _search_transactions.clear();
-  _search_shards.clear();
-  _table_rows_deltas.clear();
+  _search_storages.clear();
   _search_snapshots.clear();
   _had_query_in_transaction = false;
-}
-
-catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
-  // TODO(codeworse): manage catalog snapshot in transaction
-  auto table_shard = EnsureCatalogSnapshot()->GetTableShard(table_id);
-  if (!table_shard) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "Table shard not found for table id: ", table_id);
-  }
-  return table_shard->GetTableStats();
-}
-
-void Transaction::ApplyTableStatsDiffs() noexcept {
-  if (_table_rows_deltas.empty()) {
-    return;
-  }
-  auto snapshot = EnsureCatalogSnapshot();
-  for (const auto& [table_id, delta] : _table_rows_deltas) {
-    // It's possible that while transaction was active, table got dropped.
-    if (!snapshot->GetObject(table_id)) {
-      continue;
-    }
-    auto table_shard = snapshot->GetTableShard(table_id);
-    SDB_ASSERT(table_shard);
-    if (table_shard) {
-      table_shard->UpdateNumRows(delta);
-    }
-  }
-  _table_rows_deltas.clear();
 }
 
 }  // namespace sdb::query

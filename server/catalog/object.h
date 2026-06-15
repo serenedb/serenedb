@@ -48,8 +48,8 @@ enum class ObjectType : uint8_t {
   Tombstone = 1,
   // Catalog objects start at 128.
   // Order matters: within the same parent, objects are scanned in enum order.
-  // Shards must come after their parent definition so the parent exists
-  // when the shard is registered.
+  // Indexes must come after their table so the table exists when the index
+  // is loaded.
   // Top-level (parent = instance)
   Database = 128,
   Role,
@@ -62,12 +62,8 @@ enum class ObjectType : uint8_t {
   PgSqlView,
   Sequence,
   Table,
-  // Under table - shards after their parent definition
-  TableShard,
   SecondaryIndex,
-  SecondaryIndexShard,
   InvertedIndex,
-  InvertedIndexShard,
 
   Column,           // loaded as a part of a Table, not as a separate object
   CheckConstraint,  // loaded as a part of a Table, not as a separate object
@@ -78,21 +74,6 @@ enum class ObjectType : uint8_t {
 
 constexpr bool IsIndex(ObjectType t) noexcept {
   return t == ObjectType::SecondaryIndex || t == ObjectType::InvertedIndex;
-}
-
-constexpr bool IsIndexShard(ObjectType t) noexcept {
-  return t == ObjectType::SecondaryIndexShard ||
-         t == ObjectType::InvertedIndexShard;
-}
-
-constexpr ObjectType IndexShardType(ObjectType index_type) noexcept {
-  SDB_ASSERT(IsIndex(index_type));
-  if (index_type == ObjectType::InvertedIndex) {
-    return ObjectType::InvertedIndexShard;
-  } else {
-    SDB_ASSERT(index_type == ObjectType::SecondaryIndex);
-    return ObjectType::SecondaryIndexShard;
-  }
 }
 
 // https://www.postgresql.org/docs/current/sql-grant.html

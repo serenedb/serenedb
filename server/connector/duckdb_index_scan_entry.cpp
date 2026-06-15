@@ -178,20 +178,20 @@ duckdb::virtual_column_map_t ViewInvertedIndexScanEntry::GetVirtualColumns()
 SecondaryIndexScanEntry::SecondaryIndexScanEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::CreateTableInfo& info, std::vector<size_t> indexed_col_indices,
-  ObjectId sk_shard_id, bool sk_unique)
+  ObjectId secondary_index_id, bool sk_unique)
   : SereneDBIndexScanEntry(catalog, schema, info,
                            std::move(indexed_col_indices)),
-    _sk_shard_id(sk_shard_id),
+    _secondary_index_id(secondary_index_id),
     _sk_unique(sk_unique) {
-  SDB_ASSERT(_sk_shard_id != ObjectId{});
+  SDB_ASSERT(_secondary_index_id != ObjectId{});
 }
 
 TableSecondaryIndexScanEntry::TableSecondaryIndexScanEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
-  std::vector<size_t> indexed_col_indices, ObjectId sk_shard_id, bool sk_unique)
+  std::vector<size_t> indexed_col_indices, ObjectId secondary_index_id, bool sk_unique)
   : SecondaryIndexScanEntry(catalog, schema, info,
-                            std::move(indexed_col_indices), sk_shard_id,
+                            std::move(indexed_col_indices), secondary_index_id,
                             sk_unique),
     _sdb_table(std::move(sdb_table)) {
   SDB_ASSERT(_sdb_table);

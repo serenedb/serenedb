@@ -347,17 +347,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
       std::move(built.indexed_col_indices), std::move(inverted_index_ptr));
   }
 
-  // Secondary index: find the shard for scanning.
+  // Secondary index: native ART on the store table; identity is the index id.
   const auto& sec_index =
     basics::downCast<const catalog::SecondaryIndex>(index);
-  auto shard = snapshot.GetIndexShard(index.GetId());
-  if (!shard) {
-    return nullptr;
-  }
-  auto sk_shard_id = shard->GetId();
+  auto secondary_index_id = index.GetId();
   return duckdb::make_uniq<TableSecondaryIndexScanEntry>(
     catalog, schema, *built.info, std::move(table),
-    std::move(built.indexed_col_indices), sk_shard_id, sec_index.IsUnique());
+    std::move(built.indexed_col_indices), secondary_index_id, sec_index.IsUnique());
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::EnsureEntry(

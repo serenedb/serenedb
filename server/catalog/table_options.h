@@ -34,7 +34,6 @@
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
-#include "catalog/persistence/table_stats.h"
 #include "catalog/sequence.h"
 #include "query/utils.h"
 
@@ -133,8 +132,6 @@ class CheckConstraint final : public Object {
 
   std::shared_ptr<ColumnExpr> expr;
 };
-
-using persistence::TableStats;
 
 // Which engine owns the table's row data. Both kinds are first-class and
 // coexist: Transactional tables live as store tables in the engine's

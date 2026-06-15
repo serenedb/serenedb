@@ -51,7 +51,7 @@
 #include "connector/primary_key.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
 
 namespace sdb::connector {
@@ -94,7 +94,7 @@ std::string RowIdKey(ObjectId table_id, duckdb::row_t row) {
 // (which frees a rowid and lets a later insert reuse it). Resolved from the
 // GLOBAL catalog snapshot -- WAL replay / index bind run with no connection.
 struct InvertedStoreIndex::ReplaySession {
-  std::shared_ptr<search::InvertedIndexShard> shard;
+  std::shared_ptr<search::InvertedIndexStorage> storage;
   std::shared_ptr<const catalog::Snapshot> snapshot;
   std::shared_ptr<const catalog::InvertedIndex> index;
   std::shared_ptr<const catalog::Table> table;
@@ -111,7 +111,7 @@ struct InvertedStoreIndex::ReplaySession {
   // Running count of rows appended to insert_buffer (global buffer index).
   duckdb::idx_t buffered_rows = 0;
   // Store-WAL byte offset (within the current generation) up to which the
-  // shard is already durable: replay ops at/below this are skipped. 0 when the
+  // storage is already durable: replay ops at/below this are skipped. 0 when the
   // persisted cursor is from a different generation or absent (replay all).
   uint64_t durable_offset = 0;
   // rowid -> global buffer index of its LAST insert. A delete erases the
@@ -122,12 +122,12 @@ struct InvertedStoreIndex::ReplaySession {
   // Every rowid the delta inserted or deleted; T1 clears all of them.
   absl::flat_hash_set<duckdb::row_t> touched;
 
-  ReplaySession(std::shared_ptr<search::InvertedIndexShard> shard_in,
+  ReplaySession(std::shared_ptr<search::InvertedIndexStorage> storage_in,
                 std::shared_ptr<const catalog::Snapshot> snapshot_in,
                 std::shared_ptr<const catalog::InvertedIndex> index_in,
                 std::shared_ptr<const catalog::Table> table_in,
                 duckdb::DatabaseInstance& db)
-    : shard{std::move(shard_in)},
+    : storage{std::move(storage_in)},
       snapshot{std::move(snapshot_in)},
       index{std::move(index_in)},
       table{std::move(table_in)},
@@ -155,22 +155,18 @@ InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession() {
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   SDB_ENSURE(snapshot, ERROR_INTERNAL,
              "inverted index replay: no catalog snapshot");
-  auto index_shard = snapshot->GetIndexShard(_index_id);
-  SDB_ENSURE(index_shard && index_shard->GetType() ==
-                              catalog::ObjectType::InvertedIndexShard,
-             ERROR_INTERNAL, "inverted index replay: shard ", _index_id.id(),
-             " missing");
   auto inverted = snapshot->GetObject<catalog::InvertedIndex>(_index_id);
   auto table = snapshot->GetObject<catalog::Table>(_table_id);
   SDB_ENSURE(inverted && table, ERROR_INTERNAL,
              "inverted index replay: catalog objects for ", _index_id.id(),
              " missing");
-  auto shard = std::static_pointer_cast<search::InvertedIndexShard>(
-    std::move(index_shard));
+  auto storage = inverted->GetData();
+  SDB_ENSURE(storage, ERROR_INTERNAL, "inverted index replay: storage ",
+             _index_id.id(), " missing");
   // Resolve the durable cursor for this generation: the persisted (gen,offset)
   // is comparable to the replay offsets only within the same WAL generation.
   // A different/absent generation => replay the whole post-checkpoint delta.
-  const uint64_t cursor = shard->GetRecoveryWalCursor();
+  const uint64_t cursor = storage->GetRecoveryWalCursor();
   uint64_t durable_offset = 0;
   auto& block_manager = db.GetStorageManager().GetBlockManager();
   if (search::WalCursorGeneration(cursor) ==
@@ -178,7 +174,7 @@ InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession() {
     durable_offset = search::WalCursorOffset(cursor);
   }
   _replay = std::make_unique<ReplaySession>(
-    std::move(shard), std::move(snapshot), std::move(inverted),
+    std::move(storage), std::move(snapshot), std::move(inverted),
     std::move(table), db.GetDatabase());
   _replay->durable_offset = durable_offset;
   return *_replay;
@@ -195,7 +191,7 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
     return;
   }
   auto& session = EnsureReplaySession();
-  // Skip operations the shard already made durable before the crash: this
+  // Skip operations the storage already made durable before the crash: this
   // range's WAL offset is at/below the persisted cursor. Bounds recovery to
   // the un-durable tail. (The boundary overlap left by the conservative cursor
   // is absorbed idempotently by FinishReplay's delete-then-insert.)
@@ -287,7 +283,7 @@ void InvertedStoreIndex::FinishReplay() {
   // T1: remove every touched rowid (inserted and/or deleted in the delta),
   // clearing any posting iresearch already made durable past the checkpoint.
   {
-    auto t1 = session.shard->GetTransaction();
+    auto t1 = session.storage->GetTransaction();
     DuckDBSearchSinkDeleteWriter del{t1};
     del.Init(1, duckdb::DataChunk{});
     std::string key;
@@ -307,7 +303,7 @@ void InvertedStoreIndex::FinishReplay() {
   // is that rowid's LAST insert (final_insert) -- this drops rows superseded
   // by a later delete or, after TRUNCATE, by a later insert reusing the rowid.
   if (session.insert_buffer && !session.final_insert.empty()) {
-    auto t2 = session.shard->GetTransaction();
+    auto t2 = session.storage->GetTransaction();
     auto& inverted = *session.index;
     DuckDBSearchSinkInsertWriter ins{
       t2, MakeTokenizerProvider(session.snapshot, inverted),
@@ -389,7 +385,7 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
   auto* conn = CurrentCommittingContext();
   if (!conn) {
     // No committing connection => duckdb is replaying buffered WAL inserts
-    // into a freshly-bound index. Feed the delta into the shard (idempotent
+    // into a freshly-bound index. Feed the delta into the storage (idempotent
     // delete-then-insert); FinishReplay commits the batch.
     ReplayAppend(chunk, row_ids);
     return {};
@@ -537,7 +533,7 @@ std::string InvertedStoreIndex::ToString(duckdb::IndexLock&, bool) {
 }
 
 duckdb::IndexStorageInfo InvertedStoreIndex::MakeStorageInfo() const {
-  // Postings live in the iresearch shard; one empty allocator entry keeps
+  // Postings live in the iresearch storage; one empty allocator entry keeps
   // the info IsValid() for WAL/checkpoint round-trips.
   duckdb::IndexStorageInfo info{name};
   info.allocator_infos.emplace_back();
@@ -547,7 +543,7 @@ duckdb::IndexStorageInfo InvertedStoreIndex::MakeStorageInfo() const {
 }
 
 void InvertedStoreIndex::CheckpointBarrier() const {
-  // The checkpoint is about to truncate the store WAL, so the iresearch shard
+  // The checkpoint is about to truncate the store WAL, so the iresearch storage
   // must be durable up to this point first -- otherwise a crash drops
   // [index-durable, checkpoint) from the index (the rows survive in the
   // checkpointed table but are gone from the index, with no WAL to replay).
@@ -559,23 +555,23 @@ void InvertedStoreIndex::CheckpointBarrier() const {
   if (!snapshot) {
     return;
   }
-  // GetIndexShard asserts when the index dependency isn't registered yet (a
-  // checkpoint racing the CREATE INDEX that defines us); GetObject is the
-  // non-asserting existence gate.
-  if (!snapshot->GetObject<catalog::InvertedIndex>(_index_id)) {
+  // The index's storage is bound at CREATE INDEX before this point; a null
+  // lookup means a checkpoint racing the CREATE INDEX that defines us, so both
+  // the catalog existence gate and the storage handle non-asserting
+  // early-return.
+  auto inverted = snapshot->GetObject<catalog::InvertedIndex>(_index_id);
+  if (!inverted) {
     return;
   }
-  auto index_shard = snapshot->GetIndexShard(_index_id);
-  if (!index_shard ||
-      index_shard->GetType() != catalog::ObjectType::InvertedIndexShard) {
+  auto storage = inverted->GetData();
+  if (!storage) {
     return;
   }
-  auto& shard = basics::downCast<search::InvertedIndexShard>(*index_shard);
-  SDB_ENSURE(!shard.IsOutOfSync(), ERROR_INTERNAL, "inverted index ",
+  SDB_ENSURE(!storage->IsOutOfSync(), ERROR_INTERNAL, "inverted index ",
              _index_id.id(),
              " is out of sync with its store table; refusing to checkpoint "
              "(WAL retained for replay; REINDEX to clear)");
-  shard.Refresh();
+  storage->Refresh();
 }
 
 duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(
@@ -598,7 +594,7 @@ std::string InvertedStoreIndex::GetConstraintViolationMessage(
 
 void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
   // Never bind this index implicitly: its data lives in iresearch and its bind
-  // needs the serenedb catalog + shards, which load after the store DB's WAL
+  // needs the serenedb catalog + index storage, which load after the store DB's WAL
   // replay. It is bound only by InitInvertedIndexes (an explicit by-name bind)
   // once those are ready. This keeps an ALTER-driven rebuild during WAL replay
   // from binding it too early (queries use IRESEARCH_SCAN, not this index).

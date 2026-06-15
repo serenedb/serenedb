@@ -222,16 +222,12 @@ struct RelationDependency : ObjectDependencyBase {
 };
 
 struct TableDependency : RelationDependency {
-  ObjectId shard_id;
   containers::FlatHashSet<ObjectId> owned_sequences;
   containers::FlatHashSet<ObjectId> fk_referencing_tables;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TableDependency>(*this);
   }
   void Emit(DropEmitter& e, ObjectId self) const final {
-    if (shard_id.isSet()) {
-      e.EmitAutoDrop(shard_id);
-    }
     for (auto id : owned_sequences) {
       e.EmitAutoDrop(id);
     }
@@ -345,15 +341,10 @@ struct PgSqlFunctionDependency : ObjectDependencyBase {
 };
 
 struct IndexDependency : ObjectDependencyBase {
-  ObjectId shard_id;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<IndexDependency>(*this);
   }
-  void Emit(DropEmitter& e, ObjectId self) const final {
-    if (shard_id.isSet()) {
-      e.EmitAutoDrop(shard_id);
-    }
-  }
+  void Emit(DropEmitter& e, ObjectId self) const final {}
 };
 
 struct SchemaDependency : ObjectDependencyBase {

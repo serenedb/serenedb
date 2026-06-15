@@ -228,7 +228,7 @@ void SereneDBClientState::TransactionPreRollback(
 void SereneDBClientState::TransactionCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   // Post-durability crash point: the engine commit is durable, search
-  // ticks are not yet -- recovery must rebuild the shard. Only write
+  // ticks are not yet -- recovery must rebuild the storage. Only write
   // transactions crash. Name historical.
   SDB_IF_FAILURE("crash_after_search_commit") {
     if (transaction.ModifiedDatabase()) {

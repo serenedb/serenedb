@@ -36,8 +36,7 @@
 #include "catalog/catalog.h"
 #include "catalog/persistence/inverted_index.h"
 #include "database/ticks.h"
-#include "search/inverted_index_shard.h"
-#include "storage_engine/index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::catalog {
 namespace {
@@ -162,11 +161,6 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
 }
 
 }  // namespace
-
-ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
-  bool is_new, ObjectId id) const {
-  return search::InvertedIndexShard::Create(id, *this, is_new);
-}
 
 std::shared_ptr<InvertedIndex> InvertedIndex::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {
@@ -476,13 +470,18 @@ containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
 
 std::shared_ptr<Object> InvertedIndex::Clone() const {
   duckdb::MemoryStream stream;
-  return DeserializeObject<InvertedIndex>(SerializeObject(*this, stream),
-                                          {
-                                            .id = GetId(),
-                                            .database_id = GetDatabaseId(),
-                                            .schema_id = GetParentId(),
-                                            .relation_id = GetRelationId(),
-                                          });
+  auto cloned = DeserializeObject<InvertedIndex>(SerializeObject(*this, stream),
+                                                 {
+                                                   .id = GetId(),
+                                                   .database_id = GetDatabaseId(),
+                                                   .schema_id = GetParentId(),
+                                                   .relation_id = GetRelationId(),
+                                                 });
+  // Carry the iresearch runtime storage to the new metadata version: a clone
+  // (e.g. rename) is the same index backed by the same on-disk storage (keyed
+  // by ids, not name), so the runtime must survive the metadata mutation.
+  cloned->SetData(_data);
+  return cloned;
 }
 
 }  // namespace sdb::catalog

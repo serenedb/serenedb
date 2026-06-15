@@ -27,7 +27,7 @@
 #include "catalog/search_analyzer_impl.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/search_sink_writer.hpp"  // reuse TokenizerProvider, Field, etc.
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 

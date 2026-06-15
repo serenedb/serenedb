@@ -41,9 +41,7 @@ class VirtualTableSnapshot;
 }  // namespace sdb::catalog
 namespace sdb {
 
-class TableShard;
 class KeyGenerator;
-struct ShardingStrategy;
 class ObjectId;
 
 }  // namespace sdb

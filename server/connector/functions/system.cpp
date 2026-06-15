@@ -44,7 +44,7 @@
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 namespace {
@@ -320,13 +320,11 @@ int64_t GetRelationForkSize(duckdb::ClientContext& context,
       return table ? StoreTableSizeProxy(context, snapshot, *table) : 0;
     }
     case catalog::ObjectType::InvertedIndex: {
-      auto shard = snapshot.GetIndexShard(rel->GetId());
-      SDB_ASSERT(shard);
-      SDB_ASSERT(shard->GetType() == catalog::ObjectType::InvertedIndexShard);
-      return static_cast<int64_t>(
-        basics::downCast<search::InvertedIndexShard>(shard.get())
-          ->GetStats()
-          .indexSize);
+      auto storage = basics::downCast<const catalog::InvertedIndex>(*rel).GetData();
+      if (!storage) {
+        return 0;
+      }
+      return static_cast<int64_t>(storage->GetStats().indexSize);
     }
     default:
       return 0;

@@ -29,12 +29,12 @@
 #include "basics/assert.h"
 #include "basics/log.h"
 #include "basics/system-compiler.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::search {
 
 void RefreshTask::Finalize(
-  std::shared_ptr<search::InvertedIndexShard> inverted_index_shard,
+  std::shared_ptr<search::InvertedIndexStorage> inverted_index_storage,
   RefreshResult res) {
   static constexpr size_t kMaxNonEmptyCommits = 10;
   static constexpr size_t kMaxPendingCompactions = 3;
@@ -50,11 +50,11 @@ void RefreshTask::Finalize(
             kMaxPendingCompactions &&
           _state->non_empty_commits.fetch_add(1, std::memory_order_acq_rel) >=
             kMaxNonEmptyCommits) {
-        inverted_index_shard->ScheduleCompaction(_compaction_interval_msec);
+        inverted_index_storage->ScheduleCompaction(_compaction_interval_msec);
         _state->non_empty_commits.store(0, std::memory_order_release);
       }
     }
-    ScheduleContinue(std::move(inverted_index_shard), _refresh_interval_msec);
+    ScheduleContinue(std::move(inverted_index_storage), _refresh_interval_msec);
   } else {
     _state->non_empty_commits.store(0, std::memory_order_release);
     _state->noop_commit_count.fetch_add(1, std::memory_order_release);
@@ -62,7 +62,7 @@ void RefreshTask::Finalize(
          count < 1;) {
       if (_state->pending_commits.compare_exchange_weak(
             count, 1, std::memory_order_acq_rel)) {
-        ScheduleContinue(std::move(inverted_index_shard),
+        ScheduleContinue(std::move(inverted_index_storage),
                          _refresh_interval_msec);
         break;
       }
@@ -73,14 +73,14 @@ void RefreshTask::Finalize(
 void RefreshTask::operator()() {
   SDB_TRACE(SEARCH, "RefreshTask started");
   const char run_id = 0;
-  auto data = _inverted_index_shard.lock();
+  auto data = _inverted_index_storage.lock();
   absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
     SDB_ASSERT(promise.Valid());
     std::move(promise).Set();
   };
   SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
   if (!data) {
-    SDB_TRACE(SEARCH, "InvertedIndexShard ", _id, " is deleted");
+    SDB_TRACE(SEARCH, "InvertedIndexStorage ", _id, " is deleted");
     return;
   }
   auto id = data->GetId();
@@ -97,7 +97,7 @@ void RefreshTask::operator()() {
 
   // reload RuntimeState
   {
-    SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexShard") {
+    SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexStorage") {
       SDB_THROW(ERROR_DEBUG);
     }
     absl::ReaderMutexLock lock{data->GetMutex()};
@@ -157,13 +157,13 @@ void RefreshTask::operator()() {
 void CompactionTask::operator()() {
   SDB_TRACE(SEARCH, "CompactionTask started");
   const char run_id = 0;
-  auto data = _inverted_index_shard.lock();
+  auto data = _inverted_index_storage.lock();
   absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
     std::move(promise).Set();
   };
   SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
   if (!data) {
-    SDB_WARN(SEARCH, "CompactionTask: inverted index shard is deleted");
+    SDB_WARN(SEARCH, "CompactionTask: inverted index storage is deleted");
     return;
   }
   auto id = data->GetId();
@@ -187,7 +187,7 @@ void CompactionTask::operator()() {
 
   // reload RuntimeState
   {
-    SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexShard") {
+    SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
       SDB_THROW(ERROR_DEBUG);
     }
 

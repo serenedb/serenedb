@@ -32,7 +32,7 @@
 #include <shared_mutex>
 
 #include "catalog/inverted_index.h"
-#include "storage_engine/index_shard.h"
+#include "catalog/types.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::query {
@@ -42,7 +42,7 @@ class Transaction;
 }  // namespace sdb::query
 namespace sdb::search {
 
-class InvertedIndexShard;
+class InvertedIndexStorage;
 
 struct ThreadPoolState {
   std::atomic_size_t pending_commits{0};
@@ -80,15 +80,15 @@ using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
 class Snapshot {
  public:
-  Snapshot(std::shared_ptr<const InvertedIndexShard> inverted_index_shard,
+  Snapshot(std::shared_ptr<const InvertedIndexStorage> inverted_index_storage,
            InvertedIndexSnapshotPtr inverted_index_snapshot)
-    : _inverted_index_shard{std::move(inverted_index_shard)},
+    : _inverted_index_storage{std::move(inverted_index_storage)},
       _snapshot{std::move(inverted_index_snapshot)} {}
   Snapshot(Snapshot&&) = default;
 
   Snapshot& operator=(Snapshot&& other) {
     if (this != &other) {
-      _inverted_index_shard = std::move(other._inverted_index_shard);
+      _inverted_index_storage = std::move(other._inverted_index_storage);
       _snapshot = std::move(other._snapshot);
     }
     return *this;
@@ -104,7 +104,7 @@ class Snapshot {
   }
 
  private:
-  std::shared_ptr<const InvertedIndexShard> _inverted_index_shard;
+  std::shared_ptr<const InvertedIndexStorage> _inverted_index_storage;
   InvertedIndexSnapshotPtr _snapshot;
 };
 
@@ -126,11 +126,11 @@ inline uint64_t WalCursorOffset(uint64_t packed) noexcept {
   return packed & kWalCursorOffsetMask;
 }
 
-// Physical representation of a search index(catalog::Index)
-// Used for creating writers/readers and managing index lifecycle
-class InvertedIndexShard final
-  : public std::enable_shared_from_this<InvertedIndexShard>,
-    public IndexShard {
+// Physical representation of a search index (catalog::InvertedIndex). Owns the
+// iresearch writer/reader and all mutable index state; lives in the
+// SearchEngine registry keyed by index_id, not in the catalog snapshot.
+class InvertedIndexStorage final
+  : public std::enable_shared_from_this<InvertedIndexStorage> {
  public:
   struct Stats {
     // NOLINTBEGIN
@@ -148,17 +148,15 @@ class InvertedIndexShard final
     uint64_t time_ms;
   };
 
-  InvertedIndexShard(ObjectId id, const catalog::InvertedIndex& index,
+  InvertedIndexStorage(ObjectId id, const catalog::InvertedIndex& index,
                      bool is_new);
 
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id, ObjectId index_id,
-                                       ObjectId shard_id);
+                                       ObjectId storage_id);
 
-  static std::shared_ptr<InvertedIndexShard> Create(
+  static std::shared_ptr<InvertedIndexStorage> Create(
     ObjectId id, const catalog::InvertedIndex& index, bool is_new);
-
-  void Serialize(duckdb::Serializer& sink) const final;
 
   struct TruncateGuard {
     struct UnlockDeleter {
@@ -201,7 +199,7 @@ class InvertedIndexShard final
 
   void Refresh();
 
-  ObjectId GetId() const noexcept { return _id; }
+  ObjectId GetId() const noexcept { return _index_id; }
   auto GetState() const noexcept { return _state; }
 
   bool HasActiveSegments() const noexcept {
@@ -246,7 +244,7 @@ class InvertedIndexShard final
   }
 
   // The index lost a committed transaction's rows (an iresearch tick commit
-  // failed after the store transaction was already durable). The shard keeps
+  // failed after the store transaction was already durable). The storage keeps
   // serving, but the clean-shutdown checkpoint is suppressed so the next
   // boot rebuilds it from the store table.
   void MarkOutOfSync() noexcept {
@@ -282,6 +280,7 @@ class InvertedIndexShard final
                            RefreshResult& code);
   Result CleanupUnsafeImpl();
 
+  ObjectId _index_id;
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;
   mutable std::shared_mutex _snapshot_mutex;

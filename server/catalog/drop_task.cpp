@@ -30,28 +30,29 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/errors.h"
+#include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
 #include "catalog/store/store.h"
 #include "catalog/types.h"
 #include "general_server/scheduler.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::catalog {
 namespace {
 
-Result RemoveIndexShards(ObjectId db_id, ObjectId schema_id = ObjectId{0},
+Result RemoveIndexStorage(ObjectId db_id, ObjectId schema_id = ObjectId{0},
                          ObjectId table_id = ObjectId{0},
                          ObjectId index_id = ObjectId{0},
-                         ObjectId shard_id = ObjectId{0}) {
-  auto path = search::InvertedIndexShard::GetPath(db_id, schema_id, table_id,
-                                                  index_id, shard_id);
+                         ObjectId storage_id = ObjectId{0}) {
+  auto path = search::InvertedIndexStorage::GetPath(db_id, schema_id, table_id,
+                                                  index_id, storage_id);
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {
     return Result{ERROR_FAILED,
-                  "Failed to remove index shards: " + ec.message()};
+                  "Failed to remove index storage: " + ec.message()};
   }
   return {};
 }
@@ -106,14 +107,6 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
   }
 }
 
-AsyncResult TableShardDrop::Execute() {
-  SDB_ASSERT(!_is_root);
-  // Table rows live in the store table, dropped by TableDrop::Finalize;
-  // this task only exists to wait until catalog snapshots release the
-  // shard object (AllowToDrop) before storage teardown proceeds.
-  return yaclib::MakeFuture<Result>();
-}
-
 Result IndexDrop::Finalize() {
   if (_type == catalog::ObjectType::InvertedIndex ||
       _type == catalog::ObjectType::SecondaryIndex) {
@@ -124,13 +117,8 @@ Result IndexDrop::Finalize() {
     }
   }
   auto& server = GetCatalogStore();
-  auto shard_type = catalog::IndexShardType(_type);
-  auto r = server.DropEntry(_id, shard_type);
-  if (!r.ok()) {
-    return r;
-  }
   if (_is_root) {
-    r = server.DropDefinition(_parent_id, _type, _id);
+    auto r = server.DropDefinition(_parent_id, _type, _id);
     if (!r.ok()) {
       return r;
     }
@@ -142,13 +130,22 @@ Result IndexDrop::Finalize() {
 }
 
 AsyncResult IndexDrop::Execute() {
-  Result r;
   if (_type == catalog::ObjectType::InvertedIndex && _is_root) {
-    r = RemoveIndexShards(_db_id, _schema_id, _parent_id, _id);
+    // Seam (b): wait until the index's iresearch storage is fully released
+    // (catalog snapshots holding the dropped index gone, in-flight transactions
+    // / replay sessions gone, background tasks drained via their expired
+    // weak_ptr) BEFORE the directory is removed -- so no live holder touches a
+    // removed dir. _data is the storage weak captured at drop time.
+    if (!_data.expired()) {
+      return yaclib::MakeFuture<Result>(ERROR_LOCKED);
+    }
+    auto r = RemoveIndexStorage(_db_id, _schema_id, _parent_id, _id);
+    if (!r.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
+      return yaclib::MakeFuture<Result>(ERROR_LOCKED);
+    }
   }
-  if (r.ok()) {
-    r = Finalize();
-  }
+  auto r = Finalize();
   if (!r.ok()) {
     SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     return yaclib::MakeFuture<Result>(ERROR_LOCKED);
@@ -159,7 +156,7 @@ AsyncResult IndexDrop::Execute() {
 Result TableDrop::Finalize() {
   SDB_IF_FAILURE("crash_before_seq_counter_wipe") { SDB_IMMEDIATE_ABORT(); }
   auto& server = GetCatalogStore();
-  // Indexes, shards.
+  // Indexes and their storage.
   auto r = server.DropEntry(_id);
   if (!r.ok()) {
     return r;
@@ -182,17 +179,14 @@ AsyncResult TableDrop::Execute() {
   if (_is_root && !_indexes.empty()) {
     ObjectId db_id = _indexes.back()->GetDatabaseId();
     ObjectId schema_id = _parent_id;
-    auto r = RemoveIndexShards(db_id, schema_id, _id);
+    auto r = RemoveIndexStorage(db_id, schema_id, _id);
     if (!r.ok()) {
       SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
       co_return Result{ERROR_LOCKED};
     }
   }
   co_await RunChildrenTasks(std::span{_indexes});
-  auto r = co_await Schedule(_shard_drop);
-  if (r.ok()) {
-    r = Finalize();
-  }
+  Result r = Finalize();
   if (!r.ok()) {
     SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     co_return Result{ERROR_LOCKED};
@@ -228,7 +222,7 @@ Result SchemaDrop::Finalize() {
 
 AsyncResult SchemaDrop::Execute() {
   if (_is_root) {
-    auto r = RemoveIndexShards(_parent_id, _id);
+    auto r = RemoveIndexStorage(_parent_id, _id);
     if (!r.ok()) {
       SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
       co_return Result{ERROR_LOCKED};
@@ -260,7 +254,7 @@ Result DatabaseDrop::Finalize() {
 
 AsyncResult DatabaseDrop::Execute() {
   SDB_ASSERT(_is_root);
-  auto r = RemoveIndexShards(_id);
+  auto r = RemoveIndexStorage(_id);
   if (!r.ok()) {
     SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
     co_return Result{ERROR_LOCKED};

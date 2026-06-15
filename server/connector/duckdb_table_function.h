@@ -44,7 +44,7 @@ namespace irs {
 class IndexReader;
 }
 
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 

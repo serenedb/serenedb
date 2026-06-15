@@ -39,7 +39,7 @@ class SereneDBSchemaEntry;
 // Pipeline: TableScan -> SereneDBPhysicalCreateIndex (sink)
 //
 // Lifecycle:
-//   Sink:               receive data chunks, write to index shard (backfill)
+//   Sink:               receive data chunks, write to index storage (backfill)
 //   GetGlobalSinkState: create index in catalog with tombstone
 //   Finalize:           Refresh (inverted) + RemoveTombstone
 //   On error:           destructor drops the index (rollback)

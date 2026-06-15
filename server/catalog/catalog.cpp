@@ -98,11 +98,8 @@
 #include "general_server/state.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/sql_utils.h"
-#include "search/inverted_index_shard.h"
-#include "storage_engine/index_shard.h"
+#include "search/inverted_index_storage.h"
 #include "storage_engine/search_engine.h"
-#include "storage_engine/secondary_index_shard.h"
-#include "storage_engine/table_shard.h"
 #include "utils/exec_context.h"
 
 namespace sdb::catalog {
@@ -205,7 +202,6 @@ std::shared_ptr<TableDrop> Snapshot::CreateTableDrop(
   ObjectId db_id, ObjectId schema_id, const std::shared_ptr<Table>& table,
   bool is_root) {
   auto table_deps = GetDependency<TableDependency>(table->GetId());
-  auto shard = GetObject<TableShard>(table_deps->shard_id);
   auto indexes =
     table_deps->indexes | std::views::transform([&](ObjectId id) {
       auto index = GetObject<Index>(id);
@@ -232,17 +228,22 @@ std::shared_ptr<TableDrop> Snapshot::CreateTableDrop(
     }
   }
   return std::make_shared<TableDrop>(
-    table, shard, std::move(indexes), std::move(owned_sequences), schema_id,
+    table, std::move(indexes), std::move(owned_sequences), schema_id,
     std::move(store_name), std::move(fk_referenced), is_root);
 }
 
 std::shared_ptr<IndexDrop> Snapshot::CreateIndexDrop(
   ObjectId db_id, ObjectId schema_id, ObjectId table_id,
   const std::shared_ptr<Index>& index, bool is_root) {
-  auto index_deps = GetDependency<IndexDependency>(index->GetId());
-  auto shard = GetObject<IndexShard>(index_deps->shard_id);
-  return std::make_shared<IndexDrop>(index, std::move(shard), db_id, schema_id,
-                                     table_id, is_root);
+  // Capture the iresearch storage handle (weak) so the async IndexDrop can wait
+  // for every holder (snapshots, txns, tasks) to release before removing the
+  // on-disk directory. Secondary indexes have no storage -> empty weak.
+  std::weak_ptr<search::InvertedIndexStorage> data;
+  if (index->GetType() == ObjectType::InvertedIndex) {
+    data = basics::downCast<const InvertedIndex>(*index).GetData();
+  }
+  return std::make_shared<IndexDrop>(index, db_id, schema_id, table_id,
+                                     std::move(data), is_root);
 }
 
 template<typename T>
@@ -322,10 +323,6 @@ Result Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
       return r;
     }
     return AddObjectDefinition<IndexDependency>(parent_id, std::move(object));
-  } else if constexpr (std::is_same_v<T, TableShard>) {
-    return AddObjectDefinition(parent_id, std::move(object));
-  } else if constexpr (std::is_same_v<T, IndexShard>) {
-    return AddObjectDefinition(parent_id, std::move(object));
   } else {
     static_assert(false);
   }
@@ -365,8 +362,6 @@ void Snapshot::UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id,
     RemoveFromResolution<ResolveType::Relation>(
       object->GetParentId(), object->GetName(), maybe_not_found);
     parent_id = object->GetRelationId();
-  } else if constexpr (std::is_same_v<T, TableShard>) {
-  } else if constexpr (std::is_same_v<T, IndexShard>) {
   } else {
     static_assert(false);
   }
@@ -699,13 +694,6 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
                                         id, EdgeAction::Add);
       }
     } break;
-    case ObjectType::TableShard:
-      GetDependencyForWrite<TableDependency>(parent_id)->shard_id = id;
-      break;
-    case ObjectType::SecondaryIndexShard:
-    case ObjectType::InvertedIndexShard:
-      GetDependencyForWrite<IndexDependency>(parent_id)->shard_id = id;
-      break;
     case ObjectType::Virtual:
     case ObjectType::Column:
     case ObjectType::CheckConstraint:
@@ -1075,31 +1063,6 @@ std::shared_ptr<Object> Snapshot::GetObject(ObjectId id) const {
   return *it;
 }
 
-std::shared_ptr<TableShard> Snapshot::GetTableShard(ObjectId table_id) const {
-  auto table_deps = GetDependency<TableDependency>(table_id);
-  if (!table_deps->shard_id.isSet()) {
-    return nullptr;
-  }
-  return GetObject<TableShard>(table_deps->shard_id);
-}
-
-std::shared_ptr<IndexShard> Snapshot::GetIndexShard(ObjectId index_id) const {
-  auto index_deps = GetDependency<IndexDependency>(index_id);
-  if (!index_deps->shard_id.isSet()) {
-    return nullptr;
-  }
-  return GetObject<IndexShard>(index_deps->shard_id);
-}
-
-std::vector<std::shared_ptr<IndexShard>> Snapshot::GetIndexShardsByRelation(
-  ObjectId relation_id) const {
-  auto relation_deps = GetDependency<RelationDependency>(relation_id);
-  return relation_deps->indexes | std::views::transform([&](auto index_id) {
-           return GetIndexShard(index_id);
-         }) |
-         std::ranges::to<std::vector>();
-}
-
 std::vector<std::shared_ptr<Index>> Snapshot::GetIndexesByRelation(
   ObjectId relation_id) const {
   auto relation_deps = GetDependency<RelationDependency>(relation_id);
@@ -1261,7 +1224,7 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
   // Store-side index drops precede the column ALTERs below: a covering
   // index must be gone before its column can be dropped, and enforcement
   // (UNIQUE) must stop the moment the drop commits. The async task only
-  // sweeps shards and definitions.
+  // sweeps index storage and definitions.
   for (auto idx_id : plan.index_drops) {
     if (auto idx = GetObject<Index>(idx_id)) {
       ctx.WriteTombstone(idx->GetRelationId(), idx_id);
@@ -1487,9 +1450,6 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
           schema_deps->sequences.erase(id);
         }
       } break;
-      case ObjectType::TableShard:
-      case ObjectType::SecondaryIndexShard:
-      case ObjectType::InvertedIndexShard:
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
       case ObjectType::Column:
@@ -1521,9 +1481,6 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       if (obj->GetType() == ObjectType::Table) {
         const auto& table_deps =
           basics::downCast<TableDependency>(*relation_deps);
-        if (table_deps.shard_id.isSet()) {
-          RemoveObjectDefinition(id, table_deps.shard_id);
-        }
         // Owned sequences are parented under the schema (same parent_id
         // as the table), not the table -- unlike indexes.
         auto owned_sequences = table_deps.owned_sequences;
@@ -1550,22 +1507,12 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       }
     } break;
     case ObjectType::SecondaryIndex:
-    case ObjectType::InvertedIndex: {
-      auto index_deps = GetDependency<IndexDependency>(id);
-      if (index_deps->shard_id.isSet()) {
-        RemoveObjectDefinition(id, index_deps->shard_id);
-      }
-
-    } break;
+    case ObjectType::InvertedIndex:
+      break;
     case ObjectType::PgSqlFunction:
     case ObjectType::PgSqlType:
     case ObjectType::Tokenizer:
     case ObjectType::Sequence:
-      break;
-    case ObjectType::TableShard:
-    case ObjectType::SecondaryIndexShard:
-    case ObjectType::InvertedIndexShard:
-      SDB_ASSERT(!root);
       break;
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
@@ -1772,21 +1719,6 @@ Result Catalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
   });
 }
 
-Result Catalog::RegisterIndexShard(std::shared_ptr<IndexShard> shard) {
-  absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, _snapshot_mutex, [&](auto& clone) {
-    return clone->RegisterObject(shard, shard->GetIndexId(), false);
-  });
-}
-
-Result Catalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
-  absl::MutexLock lock{&_mutex};
-
-  return Apply(_snapshot, _snapshot_mutex, [&](auto& clone) {
-    return clone->RegisterObject(shard, shard->GetTableId(), false);
-  });
-}
-
 Result Catalog::CreateIndexImpl(std::string_view relation_schema,
                                 std::shared_ptr<Index> index,
                                 CreateIndexOperationOptions operation_options) {
@@ -1797,12 +1729,6 @@ Result Catalog::CreateIndexImpl(std::string_view relation_schema,
       if (!r.ok()) {
         return r;
       }
-      auto shard = index->CreateIndexShard(true, ObjectId{0});
-      if (!shard) {
-        return std::move(shard).error();
-      }
-      r = clone->RegisterObject(*shard, index->GetId(), false);
-      SDB_ASSERT(r.ok());
 
       if (operation_options.create_with_tombstone) {
         r = _engine->WriteTombstone(index->GetRelationId(), index->GetId());
@@ -1812,7 +1738,6 @@ Result Catalog::CreateIndexImpl(std::string_view relation_schema,
         index->SetTombstoned(true);
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      auto shard_type = IndexShardType(index->GetType());
       duckdb::MemoryStream stream;
       {  // Write index definition
         auto bytes = catalog::SerializeObject(*index, stream);
@@ -1822,14 +1747,13 @@ Result Catalog::CreateIndexImpl(std::string_view relation_schema,
           return r;
         }
       }
-      {  // Write index shard definition
-        auto bytes = catalog::SerializeObject(**shard, stream);
-
-        r = _engine->CreateDefinition(index->GetId(), shard_type,
-                                      (*shard)->GetId(), bytes);
-        if (!r.ok()) {
-          return r;
-        }
+      // The inverted index's mutable iresearch storage hangs off the metadata
+      // object itself, so the CREATE INDEX build (GetGlobalSinkState) reaches
+      // it via the index's GetData(). Bind it here, before the build runs.
+      if (index->GetType() == ObjectType::InvertedIndex) {
+        const auto& inverted = basics::downCast<const InvertedIndex>(*index);
+        inverted.SetData(search::InvertedIndexStorage::Create(
+          inverted.GetId(), inverted, /*is_new=*/true));
       }
       {
         auto table = clone->template GetObject<Table>(index->GetRelationId());
@@ -1854,6 +1778,8 @@ Result Catalog::CreateIndexImpl(std::string_view relation_schema,
       return Result{};
     },
     [&](auto& clone) {
+      // Unregistering drops the index (and its just-bound storage) from the
+      // clone; mirrors the prior rollback, which only dropped the registry ref.
       clone->UnregisterObject(index, index->GetRelationId(), true);
     });
 }
@@ -2249,7 +2175,6 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
   if (operation_options.create_with_tombstone) {
     table->SetTombstoned(true);
   }
-  auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
 
   std::optional<StoreTableDef> store_table;
   if (table->GetEngine() == TableEngine::Transactional) {
@@ -2306,8 +2231,6 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
         return r;
       }
 
-      r = clone->RegisterObject(shard, table->GetId(), false);
-      SDB_ASSERT(r.ok());
       for (const auto& seq : sequences) {
         r = clone->RegisterObject(seq, *schema_id, false);
         if (!r.ok()) {
@@ -2328,9 +2251,6 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
       return _engine->Write([&](auto& ctx) {
         ctx.PutDefinition(*schema_id, ObjectType::Table, table->GetId(),
                           catalog::SerializeObject(*table, stream));
-        ctx.PutDefinition(table->GetId(), ObjectType::TableShard,
-                          shard->GetId(),
-                          catalog::SerializeObject(*shard, stream));
         for (const auto& seq : sequences) {
           ctx.PutDefinition(*schema_id, ObjectType::Sequence, seq->GetId(),
                             catalog::SerializeObject(*seq, stream));
@@ -3483,17 +3403,6 @@ Result CheckTableForDrop(std::string_view bytes, ReadContext ctx) {
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   CatalogStore& store, ObjectId db_id, ObjectId schema_id, ObjectId table_id,
   ObjectId index_id, ObjectType index_type, bool is_root = false) {
-  auto shard_type = IndexShardType(index_type);
-  ObjectId shard_id;
-  auto r = store.VisitBoot(index_id, shard_type,
-                           [&](CatalogStore::Key key, std::string_view) {
-                             SDB_ASSERT(!shard_id.isSet());
-                             shard_id = key.id;
-                             return Result{};
-                           });
-  if (!r.ok()) {
-    return std::unexpected<Result>{std::in_place, std::move(r)};
-  }
   return std::make_shared<IndexDrop>(index_id, index_type, db_id, schema_id,
                                      table_id, is_root);
 }
@@ -3503,17 +3412,6 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(CatalogStore& store,
                                                      ObjectId schema_id,
                                                      ObjectId table_id,
                                                      bool is_root = false) {
-  ObjectId shard_id;
-
-  auto r = store.VisitBoot(table_id, ObjectType::TableShard,
-                           [&](CatalogStore::Key key, std::string_view) {
-                             SDB_ASSERT(!shard_id.isSet());
-                             shard_id = key.id;
-                             return Result{};
-                           });
-  if (!r.ok()) {
-    return std::unexpected<Result>{std::in_place, std::move(r)};
-  }
   std::vector<std::shared_ptr<IndexDrop>> indexes;
   auto collect_indexes = [&](ObjectType type) {
     return store.VisitBoot(
@@ -3527,7 +3425,7 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(CatalogStore& store,
         return Result{};
       });
   };
-  r = collect_indexes(ObjectType::SecondaryIndex);
+  auto r = collect_indexes(ObjectType::SecondaryIndex);
   if (r.ok()) {
     r = collect_indexes(ObjectType::InvertedIndex);
   }
@@ -3549,7 +3447,7 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(CatalogStore& store,
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  return std::make_shared<TableDrop>(table_id, shard_id, std::move(indexes),
+  return std::make_shared<TableDrop>(table_id, std::move(indexes),
                                      std::move(owned_sequences), schema_id,
                                      is_root);
 }
@@ -3635,9 +3533,8 @@ class OpenDatabase {
   Result RegisterSequences(ObjectId database_id, ObjectId schema_id,
                            bool owned);
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
-  Result RegisterTableShard(ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
-  Result RegisterIndexShard(const std::shared_ptr<Index>& index);
+  Result RegisterInvertedStorage(const std::shared_ptr<Index>& index);
   Result RegisterIndexes(ObjectId database_id, ObjectId schema_id,
                          ObjectId table_id);
 
@@ -3860,29 +3757,18 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
   return {};
 }
 
-Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
-  return GetCatalogStore().VisitBoot(
-    table_id, ObjectType::TableShard,
-    [&](CatalogStore::Key key, std::string_view bytes) -> Result {
-      ObjectId shard_id = key.id;
-      SDB_ASSERT(!IsDeleted(shard_id, DeletedScope::Relation));
-      auto stats = TableShard::DeserializeStats(bytes);
-      auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
-      return _catalog.RegisterTableShard(std::move(shard));
-    });
-}
-
-Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
-  return GetCatalogStore().VisitBoot(
-    index->GetId(), IndexShardType(index->GetType()),
-    [&](CatalogStore::Key key, std::string_view /*bytes*/) -> Result {
-      auto shard = index->CreateIndexShard(false, key.id);
-      if (!shard) {
-        return std::move(shard.error());
-      }
-      SDB_ASSERT(*shard);
-      return _catalog.RegisterIndexShard(std::move(*shard));
-    });
+Result OpenDatabase::RegisterInvertedStorage(
+  const std::shared_ptr<Index>& index) {
+  // The inverted index's durable state is its iresearch segment directory; the
+  // storage is (re)opened from it here and bound onto the index. Must run
+  // before InitInvertedIndexes/BindStoreTableIndexes so WAL replay resolves it
+  // via index->GetData().
+  return basics::SafeCall([&] {
+    const auto& inverted = basics::downCast<const InvertedIndex>(*index);
+    inverted.SetData(search::InvertedIndexStorage::Create(
+      inverted.GetId(), inverted, /*is_new=*/false));
+    return Result{};
+  });
 }
 
 Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
@@ -3949,10 +3835,6 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
   irs::Finally cleanup = [&] noexcept {
     ClearDeletedDefinitions(DeletedScope::Relation);
   };
-  r = RegisterTableShard(table_id);
-  if (!r.ok()) {
-    return r;
-  }
   return RegisterIndexes(db_id, schema_id, table_id);
 }
 
@@ -3991,7 +3873,9 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
   SDB_ASSERT(counter == 0);
 #endif
 
-  r = RegisterIndexShard(index);
+  if (entry_type == ObjectType::InvertedIndex) {
+    r = RegisterInvertedStorage(index);
+  }
   return r;
 }
 

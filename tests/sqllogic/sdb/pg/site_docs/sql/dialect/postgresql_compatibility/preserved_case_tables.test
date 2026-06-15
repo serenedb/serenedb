@@ -12,7 +12,7 @@ SET preserve_identifier_case = true;
 #|
 #| SELECT * FROM PreservedCase;
 #|
-#| SELECT tbl FROM duckdb_tables();
+#| SELECT tablename FROM pg_tables;
 
 # DOCS_TEST_BODY
 
@@ -35,10 +35,10 @@ x
 
 
 query ? rowsort
-SELECT DISTINCT table_name AS tbl
-FROM duckdb_tables()
-WHERE table_name IN ('MyTaBLe', 'PreservedCase');
+SELECT DISTINCT tablename
+FROM pg_tables
+WHERE tablename IN ('MyTaBLe', 'PreservedCase');
 ----
-tbl
+tablename
 MyTaBLe
 PreservedCase

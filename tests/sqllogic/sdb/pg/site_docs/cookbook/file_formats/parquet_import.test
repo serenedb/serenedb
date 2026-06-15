@@ -132,10 +132,8 @@ TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_006_1_f_pa
 # DOCS_TEST: example_007
 
 statement ok
-COPY (SELECT * FROM (VALUES
-    (1, 'alpha', 10),
-    (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_007_1_f_parquet.parquet' (FORMAT parquet);
+COPY (FROM (VALUES (42, 43)) t(c1, c2))
+TO '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_007_1_f_parquet.parquet';
 
 # DOCS_TEST_RAW
 #| FROM (VALUES (NULL::VARCHAR, NULL, NULL)) t(c1, c2, c3)
@@ -151,6 +149,5 @@ WHERE false
 UNION ALL BY NAME
 FROM '/tmp/${__DATABASE__}_cookbook_file_formats_parquet_import_example_007_1_f_parquet.parquet';
 ----
-c1	c2	c3	id	name	value
-NULL	NULL	NULL	1	alpha	10
-NULL	NULL	NULL	2	beta	20
+c1	c2	c3
+42	43	NULL

@@ -13,20 +13,20 @@ list_value
 # DOCS_TEST_BODY
 
 query
-SELECT ['duck', 'goose', NULL, 'heron'];
+SELECT ['alpha', 'beta', NULL, 'gamma'];
 ----
 list_value
-{duck,goose,NULL,heron}
+{alpha,beta,NULL,gamma}
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
 query
-SELECT [['duck', 'goose', 'heron'], NULL, ['frog', 'toad'], []];
+SELECT [['alpha', 'beta', 'gamma'], NULL, ['delta', 'epsilon'], []];
 ----
 list_value
-{{duck,goose,heron},{frog},{frog,toad},{}}
+{{alpha,beta,gamma},{},{delta,epsilon},{}}
 
 # DOCS_TEST: example_004
 
@@ -104,3 +104,27 @@ SELECT [1, 2] < [1, NULL, 4] AS result;
 ----
 result
 t
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT $$['a', 'b', 'c'][3]$$                AS "Example", (['a', 'b', 'c'][3])::VARCHAR                AS "Result"
+UNION ALL SELECT $$['a', 'b', 'c'][-1]$$,                  (['a', 'b', 'c'][-1])::VARCHAR
+UNION ALL SELECT $$['a', 'b', 'c'][2 + 1]$$,               (['a', 'b', 'c'][2 + 1])::VARCHAR
+UNION ALL SELECT $$list_extract(['a', 'b', 'c'], 3)$$,     (list_extract(['a', 'b', 'c'], 3))::VARCHAR
+UNION ALL SELECT $$['a', 'b', 'c'][1:2]$$,                 (['a', 'b', 'c'][1:2])::VARCHAR
+UNION ALL SELECT $$['a', 'b', 'c'][:2]$$,                  (['a', 'b', 'c'][:2])::VARCHAR
+UNION ALL SELECT $$['a', 'b', 'c'][-2:]$$,                 (['a', 'b', 'c'][-2:])::VARCHAR
+UNION ALL SELECT $$list_slice(['a', 'b', 'c'], 2, 3)$$,    (list_slice(['a', 'b', 'c'], 2, 3))::VARCHAR;
+----
+Example	Result
+['a', 'b', 'c'][3]	c
+['a', 'b', 'c'][-1]	c
+['a', 'b', 'c'][2 + 1]	c
+list_extract(['a', 'b', 'c'], 3)	c
+['a', 'b', 'c'][1:2]	[a, b]
+['a', 'b', 'c'][:2]	[a, b]
+['a', 'b', 'c'][-2:]	[b, c]
+list_slice(['a', 'b', 'c'], 2, 3)	[b, c]

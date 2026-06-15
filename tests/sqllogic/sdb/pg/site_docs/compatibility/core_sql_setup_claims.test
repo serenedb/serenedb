@@ -1,0 +1,161 @@
+# Setup-dependent compatibility claims for core-sql-compatibility.md.
+# These features need prerequisite objects (tables, indexes), so they are
+# authored with explicit setup rather than auto-probed in isolation.
+
+# --- Indexes (CREATE INDEX family) ---
+
+statement ok
+CREATE TABLE sc_idx_t (a INTEGER, b INTEGER);
+
+# ddl_index: CREATE INDEX
+statement ok
+CREATE INDEX sc_idx_1 ON sc_idx_t (a);
+
+# ddl_index: Multicolumn Indexes
+statement ok
+CREATE INDEX sc_idx_2 ON sc_idx_t (a, b);
+
+# ddl_index: Ordered Indexes
+statement ok
+CREATE INDEX sc_idx_3 ON sc_idx_t (a DESC);
+
+# ddl_index: Unique Indexes
+statement ok
+CREATE UNIQUE INDEX sc_idx_4 ON sc_idx_t (b);
+
+# --- Foreign Keys (syntax accepted; not enforced -> Partial) ---
+
+statement ok
+CREATE TABLE sc_fk_p (id INTEGER PRIMARY KEY);
+
+# ddl_create: Foreign Keys
+statement ok
+CREATE TABLE sc_fk_c (a INTEGER REFERENCES sc_fk_p (id));
+
+# --- ALTER TABLE rename ---
+
+statement ok
+CREATE TABLE sc_ren (a INTEGER, b INTEGER);
+
+# ddl_alter: RENAME COLUMN
+statement ok
+ALTER TABLE sc_ren RENAME COLUMN a TO a2;
+
+# ddl_alter: RENAME TO
+statement ok
+ALTER TABLE sc_ren RENAME TO sc_ren2;
+
+# --- Data Manipulation ---
+
+statement ok
+CREATE TABLE sc_dml (a INTEGER, b INTEGER);
+
+# dml: INSERT
+statement ok
+INSERT INTO sc_dml VALUES (1, 2);
+
+# dml: UPDATE
+statement ok
+UPDATE sc_dml SET b = 3 WHERE a = 1;
+
+# dml: DELETE
+statement ok
+DELETE FROM sc_dml WHERE a = 1;
+
+# dml: RETURNING
+statement ok
+INSERT INTO sc_dml VALUES (5, 6) RETURNING a;
+
+# dml: COPY TO
+statement ok
+COPY sc_dml TO '/tmp/sc_dml_copy.csv';
+
+# dml: COPY FROM
+statement ok
+COPY sc_dml FROM '/tmp/sc_dml_copy.csv';
+
+# dml: ON CONFLICT (syntax accepted)
+statement ok
+CREATE TABLE sc_oc (a INTEGER PRIMARY KEY, b INTEGER);
+
+statement ok
+INSERT INTO sc_oc VALUES (1, 1) ON CONFLICT (a) DO NOTHING;
+
+# --- Text Search: SereneDB native full-text search (inverted index) ---
+
+statement ok
+CREATE TABLE sc_ts_t (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO sc_ts_t VALUES (1, 'a fat cat'), (2, 'a fat dog sat');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sc_ts_en (template='text', locale='en_US.UTF-8', case='none', stemming=false, accent=false, frequency=true, position=true);
+
+statement ok
+CREATE INDEX sc_ts_idx ON sc_ts_t USING inverted(id, body sc_ts_en) WITH (pk='id');
+
+# op_tsearch: @@
+statement ok
+SELECT id FROM sc_ts_idx WHERE body @@ ts_phrase('cat');
+
+# op_tsearch: ||
+statement ok
+SELECT id FROM sc_ts_idx WHERE body @@ (ts_phrase('cat') || ts_phrase('dog'));
+
+# op_tsearch: &&
+statement ok
+SELECT id FROM sc_ts_idx WHERE body @@ (ts_phrase('cat') && ts_phrase('fat'));
+
+# op_tsearch: !!
+statement ok
+SELECT id FROM sc_ts_idx WHERE body @@ (ts_phrase('cat') && !! ts_phrase('dog'));
+
+# op_tsearch: plainto_tsquery
+statement ok
+SELECT id FROM sc_ts_idx WHERE body @@ plainto_tsquery('cat');
+
+# op_tsearch: phraseto_tsquery
+statement ok
+SELECT id FROM sc_ts_idx WHERE body @@ phraseto_tsquery('fat cat');
+
+# op_tsearch: websearch_to_tsquery
+statement ok
+SELECT id FROM sc_ts_idx WHERE body @@ websearch_to_tsquery('cat');
+
+# op_tsearch: to_tsquery
+statement ok
+SELECT id FROM sc_ts_idx WHERE body @@ to_tsquery('cat');
+
+# op_tsearch: tsquery_phrase
+statement ok
+SELECT id FROM sc_ts_idx WHERE body @@ tsquery_phrase(ts_phrase('fat'), ts_phrase('cat'));
+
+# --- Re-verified: formerly crash-flagged (TRUNCATE, sequences) ---
+
+# dml: TRUNCATE
+statement ok
+CREATE TABLE sc_trunc (a INTEGER);
+
+statement ok
+INSERT INTO sc_trunc VALUES (1), (2);
+
+statement ok
+TRUNCATE sc_trunc;
+
+# op_seq_cond: CREATE SEQUENCE + nextval/setval/currval
+statement ok
+CREATE SEQUENCE sc_seq;
+
+# op_seq_cond: nextval
+statement ok
+SELECT nextval('sc_seq');
+
+# op_seq_cond: setval
+statement ok
+SELECT setval('sc_seq', 10);
+
+# op_seq_cond: currval
+statement ok
+SELECT currval('sc_seq');
+

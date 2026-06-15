@@ -1,0 +1,81 @@
+# Regression tests for corrections to the compatibility docs:
+# operators/functions that were wrongly documented as unsupported, plus the
+# dual-form (Partial) cases. Guards against the doc drifting back.
+
+# --- Mathematical bitwise / exponent operators (were wrongly "No") ---
+
+statement ok
+SELECT 2 ^ 3;
+
+statement ok
+SELECT 5 | 3;
+
+statement ok
+SELECT 5 & 3;
+
+statement ok
+SELECT ~ 5;
+
+statement ok
+SELECT 1 << 4;
+
+statement ok
+SELECT 16 >> 2;
+
+# '#' (bitwise XOR) genuinely unsupported
+statement error
+SELECT 5 # 3;
+
+# --- Bit-string operators ---
+
+statement ok
+SELECT '101'::bit(3) || '010'::bit(3);
+
+statement ok
+SELECT '101'::bit(3) | '110'::bit(3);
+
+statement ok
+SELECT '101'::bit(3) & '110'::bit(3);
+
+# --- JSON: concatenation + multi-arg path extraction ---
+
+statement ok
+SELECT '{"a":1}'::json || '{"b":2}'::json;
+
+statement ok
+SELECT json_extract_path('{"a":{"b":1}}'::json, 'a', 'b');
+
+# No binary JSON (jsonb)
+statement error
+SELECT NULL::jsonb;
+
+# --- to_timestamp: epoch (numeric) form works, text+format does not ---
+
+statement ok
+SELECT to_timestamp(1577836800);
+
+statement error
+SELECT to_timestamp('2020-01-01', 'YYYY-MM-DD');
+
+# --- Formerly crash-flagged in docs, now confirmed working (no crash) ---
+
+statement ok
+SELECT COALESCE(NULL, 1, 2);
+
+statement ok
+SELECT NULL::timestamp with time zone;
+
+statement error
+SELECT lastval();
+
+statement error
+SELECT make_timestamptz(2020, 1, 1, 0, 0, 0);
+
+# --- Geometric: PostgreSQL geometric types unsupported (spatial is a
+#     separate ST_* extension, not the PG geometric types) ---
+
+statement error
+SELECT NULL::point;
+
+statement error
+SELECT NULL::box;

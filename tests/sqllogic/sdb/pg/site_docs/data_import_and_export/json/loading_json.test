@@ -259,6 +259,29 @@ duck	goose
 42	{1,2,3}
 43	{4,5,6}
 
+# DOCS_TEST: example_015
+
+statement ok
+COPY (
+    SELECT '{"duck":42,"goose":[1,2,3]}' AS line
+    UNION ALL
+    SELECT '{"duck":43,"goose":[4,5,6]}' AS line
+) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_015_1_birds_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_json('birds-records.json', records = false);
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_015_1_birds_records_json.json', records = false);
+----
+json
+(42,"{1,2,3}")
+(43,"{4,5,6}")
+
 # DOCS_TEST: example_011
 
 # DOCS_TEST_RAW

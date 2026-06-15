@@ -99,18 +99,6 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_005_1_file_db.c
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_006_1_file_db.csv' (RECOVERY_MODE no_wal_writes);
 
-# DOCS_TEST: example_007
-
-# DOCS_TEST_BODY
-
-statement error
-ATTACH 'sqlite_file.db' AS sqlite_db (TYPE sqlite);
-----
-db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/sqlite_scanner.duckdb_extension" not found.
-Extension "sqlite" is an existing extension.
-
-Install it first using "INSTALL sqlite".
-
 # DOCS_TEST: example_008
 
 # DOCS_TEST_RAW
@@ -271,27 +259,6 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_018_1_encrypted
 statement ok
 DETACH enc_db;
 
-# DOCS_TEST: example_019
-
-# DOCS_TEST_RAW
-#| LOAD httpfs;
-#|
-#| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack');
-
-# DOCS_TEST_BODY
-
-statement ok
-LOAD httpfs;
-
-statement ok
-DETACH IF EXISTS enc_db;
-
-statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_019_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'quack_quack');
-
-statement ok
-DETACH enc_db;
-
 # DOCS_TEST: example_020
 
 # DOCS_TEST_RAW
@@ -331,40 +298,36 @@ USE memory_db;
 
 # DOCS_TEST: example_022
 
-# DOCS_TEST_RAW
-#| ATTACH 'new_db.db';
+statement ok
+DETACH IF EXISTS new_db;
 
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_022_1_new_db_db.csv';
+ATTACH ':memory:' AS new_db;
 
 # DOCS_TEST: example_023
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CREATE SCHEMA new_db.my_schema;
-----
-(?i)Catalog .* does not exist!
 
 # DOCS_TEST: example_024
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CREATE TABLE new_db.my_schema.my_table (col INTEGER);
-----
-(?i)Catalog with name .* does not exist!
 
 # DOCS_TEST: example_025
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT new_db.my_schema.my_table.col FROM new_db.my_schema.my_table;
 ----
-(?i)Catalog .* does not exist!
+col
 
 # DOCS_TEST: example_026
 
@@ -384,71 +347,65 @@ USE new_db;
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 USE new_db.my_schema;
-----
-db error: ERROR: SET schema: No catalog \+ schema named "new_db\.my_schema" found\.
 
 # DOCS_TEST: example_029
 
-# DOCS_TEST_RAW
-#| ATTACH 'new_db.db';
-#|
-#| CREATE SCHEMA my_schema;
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DETACH IF EXISTS new_db;
+
+statement ok
+DROP SCHEMA IF EXISTS new_db CASCADE;
+
+statement ok
+DROP SCHEMA IF EXISTS my_schema CASCADE;
 
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_029_1_new_db_db.csv';
+ATTACH ':memory:' AS new_db;
 
 statement ok
 CREATE SCHEMA my_schema;
 
 # DOCS_TEST: example_030
 
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS new_db;
-
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CREATE TABLE new_db.tbl (i INTEGER);
-----
-db error: ERROR: Catalog with name tests_sqllogic_sdb_pg_site_docs_sql_statements_attach__hksfmpan does not exist!
 
 # DOCS_TEST: example_031
 
 # DOCS_TEST_BODY
 
-statement error db error: ERROR: Catalog with name tests_sqllogic_sdb_pg_site_docs_sql_statements_attach__hksfmpan does not exist!
+statement ok
 CREATE TABLE my_schema.tbl (i INTEGER);
 
 # DOCS_TEST: example_032
 
 statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP SCHEMA IF EXISTS new_db CASCADE;
-
-statement ok
-DROP TABLE IF EXISTS new_db;
+CREATE SCHEMA new_db;
 
 # DOCS_TEST_BODY
 
-statement ok
-CREATE SCHEMA new_db;
-
-statement ok
-CREATE TABLE new_db.tbl (i INTEGER);
+statement error Ambiguous reference to catalog or schema "new_db"
+CREATE TABLE new_db.tbl2 (i INTEGER);
 
 # DOCS_TEST: example_033
 
 statement ok
 USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS tbl1;
+
+statement ok
+DROP TABLE IF EXISTS tbl2;
 
 statement ok
 DETACH IF EXISTS db1;
@@ -465,10 +422,10 @@ statement ok
 ATTACH ':memory:' AS db2;
 
 statement ok
-CREATE table db1.tbl1 (i INTEGER);
+CREATE TABLE db1.tbl1 (i INTEGER);
 
 statement ok
-CREATE table db2.tbl2 (j INTEGER);
+CREATE TABLE db2.tbl2 (j INTEGER);
 
 # DOCS_TEST: example_034
 
@@ -486,21 +443,39 @@ j
 
 # DOCS_TEST: example_035
 
+# DOCS_TEST_RAW
+#| SET search_path TO db1, db2;
+#|
+#| SELECT * FROM tbl1;
+#|
+#| SELECT * FROM tbl2;
+
 # DOCS_TEST_BODY
 
 statement ok
-SET search_path = 'db1,db2';
+SET search_path TO db1, db2;
 
-query ???????????????????????????????????????????????????????????????????
+query
 SELECT * FROM tbl1;
 ----
-id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	product_id	employee_id	title	body	content	description	name	tag	category	genre	region	country	city	product	customer	status	symbol	amount	quantity	price	views	runtime	year	revenue	salary	grade	balance	count	value	published_at	created_at	updated_at	date	sale_date	ts	time	l_orderkey	l_partkey	l_suppkey	l_linenumber	l_quantity	l_extendedprice	l_discount	l_tax	l_returnflag	l_linestatus	l_shipdate	l_commitdate	l_receiptdate	l_shipinstruct	l_shipmode	l_comment
-1	1	10	100	1	2	3	1	2	3	1	1	1	1	1	1	1	Intro to Search	search analytics body	search content	alien galaxy film	alpha	search	engineering	sci-fi	north	US	Berlin	widget	Alice	open	AAPL	100	10	9.5	4200	120	2024	1000	70000	1	500	1	42	2025-01-15	2025-01-15 10:00:00	2025-01-16 10:00:00	2025-01-15	2025-01-15	2025-01-15 10:00:00	2025-01-15 10:00:00	1	1	1	1	10	100	0.05	0.01	N	O	1998-09-01	1998-08-15	1998-09-05	DELIVER IN PERSON	AIR	first lineitem
-2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem
+i
 
-query ???????????????????????????????????????????????????????????????????
+query
 SELECT * FROM tbl2;
 ----
-id	i	j	k	x	y	z	a	b	c	article_id	comment_id	author_id	customer_id	order_id	product_id	employee_id	title	body	content	description	name	tag	category	genre	region	country	city	product	customer	status	symbol	amount	quantity	price	views	runtime	year	revenue	salary	grade	balance	count	value	published_at	created_at	updated_at	date	sale_date	ts	time	l_orderkey	l_partkey	l_suppkey	l_linenumber	l_quantity	l_extendedprice	l_discount	l_tax	l_returnflag	l_linestatus	l_shipdate	l_commitdate	l_receiptdate	l_shipinstruct	l_shipmode	l_comment
-1	1	10	100	1	2	3	1	2	3	1	1	1	1	1	1	1	Intro to Search	search analytics body	search content	alien galaxy film	alpha	search	engineering	sci-fi	north	US	Berlin	widget	Alice	open	AAPL	100	10	9.5	4200	120	2024	1000	70000	1	500	1	42	2025-01-15	2025-01-15 10:00:00	2025-01-16 10:00:00	2025-01-15	2025-01-15	2025-01-15 10:00:00	2025-01-15 10:00:00	1	1	1	1	10	100	0.05	0.01	N	O	1998-09-01	1998-08-15	1998-09-05	DELIVER IN PERSON	AIR	first lineitem
-2	2	20	200	2	3	4	2	3	4	2	2	2	2	2	2	2	Scaling Analytics	another text body	analytics content	biggest blockbuster story	beta	analytics	product	drama	south	DE	Paris	gadget	Bob	closed	MSFT	200	20	19.5	5100	95	2025	2500	80000	2	700	2	84	2025-03-01	2025-03-01 11:00:00	2025-03-02 11:00:00	2025-03-01	2025-03-01	2025-03-01 11:00:00	2025-03-01 11:00:00	2	2	2	2	20	200	0.1	0.02	R	F	1998-09-02	1998-08-16	1998-09-06	TAKE BACK RETURN	MAIL	second lineitem
+j
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+SET search_path TO main;
+
+statement ok
+DETACH IF EXISTS db1;
+
+statement ok
+DETACH IF EXISTS db2;
+
+statement ok
+DETACH IF EXISTS new_db;

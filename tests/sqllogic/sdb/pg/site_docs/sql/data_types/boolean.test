@@ -27,3 +27,31 @@ SELECT * FROM integers WHERE i > 10;
 ----
 i
 15
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT true AS "X", true AND true AS "X AND true", true AND false AS "X AND false", true AND NULL AS "X AND NULL"
+UNION ALL SELECT false, false AND true, false AND false, false AND NULL
+UNION ALL SELECT NULL, NULL AND true, NULL AND false, NULL AND NULL;
+----
+X	X AND true	X AND false	X AND NULL
+t	t	f	NULL
+f	f	f	f
+NULL	NULL	f	NULL
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT true AS "X", true OR true AS "X OR true", true OR false AS "X OR false", true OR NULL AS "X OR NULL"
+UNION ALL SELECT false, false OR true, false OR false, false OR NULL
+UNION ALL SELECT NULL, NULL OR true, NULL OR false, NULL OR NULL;
+----
+X	X OR true	X OR false	X OR NULL
+t	t	t	t
+f	t	f	NULL
+NULL	t	NULL	NULL

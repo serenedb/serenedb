@@ -170,5 +170,8 @@ CREATE TABLE myschema.mytable (v mytype);
 
 # DOCS_TEST_BODY
 
-statement ok
+query
 DESCRIBE myschema.mytable;
+----
+column_name	column_type	null	key	default	extra
+v	mytype	YES	NULL	NULL	NULL

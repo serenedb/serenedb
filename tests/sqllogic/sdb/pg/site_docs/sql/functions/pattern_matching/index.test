@@ -197,7 +197,7 @@ f
 # DOCS_TEST: example_011
 
 statement ok
-COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/site_docs_pattern_matching_example_011_duckdb.exe';
+COPY (SELECT 'SereneDB docs fixture' AS content) TO '/tmp/site_docs_pattern_matching_example_011_serened';
 
 statement ok
 COPY (SELECT 1 AS id, 'alpha' AS name) TO '/tmp/site_docs_pattern_matching_example_011_test.csv' (FORMAT CSV, HEADER true);
@@ -232,7 +232,7 @@ FROM glob('/tmp/site_docs_pattern_matching_example_011_*')
 ORDER BY file;
 ----
 file
-duckdb.exe
+serened
 test.csv
 test.json
 test.parquet

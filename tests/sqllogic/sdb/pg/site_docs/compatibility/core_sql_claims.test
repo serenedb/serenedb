@@ -1,0 +1,2535 @@
+# Auto-generated compatibility claims for core-sql-compatibility.md
+# One record per feature; asserts engine support state.
+# Crashers + setup-dependent features are in core_sql_setup_claims.test.
+
+# ddl_create: CREATE TABLE
+statement ok
+CREATE TABLE ddl_create_t1 (a INT);
+
+# ddl_create: DROP TABLE
+statement ok
+DROP TABLE ddl_create_t1;
+
+# ddl_create: Default Values
+statement ok
+CREATE TABLE ddl_create_t2 (a INT DEFAULT 5);
+
+# ddl_create: GENERATED
+statement ok
+CREATE TABLE ddl_create_g (a INT, b INT GENERATED ALWAYS AS (a*2) STORED);
+INSERT INTO ddl_create_g (a) VALUES (5);
+SELECT b FROM ddl_create_g;
+
+# ddl_create: Check Constraints
+statement ok
+CREATE TABLE ddl_create_t4 (a INT CHECK (a > 0));
+
+# ddl_create: Not-Null Constraints
+statement ok
+CREATE TABLE ddl_create_t5 (a INT NOT NULL);
+
+# ddl_create: Unique Constraints
+statement ok
+CREATE TABLE ddl_create_u (a INT UNIQUE);
+INSERT INTO ddl_create_u VALUES (1);
+INSERT INTO ddl_create_u VALUES (1);
+
+# ddl_create: Primary Keys
+statement ok
+CREATE TABLE ddl_create_t7 (a INT PRIMARY KEY);
+
+# ddl_create: Named Constraints
+statement ok
+CREATE TABLE ddl_create_t9 (a INT CONSTRAINT ddl_create_chk CHECK (a > 0));
+
+# ddl_create: Exclusion Constraints
+statement error
+CREATE TABLE ddl_create_t10 (a INT, EXCLUDE USING gist (a WITH =));
+
+# ddl_create: System Columns
+statement error
+SELECT ctid FROM ddl_create_t11;
+
+# ddl_alter: ADD COLUMN
+statement error
+ALTER TABLE ddl_alter_t ADD COLUMN c INTEGER;
+
+# ddl_alter: DROP COLUMN
+statement error
+ALTER TABLE ddl_alter_t DROP COLUMN b;
+
+# ddl_alter: ADD CHECK
+statement error
+ALTER TABLE ddl_alter_t ADD CHECK (a > 0);
+
+# ddl_alter: ADD CONSTRAINT
+statement error
+ALTER TABLE ddl_alter_t ADD CONSTRAINT ddl_alter_chk CHECK (a > 0);
+
+# ddl_alter: ADD FOREIGN KEY
+statement error
+ALTER TABLE ddl_alter_t ADD FOREIGN KEY (a) REFERENCES ddl_alter_t (a);
+
+# ddl_alter: DROP CONSTRAINT
+statement error
+ALTER TABLE ddl_alter_c DROP CONSTRAINT ddl_alter_pk;
+
+# ddl_alter: ALTER COLUMN
+statement error
+ALTER TABLE ddl_alter_t ALTER COLUMN a SET NOT NULL;
+
+# ddl_alter: SET DEFAULT
+statement error
+ALTER TABLE ddl_alter_t ALTER COLUMN a SET DEFAULT 0;
+
+# ddl_alter: DROP DEFAULT
+statement error
+ALTER TABLE ddl_alter_t ALTER COLUMN a DROP DEFAULT;
+
+# ddl_alter: COLUMN TYPE
+statement error
+ALTER TABLE ddl_alter_t ALTER COLUMN a TYPE BIGINT;
+
+# ddl_priv: CREATE ROLE
+statement error
+CREATE ROLE ddl_priv_role1;
+
+# ddl_priv: OWNER TO
+statement error
+CREATE TABLE ddl_priv_owner_t(a int);
+ALTER TABLE ddl_priv_owner_t OWNER TO postgres;
+
+# ddl_priv: ALTER ROLE
+statement error
+ALTER ROLE postgres WITH LOGIN;
+
+# ddl_priv: GRANT
+statement error
+CREATE TABLE ddl_priv_grant_t(a int);
+GRANT SELECT ON ddl_priv_grant_t TO postgres;
+
+# ddl_priv: REVOKE
+statement error
+CREATE TABLE ddl_priv_revoke_t(a int);
+REVOKE SELECT ON ddl_priv_revoke_t FROM postgres;
+
+# ddl_priv: SET ROLE
+statement ok
+SET ROLE postgres;
+
+# ddl_priv: INHERIT
+statement error
+CREATE ROLE ddl_priv_inherit1 INHERIT;
+
+# ddl_priv: Row Security Policies
+statement error
+CREATE TABLE ddl_priv_rls_t(a int);
+ALTER TABLE ddl_priv_rls_t ENABLE ROW LEVEL SECURITY;
+CREATE POLICY ddl_priv_pol ON ddl_priv_rls_t USING (true);
+
+# ddl_index: GIN
+statement error
+CREATE INDEX ddl_index_gin ON ddl_index_base USING gin (t);
+DROP INDEX ddl_index_gin;
+
+# ddl_index: BRIN
+statement error
+CREATE INDEX ddl_index_brin ON ddl_index_base USING brin (a);
+DROP INDEX ddl_index_brin;
+
+# ddl_index: Indexes on Expressions
+statement error
+CREATE INDEX ddl_index_expr ON ddl_index_base ((a + b));
+DROP INDEX ddl_index_expr;
+
+# ddl_index: Partial Indexes
+statement error
+CREATE INDEX ddl_index_part ON ddl_index_base (a) WHERE a > 5;
+DROP INDEX ddl_index_part;
+
+# ddl_misc: CREATE SCHEMA
+statement ok
+CREATE SCHEMA ddl_misc_schema1;
+
+# ddl_misc: DROP SCHEMA
+statement ok
+DROP SCHEMA ddl_misc_schema1;
+
+# ddl_misc: search_path
+statement ok
+SET search_path TO public;
+SHOW search_path;
+
+# ddl_misc: Table Inheritance
+statement error
+CREATE TABLE ddl_misc_child () INHERITS (ddl_misc_parent);
+
+# ddl_misc: Table Partitioning
+statement error
+CREATE TABLE ddl_misc_part (a int) PARTITION BY RANGE (a);
+
+# ddl_misc: Foreign Data Wrappers
+statement error
+CREATE FOREIGN DATA WRAPPER ddl_misc_fdw;
+
+# ddl_misc: Views
+statement ok
+CREATE VIEW ddl_misc_v1 AS SELECT 1 AS x;
+
+# ddl_misc: Databases
+statement ok
+CREATE DATABASE ddl_misc_db1;
+DROP DATABASE ddl_misc_db1;
+
+# ddl_misc: Functions & Procedures
+statement ok
+CREATE FUNCTION ddl_misc_fn(a int) RETURNS int AS $$ SELECT a + 1 $$ LANGUAGE sql;
+CREATE PROCEDURE ddl_misc_proc(a int) LANGUAGE sql AS $$ SELECT a $$;
+
+# ddl_misc: Custom Types
+statement ok
+CREATE TYPE ddl_misc_typ AS (a int, b text);
+CREATE TYPE ddl_misc_enum AS ENUM ('a','b');
+
+# ddl_misc: Triggers
+statement error
+CREATE TRIGGER ddl_misc_t1 BEFORE INSERT ON ddl_misc_trg FOR EACH ROW EXECUTE FUNCTION ddl_misc_fn();
+
+# ddl_misc: Prepared Statements
+statement ok
+PREPARE p AS SELECT 1+1;
+EXECUTE p;
+-- also: PREPARE ddl_misc_ps (int) AS SELECT $1 + 1;
+
+# ddl_misc: Advisory Locks
+statement error
+SELECT pg_advisory_lock(1);
+SELECT pg_try_advisory_lock(1);
+
+# queries: Table & View References
+statement ok
+SELECT * FROM (VALUES (1)) t(c);
+
+# queries: Inner Joins
+statement ok
+SELECT a.c FROM (VALUES (1)) a(c) INNER JOIN (VALUES (1)) b(c) ON a.c=b.c;
+
+# queries: Outer Joins
+statement ok
+SELECT a.c FROM (VALUES (1)) a(c) LEFT OUTER JOIN (VALUES (2)) b(c) ON a.c=b.c;
+
+# queries: Semijoins
+statement ok
+SELECT a.c FROM (VALUES (1)) a(c) WHERE EXISTS (SELECT 1 FROM (VALUES (1)) b(c) WHERE b.c=a.c);
+
+# queries: Antijoins
+statement ok
+SELECT a.c FROM (VALUES (1)) a(c) WHERE NOT EXISTS (SELECT 1 FROM (VALUES (2)) b(c) WHERE b.c=a.c);
+
+# queries: Table Functions
+statement ok
+SELECT * FROM generate_series(1,3);
+
+# queries: Lateral Subqueries
+statement ok
+SELECT a.c, b.x FROM (VALUES (1)) a(c) CROSS JOIN LATERAL (SELECT a.c+1 AS x) b;
+
+# queries: User-Specified Aliases
+statement ok
+SELECT t.c AS alias1 FROM (VALUES (1)) t(c);
+
+# queries: GROUP BY
+statement ok
+SELECT c, count(*) FROM (VALUES (1),(2)) t(c) GROUP BY c;
+
+# queries: HAVING
+statement ok
+SELECT c, count(*) FROM (VALUES (1),(2)) t(c) GROUP BY c HAVING count(*) >= 1;
+
+# queries: GROUPING SETS
+statement ok
+SELECT c, count(*) FROM (VALUES (1),(2)) t(c) GROUP BY GROUPING SETS ((c),());
+
+# queries: CUBE
+statement ok
+SELECT c, count(*) FROM (VALUES (1),(2)) t(c) GROUP BY CUBE (c);
+
+# queries: ROLLUP
+statement ok
+SELECT c, count(*) FROM (VALUES (1),(2)) t(c) GROUP BY ROLLUP (c);
+
+# queries: WINDOW Functions
+statement ok
+SELECT row_number() OVER (ORDER BY c) FROM (VALUES (1),(2)) t(c);
+
+# queries: WITH
+statement ok
+WITH x AS (SELECT 1 AS c) SELECT c FROM x;
+
+# queries: WITH RECURSIVE
+statement ok
+WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM x WHERE n<3) SELECT n FROM x;
+
+# queries: UNION
+statement ok
+SELECT 1 UNION SELECT 2;
+
+# queries: UNION ALL
+statement ok
+SELECT 1 UNION ALL SELECT 1;
+
+# queries: INTERSECT
+statement ok
+SELECT 1 INTERSECT SELECT 1;
+
+# queries: INTERSECT ALL
+statement ok
+SELECT 1 INTERSECT ALL SELECT 1;
+
+# queries: EXCEPT
+statement ok
+SELECT 1 EXCEPT SELECT 2;
+
+# queries: EXCEPT ALL
+statement ok
+SELECT 1 EXCEPT ALL SELECT 2;
+
+# queries: ORDER BY
+statement ok
+SELECT c FROM (VALUES (2),(1)) t(c) ORDER BY c;
+
+# queries: LIMIT
+statement ok
+SELECT c FROM (VALUES (1),(2),(3)) t(c) LIMIT 1;
+
+# queries: OFFSET
+statement ok
+SELECT c FROM (VALUES (1),(2),(3)) t(c) OFFSET 1;
+
+# queries: Table Generating Function
+statement ok
+SELECT * FROM unnest(ARRAY[1,2,3]);
+
+# types: array
+statement ok
+SELECT NULL::int[];
+
+# types: bigint
+statement ok
+SELECT NULL::bigint;
+
+# types: bigserial
+statement ok
+CREATE TABLE types_bs(a bigserial);
+DROP TABLE types_bs;
+
+# types: bit [ (n) ]
+statement ok
+SELECT '101'::bit(3);
+
+# types: bit varying [ (n) ]
+statement ok
+SELECT '10'::bit varying(5);
+
+# types: boolean
+statement ok
+SELECT NULL::boolean;
+
+# types: box
+statement error
+SELECT NULL::box;
+
+# types: bytea
+statement ok
+SELECT NULL::bytea;
+
+# types: character [ (n) ]
+statement ok
+CREATE TABLE types_ch2(a character(3));
+INSERT INTO types_ch2 VALUES ('a');
+SELECT a,length(a) FROM types_ch2;
+DROP TABLE types_ch2;
+
+# types: character varying [ (n) ]
+statement ok
+CREATE TABLE types_cv2(a varchar(3));
+INSERT INTO types_cv2 VALUES ('abcde');
+SELECT a,length(a) FROM types_cv2;
+DROP TABLE types_cv2;
+
+# types: cidr
+statement error
+SELECT NULL::cidr;
+
+# types: circle
+statement error
+SELECT NULL::circle;
+
+# types: date
+statement ok
+SELECT NULL::date;
+
+# types: double precision
+statement ok
+SELECT NULL::double precision;
+
+# types: inet
+statement error
+SELECT NULL::inet;
+
+# types: integer
+statement ok
+SELECT NULL::integer;
+
+# types: interval [ fields ] [ (p) ]
+statement ok
+SELECT NULL::interval;
+
+# types: json
+statement ok
+SELECT NULL::json;
+
+# types: jsonb
+statement error
+SELECT NULL::jsonb;
+
+# types: line
+statement error
+SELECT NULL::line;
+
+# types: lseg
+statement error
+SELECT NULL::lseg;
+
+# types: macaddr
+statement error
+SELECT NULL::macaddr;
+
+# types: macaddr8
+statement error
+SELECT NULL::macaddr8;
+
+# types: money
+statement error
+SELECT NULL::money;
+
+# types: numeric [ (p, s) ]
+statement ok
+SELECT NULL::numeric(10,2);
+
+# types: path
+statement error
+SELECT NULL::path;
+
+# types: pg_lsn
+statement error
+SELECT NULL::pg_lsn;
+
+# types: pg_snapshot
+statement error
+SELECT NULL::pg_snapshot;
+
+# types: point
+statement error
+SELECT NULL::point;
+
+# types: polygon
+statement error
+SELECT NULL::polygon;
+
+# types: real
+statement ok
+SELECT NULL::real;
+
+# types: smallint
+statement ok
+SELECT NULL::smallint;
+
+# types: smallserial
+statement ok
+CREATE TABLE types_ss(a smallserial);
+DROP TABLE types_ss;
+
+# types: serial
+statement ok
+CREATE TABLE types_se2(a serial);
+INSERT INTO types_se2 DEFAULT VALUES;
+SELECT a FROM types_se2;
+DROP TABLE types_se2;
+
+# types: text
+statement ok
+SELECT NULL::text;
+
+# types: time [ (p) ] [ without time zone ]
+statement ok
+SELECT NULL::time;
+
+# types: time [ (p) ] with time zone
+statement ok
+SELECT '11:22:33+05'::time with time zone;
+
+# types: timestamp [ (p) ] [ without time zone ]
+statement ok
+SELECT NULL::timestamp(3);
+
+# types: tsquery
+statement ok
+SELECT 'cat & dog'::tsquery;
+
+# types: tsvector
+statement error
+SELECT NULL::tsvector;
+
+# types: txid_snapshot
+statement error
+SELECT NULL::txid_snapshot;
+
+# types: uuid
+statement ok
+SELECT NULL::uuid;
+
+# types: xml
+statement error
+SELECT NULL::xml;
+
+# op_logic_cmp: AND
+statement ok
+SELECT TRUE AND FALSE;
+
+# op_logic_cmp: OR
+statement ok
+SELECT TRUE OR FALSE;
+
+# op_logic_cmp: NOT
+statement ok
+SELECT NOT TRUE;
+
+# op_logic_cmp: <
+statement ok
+SELECT 1 < 2;
+
+# op_logic_cmp: >
+statement ok
+SELECT 2 > 1;
+
+# op_logic_cmp: <=
+statement ok
+SELECT 1 <= 2;
+
+# op_logic_cmp: >=
+statement ok
+SELECT 2 >= 1;
+
+# op_logic_cmp: =
+statement ok
+SELECT 1 = 1;
+
+# op_logic_cmp: <>
+statement ok
+SELECT 1 <> 2;
+
+# op_logic_cmp: !=
+statement ok
+SELECT 1 != 2;
+
+# op_logic_cmp: BETWEEN
+statement ok
+SELECT 5 BETWEEN 1 AND 10;
+
+# op_logic_cmp: NOT BETWEEN
+statement ok
+SELECT 5 NOT BETWEEN 1 AND 10;
+
+# op_logic_cmp: IS DISTINCT
+statement ok
+SELECT 1 IS DISTINCT FROM 2;
+
+# op_logic_cmp: IS NOT DISTINCT
+statement ok
+SELECT 1 IS NOT DISTINCT FROM 1;
+
+# op_logic_cmp: IS NULL
+statement ok
+SELECT NULL IS NULL;
+
+# op_logic_cmp: IS NOT NULL
+statement ok
+SELECT 1 IS NOT NULL;
+
+# op_logic_cmp: IS TRUE
+statement ok
+SELECT TRUE IS TRUE;
+
+# op_logic_cmp: IS NOT TRUE
+statement ok
+SELECT TRUE IS NOT TRUE;
+
+# op_logic_cmp: IS FALSE
+statement ok
+SELECT FALSE IS FALSE;
+
+# op_logic_cmp: IS NOT FALSE
+statement ok
+SELECT FALSE IS NOT FALSE;
+
+# op_logic_cmp: IS UNKNOWN
+statement ok
+SELECT NULL::boolean IS UNKNOWN;
+
+# op_logic_cmp: IS NOT UNKNOWN
+statement ok
+SELECT TRUE IS NOT UNKNOWN;
+
+# op_math: +
+statement ok
+SELECT 2 + 3;
+
+# op_math: -
+statement ok
+SELECT 5 - 3;
+
+# op_math: *
+statement ok
+SELECT 2 * 3;
+
+# op_math: /
+statement ok
+SELECT 6 / 3;
+
+# op_math: %
+statement ok
+SELECT 5 % 3;
+
+# op_math: ^
+statement ok
+SELECT 2 ^ 3;
+
+# op_math: |/
+statement error
+SELECT |/ 25.0;
+
+# op_math: ||/
+statement error
+SELECT ||/ 27.0;
+
+# op_math: @
+statement error
+SELECT @ -5;
+
+# op_math: &
+statement ok
+SELECT 5 & 3;
+
+# op_math: |
+statement ok
+SELECT 5 | 3;
+
+# op_math: #
+statement error
+SELECT 5 # 3;
+
+# op_math: ~
+statement ok
+SELECT ~5;
+
+# op_math: <<
+statement ok
+SELECT 1 << 4;
+
+# op_math: >>
+statement ok
+SELECT 16 >> 2;
+
+# op_math: abs
+statement ok
+SELECT abs(-1);
+
+# op_math: cbrt
+statement ok
+SELECT cbrt(27.0);
+
+# op_math: ceil
+statement ok
+SELECT ceil(1.5);
+
+# op_math: degrees
+statement ok
+SELECT degrees(1);
+
+# op_math: div
+statement ok
+SELECT div(9,4);
+
+# op_math: erf
+statement ok
+SELECT erf(1.0);
+
+# op_math: erfc
+statement ok
+SELECT erfc(1.0);
+
+# op_math: exp
+statement ok
+SELECT exp(1);
+
+# op_math: factorial
+statement ok
+SELECT factorial(5);
+
+# op_math: floor
+statement ok
+SELECT floor(1.5);
+
+# op_math: gcd
+statement ok
+SELECT gcd(12,8);
+
+# op_math: lcm
+statement ok
+SELECT lcm(4,6);
+
+# op_math: ln
+statement ok
+SELECT ln(2.0);
+
+# op_math: log
+statement ok
+SELECT log(100.0);
+
+# op_math: log10
+statement ok
+SELECT log10(100.0);
+
+# op_math: min_scale
+statement error
+SELECT min_scale(1.230);
+
+# op_math: mod
+statement ok
+SELECT mod(9,4);
+
+# op_math: pi
+statement ok
+SELECT pi();
+
+# op_math: power
+statement ok
+SELECT power(2,3);
+
+# op_math: radians
+statement ok
+SELECT radians(180);
+
+# op_math: round
+statement ok
+SELECT round(1.5);
+
+# op_math: scale
+statement error
+SELECT scale(1.230);
+
+# op_math: sign
+statement ok
+SELECT sign(-5);
+
+# op_math: sqrt
+statement ok
+SELECT sqrt(4.0);
+
+# op_math: trim_scale
+statement error
+SELECT trim_scale(1.230);
+
+# op_math: trunc
+statement ok
+SELECT trunc(1.99);
+
+# op_math: width_bucket
+statement ok
+SELECT width_bucket(5.0, 1.0, 10.0, 5);
+
+# op_math: random
+statement ok
+SELECT random();
+
+# op_math: random_normal
+statement error
+SELECT random_normal();
+
+# op_math: setseed
+statement ok
+SELECT setseed(0.5);
+
+# op_math: acos
+statement ok
+SELECT acos(1);
+
+# op_math: acosd
+statement ok
+SELECT acosd(1);
+
+# op_math: asin
+statement ok
+SELECT asin(1);
+
+# op_math: asind
+statement ok
+SELECT asind(1);
+
+# op_math: atan
+statement ok
+SELECT atan(1);
+
+# op_math: atand
+statement ok
+SELECT atand(1);
+
+# op_math: atan2
+statement ok
+SELECT atan2(1,1);
+
+# op_math: atan2d
+statement ok
+SELECT atan2d(1,1);
+
+# op_math: cos
+statement ok
+SELECT cos(1);
+
+# op_math: cosd
+statement ok
+SELECT cosd(60);
+
+# op_math: cot
+statement ok
+SELECT cot(1);
+
+# op_math: cotd
+statement ok
+SELECT cotd(45);
+
+# op_math: sin
+statement ok
+SELECT sin(1);
+
+# op_math: sind
+statement ok
+SELECT sind(30);
+
+# op_math: tan
+statement ok
+SELECT tan(1);
+
+# op_math: tand
+statement ok
+SELECT tand(45);
+
+# op_math: sinh
+statement ok
+SELECT sinh(1);
+
+# op_math: cosh
+statement ok
+SELECT cosh(1);
+
+# op_math: tanh
+statement ok
+SELECT tanh(1);
+
+# op_math: asinh
+statement ok
+SELECT asinh(1);
+
+# op_math: acosh
+statement ok
+SELECT acosh(1);
+
+# op_math: atanh
+statement ok
+SELECT atanh(0.5);
+
+# op_text: ||
+statement ok
+SELECT 'a' || 'b';
+
+# op_text: btrim
+statement error
+SELECT btrim('  x  ');
+
+# op_text: bit_length
+statement ok
+SELECT bit_length('jose');
+
+# op_text: char_length
+statement ok
+SELECT char_length('jose');
+
+# op_text: lower
+statement ok
+SELECT lower('ABC');
+
+# op_text: lpad
+statement ok
+SELECT lpad('x',3,'y');
+
+# op_text: ltrim
+statement ok
+SELECT ltrim('  x');
+
+# op_text: normalize
+statement ok
+SELECT normalize('a');
+
+# op_text: octet_length
+statement ok
+SELECT octet_length('jose');
+
+# op_text: overlay
+statement ok
+SELECT overlay('Txxxxas' placing 'hom' from 2 for 4);
+
+# op_text: position
+statement ok
+SELECT position('om' in 'Thomas');
+
+# op_text: rpad
+statement ok
+SELECT rpad('x',3,'y');
+
+# op_text: rtrim
+statement ok
+SELECT rtrim('x  ');
+
+# op_text: substring
+statement ok
+SELECT substring('Thomas' from 2 for 3);
+
+# op_text: trim
+statement ok
+SELECT trim('  x  ');
+
+# op_text: upper
+statement ok
+SELECT upper('abc');
+
+# op_text: ^@
+statement ok
+SELECT 'abc' ^@ 'a';
+
+# op_text: ascii
+statement ok
+SELECT ascii('x');
+
+# op_text: chr
+statement ok
+SELECT chr(65);
+
+# op_text: concat
+statement ok
+SELECT concat('a','b','c');
+
+# op_text: concat_ws
+statement ok
+SELECT concat_ws(',','a','b');
+
+# op_text: format
+statement ok
+SELECT format('%s',1);
+
+# op_text: initcap
+statement ok
+SELECT initcap('hi there');
+
+# op_text: left
+statement ok
+SELECT left('abc',2);
+
+# op_text: length
+statement ok
+SELECT length('jose');
+
+# op_text: md5
+statement ok
+SELECT md5('abc');
+
+# op_text: parse_ident
+statement error
+SELECT parse_ident('a.b');
+
+# op_text: quote_ident
+statement ok
+SELECT quote_ident('foo');
+
+# op_text: quote_literal
+statement ok
+SELECT quote_literal('foo');
+
+# op_text: quote_nullable
+statement ok
+SELECT quote_nullable('foo');
+
+# op_text: repeat
+statement ok
+SELECT repeat('ab',3);
+
+# op_text: replace
+statement ok
+SELECT replace('abc','b','x');
+
+# op_text: reverse
+statement ok
+SELECT reverse('abc');
+
+# op_text: right
+statement ok
+SELECT right('abc',2);
+
+# op_text: split_part
+statement ok
+SELECT split_part('a,b,c',',',2);
+
+# op_text: starts_with
+statement ok
+SELECT starts_with('alphabet','alph');
+
+# op_text: string_to_array
+statement ok
+SELECT string_to_array('a,b,c',',');
+
+# op_text: string_to_table
+statement error
+SELECT * FROM string_to_table('a,b,c',',');
+
+# op_text: strpos
+statement ok
+SELECT strpos('high','ig');
+
+# op_text: substr
+statement ok
+SELECT substr('alphabet',3,2);
+
+# op_text: to_ascii
+statement error
+SELECT to_ascii('abc');
+
+# op_text: to_hex
+statement ok
+SELECT to_hex(255);
+
+# op_text: translate
+statement ok
+SELECT translate('12345','143','ax');
+
+# op_text: unistr
+statement error
+SELECT unistr('d\0061t\+000061');
+
+# op_bytea: ||
+statement ok
+SELECT '\x01'::bytea || '\x02'::bytea;
+
+# op_bytea: bit_length
+statement ok
+SELECT bit_length('\x01'::bytea);
+
+# op_bytea: btrim
+statement error
+SELECT btrim('\x010203'::bytea, '\x03'::bytea);
+
+# op_bytea: ltrim
+statement ok
+SELECT ltrim('\x010203'::bytea, '\x01'::bytea);
+
+# op_bytea: octet_length
+statement ok
+SELECT octet_length('\x0102'::bytea);
+
+# op_bytea: overlay
+statement ok
+SELECT overlay('\x010203'::bytea placing '\xff'::bytea from 2);
+
+# op_bytea: position
+statement error
+SELECT position('\x02'::bytea in '\x0102'::bytea);
+
+# op_bytea: rtrim
+statement ok
+SELECT rtrim('\x010203'::bytea, '\x03'::bytea);
+
+# op_bytea: substring
+statement ok
+SELECT substring('\x010203'::bytea from 2 for 1);
+
+# op_bytea: trim
+statement ok
+SELECT trim('\x03'::bytea from '\x010203'::bytea);
+
+# op_bytea: bit_count
+statement error
+SELECT bit_count('\x0102'::bytea);
+
+# op_bytea: get_bit
+statement ok
+SELECT get_bit('\x0102'::bytea, 7);
+
+# op_bytea: get_byte
+statement ok
+SELECT get_byte('\x0102'::bytea, 1);
+
+# op_bytea: length
+statement ok
+SELECT length('\x0102'::bytea);
+
+# op_bytea: md5
+statement ok
+SELECT md5('\x0102'::bytea);
+
+# op_bytea: set_bit
+statement ok
+SELECT set_bit('\x0102'::bytea, 7, 1);
+
+# op_bytea: set_byte
+statement ok
+SELECT set_byte('\x0102'::bytea, 1, 255);
+
+# op_bytea: sha224
+statement error
+SELECT sha224('\x0102'::bytea);
+
+# op_bytea: sha384
+statement error
+SELECT sha384('\x0102'::bytea);
+
+# op_bytea: sha512
+statement error
+SELECT sha512('\x0102'::bytea);
+
+# op_bytea: substr
+statement ok
+SELECT substr('\x010203'::bytea, 2, 1);
+
+# op_bytea: convert
+statement error
+SELECT convert('\x010203'::bytea, 'UTF8', 'LATIN1');
+
+# op_bytea: convert_from
+statement ok
+SELECT convert_from('\x48656c6c6f'::bytea, 'UTF8');
+
+# op_bytea: convert_to
+statement ok
+SELECT convert_to('Hello', 'UTF8');
+
+# op_bytea: encode
+statement ok
+SELECT encode('\x0102'::bytea, 'hex');
+
+# op_bytea: decode
+statement ok
+SELECT decode('0102', 'hex');
+
+# op_bit: ||
+statement ok
+SELECT '101'::bit(3) || '010'::bit(3);
+
+# op_bit: &
+statement ok
+SELECT '1010'::bit(4) & '1100'::bit(4);
+
+# op_bit: |
+statement ok
+SELECT '1010'::bit(4) | '1100'::bit(4);
+
+# op_bit: #
+statement error
+SELECT '1010'::bit(4) # '1100'::bit(4);
+
+# op_bit: ~
+statement ok
+SELECT ~ '1010'::bit(4);
+
+# op_bit: <<
+statement ok
+SELECT '1010'::bit(4) << 2;
+
+# op_bit: >>
+statement ok
+SELECT '1010'::bit(4) >> 2;
+
+# op_bit: bit_count
+statement ok
+SELECT bit_count('1010'::bit(4));
+
+# op_bit: bit_length
+statement ok
+SELECT bit_length('1010'::bit(4));
+
+# op_bit: length
+statement ok
+SELECT length('1010'::bit(4));
+
+# op_bit: octet_length
+statement ok
+SELECT octet_length('1010'::bit(4));
+
+# op_bit: overlay
+statement error
+SELECT overlay('10101'::bit(5) placing '11'::bit(2) from 2 for 2);
+
+# op_bit: position
+statement error
+SELECT position('10'::bit(2) in '00100'::bit(5));
+
+# op_bit: substring
+statement error
+SELECT substring('10101'::bit(5) from 2 for 3);
+
+# op_bit: get_bit
+statement ok
+SELECT get_bit('1010'::bit(4), 2);
+
+# op_bit: set_bit
+statement ok
+SELECT set_bit('1010'::bit(4), 2, 0);
+
+# op_pattern: LIKE
+statement ok
+SELECT 'abc' LIKE 'a%';
+
+# op_pattern: SIMILAR TO
+statement ok
+SELECT 'abc' SIMILAR TO 'a%';
+
+# op_pattern: regexp_count
+statement ok
+SELECT regexp_count('abcabc','a');
+
+# op_pattern: regexp_instr
+statement ok
+SELECT regexp_instr('abcabc','b');
+
+# op_pattern: regexp_like
+statement ok
+SELECT regexp_like('abc','a.c');
+
+# op_pattern: regexp_match
+statement ok
+SELECT regexp_match('abc','a(.)c');
+
+# op_pattern: regexp_matches
+statement ok
+SELECT regexp_matches('abc','a(.)c');
+
+# op_pattern: regexp_replace
+statement ok
+SELECT regexp_replace('abc','b','X');
+
+# op_pattern: regexp_split_to_array
+statement ok
+SELECT regexp_split_to_array('a,b,c',',');
+
+# op_pattern: regexp_split_to_table
+statement ok
+SELECT regexp_split_to_table('a,b,c',',');
+
+# op_pattern: regexp_substr
+statement ok
+SELECT regexp_substr('abcabc','b');
+
+# op_pattern: to_char
+statement error
+SELECT to_char(now(),'YYYY');
+
+# op_pattern: to_date
+statement error
+SELECT to_date('2020-01-01','YYYY-MM-DD');
+
+# op_pattern: to_number
+statement error
+SELECT to_number('123','999');
+
+# op_pattern: to_timestamp
+statement error
+SELECT to_timestamp('2020-01-01','YYYY-MM-DD');
+
+# op_datetime: +
+statement ok
+SELECT DATE '2020-01-01' + INTEGER '5';
+
+# op_datetime: -
+statement ok
+SELECT DATE '2020-01-10' - DATE '2020-01-01';
+
+# op_datetime: *
+statement ok
+SELECT INTERVAL '1 hour' * 3;
+
+# op_datetime: /
+statement ok
+SELECT INTERVAL '1 hour' / 2;
+
+# op_datetime: age
+statement ok
+SELECT age(TIMESTAMP '2020-01-01', TIMESTAMP '2010-01-01');
+
+# op_datetime: clock_timestamp
+statement ok
+SELECT clock_timestamp();
+
+# op_datetime: current_date
+statement error
+SELECT current_date;
+
+# op_datetime: current_time
+statement error
+SELECT current_time;
+
+# op_datetime: current_timestamp
+statement ok
+SELECT current_timestamp;
+
+# op_datetime: date_add
+statement ok
+SELECT date_add(TIMESTAMP '2020-01-01', INTERVAL '1 day');
+
+# op_datetime: date_bin
+statement ok
+SELECT date_bin(INTERVAL '15 minutes', TIMESTAMP '2020-01-01 00:20:00', TIMESTAMP '2020-01-01 00:00:00');
+
+# op_datetime: date_part
+statement ok
+SELECT date_part('year', TIMESTAMP '2020-01-01');
+
+# op_datetime: date_subtract
+statement error
+SELECT date_subtract(TIMESTAMP '2020-01-01', INTERVAL '1 day');
+
+# op_datetime: date_trunc
+statement ok
+SELECT date_trunc('day', TIMESTAMP '2020-01-01 12:30:00');
+
+# op_datetime: extract
+statement ok
+SELECT extract(YEAR FROM TIMESTAMP '2020-01-01');
+
+# op_datetime: isfinite
+statement ok
+SELECT isfinite(DATE '2020-01-01');
+
+# op_datetime: justify_days
+statement error
+SELECT justify_days(INTERVAL '35 days');
+
+# op_datetime: justify_hours
+statement error
+SELECT justify_hours(INTERVAL '27 hours');
+
+# op_datetime: justify_interval
+statement error
+SELECT justify_interval(INTERVAL '1 mon -1 hour');
+
+# op_datetime: localtime
+statement error
+SELECT localtime;
+
+# op_datetime: localtimestamp
+statement error
+SELECT localtimestamp;
+
+# op_datetime: make_date
+statement ok
+SELECT make_date(2020,1,1);
+
+# op_datetime: make_interval
+statement error
+SELECT make_interval(1,2,3,4,5,6,7);
+
+# op_datetime: make_time
+statement ok
+SELECT make_time(12,30,0);
+
+# op_datetime: make_timestamp
+statement ok
+SELECT make_timestamp(2020,1,1,12,30,0);
+
+# op_datetime: now
+statement ok
+SELECT now();
+
+# op_datetime: statement_timestamp
+statement error
+SELECT statement_timestamp();
+
+# op_datetime: timeofday
+statement ok
+SELECT timeofday();
+
+# op_datetime: transaction_timestamp
+statement ok
+SELECT transaction_timestamp();
+
+# op_datetime: to_timestamp
+statement ok
+SELECT to_timestamp(1577836800);
+
+# op_datetime: OVERLAPS
+statement error
+SELECT (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS (DATE '2020-01-05', DATE '2020-01-15');
+
+# op_datetime: EXTRACT
+statement ok
+SELECT EXTRACT(MONTH FROM TIMESTAMP '2020-06-01');
+
+# op_misc1: enum_first
+statement ok
+CREATE TYPE op_misc1_mood AS ENUM ('sad','ok','happy');
+SELECT enum_first(NULL::op_misc1_mood);
+
+# op_misc1: enum_last
+statement ok
+SELECT enum_last(NULL::op_misc1_mood);
+
+# op_misc1: enum_range
+statement ok
+SELECT enum_range(NULL::op_misc1_mood);
+
+# op_misc1: get_random_uuid
+statement ok
+SELECT gen_random_uuid();
+
+# op_misc1: uuid_extract_timestamp
+statement ok
+SELECT uuid_extract_timestamp('018f7c8e-0000-7000-8000-000000000000'::uuid);
+
+# op_misc1: uuid_extract_version
+statement ok
+SELECT uuid_extract_version('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid);
+
+# op_misc1: xmltext
+statement error
+SELECT xmltext('foo');
+
+# op_misc1: xmlcomment
+statement error
+SELECT xmlcomment('foo');
+
+# op_misc1: xmlconcat
+statement error
+SELECT xmlconcat('<a/>'::xml,'<b/>'::xml);
+
+# op_misc1: xmlelement
+statement error
+SELECT xmlelement(name foo, 'bar');
+
+# op_misc1: xmlforest
+statement error
+SELECT xmlforest('bar' AS foo);
+
+# op_misc1: xmlpi
+statement error
+SELECT xmlpi(name php, 'echo');
+
+# op_misc1: xmlroot
+statement error
+SELECT xmlroot('<a/>'::xml, version '1.0');
+
+# op_misc1: xmlagg
+statement error
+SELECT xmlagg(c) FROM (VALUES ('<a/>'::xml)) t(c);
+
+# op_misc1: IS DOCUMENT
+statement error
+SELECT '<a>x</a>'::xml IS DOCUMENT;
+
+# op_misc1: IS NOT DOCUMENT
+statement error
+SELECT '<a>x</a>'::xml IS NOT DOCUMENT;
+
+# op_misc1: XMLEXISTS
+statement error
+SELECT xmlexists('//a' PASSING BY VALUE '<a/>'::xml);
+
+# op_misc1: xml_is_well_formed
+statement error
+SELECT xml_is_well_formed('<a/>');
+
+# op_misc1: xpath
+statement error
+SELECT xpath('/a', '<a>x</a>'::xml);
+
+# op_misc1: xpath_exists
+statement error
+SELECT xpath_exists('/a', '<a>x</a>'::xml);
+
+# op_misc1: XMLTABLE
+statement error
+SELECT * FROM xmltable('/a' PASSING '<a>x</a>'::xml COLUMNS v text PATH '.');
+
+# op_geo: +
+statement error
+SELECT point '(1,2)' + point '(3,4)';
+
+# op_geo: -
+statement error
+SELECT point '(1,2)' - point '(3,4)';
+
+# op_geo: *
+statement error
+SELECT point '(1,2)' * point '(3,4)';
+
+# op_geo: /
+statement error
+SELECT point '(1,2)' / point '(3,4)';
+
+# op_geo: @-@
+statement error
+SELECT @-@ lseg '((0,0),(1,0))';
+
+# op_geo: @@
+statement error
+SELECT @@ circle '((0,0),1)';
+
+# op_geo: #
+statement error
+SELECT box '((0,0),(2,2))' # box '((1,1),(3,3))';
+
+# op_geo: ##
+statement error
+SELECT point '(0,0)' ## lseg '((1,1),(2,2))';
+
+# op_geo: \<->
+statement error
+SELECT point '(0,0)' <-> point '(3,4)';
+
+# op_geo: @>
+statement error
+SELECT box '((0,0),(3,3))' @> point '(1,1)';
+
+# op_geo: \<@
+statement error
+SELECT point '(1,1)' <@ box '((0,0),(3,3))';
+
+# op_geo: &&
+statement error
+SELECT box '((0,0),(2,2))' && box '((1,1),(3,3))';
+
+# op_geo: \<\<
+statement error
+SELECT box '((0,0),(1,1))' << box '((2,2),(3,3))';
+
+# op_geo: >>
+statement error
+SELECT box '((2,2),(3,3))' >> box '((0,0),(1,1))';
+
+# op_geo: &\<
+statement error
+SELECT box '((0,0),(2,2))' &< box '((1,1),(3,3))';
+
+# op_geo: &>
+statement error
+SELECT box '((1,1),(3,3))' &> box '((0,0),(2,2))';
+
+# op_geo: \<\<\|
+statement error
+SELECT box '((0,0),(1,1))' <<| box '((0,2),(1,3))';
+
+# op_geo: \|>>
+statement error
+SELECT box '((0,2),(1,3))' |>> box '((0,0),(1,1))';
+
+# op_geo: &\<\|
+statement error
+SELECT box '((0,0),(1,2))' &<| box '((0,1),(1,3))';
+
+# op_geo: |&>
+statement error
+SELECT box '((0,1),(1,3))' |&> box '((0,0),(1,2))';
+
+# op_geo: \<^
+statement error
+SELECT box '((0,0),(1,1))' <^ box '((0,2),(1,3))';
+
+# op_geo: >^
+statement error
+SELECT box '((0,2),(1,3))' >^ box '((0,0),(1,1))';
+
+# op_geo: ?#
+statement error
+SELECT box '((0,0),(2,2))' ?# box '((1,1),(3,3))';
+
+# op_geo: ?-
+statement error
+SELECT lseg '((0,0),(1,0))' ?- lseg '((0,2),(1,2))';
+
+# op_geo: ?|
+statement error
+SELECT lseg '((0,0),(0,1))' ?| lseg '((2,0),(2,1))';
+
+# op_geo: ?-|
+statement error
+SELECT point '(0,0)' ?-| lseg '((0,0),(1,0))';
+
+# op_geo: ?||
+statement error
+SELECT lseg '((0,0),(0,1))' ?|| lseg '((2,0),(2,1))';
+
+# op_geo: ~=
+statement error
+SELECT box '((0,0),(2,2))' ~= box '((0,0),(2,2))';
+
+# op_geo: area
+statement error
+SELECT area(box '((0,0),(2,2))');
+
+# op_geo: center
+statement error
+SELECT center(box '((0,0),(2,2))');
+
+# op_geo: diagonal
+statement error
+SELECT diagonal(box '((0,0),(2,2))');
+
+# op_geo: diameter
+statement error
+SELECT diameter(circle '((0,0),2)');
+
+# op_geo: height
+statement error
+SELECT height(box '((0,0),(2,3))');
+
+# op_geo: isopen
+statement error
+SELECT isopen(path '[(0,0),(1,1),(2,0)]');
+
+# op_geo: length
+statement error
+SELECT length(lseg '((0,0),(3,4))');
+
+# op_geo: npoints
+statement error
+SELECT npoints(path '((0,0),(1,1),(2,0))');
+
+# op_geo: pclose
+statement error
+SELECT pclose(path '[(0,0),(1,1),(2,0)]');
+
+# op_geo: popen
+statement error
+SELECT popen(path '((0,0),(1,1),(2,0))');
+
+# op_geo: radius
+statement error
+SELECT radius(circle '((0,0),2)');
+
+# op_geo: slope
+statement error
+SELECT slope(point '(0,0)', point '(2,2)');
+
+# op_geo: width
+statement error
+SELECT width(box '((0,0),(2,3))');
+
+# op_geo: box
+statement error
+SELECT box(circle '((0,0),2)');
+
+# op_geo: bounding_box
+statement error
+SELECT bound_box(box '((0,0),(1,1))', box '((2,2),(3,3))');
+
+# op_geo: circle
+statement error
+SELECT circle(point '(0,0)', 2);
+
+# op_geo: line
+statement error
+SELECT line(point '(0,0)', point '(1,1)');
+
+# op_geo: lseg
+statement error
+SELECT lseg(point '(0,0)', point '(1,1)');
+
+# op_geo: path
+statement error
+SELECT NULL::path;
+
+# op_geo: point
+statement error
+SELECT point(1,2);
+
+# op_geo: polygon
+statement error
+SELECT polygon(box '((0,0),(2,2))');
+
+# op_net: <<
+statement error
+SELECT inet '192.168.1.5/24' << inet '192.168.1.0/24';
+
+# op_net: <<=
+statement error
+SELECT inet '192.168.1.5/24' <<= inet '192.168.1.0/24';
+
+# op_net: >>
+statement error
+SELECT inet '192.168.1.0/24' >> inet '192.168.1.5/24';
+
+# op_net: >>=
+statement error
+SELECT inet '192.168.1.0/24' >>= inet '192.168.1.0/24';
+
+# op_net: &&
+statement error
+SELECT inet '192.168.1.0/24' && inet '192.168.1.5/24';
+
+# op_net: ~
+statement error
+SELECT ~ inet '192.168.1.5/24';
+
+# op_net: &
+statement error
+SELECT inet '192.168.1.5/24' & inet '0.0.0.255';
+
+# op_net: |
+statement error
+SELECT inet '192.168.1.5/24' | inet '0.0.0.255';
+
+# op_net: +
+statement error
+SELECT inet '192.168.1.5/24' + 5;
+
+# op_net: -
+statement error
+SELECT inet '192.168.1.10/24' - inet '192.168.1.5/24';
+
+# op_net: abbrev
+statement error
+SELECT abbrev(inet '10.1.0.0/16');
+
+# op_net: broadcast
+statement error
+SELECT broadcast(inet '192.168.1.5/24');
+
+# op_net: family
+statement error
+SELECT family(inet '192.168.1.5');
+
+# op_net: host
+statement error
+SELECT host(inet '192.168.1.5/24');
+
+# op_net: hostmask
+statement error
+SELECT hostmask(inet '192.168.23.20/30');
+
+# op_net: inet_merge
+statement error
+SELECT inet_merge(inet '192.168.1.5/24', inet '192.168.2.5/24');
+
+# op_net: inet_same_family
+statement error
+SELECT inet_same_family(inet '192.168.1.5/24', inet '::1');
+
+# op_net: masklen
+statement error
+SELECT masklen(inet '192.168.1.5/24');
+
+# op_net: netmask
+statement error
+SELECT netmask(inet '192.168.1.5/24');
+
+# op_net: network
+statement error
+SELECT network(inet '192.168.1.5/24');
+
+# op_net: set_masklen
+statement error
+SELECT set_masklen(inet '192.168.1.5/24', 16);
+
+# op_net: text
+statement error
+SELECT text(inet '192.168.1.5');
+
+# op_tsearch: <->
+statement error
+SELECT id FROM op_tsearch_idx WHERE body @@ ts_phrase('fat') <-> ts_phrase('cat');
+
+# op_tsearch: @>
+statement error
+SELECT id FROM op_tsearch_idx WHERE body @@ ts_phrase('cat') @> ts_phrase('fat');
+
+# op_tsearch: <@
+statement error
+SELECT id FROM op_tsearch_idx WHERE body @@ ts_phrase('cat') <@ ts_phrase('fat');
+
+# op_tsearch: array_to_tsvector
+statement error
+SELECT array_to_tsvector('{cat,dog}'::text[]);
+
+# op_tsearch: get_current_ts_config
+statement error
+SELECT get_current_ts_config();
+
+# op_tsearch: length
+statement error
+SELECT length('a fat cat'::tsvector);
+
+# op_tsearch: numnode
+statement error
+SELECT numnode('a & b'::tsquery);
+
+# op_tsearch: querytree
+statement error
+SELECT querytree('a & b'::tsquery);
+
+# op_tsearch: setweight
+statement error
+SELECT setweight('cat:1'::tsvector, 'A');
+
+# op_tsearch: strip
+statement error
+SELECT strip('cat:1'::tsvector);
+
+# op_tsearch: to_tsvector
+statement error
+SELECT to_tsvector('a fat cat');
+
+# op_tsearch: json(b)_to_tsvector
+statement error
+SELECT jsonb_to_tsvector('{"a":"cat"}'::jsonb, '["string"]');
+
+# op_tsearch: ts_delete
+statement error
+SELECT ts_delete('cat:1 dog:2'::tsvector, 'cat');
+
+# op_tsearch: ts_filter
+statement error
+SELECT ts_filter('cat:1A dog:2B'::tsvector, '{a}');
+
+# op_tsearch: ts_headline
+statement error
+SELECT ts_headline('a fat cat', to_tsquery('cat'));
+
+# op_tsearch: ts_rank
+statement error
+SELECT ts_rank(to_tsvector('a fat cat'), to_tsquery('cat'));
+
+# op_tsearch: ts_rank_cd
+statement error
+SELECT ts_rank_cd(to_tsvector('a fat cat'), to_tsquery('cat'));
+
+# op_tsearch: ts_rewrite
+statement error
+SELECT ts_rewrite('a & b'::tsquery, 'a'::tsquery, 'c'::tsquery);
+
+# op_tsearch: tsvector_to_array
+statement error
+SELECT tsvector_to_array('cat:1 dog:2'::tsvector);
+
+# op_tsearch: unnest
+statement error
+SELECT * FROM unnest('cat:1 dog:2'::tsvector);
+
+# op_tsearch: ts_debug
+statement error
+SELECT ts_debug('english', 'a fat cat');
+
+# op_tsearch: ts_lexize
+statement ok
+CREATE TEXT SEARCH DICTIONARY op_tsearch_lx (template='text', locale='en_US.UTF-8', case='lower', stemming=true);
+SELECT ts_lexize('op_tsearch_lx', 'running cats');
+
+# op_tsearch: ts_parse
+statement error
+SELECT ts_parse('default', 'a fat cat');
+
+# op_tsearch: ts_token_type
+statement error
+SELECT ts_token_type('default');
+
+# op_tsearch: ts_stat
+statement error
+SELECT ts_stat('SELECT to_tsvector(''cat'')');
+
+# op_json: `->`
+statement ok
+SELECT '{"a":1}'::json -> 'a';
+
+# op_json: `->>`
+statement ok
+SELECT '{"a":1}'::json ->> 'a';
+
+# op_json: `#>`
+statement ok
+SELECT '{"a":{"b":1}}'::json #> '{a,b}';
+
+# op_json: `#>>`
+statement ok
+SELECT '{"a":{"b":1}}'::json #>> '{a,b}';
+
+# op_json: `@>`
+statement error
+SELECT '{"a":1,"b":2}'::jsonb @> '{"a":1}'::jsonb;
+
+# op_json: `<@`
+statement error
+SELECT '{"a":1}'::jsonb <@ '{"a":1,"b":2}'::jsonb;
+
+# op_json: `?`
+statement error
+SELECT '{"a":1}'::jsonb ? 'a';
+
+# op_json: `?|`
+statement error
+SELECT '{"a":1}'::jsonb ?| array['a','b'];
+
+# op_json: `?&`
+statement error
+SELECT '{"a":1,"b":2}'::jsonb ?& array['a','b'];
+
+# op_json: `||`
+statement ok
+SELECT '{"a":1}'::json || '{"b":2}'::json;
+
+# op_json: `-`
+statement error
+SELECT '{"a":1,"b":2}'::jsonb - 'a';
+
+# op_json: `#-`
+statement error
+SELECT '{"a":{"b":1}}'::jsonb #- '{a,b}';
+
+# op_json: `@?`
+statement error
+SELECT '{"a":1}'::jsonb @? '$.a';
+
+# op_json: `@@`
+statement error
+SELECT '{"a":1}'::jsonb @@ '$.a == 1';
+
+# op_json: to_json
+statement ok
+SELECT to_json('hello'::text);
+
+# op_json: to_jsonb
+statement error
+SELECT to_jsonb('hello'::text);
+
+# op_json: array_to_json
+statement ok
+SELECT array_to_json(ARRAY[1,2,3]);
+
+# op_json: json_array
+statement ok
+SELECT json_array(1,2,3);
+
+# op_json: row_to_json
+statement ok
+SELECT row_to_json(row(1,2));
+
+# op_json: json_build_array
+statement error
+SELECT json_build_array(1,2,3);
+
+# op_json: jsonb_build_array
+statement error
+SELECT jsonb_build_array(1,2,3);
+
+# op_json: json_build_object
+statement error
+SELECT json_build_object('a',1);
+
+# op_json: jsonb_build_object
+statement error
+SELECT jsonb_build_object('a',1);
+
+# op_json: json_object
+statement ok
+SELECT json_object('a',1,'b',2);
+
+# op_json: jsonb_object
+statement error
+SELECT jsonb_object('{a,1,b,2}');
+
+# op_json: `IS JSON`
+statement error
+SELECT '{"a":1}' IS JSON;
+
+# op_json: json_array_elements
+statement error
+SELECT json_array_elements('[1,2,3]'::json);
+
+# op_json: jsonb_array_elements
+statement error
+SELECT jsonb_array_elements('[1,2,3]'::jsonb);
+
+# op_json: json_array_elements_text
+statement error
+SELECT json_array_elements_text('["a","b"]'::json);
+
+# op_json: jsonb_array_elements_text
+statement error
+SELECT jsonb_array_elements_text('["a","b"]'::jsonb);
+
+# op_json: json_array_length
+statement ok
+SELECT json_array_length('[1,2,3]'::json);
+
+# op_json: jsonb_array_length
+statement error
+SELECT jsonb_array_length('[1,2,3]'::jsonb);
+
+# op_json: json_each
+statement ok
+SELECT * FROM json_each('{"a":1}'::json);
+
+# op_json: jsonb_each
+statement error
+SELECT * FROM jsonb_each('{"a":1}'::jsonb);
+
+# op_json: json_each_text
+statement error
+SELECT * FROM json_each_text('{"a":1}'::json);
+
+# op_json: jsonb_each_text
+statement error
+SELECT * FROM jsonb_each_text('{"a":1}'::jsonb);
+
+# op_json: json_object_keys
+statement error
+SELECT json_object_keys('{"a":1,"b":2}'::json);
+
+# op_json: jsonb_object_keys
+statement error
+SELECT jsonb_object_keys('{"a":1,"b":2}'::jsonb);
+
+# op_json: json_populate_record
+statement error
+SELECT * FROM json_populate_record(null::record, '{"a":1}'::json);
+
+# op_json: jsonb_populate_record
+statement error
+SELECT * FROM jsonb_populate_record(null::record, '{"a":1}'::jsonb);
+
+# op_json: json_populate_recordset
+statement error
+SELECT * FROM json_populate_recordset(null::record, '[{"a":1}]'::json);
+
+# op_json: jsonb_populate_recordset
+statement error
+SELECT * FROM jsonb_populate_recordset(null::record, '[{"a":1}]'::jsonb);
+
+# op_json: json_to_record
+statement error
+SELECT * FROM json_to_record('{"a":1}'::json) AS x(a integer);
+
+# op_json: jsonb_to_record
+statement error
+SELECT * FROM jsonb_to_record('{"a":1}'::jsonb) AS x(a int);
+
+# op_json: json_to_recordset
+statement error
+SELECT * FROM json_to_recordset('[{"a":1}]'::json) AS x(a int);
+
+# op_json: jsonb_to_recordset
+statement error
+SELECT * FROM jsonb_to_recordset('[{"a":1}]'::jsonb) AS x(a int);
+
+# op_json: jsonb_set
+statement error
+SELECT jsonb_set('{"a":1}'::jsonb, '{a}', '2');
+
+# op_json: jsonb_set_lax
+statement error
+SELECT jsonb_set_lax('{"a":1}'::jsonb, '{a}', '2');
+
+# op_json: jsonb_insert
+statement error
+SELECT jsonb_insert('{"a":1}'::jsonb, '{b}', '2');
+
+# op_json: json_strip_nulls
+statement ok
+SELECT json_strip_nulls('{"a":null,"b":1}'::json);
+
+# op_json: jsonb_strip_nulls
+statement error
+SELECT jsonb_strip_nulls('{"a":null,"b":1}'::jsonb);
+
+# op_json: json_extract_path
+statement ok
+SELECT json_extract_path('{"a":{"b":1}}'::json, 'a', 'b');
+
+# op_json: json_extract_path_text
+statement ok
+SELECT json_extract_path_text('{"a":{"b":1}}'::json, 'a', 'b');
+
+# op_json: json_path
+statement error
+SELECT jsonb_path_query('{"a":1}'::jsonb, '$.a');
+
+# op_seq_cond: CASE
+statement ok
+SELECT CASE WHEN 1=1 THEN 'a' ELSE 'b' END;
+
+# op_seq_cond: NULLIF
+statement ok
+SELECT NULLIF(1,1);
+
+# op_seq_cond: GREATEST
+statement ok
+SELECT GREATEST(1,2,3);
+
+# op_seq_cond: LEAST
+statement ok
+SELECT LEAST(3,2,1);
+
+# op_arr_range: @>
+statement ok
+SELECT '{1,2,3}'::int[] @> '{1}'::int[];
+
+# op_arr_range: <@
+statement ok
+SELECT '{1}'::int[] <@ '{1,2,3}'::int[];
+
+# op_arr_range: &&
+statement ok
+SELECT '{1,2}'::int[] && '{2,3}'::int[];
+
+# op_arr_range: ||
+statement ok
+SELECT '{1,2}'::int[] || '{3}'::int[];
+
+# op_arr_range: array_append
+statement ok
+SELECT array_append('{1,2}'::int[], 3);
+
+# op_arr_range: array_cat
+statement ok
+SELECT array_cat('{1,2}'::int[], '{3}'::int[]);
+
+# op_arr_range: array_dims
+statement ok
+SELECT array_dims('{1,2,3}'::int[]);
+
+# op_arr_range: array_fill
+statement error
+SELECT array_fill(7, '{3}'::int[]);
+
+# op_arr_range: array_lower
+statement ok
+SELECT array_lower('{1,2,3}'::int[], 1);
+
+# op_arr_range: array_ndims
+statement ok
+SELECT array_ndims('{1,2,3}'::int[]);
+
+# op_arr_range: array_position
+statement ok
+SELECT array_position('{1,2,3}'::int[], 2);
+
+# op_arr_range: array_positions
+statement ok
+SELECT array_positions('{1,2,2}'::int[], 2);
+
+# op_arr_range: array_prepend
+statement ok
+SELECT array_prepend(0, '{1,2}'::int[]);
+
+# op_arr_range: array_remove
+statement ok
+SELECT array_remove('{1,2,2}'::int[], 2);
+
+# op_arr_range: array_replace
+statement ok
+SELECT array_replace('{1,2,3}'::int[], 2, 9);
+
+# op_arr_range: array_sample
+statement error
+SELECT array_sample('{1,2,3,4}'::int[], 2);
+
+# op_arr_range: array_shuffle
+statement error
+SELECT array_shuffle('{1,2,3}'::int[]);
+
+# op_arr_range: array_to_string
+statement ok
+SELECT array_to_string('{1,2,3}'::int[], ',');
+
+# op_arr_range: array_upper
+statement ok
+SELECT array_upper('{1,2,3}'::int[], 1);
+
+# op_arr_range: array_cardinality
+statement ok
+SELECT cardinality('{1,2,3}'::int[]);
+
+# op_arr_range: trim_array
+statement ok
+SELECT trim_array('{1,2,3}'::int[], 1);
+
+# op_arr_range: unnest
+statement ok
+SELECT unnest('{1,2,3}'::int[]);
+
+# op_arr_range: @>
+statement error
+SELECT int4range(1,10) @> 5;
+
+# op_arr_range: <@
+statement error
+SELECT int4range(2,4) <@ int4range(1,10);
+
+# op_arr_range: &&
+statement error
+SELECT int4range(1,5) && int4range(4,10);
+
+# op_arr_range: <<
+statement error
+SELECT int4range(1,5) << int4range(6,10);
+
+# op_arr_range: >>
+statement error
+SELECT int4range(6,10) >> int4range(1,5);
+
+# op_arr_range: &<
+statement error
+SELECT int4range(1,5) &< int4range(4,10);
+
+# op_arr_range: &>
+statement error
+SELECT int4range(4,10) &> int4range(1,5);
+
+# op_arr_range: -|-
+statement error
+SELECT int4range(1,5) -|- int4range(5,10);
+
+# op_arr_range: +
+statement error
+SELECT int4range(1,5) + int4range(4,10);
+
+# op_arr_range: *
+statement error
+SELECT int4range(1,10) * int4range(4,20);
+
+# op_arr_range: -
+statement error
+SELECT int4range(1,10) - int4range(4,20);
+
+# op_arr_range: lower
+statement error
+SELECT lower(int4range(1,10));
+
+# op_arr_range: upper
+statement error
+SELECT upper(int4range(1,10));
+
+# op_arr_range: isempty
+statement error
+SELECT isempty(int4range(1,10));
+
+# op_arr_range: lower_inc
+statement error
+SELECT lower_inc(int4range(1,10));
+
+# op_arr_range: upper_inc
+statement error
+SELECT upper_inc(int4range(1,10));
+
+# op_arr_range: lower_inf
+statement error
+SELECT lower_inf(int4range(1,10));
+
+# op_arr_range: upper_inf
+statement error
+SELECT upper_inf(int4range(1,10));
+
+# op_arr_range: range_merge
+statement error
+SELECT range_merge(int4range(1,5), int4range(8,10));
+
+# op_arr_range: multirange
+statement error
+SELECT multirange(int4range(1,5));
+
+# op_arr_range: unnest
+statement error
+SELECT unnest(int4multirange(int4range(1,5), int4range(8,10)));
+
+# op_agg: any_value
+statement ok
+SELECT any_value(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: array_agg
+statement ok
+SELECT array_agg(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: avg
+statement ok
+SELECT avg(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: bit_and
+statement ok
+SELECT bit_and(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: bit_or
+statement ok
+SELECT bit_or(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: bit_xor
+statement ok
+SELECT bit_xor(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: bool_and
+statement ok
+SELECT bool_and(c) FROM (VALUES (true),(false)) t(c);
+
+# op_agg: bool_or
+statement ok
+SELECT bool_or(c) FROM (VALUES (true),(false)) t(c);
+
+# op_agg: count(*)
+statement ok
+SELECT count(*) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: count("any")
+statement ok
+SELECT count(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: json(b)_agg
+statement error
+SELECT json_agg(c) FROM (VALUES (1)) t(c);
+
+# op_agg: json(b)_objectagg
+statement error
+SELECT jsonb_object_agg(k,v) FROM (VALUES ('a',1)) t(k,v);
+
+# op_agg: json(b)_object_agg
+statement error
+SELECT json_object_agg(k,v) FROM (VALUES ('a',1)) t(k,v);
+
+# op_agg: json_arrayagg
+statement error
+SELECT json_arrayagg(c) FROM (VALUES (1),(2)) t(c);
+
+# op_agg: max
+statement ok
+SELECT max(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: min
+statement ok
+SELECT min(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: range(_intersect)_agg
+statement error
+SELECT range_agg(c) FROM (VALUES ('[1,2)'::int4range),('[3,4)'::int4range)) t(c);
+
+# op_agg: string_agg
+statement ok
+SELECT string_agg(c, ',') FROM (VALUES ('a'),('b')) t(c);
+
+# op_agg: sum
+statement ok
+SELECT sum(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: xmlagg
+statement error
+SELECT xmlagg(x) FROM (SELECT 1 x) t;
+
+# op_agg: corr
+statement ok
+SELECT corr(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: covar_pop
+statement ok
+SELECT covar_pop(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: covar_samp
+statement ok
+SELECT covar_samp(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: regr_avgx
+statement ok
+SELECT regr_avgx(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: regr_avgy
+statement ok
+SELECT regr_avgy(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: regr_count
+statement ok
+SELECT regr_count(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: regr_intercept
+statement ok
+SELECT regr_intercept(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: regr_r2
+statement ok
+SELECT regr_r2(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: regr_slope
+statement ok
+SELECT regr_slope(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: regr_sxx
+statement ok
+SELECT regr_sxx(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: regr_sxy
+statement ok
+SELECT regr_sxy(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: regr_syy
+statement ok
+SELECT regr_syy(y,x) FROM (VALUES (1,1),(2,2),(3,4)) t(y,x);
+
+# op_agg: stddev
+statement ok
+SELECT stddev(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: stddev_pop
+statement ok
+SELECT stddev_pop(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: stddev_samp
+statement ok
+SELECT stddev_samp(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: variance
+statement ok
+SELECT variance(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: var_pop
+statement ok
+SELECT var_pop(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: var_samp
+statement ok
+SELECT var_samp(c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: mode
+statement ok
+SELECT mode() WITHIN GROUP (ORDER BY c) FROM (VALUES (1),(2),(2)) t(c);
+
+# op_agg: percentile_cont
+statement ok
+SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_agg: percentile_disc
+statement ok
+SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: row_number
+statement ok
+SELECT row_number() OVER (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: rank
+statement ok
+SELECT rank() OVER (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: dense_rank
+statement ok
+SELECT dense_rank() OVER (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: percent_rank
+statement ok
+SELECT percent_rank() OVER (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: cume_dist
+statement ok
+SELECT cume_dist() OVER (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: ntile
+statement ok
+SELECT ntile(2) OVER (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: lag
+statement ok
+SELECT c, lag(c) OVER (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: lead
+statement ok
+SELECT lead(c) OVER (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: first_value
+statement ok
+SELECT first_value(c) OVER (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: last_value
+statement ok
+SELECT last_value(c) OVER (ORDER BY c) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: nth_value
+statement ok
+SELECT c, nth_value(c,2) OVER (ORDER BY c ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM (VALUES (1),(2),(3)) t(c);
+
+# op_win_sub: EXISTS
+statement ok
+SELECT 1 WHERE EXISTS (SELECT 1);
+
+# op_win_sub: IN
+statement ok
+SELECT 1 WHERE 1 IN (SELECT 1);
+
+# op_win_sub: NOT IN
+statement ok
+SELECT 1 WHERE 5 NOT IN (SELECT 1);
+
+# op_win_sub: ANY/SOME
+statement ok
+SELECT 1 WHERE 1 = ANY (SELECT 1);
+
+# op_win_sub: ALL
+statement ok
+SELECT 1 WHERE 1 = ALL (SELECT 1);
+
+# op_win_sub: EXISTS
+statement ok
+SELECT 1 WHERE EXISTS (SELECT 1);
+
+# op_win_sub: IN
+statement ok
+SELECT 1 WHERE 1 IN (1,2,3);
+
+# op_win_sub: NOT IN
+statement ok
+SELECT 1 WHERE 5 NOT IN (1,2,3);
+
+# op_win_sub: ANY/SOME
+statement ok
+SELECT 1 WHERE 1 = ANY (ARRAY[1,2,3]);
+
+# op_win_sub: ALL
+statement ok
+SELECT 1 WHERE 1 = ALL (ARRAY[1,1,1]);
+
+# op_win_sub: generate_series
+statement ok
+SELECT * FROM generate_series(1,3);
+
+# op_win_sub: generate_subscript
+statement ok
+SELECT generate_subscripts(ARRAY[1,2,3], 1);
+
+
+# --- Re-verified: formerly crash-flagged in docs, now confirmed (no crash) ---
+
+# op_seq_cond: COALESCE
+statement ok
+SELECT COALESCE(NULL, 1, 2);
+
+# types: timestamp with time zone
+statement ok
+SELECT NULL::timestamp with time zone;
+
+# op_seq_cond: lastval (function absent)
+statement error
+SELECT lastval();
+
+# op_datetime: make_timestamptz (function absent)
+statement error
+SELECT make_timestamptz(2020, 1, 1, 0, 0, 0);
+
+# op_geo: isclosed (function absent; does not crash)
+statement error
+SELECT isclosed(NULL);

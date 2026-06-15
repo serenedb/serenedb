@@ -56,6 +56,7 @@ add_library(
     duckdb_physical_delete.cpp
     duckdb_physical_search_delete.cpp
     duckdb_physical_update.cpp
+    duckdb_physical_search_update.cpp
     duckdb_transaction.cpp
     highlight/highlight_options.cpp
     highlight/memory_index.cpp

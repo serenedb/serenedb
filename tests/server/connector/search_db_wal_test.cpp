@@ -879,10 +879,10 @@ TEST_F(SearchDbWalTest, InterleavedInsertDeleteReplayInManifestOrder) {
     order.push_back(absl::StrFormat("D%s", pks.front()));
   };
   SearchDbWal wal2(Fs(), _dir);
-  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), insert_cb, delete_cb), 1u);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), insert_cb, delete_cb),
+            1u);
 
-  EXPECT_EQ(order,
-            (std::vector<std::string>{"I10", "Dd1", "I20", "Dd2"}));
+  EXPECT_EQ(order, (std::vector<std::string>{"I10", "Dd1", "I20", "Dd2"}));
 }
 
 }  // namespace

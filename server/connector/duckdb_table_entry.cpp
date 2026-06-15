@@ -162,6 +162,20 @@ void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
         duckdb::Value(gen_col.Type())));
     update.columns.push_back(gen_col.Physical());
   }
+
+  auto& conn_ctx = GetSereneDBContext(context);
+  auto shard =
+    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(_sdb_table->GetId());
+  SDB_ASSERT(shard);
+  if (shard->GetStorage() == catalog::StorageKind::kSearch) {
+    duckdb::physical_index_set_t all_physical;
+    for (auto& col : cols.Physical()) {
+      all_physical.insert(col.Physical());
+    }
+    duckdb::LogicalUpdate::BindExtraColumns(*this, get, proj, update,
+                                            all_physical);
+    update.update_is_del_and_insert = true;
+  }
 }
 
 duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(

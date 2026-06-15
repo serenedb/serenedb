@@ -341,7 +341,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     lstate->chunk_writer->Append(chunk, pk_base);
   } else {
     gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
-      gstate.table_shard, duckdb::BufferManager::GetBufferManager(context.client),
+      gstate.table_shard,
+      duckdb::BufferManager::GetBufferManager(context.client),
       gstate.chunk_types, chunk, uses_generated_pk, pk_base);
   }
   lstate->insert_count += num_rows;

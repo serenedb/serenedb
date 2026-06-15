@@ -93,10 +93,29 @@ count
 2
 
 
-statement error
-UPDATE search_dml SET b = 'y' WHERE a = 1;
+# UPDATE is delete-old + insert-new on the shard's serial trx; the new value is
+# visible after the publish (VACUUM REFRESH_TABLE). Updating a non-PK column
+# keeps the row reachable by its unchanged PK.
+statement ok
+UPDATE search_dml SET b = 'X' WHERE a = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_dml;
+
+query
+SELECT a, b FROM search_dml ORDER BY a;
 ----
-db error: ERROR: UPDATE on a search-backed table is not yet supported
+a	b
+1	X
+2	y
+3	z
+
+# Row count is unchanged by an UPDATE (one delete + one insert per row).
+query
+SELECT COUNT(*) FROM search_dml;
+----
+count
+3
 
 
 # DELETE removes rows by PK term; the removal is visible after the publish
@@ -164,6 +183,22 @@ a	b
 20	q
 30	r
 
+# UPDATE on a generated-PK table: the new row is minted a fresh generated PK
+# (the old row is removed by its old rowid). Rows stay reachable by value.
+statement ok
+UPDATE search_genpk SET b = 'Q' WHERE a = 20;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_genpk;
+
+query
+SELECT * FROM search_genpk ORDER BY a;
+----
+a	b
+10	p
+20	Q
+30	r
+
 # DELETE on a generated-PK table: the rowid is the synthetic PK, materialised
 # from the stored kGeneratedPKId column for row identity.
 statement ok
@@ -180,6 +215,67 @@ a	b
 
 statement ok
 DROP TABLE search_genpk;
+
+
+## UPDATE on an explicit-PK search table -- multi-row and PK-changing.
+statement ok
+CREATE TABLE search_upd (id INTEGER PRIMARY KEY, grp TEXT, n INTEGER)
+  WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_upd VALUES (1, 'a', 10), (2, 'a', 20), (3, 'b', 30),
+  (4, 'b', 40);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_upd;
+
+# Multi-row UPDATE: two rows match; non-matching rows are untouched.
+statement ok
+UPDATE search_upd SET n = n + 100 WHERE grp = 'a';
+
+statement ok
+VACUUM (REFRESH_TABLE) search_upd;
+
+query
+SELECT id, grp, n FROM search_upd ORDER BY id;
+----
+id	grp	n
+1	a	110
+2	a	120
+3	b	30
+4	b	40
+
+# PK-changing UPDATE: old PK term removed, the new row inserted under the new
+# PK. Reachable by the new PK; gone under the old.
+statement ok
+UPDATE search_upd SET id = 20 WHERE id = 2;
+
+statement ok
+VACUUM (REFRESH_TABLE) search_upd;
+
+query
+SELECT id, grp, n FROM search_upd ORDER BY id;
+----
+id	grp	n
+1	a	110
+3	b	30
+4	b	40
+20	a	120
+
+query
+SELECT n FROM search_upd WHERE id = 20;
+----
+n
+120
+
+query
+SELECT COUNT(*) FROM search_upd WHERE id = 2;
+----
+count
+0
+
+statement ok
+DROP TABLE search_upd;
 
 
 statement ok

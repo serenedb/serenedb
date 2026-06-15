@@ -435,3 +435,93 @@ n
 connection reins_after
 statement ok
 DROP TABLE reins;
+
+
+###############################################################################
+# 8. UPDATE = delete-old + insert-new survives recovery replay. The baseline is
+#    published; the UPDATE's removal + re-insert are fsynced into the WAL but
+#    crash before the iresearch commit, so recovery must replay BOTH halves --
+#    and in manifest order (delete before insert), or the re-inserted row would
+#    be masked by its own removal.
+###############################################################################
+
+# 8a. Explicit PK, non-PK column updated -> old and new rows share the PK, so
+#     this is the core delete<insert ordering case: the new value must win.
+connection reins_after
+statement ok
+CREATE TABLE upd_t (id INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+connection reins_after
+statement ok
+INSERT INTO upd_t VALUES (1, 'one'), (2, 'two'), (3, 'three');
+
+connection reins_after
+statement ok
+VACUUM (REFRESH_TABLE) upd_t;
+
+connection reins_after
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection reins_after
+statement error connection closed
+UPDATE upd_t SET b = 'TWO' WHERE id = 2;
+
+# --- restart ---
+connection upd_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, b FROM upd_t ORDER BY id;
+----
+id	b
+1	one
+2	TWO
+3	three
+
+# The updated row is reachable by its (unchanged) PK with the NEW value.
+connection upd_after
+query
+SELECT b FROM upd_t WHERE id = 2;
+----
+b
+TWO
+
+connection upd_after
+statement ok
+DROP TABLE upd_t;
+
+
+# 8b. Generated PK: the new row is minted a fresh generated PK; the old row is
+#     removed by its old rowid. Both halves must survive recovery.
+connection upd_after
+statement ok
+CREATE TABLE upd_g (a INTEGER, b TEXT) WITH (storage = 'search');
+
+connection upd_after
+statement ok
+INSERT INTO upd_g VALUES (10, 'p'), (20, 'q'), (30, 'r');
+
+connection upd_after
+statement ok
+VACUUM (REFRESH_TABLE) upd_g;
+
+connection upd_after
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection upd_after
+statement error connection closed
+UPDATE upd_g SET b = 'Q' WHERE a = 20;
+
+# --- restart ---
+connection upd_g_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, b FROM upd_g ORDER BY a;
+----
+a	b
+10	p
+20	Q
+30	r
+
+connection upd_g_after
+statement ok
+DROP TABLE upd_g;

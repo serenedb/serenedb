@@ -66,6 +66,7 @@
 #include "connector/duckdb_physical_insert.h"
 #include "connector/duckdb_physical_search_delete.h"
 #include "connector/duckdb_physical_search_insert.h"
+#include "connector/duckdb_physical_search_update.h"
 #include "connector/duckdb_physical_sst_insert.h"
 #include "connector/duckdb_physical_truncate.h"
 #include "connector/duckdb_physical_update.h"
@@ -930,6 +931,21 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
       pk_indices.push_back(num_updates + i);
     }
   }
+
+  {
+    auto shard =
+      GetSereneDBContext(context).EnsureCatalogSnapshot()->GetTableShard(
+        sdb_table->GetId());
+    SDB_ASSERT(shard);
+    if (shard->GetStorage() == catalog::StorageKind::kSearch) {
+      auto& search_upd = planner.Make<SereneDBSearchUpdate>(
+        std::move(sdb_table), std::move(pk_indices), std::move(op.columns),
+        op.estimated_cardinality);
+      search_upd.children.push_back(proj);
+      return search_upd;
+    }
+  }
+
   std::vector<duckdb::idx_t> indexed_indices;
   indexed_indices.reserve(num_idx);
   for (size_t i = 0; i < num_idx; ++i) {

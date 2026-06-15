@@ -38,8 +38,8 @@ namespace sdb::search {
 // Per-search-table, per-transaction ordered op manifest. Statement order is
 // preserved so recovery reproduces the live single-trx `_queries` ordering
 // between inserts and deletes (delete-then-reinsert, interleaved INSERT/DELETE,
-// ...). Consecutive inserts -- inline OR bulk -- accumulate into one insert run;
-// only a DELETE seals the run, so the next insert starts a fresh one.
+// ...). Consecutive inserts -- inline OR bulk -- accumulate into one insert
+// run; only a DELETE seals the run, so the next insert starts a fresh one.
 struct LocalTableChangesEntry {
   // One op in the manifest. A DELETE op has `delete_pks`; otherwise it is an
   // insert run carrying inline rows (`collection` + per-chunk generated-PK

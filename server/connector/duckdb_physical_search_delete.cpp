@@ -121,8 +121,7 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
-    gstate.table_shard,
-    [&] { return gstate.search_shard->GetTransaction(); });
+    gstate.table_shard, [&] { return gstate.search_shard->GetTransaction(); });
 
   // The PK term to remove is encoded exactly as the insert wrote it
   // (MakeColumnKey -> ExtractRowKey). For a no-PK table the rowid column holds
@@ -144,8 +143,8 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
       pk_formats, gstate.pk_columns, row, gstate.table_key,
       [&](std::string_view row_lock_key) {
         const auto pk = row_lock_key.substr(sizeof(ObjectId));
-        remover.DeleteRowImpl(pk);             // live iresearch removal
-        wal_pks.emplace_back(pk);              // WAL delete payload
+        remover.DeleteRowImpl(pk);  // live iresearch removal
+        wal_pks.emplace_back(pk);   // WAL delete payload
       },
       key_buffer);
   }

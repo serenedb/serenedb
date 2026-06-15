@@ -62,8 +62,7 @@ void SearchTableTransaction::AddParallelSearchTransaction(
 }
 
 void SearchTableTransaction::AddReferences(
-  const std::shared_ptr<TableShard>& shard,
-  std::span<const uint64_t> seg_ids) {
+  const std::shared_ptr<TableShard>& shard, std::span<const uint64_t> seg_ids) {
   // One batched call per bulk statement (after its parallel sinks combine), so
   // the manifest's current insert run is resolved once -- and the manifest is
   // never touched from the multi-threaded Combine path.
@@ -184,9 +183,8 @@ uint64_t SearchTableTransaction::AppendCommit() {
           {}});
       }
       if (!op.seg_ids.empty()) {
-        ops.push_back(
-          SearchDbWal::Op{nullptr, {}, std::span<const uint64_t>{op.seg_ids},
-                          {}});
+        ops.push_back(SearchDbWal::Op{
+          nullptr, {}, std::span<const uint64_t>{op.seg_ids}, {}});
       }
     }
     SDB_ASSERT(!ops.empty(),

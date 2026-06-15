@@ -64,7 +64,7 @@ QUERY PLAN
 │           Index:          │
 │      vec_t_idx (ANN)      │
 │                           │
-│          TopK: 1          │
+│           Top: 1          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -106,7 +106,7 @@ QUERY PLAN
 │      vec_t_idx (ANN)      │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 1          │
+│           Top: 1          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │

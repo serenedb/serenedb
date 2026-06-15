@@ -46,7 +46,7 @@ QUERY PLAN
 │     wal_hnsw_idx (ANN)    │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 1          │
+│           Top: 1          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │

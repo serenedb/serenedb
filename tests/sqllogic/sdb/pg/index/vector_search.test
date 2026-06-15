@@ -31,7 +31,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -59,7 +59,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 5          │
+│           Top: 5          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -88,7 +88,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 10         │
+│          Top: 10          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -355,7 +355,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l2_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 10         │
+│          Top: 10          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -493,7 +493,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l1_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 5          │
+│           Top: 5          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -522,7 +522,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: l1_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 5          │
+│           Top: 5          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -585,7 +585,7 @@ QUERY PLAN
 │      cos_index (ANN)      │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -623,7 +623,7 @@ QUERY PLAN
 │      cos_index (ANN)      │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -653,7 +653,7 @@ QUERY PLAN
 │      cos_index (ANN)      │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -748,7 +748,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: ip_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -784,7 +784,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: ip_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -812,7 +812,7 @@ QUERY PLAN
 │    ────────────────────   │
 │   Index: ip_index (ANN)   │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        Projections:       │
@@ -1306,12 +1306,21 @@ QUERY PLAN
 │      mixed_idx (ANN)      │
 │                           │
 │      Lookup: rocksdb      │
-│          TopK: 2          │
+│           Top: 2          │
 │          Dims: 3          │
 │                           │
 │        TextFilter:        │
-│ AND[PHRASE[body(string) = │
-│    <Term:red(0, 0); >]]   │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        AND        ││  │
+│  │└─────────┬─────────┘│  │
+│  │┌─────────┴─────────┐│  │
+│  ││       PHRASE      ││  │
+│  ││    ────────────   ││  │
+│  ││  body(string) =   ││  │
+│  ││ <Term:red(0, 0); >││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │             id            │
@@ -1438,41 +1447,49 @@ query
 EXPLAIN SELECT id FROM mixed_idx WHERE id > 2 AND body @@ ts_any(['red', 'blue']) ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 2          │
-│      Order By: #1 ASC     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│          (id > 2)         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      mixed_idx (ANN)      │
-│                           │
-│      Lookup: rocksdb      │
-│          Dims: 3          │
-│                           │
-│        TextFilter:        │
-│  AND[OR[Term(body(string) │
-│ =red) || Term(body(string)│
-│          =blue)]]         │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+┌─────────────────────────────────────────────┐
+│                    TOP_N                    │
+│    ──────────────────────────────────────   │
+│                    Top: 2                   │
+│               Order By: #1 ASC              │
+│                                             │
+│                    ~1 row                   │
+└──────────────────────┬──────────────────────┘
+┌──────────────────────┴──────────────────────┐
+│                    FILTER                   │
+│    ──────────────────────────────────────   │
+│                   (id > 2)                  │
+│                                             │
+│                    ~1 row                   │
+└──────────────────────┬──────────────────────┘
+┌──────────────────────┴──────────────────────┐
+│                IRESEARCH_SCAN               │
+│    ──────────────────────────────────────   │
+│            Index: mixed_idx (ANN)           │
+│               Lookup: rocksdb               │
+│                   Dims: 3                   │
+│                                             │
+│                 TextFilter:                 │
+│ ┌──────────────────────────────────────────┐│
+│ │┌───────────────────┐                     ││
+│ ││        AND        │                     ││
+│ │└─────────┬─────────┘                     ││
+│ │┌─────────┴─────────┐                     ││
+│ ││         OR        ├──────────┐          ││
+│ │└─────────┬─────────┘          │          ││
+│ │┌─────────┴─────────┐┌─────────┴─────────┐││
+│ ││        Term       ││        Term       │││
+│ ││    ────────────   ││    ────────────   │││
+│ ││ body(string) = red││body(string) = blue│││
+│ │└───────────────────┘└───────────────────┘││
+│ └──────────────────────────────────────────┘│
+│                                             │
+│                 Projections:                │
+│                      id                     │
+│           sdb_inverted_index_score          │
+│                                             │
+│                    ~1 row                   │
+└─────────────────────────────────────────────┘
 
 
 query

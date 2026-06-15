@@ -228,16 +228,16 @@ COPY (
          ((i * 5) % 60000 - 30000)::SMALLINT AS i16,
          ((i * 7) % 1000000) AS i32,
          (i * 1009)::BIGINT AS i64,
-         rnd(i, 1)::FLOAT AS f32,
-         rnd(i, 2)::DOUBLE AS f64,
+         ((i + 1) * 0.5)::FLOAT AS f32,
+         ((i + 2) * 0.5)::DOUBLE AS f64,
          'str-' || (i % 1024)::VARCHAR AS s,
          (i % 2 = 0) AS bool_col,
          [(i + 0) % 50, (i + 1) % 50, (i + 2) % 50]::INTEGER[3] AS arr_i32,
-         [rnd(i, 3), rnd(i, 4), rnd(i, 5)]::DOUBLE[3] AS arr_f64,
+         [(i + 3) * 0.5, (i + 4) * 0.5, (i + 5) * 0.5]::DOUBLE[3] AS arr_f64,
          [(i + 0) % 30, (i + 1) % 30, (i + 2) % 30, (i + 3) % 30] AS lst_i32,
          ROW(i * 2, 'b-' || (i % 100)::VARCHAR)
            ::STRUCT(a INTEGER, b VARCHAR) AS struct_basic,
-         ROW(rnd(i, 6)::DOUBLE, 'b-' || (i % 100)::VARCHAR)
+         ROW(((i + 6) * 0.5)::DOUBLE, 'b-' || (i % 100)::VARCHAR)
            ::STRUCT(a DOUBLE, b VARCHAR) AS struct_f64,
          MAP {'k1': i, 'k2': i * 2, 'k3': i * 3} AS map_i32,
          [ROW('p1', i)::STRUCT(k VARCHAR, v INTEGER),
@@ -248,23 +248,23 @@ COPY (
            ::STRUCT(name VARCHAR, vals STRUCT(k VARCHAR, v INTEGER)[]) AS deep,
          {'a': i * 2, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
            AS variant_obj,
-         {'a': rnd(i, 7)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
+         {'a': ((i + 7) * 0.5)::DOUBLE, 'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
            AS variant_f64,
          CASE
            WHEN i < 1000 AND i % 100 = 0
-             THEN {'a': rnd(i, 8)::DOUBLE,
+             THEN {'a': ((i + 8) * 0.5)::DOUBLE,
                    'b': 'b-' || (i % 100)::VARCHAR, 'rare': i}::VARIANT
            WHEN i % 1000 = 0
-             THEN {'a': rnd(i, 9)::DOUBLE, 'b': i}::VARIANT
+             THEN {'a': ((i + 9) * 0.5)::DOUBLE, 'b': i}::VARIANT
            WHEN i % 9999 = 3
              THEN {'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
-           ELSE {'a': rnd(i, 10)::DOUBLE,
+           ELSE {'a': ((i + 10) * 0.5)::DOUBLE,
                  'b': 'b-' || (i % 100)::VARCHAR}::VARIANT
          END AS variant_messy,
          {'outer': {'mid': {'a': i * 2,
                             'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
            AS variant_nested,
-         {'outer': {'mid': {'a': rnd(i, 11)::DOUBLE,
+         {'outer': {'mid': {'a': ((i + 11) * 0.5)::DOUBLE,
                             'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
            AS variant_nested_f64
   FROM range(${N}) t(i)

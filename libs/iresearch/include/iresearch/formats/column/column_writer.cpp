@@ -38,6 +38,7 @@
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/append_state.hpp>
+#include <duckdb/storage/table/column_data.hpp>
 #include <duckdb/storage/table/column_data_checkpointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/variant_column_data.hpp>
@@ -246,19 +247,30 @@ PickedCodec PickCodec(WriteContext& write_ctx,
     }
   }
 
+  // Feed analyze in native's transient-segment scan cadence
+  // so the shape-sensitive analyzers pick the same codec native does.
+  const auto type_size = duckdb::GetTypeIdSize(codec_type.InternalType());
   duckdb::Vector slice{staging.GetType(), STANDARD_VECTOR_SIZE};
   duckdb::idx_t consumed = 0;
+  duckdb::idx_t seg_bytes = 0;
   while (consumed < row_count) {
-    const auto take =
-      std::min<duckdb::idx_t>(row_count - consumed, STANDARD_VECTOR_SIZE);
-    CopySlice(slice, staging, consumed, take);
-    duckdb::FlatVector::SetSize(slice, take);
-    for (size_t i = 0; i < candidates.size(); ++i) {
-      if (states[i] && !candidates[i].get().analyze(*states[i], slice)) {
-        states[i].reset();
+    seg_bytes = duckdb::ColumnData::GetTransientSegmentSize(
+      config, write_ctx, codec_type, seg_bytes);
+    const auto seg_rows = std::max<duckdb::idx_t>(1, seg_bytes / type_size);
+    duckdb::idx_t seg_consumed = 0;
+    while (seg_consumed < seg_rows && consumed < row_count) {
+      const auto take = std::min<duckdb::idx_t>(
+        {seg_rows - seg_consumed, STANDARD_VECTOR_SIZE, row_count - consumed});
+      CopySlice(slice, staging, consumed, take);
+      duckdb::FlatVector::SetSize(slice, take);
+      for (size_t i = 0; i < candidates.size(); ++i) {
+        if (states[i] && !candidates[i].get().analyze(*states[i], slice)) {
+          states[i].reset();
+        }
       }
+      seg_consumed += take;
+      consumed += take;
     }
-    consumed += take;
   }
 
   PickedCodec best;

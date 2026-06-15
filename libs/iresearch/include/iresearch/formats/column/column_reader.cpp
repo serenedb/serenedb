@@ -130,11 +130,6 @@ bool AnyNonEmptyValidity(std::span<const duckdb::DataPointer> pointers) {
   });
 }
 
-// Wraps a slice of the mmap'd .col file as a duckdb FileBuffer without
-// copying. Owns a share of the input whose MMapHandle keeps the mapping
-// alive for as long as any BlockHandle (and thus any output Vector pinning
-// it) references the slice. ~FileBuffer frees internal_buffer, so the slice
-// pointers are detached in the destructor.
 class MmapSegmentBuffer final : public duckdb::FileBuffer {
  public:
   MmapSegmentBuffer(duckdb::BlockAllocator& block_allocator,
@@ -155,18 +150,10 @@ class MmapSegmentBuffer final : public duckdb::FileBuffer {
   std::shared_ptr<IndexInput> _mapping;
 };
 
-// Codecs assume the alignment that buffer-manager blocks provide (roaring
-// asserts RunContainerRLEPair alignment, etc.), so a segment may only be
-// wrapped in place when its file offset was written aligned (the writer
-// pads to 64 bytes; older files weren't padded and must be staged).
 inline bool MmapWrapAligned(const byte_type* data) noexcept {
   return reinterpret_cast<uintptr_t>(data) % 64 == 0;
 }
 
-// The staging copy that zero-copy replaced doubled as readahead; without a
-// hint the decode demand-pages the mapping 4KB at a time, which is much
-// slower on a cold page cache. Ask the kernel to fetch the whole segment
-// asynchronously; near-free when the pages are already resident.
 void PrefetchMmapRange(const byte_type* data, size_t size) noexcept {
 #ifdef __linux__
   static const uintptr_t kPageMask =
@@ -178,9 +165,6 @@ void PrefetchMmapRange(const byte_type* data, size_t size) noexcept {
 #endif
 }
 
-// Ids >= MAXIMUM_BLOCK mark temporary blocks: ~BlockHandle early-outs and
-// never talks to the BlockManager. Offset far above the buffer manager's
-// own temporary_id counter to keep the ranges visibly distinct.
 duckdb::block_id_t NextMmapBlockId() noexcept {
   static std::atomic<duckdb::block_id_t> next{MAXIMUM_BLOCK +
                                               (duckdb::block_id_t{1} << 40)};
@@ -201,10 +185,6 @@ duckdb::shared_ptr<duckdb::BlockHandle> WrapMmapPointer(
     return nullptr;
   }
   auto& bm = duckdb::BufferManager::GetBufferManager(db);
-  // TINY_BUFFER blocks are never unloaded by the buffer pool and the
-  // temporary block id keeps ~BlockHandle away from the BlockManager. The
-  // reservation must match the loaded buffer's size: ~BlockMemory asserts
-  // a positive charge for loaded buffers and returns it to the pool.
   return duckdb::make_shared_ptr<duckdb::BlockHandle>(
     bm.GetTemporaryBlockManager(), NextMmapBlockId(),
     duckdb::MemoryTag::EXTERNAL_FILE_CACHE,
@@ -215,8 +195,6 @@ duckdb::shared_ptr<duckdb::BlockHandle> WrapMmapPointer(
                                       bm.GetBufferPool(), byte_size});
 }
 
-// One prebuilt wrapper per pointer; null slots (constant pointers or a
-// non-mmap input) fall back to lazy wrapping / staging in OpenSegmentImpl.
 std::vector<duckdb::shared_ptr<duckdb::BlockHandle>> WrapMmapPointers(
   const ColumnBlockSource& source,
   std::span<const duckdb::DataPointer> pointers) {
@@ -408,13 +386,6 @@ RgWindow ColumnReader::LocateVariantRg(uint64_t row,
 
 namespace {
 
-// Whether a codec's SCAN_ENTIRE_VECTOR output keeps `out` a FLAT_VECTOR and
-// leaves any pre-existing validity mask intact. MaterializeNode scans the
-// separate validity column into `out`'s flat mask before the data scan, so a
-// codec that retypes `out` to a DICTIONARY/CONSTANT vector (dictionary, FSST,
-// RLE, constant) would silently drop that mask. The flat-preserving codecs
-// either decode in place (ALP/bitpacking/chimp/patas) or SetData while
-// preserving the mask (uncompressed).
 bool CodecPreservesValidityOnEntireScan(duckdb::CompressionType t) noexcept {
   switch (t) {
     case duckdb::CompressionType::COMPRESSION_UNCOMPRESSED:
@@ -446,10 +417,6 @@ void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
     _cursor.SeekTo(row_pos - _window.begin);
     const auto take = std::min<duckdb::idx_t>(count, _window.end - row_pos);
     const bool single_shot = (out_offset == 0 && take == count);
-    // SCAN_ENTIRE_VECTOR is zero-copy/in-place; SCAN_FLAT_VECTOR memcpys the
-    // whole segment slice. Use the fast path on the data side whenever the
-    // codec keeps `out` flat -- when the column has no validity (nothing to
-    // preserve) or the codec preserves a pre-scanned mask (see helper).
     const bool entire_safe =
       !_validity && (!_reader->HasValidity() ||
                      CodecPreservesValidityOnEntireScan(_cursor.Codec()));
@@ -494,10 +461,6 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   const uint64_t file_offset = p.block_pointer.block_id;
   duckdb::shared_ptr<duckdb::BlockHandle> handle;
   if (prebuilt) {
-    // Zero-copy: the block was wrapped around the mmap'd .col file when the
-    // reader was built (see WrapMmapPointer); reuse costs one shared_ptr
-    // copy. Readahead only pays off on the first open per block (cold page
-    // cache) -- see _data_advised.
     if (advise_once && !advise_once->load(std::memory_order_relaxed)) {
       advise_once->store(true, std::memory_order_relaxed);
       if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size)) {
@@ -508,8 +471,6 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
   } else if (const auto* direct = ctx.In().ReadStable(file_offset, byte_size);
              direct && MmapWrapAligned(direct)) {
     PrefetchMmapRange(direct, byte_size);
-    // Reader built without a ColumnBlockSource but the input is mmap'd:
-    // wrap lazily, anchored by a duplicate of the per-query input.
     handle = duckdb::make_shared_ptr<duckdb::BlockHandle>(
       bm.GetTemporaryBlockManager(), NextMmapBlockId(),
       duckdb::MemoryTag::EXTERNAL_FILE_CACHE,
@@ -520,7 +481,6 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenSegmentImpl(
       duckdb::TempBufferPoolReservation{duckdb::MemoryTag::EXTERNAL_FILE_CACHE,
                                         bm.GetBufferPool(), byte_size});
   } else {
-    // Non-mmap input: stage a copy through the buffer manager.
     handle = bm.RegisterTransientMemory(byte_size, ctx);
     auto buf = bm.Pin(handle);
     ctx.In().ReadData(file_offset, buf.GetDataMutable(), byte_size);

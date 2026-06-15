@@ -161,9 +161,6 @@ struct ColReader::Impl {
 
 void ColReader::BuildColumnReaders(duckdb::BinaryDeserializer& deserializer,
                                    duckdb::DatabaseInstance& db) {
-  // Shared anchor for the zero-copy block wrappers: one duplicate of the
-  // mmap'd input keeps the mapping alive for as long as any reader block
-  // (or a Vector pinning it) is around.
   const ColumnBlockSource source{&db,
                                  std::shared_ptr<IndexInput>{_impl->in->Dup()}};
   deserializer.ReadList(

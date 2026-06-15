@@ -211,7 +211,6 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
           bool valid_path = true;
           while (true) {
             if (node->HasPrimaryIndex()) {
-              // Struct field: integer index -> field name via the column type.
               if (cur_type->id() != duckdb::LogicalTypeId::STRUCT) {
                 valid_path = false;
                 break;
@@ -226,7 +225,6 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
               path.emplace_back(children[idx].first);
               cur_type = &children[idx].second;
             } else {
-              // Variant/semi-structured: field name directly.
               path.emplace_back(node->GetFieldName());
             }
             if (!node->HasChildren()) {

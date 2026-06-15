@@ -359,9 +359,6 @@ void MaterializeNode(const ColumnReader& reader, MaterializeState& state,
   }
 }
 
-// Walk the ColumnReader struct tree following `path` (field names, case-
-// insensitive) and return the leaf reader, or nullptr if the path is invalid
-// or leads to a nested type.
 [[nodiscard]] inline const ColumnReader* ResolveStructLeaf(
   const ColumnReader& reader, std::span<const std::string> path) {
   const ColumnReader* node = &reader;
@@ -398,11 +395,6 @@ inline void CastExtractInto(duckdb::ClientContext& context, duckdb::Vector& src,
   duckdb::VectorOperations::Copy(casted, dst, count, 0, dst_offset);
 }
 
-// Struct projection pushdown: read only the single leaf field named by `path`,
-// skipping all sibling fields.  The state tree was built for the full struct by
-// MakeMaterializeState, so we navigate it in parallel with the reader tree and
-// call MaterializeNode only on the resolved leaf -- sibling segment files are
-// never opened.
 template<typename DocIds>
 void MaterializeStructExtractNode(
   const ColumnReader& reader, MaterializeState& state, const DocIds& doc_ids,
@@ -418,7 +410,6 @@ void MaterializeStructExtractNode(
   if (!leaf) {
     return;
   }
-  // Navigate the pre-built state tree in parallel with the reader tree.
   MaterializeState* leaf_state = &state;
   const ColumnReader* cur = &reader;
   for (const auto& field : path) {

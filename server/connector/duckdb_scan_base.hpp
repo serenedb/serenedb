@@ -402,11 +402,6 @@ void RunStreamingScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
     if (added != 0) {
       continue;
     }
-    // Segment exhausted. Emit the short chunk instead of refilling from the
-    // next segment: one straddling chunk would shift every later scan in
-    // that segment off the vector alignment that the SCAN_ENTIRE_VECTOR /
-    // direct-decode codec paths require (duckdb likewise cuts chunks at
-    // row-group ends).
     if (collected != 0) {
       break;
     }

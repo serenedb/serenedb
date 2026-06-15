@@ -23,14 +23,14 @@
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 
 #include "basics/containers/node_hash_map.h"
-#include "catalog/catalog.h"
+#include "catalog/fwd.h"
 #include "connector/duckdb_schema_entry.h"
 
 namespace sdb::connector {
 
 // Hierarchical cache of DuckDB CatalogEntry objects.
 // Structure: databases[db_id] -> schemas[name] -> entries[name].
-// Lives on SnapshotImpl. Thread-safe.
+// Lives on Snapshot. Thread-safe.
 class DuckDBEntryCache {
  public:
   // Called by SereneDBCatalog::LookupSchema

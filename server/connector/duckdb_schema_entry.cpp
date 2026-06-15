@@ -223,7 +223,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   };
 
   // SERIAL expands to base int + nextval default + NOT NULL. The sequence
-  // name and nextval default are resolved by LocalCatalog under its mutex.
+  // name and nextval default are resolved by Catalog under its mutex.
   for (auto& col : table_info.columns.Logical()) {
     auto& sdb_col = options.columns.emplace_back(ObjectId{}, catalog::NextId(),
                                                  col.Name(), col.Type());

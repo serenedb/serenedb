@@ -154,7 +154,7 @@ struct TableForeignKey {
 };
 
 struct CreateTableOptions {
-  // LocalCatalog resolves the sequence name (mangling on collision), stamps
+  // Catalog resolves the sequence name (mangling on collision), stamps
   // owner_table_id, and installs the column's nextval default.
   struct SerialSequenceOption {
     Column::Id column_id;

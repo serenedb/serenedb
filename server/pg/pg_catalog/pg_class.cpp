@@ -31,7 +31,6 @@
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/local_catalog.h"
 #include "catalog/sequence.h"
 #include "catalog/store/store.h"
 #include "catalog/user_type.h"

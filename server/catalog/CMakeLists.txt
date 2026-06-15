@@ -6,7 +6,6 @@ target_sources(
         drop_task.cpp
         schema.cpp
         databases.cpp
-        local_catalog.cpp
         catalog.cpp
         object.cpp
         table_options.cpp

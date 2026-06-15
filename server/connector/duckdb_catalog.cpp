@@ -85,7 +85,7 @@ namespace {
 // parameter signature, and either removes just that overload (updating the
 // stored function) or drops the whole function if it was the last one.
 // DROP FUNCTION name(type, ...) -- selective overload removal.
-Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
+Result DropFunctionOverload(catalog::Catalog& catalog,
                             duckdb::ClientContext& context,
                             duckdb::DropInfo& info) {
   auto snapshot = catalog.GetCatalogSnapshot();
@@ -170,7 +170,7 @@ Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
 // DROP FUNCTION/PROCEDURE name -- drop overloads matching the drop kind.
 // PG: DROP FUNCTION drops only function overloads, DROP PROCEDURE drops only
 // procedure overloads. If mixed (func + proc under same name), keep the other.
-Result DropFunctionByKind(catalog::LogicalCatalog& catalog,
+Result DropFunctionByKind(catalog::Catalog& catalog,
                           const duckdb::DropInfo& info) {
   auto snapshot = catalog.GetCatalogSnapshot();
   auto db = snapshot->GetDatabase(info.catalog);

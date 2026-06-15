@@ -38,6 +38,7 @@
 
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
+#include "catalog/catalog.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"

@@ -65,8 +65,6 @@ using ChangeCallback = absl::FunctionRef<Result(const T&, std::shared_ptr<T>&)>;
 class SecondaryIndex;
 class InvertedIndex;
 
-enum class EdgeAction : uint8_t { Add, Delete };
-
 struct CreateTableOperationOptions {
   bool create_with_tombstone = false;
 };
@@ -109,7 +107,6 @@ struct Snapshot {
   ~Snapshot();
 
   std::shared_ptr<Snapshot> Clone() const;
-  void EndLoad() noexcept;
 
   connector::DuckDBEntryCache& GetDuckDBEntryCache() const;
   std::vector<std::shared_ptr<Role>> GetRoles() const;
@@ -220,6 +217,13 @@ struct Snapshot {
     return basics::downCast<T>(obj);
   }
 
+ private:
+  friend class Catalog;
+
+  enum class EdgeAction : uint8_t { Add, Delete };
+
+  void EndLoad() noexcept;
+
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
     const std::shared_ptr<Database>& db, duckdb::shared_ptr<void> keep_alive);
   std::shared_ptr<SchemaDrop> CreateSchemaDrop(
@@ -303,7 +307,6 @@ struct Snapshot {
   template<typename T>
   std::shared_ptr<T> GetDependencyForWrite(ObjectId id);
 
- private:
   void RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
                               bool root = false,
                               bool maybe_not_found = false) noexcept;

@@ -476,7 +476,7 @@ SET disabled_optimizers = '';
 # DOCS_TEST: example_048
 
 # DOCS_TEST_RAW
-#| SET log_query_path = '/tmp/duckdb_log/';
+#| SET log_query_path = '/tmp/serened_log/';
 
 # DOCS_TEST_BODY
 

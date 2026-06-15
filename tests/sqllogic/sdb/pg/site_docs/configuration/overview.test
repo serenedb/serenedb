@@ -13,8 +13,8 @@ memlimit
 # DOCS_TEST_BODY
 
 statement ok
-SELECT value AS memlimit
-FROM duckdb_settings()
+SELECT setting AS memlimit
+FROM pg_settings
 WHERE name = 'memory_limit';
 
 # DOCS_TEST: example_003
@@ -57,10 +57,10 @@ NULL
 
 query
 SELECT write_log(
-        'A new duck has connected to the lake.',
+        'A new client has connected to SereneDB.',
         level := 'debug',
         scope := 'connection',
-        log_type := 'duckdb.docs.example.quack'
+        log_type := 'serenedb.docs.example'
     );
 ----
 write_log

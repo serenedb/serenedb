@@ -21,6 +21,9 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/synchronization/notification.h>
+
+#include <latch>
 #include <thread>
 
 #include "basics/file_utils_ext.hpp"
@@ -124,6 +127,9 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     auto total_threads = thread_count + num_import_threads + num_update_threads;
     irs::async_utils::ThreadPool<> thread_pool(total_threads);
     std::mutex mutex;
+    // notification only for the first update task, so at least one
+    // update would execute after an insert
+    std::latch inserts{static_cast<std::ptrdiff_t>(thread_count)};
 
     if (!writer) {
       auto options = irs::tests::DefaultWriterOptions();
@@ -174,7 +180,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       for (size_t i = 0; i < thread_count; ++i) {
         thread_pool.run([&mutex, &writer, thread_count, i, writer_batch_size,
                          &parsed_docs_count, &writer_commit_count,
-                         &import_again, this] {
+                         &import_again, &inserts, this] {
           {
             // wait for all threads to be registered
             std::lock_guard lock(mutex);
@@ -247,7 +253,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
           ++writer_commit_count;
           import_again.store(false);  // stop any import threads, on completion
-                                      // of any insert thread
+          // of any insert thread
+          inserts.count_down();
         });
       }
 
@@ -280,10 +287,15 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       // register update jobs
       for (size_t i = 0; i < num_update_threads; ++i) {
         thread_pool.run([&mutex, &writer, num_update_threads, i, update_skip,
-                         writer_batch_size, &writer_commit_count, this] {
+                         writer_batch_size, &writer_commit_count, &inserts,
+                         this] {
           {
             // wait for all threads to be registered
             std::lock_guard lock(mutex);
+          }
+
+          if (!i) {
+            inserts.wait();
           }
 
           CsvDocTemplateT csv_doc_template;

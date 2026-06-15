@@ -18,7 +18,7 @@ services:
         mkdir -p /tmp/serenedb &&
         tar -xzf /workspace/$TARBALL_NAME -C /tmp/serenedb --strip-components=1 &&
         exec /tmp/serenedb/usr/bin/serened \
-          --config /tmp/serenedb/etc/serenedb/serened.conf \
+          --flagfile=/tmp/serenedb/etc/serenedb/serened.conf \
           --server_endpoints pgsql+tcp://0.0.0.0:7890 \
       '
 

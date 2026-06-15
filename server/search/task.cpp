@@ -36,31 +36,31 @@ namespace sdb::search {
 void RefreshTask::Finalize(
   std::shared_ptr<search::InvertedIndexStorage> inverted_index_storage,
   RefreshResult res) {
-  static constexpr size_t kMaxNonEmptyCommits = 10;
+  static constexpr size_t kMaxNonEmptyRefreshes = 10;
   static constexpr size_t kMaxPendingCompactions = 3;
 
   if (res != RefreshResult::NoChanges) {
-    _state->pending_commits.fetch_add(1, std::memory_order_release);
+    _state->pending_refreshes.fetch_add(1, std::memory_order_release);
 
     if (res == RefreshResult::Done) {
-      _state->noop_commit_count.store(0, std::memory_order_release);
+      _state->noop_refresh_count.store(0, std::memory_order_release);
       _state->noop_compaction_count.store(0, std::memory_order_release);
 
       if (_state->pending_compactions.load(std::memory_order_acquire) <
             kMaxPendingCompactions &&
-          _state->non_empty_commits.fetch_add(1, std::memory_order_acq_rel) >=
-            kMaxNonEmptyCommits) {
+          _state->non_empty_refreshes.fetch_add(1, std::memory_order_acq_rel) >=
+            kMaxNonEmptyRefreshes) {
         inverted_index_storage->ScheduleCompaction(_compaction_interval_msec);
-        _state->non_empty_commits.store(0, std::memory_order_release);
+        _state->non_empty_refreshes.store(0, std::memory_order_release);
       }
     }
     ScheduleContinue(std::move(inverted_index_storage), _refresh_interval_msec);
   } else {
-    _state->non_empty_commits.store(0, std::memory_order_release);
-    _state->noop_commit_count.fetch_add(1, std::memory_order_release);
-    for (auto count = _state->pending_commits.load(std::memory_order_acquire);
+    _state->non_empty_refreshes.store(0, std::memory_order_release);
+    _state->noop_refresh_count.fetch_add(1, std::memory_order_release);
+    for (auto count = _state->pending_refreshes.load(std::memory_order_acquire);
          count < 1;) {
-      if (_state->pending_commits.compare_exchange_weak(
+      if (_state->pending_refreshes.compare_exchange_weak(
             count, 1, std::memory_order_acq_rel)) {
         ScheduleContinue(std::move(inverted_index_storage),
                          _refresh_interval_msec);
@@ -84,7 +84,7 @@ void RefreshTask::operator()() {
     return;
   }
   auto id = data->GetId();
-  _state->pending_commits.fetch_sub(1, std::memory_order_release);
+  _state->pending_refreshes.fetch_sub(1, std::memory_order_release);
 
   auto code = RefreshResult::Undefined;
   absl::Cleanup reschedule = [&code, data, this]() noexcept {
@@ -112,7 +112,7 @@ void RefreshTask::operator()() {
   // TODO(phase5-follow-up): Currently `refresh_interval_ms` defaults to 0
   // (not set on CREATE INDEX by our DuckDB path), which disables background
   // sync entirely -- inserts never become searchable. A synchronous
-  // Refresh() caller still expects a commit to happen, so always commit
+  // Refresh() caller still expects a refresh to happen, so always refresh
   // when `_wait` is set even if background scheduling is off.
   if (absl::ZeroDuration() == _refresh_interval_msec && !_wait) {
     std::move(reschedule).Cancel();
@@ -129,7 +129,7 @@ void RefreshTask::operator()() {
               "', run id '", size_t(&run_id), "', took: ", timeMs, "ms");
   } else {
     SDB_WARN(SEARCH, "error after running for ", timeMs,
-             "ms while committing Search index '", id.id(), "', run id '",
+             "ms while refreshing Search index '", id.id(), "', run id '",
              size_t(&run_id), "': ", res.errorNumber(), " ",
              res.errorMessage());
   }
@@ -206,10 +206,10 @@ void CompactionTask::operator()() {
               "', runId '", size_t(&run_id), "'");
     return;
   }
-  static constexpr size_t kMaxNoopCommits = 10;
+  static constexpr size_t kMaxNoopRefreshes = 10;
   static constexpr size_t kMaxNoopCompactions = 10;
-  if (_state->noop_commit_count.load(std::memory_order_acquire) <
-        kMaxNoopCommits &&
+  if (_state->noop_refresh_count.load(std::memory_order_acquire) <
+        kMaxNoopRefreshes &&
       _state->noop_compaction_count.load(std::memory_order_acquire) <
         kMaxNoopCompactions) {
     _state->pending_compactions.fetch_add(1, std::memory_order_release);

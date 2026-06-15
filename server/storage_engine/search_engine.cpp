@@ -52,7 +52,6 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
-#include "catalog/search_common.h"
 #include "catalog/view.h"
 #include "rest_server/database_path_feature.h"
 #include "search/inverted_index_storage.h"
@@ -63,6 +62,8 @@ using namespace std::chrono_literals;
 
 namespace sdb::search {
 namespace {
+
+constexpr std::string_view kEngineDirRoot = "engine_search";
 
 uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
                              uint32_t div) noexcept {
@@ -182,7 +183,7 @@ std::tuple<size_t, size_t, size_t> SearchEngine::stats(ThreadGroup id) const {
 std::filesystem::path SearchEngine::GetPersistedPath(
   ObjectId database_id) const {
   std::filesystem::path path = _dir_feature.directory();
-  path /= StaticStrings::kEngineDirRoot;
+  path /= kEngineDirRoot;
   path /= absl::StrCat(database_id);
   return path;
 }

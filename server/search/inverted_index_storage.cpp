@@ -62,23 +62,18 @@
 namespace sdb::search {
 namespace {
 
-bool ReadCommitMeta(irs::bytes_view payload, Tick& tick,
+bool ReadSegmentMeta(irs::bytes_view payload, Tick& tick,
                     int64_t& iceberg_snapshot_id,
                     uint64_t& wal_cursor) noexcept {
-  // [tick:8][iceberg_snapshot_id:8] optionally followed by [wal_cursor:8].
-  // Older segments lack the wal_cursor (0 = no durable bound => replay all).
-  constexpr size_t kBaseSize = 2 * sizeof(uint64_t);
-  constexpr size_t kWithCursorSize = 3 * sizeof(uint64_t);
-  if (payload.size() != kBaseSize && payload.size() != kWithCursorSize) {
+  // [tick:8][iceberg_snapshot_id:8][wal_cursor:8].
+  constexpr size_t kSize = 3 * sizeof(uint64_t);
+  if (payload.size() != kSize) {
     return false;
   }
   tick = absl::big_endian::Load64(payload.data());
   iceberg_snapshot_id = static_cast<int64_t>(
     absl::big_endian::Load64(payload.data() + sizeof(uint64_t)));
-  wal_cursor =
-    payload.size() == kWithCursorSize
-      ? absl::big_endian::Load64(payload.data() + 2 * sizeof(uint64_t))
-      : 0;
+  wal_cursor = absl::big_endian::Load64(payload.data() + 2 * sizeof(uint64_t));
   return true;
 }
 
@@ -155,9 +150,9 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
                 : irs::OpenMode::kOmCreate;
 
   // New indexes start at the current tick; existing directories override
-  // both values from the persisted commit meta below.
+  // both values from the persisted segment meta below.
   _recovery_tick = TickDomain::Instance().Current();
-  _last_committed_tick = _recovery_tick;
+  _last_durable_tick = _recovery_tick;
   irs::ResourceManagementOptions resource_manager;
   resource_manager.transactions = _writers_memory;
   resource_manager.readers = _readers_memory;
@@ -220,8 +215,8 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
     if (_phase == Phase::Creating) {
       tick = TickDomain::Instance().Current();
     }
-    _last_committed_tick = std::max(_last_committed_tick, tick);
-    uint64_t tick_be = absl::big_endian::FromHost(_last_committed_tick);
+    _last_durable_tick = std::max(_last_durable_tick, tick);
+    uint64_t tick_be = absl::big_endian::FromHost(_last_durable_tick);
     out.append(reinterpret_cast<const irs::byte_type*>(&tick_be),
                sizeof(tick_be));
     uint64_t iceberg_be =
@@ -254,12 +249,12 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   if (path_exists) {
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (!payload.empty()) {
-      if (!ReadCommitMeta(payload, _recovery_tick, _iceberg_snapshot_id,
+      if (!ReadSegmentMeta(payload, _recovery_tick, _iceberg_snapshot_id,
                           _recovery_wal_cursor)) {
-        SDB_WARN(SEARCH, "Failed to read commit meta from inverted index '",
+        SDB_WARN(SEARCH, "Failed to read segment meta from inverted index '",
                  GetId().id(), "'");
       }
-      _last_committed_tick = _recovery_tick;
+      _last_durable_tick = _recovery_tick;
     }
   }
   _snapshot = std::make_shared<InvertedIndexSnapshot>(std::move(reader));
@@ -287,19 +282,19 @@ void InvertedIndexStorage::TruncateCommit(TruncateGuard&& guard, Tick tick,
   if (!guard.mutex) {
     guard = TruncateBegin();
   }
-  SDB_ASSERT(guard.mutex.get() == &_commit_mutex);
+  SDB_ASSERT(guard.mutex.get() == &_refresh_mutex);
 
-  // Roll _last_committed_tick back to its prior value if the iresearch Clear
+  // Roll _last_durable_tick back to its prior value if the iresearch Clear
   // throws partway through. Once Clear returns, we cancel the rollback and
   // commit to the new tick -- same ordering as the legacy code.
-  absl::Cleanup clear_guard = [&, last = _last_committed_tick]() noexcept {
-    _last_committed_tick = last;
+  absl::Cleanup clear_guard = [&, last = _last_durable_tick]() noexcept {
+    _last_durable_tick = last;
   };
   try {
     _writer->Clear(tick);
     std::move(clear_guard).Cancel();
     // payload will not be called if index already empty
-    _last_committed_tick = std::max(tick, _last_committed_tick);
+    _last_durable_tick = std::max(tick, _last_durable_tick);
 
     auto reader = _writer->GetSnapshot();
     SDB_ASSERT(reader);
@@ -327,10 +322,10 @@ void InvertedIndexStorage::ScheduleCompaction(absl::Duration delay) {
   std::move(task).Schedule(delay).Detach();
 }
 
-void InvertedIndexStorage::ScheduleCommit(absl::Duration delay) {
+void InvertedIndexStorage::ScheduleRefresh(absl::Duration delay) {
   RefreshTask task{shared_from_this(), false};
 
-  _state->pending_commits.fetch_add(1, std::memory_order_release);
+  _state->pending_refreshes.fetch_add(1, std::memory_order_release);
   std::move(task).Schedule(delay).Detach();
 }
 
@@ -447,20 +442,20 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
   code = RefreshResult::NoChanges;
 
   try {
-    std::unique_lock commit_lock{_commit_mutex, std::try_to_lock};
-    if (!commit_lock.owns_lock()) {
+    std::unique_lock refresh_lock{_refresh_mutex, std::try_to_lock};
+    if (!refresh_lock.owns_lock()) {
       if (!wait) {
-        SDB_TRACE(SEARCH, "Commit for Search index '", GetId().id(),
+        SDB_TRACE(SEARCH, "Refresh for Search index '", GetId().id(),
                   "' is already in progress, skipping");
 
         code = RefreshResult::InProgress;
         return {};
       }
 
-      SDB_TRACE(SEARCH, "Commit for Search index '", GetId().id(),
+      SDB_TRACE(SEARCH, "Refresh for Search index '", GetId().id(),
                 "' is already in progress, waiting");
 
-      commit_lock.lock();
+      refresh_lock.lock();
     }
 
     // Capture the durable WAL cursor BEFORE the flush watermark. Read the store
@@ -478,42 +473,42 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
       _pending_wal_cursor = PackWalCursor(
         sm.GetBlockManager().GetCheckpointIteration(), sm.GetWALSize());
     }
-    const auto before_commit = TickDomain::Instance().Current();
-    SDB_ASSERT(_last_committed_tick <= before_commit);
-    absl::Cleanup commit_guard = [&, last = _last_committed_tick]() noexcept {
-      _last_committed_tick = last;
+    const auto before_refresh = TickDomain::Instance().Current();
+    SDB_ASSERT(_last_durable_tick <= before_refresh);
+    absl::Cleanup refresh_guard = [&, last = _last_durable_tick]() noexcept {
+      _last_durable_tick = last;
     };
 
-    const auto commit_tick = [&] {
+    const auto refresh_tick = [&] {
       switch (_phase) {
         case Phase::Creating:
         case Phase::Recovering:
           return irs::writer_limits::kMaxTick;
         case Phase::Active:
-          return before_commit;
+          return before_refresh;
       }
     }();
     const bool were_changes = _writer->RefreshCommit({
-      .tick = commit_tick,
+      .tick = refresh_tick,
       .progress = progress,
       .reopen_reader = /* TODO(codeworse) */ false,
     });
     // get new reader
     auto reader = _writer->GetSnapshot();
     SDB_ASSERT(reader != nullptr);
-    std::move(commit_guard).Cancel();
+    std::move(refresh_guard).Cancel();
     if (!were_changes) {
-      SDB_TRACE(SEARCH, "Commit for Search index '", GetId().id(),
-                "' is no changes, tick ", before_commit, "'");
+      SDB_TRACE(SEARCH, "Refresh for Search index '", GetId().id(),
+                "' is no changes, tick ", before_refresh, "'");
       if (_phase != Phase::Recovering) {
-        _last_committed_tick = before_commit;
+        _last_durable_tick = before_refresh;
       }
       StoreInvertedIndexSnapshot(
         std::make_shared<InvertedIndexSnapshot>(std::move(reader)));
       return {};
     }
     SDB_ASSERT(_phase != Phase::Active ||
-               _last_committed_tick == before_commit);
+               _last_durable_tick == before_refresh);
     code = RefreshResult::Done;
 
     // update reader
@@ -531,30 +526,26 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
     SDB_DEBUG(SEARCH, "successful sync of Search index '", GetId().id(),
               "', segments '", reader_size, "', docs count '", docs_count,
               "', live docs count '", live_docs_count,
-              "', last operation tick '", _last_committed_tick, "'");
+              "', last operation tick '", _last_durable_tick, "'");
   } catch (const basics::Exception& e) {
-    return {e.code(), "caught exception while committing Search index '",
+    return {e.code(), "caught exception while refreshing Search index '",
             GetId().id(), "': ", e.message()};
   } catch (const std::exception& e) {
-    return {ERROR_INTERNAL, "caught exception while committing Search index '",
+    return {ERROR_INTERNAL, "caught exception while refreshing Search index '",
             GetId().id(), "': ", e.what()};
   } catch (...) {
-    return {ERROR_INTERNAL, "caught exception while committing Search index '",
+    return {ERROR_INTERNAL, "caught exception while refreshing Search index '",
             GetId().id(), "'"};
   }
   return {};
 }
 
 void InvertedIndexStorage::FinishCreation() {
-  std::lock_guard lock{_commit_mutex};
+  std::lock_guard lock{_refresh_mutex};
   if (_phase == Phase::Active) {
     return;
   }
   _phase = Phase::Active;
-}
-
-void InvertedIndexStorage::RecoveryCommit(Tick tick) {
-  _last_committed_tick = tick;
 }
 
 InvertedIndexStorage::Stats InvertedIndexStorage::GetStats() const {

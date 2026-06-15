@@ -45,11 +45,11 @@ namespace sdb::search {
 class InvertedIndexStorage;
 
 struct ThreadPoolState {
-  std::atomic_size_t pending_commits{0};
-  std::atomic_size_t non_empty_commits{0};
+  std::atomic_size_t pending_refreshes{0};
+  std::atomic_size_t non_empty_refreshes{0};
   std::atomic_size_t pending_compactions{0};
   std::atomic_size_t noop_compaction_count{0};
-  std::atomic_size_t noop_commit_count{0};
+  std::atomic_size_t noop_refresh_count{0};
 };
 
 struct TasksSettings {
@@ -168,8 +168,8 @@ class InvertedIndexStorage final
     Ptr mutex;
   };
   TruncateGuard TruncateBegin() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-    _commit_mutex.Lock();
-    return {TruncateGuard::Ptr{&_commit_mutex}};
+    _refresh_mutex.Lock();
+    return {TruncateGuard::Ptr{&_refresh_mutex}};
   }
   // `user_txn` (nullable) is the connection's transaction whose pending
   // per-conn iresearch staging we need to drop before Clear -- the new-arch
@@ -195,7 +195,7 @@ class InvertedIndexStorage final
   Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
   void ScheduleCompaction(absl::Duration delay);
-  void ScheduleCommit(absl::Duration delay);
+  void ScheduleRefresh(absl::Duration delay);
 
   void Refresh();
 
@@ -224,13 +224,11 @@ class InvertedIndexStorage final
   auto& GetTasksSettings() { return _tasks_settings; }
 
   void StartTasks() {
-    ScheduleCommit({});
+    ScheduleRefresh({});
     ScheduleCompaction({});
   }
 
   void FinishCreation();
-
-  void RecoveryCommit(Tick tick);
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 
@@ -261,12 +259,12 @@ class InvertedIndexStorage final
   };
 
   void StartRecovery() noexcept {
-    std::lock_guard lock{_commit_mutex};
+    std::lock_guard lock{_refresh_mutex};
     SDB_ASSERT(_phase == Phase::Creating);
     _phase = Phase::Recovering;
   }
 
-  // Persisted in the commit payload to survive iceberg compactions. 0 = not
+  // Persisted in the segment meta payload to survive iceberg compactions. 0 = not
   // pinned.
   void SetIcebergSnapshotId(int64_t id) noexcept { _iceberg_snapshot_id = id; }
   int64_t GetIcebergSnapshotId() const noexcept { return _iceberg_snapshot_id; }
@@ -290,10 +288,10 @@ class InvertedIndexStorage final
   std::shared_ptr<irs::IndexWriter> _writer;
   TasksSettings _tasks_settings;
   absl::Mutex _mutex;
-  absl::Mutex _commit_mutex;
+  absl::Mutex _refresh_mutex;
 
   Tick _recovery_tick{0};
-  Tick _last_committed_tick{0};
+  Tick _last_durable_tick{0};
   // Durable store-WAL cursor (packed gen<<40|offset). Captured from the store
   // WAL at refresh -> _pending_wal_cursor -> stamped into the segment meta.
   // _recovery_wal_cursor is read back from the meta at open (the recovery skip

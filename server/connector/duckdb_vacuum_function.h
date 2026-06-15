@@ -30,7 +30,7 @@ class DatabaseInstance;
 namespace sdb::connector {
 
 // Register serenedb_vacuum() table function with DuckDB. The VACUUM grammar
-// lowers VACUUM (REFRESH_*|COMPACT_*|SYNC_STATS) <object>
+// lowers VACUUM (REFRESH_*|COMPACT_*) <object>
 // into `PRAGMA serenedb_vacuum(option, name, [schema], [catalog])`.
 void RegisterVacuumFunction(duckdb::DatabaseInstance& db);
 

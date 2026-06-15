@@ -23,8 +23,12 @@
 #include <absl/strings/str_cat.h>
 
 #include <deque>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/storage/data_table.hpp>
 #include <string>
 
 #include "app/app_server.h"
@@ -118,9 +122,9 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
                      std::deque<std::string>& pk_index_names,
                      const catalog::Snapshot& catalog,
                      duckdb::ClientContext& context) {
-  // Store-table row counts ride a scratch connection: the native plane has
-  // no per-table counter yet. TODO(M2): maintain a commit-time counter.
-  std::optional<duckdb::Connection> store_conn;
+  // reltuples is read from the store table's row-group metadata
+  // (DataTable::GetTotalRows), never a count(*) query: pg_catalog must not scan
+  // data.
   auto count_store_rows = [&](const catalog::Table& table,
                               std::string_view db_name,
                               std::string_view schema_name) -> float {
@@ -128,22 +132,18 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
         table.Tombstoned()) {
       return 0.0F;
     }
-    if (!store_conn) {
-      store_conn.emplace(*context.db);
-    }
     auto store_name =
       catalog::StoreTableName(db_name, schema_name, table.GetName());
-    auto result = store_conn->Query(
-      absl::StrCat("SELECT count(*) FROM \"", catalog::kStoreDatabaseName,
-                   "\".main.\"", store_name, "\""));
-    if (result->HasError()) {
+    duckdb::EntryLookupInfo lookup(duckdb::CatalogType::TABLE_ENTRY,
+                                   store_name);
+    auto entry = duckdb::Catalog::GetEntry(
+      context, std::string{catalog::kStoreDatabaseName}, "main", lookup,
+      duckdb::OnEntryNotFound::RETURN_NULL);
+    if (!entry) {
       return 0.0F;
     }
-    auto chunk = result->Fetch();
-    if (!chunk || chunk->size() == 0) {
-      return 0.0F;
-    }
-    return static_cast<float>(chunk->GetValue(0, 0).GetValue<int64_t>());
+    return static_cast<float>(
+      entry->Cast<duckdb::TableCatalogEntry>().GetStorage().GetTotalRows());
   };
   auto database = catalog.GetDatabase(database_id);
   SDB_ASSERT(database);

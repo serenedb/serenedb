@@ -33,7 +33,6 @@
 #include "catalog/table_options.h"
 
 namespace sdb {
-
 namespace catalog {
 
 inline constexpr std::string_view kIncludedKind = "included";

@@ -44,7 +44,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
-#include "connector/primary_key.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"

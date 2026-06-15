@@ -189,7 +189,8 @@ SecondaryIndexScanEntry::SecondaryIndexScanEntry(
 TableSecondaryIndexScanEntry::TableSecondaryIndexScanEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
-  std::vector<size_t> indexed_col_indices, ObjectId secondary_index_id, bool sk_unique)
+  std::vector<size_t> indexed_col_indices, ObjectId secondary_index_id,
+  bool sk_unique)
   : SecondaryIndexScanEntry(catalog, schema, info,
                             std::move(indexed_col_indices), secondary_index_id,
                             sk_unique),

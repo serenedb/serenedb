@@ -142,7 +142,8 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId,
                           std::unique_ptr<irs::IndexWriter::Transaction>>
     _search_transactions;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<search::InvertedIndexStorage>>
+  containers::FlatHashMap<ObjectId,
+                          std::shared_ptr<search::InvertedIndexStorage>>
     _search_storages;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;

@@ -1,4 +1,1 @@
-target_sources(
-    sereneserver
-    PRIVATE search_engine.cpp
-)
+target_sources(sereneserver PRIVATE search_engine.cpp)

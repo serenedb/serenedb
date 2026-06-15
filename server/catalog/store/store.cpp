@@ -1068,8 +1068,11 @@ void CatalogStore::EnsureSystemDatabase() {
   bool has_system = false;
   std::ignore = VisitDefinitions(id::kInstance, ObjectType::Database,
                                  [&](Key key, std::string_view) -> Result {
-                                   has_system = key.id == id::kSystemDB;
-                                   return {ERROR_INTERNAL};  // stop iteration
+                                   if (key.id == id::kSystemDB) {
+                                     has_system = true;
+                                     return {ERROR_INTERNAL};  // found, stop
+                                   }
+                                   return {};  // keep scanning
                                  });
 
   if (has_system) {

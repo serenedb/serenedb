@@ -22,7 +22,10 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
@@ -33,6 +36,7 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/storage/data_table.hpp>
 
 #include "basics/build.h"
 #include "basics/down_cast.h"
@@ -250,20 +254,17 @@ int64_t StoreTableSizeProxy(duckdb::ClientContext& context,
   if (!database) {
     return 0;
   }
-  duckdb::Connection conn(*context.db);
   auto store_name = catalog::StoreTableName(
     database->GetName(), schema->GetName(), table->GetName());
-  auto result = conn.Query(absl::StrCat("SELECT count(*) FROM \"",
-                                        catalog::kStoreDatabaseName,
-                                        "\".main.\"", store_name, "\""));
-  if (result->HasError()) {
+  duckdb::EntryLookupInfo lookup(duckdb::CatalogType::TABLE_ENTRY, store_name);
+  auto entry = duckdb::Catalog::GetEntry(
+    context, std::string{catalog::kStoreDatabaseName}, "main", lookup,
+    duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!entry) {
     return 0;
   }
-  auto chunk = result->Fetch();
-  if (!chunk || chunk->size() == 0) {
-    return 0;
-  }
-  return chunk->GetValue(0, 0).GetValue<int64_t>();
+  return static_cast<int64_t>(
+    entry->Cast<duckdb::TableCatalogEntry>().GetStorage().GetTotalRows());
 }
 
 // Helper: get fork size for a relation OID.
@@ -320,7 +321,8 @@ int64_t GetRelationForkSize(duckdb::ClientContext& context,
       return table ? StoreTableSizeProxy(context, snapshot, *table) : 0;
     }
     case catalog::ObjectType::InvertedIndex: {
-      auto storage = basics::downCast<const catalog::InvertedIndex>(*rel).GetData();
+      auto storage =
+        basics::downCast<const catalog::InvertedIndex>(*rel).GetData();
       if (!storage) {
         return 0;
       }

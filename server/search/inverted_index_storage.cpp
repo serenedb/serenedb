@@ -63,8 +63,8 @@ namespace sdb::search {
 namespace {
 
 bool ReadSegmentMeta(irs::bytes_view payload, Tick& tick,
-                    int64_t& iceberg_snapshot_id,
-                    uint64_t& wal_cursor) noexcept {
+                     int64_t& iceberg_snapshot_id,
+                     uint64_t& wal_cursor) noexcept {
   // [tick:8][iceberg_snapshot_id:8][wal_cursor:8].
   constexpr size_t kSize = 3 * sizeof(uint64_t);
   if (payload.size() != kSize) {
@@ -80,10 +80,10 @@ bool ReadSegmentMeta(irs::bytes_view payload, Tick& tick,
 }  // namespace
 
 std::filesystem::path InvertedIndexStorage::GetPath(ObjectId db_id,
-                                                  ObjectId schema_id,
-                                                  ObjectId table_id,
-                                                  ObjectId index_id,
-                                                  ObjectId storage_id) {
+                                                    ObjectId schema_id,
+                                                    ObjectId table_id,
+                                                    ObjectId index_id,
+                                                    ObjectId storage_id) {
   SDB_ASSERT(db_id.isSet());
   auto path = search::GetSearchEngine().GetPersistedPath(db_id);
   if (schema_id.isSet()) {
@@ -110,8 +110,8 @@ std::shared_ptr<InvertedIndexStorage> InvertedIndexStorage::Create(
 }
 
 InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
-                                       const catalog::InvertedIndex& index,
-                                       bool is_new)
+                                           const catalog::InvertedIndex& index,
+                                           bool is_new)
   : _index_id{index.GetId()},
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()} {
@@ -250,7 +250,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (!payload.empty()) {
       if (!ReadSegmentMeta(payload, _recovery_tick, _iceberg_snapshot_id,
-                          _recovery_wal_cursor)) {
+                           _recovery_wal_cursor)) {
         SDB_WARN(SEARCH, "Failed to read segment meta from inverted index '",
                  GetId().id(), "'");
       }
@@ -261,7 +261,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
 }
 
 void InvertedIndexStorage::TruncateCommit(TruncateGuard&& guard, Tick tick,
-                                        query::Transaction* user_txn)
+                                          query::Transaction* user_txn)
   ABSL_NO_THREAD_SAFETY_ANALYSIS {
   SDB_IF_FAILURE("SereneSearchTruncateFailure") { SDB_THROW(ERROR_DEBUG); }
 
@@ -507,8 +507,7 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
         std::make_shared<InvertedIndexSnapshot>(std::move(reader)));
       return {};
     }
-    SDB_ASSERT(_phase != Phase::Active ||
-               _last_durable_tick == before_refresh);
+    SDB_ASSERT(_phase != Phase::Active || _last_durable_tick == before_refresh);
     code = RefreshResult::Done;
 
     // update reader

@@ -466,7 +466,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string_view prefix,
     const irs::analysis::SparseNGramTokenizer::Options* parent) {
     irs::analysis::SparseNGramTokenizer::Options opts;
-    int parent_len = parent ? parent->max_ngram_length : 0;
+    int parent_len = parent ? static_cast<int>(parent->max_ngram_length) : 0;
     opts.max_ngram_length = Resolve<tokenizer_options::kMaxNgramLength>(
       prefix, parent ? &parent_len : nullptr);
     opts.covering = Resolve<tokenizer_options::kCovering>(

@@ -353,7 +353,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
   auto secondary_index_id = index.GetId();
   return duckdb::make_uniq<TableSecondaryIndexScanEntry>(
     catalog, schema, *built.info, std::move(table),
-    std::move(built.indexed_col_indices), secondary_index_id, sec_index.IsUnique());
+    std::move(built.indexed_col_indices), secondary_index_id,
+    sec_index.IsUnique());
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::EnsureEntry(

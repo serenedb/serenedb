@@ -111,8 +111,8 @@ struct InvertedStoreIndex::ReplaySession {
   // Running count of rows appended to insert_buffer (global buffer index).
   duckdb::idx_t buffered_rows = 0;
   // Store-WAL byte offset (within the current generation) up to which the
-  // storage is already durable: replay ops at/below this are skipped. 0 when the
-  // persisted cursor is from a different generation or absent (replay all).
+  // storage is already durable: replay ops at/below this are skipped. 0 when
+  // the persisted cursor is from a different generation or absent (replay all).
   uint64_t durable_offset = 0;
   // rowid -> global buffer index of its LAST insert. A delete erases the
   // entry; a later insert overwrites it. After replay this holds exactly the
@@ -594,10 +594,11 @@ std::string InvertedStoreIndex::GetConstraintViolationMessage(
 
 void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type) {
   // Never bind this index implicitly: its data lives in iresearch and its bind
-  // needs the serenedb catalog + index storage, which load after the store DB's WAL
-  // replay. It is bound only by InitInvertedIndexes (an explicit by-name bind)
-  // once those are ready. This keeps an ALTER-driven rebuild during WAL replay
-  // from binding it too early (queries use IRESEARCH_SCAN, not this index).
+  // needs the serenedb catalog + index storage, which load after the store DB's
+  // WAL replay. It is bound only by InitInvertedIndexes (an explicit by-name
+  // bind) once those are ready. This keeps an ALTER-driven rebuild during WAL
+  // replay from binding it too early (queries use IRESEARCH_SCAN, not this
+  // index).
   type.defer_implicit_bind = true;
   type.build_bind = [](duckdb::IndexBuildBindInput&)
     -> duckdb::unique_ptr<duckdb::IndexBuildBindData> { return nullptr; };

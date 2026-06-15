@@ -43,11 +43,11 @@ class Serializer;
 class Deserializer;
 
 }  // namespace duckdb
-
 namespace sdb::search {
-class InvertedIndexStorage;
-}  // namespace sdb::search
 
+class InvertedIndexStorage;
+
+}  // namespace sdb::search
 namespace sdb::catalog {
 namespace term_dict {
 
@@ -241,10 +241,12 @@ class InvertedIndex final : public Index {
   // snapshot clone shares the same storage, a row feed never clones the
   // catalog, and a metadata mutation (Clone) carries it forward. nullptr until
   // the index is bound to its storage (CREATE INDEX / boot recovery).
-  const std::shared_ptr<search::InvertedIndexStorage>& GetData() const noexcept {
+  const std::shared_ptr<search::InvertedIndexStorage>& GetData()
+    const noexcept {
     return _data;
   }
-  void SetData(std::shared_ptr<search::InvertedIndexStorage> data) const noexcept {
+  void SetData(
+    std::shared_ptr<search::InvertedIndexStorage> data) const noexcept {
     _data = std::move(data);
   }
 

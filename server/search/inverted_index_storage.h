@@ -149,7 +149,7 @@ class InvertedIndexStorage final
   };
 
   InvertedIndexStorage(ObjectId id, const catalog::InvertedIndex& index,
-                     bool is_new);
+                       bool is_new);
 
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id, ObjectId index_id,
@@ -264,8 +264,8 @@ class InvertedIndexStorage final
     _phase = Phase::Recovering;
   }
 
-  // Persisted in the segment meta payload to survive iceberg compactions. 0 = not
-  // pinned.
+  // Persisted in the segment meta payload to survive iceberg compactions. 0 =
+  // not pinned.
   void SetIcebergSnapshotId(int64_t id) noexcept { _iceberg_snapshot_id = id; }
   int64_t GetIcebergSnapshotId() const noexcept { return _iceberg_snapshot_id; }
 

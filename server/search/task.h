@@ -39,14 +39,15 @@
 namespace sdb::search {
 
 template<typename T>
-concept IndexTaskType = requires(
-  const T& task, std::shared_ptr<InvertedIndexStorage>&& inverted_index_storage) {
-  { T::ThreadGroup() } -> std::same_as<ThreadGroup>;
-  { T::TaskName() } -> std::same_as<std::string_view>;
-  {
-    task.GetContinuos(std::move(inverted_index_storage))
-  } -> std::same_as<T>;  // span continuous tasks
-};
+concept IndexTaskType =
+  requires(const T& task,
+           std::shared_ptr<InvertedIndexStorage>&& inverted_index_storage) {
+    { T::ThreadGroup() } -> std::same_as<ThreadGroup>;
+    { T::TaskName() } -> std::same_as<std::string_view>;
+    {
+      task.GetContinuos(std::move(inverted_index_storage))
+    } -> std::same_as<T>;  // span continuous tasks
+  };
 
 class Task {
  public:
@@ -71,7 +72,9 @@ class Task {
     std::shared_ptr<InvertedIndexStorage>&& inverted_index_storage,
     absl::Duration delay = {}) {
     SDB_TRACE(SEARCH, "Scheduling task: ", Self::TaskName());
-    self.GetContinuos(std::move(inverted_index_storage)).Schedule(delay).Detach();
+    self.GetContinuos(std::move(inverted_index_storage))
+      .Schedule(delay)
+      .Detach();
   }
 
  protected:
@@ -88,8 +91,9 @@ class RefreshTask : public Task {
     return ThreadGroup::Refresh;
   }
   static constexpr std::string_view TaskName() noexcept { return "Refresh"; }
-  RefreshTask(const std::shared_ptr<InvertedIndexStorage>& inverted_index_storage,
-              bool wait)
+  RefreshTask(
+    const std::shared_ptr<InvertedIndexStorage>& inverted_index_storage,
+    bool wait)
     : Task{inverted_index_storage}, _wait{wait} {}
 
   RefreshTask GetContinuos(

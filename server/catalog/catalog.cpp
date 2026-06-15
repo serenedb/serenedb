@@ -2515,7 +2515,7 @@ Result Catalog::ChangeRole(std::string_view name,
     [&](const std::shared_ptr<Snapshot>& clone) {
       auto obj = clone->GetObject<Role>(new_role_ptr->GetId());
       if (obj->GetName() == new_role_ptr->GetName()) {
-        auto r = clone->ReplaceObject<ResolveType::Relation>(
+        auto r = clone->ReplaceObject<ResolveType::Role>(
           id::kInstance, new_role_ptr->GetName(), role);
         SDB_ASSERT(r.ok());
       }

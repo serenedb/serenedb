@@ -37,10 +37,6 @@ CREATE INDEX t_idx ON t USING inverted(name test_english);
 
 
 statement ok
-VACUUM (SYNC_STATS_TABLE) t;
-
-
-statement ok
 VACUUM (REFRESH_TABLE) t;
 
 

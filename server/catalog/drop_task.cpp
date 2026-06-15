@@ -43,11 +43,11 @@ namespace sdb::catalog {
 namespace {
 
 Result RemoveIndexStorage(ObjectId db_id, ObjectId schema_id = ObjectId{0},
-                         ObjectId table_id = ObjectId{0},
-                         ObjectId index_id = ObjectId{0},
-                         ObjectId storage_id = ObjectId{0}) {
+                          ObjectId table_id = ObjectId{0},
+                          ObjectId index_id = ObjectId{0},
+                          ObjectId storage_id = ObjectId{0}) {
   auto path = search::InvertedIndexStorage::GetPath(db_id, schema_id, table_id,
-                                                  index_id, storage_id);
+                                                    index_id, storage_id);
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {

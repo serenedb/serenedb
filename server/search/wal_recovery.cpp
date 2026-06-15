@@ -48,9 +48,9 @@ namespace {
 // Trigger duckdb to bind the inverted indexes on one store table. Binding
 // applies the operations buffered during this boot's WAL replay
 // (InvertedStoreIndex::Append/Delete with no committing context), feeding the
-// post-checkpoint delta into the iresearch storage. The storages must already be
-// loaded (this runs after InitCatalog) so the index's replay path
-// can resolve them.
+// post-checkpoint delta into the iresearch storage. The storages must already
+// be loaded (this runs after InitCatalog) so the index's replay path can
+// resolve them.
 void BindStoreTableIndexes(duckdb::ClientContext& context,
                            std::string_view database_name,
                            std::string_view schema_name,
@@ -153,9 +153,10 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
                           coord.schema_name, coord.table_name);
   }
 
-  // The replay committed the delta into each storage's writer, but the storage's
-  // query snapshot is only refreshed by a background commit. Force it now so
-  // the recovered rows are searchable the instant the server accepts queries.
+  // The replay committed the delta into each storage's writer, but the
+  // storage's query snapshot is only refreshed by a background commit. Force it
+  // now so the recovered rows are searchable the instant the server accepts
+  // queries.
   for (auto& storage : recovering_storages) {
     storage->Refresh();
   }

@@ -145,8 +145,9 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
     SDB_ASSERT(index);
     auto storage = index->GetData();
     SDB_ASSERT(storage);
-    it = _search_snapshots.emplace(index_id, storage->GetInvertedIndexSnapshot())
-           .first;
+    it =
+      _search_snapshots.emplace(index_id, storage->GetInvertedIndexSnapshot())
+        .first;
   }
   return it->second;
 }

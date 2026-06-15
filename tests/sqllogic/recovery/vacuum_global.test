@@ -1,6 +1,6 @@
 control substitution on
 
-# Instance-wide VACUUM scopes: REFRESH_ALL / COMPACT_ALL / SYNC_STATS_ALL.
+# Instance-wide VACUUM scopes: REFRESH_ALL / COMPACT_ALL.
 # These walk every database, so they need their own serened instance -- under
 # the shared sqllogic runner they would touch other tests' per-test databases.
 # Per-scope variants and the error paths are covered in
@@ -146,17 +146,16 @@ count
 3
 
 
-# SYNC_STATS_ALL is a whole-instance maintenance op that must run without
-# error.
-statement ok
-VACUUM (SYNC_STATS_ALL);
-
-
 query
 SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('beta');
 ----
 count
 3
+
+
+# RECOMPUTE_STATS_ALL runs VACUUM ANALYZE on every store table instance-wide.
+statement ok
+VACUUM (RECOMPUTE_STATS_ALL);
 
 
 statement ok

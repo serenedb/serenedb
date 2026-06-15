@@ -3,7 +3,7 @@ hash-threshold 100
 # `${__DATABASE__}` resolves to the per-test database the runner creates.
 control substitution on
 
-# Coverage test for VACUUM (REFRESH_*|COMPACT_*|SYNC_STATS_*).
+# Coverage test for VACUUM (REFRESH_*|COMPACT_*).
 # Drives every scope variant on real data and locks down the error paths
 # (missing/extra arguments, over-qualified names, missing objects, mixed
 # extension + standard options, conflicting extension options).
@@ -162,7 +162,7 @@ count
 1
 
 
-# Note: REFRESH_ALL / COMPACT_ALL / SYNC_STATS_ALL are instance-wide and
+# Note: REFRESH_ALL / COMPACT_ALL are instance-wide and
 # would touch other tests' per-test databases under the shared sqllogic
 # runner, so their success paths live in
 # tests/sqllogic/recovery/vacuum_global.test (one serened instance per test).
@@ -291,24 +291,28 @@ count
 
 
 # ---------------------------------------------------------------------------
-# SYNC_STATS_* -- placeholder stats-sync ops. SYNC_STATS_ALL is
-# instance-wide and lives in tests/sqllogic/recovery/vacuum_global.test.
+# RECOMPUTE_STATS_* -- run DuckDB VACUUM ANALYZE on the backing store tables.
+# RECOMPUTE_STATS_ALL is instance-wide (tests/sqllogic/recovery/vacuum_global.test).
 # ---------------------------------------------------------------------------
 
 statement ok
-VACUUM (SYNC_STATS_TABLE) public.docs;
+VACUUM (RECOMPUTE_STATS_TABLE) public.docs;
 
 
 statement ok
-VACUUM (SYNC_STATS_SCHEMA) s1;
+VACUUM (RECOMPUTE_STATS_COLUMN) public.docs.body;
 
 
 statement ok
-VACUUM (SYNC_STATS_SCHEMA) ${__DATABASE__}.s2;
+VACUUM (RECOMPUTE_STATS_COLUMN) docs.id;
 
 
 statement ok
-VACUUM (SYNC_STATS_DATABASE) ${__DATABASE__};
+VACUUM (RECOMPUTE_STATS_SCHEMA) s1;
+
+
+statement ok
+VACUUM (RECOMPUTE_STATS_DATABASE) ${__DATABASE__};
 
 
 # ---------------------------------------------------------------------------
@@ -365,21 +369,16 @@ db error: ERROR: VACUUM (compact_database) requires an object name
 
 
 statement error
-VACUUM (SYNC_STATS_TABLE);
+VACUUM (RECOMPUTE_STATS_TABLE);
 ----
-db error: ERROR: VACUUM (sync_stats_table) requires an object name
+db error: ERROR: VACUUM (recompute_stats_table) requires an object name
 
 
+# recompute_stats_column needs <table>.<column>, not a bare identifier.
 statement error
-VACUUM (SYNC_STATS_SCHEMA);
+VACUUM (RECOMPUTE_STATS_COLUMN) docs;
 ----
-db error: ERROR: VACUUM (sync_stats_schema) requires an object name
-
-
-statement error
-VACUUM (SYNC_STATS_DATABASE);
-----
-db error: ERROR: VACUUM (sync_stats_database) requires an object name
+db error: ERROR: VACUUM (RECOMPUTE_STATS_COLUMN) expects [<schema>.]<table>.<column>
 
 
 # Argument forbidden on _ALL scope.
@@ -396,9 +395,9 @@ db error: ERROR: VACUUM (compact_all) does not take an argument
 
 
 statement error
-VACUUM (SYNC_STATS_ALL) docs;
+VACUUM (RECOMPUTE_STATS_ALL) docs;
 ----
-db error: ERROR: VACUUM (sync_stats_all) does not take an argument
+db error: ERROR: VACUUM (recompute_stats_all) does not take an argument
 
 
 
@@ -406,37 +405,25 @@ db error: ERROR: VACUUM (sync_stats_all) does not take an argument
 statement error
 VACUUM (REFRESH_DATABASE) ${__DATABASE__}.public;
 ----
-db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|SYNC_STATS_DATABASE) expects a single database name
+db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) expects a single database name
 
 
 statement error
 VACUUM (COMPACT_DATABASE) ${__DATABASE__}.public;
 ----
-db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|SYNC_STATS_DATABASE) expects a single database name
-
-
-statement error
-VACUUM (SYNC_STATS_DATABASE) ${__DATABASE__}.public;
-----
-db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|SYNC_STATS_DATABASE) expects a single database name
+db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) expects a single database name
 
 
 statement error
 VACUUM (REFRESH_SCHEMA) ${__DATABASE__}.public.docs;
 ----
-db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|SYNC_STATS_SCHEMA) expects [<database>.]<schema>
+db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects [<database>.]<schema>
 
 
 statement error
 VACUUM (COMPACT_SCHEMA) ${__DATABASE__}.public.docs;
 ----
-db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|SYNC_STATS_SCHEMA) expects [<database>.]<schema>
-
-
-statement error
-VACUUM (SYNC_STATS_SCHEMA) ${__DATABASE__}.public.docs;
-----
-db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|SYNC_STATS_SCHEMA) expects [<database>.]<schema>
+db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects [<database>.]<schema>
 
 
 # Catalog lookup failures, one per scope.
@@ -465,12 +452,6 @@ db error: ERROR: relation 'nope_table' not found.
 
 
 statement error
-VACUUM (SYNC_STATS_TABLE) nope_table;
-----
-db error: ERROR: relation 'nope_table' not found.
-
-
-statement error
 VACUUM (REFRESH_SCHEMA) nope_schema;
 ----
 db error: ERROR: schema 'nope_schema' does not exist.
@@ -483,12 +464,6 @@ db error: ERROR: schema 'nope_schema' does not exist.
 
 
 statement error
-VACUUM (SYNC_STATS_SCHEMA) nope_schema;
-----
-db error: ERROR: schema 'nope_schema' does not exist.
-
-
-statement error
 VACUUM (REFRESH_DATABASE) nope_db;
 ----
 db error: ERROR: database 'nope_db' does not exist.
@@ -496,12 +471,6 @@ db error: ERROR: database 'nope_db' does not exist.
 
 statement error
 VACUUM (COMPACT_DATABASE) nope_db;
-----
-db error: ERROR: database 'nope_db' does not exist.
-
-
-statement error
-VACUUM (SYNC_STATS_DATABASE) nope_db;
 ----
 db error: ERROR: database 'nope_db' does not exist.
 

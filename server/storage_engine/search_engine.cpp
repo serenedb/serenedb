@@ -43,12 +43,12 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include <iresearch/formats/formats.hpp>
 
 #include "app/app_server.h"
+#include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
 #include "basics/lifecycle.h"
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
-#include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"

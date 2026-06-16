@@ -101,7 +101,30 @@ void Transaction::CommitSearch() noexcept {
 
   std::move(rollback).Cancel();
 
+  // This commit's exact store-WAL end offset, packed with the checkpoint
+  // iteration (generation). We run after the store WAL is durable (inside the
+  // engine commit, before the in-commit checkpoint), so GetWALSize() is this
+  // transaction's WAL end offset and is constant throughout CommitSearch; read
+  // it once. Commits serialize, so ticks and offsets arrive in the same order.
+  uint64_t packed_cursor = 0;
+  if (auto store =
+        duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
+          .GetDatabase(std::string{catalog::kStoreDatabaseName})) {
+    auto& sm = store->GetStorageManager();
+    packed_cursor = search::PackWalCursor(
+      sm.GetBlockManager().GetCheckpointIteration(), sm.GetWALSize());
+  }
+
   for (auto& [index_id, entry] : _search_transactions) {
+    // Record this commit's WAL cursor into the index's own table BEFORE its
+    // segment becomes flushable (Commit below emplaces it into the flush
+    // context). A concurrent refresh can only flush this batch after Commit, by
+    // which point the offset is already in the table, so the refresh's
+    // CursorAtOrBelow(flushed_tick) can never under-claim and re-stream an
+    // already-durable insert after a crash.
+    if (entry.storage && packed_cursor != 0) {
+      entry.storage->RecordFlushCursor(last_tick, packed_cursor);
+    }
     if (entry.transaction->Commit(last_tick)) {
       continue;
     }
@@ -115,22 +138,6 @@ void Transaction::CommitSearch() noexcept {
     if (entry.storage) {
       entry.storage->MarkOutOfSync();
     }
-  }
-
-  // Record this commit's exact store-WAL end offset against its tick. We run
-  // after the store WAL is durable (inside the engine commit, before the
-  // in-commit checkpoint), so GetWALSize() is this transaction's WAL end
-  // offset; commits serialize, so ticks and offsets arrive in the same order. A
-  // later refresh that flushes every batch with tick <= before_refresh stamps
-  // the offset of the highest such tick as the exact durable cursor.
-  if (auto store =
-        duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-          .GetDatabase(std::string{catalog::kStoreDatabaseName})) {
-    auto& sm = store->GetStorageManager();
-    search::SearchFlushCursors::Instance().Record(
-      last_tick,
-      search::PackWalCursor(sm.GetBlockManager().GetCheckpointIteration(),
-                            sm.GetWALSize()));
   }
 
   _search_transactions.clear();

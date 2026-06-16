@@ -128,31 +128,6 @@ inline uint64_t WalCursorOffset(uint64_t packed) noexcept {
   return packed & kWalCursorOffsetMask;
 }
 
-// Process-global map from a search commit tick to the store-WAL cursor (packed
-// gen<<40|offset) that the commit's WAL bytes end at. CommitSearch records one
-// entry per settled batch AFTER the store WAL is durable, so the recorded
-// offset is that commit's exact WAL end offset; commits serialize, so ticks and
-// WAL offsets arrive in the same order. A refresh flushes every batch with
-// tick <= before_refresh, so the exact durable cursor is the entry of the
-// highest tick at/below before_refresh -> CursorAtOrBelow. Entries strictly
-// below a stamped tick can be pruned (they can never be the highest again).
-class SearchFlushCursors {
- public:
-  static SearchFlushCursors& Instance() noexcept {
-    static SearchFlushCursors instance;
-    return instance;
-  }
-
-  void Record(Tick tick, uint64_t packed_cursor) noexcept;
-  // Packed cursor of the highest recorded tick <= `tick`, or 0 if none. Prunes
-  // entries strictly below the returned one (they can never be selected again).
-  uint64_t CursorAtOrBelow(Tick tick) noexcept;
-
- private:
-  duckdb::mutex _mutex;
-  std::map<Tick, uint64_t> _by_tick;
-};
-
 // Physical representation of a search index (catalog::InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
 // SearchEngine registry keyed by index_id, not in the catalog snapshot.
@@ -274,6 +249,18 @@ class InvertedIndexStorage final
     return _recovery_wal_cursor;
   }
 
+  // Per-index map from a search commit tick to the store-WAL cursor (packed
+  // gen<<40|offset) that the commit's WAL bytes end at. CommitSearch records
+  // one entry per settled batch BEFORE the batch becomes flushable (before
+  // IndexWriter::Transaction::Commit emplaces it), and after the store WAL is
+  // durable, so the recorded offset is that commit's exact WAL end offset;
+  // commits serialize, so ticks and WAL offsets arrive in the same order.
+  void RecordFlushCursor(Tick tick, uint64_t packed_cursor) noexcept;
+  // Packed cursor of the highest recorded tick <= `tick`, or 0 if none. Prunes
+  // entries strictly below the returned one for THIS index (they can never be
+  // selected again here), which is safe because the table is per-index.
+  uint64_t CursorAtOrBelow(Tick tick) noexcept;
+
   // The index lost a committed transaction's rows (an iresearch tick commit
   // failed after the store transaction was already durable). The storage keeps
   // serving, but the clean-shutdown checkpoint is suppressed so the next
@@ -331,6 +318,17 @@ class InvertedIndexStorage final
   // bound).
   uint64_t _pending_wal_cursor{0};
   uint64_t _recovery_wal_cursor{0};
+  // When true, the meta payload provider stamps _pending_wal_cursor from
+  // CursorAtOrBelow(_last_durable_tick) -- the durable tick it is persisting in
+  // that same call. When false (checkpoint refresh), _pending_wal_cursor was
+  // already set by RefreshUnsafeImpl (next generation, offset 0) and is left
+  // as-is.
+  bool _stamp_cursor_from_flush{false};
+  // Per-index commit-tick -> packed store-WAL cursor table. Recorded by
+  // CommitSearch/FinishReplay before a batch becomes flushable; consumed by
+  // the meta payload provider via CursorAtOrBelow(_last_durable_tick).
+  duckdb::mutex _flush_cursors_mutex;
+  std::map<Tick, uint64_t> _flush_cursors;
   std::atomic<bool> _out_of_sync{false};
   int64_t _iceberg_snapshot_id{0};
   Phase _phase{Phase::Creating};

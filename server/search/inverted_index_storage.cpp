@@ -79,22 +79,24 @@ bool ReadSegmentMeta(irs::bytes_view payload, Tick& tick,
 
 }  // namespace
 
-void SearchFlushCursors::Record(Tick tick, uint64_t packed_cursor) noexcept {
-  duckdb::lock_guard<duckdb::mutex> lock{_mutex};
-  _by_tick.insert_or_assign(tick, packed_cursor);
+void InvertedIndexStorage::RecordFlushCursor(Tick tick,
+                                             uint64_t packed_cursor) noexcept {
+  duckdb::lock_guard<duckdb::mutex> lock{_flush_cursors_mutex};
+  _flush_cursors.insert_or_assign(tick, packed_cursor);
 }
 
-uint64_t SearchFlushCursors::CursorAtOrBelow(Tick tick) noexcept {
-  duckdb::lock_guard<duckdb::mutex> lock{_mutex};
-  auto it = _by_tick.upper_bound(tick);
-  if (it == _by_tick.begin()) {
+uint64_t InvertedIndexStorage::CursorAtOrBelow(Tick tick) noexcept {
+  duckdb::lock_guard<duckdb::mutex> lock{_flush_cursors_mutex};
+  auto it = _flush_cursors.upper_bound(tick);
+  if (it == _flush_cursors.begin()) {
     return 0;
   }
   --it;
   const uint64_t cursor = it->second;
-  // Entries strictly below the claimed tick can never be the highest at/below a
-  // future bound, so drop them.
-  _by_tick.erase(_by_tick.begin(), it);
+  // Entries strictly below the returned one can never be the highest at/below a
+  // future bound for THIS index, so drop them. Safe because the table is
+  // per-index: no other index relies on these entries.
+  _flush_cursors.erase(_flush_cursors.begin(), it);
   return cursor;
 }
 
@@ -242,9 +244,23 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
       absl::big_endian::FromHost(static_cast<uint64_t>(_iceberg_snapshot_id));
     out.append(reinterpret_cast<const irs::byte_type*>(&iceberg_be),
                sizeof(iceberg_be));
-    // Durable WAL cursor: the exact store-WAL end offset of the highest batch
-    // this refresh flushed (see RefreshUnsafeImpl). Recovery replays only
-    // operations at or past it.
+    // Durable WAL cursor, stamped consistently with the durable tick we just
+    // persisted above. `tick` here is the exact tick this flush made durable
+    // (FlushContext::FlushPending's flushed_tick in the Recovering/Creating
+    // phase, before_refresh in the Active phase -- both are the highest tick
+    // covered by these segments), and _last_durable_tick is its running max.
+    // The matching cursor is the highest per-index commit entry at/below that
+    // tick. A 0/absent lookup means no recorded commit fell at/below it, so
+    // keep the prior durable cursor rather than regressing it to 0. Checkpoint
+    // refreshes set _pending_wal_cursor up front (next generation, offset 0)
+    // and disable this stamping. Recovery replays only operations at or past
+    // the stamped cursor.
+    if (_stamp_cursor_from_flush) {
+      if (const auto cursor = CursorAtOrBelow(_last_durable_tick);
+          cursor != 0) {
+        _pending_wal_cursor = cursor;
+      }
+    }
     uint64_t cursor_be = absl::big_endian::FromHost(_pending_wal_cursor);
     out.append(reinterpret_cast<const irs::byte_type*>(&cursor_be),
                sizeof(cursor_be));
@@ -488,13 +504,17 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
     const auto before_refresh = TickDomain::Instance().Current();
     SDB_ASSERT(_last_durable_tick <= before_refresh);
 
-    // Capture the EXACT durable WAL cursor for the batches this refresh
-    // flushes. RefreshCommit (below) flushes every staged batch with tick <=
-    // refresh_tick
-    // (== before_refresh in the Active phase). SearchFlushCursors recorded, per
-    // settled CommitSearch and after the store WAL was durable, the WAL end
-    // offset of that commit; commits serialize, so the exact durable cursor is
-    // the entry of the highest tick at/below before_refresh.
+    // Stamp the EXACT durable WAL cursor consistently with the durable tick
+    // this refresh persists. RefreshCommit (below) flushes every staged batch
+    // with tick <= refresh_tick and, inside the meta payload provider, persists
+    // _last_durable_tick == the highest tick covered by the flushed segments.
+    // The per-index table recorded, per settled CommitSearch BEFORE the batch
+    // became flushable and after the store WAL was durable, the WAL end offset
+    // of that commit; commits serialize, so the cursor that matches the durable
+    // tick is the entry of the highest tick at/below it. The payload provider
+    // performs that CursorAtOrBelow(_last_durable_tick) lookup just before
+    // persisting (it has the exact durable tick in hand), gated by
+    // _stamp_cursor_from_flush.
     //
     // A checkpoint-driven refresh runs the moment before the checkpoint
     // truncates the store WAL and bumps the iteration to
@@ -502,7 +522,12 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
     // + 1. The post-checkpoint WAL starts fresh, so stamp that next generation
     // with offset 0: the next boot loads iteration+1 and the cursor generation
     // matches (the live iteration is still N here, but the persisted header
-    // will be N+1).
+    // will be N+1). The payload provider must NOT overwrite that, so disable
+    // the flush-driven stamping.
+    _stamp_cursor_from_flush = !for_checkpoint;
+    absl::Cleanup stamp_guard = [&]() noexcept {
+      _stamp_cursor_from_flush = false;
+    };
     if (for_checkpoint) {
       if (auto store =
             duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
@@ -513,10 +538,6 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
                               1;
         _pending_wal_cursor = PackWalCursor(next_gen, 0);
       }
-    } else if (const auto cursor =
-                 SearchFlushCursors::Instance().CursorAtOrBelow(before_refresh);
-               cursor != 0) {
-      _pending_wal_cursor = cursor;
     }
     absl::Cleanup refresh_guard = [&, last = _last_durable_tick]() noexcept {
       _last_durable_tick = last;

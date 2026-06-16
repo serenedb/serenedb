@@ -299,18 +299,20 @@ void InvertedStoreIndex::FinishReplay() {
   // TickDomain at boot).
   const auto last_tick =
     search::TickDomain::Instance().Advance(session.total_ops);
-  SDB_ENSURE(session.trx.Commit(last_tick), ERROR_INTERNAL,
-             "inverted index replay: commit failed for index ", _index_id.id());
   // The whole replayed tail is durable in the store WAL, so the post-recovery
   // Refresh can claim it: record the current WAL end offset against this commit
-  // tick (the same bookkeeping CommitSearch does for the live path). Without
-  // this, a refresh after recovery would not advance the durable cursor and a
-  // later crash would re-replay the already-recovered tail.
+  // tick into the index's own table BEFORE Commit makes the batch flushable
+  // (matching the live CommitSearch ordering; recovery is single-threaded with
+  // no concurrent refresh, but we keep the ordering anyway). Without this, a
+  // refresh after recovery would not advance the durable cursor and a later
+  // crash would re-replay the already-recovered tail.
   auto& sm = db.GetStorageManager();
-  search::SearchFlushCursors::Instance().Record(
+  session.storage->RecordFlushCursor(
     last_tick,
     search::PackWalCursor(sm.GetBlockManager().GetCheckpointIteration(),
                           sm.GetWALSize()));
+  SDB_ENSURE(session.trx.Commit(last_tick), ERROR_INTERNAL,
+             "inverted index replay: commit failed for index ", _index_id.id());
   session.expr_conn.Rollback();
   _replay.reset();
 }

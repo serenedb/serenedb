@@ -161,12 +161,11 @@ InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession() {
   // Resolve the durable cursor for this generation: the persisted (gen,offset)
   // is comparable to the replay offsets only within the same WAL generation.
   // A different/absent generation => replay the whole post-checkpoint delta.
-  const uint64_t cursor = storage->GetRecoveryWalCursor();
+  const search::WalCursor cursor = storage->GetRecoveryWalCursor();
   uint64_t durable_offset = 0;
   auto& block_manager = db.GetStorageManager().GetBlockManager();
-  if (search::WalCursorGeneration(cursor) ==
-      block_manager.GetCheckpointIteration()) {
-    durable_offset = search::WalCursorOffset(cursor);
+  if (cursor.generation == block_manager.GetCheckpointIteration()) {
+    durable_offset = cursor.offset;
   }
   _replay = std::make_unique<ReplaySession>(
     std::move(storage), std::move(snapshot), std::move(inverted),
@@ -308,9 +307,8 @@ void InvertedStoreIndex::FinishReplay() {
   // crash would re-replay the already-recovered tail.
   auto& sm = db.GetStorageManager();
   session.storage->RecordFlushCursor(
-    last_tick,
-    search::PackWalCursor(sm.GetBlockManager().GetCheckpointIteration(),
-                          sm.GetWALSize()));
+    last_tick, search::WalCursor{sm.GetBlockManager().GetCheckpointIteration(),
+                                 sm.GetWALSize()});
   SDB_ENSURE(session.trx.Commit(last_tick), ERROR_INTERNAL,
              "inverted index replay: commit failed for index ", _index_id.id());
   session.expr_conn.Rollback();

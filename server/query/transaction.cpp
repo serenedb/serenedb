@@ -101,18 +101,20 @@ void Transaction::CommitSearch() noexcept {
 
   std::move(rollback).Cancel();
 
-  // This commit's exact store-WAL end offset, packed with the checkpoint
-  // iteration (generation). We run after the store WAL is durable (inside the
-  // engine commit, before the in-commit checkpoint), so GetWALSize() is this
+  // This commit's exact store-WAL end offset, with the checkpoint iteration as
+  // the generation. We run after the store WAL is durable (inside the engine
+  // commit, before the in-commit checkpoint), so GetWALSize() is this
   // transaction's WAL end offset and is constant throughout CommitSearch; read
   // it once. Commits serialize, so ticks and offsets arrive in the same order.
-  uint64_t packed_cursor = 0;
+  search::WalCursor cursor;
+  bool has_cursor = false;
   if (auto store =
         duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
           .GetDatabase(std::string{catalog::kStoreDatabaseName})) {
     auto& sm = store->GetStorageManager();
-    packed_cursor = search::PackWalCursor(
-      sm.GetBlockManager().GetCheckpointIteration(), sm.GetWALSize());
+    cursor = search::WalCursor{sm.GetBlockManager().GetCheckpointIteration(),
+                               sm.GetWALSize()};
+    has_cursor = true;
   }
 
   for (auto& [index_id, entry] : _search_transactions) {
@@ -122,8 +124,8 @@ void Transaction::CommitSearch() noexcept {
     // which point the offset is already in the table, so the refresh's
     // CursorAtOrBelow(flushed_tick) can never under-claim and re-stream an
     // already-durable insert after a crash.
-    if (entry.storage && packed_cursor != 0) {
-      entry.storage->RecordFlushCursor(last_tick, packed_cursor);
+    if (entry.storage && has_cursor) {
+      entry.storage->RecordFlushCursor(last_tick, cursor);
     }
     if (entry.transaction->Commit(last_tick)) {
       continue;

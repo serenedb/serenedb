@@ -64,35 +64,38 @@ namespace {
 
 bool ReadSegmentMeta(irs::bytes_view payload, Tick& tick,
                      int64_t& iceberg_snapshot_id,
-                     uint64_t& wal_cursor) noexcept {
-  // [tick:8][iceberg_snapshot_id:8][wal_cursor:8].
-  constexpr size_t kSize = 3 * sizeof(uint64_t);
+                     WalCursor& wal_cursor) noexcept {
+  // [tick:8][iceberg_snapshot_id:8][wal_generation:8][wal_offset:8].
+  constexpr size_t kSize = 4 * sizeof(uint64_t);
   if (payload.size() != kSize) {
     return false;
   }
   tick = absl::big_endian::Load64(payload.data());
   iceberg_snapshot_id = static_cast<int64_t>(
     absl::big_endian::Load64(payload.data() + sizeof(uint64_t)));
-  wal_cursor = absl::big_endian::Load64(payload.data() + 2 * sizeof(uint64_t));
+  wal_cursor.generation =
+    absl::big_endian::Load64(payload.data() + 2 * sizeof(uint64_t));
+  wal_cursor.offset =
+    absl::big_endian::Load64(payload.data() + 3 * sizeof(uint64_t));
   return true;
 }
 
 }  // namespace
 
 void InvertedIndexStorage::RecordFlushCursor(Tick tick,
-                                             uint64_t packed_cursor) noexcept {
+                                             WalCursor cursor) noexcept {
   duckdb::lock_guard<duckdb::mutex> lock{_flush_cursors_mutex};
-  _flush_cursors.insert_or_assign(tick, packed_cursor);
+  _flush_cursors.insert_or_assign(tick, cursor);
 }
 
-uint64_t InvertedIndexStorage::CursorAtOrBelow(Tick tick) noexcept {
+WalCursor InvertedIndexStorage::CursorAtOrBelow(Tick tick) noexcept {
   duckdb::lock_guard<duckdb::mutex> lock{_flush_cursors_mutex};
   auto it = _flush_cursors.upper_bound(tick);
   if (it == _flush_cursors.begin()) {
-    return 0;
+    return {};
   }
   --it;
-  const uint64_t cursor = it->second;
+  const WalCursor cursor = it->second;
   // Entries strictly below the returned one can never be the highest at/below a
   // future bound for THIS index, so drop them. Safe because the table is
   // per-index: no other index relies on these entries.
@@ -257,13 +260,17 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
     // the stamped cursor.
     if (_stamp_cursor_from_flush) {
       if (const auto cursor = CursorAtOrBelow(_last_durable_tick);
-          cursor != 0) {
+          cursor.generation != 0 || cursor.offset != 0) {
         _pending_wal_cursor = cursor;
       }
     }
-    uint64_t cursor_be = absl::big_endian::FromHost(_pending_wal_cursor);
-    out.append(reinterpret_cast<const irs::byte_type*>(&cursor_be),
-               sizeof(cursor_be));
+    uint64_t gen_be =
+      absl::big_endian::FromHost(_pending_wal_cursor.generation);
+    out.append(reinterpret_cast<const irs::byte_type*>(&gen_be),
+               sizeof(gen_be));
+    uint64_t offset_be = absl::big_endian::FromHost(_pending_wal_cursor.offset);
+    out.append(reinterpret_cast<const irs::byte_type*>(&offset_be),
+               sizeof(offset_be));
     return true;
   };
 
@@ -536,7 +543,7 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
                                 .GetBlockManager()
                                 .GetCheckpointIteration() +
                               1;
-        _pending_wal_cursor = PackWalCursor(next_gen, 0);
+        _pending_wal_cursor = WalCursor{next_gen, 0};
       }
     }
     absl::Cleanup refresh_guard = [&, last = _last_durable_tick]() noexcept {

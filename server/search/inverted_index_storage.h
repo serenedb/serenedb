@@ -110,23 +110,12 @@ class Snapshot {
   InvertedIndexSnapshotPtr _snapshot;
 };
 
-// Durable WAL cursor packing: store-WAL generation (checkpoint iteration) in
-// the high bits, byte offset within that generation in the low bits, so a
-// single uint64 orders correctly across generations and within one. The 40-bit
-// offset field bounds a generation to 1 TiB of WAL -- far above any checkpoint
-// threshold. Used to bound recovery replay to the index's un-durable tail.
-inline constexpr int kWalCursorOffsetBits = 40;
-inline constexpr uint64_t kWalCursorOffsetMask =
-  (uint64_t{1} << kWalCursorOffsetBits) - 1;
-inline uint64_t PackWalCursor(uint64_t generation, uint64_t offset) noexcept {
-  return (generation << kWalCursorOffsetBits) | (offset & kWalCursorOffsetMask);
-}
-inline uint64_t WalCursorGeneration(uint64_t packed) noexcept {
-  return packed >> kWalCursorOffsetBits;
-}
-inline uint64_t WalCursorOffset(uint64_t packed) noexcept {
-  return packed & kWalCursorOffsetMask;
-}
+// Durable WAL cursor: generation = checkpoint iteration, offset = byte offset
+// within it; bounds recovery replay to the index's un-durable tail.
+struct WalCursor {
+  uint64_t generation = 0;
+  uint64_t offset = 0;
+};
 
 // Physical representation of a search index (catalog::InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
@@ -240,26 +229,26 @@ class InvertedIndexStorage final
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 
-  // Durable WAL cursor (store-table WAL generation + byte offset, packed) read
-  // back from the segment meta at open. Recovery replays only operations at or
-  // past it (operations strictly below are already durable in the segments).
-  // The refresh stamps the exact WAL end offset of the highest batch it flushed
+  // Durable WAL cursor (store-table WAL generation + byte offset) read back
+  // from the segment meta at open. Recovery replays only operations at or past
+  // it (operations strictly below are already durable in the segments). The
+  // refresh stamps the exact WAL end offset of the highest batch it flushed
   // (see RefreshUnsafeImpl).
-  uint64_t GetRecoveryWalCursor() const noexcept {
+  WalCursor GetRecoveryWalCursor() const noexcept {
     return _recovery_wal_cursor;
   }
 
-  // Per-index map from a search commit tick to the store-WAL cursor (packed
-  // gen<<40|offset) that the commit's WAL bytes end at. CommitSearch records
-  // one entry per settled batch BEFORE the batch becomes flushable (before
-  // IndexWriter::Transaction::Commit emplaces it), and after the store WAL is
-  // durable, so the recorded offset is that commit's exact WAL end offset;
-  // commits serialize, so ticks and WAL offsets arrive in the same order.
-  void RecordFlushCursor(Tick tick, uint64_t packed_cursor) noexcept;
-  // Packed cursor of the highest recorded tick <= `tick`, or 0 if none. Prunes
+  // Per-index map from a search commit tick to the store-WAL cursor that the
+  // commit's WAL bytes end at. CommitSearch records one entry per settled batch
+  // BEFORE the batch becomes flushable (before IndexWriter::Transaction::Commit
+  // emplaces it), and after the store WAL is durable, so the recorded offset is
+  // that commit's exact WAL end offset; commits serialize, so ticks and WAL
+  // offsets arrive in the same order.
+  void RecordFlushCursor(Tick tick, WalCursor cursor) noexcept;
+  // Cursor of the highest recorded tick <= `tick`, or {0, 0} if none. Prunes
   // entries strictly below the returned one for THIS index (they can never be
   // selected again here), which is safe because the table is per-index.
-  uint64_t CursorAtOrBelow(Tick tick) noexcept;
+  WalCursor CursorAtOrBelow(Tick tick) noexcept;
 
   // The index lost a committed transaction's rows (an iresearch tick commit
   // failed after the store transaction was already durable). The storage keeps
@@ -312,23 +301,23 @@ class InvertedIndexStorage final
 
   Tick _recovery_tick{0};
   Tick _last_durable_tick{0};
-  // Durable store-WAL cursor (packed gen<<40|offset). Captured from the store
-  // WAL at refresh -> _pending_wal_cursor -> stamped into the segment meta.
-  // _recovery_wal_cursor is read back from the meta at open (the recovery skip
-  // bound).
-  uint64_t _pending_wal_cursor{0};
-  uint64_t _recovery_wal_cursor{0};
+  // Durable store-WAL cursor (generation + byte offset). Captured from the
+  // store WAL at refresh -> _pending_wal_cursor -> stamped into the segment
+  // meta. _recovery_wal_cursor is read back from the meta at open (the recovery
+  // skip bound).
+  WalCursor _pending_wal_cursor;
+  WalCursor _recovery_wal_cursor;
   // When true, the meta payload provider stamps _pending_wal_cursor from
   // CursorAtOrBelow(_last_durable_tick) -- the durable tick it is persisting in
   // that same call. When false (checkpoint refresh), _pending_wal_cursor was
   // already set by RefreshUnsafeImpl (next generation, offset 0) and is left
   // as-is.
   bool _stamp_cursor_from_flush{false};
-  // Per-index commit-tick -> packed store-WAL cursor table. Recorded by
+  // Per-index commit-tick -> store-WAL cursor table. Recorded by
   // CommitSearch/FinishReplay before a batch becomes flushable; consumed by
   // the meta payload provider via CursorAtOrBelow(_last_durable_tick).
   duckdb::mutex _flush_cursors_mutex;
-  std::map<Tick, uint64_t> _flush_cursors;
+  std::map<Tick, WalCursor> _flush_cursors;
   std::atomic<bool> _out_of_sync{false};
   int64_t _iceberg_snapshot_id{0};
   Phase _phase{Phase::Creating};

@@ -209,12 +209,13 @@ Filter::Query::ptr PrepareLevenshteinFilter(
 }  // namespace
 
 field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions& opts) {
-  SDB_UNREACHABLE();
+  SDB_VERIFY(false,
+             "ByEditDistance must be lowered by the optimizer before visitor");
 }
 
 Filter::Query::ptr ByEditDistance::prepare(const PrepareContext&) const {
-  SDB_UNREACHABLE();
-  return Query::empty();
+  SDB_VERIFY(false,
+             "ByEditDistance must be lowered by the optimizer before prepare");
 }
 
 Filter::Query::ptr LevenshteinAutomatonFilter::prepare(

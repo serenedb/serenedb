@@ -60,7 +60,7 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
 }
 
 void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
-  PostOrder(root, [&](Filter::ptr& slot) { RunRules(slot, ctx); });
+  TraverseFilter(root, [&](Filter::ptr& slot) { RunRules(slot, ctx); });
 }
 
 }  // namespace

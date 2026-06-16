@@ -255,10 +255,7 @@ void LowerNode(Filter::ptr& slot) {
 }  // namespace
 
 void LowerAutomatons(Filter::ptr& root, const OptimizeContext& /*ctx*/) {
-  if (root == nullptr) {
-    return;
-  }
-  PostOrder(root, [](Filter::ptr& slot) { LowerNode(slot); });
+  TraverseFilter(root, [](Filter::ptr& slot) { LowerNode(slot); });
 }
 
 }  // namespace irs::optimizer

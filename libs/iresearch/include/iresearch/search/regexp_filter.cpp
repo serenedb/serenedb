@@ -28,8 +28,7 @@
 namespace irs {
 
 Filter::Query::ptr ByRegexp::prepare(const PrepareContext&) const {
-  SDB_UNREACHABLE();
-  return Query::empty();
+  SDB_VERIFY(false, "ByRegexp must be lowered by the optimizer before prepare");
 }
 
 Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,

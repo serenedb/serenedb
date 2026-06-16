@@ -38,7 +38,8 @@ struct OptimizeContext {
 };
 
 template<typename Visit>
-void PostOrder(Filter::ptr& root, Visit&& visit) {
+void TraverseFilter(Filter::ptr& root, Visit&& visit) {
+  SDB_ASSERT(root);
   struct Frame {
     Filter::ptr* slot;
     bool children_visited;

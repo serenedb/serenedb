@@ -30,8 +30,8 @@
 namespace irs {
 
 Filter::Query::ptr ByWildcard::prepare(const PrepareContext&) const {
-  SDB_UNREACHABLE();
-  return Query::empty();
+  SDB_VERIFY(false,
+             "ByWildcard must be lowered by the optimizer before prepare");
 }
 
 Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,

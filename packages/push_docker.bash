@@ -90,8 +90,7 @@ done
 
 log "Creating multi-arch manifests..."
 for tag in "${ALL_TAGS[@]}"; do
-	docker manifest create --amend "${FULL_IMAGE_NAME}:${tag}" "${MANIFEST_SOURCES[@]}"
-	docker manifest push "${FULL_IMAGE_NAME}:${tag}"
+	docker buildx imagetools create -t "${FULL_IMAGE_NAME}:${tag}" "${MANIFEST_SOURCES[@]}"
 	log "  Pushed ${FULL_IMAGE_NAME}:${tag}"
 done
 

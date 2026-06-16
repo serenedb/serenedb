@@ -18,14 +18,17 @@
 # cached in results/baselines-storage/old.tsv, reused across branch
 # iterations (PERF_REMEASURE_OLD=1 refreshes).
 #
-# Isolation: run under scripts/perf/run_bench_isolated.sh-style core
-# reservation when you have sudo; without sudo there is no cpuset partition
-# (user slices on this box have no cpuset delegation), so this script falls
-# back to plain taskset affinity: server pinned to PERF_SERVER_CORES, pgbench
-# to PERF_CLIENT_CORES (disjoint sets, whole physical cores incl. SMT
-# siblings), plus a loadavg gate (PERF_QUIET_LOAD) before every measured
-# window. Affinity does not keep co-tenants off the cores -- prefer the sudo
-# wrapper for publishable numbers.
+# Isolation: pass PERF_ISOLATE=1 (REQUIRES sudo) to build a real cgroup-v2
+# cpuset partition that the kernel keeps co-tenants off -- the script reserves
+# the top PERF_ISOLATE_PHYS physical cores (both SMT siblings) in an exclusive
+# (partition=root) cgroup, herds every other movable task into a complementary
+# cgroup pinned to the remaining cores, runs the bench inside the shield, and
+# restores the cgroups on exit. Without PERF_ISOLATE (default), there is no
+# cpuset partition, so this script falls back to plain taskset affinity: server
+# pinned to PERF_SERVER_CORES, pgbench to PERF_CLIENT_CORES (disjoint sets,
+# whole physical cores incl. SMT siblings), plus a loadavg gate
+# (PERF_QUIET_LOAD) before every measured window. Affinity does not keep
+# co-tenants off the cores -- prefer PERF_ISOLATE=1 for publishable numbers.
 #
 # Pre-reqs: pgbench, perf, the baseline binary, the branch perf binary.
 # No other serened on the ports.
@@ -60,6 +63,200 @@ IO_THREADS="${PERF_STORAGE_IO_THREADS:-4}"
 QUIET_LOAD="${PERF_QUIET_LOAD:-8}"
 QUIET_WAIT_SECS="${PERF_QUIET_WAIT_SECS:-600}"
 
+# Whole physical cores (both SMT siblings per line) sorted by first cpu. Used by
+# both the cpuset shield (below) and the no-sudo core-selection block.
+phys_cores() { # emit thread_siblings_list lines sorted by first cpu
+	cat /sys/devices/system/cpu/cpu[0-9]*/topology/thread_siblings_list |
+		sort -t, -k1,1n -u
+}
+
+# --- optional sudo cgroup-v2 cpuset shield (PERF_ISOLATE=1) ------------------
+# Opt-in EXCLUSIVE-core reservation. Unlike the default taskset path (affinity
+# only -- co-tenants can still land on "our" cores), this carves a real
+# cgroup-v2 cpuset partition so the kernel scheduler keeps every other movable
+# task off the reserved cores. REQUIRES sudo: if sudo is unavailable it FAILS
+# (no silent fallback). Cannot be exercised in CI without passwordless sudo;
+# this box is cgroup v2 (cgroup2fs), nproc=32, 16 physical cores each with two
+# SMT siblings (cpu N + cpu N+16).
+#
+# Cores reserved (PERF_ISOLATE_PHYS=9 physical cores by default = the top 9
+# physical cores 7..15 and their SMT siblings 23..31):
+#     reserved (shield)  = 7-15,23-31      (18 logical cpus)
+#     complement (rest)  = 0-6,16-22       (14 logical cpus, incl. cpu0/16
+#                                            housekeeping + irq affinity)
+# The shield set is exported as PERF_BENCH_CORES; the core-selection block below
+# then splits it ~2/3 server, ~1/3 client exactly as it does under the (absent)
+# run_bench_isolated.sh wrapper.
+#
+# cgroup-v2 cpuset partition semantics used here:
+#   * A parent must list a controller in cgroup.subtree_control before a child
+#     can use it; we enable `cpuset` on the root's subtree_control (and undo it
+#     on exit only if we enabled it).
+#   * Both children get their own cgroup dir under the unified hierarchy root.
+#   * cpuset.cpus is set BEFORE cpuset.cpus.partition is flipped to "root":
+#     an exclusive (root) partition requires its cpus to be settable-exclusive
+#     (disjoint from siblings, subset of parent's effective cpus). We set the
+#     complement first, then the shield, then flip the shield to "root".
+#   * Tasks are moved by writing PIDs to cgroup.procs. Kernel threads and other
+#     cgroups' unmovable tasks are skipped (their writes fail with EINVAL/EBUSY
+#     -> tolerated). The bench's own shell is migrated into the shield so every
+#     serened/pgbench/psql it spawns inherits the reserved cpuset.
+ISOLATE="${PERF_ISOLATE:-0}"
+ISOLATE_PHYS="${PERF_ISOLATE_PHYS:-9}"
+CG_ROOT="/sys/fs/cgroup"
+CG_SHIELD="${CG_ROOT}/sdb_bench_shield"
+CG_REST="${CG_ROOT}/sdb_bench_rest"
+ISO_ENABLED_CPUSET=0 # 1 if WE added cpuset to root subtree_control (undo on exit)
+ISO_ACTIVE=0         # 1 once the shield exists (drives teardown)
+
+# sudo wrappers: every privileged step goes through these. setup_cpuset_shield
+# primes credentials once with `sudo -v` (prompts for the password); subsequent
+# calls reuse the cached timestamp, so the user types their password at most
+# once at the start of the run.
+_su() { sudo "$@"; }
+
+# Write VALUE into FILE as root via tee (sudo can't redirect with '>').
+_su_write() { printf '%s' "$2" | sudo tee "$1" >/dev/null; }
+
+teardown_cpuset_shield() {
+	((ISO_ACTIVE == 1)) || return 0
+	# Move every task back to the root cgroup before deleting the children
+	# (a non-empty cgroup with an exclusive partition cannot be rmdir'd).
+	local cg pid
+	for cg in "${CG_SHIELD}" "${CG_REST}"; do
+		[[ -e "${cg}/cgroup.procs" ]] || continue
+		# Demote out of the exclusive partition first so cpus are released.
+		sudo tee "${cg}/cpuset.cpus.partition" >/dev/null 2>&1 <<<"member" || true
+		while read -r pid; do
+			[[ -n "${pid}" ]] || continue
+			sudo tee "${CG_ROOT}/cgroup.procs" >/dev/null 2>&1 <<<"${pid}" || true
+		done < <(sudo cat "${cg}/cgroup.procs" 2>/dev/null || true)
+		sudo rmdir "${cg}" 2>/dev/null || true
+	done
+	# Only revert subtree_control if we were the ones who enabled cpuset there.
+	if ((ISO_ENABLED_CPUSET == 1)); then
+		sudo tee "${CG_ROOT}/cgroup.subtree_control" >/dev/null 2>&1 <<<"-cpuset" || true
+	fi
+	ISO_ACTIVE=0
+	echo "-- cpuset shield torn down"
+}
+
+setup_cpuset_shield() {
+	# Hard requirement: sudo present and usable. No silent fallback.
+	command -v sudo >/dev/null 2>&1 || {
+		echo "PERF_ISOLATE=1 requires sudo, which is not installed. Aborting." >&2
+		exit 1
+	}
+	if ! sudo -v; then
+		echo "PERF_ISOLATE=1 requires working sudo (cgroup writes need root). Aborting." >&2
+		exit 1
+	fi
+	[[ "$(stat -fc %T "${CG_ROOT}" 2>/dev/null)" == cgroup2fs ]] || {
+		echo "PERF_ISOLATE=1 needs a cgroup-v2 (unified) hierarchy at ${CG_ROOT}. Aborting." >&2
+		exit 1
+	}
+	grep -qw cpuset "${CG_ROOT}/cgroup.controllers" || {
+		echo "cpuset controller not available in ${CG_ROOT}/cgroup.controllers. Aborting." >&2
+		exit 1
+	}
+
+	# Reserved = top ISOLATE_PHYS physical cores (both SMT siblings each);
+	# complement = everything else (keeps cpu0/16 for housekeeping + irqs).
+	mapfile -t _iso_cs < <(phys_cores)
+	local _tot=${#_iso_cs[@]}
+	((ISOLATE_PHYS < _tot)) || {
+		echo "PERF_ISOLATE_PHYS=${ISOLATE_PHYS} must be < ${_tot} physical cores (need a non-empty complement). Aborting." >&2
+		exit 1
+	}
+	local _shield_arr=("${_iso_cs[@]: -$ISOLATE_PHYS}")
+	local _rest_arr=("${_iso_cs[@]:0:$((_tot - ISOLATE_PHYS))}")
+	local SHIELD_CPUS REST_CPUS
+	SHIELD_CPUS="$(
+		IFS=,
+		echo "${_shield_arr[*]}"
+	)"
+	REST_CPUS="$(
+		IFS=,
+		echo "${_rest_arr[*]}"
+	)"
+
+	echo "-- PERF_ISOLATE: cpuset shield"
+	echo "   shield (reserved) cpus = ${SHIELD_CPUS}"
+	echo "   rest   (complement) cpus = ${REST_CPUS}"
+
+	# Enable cpuset on the root subtree if not already; remember so teardown
+	# only reverts what we changed.
+	if ! grep -qw cpuset "${CG_ROOT}/cgroup.subtree_control"; then
+		_su_write "${CG_ROOT}/cgroup.subtree_control" "+cpuset"
+		ISO_ENABLED_CPUSET=1
+	fi
+
+	ISO_ACTIVE=1 # from here on, teardown must run on exit
+
+	# Create both children.
+	_su mkdir -p "${CG_SHIELD}" "${CG_REST}"
+
+	# Complement first: set its cpus, then move all movable root tasks into it so
+	# the shield cpus are freed up for an exclusive partition.
+	_su_write "${CG_REST}/cpuset.cpus" "${REST_CPUS}"
+	_su_write "${CG_REST}/cpuset.mems" "0"
+	local _pid
+	while read -r _pid; do
+		[[ -n "${_pid}" ]] || continue
+		# Unmovable kernel/other-cgroup tasks fail here -> tolerated.
+		printf '%s' "${_pid}" | sudo tee "${CG_REST}/cgroup.procs" >/dev/null 2>&1 || true
+	done < <(sudo cat "${CG_ROOT}/cgroup.procs" 2>/dev/null || true)
+
+	# Shield: set cpus, claim them as exclusive, then promote to a "root"
+	# partition. Newer cgroup-v2 kernels REQUIRE cpuset.cpus.exclusive to be set
+	# first, otherwise the flip records "root invalid (Cpu list in cpuset.cpus not
+	# exclusive)". The exclusive write is best-effort (older kernels lack the file).
+	_su_write "${CG_SHIELD}/cpuset.cpus" "${SHIELD_CPUS}"
+	_su_write "${CG_SHIELD}/cpuset.mems" "0"
+	if [[ -e "${CG_SHIELD}/cpuset.cpus.exclusive" ]]; then
+		_su_write "${CG_SHIELD}/cpuset.cpus.exclusive" "${SHIELD_CPUS}" || true
+	fi
+	_su_write "${CG_SHIELD}/cpuset.cpus.partition" "root" || true
+	local _part
+	_part="$(sudo cat "${CG_SHIELD}/cpuset.cpus.partition" 2>/dev/null || echo '?')"
+	if [[ "${_part}" != root ]]; then
+		# No hard exclusive partition (kernel/sibling constraints). Do NOT abort:
+		# every other movable task was already herded into the REST cgroup (the
+		# complement cpus), so the shield cpus stay effectively reserved -- soft
+		# isolation, fine for benchmarking. The shield stays a plain (member)
+		# cpuset pinned to SHIELD_CPUS and we continue.
+		echo "   note: exclusive partition unavailable (partition='${_part}') -- using soft" >&2
+		echo "   isolation: other tasks are confined to the rest cgroup off these cpus" >&2
+	fi
+
+	# Move THIS bench shell into the shield so all serened/pgbench/psql it forks
+	# inherit the reserved cpuset.
+	printf '%s' "$$" | sudo tee "${CG_SHIELD}/cgroup.procs" >/dev/null || {
+		echo "could not move bench shell ($$) into the shield. Aborting." >&2
+		exit 1
+	}
+
+	# Hand the reserved set to the core-selection block.
+	export PERF_BENCH_CORES="${SHIELD_CPUS}"
+	echo "   PERF_BENCH_CORES=${PERF_BENCH_CORES} (partition=root)"
+}
+
+# Install the EXIT trap BEFORE building the shield so a later failure (missing
+# binary, etc.) still tears the cgroups down. CUR_PID/CUR_DATA are empty here;
+# cleanup tolerates that.
+CUR_PID=""
+CUR_DATA=""
+cleanup() {
+	[[ -n "${CUR_PID}" ]] && kill -9 "${CUR_PID}" 2>/dev/null || true
+	[[ -n "${CUR_DATA}" ]] && rm -rf "${CUR_DATA}" || true
+	teardown_cpuset_shield
+}
+trap cleanup EXIT
+
+if [[ "${ISOLATE}" == 1 ]]; then
+	setup_cpuset_shield
+fi
+
 # --- core selection ---------------------------------------------------------
 # Inside run_bench_isolated.sh, PERF_BENCH_CORES is the reserved set: split it
 # server/client. Without it, derive whole physical cores (both SMT siblings)
@@ -67,10 +264,6 @@ QUIET_WAIT_SECS="${PERF_QUIET_WAIT_SECS:-600}"
 # the PERF_CLIENT_PHYS below them, leaving cpu0's housekeeping alone.
 SERVER_PHYS="${PERF_SERVER_PHYS:-6}"
 CLIENT_PHYS="${PERF_CLIENT_PHYS:-3}"
-phys_cores() { # emit thread_siblings_list lines sorted by first cpu
-	cat /sys/devices/system/cpu/cpu[0-9]*/topology/thread_siblings_list |
-		sort -t, -k1,1n -u
-}
 if [[ -n "${PERF_SERVER_CORES:-}" && -n "${PERF_CLIENT_CORES:-}" ]]; then
 	SERVER_CORES="${PERF_SERVER_CORES}"
 	CLIENT_CORES="${PERF_CLIENT_CORES}"
@@ -138,13 +331,6 @@ for tool in pgbench perf psql; do
 done
 
 mkdir -p "${OUT_DIR}" "${BASELINE_DIR}"
-CUR_PID=""
-CUR_DATA=""
-cleanup() {
-	[[ -n "${CUR_PID}" ]] && kill -9 "${CUR_PID}" 2>/dev/null || true
-	[[ -n "${CUR_DATA}" ]] && rm -rf "${CUR_DATA}" || true
-}
-trap cleanup EXIT
 
 # Wait for a quiet machine before each measured window; proceed with a warning
 # (and record the loadavg) if it never quiets down.
@@ -263,10 +449,14 @@ cat >"${OUT_DIR}/wl/delete_inv.sql" <<'EOF'
 \set id random(1, 300000)
 DELETE FROM bench_inv WHERE id = :id;
 EOF
-# Upsert that always hits the conflict (id within the seeded range).
+# Upsert that always hits the conflict (id within the seeded range). DO NOTHING
+# is the only ON CONFLICT form the OLD baseline accepts -- it rejects every DO
+# UPDATE variant with "Unsupported MERGE INTO action type for SereneDB", so the
+# richest form that runs on both binaries is DO NOTHING (exercises the
+# conflict-detect path on every insert; the row is never rewritten).
 cat >"${OUT_DIR}/wl/upsert.sql" <<'EOF'
 \set id random(1, 100000)
-INSERT INTO bench_upd (id, v) VALUES (:id, 0) ON CONFLICT (id) DO UPDATE SET v = bench_upd.v + 1;
+INSERT INTO bench_upd (id, v) VALUES (:id, 0) ON CONFLICT DO NOTHING;
 EOF
 # Insert into a table with two secondary indexes (writes both).
 cat >"${OUT_DIR}/wl/insert_sk.sql" <<'EOF'
@@ -298,10 +488,14 @@ BEGIN;
 INSERT INTO bench_txn(body) SELECT 'tok' || g FROM generate_series(1, 10) g;
 ROLLBACK;
 EOF
-# Search that materializes row columns from the base table (vs id-only).
+# Search that materializes a row column from the base table (vs id-only). The
+# `@@` match must run against the index relation (bench_txt_idx); projecting the
+# non-indexed `pad` column there forces the row to be materialized from the base
+# table, which is the path under test. Querying the base table directly errors
+# ("TSQUERY expression evaluated outside an `@@` match") on both binaries.
 cat >"${OUT_DIR}/wl/search_materialize.sql" <<'EOF'
 \set tok random(0, 49)
-SELECT id, body FROM bench_txt WHERE body @@ ts_phrase('token' || :tok) LIMIT 10;
+SELECT id, pad FROM bench_txt_idx WHERE body @@ ts_phrase('token' || :tok) LIMIT 10;
 EOF
 # Plain-table insert sweep (used at several client counts).
 cat >"${OUT_DIR}/wl/insert_sweep.sql" <<'EOF'
@@ -546,10 +740,12 @@ bench_server() {
 	"${PSQL[@]}" -c "CREATE INDEX bench_big_grp ON bench_big(grp);" >/dev/null
 	run_pgb "${srv}_sk_lookup" "${OUT_DIR}/wl/sk_lookup.sql" prepared "${CLIENTS}"
 
-	# 10. inverted index: build over 200k texts (wall) + scored fetch.
+	# 10. inverted index: build over 200k texts (wall) + scored fetch. The
+	# non-indexed `pad` column exists so search_materialize can fetch a column
+	# that is NOT in the inverted index (forcing a base-table row materialize).
 	"${PSQL[@]}" \
-		-c "CREATE TABLE bench_txt (id INTEGER PRIMARY KEY, body TEXT);" \
-		-c "INSERT INTO bench_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50) FROM generate_series(1, 200000) t(x);" \
+		-c "CREATE TABLE bench_txt (id INTEGER PRIMARY KEY, body TEXT, pad TEXT);" \
+		-c "INSERT INTO bench_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50), 'padpadpadpadpad' || x FROM generate_series(1, 200000) t(x);" \
 		>/dev/null
 	run_wall "${srv}_inverted_build" "${REPS}" "" \
 		"CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body bench_dict);" \
@@ -626,7 +822,7 @@ bench_server() {
 
 	# --- J. footprint + memory: datadir bytes and peak RSS (VmHWM), read from
 	# the ORIGINAL PID before the kill-9 recovery restart (which resets VmHWM),
-	# so peak RSS captures the bulk-load + CREATE INDEX high-water mark.
+	# so peak RSS captures the bulk-load + CREATE INDEX peak.
 	local dirbytes peakrss load
 	dirbytes="$(du -sb "${datadir}" 2>/dev/null | awk '{print $1+0}')"
 	peakrss="$(awk '/^VmHWM:/{print $2+0}' "/proc/${CUR_PID}/status" 2>/dev/null)"

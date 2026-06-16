@@ -266,7 +266,7 @@ statement error
 UPDATE clickclack SET name = 'babsky' WHERE name = 'deadinside';
 ----
 db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_name_check"
-DETAIL: Failing row contains (9, babsky, 140, 420).
+DETAIL: Failing row contains (9, babsky, 140, 420, 70).
 
 
 onlyif serenedb
@@ -279,7 +279,7 @@ statement error
 UPDATE clickclack SET name = 'arelav' WHERE name = 'deadinside';
 ----
 db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_name_check1"
-DETAIL: Failing row contains (9, arelav, 140, 420).
+DETAIL: Failing row contains (9, arelav, 140, 420, 70).
 
 
 onlyif serenedb

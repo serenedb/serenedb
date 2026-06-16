@@ -168,12 +168,6 @@ void Config::SetSettingChecked(std::string_view key, std::string value,
     duckdb::Value{std::move(value)});
 }
 
-void Config::ResetAll() {
-  _transaction.clear();
-
-  _client_ctx.config.user_settings = {};
-}
-
 bool Config::IsExplicitTransaction() const {
   return !_client_ctx.transaction.IsAutoCommit();
 }

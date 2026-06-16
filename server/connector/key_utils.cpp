@@ -40,11 +40,6 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid) {
   return key;
 }
 
-void AppendColumnKey(std::string& key, catalog::Column::Id column_oid) {
-  SDB_ASSERT(!key.empty());
-  keyenc::Append(key, column_oid);
-}
-
 void AppendTableKey(std::string& key, ObjectId id) {
   SDB_ASSERT(id.isSet());
   keyenc::Concat(key, id);

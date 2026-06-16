@@ -137,8 +137,6 @@ struct IndexDrop final : public DropTask {
 
 struct TableDrop final : public DropTask {
  public:
-  static constexpr std::string_view kName = "table drop";
-
   TableDrop(ObjectId id, std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             bool is_root = false)

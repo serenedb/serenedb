@@ -33,13 +33,9 @@
 #include "rest_server/database_path_feature.h"
 
 namespace sdb {
-
-struct IndexFactory;
-
 namespace search {
 
 class SearchThreadPools;
-class ResourceMutex;
 
 enum class ThreadGroup : uint8_t {
   Refresh = 0,

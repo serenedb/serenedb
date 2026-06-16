@@ -80,36 +80,6 @@ struct InvertedIndexSnapshot {
 };
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
-class Snapshot {
- public:
-  Snapshot(std::shared_ptr<const InvertedIndexStorage> inverted_index_storage,
-           InvertedIndexSnapshotPtr inverted_index_snapshot)
-    : _inverted_index_storage{std::move(inverted_index_storage)},
-      _snapshot{std::move(inverted_index_snapshot)} {}
-  Snapshot(Snapshot&&) = default;
-
-  Snapshot& operator=(Snapshot&& other) {
-    if (this != &other) {
-      _inverted_index_storage = std::move(other._inverted_index_storage);
-      _snapshot = std::move(other._snapshot);
-    }
-    return *this;
-  }
-
-  ~Snapshot() = default;
-
-  Snapshot(const Snapshot&) = delete;
-  Snapshot& operator=(const Snapshot&) = delete;
-
-  [[nodiscard]] const auto& GetDirectoryReader() const noexcept {
-    return _snapshot->reader;
-  }
-
- private:
-  std::shared_ptr<const InvertedIndexStorage> _inverted_index_storage;
-  InvertedIndexSnapshotPtr _snapshot;
-};
-
 // Durable WAL cursor: generation = checkpoint iteration, offset = byte offset
 // within it; bounds recovery replay to the index's un-durable tail.
 struct WalCursor {
@@ -127,7 +97,6 @@ class InvertedIndexStorage final
     // NOLINTBEGIN
     uint64_t numDocs = 0;
     uint64_t numLiveDocs = 0;
-    uint64_t numPrimaryDocs = 0;
     uint64_t numSegments = 0;
     uint64_t numFiles = 0;
     uint64_t indexSize = 0;
@@ -198,10 +167,6 @@ class InvertedIndexStorage final
 
   ObjectId GetId() const noexcept { return _index_id; }
   auto GetState() const noexcept { return _state; }
-
-  bool HasActiveSegments() const noexcept {
-    return _writer && _writer->HasActiveSegments();
-  }
 
   Stats GetStats() const;
 

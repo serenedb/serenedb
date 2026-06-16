@@ -37,7 +37,7 @@ class ConnectionContext;
 
 namespace sdb::connector {
 
-enum class DuckDBWriteKind { Insert, Delete, Update };
+enum class DuckDBWriteKind { Insert, Delete };
 
 // Writer for ONE inverted index, identified by id -- the store-side
 // BoundIndex feeds exactly its own index. nullptr when the index is not an

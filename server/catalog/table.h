@@ -54,11 +54,6 @@ class Table final : public Object {
   const auto& UniqueConstraints() const noexcept { return _unique_constraints; }
   const auto& ForeignKeys() const noexcept { return _foreign_keys; }
 
-  // Id of the auto-generated PK sequence (created when the table has no
-  // explicit PK). Unset for tables with an explicit PK. Look it up via
-  // `Snapshot::GetObject<Sequence>(GetGeneratedPkSeqId())`.
-  ObjectId GetGeneratedPkSeqId() const noexcept { return _generated_pk_seq_id; }
-
   Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
                       std::string_view new_name) const;
   Result RenameConstraint(std::shared_ptr<Table>& result,

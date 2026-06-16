@@ -48,10 +48,6 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSearchWriter(
         std::move(entry_info_provider), std::move(indexed_exprs));
     case DuckDBWriteKind::Delete:
       return std::make_unique<DuckDBSearchSinkDeleteWriter>(trx);
-    case DuckDBWriteKind::Update:
-      return std::make_unique<DuckDBSearchSinkUpdateWriter>(
-        trx, std::move(tokenizer_provider), columns,
-        std::move(entry_info_provider), std::move(indexed_exprs));
   }
   SDB_ASSERT(false, "Unknown DuckDBWriteKind");
   return nullptr;

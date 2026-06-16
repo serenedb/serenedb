@@ -65,44 +65,6 @@ size_t WriteImpl(char* p, const T& v) noexcept {
   }
 }
 
-template<typename T>
-const char* ReadImpl(const char* p, const char* end, T& v) noexcept {
-  SDB_ASSERT(p < end);
-  if constexpr (std::is_enum_v<T>) {
-    static_assert(sizeof(T) == 1);
-    v = static_cast<T>(*p++);
-  } else if constexpr (std::is_base_of_v<basics::Identifier, T>) {
-    v = T{absl::big_endian::Load64(p)};
-    p += sizeof(T);
-  } else if constexpr (std::is_same_v<T, std::string_view>) {
-    v = {p, end};
-    p = end;
-  } else {
-    v = absl::big_endian::Load<T>(p);
-    p += sizeof(T);
-  }
-  return p;
-}
-
-template<typename T>
-struct IsValid {
-  static constexpr size_t kCountStringViews = [] {
-    size_t count = 0;
-    boost::pfr::for_each_field(T{}, [&]<typename U>(const U& field) {
-      if constexpr (std::is_same_v<U, std::string_view>) {
-        count++;
-      }
-    });
-    return count;
-  }();
-
-  static constexpr bool kValue =
-    kCountStringViews == 0 ||
-    std::is_same_v<
-      boost::pfr::tuple_element_t<boost::pfr::tuple_size_v<T> - 1, T>,
-      std::string_view>;
-};
-
 }  // namespace detail
 
 template<typename... Args>
@@ -120,33 +82,6 @@ void Append(std::string& str, const Args&... args) {
   basics::StrResize(str, (detail::GetByteSizeImpl(args) + ...) + old_size);
   auto* p = str.data() + old_size;
   ((p += detail::WriteImpl(p, args)), ...);
-}
-
-template<typename U>
-size_t GetByteSize(const U& in) noexcept {
-  size_t size = 0;
-  boost::pfr::for_each_field(
-    in, [&](const auto& v) { size += detail::GetByteSizeImpl(v); });
-  return size;
-}
-
-template<typename U>
-void Write(const U& in, char* p) {
-  static_assert(detail::IsValid<U>::kValue);
-  boost::pfr::for_each_field(
-    in, [&](const auto& v) { p += detail::WriteImpl(p, v); });
-}
-
-template<typename U>
-U Read(std::string_view in) {
-  static_assert(detail::IsValid<U>::kValue);
-  const auto* p = in.data();
-  const auto* end = p + in.size();
-
-  U out;
-  boost::pfr::for_each_field(out,
-                             [&](auto& v) { p = detail::ReadImpl(p, end, v); });
-  return out;
 }
 
 }  // namespace sdb::keyenc

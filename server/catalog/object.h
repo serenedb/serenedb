@@ -76,36 +76,6 @@ constexpr bool IsIndex(ObjectType t) noexcept {
   return t == ObjectType::SecondaryIndex || t == ObjectType::InvertedIndex;
 }
 
-// https://www.postgresql.org/docs/current/sql-grant.html
-enum class AclMode : uint64_t {
-  NoRights = 0U,
-  Insert = 1U << 0,
-  Select = 1U << 1,
-  Update = 1U << 2,
-  Delete = 1U << 3,
-  Truncate = 1U << 4,
-  References = 1U << 5,
-  Trigger = 1U << 6,
-  Execute = 1U << 7,
-  Usage = 1U << 8,
-  Create = 1U << 9,
-  CreateTemp = 1U << 10,
-  Connect = 1U << 11,
-  Set = 1U << 12,
-  AlterSystem = 1U << 13,
-};
-
-ENABLE_BITMASK_ENUM(AclMode);
-
-struct AclItem {
-  ObjectId grantee = id::kInvalid;
-  ObjectId grantor = id::kInvalid;
-  AclMode privs = AclMode::NoRights;
-};
-
-using Acl = std::vector<AclItem>;
-using AclView = std::span<const AclItem>;
-
 class Object {
  public:
   virtual ~Object();
@@ -115,7 +85,6 @@ class Object {
       _id{other._id},
       _parent_id{other._parent_id},
       _type{other._type},
-      _acl{other._acl},
       _tombstoned{other._tombstoned.load(std::memory_order_acquire)} {}
 
   Object& operator=(const Object& other) {
@@ -124,7 +93,6 @@ class Object {
       _id = other._id;
       _parent_id = other._parent_id;
       _type = other._type;
-      _acl = other._acl;
       _tombstoned.store(other._tombstoned.load(std::memory_order_acquire),
                         std::memory_order_release);
     }
@@ -132,7 +100,6 @@ class Object {
   }
 
   ObjectId GetParentId() const noexcept { return _parent_id; }
-  auto GetAcl() const noexcept { return std::span{_acl}; }
   ObjectType GetType() const noexcept { return _type; }
   std::string_view GetName() const noexcept { return _name; }
   ObjectId GetId() const noexcept { return _id; }
@@ -161,7 +128,6 @@ class Object {
   ObjectId _id;
   ObjectId _parent_id;
   ObjectType _type;
-  Acl _acl;
   std::atomic_bool _tombstoned = false;
 };
 
@@ -240,22 +206,6 @@ struct ObjectById {
     SDB_ASSERT(l);
     SDB_ASSERT(r);
     return l->GetId() == r->GetId();
-  }
-};
-
-struct ObjectMeta {
-  std::string_view name;
-  ObjectId id;
-  ObjectId parent_id;
-  AclView acl;
-
-  static ObjectMeta Make(const Object& obj) noexcept {
-    return {
-      .name = obj.GetName(),
-      .id = obj.GetId(),
-      .parent_id = obj.GetParentId(),
-      .acl = obj.GetAcl(),
-    };
   }
 };
 

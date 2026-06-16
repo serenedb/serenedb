@@ -22,14 +22,9 @@
 
 #pragma once
 
-#include "iresearch/store/caching_directory.hpp"
 #include "iresearch/store/fs_directory.hpp"
 
 namespace irs {
-namespace mmap_utils {
-
-class MMapHandle;
-}
 
 class MMapDirectory : public FSDirectory {
  public:
@@ -40,18 +35,6 @@ class MMapDirectory : public FSDirectory {
 
   IndexInput::ptr open(std::string_view name,
                        IOAdvice advice) const noexcept override;
-};
-
-class CachingMMapDirectory
-  : public CachingDirectoryBase<MMapDirectory,
-                                std::shared_ptr<mmap_utils::MMapHandle>> {
- public:
-  using CachingDirectoryBase::CachingDirectoryBase;
-
-  bool length(uint64_t& result, std::string_view name) const noexcept final;
-
-  IndexInput::ptr open(std::string_view name,
-                       IOAdvice advice) const noexcept final;
 };
 
 }  // namespace irs

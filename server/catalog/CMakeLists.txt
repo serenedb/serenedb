@@ -23,5 +23,3 @@ target_sources(
         store/store.cpp
         tokenizer.cpp
 )
-
-add_subdirectory(identifiers)

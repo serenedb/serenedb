@@ -92,10 +92,6 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
     return _sdb_table;
   }
 
-  const std::vector<size_t>& GetIndexedColumnIndices() const {
-    return _indexed_col_indices;
-  }
-
  private:
   std::shared_ptr<catalog::Table> _sdb_table;
   std::vector<size_t> _indexed_col_indices;

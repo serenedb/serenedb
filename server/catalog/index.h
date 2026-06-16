@@ -70,11 +70,6 @@ struct CreateIndexColumn {
     SDB_ASSERT(!IsIndexedExpression());
     return catalog_column;
   }
-
-  void SetCatalogColumn(const catalog::Column* col) noexcept {
-    SDB_ASSERT(!IsIndexedExpression());
-    catalog_column = col;
-  }
 };
 
 class Index : public Object {

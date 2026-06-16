@@ -28,10 +28,6 @@
 
 namespace sdb::connector::key_utils {
 
-inline constexpr size_t kTablePrefixSize = sizeof(ObjectId);
-inline constexpr size_t kKeyPrefixSize =
-  kTablePrefixSize + sizeof(catalog::Column::Id);
-
 // Constructs common part of table row. Result could be used with AppendXXX
 // methods to construct full keys.
 std::string PrepareTableKey(ObjectId id);
@@ -41,17 +37,6 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 
 // Appends table key to constructed string
 void AppendTableKey(std::string& key, ObjectId id);
-
-// Appends column OID to the Table key created with PrepareTableKey.
-void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
-
-// Takes buffer in format
-// 'object_id | reserved for column_id | pk'
-// and fills column_id
-inline void SetupColumnForKey(std::string& buf, catalog::Column::Id column_id) {
-  SDB_ASSERT(buf.size() >= sizeof(ObjectId) + sizeof(catalog::Column::Id));
-  absl::big_endian::Store(buf.data() + sizeof(ObjectId), column_id);
-}
 
 inline std::string_view ExtractRowKey(std::string_view full_key) {
   SDB_ASSERT(full_key.size() > sizeof(ObjectId) + sizeof(catalog::Column::Id));

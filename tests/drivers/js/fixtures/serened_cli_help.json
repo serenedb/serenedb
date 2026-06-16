@@ -1,0 +1,314 @@
+{
+  "generatedFrom": "serened source fallback",
+  "title": "serened -- SereneDB pg-wire server",
+  "usage": [
+    "serened <data-dir> [--flag=value ...]",
+    "serened shell [duckdb-shell args ...]",
+    "serened psql  [psql args ...]"
+  ],
+  "commands": [
+    {
+      "command": "serened <data-dir> [--flag=value ...]",
+      "description": "Start the SereneDB pg-wire server, using the optional data directory and flags."
+    },
+    {
+      "command": "serened shell [duckdb-shell args ...]",
+      "description": "Open the embedded DuckDB shell without starting the SereneDB server."
+    },
+    {
+      "command": "serened psql  [psql args ...]",
+      "description": "Open the psql-compatible shell subcommand without starting the SereneDB server."
+    }
+  ],
+  "flagSources": [
+    {
+      "flag": "--flagfile=path1,path2",
+      "description": "Read flags from one or more files (one '--flag=value' per line, '#' comments OK)."
+    },
+    {
+      "flag": "--fromenv=name1,name2",
+      "description": "Read each listed flag from FLAGS_<name>; missing env vars are an error."
+    },
+    {
+      "flag": "--tryfromenv=name1,name2",
+      "description": "Same as --fromenv but silently skip flags whose env var is unset."
+    },
+    {
+      "flag": "--undefok=name1,name2",
+      "description": "Tolerate '--name1=...' even when no flag with that name exists (useful for shared flagfiles across binaries)."
+    }
+  ],
+  "helpVariants": [
+    {
+      "flag": "--help",
+      "description": "This filtered banner."
+    },
+    {
+      "flag": "--helpfull",
+      "description": "Every absl-managed flag."
+    },
+    {
+      "flag": "--help=<substring>",
+      "description": "Flags whose name or description matches."
+    },
+    {
+      "flag": "--helpshort",
+      "description": "Project-defined flags only (no absl/gtest)."
+    },
+    {
+      "flag": "--helppackage",
+      "description": "Flags grouped by source-tree location."
+    },
+    {
+      "flag": "--version",
+      "description": "Print the build banner and exit."
+    }
+  ],
+  "flagGroups": [
+    {
+      "id": "server",
+      "label": "Server",
+      "flags": [
+        {
+          "name": "server_compaction_threads",
+          "flag": "--server_compaction_threads",
+          "type": "uint32_t",
+          "defaultValue": "0",
+          "description": "Threads in the iresearch compaction pool (0 = auto-derive from cores, clamped to [1, 4 * cores]).",
+          "source": "server/storage_engine/search_engine.cpp",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "server_cpu_threads",
+          "flag": "--server_cpu_threads",
+          "type": "uint64_t",
+          "defaultValue": "0",
+          "description": "DuckDB executor pool size at process start. 0 = let DuckDB auto-detect from cpu_count. The SQL-level `SET threads = N` continues to win at runtime.",
+          "source": "server/general_server/scheduler_feature.cpp",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "server_directory",
+          "flag": "--server_directory",
+          "type": "string",
+          "defaultValue": "",
+          "description": "Path to the database directory. Overrides any positional arg.",
+          "source": "server/rest_server/database_path_feature.cpp",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "server_endpoints",
+          "flag": "--server_endpoints",
+          "type": "vector<string>",
+          "defaultValue": "[]",
+          "description": "Endpoint(s) for client requests (e.g. `pgsql+tcp://127.0.0.1:7890`). Comma-separated for multiple. Supported schemes: pgsql+tcp, tcp, ssl, unix.",
+          "source": "server/rest_server/endpoint_feature.cpp",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "server_io_threads",
+          "flag": "--server_io_threads",
+          "type": "uint64_t",
+          "defaultValue": "0",
+          "description": "IO threads for HTTP and pg-wire connections (0 = max(1, cpu_count / 4)).",
+          "source": "server/general_server/scheduler_feature.cpp",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "server_maximal_queue_size",
+          "flag": "--server_maximal_queue_size",
+          "type": "uint64_t",
+          "defaultValue": "4096",
+          "description": "Maximum FIFO queue depth per priority in the SchedulerFeature scheduler; controls backpressure for the HTTP/REST work queue.",
+          "source": "server/general_server/scheduler_feature.cpp",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "server_refresh_threads",
+          "flag": "--server_refresh_threads",
+          "type": "uint32_t",
+          "defaultValue": "0",
+          "description": "Threads in the iresearch refresh pool (0 = auto-derive from cores, clamped to [1, 4 * cores]).",
+          "source": "server/storage_engine/search_engine.cpp",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "server_request_threads",
+          "flag": "--server_request_threads",
+          "type": "uint64_t",
+          "defaultValue": "0",
+          "description": "Maximum worker threads for the SchedulerFeature pool (the legacy ArangoDB scheduler used for HTTP/REST work; distinct from server_io_threads and server_cpu_threads). 0 = auto-detect (max(32, 2 * cpu_count)).",
+          "source": "server/general_server/scheduler_feature.cpp",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "server_skip_search_recovery",
+          "flag": "--server_skip_search_recovery",
+          "type": "bool",
+          "defaultValue": "false",
+          "description": "Skip the entire WAL replay phase for inverted indexes on startup. Diagnostic only -- data loss is permanent for the skipped delta.",
+          "source": "server/storage_engine/search_engine.cpp",
+          "category": "server",
+          "categoryLabel": "Server"
+        }
+      ]
+    },
+    {
+      "id": "http",
+      "label": "HTTP",
+      "flags": [
+        {
+          "name": "http_compress_response_threshold",
+          "flag": "--http_compress_response_threshold",
+          "type": "uint64_t",
+          "defaultValue": "0",
+          "description": "Response body size threshold for transparent gzip/deflate compression (0 disables compression).",
+          "source": "server/general_server/general_server_feature.cpp",
+          "category": "http",
+          "categoryLabel": "HTTP"
+        },
+        {
+          "name": "http_keep_alive_timeout",
+          "flag": "--http_keep_alive_timeout",
+          "type": "double",
+          "defaultValue": "300.0",
+          "description": "Keep-alive timeout for HTTP and pg-wire connections (in seconds; 0 disables keep-alive).",
+          "source": "server/general_server/general_server_feature.cpp",
+          "category": "http",
+          "categoryLabel": "HTTP"
+        },
+        {
+          "name": "http_return_queue_time_header",
+          "flag": "--http_return_queue_time_header",
+          "type": "bool",
+          "defaultValue": "true",
+          "description": "Return the x-serene-queue-time-seconds header on every response.",
+          "source": "server/general_server/general_server_feature.cpp",
+          "category": "http",
+          "categoryLabel": "HTTP"
+        },
+        {
+          "name": "http_trusted_origin",
+          "flag": "--http_trusted_origin",
+          "type": "vector<string>",
+          "defaultValue": "[]",
+          "description": "Trusted origin URLs for CORS requests with credentials.",
+          "source": "server/general_server/general_server_feature.cpp",
+          "category": "http",
+          "categoryLabel": "HTTP"
+        }
+      ]
+    },
+    {
+      "id": "ssl",
+      "label": "TLS / SSL",
+      "flags": [
+        {
+          "name": "ssl_cafile",
+          "flag": "--ssl_cafile",
+          "type": "string",
+          "defaultValue": "",
+          "description": "CA file used for client certificate verification. Empty disables client-cert checks.",
+          "source": "server/general_server/ssl_server_feature.cpp",
+          "category": "ssl",
+          "categoryLabel": "TLS / SSL"
+        },
+        {
+          "name": "ssl_cipher_list",
+          "flag": "--ssl_cipher_list",
+          "type": "string",
+          "defaultValue": "",
+          "description": "OpenSSL cipher list to restrict the server to. See OpenSSL docs.",
+          "source": "server/general_server/ssl_server_feature.cpp",
+          "category": "ssl",
+          "categoryLabel": "TLS / SSL"
+        },
+        {
+          "name": "ssl_ecdh_curve",
+          "flag": "--ssl_ecdh_curve",
+          "type": "string",
+          "defaultValue": "x25519:prime256v1",
+          "description": "Colon-separated list of TLS key-exchange groups passed to SSL_CTX_set1_groups_list. Empty disables the call.",
+          "source": "server/general_server/ssl_server_feature.cpp",
+          "category": "ssl",
+          "categoryLabel": "TLS / SSL"
+        },
+        {
+          "name": "ssl_keyfile",
+          "flag": "--ssl_keyfile",
+          "type": "string",
+          "defaultValue": "",
+          "description": "Server private key (PEM, certificate + key concatenated). Required for SSL endpoints.",
+          "source": "server/general_server/ssl_server_feature.cpp",
+          "category": "ssl",
+          "categoryLabel": "TLS / SSL"
+        },
+        {
+          "name": "ssl_prefer_http1_in_alpn",
+          "flag": "--ssl_prefer_http1_in_alpn",
+          "type": "bool",
+          "defaultValue": "false",
+          "description": "Prefer HTTP/1.1 over HTTP/2 in the ALPN selection callback.",
+          "source": "server/general_server/ssl_server_feature.cpp",
+          "category": "ssl",
+          "categoryLabel": "TLS / SSL"
+        },
+        {
+          "name": "ssl_protocol",
+          "flag": "--ssl_protocol",
+          "type": "string",
+          "defaultValue": "tls",
+          "description": "TLS protocol selector: 'tls' (generic, OpenSSL negotiates), 'tls1.2', or 'tls1.3'. Legacy SSLv2/v3/TLSv1 are rejected.",
+          "source": "server/general_server/ssl_server_feature.cpp",
+          "category": "ssl",
+          "categoryLabel": "TLS / SSL"
+        },
+        {
+          "name": "ssl_session_cache",
+          "flag": "--ssl_session_cache",
+          "type": "bool",
+          "defaultValue": "false",
+          "description": "Enable OpenSSL server-side session caching (SSL_SESS_CACHE_SERVER); off = SSL_SESS_CACHE_OFF.",
+          "source": "server/general_server/ssl_server_feature.cpp",
+          "category": "ssl",
+          "categoryLabel": "TLS / SSL"
+        }
+      ]
+    },
+    {
+      "id": "log",
+      "label": "Logging",
+      "flags": [
+        {
+          "name": "log_level",
+          "flag": "--log_level",
+          "type": "string",
+          "defaultValue": "info",
+          "description": "DuckDB minimum log severity at process start: trace | debug | info | warning | error | fatal. Override at runtime with `SET logging_level = '<value>'`.",
+          "source": "libs/basics/log_flags.cpp",
+          "category": "log",
+          "categoryLabel": "Logging"
+        },
+        {
+          "name": "log_storage",
+          "flag": "--log_storage",
+          "type": "string",
+          "defaultValue": "stdout",
+          "description": "DuckDB log destination at process start: 'stdout' (default; container log drivers capture it), 'memory' (queryable via SELECT * FROM duckdb_logs()), or 'file://<path>'. Override at runtime with `SET logging_storage = '<value>'`.",
+          "source": "libs/basics/log_flags.cpp",
+          "category": "log",
+          "categoryLabel": "Logging"
+        }
+      ]
+    }
+  ],
+  "rawHelp": "serened -- SereneDB pg-wire server\n\nUsage:\n  serened <data-dir> [--flag=value ...]\n  serened shell [duckdb-shell args ...]\n  serened psql  [psql args ...]\n\nFlag sources (absl built-in, full definitions under --helpfull):\n  --flagfile=path1,path2     Read flags from one or more files (one\n                             '--flag=value' per line, '#' comments OK).\n  --fromenv=name1,name2      Read each listed flag from FLAGS_<name>;\n                             missing env vars are an error.\n  --tryfromenv=name1,name2   Same as --fromenv but silently skip\n                             flags whose env var is unset.\n  --undefok=name1,name2      Tolerate '--name1=...' even when no flag\n                             with that name exists (useful for shared\n                             flagfiles across binaries).\n\nHelp variants:\n  --help                     This filtered banner.\n  --helpfull                 Every absl-managed flag.\n  --help=<substring>         Flags whose name or description matches.\n  --helpshort                Project-defined flags only (no absl/gtest).\n  --helppackage              Flags grouped by source-tree location.\n  --version                  Print the build banner and exit."
+}

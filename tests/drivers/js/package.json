@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "generate:cli-test": "node ./generate_cli_test.js",
     "test": "vitest run"
   },
   "devDependencies": {

@@ -414,18 +414,32 @@ SearchDbWal::SearchDbWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir,
     _wal_dir(std::move(wal_dir)),
     _chunks_root(_wal_dir / "chunks"),
     _seal_threshold(seal_threshold) {
-  // Seed the engine tick from the max on-disk record tick (the first u64 of
-  // each record payload -- readable without deserialising).
+
+  const auto segments = EnumerateSegments(_wal_dir);
   uint64_t max_tick = 0;
-  for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
-    duckdb::BufferedFileReader reader(_fs, path.string().c_str());
-    std::vector<uint8_t> payload;
-    while (ReadFrame(reader, payload)) {
-      if (payload.size() >= sizeof(uint64_t)) {
-        Cursor c(payload);
-        max_tick = std::max(max_tick, c.Read<uint64_t>());
+  for (size_t i = segments.size(); i-- > 0;) {
+    const auto& path = segments[i].second;
+    uint64_t last_tick = 0;
+    bool any = false;
+    {
+      duckdb::BufferedFileReader reader(_fs, path.string().c_str());
+      std::vector<uint8_t> payload;
+      while (ReadFrame(reader, payload)) {
+        if (payload.size() >= sizeof(uint64_t)) {
+          Cursor c(payload);
+          last_tick = c.Read<uint64_t>();
+          any = true;
+        }
       }
     }
+    if (any) {
+      max_tick = last_tick;
+      break;
+    }
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    SDB_ENSURE(!ec, ERROR_INTERNAL, "remove corrupted wal file '", path.string(),
+             "': ", ec.message());
   }
   _tick.store(max_tick, std::memory_order_relaxed);
 }

@@ -25,6 +25,7 @@
 
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/proxy_filter.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 
@@ -46,11 +47,12 @@ inline bool TryFoldBoost(Filter& survivor, score_t boost, bool scored) {
   if (boost == kNoBoost || !scored) {
     return true;
   }
-  auto* boostable = dynamic_cast<FilterWithBoost*>(&survivor);
-  if (boostable == nullptr) {
+  // The only non-boost filter
+  if (survivor.type() == irs::Type<ProxyFilter>::id()) {
     return false;
   }
-  boostable->boost(boostable->Boost() * boost);
+  auto& boostable = sdb::basics::downCast<FilterWithBoost>(survivor);
+  boostable.boost(boostable.Boost() * boost);
   return true;
 }
 

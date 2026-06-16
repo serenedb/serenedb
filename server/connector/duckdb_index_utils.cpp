@@ -26,7 +26,6 @@
 #include "basics/log.h"
 #include "basics/string_utils.h"
 #include "catalog/inverted_index.h"
-#include "connector/duckdb_column_serializer.h"
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
@@ -68,32 +67,30 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   conn_ctx.EnsureIndexesTransactions(
     table_id, [&](auto& index_txn, const catalog::Index& index) {
-      {
-        if (index.GetId() != index_id) {
-          return;
-        }
-        auto& inverted_index =
-          basics::downCast<const catalog::InvertedIndex>(index);
-        auto tokenizer_provider =
-          MakeTokenizerProvider(snapshot, inverted_index);
-        auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
-        std::vector<IndexedExpression> indexed_exprs;
-        if constexpr (Kind == DuckDBWriteKind::Insert) {
-          // Deletes are key-only; skipping the deserialization also keeps
-          // rollback paths (no usable transaction context) working.
-          indexed_exprs = MakeIndexedExpressions(
-            inverted_index,
-            expr_context ? *expr_context : conn_ctx.GetClientContext());
-        }
-        writer = MakeDuckDBSearchWriter(
-          Kind, index_txn, std::move(tokenizer_provider),
-          std::move(entry_info_provider), index.GetColumnIds(),
-          std::move(indexed_exprs));
+      if (index.GetId() != index_id) {
+        return;
       }
+      auto& inverted_index =
+        basics::downCast<const catalog::InvertedIndex>(index);
+      auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
+      auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
+      std::vector<IndexedExpression> indexed_exprs;
+      if constexpr (Kind == DuckDBWriteKind::Insert) {
+        // Deletes are key-only; skipping the deserialization also keeps
+        // rollback paths (no usable transaction context) working.
+        indexed_exprs = MakeIndexedExpressions(
+          inverted_index,
+          expr_context ? *expr_context : conn_ctx.GetClientContext());
+      }
+      writer =
+        MakeDuckDBSearchWriter(Kind, index_txn, std::move(tokenizer_provider),
+                               std::move(entry_info_provider),
+                               index.GetColumnIds(), std::move(indexed_exprs));
     });
   return writer;
 }
 
+// Explicit instantiations
 template std::unique_ptr<DuckDBSinkIndexWriter>
 CreateInvertedIndexWriter<DuckDBWriteKind::Insert>(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
@@ -103,7 +100,6 @@ CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
   duckdb::optional_ptr<duckdb::ClientContext> expr_context);
 
-// Explicit instantiations
 std::vector<size_t> BuildCreateIndexProjection(
   std::span<const catalog::Column> columns,
   std::span<const catalog::Column::Id> pk_column_ids,

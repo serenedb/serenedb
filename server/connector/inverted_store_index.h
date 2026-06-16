@@ -73,9 +73,10 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) override;
 
   // Called by duckdb before each buffered WAL-replay range, with that range's
-  // store-WAL byte offset. Operations at/below the storage's durable cursor are
-  // already in the segments; we record the offset so ReplayAppend/ReplayDelete
-  // can skip them.
+  // store-WAL byte offset. Operations strictly below the storage's durable
+  // cursor are already in the segments; we record the offset so
+  // ReplayAppend/ReplayDelete can skip them (the op exactly at the cursor is
+  // the first un-durable one and is streamed).
   void OnReplayRange(duckdb::idx_t commit_offset) override;
 
   // Called by duckdb after every buffered WAL-replay insert/delete for this
@@ -115,10 +116,15 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,
                                duckdb::Vector& row_ids);
 
-  // Replay path: a transaction held open across one ApplyBufferedReplays
-  // pass, feeding the storage delete-then-insert (idempotent against postings
-  // iresearch already made durable ahead of the last checkpoint), committed
-  // once in FinishReplay. Built lazily on the first replayed operation.
+  // Replay path: a single iresearch batch held open across one
+  // ApplyBufferedReplays pass. Each buffered WAL op is streamed straight into
+  // the batch in WAL order on its own strictly-ascending sub-tick (insert ->
+  // DuckDBSearchSinkInsertWriter, delete -> a tick-bound Remove), then
+  // committed once in FinishReplay with last_tick placing every op above the
+  // durable recovery tick. Tick-bound removes give last-op-wins for free (incl.
+  // TRUNCATE
+  // + rowid reuse), so no dedup is needed. Built lazily on the first replayed
+  // operation.
   struct ReplaySession;
   ReplaySession& EnsureReplaySession();
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);

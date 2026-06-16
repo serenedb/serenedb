@@ -297,14 +297,35 @@ SELECT count(*) FROM vedernikoff;
 count
 0
 
-# Secondary index must not surface any old rows.
+# Secondary index is MVCC: it must not surface any old rows immediately.
 query
 SELECT count(*) FROM vedernikoff WHERE team = 'babsky';
 ----
 count
 0
 
-# Inverted index must not surface any old rows.
+# Inverted index scans are eventually consistent (as-of-last-refresh), not
+# MVCC. TRUNCATE without a subsequent refresh leaves the inverted index at its
+# last-refresh state, so count(*) WHERE <phrase> still returns the last-refresh
+# matched count, NOT 0. This contrasts with the secondary B-tree above, which
+# drops the rows immediately.
+query
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
+----
+count
+10000
+
+query
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'babsky want to hire vedernikoff');
+----
+count
+2000
+
+# Refresh the inverted index so it observes the TRUNCATE; only now does the
+# eventual count drop to 0.
+statement ok
+VACUUM (REFRESH_TABLE) vedernikoff;
+
 query
 SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
 ----

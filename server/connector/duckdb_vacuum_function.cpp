@@ -212,15 +212,11 @@ ObjectId LookupDatabaseId(const catalog::Snapshot& snapshot,
   return db->GetId();
 }
 
-void RefreshInvertedStorage(search::InvertedIndexStorage& inverted) {
-  inverted.Refresh();
-}
-
 void CompactInvertedStorage(search::InvertedIndexStorage& inverted) {
   static const auto kPolicy = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
-  RefreshInvertedStorage(inverted);
+  inverted.Refresh();
   for (size_t pass = 0; pass < 8; ++pass) {
     bool empty_compaction = false;
     const auto [res, _] =
@@ -229,7 +225,7 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted) {
       throw duckdb::InternalException("compact_index: compaction failed: %s",
                                       res.errorMessage());
     }
-    RefreshInvertedStorage(inverted);
+    inverted.Refresh();
     if (empty_compaction) {
       break;
     }
@@ -254,7 +250,7 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
                       Scope scope, const ResolvedName& target) {
   auto apply = [action](search::InvertedIndexStorage& s) {
     if (action == Action::Refresh) {
-      RefreshInvertedStorage(s);
+      s.Refresh();
     } else {
       CompactInvertedStorage(s);
     }

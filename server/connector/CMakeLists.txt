@@ -24,7 +24,6 @@ add_library(
     duckdb_scan_base.cpp
     duckdb_search_full_scan.cpp
     duckdb_search_ann_scan.cpp
-    duckdb_column_serializer.cpp
     columnstore_materializer.cpp
     index_source_factory.cpp
     index_source_view.cpp

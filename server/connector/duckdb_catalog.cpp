@@ -638,9 +638,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   const bool parallel_streaming_insert =
     plan &&
     !duckdb::PhysicalPlanGenerator::PreserveInsertionOrder(context, *plan) &&
-    !op.return_chunk && on_conflict_action == duckdb::OnConflictAction::THROW;
-  const auto num_threads =
-    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
+    !op.return_chunk && on_conflict_action == duckdb::OnConflictAction::THROW &&
+    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads() > 1;
   auto store_constraints =
     duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
                                     store_entry.name, store_entry.GetColumns());
@@ -656,8 +655,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     op.types, store_entry, std::move(store_constraints),
     std::move(op.expressions), std::move(op.on_conflict_info.set_columns),
     std::move(op.on_conflict_info.set_types), op.estimated_cardinality,
-    op.return_chunk, parallel_streaming_insert && num_threads > 1,
-    on_conflict_action, std::move(op.on_conflict_info.on_conflict_condition),
+    op.return_chunk, parallel_streaming_insert, on_conflict_action,
+    std::move(op.on_conflict_info.on_conflict_condition),
     std::move(op.on_conflict_info.do_update_condition),
     std::move(op.on_conflict_info.on_conflict_filter),
     std::move(op.on_conflict_info.columns_to_fetch),

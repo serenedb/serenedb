@@ -119,7 +119,7 @@ Result RunInTransaction(duckdb::Connection& conn, Fn&& fn) {
   } catch (const std::exception& e) {
     return {ERROR_INTERNAL, e.what()};
   }
-  Result r = fn();
+  Result r = [&]() noexcept { return fn(); }();
   try {
     if (r.ok()) {
       conn.Commit();

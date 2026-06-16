@@ -67,7 +67,6 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-#include "search/inverted_index_storage.h"
 
 #define SDB_LOG_PGSQL(...) SDB_PRINT_IF(false, __VA_ARGS__)
 

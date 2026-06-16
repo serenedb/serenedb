@@ -23,11 +23,8 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <span>
-#include <string>
 #include <string_view>
 
-#include "basics/containers/flat_hash_set.h"
-#include "catalog/table_options.h"
 #include "connector/index_expression.hpp"
 #include "connector/sink_writer_base.hpp"
 
@@ -69,31 +66,6 @@ class DuckDBSinkIndexWriter {
   virtual void DeleteRow(std::string_view row_key) {
     SDB_ASSERT(false, "DeleteRow call not implemented");
   }
-};
-
-class DuckDBSinkColumnWriter : public DuckDBSinkIndexWriter {
- public:
-  virtual void Write(std::span<const std::string_view> /*cell_slices*/,
-                     std::string_view /*full_key*/) {}
-};
-
-// Base implementation of column centric index writers (same as Velox version)
-class DuckDBColumnSinkWriterImplBase {
- public:
-  DuckDBColumnSinkWriterImplBase(std::span<const catalog::Column::Id> columns) {
-    _columns.reserve(columns.size());
-    for (auto c : columns) {
-      _columns.insert(c);
-    }
-    SDB_ASSERT(!_columns.empty());
-  }
-
-  bool IsIndexed(catalog::Column::Id column_id) const noexcept {
-    return _columns.contains(column_id);
-  }
-
- protected:
-  containers::FlatHashSet<catalog::Column::Id> _columns;
 };
 
 }  // namespace sdb::connector

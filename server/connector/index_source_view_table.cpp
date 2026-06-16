@@ -148,7 +148,6 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   : RowIdFetchIndexSource{ViewFastPath{}} {
   auto& table = ResolveStoreTableEntry(context, scan_entry, sdb_table);
   SetTable(table);
-  _drop_missing = true;
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   const auto& columns = table.GetColumns();
   // Store physical positions follow the facade column order minus the
@@ -208,7 +207,6 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   auto& transaction =
     duckdb::DuckTransaction::Get(context, _table->ParentCatalog());
 
-  std::vector<bool> found(count, false);
   duckdb::idx_t done = 0;
   duckdb::idx_t pkp = 0;
   while (done < count) {
@@ -235,7 +233,6 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
       }
       SDB_ASSERT(pkp < count);
       const auto caller_pos = _output_positions[pkp];
-      found[caller_pos] = true;
       for (duckdb::idx_t c = 0; c < _col_to_fetch.size(); ++c) {
         duckdb::VectorOperations::Copy(_fetch_chunk.data[_col_to_fetch[c]],
                                        _tf_target.data[c], k + 1, k,
@@ -247,23 +244,7 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   }
 
   RunCastPass(output, count);
-  if (!_drop_missing) {
-    return count;
-  }
-  duckdb::idx_t kept = 0;
-  duckdb::SelectionVector sel(count);
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    if (found[i]) {
-      sel.set_index(kept++, i);
-    }
-  }
-  if (kept != count) {
-    // Postings can be ahead of the table snapshot (search ticks commit
-    // independently); rows the transaction cannot see are filtered, not
-    // returned as NULLs.
-    output.Slice(sel, kept);
-  }
-  return kept;
+  return count;
 }
 
 }  // namespace sdb::connector

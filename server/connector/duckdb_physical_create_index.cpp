@@ -45,7 +45,6 @@
 #include "catalog/view.h"
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_column_serializer.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_search_sink_writer.h"
@@ -103,7 +102,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::vector<std::string> row_keys;
-  duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
 
   std::shared_ptr<search::InvertedIndexStorage> index_storage;
   std::shared_ptr<const catalog::Snapshot> snapshot_for_providers;
@@ -129,7 +127,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
 struct CreateIndexLocalState : public duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
-  duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
   std::vector<std::string> row_keys;
 
   ~CreateIndexLocalState() override {
@@ -179,8 +176,6 @@ duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
-  state->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
-    duckdb::BufferAllocator::Get(context));
   state->database_id = _database_id;
   state->database_name = _schema_entry.catalog.GetName();
   state->schema_name = _schema_entry.name;
@@ -473,8 +468,6 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
     inverted_storage.GetTransaction());
-  lstate->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
-    duckdb::BufferAllocator::Get(context.client));
 
   auto tokenizer_provider =
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
@@ -512,8 +505,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   }
 
   auto* writer = parallel ? lstate->writer.get() : gstate.writer.get();
-  auto* serializer =
-    parallel ? lstate->serializer.get() : gstate.serializer.get();
   auto& row_keys = parallel ? lstate->row_keys : gstate.row_keys;
 
   // Row key layout: [ObjectId][ColumnId(reserved)][PK bytes].
@@ -586,25 +577,14 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   writer->Init(num_rows, chunk);
 
   std::vector<std::string_view> view_row_keys{row_keys.begin(), row_keys.end()};
-  DuckDBColumnSerializer::NoopWriter noop;
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
       continue;
     }
 
     const ColumnDescriptor desc{col.id, col.duckdb_type};
-    if (!writer->SwitchColumn(desc, chunk.data[col.input_col_idx],
-                              view_row_keys, num_rows)) {
-      continue;
-    }
-
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(row_keys[row], col.id);
-    }
-
-    auto* writer_ptr = basics::downCast<DuckDBSinkColumnWriter>(writer);
-    serializer->WriteColumn(noop, chunk.data[col.input_col_idx], num_rows,
-                            row_keys, {&writer_ptr, 1}, desc);
+    writer->SwitchColumn(desc, chunk.data[col.input_col_idx], view_row_keys,
+                         num_rows);
   }
 
   if (auto indexed_exprs = writer->IndexedExpressions();

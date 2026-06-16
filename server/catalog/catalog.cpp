@@ -3400,9 +3400,10 @@ Result CheckTableForDrop(std::string_view bytes, ReadContext ctx) {
   return {};
 }
 
-ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
-  CatalogStore& store, ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-  ObjectId index_id, ObjectType index_type, bool is_root = false) {
+std::shared_ptr<IndexDrop> CreateIndexDrop(ObjectId db_id, ObjectId schema_id,
+                                           ObjectId table_id, ObjectId index_id,
+                                           ObjectType index_type,
+                                           bool is_root = false) {
   return std::make_shared<IndexDrop>(index_id, index_type, db_id, schema_id,
                                      table_id, is_root);
 }
@@ -3416,12 +3417,8 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(CatalogStore& store,
   auto collect_indexes = [&](ObjectType type) {
     return store.VisitBoot(
       table_id, type, [&](CatalogStore::Key key, std::string_view) {
-        auto index_drop =
-          CreateIndexDrop(store, db_id, schema_id, table_id, key.id, type);
-        if (!index_drop) {
-          return std::move(index_drop.error());
-        }
-        indexes.push_back(std::move(*index_drop));
+        indexes.push_back(
+          CreateIndexDrop(db_id, schema_id, table_id, key.id, type));
         return Result{};
       });
   };
@@ -3739,12 +3736,9 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
           return AddIndex(db_id, schema_id, table_id, index_id, type, bytes);
         }
 
-        auto drop = CreateIndexDrop(GetCatalogStore(), db_id, schema_id,
-                                    table_id, key.id, type, true);
-        if (!drop) {
-          return std::move(drop.error());
-        }
-        DropTask::Schedule(std::move(*drop)).Detach();
+        auto drop =
+          CreateIndexDrop(db_id, schema_id, table_id, key.id, type, true);
+        DropTask::Schedule(std::move(drop)).Detach();
         return {};
       });
   };

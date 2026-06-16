@@ -49,10 +49,6 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
 
   void SetTable(duckdb::TableCatalogEntry& table) { _table = &table; }
 
-  // Rows missing from the fetch are filtered out (transactional sources)
-  // instead of surfacing as NULL rows (static view captures).
-  bool _drop_missing = false;
-
   // Registers a fetch column for the table's storage index, deduplicating
   // repeats, and records the output slot mapping. Returns the column type.
   duckdb::LogicalType AddFetchColumn(const duckdb::ColumnDefinition& col);

@@ -79,6 +79,25 @@ bool ReadSegmentMeta(irs::bytes_view payload, Tick& tick,
 
 }  // namespace
 
+void SearchFlushCursors::Record(Tick tick, uint64_t packed_cursor) noexcept {
+  duckdb::lock_guard<duckdb::mutex> lock{_mutex};
+  _by_tick.insert_or_assign(tick, packed_cursor);
+}
+
+uint64_t SearchFlushCursors::CursorAtOrBelow(Tick tick) noexcept {
+  duckdb::lock_guard<duckdb::mutex> lock{_mutex};
+  auto it = _by_tick.upper_bound(tick);
+  if (it == _by_tick.begin()) {
+    return 0;
+  }
+  --it;
+  const uint64_t cursor = it->second;
+  // Entries strictly below the claimed tick can never be the highest at/below a
+  // future bound, so drop them.
+  _by_tick.erase(_by_tick.begin(), it);
+  return cursor;
+}
+
 std::filesystem::path InvertedIndexStorage::GetPath(ObjectId db_id,
                                                     ObjectId schema_id,
                                                     ObjectId table_id,
@@ -223,9 +242,9 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
       absl::big_endian::FromHost(static_cast<uint64_t>(_iceberg_snapshot_id));
     out.append(reinterpret_cast<const irs::byte_type*>(&iceberg_be),
                sizeof(iceberg_be));
-    // Durable WAL cursor: the max committed store-WAL position captured before
-    // this refresh's flush watermark (see RefreshUnsafeImpl). Recovery replays
-    // only operations past it.
+    // Durable WAL cursor: the exact store-WAL end offset of the highest batch
+    // this refresh flushed (see RefreshUnsafeImpl). Recovery replays only
+    // operations at or past it.
     uint64_t cursor_be = absl::big_endian::FromHost(_pending_wal_cursor);
     out.append(reinterpret_cast<const irs::byte_type*>(&cursor_be),
                sizeof(cursor_be));
@@ -334,6 +353,12 @@ void InvertedIndexStorage::Refresh() {
   std::ignore = RefreshUnsafe(/*wait=*/true, nullptr, code);
 }
 
+void InvertedIndexStorage::CheckpointRefresh() {
+  RefreshResult code = RefreshResult::Undefined;
+  std::ignore = RefreshUnsafe(/*wait=*/true, nullptr, code,
+                              /*for_checkpoint=*/true);
+}
+
 InvertedIndexStorage::Stats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
   SDB_ASSERT(inverted_index_snapshot);
@@ -388,9 +413,10 @@ InvertedIndexStorage::ResultWithTime InvertedIndexStorage::CompactUnsafe(
 }
 
 InvertedIndexStorage::ResultWithTime InvertedIndexStorage::RefreshUnsafe(
-  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
+  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code,
+  bool for_checkpoint) {
   auto begin = std::chrono::steady_clock::now();
-  auto result = RefreshUnsafeImpl(wait, progress, code);
+  auto result = RefreshUnsafeImpl(wait, progress, code, for_checkpoint);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
@@ -438,7 +464,8 @@ Result InvertedIndexStorage::CompactUnsafeImpl(
 }
 
 Result InvertedIndexStorage::RefreshUnsafeImpl(
-  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
+  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code,
+  bool for_checkpoint) {
   code = RefreshResult::NoChanges;
 
   try {
@@ -458,23 +485,39 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
       refresh_lock.lock();
     }
 
-    // Capture the durable WAL cursor BEFORE the flush watermark. Read the store
-    // WAL position (generation + byte offset) directly: RegisterSearchFlush (at
-    // feed time) guarantees this refresh waits for every transaction whose WAL
-    // bytes are already written, so everything at/below this offset is flushed
-    // here -> a safe durable cursor. Conservative: registered transactions with
-    // a higher offset get flushed too but aren't claimed, and the recovery
-    // boundary overlap is absorbed idempotently by FinishReplay's
-    // delete-then-insert.
-    if (auto store =
-          duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-            .GetDatabase(std::string{catalog::kStoreDatabaseName})) {
-      auto& sm = store->GetStorageManager();
-      _pending_wal_cursor = PackWalCursor(
-        sm.GetBlockManager().GetCheckpointIteration(), sm.GetWALSize());
-    }
     const auto before_refresh = TickDomain::Instance().Current();
     SDB_ASSERT(_last_durable_tick <= before_refresh);
+
+    // Capture the EXACT durable WAL cursor for the batches this refresh
+    // flushes. RefreshCommit (below) flushes every staged batch with tick <=
+    // refresh_tick
+    // (== before_refresh in the Active phase). SearchFlushCursors recorded, per
+    // settled CommitSearch and after the store WAL was durable, the WAL end
+    // offset of that commit; commits serialize, so the exact durable cursor is
+    // the entry of the highest tick at/below before_refresh.
+    //
+    // A checkpoint-driven refresh runs the moment before the checkpoint
+    // truncates the store WAL and bumps the iteration to
+    // GetCheckpointIteration()
+    // + 1. The post-checkpoint WAL starts fresh, so stamp that next generation
+    // with offset 0: the next boot loads iteration+1 and the cursor generation
+    // matches (the live iteration is still N here, but the persisted header
+    // will be N+1).
+    if (for_checkpoint) {
+      if (auto store =
+            duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
+              .GetDatabase(std::string{catalog::kStoreDatabaseName})) {
+        const auto next_gen = store->GetStorageManager()
+                                .GetBlockManager()
+                                .GetCheckpointIteration() +
+                              1;
+        _pending_wal_cursor = PackWalCursor(next_gen, 0);
+      }
+    } else if (const auto cursor =
+                 SearchFlushCursors::Instance().CursorAtOrBelow(before_refresh);
+               cursor != 0) {
+      _pending_wal_cursor = cursor;
+    }
     absl::Cleanup refresh_guard = [&, last = _last_durable_tick]() noexcept {
       _last_durable_tick = last;
     };

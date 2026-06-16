@@ -173,7 +173,6 @@ duckdb::SinkResultType SereneDBPhysicalCTAS::Sink(
   if (!gstate.appender || chunk.size() == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  chunk.Flatten();
   gstate.appender->AppendDataChunk(chunk);
   gstate.insert_count += chunk.size();
   return duckdb::SinkResultType::NEED_MORE_INPUT;

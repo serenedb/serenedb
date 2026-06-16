@@ -20,14 +20,10 @@
 
 #include "pg/pg_catalog/pg_class.h"
 
-#include <absl/strings/str_cat.h>
-
 #include <deque>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
-#include <duckdb/main/connection.hpp>
-#include <duckdb/main/database.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <string>
 

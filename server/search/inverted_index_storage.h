@@ -28,7 +28,9 @@
 #include <filesystem>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 
 #include "catalog/inverted_index.h"
@@ -126,6 +128,31 @@ inline uint64_t WalCursorOffset(uint64_t packed) noexcept {
   return packed & kWalCursorOffsetMask;
 }
 
+// Process-global map from a search commit tick to the store-WAL cursor (packed
+// gen<<40|offset) that the commit's WAL bytes end at. CommitSearch records one
+// entry per settled batch AFTER the store WAL is durable, so the recorded
+// offset is that commit's exact WAL end offset; commits serialize, so ticks and
+// WAL offsets arrive in the same order. A refresh flushes every batch with
+// tick <= before_refresh, so the exact durable cursor is the entry of the
+// highest tick at/below before_refresh -> CursorAtOrBelow. Entries strictly
+// below a stamped tick can be pruned (they can never be the highest again).
+class SearchFlushCursors {
+ public:
+  static SearchFlushCursors& Instance() noexcept {
+    static SearchFlushCursors instance;
+    return instance;
+  }
+
+  void Record(Tick tick, uint64_t packed_cursor) noexcept;
+  // Packed cursor of the highest recorded tick <= `tick`, or 0 if none. Prunes
+  // entries strictly below the returned one (they can never be selected again).
+  uint64_t CursorAtOrBelow(Tick tick) noexcept;
+
+ private:
+  duckdb::mutex _mutex;
+  std::map<Tick, uint64_t> _by_tick;
+};
+
 // Physical representation of a search index (catalog::InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
 // SearchEngine registry keyed by index_id, not in the catalog snapshot.
@@ -189,7 +216,8 @@ class InvertedIndexStorage final
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
-                               RefreshResult& code);
+                               RefreshResult& code,
+                               bool for_checkpoint = false);
 
   ResultWithTime CleanupUnsafe();
   Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
@@ -198,6 +226,11 @@ class InvertedIndexStorage final
   void ScheduleRefresh(absl::Duration delay);
 
   void Refresh();
+  // Refresh driven by the checkpoint barrier: the store WAL is about to be
+  // truncated and its iteration bumped, so the stamped durable cursor must
+  // carry the NEXT generation (offset 0), not the live one (see
+  // RefreshUnsafeImpl). Synchronous; the flag is consumed by this call.
+  void CheckpointRefresh();
 
   ObjectId GetId() const noexcept { return _index_id; }
   auto GetState() const noexcept { return _state; }
@@ -233,10 +266,10 @@ class InvertedIndexStorage final
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 
   // Durable WAL cursor (store-table WAL generation + byte offset, packed) read
-  // back from the segment meta at open. Recovery replays only operations PAST
-  // it (operations at/below are already durable in the segments). The refresh
-  // stamps it conservatively (see RefreshUnsafeImpl); the boundary overlap is
-  // absorbed idempotently by FinishReplay's delete-then-insert.
+  // back from the segment meta at open. Recovery replays only operations at or
+  // past it (operations strictly below are already durable in the segments).
+  // The refresh stamps the exact WAL end offset of the highest batch it flushed
+  // (see RefreshUnsafeImpl).
   uint64_t GetRecoveryWalCursor() const noexcept {
     return _recovery_wal_cursor;
   }
@@ -275,7 +308,7 @@ class InvertedIndexStorage final
                            bool& empty_compaction);
   Result RefreshUnsafeImpl(bool wait,
                            const irs::ProgressReportCallback& progress,
-                           RefreshResult& code);
+                           RefreshResult& code, bool for_checkpoint);
   Result CleanupUnsafeImpl();
 
   ObjectId _index_id;

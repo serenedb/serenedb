@@ -37,8 +37,6 @@ class ConnectionContext;
 
 namespace sdb::connector {
 
-class DuckDBColumnSerializer;
-
 enum class DuckDBWriteKind { Insert, Delete, Update };
 
 // Writer for ONE inverted index, identified by id -- the store-side

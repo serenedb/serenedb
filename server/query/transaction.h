@@ -80,7 +80,6 @@ class Transaction : public Config {
 
   void EraseSearchTransaction(ObjectId index_id) noexcept {
     _search_transactions.erase(index_id);
-    _search_storages.erase(index_id);
   }
 
   // Pin every staged search transaction into the iresearch flush context so a
@@ -91,9 +90,9 @@ class Transaction : public Config {
   // no-op until an active segment exists (docs staged) and idempotent after,
   // so registering all transactions each feed is safe and cheap.
   void RegisterSearchFlush() noexcept {
-    for (auto& [index_id, transaction] : _search_transactions) {
-      if (transaction) {
-        transaction->RegisterFlush();
+    for (auto& [index_id, entry] : _search_transactions) {
+      if (entry.transaction) {
+        entry.transaction->RegisterFlush();
       }
     }
   }
@@ -125,26 +124,26 @@ class Transaction : public Config {
       auto storage =
         basics::downCast<const catalog::InvertedIndex>(*index).GetData();
       SDB_ASSERT(storage);
-      _search_transactions.try_emplace(index->GetId(), nullptr);
-      auto& transaction = _search_transactions[index->GetId()];
-      if (!transaction) {
-        transaction = std::make_unique<irs::IndexWriter::Transaction>(
+      auto& entry =
+        _search_transactions.try_emplace(index->GetId()).first->second;
+      if (!entry.transaction) {
+        entry.transaction = std::make_unique<irs::IndexWriter::Transaction>(
           storage->GetTransaction());
         // Keep the storage alive and reachable for Commit() without a catalog
         // re-lookup.
-        _search_storages[index->GetId()] = storage;
+        entry.storage = storage;
       }
-      visit(*transaction, *index);
+      visit(*entry.transaction, *index);
     }
   }
 
  private:
-  containers::FlatHashMap<ObjectId,
-                          std::unique_ptr<irs::IndexWriter::Transaction>>
-    _search_transactions;
-  containers::FlatHashMap<ObjectId,
-                          std::shared_ptr<search::InvertedIndexStorage>>
-    _search_storages;
+  struct SearchTransaction {
+    std::unique_ptr<irs::IndexWriter::Transaction> transaction;
+    std::shared_ptr<search::InvertedIndexStorage> storage;
+  };
+
+  containers::FlatHashMap<ObjectId, SearchTransaction> _search_transactions;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   bool _had_query_in_transaction = false;

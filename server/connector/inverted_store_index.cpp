@@ -21,12 +21,9 @@
 #include "connector/inverted_store_index.h"
 
 #include <absl/cleanup/cleanup.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
-#include <duckdb/common/types/column/column_data_collection.hpp>
-#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block_manager.hpp>
@@ -82,17 +79,15 @@ std::string RowIdKey(ObjectId table_id, duckdb::row_t row) {
 
 }  // namespace
 
-// Accumulates the WAL-replay delta for one ApplyBufferedReplays pass, then
-// applies it in FinishReplay as TWO sequential iresearch transactions:
-//   T1 removes every touched rowid (clearing any posting iresearch already
-//      made durable ahead of the last checkpoint), then
-//   T2 inserts the buffered rows whose rowid was not subsequently deleted.
-// The remove and insert MUST be in separate transactions: removing then
-// re-inserting the same pk in one iresearch transaction suppresses the
-// insert. `final_insert`/`touched` capture last-op-wins per rowid so the
-// delta is correct under arbitrary insert/delete ordering AND under TRUNCATE
-// (which frees a rowid and lets a later insert reuse it). Resolved from the
-// GLOBAL catalog snapshot -- WAL replay / index bind run with no connection.
+// Streams the WAL-replay delta for one ApplyBufferedReplays pass into a single
+// long-lived iresearch batch, committed once in FinishReplay. Each buffered WAL
+// op is fed in order and given its own strictly-ascending sub-tick (insert ops
+// bump _queries explicitly via AdvanceQueries; tick-bound deletes bump it on
+// their own), so a Remove@t masks only the same-key docs with tick <= t. This
+// yields last-op-wins with no dedup: an UPDATE (delete then re-insert same
+// rowid) keeps the re-insert, and after TRUNCATE a delete-R@t1 followed by an
+// insert reusing R@t2>t1 keeps the insert. Resolved from the GLOBAL catalog
+// snapshot -- WAL replay / index bind run with no connection.
 struct InvertedStoreIndex::ReplaySession {
   std::shared_ptr<search::InvertedIndexStorage> storage;
   std::shared_ptr<const catalog::Snapshot> snapshot;
@@ -100,27 +95,25 @@ struct InvertedStoreIndex::ReplaySession {
   std::shared_ptr<const catalog::Table> table;
   // ApplyBufferedReplays only populates the index's referenced columns in the
   // replay chunk; the rest are empty. These are the positions/catalog-ids we
-  // buffer and feed (computed on the first ReplayAppend).
+  // feed (computed on the first ReplayAppend).
   std::vector<duckdb::idx_t> ref_positions;
   std::vector<catalog::Column::Id> ref_col_ids;
   // Scratch connection for indexed-expression deserialization/evaluation.
   duckdb::Connection expr_conn;
-  // Buffered insert rows: the referenced columns plus a trailing ROW_TYPE
-  // rowid column, in WAL order. Lazily created on the first ReplayAppend.
-  std::unique_ptr<duckdb::ColumnDataCollection> insert_buffer;
-  // Running count of rows appended to insert_buffer (global buffer index).
-  duckdb::idx_t buffered_rows = 0;
+  // The single batch every op streams into, committed once in FinishReplay.
+  irs::IndexWriter::Transaction trx;
+  // Insert/delete writers bound to `trx`. The insert writer is built lazily on
+  // the first ReplayAppend (it needs the resolved tokenizer/expr providers).
+  std::unique_ptr<DuckDBSearchSinkInsertWriter> insert_writer;
+  DuckDBSearchSinkDeleteWriter delete_writer;
+  // Count of WAL ops streamed; FinishReplay reserves this many sub-ticks so
+  // each op's tick = first_tick + op_index lands strictly above the durable
+  // tick.
+  uint64_t total_ops = 0;
   // Store-WAL byte offset (within the current generation) up to which the
-  // storage is already durable: replay ops at/below this are skipped. 0 when
-  // the persisted cursor is from a different generation or absent (replay all).
+  // storage is already durable: replay ops strictly below this are skipped. 0
+  // when the persisted cursor is from a different generation or absent.
   uint64_t durable_offset = 0;
-  // rowid -> global buffer index of its LAST insert. A delete erases the
-  // entry; a later insert overwrites it. After replay this holds exactly the
-  // rowids that should be present, each mapped to the buffer row carrying its
-  // final content -- correct even when TRUNCATE frees and reuses a rowid.
-  absl::flat_hash_map<duckdb::row_t, duckdb::idx_t> final_insert;
-  // Every rowid the delta inserted or deleted; T1 clears all of them.
-  absl::flat_hash_set<duckdb::row_t> touched;
 
   ReplaySession(std::shared_ptr<search::InvertedIndexStorage> storage_in,
                 std::shared_ptr<const catalog::Snapshot> snapshot_in,
@@ -131,7 +124,9 @@ struct InvertedStoreIndex::ReplaySession {
       snapshot{std::move(snapshot_in)},
       index{std::move(index_in)},
       table{std::move(table_in)},
-      expr_conn{db} {
+      expr_conn{db},
+      trx{storage->GetTransaction()},
+      delete_writer{trx} {
     expr_conn.BeginTransaction();
   }
 };
@@ -192,22 +187,22 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
   }
   auto& session = EnsureReplaySession();
   // Skip operations the storage already made durable before the crash: this
-  // range's WAL offset is at/below the persisted cursor. Bounds recovery to
-  // the un-durable tail. (The boundary overlap left by the conservative cursor
-  // is absorbed idempotently by FinishReplay's delete-then-insert.)
+  // range's WAL offset is strictly below the persisted cursor. Bounds recovery
+  // to the un-durable tail; an op exactly at the cursor is the first un-durable
+  // one and must be streamed.
   if (_replay_commit_offset != 0 &&
-      _replay_commit_offset <= session.durable_offset) {
+      _replay_commit_offset < session.durable_offset) {
     return;
   }
-  if (!session.insert_buffer) {
+  auto& inverted = *session.index;
+  if (!session.insert_writer) {
     // The replay chunk has one slot per non-generated-PK column but only the
-    // index's referenced columns are populated. Buffer exactly those.
+    // index's referenced columns are populated. Record exactly those positions.
     auto chunk_column_ids = TableChunkColumnIds(*session.table);
     absl::flat_hash_set<catalog::Column::Id> referenced;
-    for (auto id : session.index->GetReferencedColumnIds()) {
+    for (auto id : inverted.GetReferencedColumnIds()) {
       referenced.insert(id);
     }
-    duckdb::vector<duckdb::LogicalType> types;
     for (duckdb::idx_t pos = 0;
          pos < chunk.ColumnCount() && pos < chunk_column_ids.size(); ++pos) {
       if (!referenced.contains(chunk_column_ids[pos])) {
@@ -215,39 +210,48 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
       }
       session.ref_positions.push_back(pos);
       session.ref_col_ids.push_back(chunk_column_ids[pos]);
-      types.push_back(chunk.data[pos].GetType());
     }
-    types.push_back(duckdb::LogicalType::ROW_TYPE);
-    session.insert_buffer = std::make_unique<duckdb::ColumnDataCollection>(
-      duckdb::Allocator::DefaultAllocator(), std::move(types));
+    session.insert_writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
+      session.trx, MakeTokenizerProvider(session.snapshot, inverted),
+      inverted.GetColumnIds(), MakeEntryInfoProvider(inverted),
+      MakeIndexedExpressions(inverted, *session.expr_conn.context));
   }
-  // Record last-insert-wins per rowid, then stash the chunk + rowids; T2 in
-  // FinishReplay feeds the surviving rows. (ColumnDataCollection copies, so
-  // the source chunk may be reused after Append.)
+
   duckdb::UnifiedVectorFormat row_fmt;
   row_ids.ToUnifiedFormat(count, row_fmt);
+  std::vector<std::string> keys(count);
+  std::vector<std::string_view> key_views(count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
     auto row = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(
       row_fmt)[row_fmt.sel->get_index(i)];
-    session.final_insert[row] = session.buffered_rows + i;
-    session.touched.insert(row);
+    keys[i] = RowIdKey(_table_id, row);
+    key_views[i] = keys[i];
   }
 
-  // Copy the referenced columns (+ rowid) into an owned chunk; the source
-  // vectors are sliced/dictionary and reused on the next replay range, so
-  // ColumnDataCollection::Append needs materialized buffers.
-  duckdb::DataChunk buffered;
-  buffered.Initialize(duckdb::Allocator::DefaultAllocator(),
-                      session.insert_buffer->Types());
+  auto& ins = *session.insert_writer;
+  const auto& columns = session.table->Columns();
+  ins.Init(count, chunk);
   for (duckdb::idx_t k = 0; k < session.ref_positions.size(); ++k) {
-    duckdb::VectorOperations::Copy(chunk.data[session.ref_positions[k]],
-                                   buffered.data[k], count, 0, 0);
+    auto col_id = session.ref_col_ids[k];
+    auto it = std::ranges::find_if(
+      columns, [&](const auto& c) { return c.GetId() == col_id; });
+    if (it == columns.end()) {
+      continue;
+    }
+    const ColumnDescriptor desc{col_id, it->type};
+    ins.SwitchColumn(desc, chunk.data[session.ref_positions[k]], key_views,
+                     count);
   }
-  duckdb::VectorOperations::Copy(
-    row_ids, buffered.data[session.ref_positions.size()], count, 0, 0);
-  buffered.SetCardinality(count);
-  session.insert_buffer->Append(buffered);
-  session.buffered_rows += count;
+  if (auto indexed_exprs = ins.IndexedExpressions(); !indexed_exprs.empty()) {
+    EvaluateAndWriteIndexedExpressions(ins, indexed_exprs, chunk, _table_id,
+                                       session.ref_col_ids,
+                                       *session.expr_conn.context, count, keys);
+  }
+  ins.Finish();
+  // This op consumes one sub-tick: Insert snapshots _queries but doesn't bump
+  // it, so advance it explicitly to keep every op strictly ascending.
+  session.trx.AdvanceQueries(1);
+  ++session.total_ops;
 }
 
 void InvertedStoreIndex::ReplayDelete(duckdb::DataChunk& chunk,
@@ -259,17 +263,25 @@ void InvertedStoreIndex::ReplayDelete(duckdb::DataChunk& chunk,
   auto& session = EnsureReplaySession();
   // Skip operations already durable before the crash (see ReplayAppend).
   if (_replay_commit_offset != 0 &&
-      _replay_commit_offset <= session.durable_offset) {
+      _replay_commit_offset < session.durable_offset) {
     return;
   }
   duckdb::UnifiedVectorFormat row_fmt;
   row_ids.ToUnifiedFormat(count, row_fmt);
+  session.delete_writer.Init(count, chunk);
+  std::string key;
   for (duckdb::idx_t i = 0; i < count; ++i) {
     auto row = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(
       row_fmt)[row_fmt.sel->get_index(i)];
-    session.final_insert.erase(row);
-    session.touched.insert(row);
+    key.clear();
+    primary_key::AppendSigned(key, static_cast<int64_t>(row));
+    session.delete_writer.DeleteRow(key);
   }
+  // The tick-bound Remove records at the current sub-tick and advances _queries
+  // itself, so this op is strictly above every earlier op (masking only
+  // same-key docs at/below its tick) and strictly below every later one.
+  session.delete_writer.Finish();
+  ++session.total_ops;
 }
 
 void InvertedStoreIndex::FinishReplay() {
@@ -277,105 +289,28 @@ void InvertedStoreIndex::FinishReplay() {
     return;
   }
   auto& session = *_replay;
-  const auto rowid_col =
-    session.insert_buffer ? session.insert_buffer->ColumnCount() - 1 : 0;
-
-  // T1: remove every touched rowid (inserted and/or deleted in the delta),
-  // clearing any posting iresearch already made durable past the checkpoint.
-  {
-    auto t1 = session.storage->GetTransaction();
-    DuckDBSearchSinkDeleteWriter del{t1};
-    del.Init(1, duckdb::DataChunk{});
-    std::string key;
-    for (auto row : session.touched) {
-      key.clear();
-      primary_key::AppendSigned(key, static_cast<int64_t>(row));
-      del.DeleteRow(key);
-    }
-    del.Finish();
-    const auto ordinal = search::TickDomain::Instance().Advance(1);
-    SDB_ENSURE(t1.Commit(ordinal), ERROR_INTERNAL,
-               "inverted index replay: delete commit failed for index ",
-               _index_id.id());
+  if (session.total_ops == 0) {
+    session.expr_conn.Rollback();
+    _replay.reset();
+    return;
   }
-
-  // T2: insert each rowid's final content. A buffer row is emitted only if it
-  // is that rowid's LAST insert (final_insert) -- this drops rows superseded
-  // by a later delete or, after TRUNCATE, by a later insert reusing the rowid.
-  if (session.insert_buffer && !session.final_insert.empty()) {
-    auto t2 = session.storage->GetTransaction();
-    auto& inverted = *session.index;
-    DuckDBSearchSinkInsertWriter ins{
-      t2, MakeTokenizerProvider(session.snapshot, inverted),
-      inverted.GetColumnIds(), MakeEntryInfoProvider(inverted),
-      MakeIndexedExpressions(inverted, *session.expr_conn.context)};
-    const auto& columns = session.table->Columns();
-
-    duckdb::ColumnDataScanState scan;
-    session.insert_buffer->InitializeScan(scan);
-    duckdb::DataChunk chunk;
-    session.insert_buffer->InitializeScanChunk(chunk);
-    duckdb::idx_t global_index = 0;
-    while (session.insert_buffer->Scan(scan, chunk)) {
-      auto count = chunk.size();
-      const auto base = global_index;
-      global_index += count;
-      duckdb::UnifiedVectorFormat row_fmt;
-      chunk.data[rowid_col].ToUnifiedFormat(count, row_fmt);
-      // Keep only rows that are their rowid's final insert.
-      duckdb::SelectionVector sel(count);
-      duckdb::idx_t kept = 0;
-      std::vector<std::string> keys;
-      std::vector<std::string_view> key_views;
-      keys.reserve(count);
-      for (duckdb::idx_t i = 0; i < count; ++i) {
-        auto row = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(
-          row_fmt)[row_fmt.sel->get_index(i)];
-        auto it = session.final_insert.find(row);
-        if (it == session.final_insert.end() || it->second != base + i) {
-          continue;
-        }
-        sel.set_index(kept++, i);
-        keys.push_back(RowIdKey(_table_id, row));
-      }
-      if (kept == 0) {
-        continue;
-      }
-      if (kept != count) {
-        chunk.Slice(sel, kept);
-        count = kept;
-      }
-      key_views.reserve(keys.size());
-      for (const auto& k : keys) {
-        key_views.emplace_back(k);
-      }
-      ins.Init(count, chunk);
-      // Buffer columns are exactly the referenced columns, in ref_col_ids
-      // order (rowid is the trailing column).
-      for (duckdb::idx_t pos = 0; pos < rowid_col; ++pos) {
-        auto col_id = session.ref_col_ids[pos];
-        auto it = std::ranges::find_if(
-          columns, [&](const auto& c) { return c.GetId() == col_id; });
-        if (it == columns.end()) {
-          continue;
-        }
-        const ColumnDescriptor desc{col_id, it->type};
-        ins.SwitchColumn(desc, chunk.data[pos], key_views, count);
-      }
-      if (auto indexed_exprs = ins.IndexedExpressions();
-          !indexed_exprs.empty()) {
-        EvaluateAndWriteIndexedExpressions(
-          ins, indexed_exprs, chunk, _table_id, session.ref_col_ids,
-          *session.expr_conn.context, count, keys);
-      }
-      ins.Finish();
-    }
-    const auto ordinal = search::TickDomain::Instance().Advance(1);
-    SDB_ENSURE(t2.Commit(ordinal), ERROR_INTERNAL,
-               "inverted index replay: insert commit failed for index ",
-               _index_id.id());
-  }
-
+  // Per-op tick = first_tick + op_index, with first_tick == last_tick -
+  // total_ops landing strictly above the durable recovery tick (seeded into the
+  // TickDomain at boot).
+  const auto last_tick =
+    search::TickDomain::Instance().Advance(session.total_ops);
+  SDB_ENSURE(session.trx.Commit(last_tick), ERROR_INTERNAL,
+             "inverted index replay: commit failed for index ", _index_id.id());
+  // The whole replayed tail is durable in the store WAL, so the post-recovery
+  // Refresh can claim it: record the current WAL end offset against this commit
+  // tick (the same bookkeeping CommitSearch does for the live path). Without
+  // this, a refresh after recovery would not advance the durable cursor and a
+  // later crash would re-replay the already-recovered tail.
+  auto& sm = db.GetStorageManager();
+  search::SearchFlushCursors::Instance().Record(
+    last_tick,
+    search::PackWalCursor(sm.GetBlockManager().GetCheckpointIteration(),
+                          sm.GetWALSize()));
   session.expr_conn.Rollback();
   _replay.reset();
 }
@@ -571,7 +506,10 @@ void InvertedStoreIndex::CheckpointBarrier() const {
              _index_id.id(),
              " is out of sync with its store table; refusing to checkpoint "
              "(WAL retained for replay; REINDEX to clear)");
-  storage->Refresh();
+  // The checkpoint will truncate the store WAL and bump its iteration; stamp
+  // the post-checkpoint generation so the next boot's cursor generation
+  // matches.
+  storage->CheckpointRefresh();
 }
 
 duckdb::IndexStorageInfo InvertedStoreIndex::SerializeToDisk(

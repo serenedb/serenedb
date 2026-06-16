@@ -20,8 +20,6 @@
 
 #include "filter_optimizer.hpp"
 
-#include <absl/container/inlined_vector.h>
-
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/optimizer/boolean_rules.hpp"
@@ -42,71 +40,40 @@ Registry& OptimizationRules() {
   return gRules;
 }
 
-Registry& LoweringRules() {
-  static Registry gRules;
-  return gRules;
-}
-
-bool RunRule(Filter::ptr& slot, const OptimizeContext& ctx,
-             const Registry& rules) {
-  const auto it = rules.find(slot->type());
-  if (it == rules.end()) {
-    return false;
-  }
-  for (const auto& rule : it->second) {
-    if (rule.apply(slot, ctx)) {
-      SDB_ASSERT(slot);
-      return true;
-    }
-  }
-  return false;
-}
-
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
   bool changed = true;
   const auto& optimizations = OptimizationRules();
-  const auto& lowering = LoweringRules();
-  do {
-    changed = RunRule(slot, ctx, optimizations) || RunRule(slot, ctx, lowering);
-  } while (changed);
-}
-
-void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
-  struct Frame {
-    Filter::ptr* slot;
-    bool children_visited;
-  };
-
-  absl::InlinedVector<Frame, 16> stack;
-  stack.emplace_back(&root, false);
-  while (!stack.empty()) {
-    auto& frame = stack.back();
-    if (frame.children_visited) {
-      RunRules(*frame.slot, ctx);
-      stack.pop_back();
-      continue;
+  while (changed) {
+    const auto it = optimizations.find(slot->type());
+    changed = false;
+    if (it == optimizations.end()) {
+      return;
     }
-    frame.children_visited = true;
-    for (auto& child : (**frame.slot).GetChildren()) {
-      if (child) {
-        stack.emplace_back(&child, false);
+    for (const auto& rule : it->second) {
+      if (rule.apply(slot, ctx)) {
+        SDB_ASSERT(slot);
+        changed = true;
+        break;
       }
     }
   }
 }
 
+void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
+  PostOrder(root, [&](Filter::ptr& slot) { RunRules(slot, ctx); });
+}
+
 }  // namespace
 
 void RegisterRule(RuleDesc rule) {
-  auto& registry =
-    rule.kind == RuleKind::Lowering ? LoweringRules() : OptimizationRules();
+  auto& registry = OptimizationRules();
   for (const auto tid : rule.targets) {
     registry[tid].push_back(rule);
   }
 }
 
 void InitOptimizeRules() {
-  SDB_ASSERT(OptimizationRules().empty() && LoweringRules().empty());
+  SDB_ASSERT(OptimizationRules().empty());
   optimizer::InitBooleanRules();
   optimizer::InitNegationRules();
   optimizer::InitTermsRules();
@@ -120,6 +87,7 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
     return;
   }
   RunPass(root, ctx);
+  optimizer::LowerAutomatons(root, ctx);
 }
 
 }  // namespace irs

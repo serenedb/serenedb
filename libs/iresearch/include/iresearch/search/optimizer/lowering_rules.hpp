@@ -20,8 +20,12 @@
 
 #pragma once
 
+#include "iresearch/search/filter_optimizer.hpp"
+
 namespace irs::optimizer {
 
 void InitLoweringRules();
+
+void LowerAutomatons(Filter::ptr& root, const OptimizeContext& ctx);
 
 }  // namespace irs::optimizer

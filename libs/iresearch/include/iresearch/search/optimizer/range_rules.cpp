@@ -208,8 +208,10 @@ bool GranularRangeDegenerateRule::Apply(Filter::ptr& slot,
   return true;
 }
 
-bool AndRangeMergeRule::Apply(Filter::ptr& slot,
-                              const OptimizeContext& /*ctx*/) {
+bool AndRangeMergeRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
+  if (ctx.scorer != nullptr) {
+    return false;
+  }
   auto& node = sdb::basics::downCast<And>(*slot);
   if (node.size() < 2) {
     return false;

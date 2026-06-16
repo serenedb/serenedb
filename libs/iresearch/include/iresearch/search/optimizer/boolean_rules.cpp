@@ -186,6 +186,7 @@ bool Flatten(T& node) {
 
 template<typename T>
 std::pair<size_t, score_t> CountAllDocs(const T& node) {
+  SDB_ASSERT(node.merge_type() == ScoreMergeType::Sum);
   size_t count = 0;
   score_t boost = 0.F;
   for (const auto& child : node) {
@@ -323,7 +324,7 @@ bool AndAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     slot = node.MakeAllDocsFilter(node.Boost() * all_boost);
     return true;
   }
-  if (node.size() - all_count == 1) {
+  if (ctx.scorer == nullptr && node.size() - all_count == 1) {
     auto& children = node.mutable_filters();
     const auto it = absl::c_find_if(
       children, [](const auto& child) { return !IsAllDocs(*child); });

@@ -51,9 +51,9 @@ bool ImpliesPrefix(const Filter& child, field_id field, bytes_view prefix) {
   if (child.type() != Type<ByEditDistance>::id()) {
     return false;
   }
-  const auto& edit = sdb::basics::downCast<ByEditDistance>(child);
-  return edit.field_id() == field &&
-         bytes_view{edit.options().prefix}.starts_with(prefix);
+  const auto& filter = sdb::basics::downCast<ByEditDistance>(child);
+  return filter.field_id() == field &&
+         bytes_view{filter.options().prefix}.starts_with(prefix);
 }
 
 bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
@@ -77,29 +77,29 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
     if (child->type() != Type<ByEditDistance>::id()) {
       continue;
     }
-    auto& edit = sdb::basics::downCast<ByEditDistance>(*child);
-    auto& opts = *edit.mutable_options();
-    bstring full_target;
-    full_target.reserve(opts.prefix.size() + opts.term.size());
-    full_target += opts.prefix;
-    full_target += opts.term;
+    auto& filter = sdb::basics::downCast<ByEditDistance>(*child);
+    auto& opts = *filter.mutable_options();
+
+    bstring target = opts.prefix;
+    target += opts.term;
 
     const PrefixEntry* best = nullptr;
     for (const auto& entry : prefixes) {
-      if (entry.field != edit.field_id() ||
-          entry.term.size() < opts.prefix.size() ||
-          !bytes_view{full_target}.starts_with(entry.term)) {
+      if (entry.field != filter.field_id() ||
+          entry.term.size() <= opts.prefix.size() ||
+          !bytes_view{target}.starts_with(entry.term)) {
         continue;
       }
       if (best == nullptr || entry.term.size() > best->term.size()) {
         best = &entry;
       }
     }
-    if (best == nullptr || bytes_view{opts.prefix} == best->term) {
+    if (best == nullptr) {
       continue;
     }
-    opts.term = full_target.substr(best->term.size());
-    opts.prefix.assign(best->term);
+
+    opts.prefix.assign(target, 0, best->term.size());
+    opts.term.assign(target, best->term.size());
     changed = true;
   }
 

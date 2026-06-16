@@ -69,6 +69,7 @@ bool NotSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   Filter::ptr* inner = &slot;
   while ((*inner)->type() == Type<Not>::id()) {
     auto& node = sdb::basics::downCast<Not>(**inner);
+    SDB_ASSERT(node.Boost() == kNoBoost);
     if (!node.mutable_filter()) {
       return false;
     }

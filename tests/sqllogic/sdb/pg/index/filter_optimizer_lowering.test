@@ -368,3 +368,210 @@ query
 SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('xyz'), ts_levenshtein('alpha', 1)]) ORDER BY id;
 ----
 id
+
+# A longer prefix extends an edit-distance that already pins a shorter prefix;
+# the STARTS_WITH folds in, leaving a single LEVENSHTEIN_AUTOMATON.
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alp'), ts_levenshtein('lpha', 1, false, 'a')]);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││LEVENSHTEIN_AU...  ││  │
+│  ││    ────────────   ││  │
+│  ││   name(string)    ││  │
+│  ││ 'alpha' max_terms ││  │
+│  ││       =1024       ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alp'), ts_levenshtein('lpha', 1, false, 'a')]) ORDER BY id;
+----
+id
+1
+
+# Several edit-distance siblings share one prefix; it pins into each and the now
+# redundant STARTS_WITH is removed, leaving an AND of two LEVENSHTEIN_AUTOMATON.
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1), ts_levenshtein('alpino', 1)]);
+----
+QUERY PLAN
+┌─────────────────────────────────────────────┐
+│                IRESEARCH_SCAN               │
+│    ──────────────────────────────────────   │
+│              Index: fo_low_idx              │
+│               Lookup: rocksdb               │
+│                                             │
+│                   Filter:                   │
+│ ┌──────────────────────────────────────────┐│
+│ │┌───────────────────┐                     ││
+│ ││        AND        ├──────────┐          ││
+│ │└─────────┬─────────┘          │          ││
+│ │┌─────────┴─────────┐┌─────────┴─────────┐││
+│ ││LEVENSHTEIN_AU...  ││LEVENSHTEIN_AU...  │││
+│ ││    ────────────   ││    ────────────   │││
+│ ││   name(string)    ││   name(string)    │││
+│ ││ 'alpha' max_terms ││ 'alpino' max_terms│││
+│ ││       =1024       ││       =1024       │││
+│ │└───────────────────┘└───────────────────┘││
+│ └──────────────────────────────────────────┘│
+│                                             │
+│               Projections: id               │
+│                                             │
+│                    ~1 row                   │
+└─────────────────────────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('be'), ts_levenshtein('alpha', 1), ts_levenshtein('alpino', 1), ts_starts_with('al'), ts_levenshtein('beta', 1)]);
+----
+QUERY PLAN
+┌─────────────────────────────────────────────────────────────────┐
+│                          IRESEARCH_SCAN                         │
+│    ──────────────────────────────────────────────────────────   │
+│                        Index: fo_low_idx                        │
+│                         Lookup: rocksdb                         │
+│                                                                 │
+│                             Filter:                             │
+│┌───────────────────────────────────────────────────────────────┐│
+││┌───────────────────┐                                          ││
+│││        AND        ├──────────┬────────────────────┐          ││
+││└─────────┬─────────┘          │                    │          ││
+││┌─────────┴─────────┐┌─────────┴─────────┐┌─────────┴─────────┐││
+│││LEVENSHTEIN_AU...  ││LEVENSHTEIN_AU...  ││LEVENSHTEIN_AU...  │││
+│││    ────────────   ││    ────────────   ││    ────────────   │││
+│││   name(string)    ││   name(string)    ││ name(string) 'beta│││
+│││ 'alpha' max_terms ││ 'alpino' max_terms││  ' max_terms=1024 │││
+│││       =1024       ││       =1024       ││                   │││
+││└───────────────────┘└───────────────────┘└───────────────────┘││
+│└───────────────────────────────────────────────────────────────┘│
+│                                                                 │
+│                         Projections: id                         │
+│                                                                 │
+│                              ~1 row                             │
+└─────────────────────────────────────────────────────────────────┘
+
+
+query
+SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('al'), ts_levenshtein('alpha', 1), ts_levenshtein('alpino', 1)]) ORDER BY id;
+----
+id
+
+# A distance-0 edit-distance lowers to a Term before the prefix rule runs, so it
+# is not folded; the STARTS_WITH stays a separate AND clause.
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alp'), ts_levenshtein('alpha', 0)]);
+----
+QUERY PLAN
+┌─────────────────────────────────────────────┐
+│                IRESEARCH_SCAN               │
+│    ──────────────────────────────────────   │
+│              Index: fo_low_idx              │
+│               Lookup: rocksdb               │
+│                                             │
+│                   Filter:                   │
+│ ┌──────────────────────────────────────────┐│
+│ │┌───────────────────┐                     ││
+│ ││        AND        ├──────────┐          ││
+│ │└─────────┬─────────┘          │          ││
+│ │┌─────────┴─────────┐┌─────────┴─────────┐││
+│ ││    STARTS_WITH    ││        Term       │││
+│ ││    ────────────   ││    ────────────   │││
+│ ││ name(string) 'alp'││   name(string) =  │││
+│ ││     limit=1024    ││        alpha      │││
+│ │└───────────────────┘└───────────────────┘││
+│ └──────────────────────────────────────────┘│
+│                                             │
+│               Projections: id               │
+│                                             │
+│                    ~1 row                   │
+└─────────────────────────────────────────────┘
+
+query
+SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alp'), ts_levenshtein('alpha', 0)]) ORDER BY id;
+----
+id
+1
+
+# A prefix longer than the target is not a prefix of it; nothing folds and the
+# STARTS_WITH stays a separate AND clause.
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alphab'), ts_levenshtein('alpha', 1)]);
+----
+QUERY PLAN
+┌─────────────────────────────────────────────┐
+│                IRESEARCH_SCAN               │
+│    ──────────────────────────────────────   │
+│              Index: fo_low_idx              │
+│               Lookup: rocksdb               │
+│                                             │
+│                   Filter:                   │
+│ ┌──────────────────────────────────────────┐│
+│ │┌───────────────────┐                     ││
+│ ││        AND        ├──────────┐          ││
+│ │└─────────┬─────────┘          │          ││
+│ │┌─────────┴─────────┐┌─────────┴─────────┐││
+│ ││    STARTS_WITH    ││LEVENSHTEIN_AU...  │││
+│ ││    ────────────   ││    ────────────   │││
+│ ││   name(string)    ││   name(string)    │││
+│ ││'alphab' limit=1024││ 'alpha' max_terms │││
+│ ││                   ││       =1024       │││
+│ │└───────────────────┘└───────────────────┘││
+│ └──────────────────────────────────────────┘│
+│                                             │
+│               Projections: id               │
+│                                             │
+│                    ~1 row                   │
+└─────────────────────────────────────────────┘
+
+query
+SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('alphab'), ts_levenshtein('alpha', 1)]) ORDER BY id;
+----
+id
+
+# Multiple prefixes of the same target: the longest pins into the edit-distance
+# and every redundant STARTS_WITH is removed.
+query
+EXPLAIN SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('al'), ts_starts_with('alp'), ts_levenshtein('alpha', 1)]);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_low_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││LEVENSHTEIN_AU...  ││  │
+│  ││    ────────────   ││  │
+│  ││   name(string)    ││  │
+│  ││ 'alpha' max_terms ││  │
+│  ││       =1024       ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘
+
+query
+SELECT id FROM fo_low_idx WHERE name @@ ts_all([ts_starts_with('al'), ts_starts_with('alp'), ts_levenshtein('alpha', 1)]) ORDER BY id;
+----
+id
+1

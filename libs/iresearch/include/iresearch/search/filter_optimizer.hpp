@@ -20,11 +20,14 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
+
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include "iresearch/search/filter.hpp"
 
@@ -34,13 +37,35 @@ struct OptimizeContext {
   const Scorer* scorer = nullptr;
 };
 
-enum class RuleKind : uint8_t { Optimization, Lowering };
+template<typename Visit>
+void PostOrder(Filter::ptr& root, Visit&& visit) {
+  struct Frame {
+    Filter::ptr* slot;
+    bool children_visited;
+  };
+
+  absl::InlinedVector<Frame, 16> stack;
+  stack.emplace_back(&root, false);
+  while (!stack.empty()) {
+    auto& frame = stack.back();
+    if (frame.children_visited) {
+      visit(*frame.slot);
+      stack.pop_back();
+      continue;
+    }
+    frame.children_visited = true;
+    for (auto& child : (**frame.slot).GetChildren()) {
+      if (child) {
+        stack.emplace_back(&child, false);
+      }
+    }
+  }
+}
 
 struct RuleDesc {
   std::string_view name;
   std::span<const TypeInfo::type_id> targets;
   bool (*apply)(Filter::ptr& slot, const OptimizeContext& ctx);
-  RuleKind kind = RuleKind::Optimization;
 };
 
 template<typename Rule>
@@ -53,20 +78,11 @@ concept RuleLike = requires {
   } -> std::convertible_to<bool (*)(Filter::ptr&, const OptimizeContext&)>;
 };
 
-template<typename Rule>
-consteval RuleKind RuleKindOf() {
-  if constexpr (requires { Rule::kKind; }) {
-    return Rule::kKind;
-  } else {
-    return RuleKind::Optimization;
-  }
-}
-
 void RegisterRule(RuleDesc rule);
 
-template<RuleLike Rule, RuleKind Kind = RuleKind::Optimization>
+template<RuleLike Rule>
 void RegisterRule() {
-  auto r = RuleDesc{Rule::kName, Rule::kTargets, &Rule::Apply, Kind};
+  auto r = RuleDesc{Rule::kName, Rule::kTargets, &Rule::Apply};
   RegisterRule(std::move(r));
 }
 

@@ -28,6 +28,7 @@
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/ngram_similarity_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
+#include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -37,24 +38,24 @@
 namespace irs::optimizer {
 namespace {
 
-struct WildcardLowerRule {
-  static constexpr std::string_view kName = "wildcard_lower";
+struct WildcardSimplifyRule {
+  static constexpr std::string_view kName = "wildcard_simplify";
   static constexpr std::array kTargets{Type<ByWildcard>::id()};
   static constexpr bool kEnable = true;
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
 };
 
-struct RegexpLowerRule {
-  static constexpr std::string_view kName = "regexp_lower";
+struct RegexpSimplifyRule {
+  static constexpr std::string_view kName = "regexp_simplify";
   static constexpr std::array kTargets{Type<ByRegexp>::id()};
   static constexpr bool kEnable = true;
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
 };
 
-struct EditDistanceLowerRule {
-  static constexpr std::string_view kName = "edit_distance_lower";
+struct EditDistanceSimplifyRule {
+  static constexpr std::string_view kName = "edit_distance_simplify";
   static constexpr std::array kTargets{Type<ByEditDistance>::id()};
   static constexpr bool kEnable = true;
 
@@ -63,6 +64,14 @@ struct EditDistanceLowerRule {
 
 struct PhraseLowerRule {
   static constexpr std::string_view kName = "phrase_lower";
+  static constexpr std::array kTargets{Type<ByPhrase>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct PhraseSimplifyRule {
+  static constexpr std::string_view kName = "phrase_simplify";
   static constexpr std::array kTargets{Type<ByPhrase>::id()};
   static constexpr bool kEnable = true;
 
@@ -79,31 +88,100 @@ struct NGramSimilarityLowerRule {
 
 }  // namespace
 
-bool WildcardLowerRule::Apply(Filter::ptr& slot,
-                              const OptimizeContext& /*ctx*/) {
+bool WildcardSimplifyRule::Apply(Filter::ptr& slot,
+                                 const OptimizeContext& /*ctx*/) {
   auto& node = sdb::basics::downCast<ByWildcard>(*slot);
-  slot = LowerWildcard(node.field_id(), node.options().term,
-                       node.options().scored_terms_limit, node.Boost());
+  bstring buf;
+  auto lowered = ExecuteWildcard(
+    buf, node.options().term,
+    [&](bytes_view term) -> Filter::ptr {
+      auto filter = std::make_unique<ByTerm>();
+      *filter->mutable_field_id() = node.field_id();
+      filter->mutable_options()->term = term;
+      filter->boost(node.Boost());
+      return filter;
+    },
+    [&](bytes_view term) -> Filter::ptr {
+      auto filter = std::make_unique<ByPrefix>();
+      *filter->mutable_field_id() = node.field_id();
+      filter->mutable_options()->term = term;
+      filter->mutable_options()->scored_terms_limit =
+        node.options().scored_terms_limit;
+      filter->boost(node.Boost());
+      return filter;
+    },
+    [](bytes_view) -> Filter::ptr { return nullptr; });
+  if (lowered == nullptr) {
+    return false;
+  }
+  slot = std::move(lowered);
   return true;
 }
 
-bool RegexpLowerRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
+bool RegexpSimplifyRule::Apply(Filter::ptr& slot,
+                               const OptimizeContext& /*ctx*/) {
   auto& node = sdb::basics::downCast<ByRegexp>(*slot);
-  slot =
-    LowerRegexp(node.field_id(), node.options().pattern, node.options().syntax,
-                node.options().scored_terms_limit, node.Boost());
+  bstring buf;
+  auto lowered = ExecuteRegexp(
+    buf, node.options().pattern,
+    [&](bytes_view term) -> Filter::ptr {
+      auto filter = std::make_unique<ByTerm>();
+      *filter->mutable_field_id() = node.field_id();
+      filter->mutable_options()->term = term;
+      filter->boost(node.Boost());
+      return filter;
+    },
+    [&](bytes_view prefix) -> Filter::ptr {
+      auto filter = std::make_unique<ByPrefix>();
+      *filter->mutable_field_id() = node.field_id();
+      filter->mutable_options()->term = prefix;
+      filter->mutable_options()->scored_terms_limit =
+        node.options().scored_terms_limit;
+      filter->boost(node.Boost());
+      return filter;
+    },
+    [](bytes_view) -> Filter::ptr { return nullptr; });
+  if (lowered == nullptr) {
+    return false;
+  }
+  slot = std::move(lowered);
   return true;
 }
 
-bool EditDistanceLowerRule::Apply(Filter::ptr& slot,
-                                  const OptimizeContext& /*ctx*/) {
+bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
+                                     const OptimizeContext& /*ctx*/) {
   auto& node = sdb::basics::downCast<ByEditDistance>(*slot);
-  slot = LowerLevenshtein(node.field_id(), node.options(), node.Boost());
+  const auto& opts = node.options();
+  if (opts.max_distance != 0) {
+    return false;
+  }
+  auto filter = std::make_unique<ByTerm>();
+  *filter->mutable_field_id() = node.field_id();
+  auto& target = filter->mutable_options()->term;
+  target.reserve(opts.prefix.size() + opts.term.size());
+  target += opts.prefix;
+  target += opts.term;
+  filter->boost(node.Boost());
+  slot = std::move(filter);
   return true;
 }
 
 bool PhraseLowerRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   return sdb::basics::downCast<ByPhrase>(*slot).mutable_options()->LowerParts();
+}
+
+bool PhraseSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
+  auto& phrase = sdb::basics::downCast<ByPhrase>(*slot);
+  if (!phrase.options().simple() || phrase.options().size() != 1) {
+    return false;
+  }
+  auto term = std::make_unique<ByTerm>();
+  *term->mutable_field_id() = phrase.field_id();
+  *term->mutable_options() =
+    std::move(std::get<ByTermOptions>(phrase.mutable_options()->begin()->part));
+  term->boost(phrase.Boost());
+  slot = std::move(term);
+  return true;
 }
 
 bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
@@ -147,11 +225,40 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
 }
 
 void InitLoweringRules() {
-  RegisterRule<WildcardLowerRule, RuleKind::Lowering>();
-  RegisterRule<RegexpLowerRule, RuleKind::Lowering>();
-  RegisterRule<EditDistanceLowerRule, RuleKind::Lowering>();
-  RegisterRule<PhraseLowerRule, RuleKind::Lowering>();
-  RegisterRule<NGramSimilarityLowerRule, RuleKind::Lowering>();
+  RegisterRule<WildcardSimplifyRule>();
+  RegisterRule<RegexpSimplifyRule>();
+  RegisterRule<EditDistanceSimplifyRule>();
+  RegisterRule<PhraseLowerRule>();
+  RegisterRule<PhraseSimplifyRule>();
+  RegisterRule<NGramSimilarityLowerRule>();
+}
+
+namespace {
+
+void LowerNode(Filter::ptr& slot) {
+  const auto type = slot->type();
+  if (type == Type<ByWildcard>::id()) {
+    auto& node = sdb::basics::downCast<ByWildcard>(*slot);
+    slot = LowerWildcard(node.field_id(), node.options().term,
+                         node.options().scored_terms_limit, node.Boost());
+  } else if (type == Type<ByRegexp>::id()) {
+    auto& node = sdb::basics::downCast<ByRegexp>(*slot);
+    slot = LowerRegexp(node.field_id(), node.options().pattern,
+                       node.options().syntax, node.options().scored_terms_limit,
+                       node.Boost());
+  } else if (type == Type<ByEditDistance>::id()) {
+    auto& node = sdb::basics::downCast<ByEditDistance>(*slot);
+    slot = LowerLevenshtein(node.field_id(), node.options(), node.Boost());
+  }
+}
+
+}  // namespace
+
+void LowerAutomatons(Filter::ptr& root, const OptimizeContext& /*ctx*/) {
+  if (root == nullptr) {
+    return;
+  }
+  PostOrder(root, [](Filter::ptr& slot) { LowerNode(slot); });
 }
 
 }  // namespace irs::optimizer

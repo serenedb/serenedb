@@ -118,9 +118,10 @@ void Transaction::CommitSearch() noexcept {
 }
 
 Result Transaction::Commit() {
-  // Normally already settled inside the engine commit (TransactionFlushChanges,
-  // before the in-commit checkpoint); this is a no-op then, and the fallback
-  // for transactions that did not commit the store database.
+  // Normally already settled inside the engine commit
+  // (TransactionPreCheckpoint, before the in-commit checkpoint); this is a
+  // no-op then, and the fallback for transactions that did not commit the store
+  // database.
   CommitSearch();
   Destroy();
 

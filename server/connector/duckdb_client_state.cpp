@@ -206,8 +206,8 @@ void SereneDBClientState::TransactionPreCommit(
   tls_committing_ctx = _connection_ctx.get();
 }
 
-void SereneDBClientState::TransactionFlushChanges(duckdb::AttachedDatabase& db,
-                                                  duckdb::ClientContext&) {
+void SereneDBClientState::TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
+                                                   duckdb::ClientContext&) {
   // Commit the search-index leg synchronously with the store table changes:
   // this fires after the store database's changes are durable but before the
   // in-commit checkpoint, so the checkpoint's force-refresh never waits on an

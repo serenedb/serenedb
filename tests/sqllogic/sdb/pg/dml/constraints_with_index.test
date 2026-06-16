@@ -60,6 +60,32 @@ statement ok
 DROP TABLE cwi_con;
 
 
+# --- CHECK referencing a function is bound facade-side (engine-supplied) and
+# has no parsed counterpart on the store table, yet is enforced on insert ---
+
+
+statement ok
+CREATE TABLE cwi_fncheck(a INTEGER PRIMARY KEY, body TEXT CHECK (length(body) > 2));
+
+
+statement ok
+CREATE INDEX cwi_fncheck_inv ON cwi_fncheck USING inverted(body cwi_dict);
+
+
+statement count 1
+INSERT INTO cwi_fncheck VALUES (1, 'okay');
+
+
+statement error
+INSERT INTO cwi_fncheck VALUES (2, 'no');
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+statement ok
+DROP TABLE cwi_fncheck;
+
+
 # --- UNIQUE secondary index alongside the inverted index ---
 
 

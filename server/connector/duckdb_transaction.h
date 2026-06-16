@@ -45,7 +45,7 @@ class SereneDBTransaction final : public duckdb::Transaction {
 
 class SereneDBTransactionManager final : public duckdb::TransactionManager {
  public:
-  bool IsTransactionShell() const final { return true; }
+  bool ForwardWrites() const final { return true; }
   explicit SereneDBTransactionManager(duckdb::AttachedDatabase& db);
 
   duckdb::Transaction& StartTransaction(duckdb::ClientContext& context) final;

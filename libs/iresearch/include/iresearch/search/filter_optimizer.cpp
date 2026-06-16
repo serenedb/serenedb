@@ -47,27 +47,31 @@ Registry& LoweringRules() {
   return gRules;
 }
 
-void RunRules(Filter::ptr& slot, const OptimizeContext& ctx,
-              const Registry& rules) {
-  bool changed = true;
-  while (changed) {
-    changed = false;
-    const auto it = rules.find(slot->type());
-    if (it == rules.end()) {
-      break;
-    }
-    for (const auto& rule : it->second) {
-      if (rule.apply(slot, ctx)) {
-        SDB_ASSERT(slot != nullptr);
-        changed = true;
-        break;
-      }
+bool RunRule(Filter::ptr& slot, const OptimizeContext& ctx,
+             const Registry& rules) {
+  const auto it = rules.find(slot->type());
+  if (it == rules.end()) {
+    return false;
+  }
+  for (const auto& rule : it->second) {
+    if (rule.apply(slot, ctx)) {
+      SDB_ASSERT(slot);
+      return true;
     }
   }
+  return false;
 }
 
-void RunPass(Filter::ptr& root, const OptimizeContext& ctx,
-             const Registry& rules) {
+void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
+  bool changed = true;
+  const auto& optimizations = OptimizationRules();
+  const auto& lowering = LoweringRules();
+  do {
+    changed = RunRule(slot, ctx, optimizations) || RunRule(slot, ctx, lowering);
+  } while (changed);
+}
+
+void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
   struct Frame {
     Filter::ptr* slot;
     bool children_visited;
@@ -78,7 +82,7 @@ void RunPass(Filter::ptr& root, const OptimizeContext& ctx,
   while (!stack.empty()) {
     auto& frame = stack.back();
     if (frame.children_visited) {
-      RunRules(*frame.slot, ctx, rules);
+      RunRules(*frame.slot, ctx);
       stack.pop_back();
       continue;
     }
@@ -115,8 +119,7 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
   if (!root) {
     return;
   }
-  RunPass(root, ctx, OptimizationRules());
-  RunPass(root, ctx, LoweringRules());
+  RunPass(root, ctx);
 }
 
 }  // namespace irs

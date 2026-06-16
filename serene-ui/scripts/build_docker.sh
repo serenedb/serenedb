@@ -104,14 +104,14 @@ if [ "$PUSH_IMAGE_TO_REGISTRY" = true ]; then
 	done
 
 	# Create and push multi-arch manifests
-	echo ">>> Creating multi-arch manifests..."
+	echo ">>> Creating multi-arch manifests for: ${ALL_TAGS[*]}"
+	TAG_ARGS=()
 	for tag in "${ALL_TAGS[@]}"; do
-		docker manifest create --amend "${FULL_IMAGE_NAME}:${tag}" \
-			"${FULL_IMAGE_NAME}:${DOCKER_TAG}-amd64" \
-			"${FULL_IMAGE_NAME}:${DOCKER_TAG}-arm64"
-		docker manifest push "${FULL_IMAGE_NAME}:${tag}"
-		echo ">>> Pushed ${FULL_IMAGE_NAME}:${tag}"
+		TAG_ARGS+=(-t "${FULL_IMAGE_NAME}:${tag}")
 	done
+	docker buildx imagetools create "${TAG_ARGS[@]}" \
+		"${FULL_IMAGE_NAME}:${DOCKER_TAG}-amd64" \
+		"${FULL_IMAGE_NAME}:${DOCKER_TAG}-arm64"
 
 	# Cleanup arch-specific images
 	for arch in amd64 arm64; do

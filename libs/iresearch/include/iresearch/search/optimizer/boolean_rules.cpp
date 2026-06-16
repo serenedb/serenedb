@@ -184,15 +184,29 @@ bool Flatten(T& node) {
   return true;
 }
 
+void MergeBoost(score_t& boost, score_t other, ScoreMergeType type) {
+  switch (type) {
+    case irs::ScoreMergeType::Sum:
+      boost += other;
+      break;
+    case irs::ScoreMergeType::Max:
+      boost = std::max(boost, other);
+      break;
+    case irs::ScoreMergeType::Noop:
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
 template<typename T>
 std::pair<size_t, score_t> CountAllDocs(const T& node) {
-  SDB_ASSERT(node.merge_type() == ScoreMergeType::Sum);
   size_t count = 0;
   score_t boost = 0.F;
   for (const auto& child : node) {
     if (IsAllDocs(*child)) {
       ++count;
-      boost += child->BoostImpl();
+      MergeBoost(boost, child->BoostImpl(), node.merge_type());
     }
   }
   return {count, boost};
@@ -297,9 +311,7 @@ bool AndEmptyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
 
 bool OrEmptyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   auto& node = sdb::basics::downCast<Or>(*slot);
-  if (node.min_match_count() == 0) {
-    return false;
-  }
+  SDB_ASSERT(node.min_match_count());
   auto& children = node.mutable_filters();
   const auto it = std::remove_if(
     children.begin(), children.end(),
@@ -346,9 +358,7 @@ bool AndAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
 bool OrAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& node = sdb::basics::downCast<Or>(*slot);
   const auto min_match = node.min_match_count();
-  if (min_match == 0) {
-    return false;
-  }
+  SDB_ASSERT(min_match);
   const auto [all_count, all_boost] = CountAllDocs(node);
   if (all_count == 0) {
     return false;

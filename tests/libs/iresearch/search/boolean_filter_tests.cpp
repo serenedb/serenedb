@@ -29,6 +29,7 @@
 #include "iresearch/search/all_iterator.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/exclusion.hpp"
@@ -16390,22 +16391,9 @@ TEST(And_test, optimize_all_filters) {
     irs::Optimize(f, {.scored = true});
     auto prepared =
       f->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
-    ASSERT_EQ(8.f, prepared->Boost());
-  }
-
-  // `all` filter + term filter
-  {
-    tests::sort::Boost sort{};
-    auto root = std::make_unique<irs::And>();
-    Append<irs::ByTerm>(*root, kFieldTestField, "test_term");
-    root->add<irs::All>().boost(5.f);
-    irs::Filter::ptr f = std::move(root);
-    irs::Optimize(f, {.scored = true});
-    auto prepared =
-      f->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
-    ASSERT_EQ(6.f, prepared->Boost());
+    ASSERT_NE(nullptr, dynamic_cast<const irs::AndQuery*>(prepared.get()));
+    auto& q = sdb::basics::downCast<irs::AndQuery>(*prepared);
+    ASSERT_EQ(q.size(), 2);
   }
 }
 

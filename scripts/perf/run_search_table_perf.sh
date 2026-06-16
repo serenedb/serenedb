@@ -318,7 +318,7 @@ sum_ext() {
 		awk '{s+=$1} END{printf "%d\n", s+0}'
 }
 
-pq=$(du_bytes "${PARQUET_FILE}")
+pq=$(du_bytes "${SRC_PARQUET}")
 total=$(du_bytes "${SERENED_DATA_DIR}")
 
 {
@@ -374,7 +374,7 @@ ratio() {
 {
 	echo
 	echo "================ SUMMARY ================"
-	echo "parquet:   ${PARQUET_FILE}"
+	echo "parquet:   ${SRC_PARQUET}"
 	echo "row limit: ${PERF_ROW_LIMIT:-(none -- full file)}"
 	echo "build threads: ${BUILD_THREADS}    scan threads: ${SCAN_THREADS}"
 	echo

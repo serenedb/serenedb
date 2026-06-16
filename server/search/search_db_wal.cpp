@@ -414,7 +414,6 @@ SearchDbWal::SearchDbWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir,
     _wal_dir(std::move(wal_dir)),
     _chunks_root(_wal_dir / "chunks"),
     _seal_threshold(seal_threshold) {
-
   const auto segments = EnumerateSegments(_wal_dir);
   uint64_t max_tick = 0;
   for (size_t i = segments.size(); i-- > 0;) {
@@ -438,8 +437,8 @@ SearchDbWal::SearchDbWal(duckdb::FileSystem& fs, std::filesystem::path wal_dir,
     }
     std::error_code ec;
     std::filesystem::remove(path, ec);
-    SDB_ENSURE(!ec, ERROR_INTERNAL, "remove corrupted wal file '", path.string(),
-             "': ", ec.message());
+    SDB_ENSURE(!ec, ERROR_INTERNAL, "remove corrupted wal file '",
+               path.string(), "': ", ec.message());
   }
   _tick.store(max_tick, std::memory_order_relaxed);
 }
@@ -458,8 +457,13 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
   std::filesystem::create_directories(_wal_dir, ec);
   SDB_ENSURE(!ec, ERROR_INTERNAL, "create wal dir '", _wal_dir.string(),
              "': ", ec.message());
-  _active = std::make_unique<duckdb::BufferedFileWriter>(
-    _fs, (_wal_dir / SegmentName(first_tick)).string(), kAppendFlags);
+  auto seg_path = _wal_dir / SegmentName(first_tick);
+  std::error_code exists_ec;
+  SDB_ENSURE(!std::filesystem::exists(seg_path, exists_ec), ERROR_INTERNAL,
+             "search WAL: new active segment '", seg_path.string(),
+             "' already exists -- tick seed regressed");
+  _active = std::make_unique<duckdb::BufferedFileWriter>(_fs, seg_path.string(),
+                                                         kAppendFlags);
   _active_first_tick = first_tick;
   _active_chunk_bytes = 0;  // fresh segment owns no chunks yet
 }

@@ -431,7 +431,8 @@ bool ByTermsRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
     auto it =
       options.terms.emplace(term_filter.options().term, term_filter.Boost());
     if (!it.second) {
-      const_cast<score_t&>(it.first->boost) += term_filter.Boost();
+      MergeBoost(const_cast<score_t&>(it.first->boost), term_filter.Boost(),
+                 node.merge_type());
       has_duplicates = true;
     }
   }

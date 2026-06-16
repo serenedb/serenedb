@@ -1372,10 +1372,10 @@ COPY (SELECT * FROM (VALUES
       INTERVAL 10 DAY,
       200::HUGEINT)
 ) AS t(pk, u8, u16, u32, tt, ts_ms, ts_ns, ts_tz, u, d, iv, h))
-TO '/tmp/sdb_matrix_unsup.parquet' (FORMAT parquet);
+TO '/tmp/${__DATABASE__}_sdb_matrix_unsup.parquet' (FORMAT parquet);
 
 statement ok
-CREATE VIEW m_unsup AS SELECT * FROM read_parquet('/tmp/sdb_matrix_unsup.parquet');
+CREATE VIEW m_unsup AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_sdb_matrix_unsup.parquet');
 
 statement ok
 CREATE INDEX m_unsup_u8    ON m_unsup USING inverted(pk, u8);

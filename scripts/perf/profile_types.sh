@@ -11,7 +11,8 @@
 #   PERF_NATIVE_DB (default ../../build_perf_types.duckdb)
 #   PERF_PORT (default 6263)
 #   PERF_DURATION (default 20 -- seconds per profile)
-#   QUERIES  (default "i32 varchar struct" -- space-separated label list)
+#   QUERIES  (default "structF variantF" -- space-separated label list)
+#   FLAMEGRAPH_DIR (default ~/FlameGraph -- auto-cloned if missing)
 
 set -euo pipefail
 
@@ -26,11 +27,18 @@ LOG="/tmp/${USER}-serened-profile.log"
 PSQL_CONN="postgres://postgres@localhost:${PORT}/postgres"
 RESULTS_DIR="${ROOT}/scripts/perf/results"
 DURATION="${PERF_DURATION:-20}"
-QUERIES_DEFAULT="i32 varchar struct"
+QUERIES_DEFAULT="structF variantF"
 QUERIES="${QUERIES:-${QUERIES_DEFAULT}}"
+FLAMEGRAPH_DIR="${FLAMEGRAPH_DIR:-${HOME}/FlameGraph}"
 
 mkdir -p "${RESULTS_DIR}"
 RUN_TAG="$(date -u +%Y%m%dT%H%M%SZ)"
+
+if [[ ! -x "${FLAMEGRAPH_DIR}/flamegraph.pl" ]]; then
+	git clone --depth 1 https://github.com/brendangregg/FlameGraph \
+		"${FLAMEGRAPH_DIR}" ||
+		echo "warn: FlameGraph unavailable; .svg output will be skipped" >&2
+fi
 
 declare -A EXPR=(
 	[i8]="SUM(i8::BIGINT)"
@@ -47,6 +55,13 @@ declare -A EXPR=(
 	[map]="SUM(list_sum(map_values(map_i32)))"
 	[lstStr]="SUM(list_sum(list_transform(lst_struct, p -> p.v)))"
 	[deep]="SUM(length(deep.name)) + SUM(list_sum(list_transform(deep.vals, p -> p.v)))"
+	[structF]="SUM(struct_f64.a) + SUM(length(struct_f64.b))"
+	[arrayF]="SUM(arr_f64[1] + arr_f64[2] + arr_f64[3])"
+	[variant]="SUM(variant_obj.a::INTEGER) + SUM(length(variant_obj.b::VARCHAR))"
+	[variantF]="SUM(variant_f64.a::DOUBLE) + SUM(length(variant_f64.b::VARCHAR))"
+	[variantMsg]="SUM(variant_messy.a::DOUBLE)"
+	[variantNest]="SUM(variant_nested.outer.mid.a::INTEGER) + SUM(length(variant_nested.outer.mid.b::VARCHAR))"
+	[variantNestF]="SUM(variant_nested_f64.outer.mid.a::DOUBLE) + SUM(length(variant_nested_f64.outer.mid.b::VARCHAR))"
 )
 
 start_server() {
@@ -73,10 +88,12 @@ setup_session() {
 	psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 <<EOF
 ATTACH IF NOT EXISTS '${NATIVE_DB}' AS native_db (TYPE duckdb, STORAGE_VERSION latest);
 SET search_path TO public, native_db.main;
-CREATE INDEX IF NOT EXISTS bench_idx ON bench_view USING inverted()
+CREATE INDEX IF NOT EXISTS bench_idx ON bench_view USING inverted(bool_col)
 INCLUDE (
   i8, i16, i32, i64, f32, f64, s, bool_col,
-  arr_i32, lst_i32, struct_basic, map_i32, lst_struct, deep
+  arr_i32, arr_f64, lst_i32, struct_basic, struct_f64,
+  map_i32, lst_struct, deep, variant_obj, variant_f64, variant_messy,
+  variant_nested, variant_nested_f64
 );
 EOF
 }
@@ -129,10 +146,9 @@ profile_one() {
 		-c "SELECT ${expr} FROM ${table};" >/dev/null
 	# Start the workload first so the JIT/codec is warm by the time
 	# perf starts sampling.  Wait briefly, then start perf, sleep, end.
-	# No callgraph: dwarf produces 100+MB per profile which makes
-	# `perf report` minute-long, and the binary has no frame pointers
-	# so `--call-graph fp` would be useless.  Flat profile is enough
-	# to identify hot symbols.
+	# Callgraph via frame pointers: build_perf is RelWithDebInfo which
+	# compiles with -fno-omit-frame-pointer, so fp unwinding works and
+	# stays cheap (dwarf would be 100+MB per profile).
 	run_loop "${table}" "${expr}"
 	sleep 1
 	perf record -F 999 --pid="${pid}" --inherit \
@@ -143,6 +159,15 @@ profile_one() {
 		--sort overhead,dso,symbol 2>/dev/null |
 		sed -n '/^#\s*Overhead/,/^# (Tip\|^$/p' >"${txt}"
 	echo "wrote ${txt}"
+	if [[ -x "${FLAMEGRAPH_DIR}/flamegraph.pl" ]]; then
+		local folded="${RESULTS_DIR}/perf-${RUN_TAG}-${label}-${tag}.folded"
+		local svg="${RESULTS_DIR}/perf-${RUN_TAG}-${label}-${tag}.svg"
+		perf script -i "${data}" 2>/dev/null |
+			"${FLAMEGRAPH_DIR}/stackcollapse-perf.pl" >"${folded}"
+		"${FLAMEGRAPH_DIR}/flamegraph.pl" --title "${label} (${tag})" \
+			--width 1800 "${folded}" >"${svg}"
+		echo "wrote ${svg}"
+	fi
 }
 
 start_server

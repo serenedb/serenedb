@@ -402,6 +402,9 @@ void RunStreamingScan(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
     if (added != 0) {
       continue;
     }
+    if (collected != 0) {
+      break;
+    }
     const auto seg_idx = g.next_segment.fetch_add(1, std::memory_order_relaxed);
     if (seg_idx >= g.total_segments) {
       break;

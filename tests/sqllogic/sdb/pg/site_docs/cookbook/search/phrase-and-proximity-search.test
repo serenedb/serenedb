@@ -50,8 +50,8 @@ WHERE description @@ ts_phrase('biggest blockbuster')
 ORDER BY id;
 ----
 id	title
-4	Jurassic Park
 6	Scary Movie
+4	Jurassic Park
 
 # DOCS_TEST: example_002
 
@@ -89,8 +89,8 @@ WHERE description @@ ts_phrase('computer hacker') OR description @@ ts_phrase('s
 ORDER BY id;
 ----
 id	title
-1	The Matrix
 6	Scary Movie
+1	The Matrix
 
 # DOCS_TEST: example_005
 
@@ -103,8 +103,8 @@ WHERE title @@ ts_phrase('the matrix') AND description @@ ts_phrase('machine')
 ORDER BY id;
 ----
 id	title
-2	The Matrix Reloaded
 3	The Matrix Revolutions
+2	The Matrix Reloaded
 
 # DOCS_TEST: example_006
 
@@ -117,8 +117,8 @@ WHERE genre @@ 'sci-fi' AND description @@ ts_phrase('galaxy')
 ORDER BY id;
 ----
 id	title	genre
-7	Star Trek: The Motion Picture	sci-fi
 8	Alien	sci-fi
+7	Star Trek: The Motion Picture	sci-fi
 
 # DOCS_TEST: example_007
 
@@ -149,8 +149,8 @@ GROUP BY genre
 ORDER BY genre;
 ----
 genre	count	earliest	latest
-adventure	1	1993	1993
 comedy	1	2000	2000
+adventure	1	1993	1993
 
 # DOCS_TEST: example_009
 

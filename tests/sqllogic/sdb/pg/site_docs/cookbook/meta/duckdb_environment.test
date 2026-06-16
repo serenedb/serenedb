@@ -6,7 +6,7 @@ query
 SELECT version() AS version;
 ----
 version
-PostgreSQL 18.3 (SereneDB 26.05.4)
+PostgreSQL 18.3 (SereneDB 26.06.0)
 
 # DOCS_TEST: example_002
 
@@ -16,7 +16,7 @@ query
 PRAGMA version;
 ----
 library_version	source_id	codename
-v0.0.1	8c42e3b1	Unknown Version
+v1.6.0-dev6983	fa097f1572	Development Version
 
 # DOCS_TEST: example_003
 
@@ -26,7 +26,7 @@ query
 PRAGMA platform;
 ----
 platform
-linux_arm64
+linux_amd64
 
 # DOCS_TEST: example_004
 

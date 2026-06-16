@@ -50,11 +50,11 @@ WHERE genre @@ ts_like('sci%')
 ORDER BY id;
 ----
 id	title	genre
-1	The Matrix	sci-fi
-2	The Matrix Reloaded	sci-fi
-3	The Matrix Revolutions	sci-fi
-7	Star Trek: The Motion Picture	sci-fi
 8	Alien	sci-fi
+7	Star Trek: The Motion Picture	sci-fi
+3	The Matrix Revolutions	sci-fi
+2	The Matrix Reloaded	sci-fi
+1	The Matrix	sci-fi
 
 # DOCS_TEST: example_002
 
@@ -67,8 +67,8 @@ WHERE genre @@ ts_like('%dy')
 ORDER BY id;
 ----
 id	title	genre
-6	Scary Movie	comedy
 10	The Grand Budapest Hotel	comedy
+6	Scary Movie	comedy
 
 # DOCS_TEST: example_003
 
@@ -94,8 +94,8 @@ WHERE genre @@ ts_like('co_edy')
 ORDER BY id;
 ----
 id	title	genre
-6	Scary Movie	comedy
 10	The Grand Budapest Hotel	comedy
+6	Scary Movie	comedy
 
 # DOCS_TEST: example_005
 
@@ -108,8 +108,8 @@ WHERE description @@ ts_like('h_____')
 ORDER BY id;
 ----
 id	title
-1	The Matrix
 9	Café Society
+1	The Matrix
 
 # DOCS_TEST: example_006
 
@@ -122,8 +122,8 @@ WHERE description @@ ts_like('block%')
 ORDER BY id;
 ----
 id	title
-4	Jurassic Park
 6	Scary Movie
+4	Jurassic Park
 
 # DOCS_TEST: example_007
 

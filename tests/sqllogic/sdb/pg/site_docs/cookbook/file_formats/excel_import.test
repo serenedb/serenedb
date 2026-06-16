@@ -11,6 +11,7 @@ db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
@@ -20,6 +21,7 @@ SELECT * FROM 'test_excel.xlsx';
 ----
 db error: ERROR: Table with name test_excel.xlsx does not exist!
 Did you mean "<slt:ignore>"?
+
 
 # DOCS_TEST: example_003
 
@@ -32,6 +34,7 @@ db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
@@ -42,6 +45,7 @@ SELECT * FROM read_xlsx('test_excel.xlsx', range = 'A1:B2');
 db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
 
 # DOCS_TEST: example_005
 
@@ -54,6 +58,7 @@ db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
@@ -64,6 +69,7 @@ SELECT * FROM read_xlsx('test_excel.xlsx', range = 'E:Z');
 db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
 
 # DOCS_TEST: example_007
 
@@ -86,6 +92,7 @@ db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_008
 
 # DOCS_TEST_BODY
@@ -97,6 +104,7 @@ CREATE TABLE new_tbl AS
 db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
 
 # DOCS_TEST: example_009
 
@@ -135,6 +143,7 @@ db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY
@@ -144,6 +153,7 @@ COPY tbl FROM 'test_excel.xlsx' (FORMAT xlsx, SHEET 'Sheet1');
 ----
 db error: ERROR: Copy Function with name xlsx does not exist!
 Did you mean "<slt:ignore>"?
+
 
 # DOCS_TEST: example_011
 
@@ -156,6 +166,7 @@ db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_012
 
 # DOCS_TEST_BODY
@@ -167,6 +178,7 @@ db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_013
 
 # DOCS_TEST_BODY
@@ -177,6 +189,7 @@ SELECT * FROM read_xlsx('test_excel.xlsx', all_varchar = true);
 db error: ERROR: Table Function with name "read_xlsx" is not in the catalog, but it exists in the excel extension.
 
 This feature relies on the "excel" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
 
 # DOCS_TEST: example_014
 

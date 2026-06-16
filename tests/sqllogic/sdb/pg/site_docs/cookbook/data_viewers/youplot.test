@@ -5,4 +5,4 @@
 statement error
 COPY (⟨query⟩) TO '/dev/stdout' WITH (FORMAT csv, HEADER);
 ----
-db error: ERROR: syntax error at or near "⟨query⟩"
+db error: ERROR: syntax error at or near "TO"

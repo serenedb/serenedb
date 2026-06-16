@@ -50,11 +50,11 @@ WHERE genre @@ 'sci-fi'
 ORDER BY id;
 ----
 id	title	genre
-1	The Matrix	sci-fi
-2	The Matrix Reloaded	sci-fi
-3	The Matrix Revolutions	sci-fi
-7	Star Trek: The Motion Picture	sci-fi
 8	Alien	sci-fi
+7	Star Trek: The Motion Picture	sci-fi
+3	The Matrix Revolutions	sci-fi
+2	The Matrix Reloaded	sci-fi
+1	The Matrix	sci-fi
 
 # DOCS_TEST: example_002
 
@@ -67,9 +67,9 @@ WHERE genre @@ ts_any(['comedy', 'drama'])
 ORDER BY id;
 ----
 id	title	genre
-6	Scary Movie	comedy
-9	Café Society	drama
 10	The Grand Budapest Hotel	comedy
+9	Café Society	drama
+6	Scary Movie	comedy
 
 # DOCS_TEST: example_003
 
@@ -82,11 +82,11 @@ WHERE NOT (genre @@ 'sci-fi')
 ORDER BY id;
 ----
 id	title	genre
-4	Jurassic Park	adventure
-5	Harry Potter and the Order of the Phoenix	fantasy
-6	Scary Movie	comedy
-9	Café Society	drama
 10	The Grand Budapest Hotel	comedy
+9	Café Society	drama
+6	Scary Movie	comedy
+5	Harry Potter and the Order of the Phoenix	fantasy
+4	Jurassic Park	adventure
 
 # DOCS_TEST: example_004
 
@@ -113,5 +113,5 @@ GROUP BY genre
 ORDER BY genre;
 ----
 genre	count	avg_runtime
-adventure	1	127
 comedy	1	88
+adventure	1	127

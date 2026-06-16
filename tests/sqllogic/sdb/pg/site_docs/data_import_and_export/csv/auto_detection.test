@@ -61,5 +61,9 @@ COPY (SELECT * FROM (VALUES
 
 # DOCS_TEST_BODY
 
-statement ok
-SELECT Prompt FROM sniff_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_003_my_file_csv.csv');
+query
+SELECT regexp_replace(Prompt, '''/tmp/[^'']*''', '''my_file.csv''') AS Prompt
+FROM sniff_csv('/tmp/${__DATABASE__}_data_import_and_export_csv_auto_detection_example_003_my_file_csv.csv');
+----
+prompt
+FROM read_csv('my_file.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'id': 'BIGINT', 'name': 'VARCHAR', 'value': 'BIGINT'});

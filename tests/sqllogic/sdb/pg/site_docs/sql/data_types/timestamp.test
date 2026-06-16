@@ -85,27 +85,6 @@ SELECT '-infinity'::TIMESTAMP, 'epoch'::TIMESTAMP, 'infinity'::TIMESTAMP;
 timestamp	timestamp	timestamp
 -infinity	1970-01-01 00:00:00	infinity
 
-# DOCS_TEST: example_009
-
-# DOCS_TEST_BODY
-
-statement error
-INSTALL icu;
-----
-db error: ERROR: Failed to download extension "icu" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/icu.duckdb_extension.gz"
-Extension "icu" is an existing extension.
-
-For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=icu (ERROR Problem with the SSL CA cert (path? access rights?))
-
-
-statement error
-LOAD icu;
-----
-db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_extension" not found.
-Extension "icu" is an existing extension.
-
-Install it first using "INSTALL icu".
-
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY
@@ -148,24 +127,6 @@ UTC	UTC	00:00:00
 # DOCS_TEST: example_012
 
 # DOCS_TEST_BODY
-
-statement error
-INSTALL icu;
-----
-db error: ERROR: Failed to download extension "icu" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/icu.duckdb_extension.gz"
-Extension "icu" is an existing extension.
-
-For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=icu (ERROR Problem with the SSL CA cert (path? access rights?))
-
-
-statement error
-LOAD icu;
-----
-db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_extension" not found.
-Extension "icu" is an existing extension.
-
-Install it first using "INSTALL icu".
-
 
 statement error
 SET Calendar = 'japanese';

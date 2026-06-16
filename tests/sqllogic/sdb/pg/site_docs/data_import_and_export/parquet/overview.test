@@ -819,14 +819,3 @@ USE $__DATABASE__;
 statement ok
 DETACH parquet_overview_export_035;
 
-# DOCS_TEST: example_036
-
-# DOCS_TEST_BODY
-
-statement error
-INSTALL parquet;
-----
-db error: ERROR: Failed to download extension "parquet" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/parquet.duckdb_extension.gz"
-Extension "parquet" is an existing extension.
-
-For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=parquet (ERROR Problem with the SSL CA cert (path? access rights?))

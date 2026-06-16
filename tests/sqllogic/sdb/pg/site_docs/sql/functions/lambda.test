@@ -52,10 +52,10 @@ list_transform
 # DOCS_TEST_BODY
 
 query
-SELECT list_transform(['Duck', 'Goose', 'Sparrow'], lambda s: concat(s, 'DB'));
+SELECT list_transform(['Serene', 'Calm', 'Tranquil'], lambda s: concat(s, 'DB'));
 ----
 list_transform
-{DuckDB,GooseDB,SparrowDB}
+{SereneDB,CalmDB,TranquilDB}
 
 # DOCS_TEST: example_007
 
@@ -131,10 +131,10 @@ list_reduce
 # DOCS_TEST_BODY
 
 query
-SELECT list_reduce(['DuckDB', 'is', 'awesome'], lambda acc, x: concat(acc, ' ', x));
+SELECT list_reduce(['SereneDB', 'is', 'awesome'], lambda acc, x: concat(acc, ' ', x));
 ----
 list_reduce
-DuckDB is awesome
+SereneDB is awesome
 
 # DOCS_TEST: example_014
 

@@ -14,6 +14,7 @@ SELECT title, rating FROM movies WHERE year > 2015 ORDER BY rating DESC LIMIT 5;
 db error: ERROR: Referenced column "rating" not found in FROM clause!
 Candidate bindings: "a", "region", "runtime", "quantity", "category"
 
+
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
@@ -21,4 +22,4 @@ Candidate bindings: "a", "region", "runtime", "quantity", "category"
 statement error
 \copy movies FROM 'movies.csv' WITH (FORMAT CSV, HEADER TRUE);
 ----
-db error: ERROR: syntax error at or near "\\"
+db error: ERROR: syntax error at or near "\"

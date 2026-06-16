@@ -23,6 +23,7 @@ FROM times WHERE t <= '2025-08-30';
 db error: ERROR: Table with name times does not exist!
 Did you mean "<slt:ignore>"?
 
+
 # DOCS_TEST: example_002
 
 statement ok
@@ -91,6 +92,7 @@ db error: ERROR: No function matches the given name and argument types 'generate
 	generate_series(BIGINT, BIGINT, BIGINT)
 	generate_series(TIMESTAMP, TIMESTAMP, INTERVAL)
 
+
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
@@ -102,4 +104,4 @@ begin <= x AND x <= end
 -- not
 begin <= x AND x < end
 ----
-db error: ERROR: syntax error at or near "x"
+db error: ERROR: syntax error at or near "end"

@@ -37,7 +37,8 @@ create or replace table data as (
 	cross join range(${keys}) keys(k)
 );
 ----
-db error: ERROR: syntax error at or near "\{"
+db error: ERROR: syntax error at or near "{"
+
 
 # DOCS_TEST: example_003
 
@@ -53,4 +54,4 @@ FROM
 	data
 qualify v <> m - 1704067200000;
 ----
-db error: ERROR: syntax error at or near "run"
+db error: ERROR: syntax error at or near "SELECT"

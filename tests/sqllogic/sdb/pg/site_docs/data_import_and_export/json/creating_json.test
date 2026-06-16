@@ -3,10 +3,10 @@
 # DOCS_TEST_BODY
 
 query
-SELECT to_json('duck');
+SELECT to_json('mercury');
 ----
 to_json
-"duck"
+"mercury"
 
 # DOCS_TEST: example_002
 
@@ -23,47 +23,47 @@ to_json
 # DOCS_TEST_BODY
 
 query
-SELECT to_json({duck : 42});
+SELECT to_json({mercury : 42});
 ----
 to_json
-{"duck":42}
+{"mercury":42}
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
 query
-SELECT to_json(MAP(['duck'], [42]));
+SELECT to_json(MAP(['mercury'], [42]));
 ----
 to_json
-{"duck":42}
+{"mercury":42}
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
 query
-SELECT json_array('duck', 42, 'goose', 123);
+SELECT json_array('mercury', 42, 'venus', 123);
 ----
 json_array
-["duck",42,"goose",123]
+["mercury",42,"venus",123]
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
 query
-SELECT json_object('duck', 42, 'goose', 123);
+SELECT json_object('mercury', 42, 'venus', 123);
 ----
 json_object
-{"duck":42,"goose":123}
+{"mercury":42,"venus":123}
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
 query
-SELECT json_merge_patch('{"duck": 42}', '{"goose": 123}');
+SELECT json_merge_patch('{"mercury": 42}', '{"venus": 123}');
 ----
 json_merge_patch
-{"duck":42,"goose":123}
+{"mercury":42,"venus":123}

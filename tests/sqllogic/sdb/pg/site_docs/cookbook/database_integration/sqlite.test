@@ -1,27 +1,3 @@
-# DOCS_TEST: example_001
-
-# DOCS_TEST_BODY
-
-statement error
-INSTALL sqlite;
-----
-db error: ERROR: Failed to download extension "sqlite_scanner" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/sqlite_scanner.duckdb_extension.gz"
-Extension "sqlite_scanner" is an existing extension.
-
-For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=sqlite_scanner (ERROR Problem with the SSL CA cert (path? access rights?))
-
-# DOCS_TEST: example_002
-
-# DOCS_TEST_BODY
-
-statement error
-LOAD sqlite;
-----
-db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/sqlite_scanner.duckdb_extension" not found.
-Extension "sqlite" is an existing extension.
-
-Install it first using "INSTALL sqlite".
-
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
@@ -34,6 +10,7 @@ db error: ERROR: Table Function with name "sqlite_scan" is not in the catalog, b
 
 This feature relies on the "sqlite_scanner" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
@@ -42,7 +19,7 @@ statement error
 -- Attach the SQLite file "test.db"
 ATTACH 'test.db' AS test (TYPE sqlite);
 ----
-db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/sqlite_scanner.duckdb_extension" not found.
+db error: ERROR: Extension "/home/abrama/.duckdb/extensions/fa097f1572/linux_amd64/sqlite_scanner.duckdb_extension" not found.
 Extension "sqlite" is an existing extension.
 
 Install it first using "INSTALL sqlite".
@@ -52,7 +29,7 @@ query error
 -- The table "tbl_name" can now be queried as if it is a regular table
 SELECT * FROM test.tbl_name;
 ----
-db error: ERROR: Table with name "test\.tbl_name" does not exist because schema "test" does not exist\.
+db error: ERROR: Table with name "test.tbl_name" does not exist because schema "test" does not exist.
 
 
 statement ok

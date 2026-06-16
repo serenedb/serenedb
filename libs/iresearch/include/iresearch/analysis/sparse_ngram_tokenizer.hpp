@@ -62,13 +62,17 @@ class SparseNGramTokenizer final : public TypedAnalyzer<SparseNGramTokenizer>,
       return false;
     }
     const uint64_t entry = _pending[_pending_idx++];
-    SetTerm(static_cast<uint32_t>(entry), entry >> 32);
+    SetTerm(static_cast<uint32_t>(entry), static_cast<uint32_t>(entry >> 32));
     return true;
   }
   bool reset(std::string_view data) final;
 
  private:
-  using attributes = std::tuple<IncAttr, TermAttr>;
+  // Each gram carries its source byte range as an OffsAttr. The grams are
+  // emitted in monotonic-stack order, not sorted by start offset, so they
+  // cannot feed the persistent indexer (which requires non-decreasing
+  // offsets) -- the highlight path sorts them in memory first.
+  using attributes = std::tuple<IncAttr, TermAttr, OffsAttr>;
 
   struct HashAndPos {
     uint32_t hash;
@@ -84,9 +88,12 @@ class SparseNGramTokenizer final : public TypedAnalyzer<SparseNGramTokenizer>,
     *_pending_out++ = begin | (end << 32);
   }
 
-  void SetTerm(uint64_t begin, uint64_t end) noexcept {
+  void SetTerm(uint32_t begin, uint32_t end) noexcept {
     std::get<TermAttr>(_attrs).value =
       bytes_view{_data.data() + begin, end - begin};
+    auto& offs = std::get<OffsAttr>(_attrs);
+    offs.start = begin;
+    offs.end = end;
   }
 
   size_t StackSize() const noexcept { return _stack.size() - _head; }

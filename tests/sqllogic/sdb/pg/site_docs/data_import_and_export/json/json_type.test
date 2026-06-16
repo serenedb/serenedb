@@ -15,7 +15,8 @@ json
 query error
 SELECT 'unquoted'::JSON;
 ----
-(?i)Malformed JSON.*
+db error: ERROR: Malformed JSON at byte 0 of input: unexpected character.  Input: "unquoted"
+
 
 # DOCS_TEST: example_003
 
@@ -62,9 +63,9 @@ json
 # DOCS_TEST_BODY
 
 query
-SELECT '{"duck": 42}'::JSON::STRUCT(duck INTEGER);
+SELECT '{"mercury": 42}'::JSON::STRUCT(mercury INTEGER);
 ----
-struct(duck integer)
+struct(mercury integer)
 (42)
 
 # DOCS_TEST: example_008
@@ -72,10 +73,10 @@ struct(duck integer)
 # DOCS_TEST_BODY
 
 query
-SELECT {duck: 42}::JSON;
+SELECT {mercury: 42}::JSON;
 ----
 struct_pack
-{"duck":42}
+{"mercury":42}
 
 # DOCS_TEST: example_009
 

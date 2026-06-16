@@ -235,26 +235,6 @@ select 'POINT(1 2)'::GEOMETRY('DUCK:1337') AS my_point;
 ----
 db error: ERROR: Such type is not supported
 
-# DOCS_TEST: example_009
-
-# DOCS_TEST_BODY
-
-statement error
-LOAD spatial;
-----
-db error: ERROR: Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/spatial.duckdb_extension" not found.
-Extension "spatial" is an existing extension.
-
-Install it first using "INSTALL spatial".
-
-
-query error
-SELECT ST_Transform('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84'), 'EPSG:3857') AS transformed;
-----
-db error: ERROR: Scalar Function with name "st_transform" is not in the catalog, but it exists in the spatial extension.
-
-This feature relies on the "spatial" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
-
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY

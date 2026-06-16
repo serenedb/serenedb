@@ -19,7 +19,7 @@ CREATE TABLE example (j JSON);
 
 statement ok
 INSERT INTO example VALUES
-    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+    ('{ "family": "terrestrial", "species": [ "mercury", "venus", "earth", null ] }');
 
 # DOCS_TEST: example_003
 
@@ -31,7 +31,7 @@ CREATE TABLE example (j JSON);
 
 statement ok
 INSERT INTO example VALUES
-    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+    ('{ "family": "terrestrial", "species": [ "mercury", "venus", "earth", null ] }');
 
 # DOCS_TEST_RAW
 #| SELECT json_extract(j, '$.family') FROM example;
@@ -101,7 +101,7 @@ query
 SELECT j->'species'->['/0', '/1'] FROM example;
 ----
 ?column?
-{"\\"duck\\"","\\"goose\\""}
+{"\\"mercury\\"","\\"venus\\""}
 
 # DOCS_TEST: example_010
 
@@ -138,7 +138,7 @@ query
 SELECT j->'species'->>0 FROM example;
 ----
 ?column?
-duck
+mercury
 
 # DOCS_TEST: example_014
 
@@ -148,7 +148,7 @@ query
 SELECT j->'species'->>['/0', '/1'] FROM example;
 ----
 ?column?
-{duck,goose}
+{mercury,venus}
 
 # DOCS_TEST: example_015
 
@@ -161,7 +161,7 @@ SELECT
 FROM example;
 ----
 family	species
-"anatidae"	[ "duck", "goose", "swan", null ]
+"terrestrial"	[ "mercury", "venus", "earth", null ]
 
 # DOCS_TEST: example_016
 
@@ -178,14 +178,14 @@ SELECT
 FROM extracted;
 ----
 family	species
-"anatidae"	["duck","goose","swan",null]
+"terrestrial"	["mercury","venus","earth",null]
 
 # DOCS_TEST: example_017
 
 # DOCS_TEST_BODY
 
 query
-SELECT json_extract('{"duck": [1, 2, 3]}', '/duck/0');
+SELECT json_extract('{"mercury": [1, 2, 3]}', '/mercury/0');
 ----
 json_extract
 1
@@ -195,7 +195,7 @@ json_extract
 # DOCS_TEST_BODY
 
 query error
-SELECT json_extract('{"duck": [1, 2, 3]}', '$.duck[0]');
+SELECT json_extract('{"mercury": [1, 2, 3]}', '$.mercury[0]');
 ----
 substitution failed: Missing variable name
 
@@ -204,7 +204,7 @@ substitution failed: Missing variable name
 # DOCS_TEST_BODY
 
 query error
-SELECT json_extract('{"duck": [1, 2, 3]}', '$.duck[#-1]');
+SELECT json_extract('{"mercury": [1, 2, 3]}', '$.mercury[#-1]');
 ----
 substitution failed: Missing variable name
 
@@ -213,7 +213,7 @@ substitution failed: Missing variable name
 # DOCS_TEST_BODY
 
 query error
-SELECT json_extract('{"duck.goose": [1, 2, 3]}', '$."duck.goose"[1]');
+SELECT json_extract('{"mercury.venus": [1, 2, 3]}', '$."mercury.venus"[1]');
 ----
 substitution failed: Missing variable name
 
@@ -232,7 +232,7 @@ CREATE TABLE example (j JSON);
 
 statement ok
 INSERT INTO example VALUES
-    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+    ('{ "family": "terrestrial", "species": [ "mercury", "venus", "earth", null ] }');
 
 # DOCS_TEST: example_022
 
@@ -244,7 +244,7 @@ CREATE TABLE example (j VARCHAR);
 
 statement ok
 INSERT INTO example VALUES
-    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+    ('{ "family": "terrestrial", "species": [ "mercury", "venus", "earth", null ] }');
 
 # DOCS_TEST_BODY
 
@@ -252,7 +252,7 @@ query
 SELECT json(j) FROM example;
 ----
 json
-{"family":"anatidae","species":["duck","goose","swan",null]}
+{"family":"terrestrial","species":["mercury","venus","earth",null]}
 
 # DOCS_TEST: example_023
 
@@ -264,7 +264,7 @@ CREATE TABLE example (j JSON);
 
 statement ok
 INSERT INTO example VALUES
-    ('{ "family": "anatidae", "species": [ "duck", "goose", "swan", null ] }');
+    ('{ "family": "terrestrial", "species": [ "mercury", "venus", "earth", null ] }');
 
 # DOCS_TEST_BODY
 
@@ -272,7 +272,7 @@ query
 SELECT j.family FROM example;
 ----
 family
-"anatidae"
+"terrestrial"
 
 # DOCS_TEST: example_024
 
@@ -282,7 +282,7 @@ query
 SELECT j.species[0] FROM example;
 ----
 species
-"duck"
+"mercury"
 
 # DOCS_TEST: example_025
 
@@ -309,7 +309,7 @@ f
 # DOCS_TEST_BODY
 
 query
-SELECT json_array_length('["duck", "goose", "swan", null]');
+SELECT json_array_length('["mercury", "venus", "earth", null]');
 ----
 json_array_length
 4
@@ -387,7 +387,7 @@ json_structure
 # DOCS_TEST_BODY
 
 query
-SELECT json_structure('["duck", {"family": "anatidae"}]');
+SELECT json_structure('["mercury", {"family": "terrestrial"}]');
 ----
 json_structure
 ["JSON"]
@@ -430,7 +430,7 @@ statement ok
 CREATE TABLE example1 (k VARCHAR, v INTEGER);
 
 statement ok
-INSERT INTO example1 VALUES ('duck', 42), ('goose', 7);
+INSERT INTO example1 VALUES ('mercury', 42), ('venus', 7);
 
 # DOCS_TEST: example_040
 
@@ -461,8 +461,8 @@ CREATE TABLE example2 (j JSON);
 
 statement ok
 INSERT INTO example2 VALUES
-    ('{"family": "anatidae", "species": ["duck", "goose"], "coolness": 42.42}'),
-    ('{"family": "canidae", "species": ["labrador", "bulldog"], "hair": true}');
+    ('{"family": "terrestrial", "species": ["mercury", "venus"], "coolness": 42.42}'),
+    ('{"family": "gas_giant", "species": ["jupiter", "saturn"], "has_rings": true}');
 
 # DOCS_TEST: example_043
 
@@ -472,7 +472,7 @@ query
 SELECT json_group_structure(j) FROM example2;
 ----
 json_group_structure
-{"family":"VARCHAR","species":["VARCHAR"],"coolness":"DOUBLE","hair":"BOOLEAN"}
+{"family":"VARCHAR","species":["VARCHAR"],"coolness":"DOUBLE","has_rings":"BOOLEAN"}
 
 # DOCS_TEST: example_044
 
@@ -489,8 +489,8 @@ CREATE TABLE example (j JSON);
 
 statement ok
 INSERT INTO example VALUES
-    ('{"family": "anatidae", "species": ["duck", "goose"], "coolness": 42.42}'),
-    ('{"family": "canidae", "species": ["labrador", "bulldog"], "hair": true}');
+    ('{"family": "terrestrial", "species": ["mercury", "venus"], "coolness": 42.42}'),
+    ('{"family": "gas_giant", "species": ["jupiter", "saturn"], "has_rings": true}');
 
 # DOCS_TEST: example_045
 
@@ -500,8 +500,8 @@ query
 SELECT json_transform(j, '{"family": "VARCHAR", "coolness": "DOUBLE"}') FROM example;
 ----
 json_transform
-(anatidae,42.42)
-(canidae,)
+(terrestrial,42.42)
+(gas_giant,)
 
 # DOCS_TEST: example_046
 
@@ -521,7 +521,7 @@ json_transform
 query error
 SELECT json_transform_strict(j, '{"family": "TINYINT", "coolness": "DOUBLE"}') FROM example;
 ----
-db error: ERROR: Failed to cast value to numerical: "canidae"
+db error: ERROR: Failed to cast value to numerical: "gas_giant"
 
 # DOCS_TEST: example_048
 
@@ -538,8 +538,8 @@ CREATE TABLE example (j JSON);
 
 statement ok
 INSERT INTO example VALUES
-    ('{"family": "anatidae", "species": ["duck", "goose"], "coolness": 42.42}'),
-    ('{"family": "canidae", "species": ["labrador", "bulldog"], "hair": true}');
+    ('{"family": "terrestrial", "species": ["mercury", "venus"], "coolness": 42.42}'),
+    ('{"family": "gas_giant", "species": ["jupiter", "saturn"], "has_rings": true}');
 
 # DOCS_TEST: example_049
 
@@ -550,11 +550,11 @@ SELECT je.*, je.rowid
 FROM example AS e, json_each(e.j) AS je;
 ----
 key	value	type	atom	id	parent	fullkey	path	rowid
-family	"anatidae"	VARCHAR	"anatidae"	2	NULL	$.family	$	0
-species	["duck","goose"]	ARRAY	NULL	4	NULL	$.species	$	1
+family	"terrestrial"	VARCHAR	"terrestrial"	2	NULL	$.family	$	0
+species	["mercury","venus"]	ARRAY	NULL	4	NULL	$.species	$	1
 coolness	42.42	DOUBLE	42.42	8	NULL	$.coolness	$	2
-family	"canidae"	VARCHAR	"canidae"	2	NULL	$.family	$	0
-species	["labrador","bulldog"]	ARRAY	NULL	4	NULL	$.species	$	1
+family	"gas_giant"	VARCHAR	"gas_giant"	2	NULL	$.family	$	0
+species	["jupiter","saturn"]	ARRAY	NULL	4	NULL	$.species	$	1
 hair	true	BOOLEAN	true	8	NULL	$.hair	$	2
 
 # DOCS_TEST: example_050
@@ -576,15 +576,15 @@ SELECT je.key, je.value, je.type, je.id, je.parent, je.fullkey, je.rowid
 FROM example AS e, json_tree(e.j) AS je;
 ----
 key	value	type	id	parent	fullkey	rowid
-NULL	{"family":"anatidae","species":["duck","goose"],"coolness":42.42}	OBJECT	0	NULL	$	0
-family	"anatidae"	VARCHAR	2	0	$.family	1
-species	["duck","goose"]	ARRAY	4	0	$.species	2
-0	"duck"	VARCHAR	5	4	$.species[0]	3
-1	"goose"	VARCHAR	6	4	$.species[1]	4
+NULL	{"family":"terrestrial","species":["mercury","venus"],"coolness":42.42}	OBJECT	0	NULL	$	0
+family	"terrestrial"	VARCHAR	2	0	$.family	1
+species	["mercury","venus"]	ARRAY	4	0	$.species	2
+0	"mercury"	VARCHAR	5	4	$.species[0]	3
+1	"venus"	VARCHAR	6	4	$.species[1]	4
 coolness	42.42	DOUBLE	8	0	$.coolness	5
-NULL	{"family":"canidae","species":["labrador","bulldog"],"hair":true}	OBJECT	0	NULL	$	0
-family	"canidae"	VARCHAR	2	0	$.family	1
-species	["labrador","bulldog"]	ARRAY	4	0	$.species	2
-0	"labrador"	VARCHAR	5	4	$.species[0]	3
-1	"bulldog"	VARCHAR	6	4	$.species[1]	4
+NULL	{"family":"gas_giant","species":["jupiter","saturn"],"has_rings":true}	OBJECT	0	NULL	$	0
+family	"gas_giant"	VARCHAR	2	0	$.family	1
+species	["jupiter","saturn"]	ARRAY	4	0	$.species	2
+0	"jupiter"	VARCHAR	5	4	$.species[0]	3
+1	"saturn"	VARCHAR	6	4	$.species[1]	4
 hair	true	BOOLEAN	8	0	$.hair	5

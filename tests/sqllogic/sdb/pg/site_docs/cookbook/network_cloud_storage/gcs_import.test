@@ -39,14 +39,9 @@ id	name	value
 # DOCS_TEST: example_003
 
 # DOCS_TEST_RAW
-#| LOAD httpfs;
-#|
 #| ATTACH 'gs://⟨gcs_bucket⟩/⟨file.duckdb⟩' AS ⟨duckdb_database⟩ (READ_ONLY);
 
 # DOCS_TEST_BODY
-
-statement ok
-LOAD httpfs;
 
 statement ok
 DETACH IF EXISTS duckdb_database;

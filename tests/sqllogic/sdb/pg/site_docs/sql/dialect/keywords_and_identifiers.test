@@ -13,6 +13,12 @@ a	a	b
 
 # DOCS_TEST: example_002
 
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DETACH IF EXISTS temp2;
+
 # DOCS_TEST_RAW
 #| ATTACH 'temp.db' AS temp2;
 #|
@@ -57,3 +63,42 @@ SELECT col_á FROM (SELECT 'x' AS col_a);
 ----
 db error: ERROR: Referenced column "col_á" not found in FROM clause!
 Candidate bindings: "col_a"
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT (MAP {'a': 1})['A'] IS NOT NULL AS found;
+----
+found
+f
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT union_extract(union_value(a := 1), 'A') IS NOT NULL AS found;
+----
+found
+t
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT ({'a': 1}).A IS NOT NULL AS found;
+----
+found
+t
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query error
+SELECT {'a': 1, 'A': 2};
+----
+db error: ERROR: Duplicate struct entry name "A"

@@ -163,6 +163,47 @@ def test_psql_round_trip() -> None:
         f"string_agg missing: {r.stdout!r}"
 
 
+def test_psql_create_drop_database() -> None:
+    # CREATE DATABASE / DROP DATABASE are rewritten by the parser to
+    # ATTACH (TYPE serenedb) / DETACH -- local catalog ops the client shell
+    # cannot run (it has no serenedb storage extension). serened psql must
+    # forward them to the attached server instead of failing locally with
+    # `Extension "serenedb.duckdb_extension" not found`.
+    k = _kw()
+    db = f"psql_cdb_{uuid.uuid4().hex[:10]}"
+
+    def psql(sql: str, dbname: str | None = None):
+        return _run(["-h", k["host"], "-p", k["port"], "-U", k["user"],
+                     "-d", dbname or k["dbname"], "-c", sql])
+
+    # CREATE forwards to the server -- no local serenedb.duckdb_extension error.
+    r = psql(f'CREATE DATABASE "{db}";')
+    assert r.returncode == 0, f"stderr={r.stderr!r}"
+    assert "serenedb.duckdb_extension" not in r.stderr, \
+        f"statement ran locally instead of being forwarded: {r.stderr!r}"
+
+    # IF NOT EXISTS is idempotent.
+    r = psql(f'CREATE DATABASE IF NOT EXISTS "{db}";')
+    assert r.returncode == 0, f"stderr={r.stderr!r}"
+
+    # A plain re-create surfaces the server's duplicate error.
+    r = psql(f'CREATE DATABASE "{db}";')
+    assert r.returncode != 0, f"expected duplicate error, stdout={r.stdout!r}"
+    assert "already exists" in r.stderr, \
+        f"missing duplicate-database error: {r.stderr!r}"
+
+    # The database really exists on the server: connect straight to it.
+    r = psql("SELECT 1 AS ok;", dbname=db)
+    assert r.returncode == 0, f"could not connect to created db: {r.stderr!r}"
+
+    # DROP forwards too; afterwards the database is gone (connect fails).
+    r = psql(f'DROP DATABASE "{db}";')
+    assert r.returncode == 0, f"stderr={r.stderr!r}"
+    r = psql("SELECT 1;", dbname=db)
+    assert r.returncode != 0, \
+        f"database still connectable after DROP: {r.stdout!r}"
+
+
 def test_psql_unknown_flag_passes_through() -> None:
     # --csv is a duckdb shell flag; serened psql should leave it alone so
     # the embedded shell sees it.

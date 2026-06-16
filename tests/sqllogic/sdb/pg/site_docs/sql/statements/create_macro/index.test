@@ -101,6 +101,9 @@ CREATE TABLE users (uid INTEGER, name VARCHAR);
 statement ok
 INSERT INTO users VALUES
     (1, 'Ada'),
+    (2, 'Bob'),
+    (3, 'Carl'),
+    (4, 'Dan'),
     (5, 'Eve');
 
 # DOCS_TEST_BODY
@@ -111,21 +114,17 @@ CREATE MACRO get_users(i) AS TABLE
 
 # DOCS_TEST: example_014
 
-statement ok
-DROP TABLE IF EXISTS users;
+# DOCS_TEST_RAW
+#| SELECT * FROM get_users([1, 5]);
 
 # DOCS_TEST_BODY
-
-statement ok
-CREATE TABLE users AS
-    SELECT *
-    FROM (VALUES (1, 'Ada'), (2, 'Bob'), (3, 'Carl'), (4, 'Dan'), (5, 'Eve')) t(uid, name);
 
 query ??
 SELECT * FROM get_users([1, 5]);
 ----
-get_users	get_users
+uid	name
 1	Ada
+5	Eve
 
 # DOCS_TEST: example_015
 
@@ -142,7 +141,7 @@ CREATE TABLE tbl AS SELECT unnest([42, 43]) AS x, 100 AS y;
 query
 SELECT * FROM checksum('tbl');
 ----
-checksum	checksum
+x	y
 60609334165039584609948387465088153270	0
 
 # DOCS_TEST: example_016
@@ -339,11 +338,14 @@ aa
 
 # DOCS_TEST: example_034
 
+# DOCS_TEST_RAW
+#| SELECT schema_name, function_name, function_type, parameters
+#| FROM duckdb_functions()
+#| WHERE function_type IN ('macro', 'table_macro');
+
 # DOCS_TEST_BODY
 
-query error
+statement ok
 SELECT schema_name, function_name, function_type, parameters
-FROM duckdb_function();
-----
-db error: ERROR: Table Function with name duckdb_function does not exist!
-Did you mean "<slt:ignore>"?
+FROM duckdb_functions()
+WHERE function_type IN ('macro', 'table_macro');

@@ -76,18 +76,6 @@ INSERT INTO partsupp VALUES
 
 # DOCS_TEST_BODY
 
-statement error
-INSTALL tpch;
-----
-db error: ERROR: Failed to download extension "tpch" at URL "https://extensions.duckdb.org/v0.0.1/linux_arm64/tpch.duckdb_extension.gz"
-Extension "tpch" is an existing extension.
-
-For more info, visit https://duckdb.org/docs/current/extensions/troubleshooting?version=v0.0.1&platform=linux_arm64&extension=tpch (ERROR Problem with the SSL CA cert (path? access rights?))
-
-
-statement ok
-LOAD tpch;
-
 query error
 CALL dbgen(sf = 1);
 ----

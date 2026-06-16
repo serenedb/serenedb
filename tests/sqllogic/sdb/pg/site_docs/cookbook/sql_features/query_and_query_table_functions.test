@@ -40,24 +40,22 @@ SELECT *
 FROM my_summarize('https://blobs.duckdb.org/data/ontime.parquet')
 LIMIT 3;
 ----
-db error: ERROR: Expected catalog\.entry, schema\.entry or entry: too many entries found \(input: https://blobs\.duckdb\.org/data/ontime\.parquet\)
+db error: ERROR: Expected catalog.entry, schema.entry or entry: too many entries found (input: https://blobs.duckdb.org/data/ontime.parquet)
+
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CREATE OR REPLACE MACRO stack(table_name, index, name, values) AS TABLE
 FROM query(
     'UNPIVOT ' || table_name
     || ' ON COLUMNS(* EXCLUDE (' || array_to_string(index, ', ')
     || ')) INTO NAME ' || name || ' VALUES ' || values
 );
-----
-db error: ERROR: syntax error at or near "values"
 
-
-query error
+query ????
 WITH cities AS (
     FROM (
         VALUES
@@ -68,5 +66,10 @@ WITH cities AS (
 SELECT *
 FROM stack('cities', ['country', 'city'], 'year', 'population');
 ----
-db error: ERROR: Table Function with name stack does not exist!
-Did you mean "<slt:ignore>"?
+country	city	year	population
+NL	Amsterdam	2000	10
+NL	Amsterdam	2010	12
+NL	Amsterdam	2020	15
+US	New York	2000	100
+US	New York	2010	120
+US	New York	2020	150

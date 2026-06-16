@@ -236,7 +236,6 @@ struct Transition : RangeLabel {
 };
 
 }  // namespace fsa
-
 }  // namespace fst
 
 // clang-format off

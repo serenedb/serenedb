@@ -56,7 +56,7 @@ bool ByTermsMinMatchZeroRule::Apply(Filter::ptr& slot,
   if (node.options().terms.empty() || node.options().min_match != 0) {
     return false;
   }
-  if (ctx.scorer == nullptr) {
+  if (!ctx.scored) {
     slot = node.MakeAllDocsFilter(kNoBoost);
     return true;
   }

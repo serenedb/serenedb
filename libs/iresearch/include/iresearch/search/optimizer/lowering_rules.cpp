@@ -198,7 +198,7 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
     std::clamp(static_cast<size_t>(
                  std::ceil(static_cast<float_t>(terms_count) * threshold)),
                size_t{1}, terms_count);
-  if (ctx.scorer == nullptr && min_match == 1) {
+  if (!ctx.scored && min_match == 1) {
     auto by_terms = std::make_unique<ByTerms>();
     *by_terms->mutable_field_id() = node.field_id();
     auto* options = by_terms->mutable_options();

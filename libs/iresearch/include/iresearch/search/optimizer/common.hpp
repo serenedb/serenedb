@@ -42,9 +42,8 @@ std::unique_ptr<T> MakeBoolean(std::vector<Filter::ptr> children,
   return node;
 }
 
-inline bool TryFoldBoost(Filter& survivor, score_t boost,
-                         const Scorer* scorer) {
-  if (boost == kNoBoost || scorer == nullptr) {
+inline bool TryFoldBoost(Filter& survivor, score_t boost, bool scored) {
+  if (boost == kNoBoost || !scored) {
     return true;
   }
   auto* boostable = dynamic_cast<FilterWithBoost*>(&survivor);

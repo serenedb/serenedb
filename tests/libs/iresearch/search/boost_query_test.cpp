@@ -115,7 +115,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
     ASSERT_NE(nullptr, opt);
 
     irs::TFIDF scorer{/*normalize=*/false};
-    irs::Optimize(opt, {.scorer = &scorer});
+    irs::Optimize(opt, {.scored = true});
 
     auto raw_hits = CollectAll(reader, *raw);
     auto opt_hits = CollectAll(reader, *opt);
@@ -315,7 +315,7 @@ TEST_P(BoostQueryTestCase, OptimizerPreservesMixedDistinct) {
   irs::Filter::ptr raw = build();
   irs::Filter::ptr opt = build();
   irs::TFIDF scorer{/*normalize=*/false};
-  irs::Optimize(opt, {.scorer = &scorer});
+  irs::Optimize(opt, {.scored = true});
 
   auto raw_hits = CollectAll(reader, *raw);
   auto opt_hits = CollectAll(reader, *opt);

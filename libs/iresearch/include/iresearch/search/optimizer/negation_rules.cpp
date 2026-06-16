@@ -116,7 +116,7 @@ bool ExclusionRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     slot = AllDocsProvider::Default(node.Boost());
     return true;
   }
-  if (!TryFoldBoost(*incl, node.Boost(), ctx.scorer)) {
+  if (!TryFoldBoost(*incl, node.Boost(), ctx.scored)) {
     return false;
   }
   slot = std::move(incl);
@@ -145,7 +145,7 @@ bool ExclusionDoubleNegationRule::Apply(Filter::ptr& slot,
     return false;
   }
   if (!negated) {
-    if (!TryFoldBoost(**inner, node.Boost(), ctx.scorer)) {
+    if (!TryFoldBoost(**inner, node.Boost(), ctx.scored)) {
       return false;
     }
     slot = std::move(*inner);

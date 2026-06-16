@@ -324,7 +324,7 @@ bool AndAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     slot = node.MakeAllDocsFilter(node.Boost() * all_boost);
     return true;
   }
-  if (ctx.scorer == nullptr && node.size() - all_count == 1) {
+  if (!ctx.scored && node.size() - all_count == 1) {
     auto& children = node.mutable_filters();
     const auto it = absl::c_find_if(
       children, [](const auto& child) { return !IsAllDocs(*child); });
@@ -354,7 +354,7 @@ bool OrAllFoldRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   if (min_match <= all_count) {
-    if (ctx.scorer == nullptr || all_count == node.size()) {
+    if (!ctx.scored || all_count == node.size()) {
       slot = node.MakeAllDocsFilter(node.Boost() * all_boost);
       return true;
     }
@@ -383,7 +383,7 @@ bool SingleChildRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   auto& front = node.mutable_filters().front();
-  if (!TryFoldBoost(*front, node.Boost(), ctx.scorer)) {
+  if (!TryFoldBoost(*front, node.Boost(), ctx.scored)) {
     return false;
   }
   auto child = std::move(front);

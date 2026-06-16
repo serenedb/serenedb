@@ -100,7 +100,7 @@ irs::Filter::ptr Executor::ParseFilter(std::string_view str) {
     return {};
   }
   irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter, {.scorer = _scorer_ptr});
+  irs::Optimize(filter, {.scored = _scorer_ptr != nullptr});
   return filter;
 }
 

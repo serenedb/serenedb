@@ -16387,7 +16387,7 @@ TEST(And_test, optimize_all_filters) {
     irs::Filter::ptr f = std::move(root);
 
     tests::sort::Boost sort{};
-    irs::Optimize(f, {.scorer = &sort});
+    irs::Optimize(f, {.scored = true});
     auto prepared =
       f->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -16401,7 +16401,7 @@ TEST(And_test, optimize_all_filters) {
     Append<irs::ByTerm>(*root, kFieldTestField, "test_term");
     root->add<irs::All>().boost(5.f);
     irs::Filter::ptr f = std::move(root);
-    irs::Optimize(f, {.scorer = &sort});
+    irs::Optimize(f, {.scored = true});
     auto prepared =
       f->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
@@ -16587,7 +16587,7 @@ TEST(Or_test, optimize_all_scored) {
   root->add<irs::Empty>();
   tests::sort::Boost sort{};
   irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter, {.scorer = &sort});
+  irs::Optimize(filter, {.scored = true});
   auto prep =
     filter->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
@@ -16605,7 +16605,7 @@ TEST(Or_test, optimize_only_all_boosted) {
   root->add<irs::All>().boost(5);
 
   irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter, {.scorer = &sort});
+  irs::Optimize(filter, {.scored = true});
   auto prep =
     filter->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
@@ -16628,7 +16628,7 @@ TEST(Or_test, boosted_not) {
     node.boost(5);
   }
   irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter, {.scorer = &sort});
+  irs::Optimize(filter, {.scored = true});
   auto prep =
     filter->prepare({.index = irs::SubReader::empty(), .scorer = &sort});
   auto docs =

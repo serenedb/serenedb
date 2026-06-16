@@ -34,7 +34,7 @@
 namespace irs {
 
 struct OptimizeContext {
-  const Scorer* scorer = nullptr;
+  bool scored = false;
 };
 
 template<typename Visit>

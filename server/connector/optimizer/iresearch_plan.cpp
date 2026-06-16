@@ -868,12 +868,7 @@ bool TryClaimSearchFilter(
   }
 
   irs::Filter::ptr root = std::move(root_and);
-  std::unique_ptr<irs::Scorer> scorer;
-  if (!scan.vector_scorer && (scan.text_scorer || scan.EmitOffsets())) {
-    scorer = scan.text_scorer ? catalog::MakeScorer(*scan.text_scorer)
-                              : catalog::MakeScorer({});
-  }
-  irs::Optimize(root, {.scorer = scorer.get()});
+  irs::Optimize(root, {.scored = scan.text_scorer || scan.EmitOffsets()});
 
   std::shared_ptr<irs::Filter> stored;
   if (scan.vector_scorer) {

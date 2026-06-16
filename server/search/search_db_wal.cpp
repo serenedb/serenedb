@@ -197,6 +197,76 @@ SectionHeader ReadSectionHeader(Cursor& c) {
   return h;
 }
 
+struct ParsedOp {
+  uint8_t kind = 0;
+  // INLINE
+  uint32_t seg_count = 0;  // # of (u64 base, u64 count) InlinePk pairs
+  const uint8_t* pk_blob = nullptr;  // seg_count * 2 * u64, packed
+  const uint8_t* inline_blob = nullptr;
+  uint64_t inline_blob_len = 0;
+  // REFERENCE (into seg_scratch -- alignment-safe)
+  std::span<const uint64_t> seg_ids;
+  // DELETE (views into the payload, into pk_scratch)
+  std::span<const std::string_view> delete_pks;
+};
+
+ParsedOp ParseOp(Cursor& c, std::vector<uint64_t>& seg_scratch,
+                 std::vector<std::string_view>& pk_scratch) {
+  ParsedOp op;
+  op.kind = c.Read<uint8_t>();
+  switch (op.kind) {
+    case kKindInline:
+      op.seg_count = c.Read<uint32_t>();
+      op.pk_blob = c.ReadBlob(op.seg_count * 2 * sizeof(uint64_t));
+      op.inline_blob_len = c.Read<uint64_t>();
+      op.inline_blob = c.ReadBlob(op.inline_blob_len);
+      break;
+    case kKindReference: {
+      const auto n = c.Read<uint32_t>();
+      seg_scratch.clear();
+      seg_scratch.reserve(n);
+      for (uint32_t k = 0; k < n; ++k) {
+        seg_scratch.push_back(c.Read<uint64_t>());
+      }
+      op.seg_ids = seg_scratch;
+      break;
+    }
+    case kKindDelete: {
+      const auto n = c.Read<uint32_t>();
+      pk_scratch.clear();
+      pk_scratch.reserve(n);
+      for (uint32_t i = 0; i < n; ++i) {
+        const auto len = c.Read<uint32_t>();
+        const uint8_t* bytes = c.ReadBlob(len);
+        pk_scratch.emplace_back(reinterpret_cast<const char*>(bytes), len);
+      }
+      op.delete_pks = pk_scratch;
+      break;
+    }
+    case kKindTruncate:
+      break;  // bodyless
+    default:
+      SDB_ENSURE(false, ERROR_INTERNAL,
+                 "unknown search WAL op kind: ", static_cast<int>(op.kind));
+  }
+  return op;
+}
+
+template<typename OpHandler>
+void VisitSectionsOps(Cursor& c, std::vector<uint64_t>& seg_scratch,
+                      std::vector<std::string_view>& pk_scratch,
+                      const OpHandler& on_op) {
+  const auto shard_count = c.Read<uint32_t>();
+  for (uint32_t s = 0; s < shard_count; ++s) {
+    const auto h = ReadSectionHeader(c);
+    const auto op_count = c.Read<uint32_t>();
+    for (uint32_t o = 0; o < op_count; ++o) {
+      const ParsedOp op = ParseOp(c, seg_scratch, pk_scratch);
+      on_op(h.table_id, op);
+    }
+  }
+}
+
 void ReplayChunkFile(
   duckdb::FileSystem& fs, const std::string& chunk_path,
   const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t pk_base) const>&
@@ -554,6 +624,8 @@ void SearchDbWal::RunGc() {
     active_first_tick = _active_first_tick;
   }
 
+  std::vector<uint64_t> seg_scratch;         // reused by ParseOp across records
+  std::vector<std::string_view> pk_scratch;  // (RunGc only consumes REFERENCE)
   for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
     if (active_first_tick != 0 && first_tick == active_first_tick) {
       continue;  // the live, still-appended segment
@@ -569,32 +641,16 @@ void SearchDbWal::RunGc() {
           consumed = false;
           break;
         }
-        auto shard_count = c.Read<uint32_t>();
-        for (uint32_t s = 0; s < shard_count; ++s) {
-          auto h = ReadSectionHeader(c);
-          auto op_count = c.Read<uint32_t>();
-          for (uint32_t o = 0; o < op_count; ++o) {
-            auto kind = c.Read<uint8_t>();
-            if (kind == kKindInline) {
-              auto seg_count = c.Read<uint32_t>();
-              c.ReadBlob(seg_count * 2 * sizeof(uint64_t));
-              auto inline_len = c.Read<uint64_t>();
-              c.ReadBlob(inline_len);
-            } else if (kind == kKindReference) {
-              auto seg_count = c.Read<uint32_t>();
-              for (uint32_t k = 0; k < seg_count; ++k) {
-                uint64_t sid = c.Read<uint64_t>();
-                chunk_paths.push_back(ChunkDir(h.table_id) / ChunkName(sid));
-              }
-            } else if (kind == kKindDelete) {
-              auto pk_count = c.Read<uint32_t>();
-              for (uint32_t i = 0; i < pk_count; ++i) {
-                auto len = c.Read<uint32_t>();
-                c.ReadBlob(len);
-              }
+        VisitSectionsOps(
+          c, seg_scratch, pk_scratch,
+          [&](uint64_t table_id, const ParsedOp& op) {
+            if (op.kind != kKindReference) {
+              return;
             }
-          }
-        }
+            for (uint64_t sid : op.seg_ids) {
+              chunk_paths.push_back(ChunkDir(table_id) / ChunkName(sid));
+            }
+          });
       }
     }
     if (!consumed) {
@@ -617,92 +673,73 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
   std::lock_guard<std::mutex> lock(_append_mu);
   uint64_t max_tick = 0;
   std::unordered_set<std::string> referenced;  // surviving chunk-file paths
-  std::vector<std::string_view> delete_pks;    // scratch, reused per DELETE op
+  std::vector<uint64_t> seg_scratch;           // reused by ParseOp across
+  std::vector<std::string_view> pk_scratch;    // records
 
   for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
     duckdb::BufferedFileReader reader(_fs, path.string().c_str());
     std::vector<uint8_t> payload;
     while (ReadFrame(reader, payload)) {
       Cursor c(payload);
-      uint64_t tick = c.Read<uint64_t>();
+      const uint64_t tick = c.Read<uint64_t>();
       max_tick = std::max(max_tick, tick);
-      auto shard_count = c.Read<uint32_t>();
-      for (uint32_t s = 0; s < shard_count; ++s) {
-        auto h = ReadSectionHeader(c);
-        const ObjectId tid{h.table_id};
-        const bool live = exists_of(tid) && tick > committed_of(tid);
-        auto op_count = c.Read<uint32_t>();
-        for (uint32_t o = 0; o < op_count; ++o) {
-          auto kind = c.Read<uint8_t>();
-          if (kind == kKindInline) {
-            auto seg_count = c.Read<uint32_t>();
-            const uint8_t* pk_blob =
-              c.ReadBlob(seg_count * 2 * sizeof(uint64_t));
-            auto inline_len = c.Read<uint64_t>();
-            const uint8_t* blob = c.ReadBlob(inline_len);
-            if (!live) {
-              continue;
-            }
-            std::vector<InlinePk> segments(seg_count);
-            for (uint32_t i = 0; i < seg_count; ++i) {
-              std::memcpy(&segments[i].base,
-                          pk_blob + (2 * i) * sizeof(uint64_t),
-                          sizeof(uint64_t));
-              std::memcpy(&segments[i].count,
-                          pk_blob + (2 * i + 1) * sizeof(uint64_t),
-                          sizeof(uint64_t));
-            }
-            duckdb::MemoryStream ms(const_cast<uint8_t*>(blob), inline_len);
-            duckdb::BinaryDeserializer deser{ms};
-            deser.Begin();
-            auto cdc = duckdb::ColumnDataCollection::Deserialize(deser);
-            deser.End();
-            // Re-slice by the recorded per-Sink-chunk segments -- the CDC's own
-            // Chunks() coalesce partial appends, so we can't index by chunk.
-            VisitInlineSegments(
-              *cdc, segments, [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                insert_cb(tick, tid, pk_base, chunk);
-              });
-          } else if (kind == kKindReference) {
-            auto seg_count = c.Read<uint32_t>();
-            for (uint32_t k = 0; k < seg_count; ++k) {
-              uint64_t sid = c.Read<uint64_t>();
-              auto chunk_path =
-                (ChunkDir(h.table_id) / ChunkName(sid)).string();
-              referenced.insert(chunk_path);  // survives the orphan sweep
+      VisitSectionsOps(
+        c, seg_scratch, pk_scratch, [&](uint64_t table_id, const ParsedOp& op) {
+          const ObjectId tid{table_id};
+          const bool live = exists_of(tid) && tick > committed_of(tid);
+          switch (op.kind) {
+            case kKindInline: {
               if (!live) {
-                continue;
+                return;
               }
-              ReplayChunkFile(_fs, chunk_path,
-                              [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
-                                insert_cb(tick, tid, pk_base, chunk);
-                              });
+              std::vector<InlinePk> segments(op.seg_count);
+              for (uint32_t i = 0; i < op.seg_count; ++i) {
+                std::memcpy(&segments[i].base,
+                            op.pk_blob + (2 * i) * sizeof(uint64_t),
+                            sizeof(uint64_t));
+                std::memcpy(&segments[i].count,
+                            op.pk_blob + (2 * i + 1) * sizeof(uint64_t),
+                            sizeof(uint64_t));
+              }
+              duckdb::MemoryStream ms(const_cast<uint8_t*>(op.inline_blob),
+                                      op.inline_blob_len);
+              duckdb::BinaryDeserializer deser{ms};
+              deser.Begin();
+              auto cdc = duckdb::ColumnDataCollection::Deserialize(deser);
+              deser.End();
+              VisitInlineSegments(
+                *cdc, segments,
+                [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
+                  insert_cb(tick, tid, pk_base, chunk);
+                });
+              break;
             }
-          } else if (kind == kKindDelete) {
-            // Consume the PK list either way; collect and replay only if live.
-            auto pk_count = c.Read<uint32_t>();
-            delete_pks.clear();
-            if (live) {
-              delete_pks.reserve(pk_count);
-            }
-            for (uint32_t i = 0; i < pk_count; ++i) {
-              auto len = c.Read<uint32_t>();
-              const uint8_t* bytes = c.ReadBlob(len);
+            case kKindReference:
+              for (uint64_t sid : op.seg_ids) {
+                auto chunk_path =
+                  (ChunkDir(table_id) / ChunkName(sid)).string();
+                referenced.insert(chunk_path);  // survives the orphan sweep
+                if (live) {
+                  ReplayChunkFile(
+                    _fs, chunk_path,
+                    [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
+                      insert_cb(tick, tid, pk_base, chunk);
+                    });
+                }
+              }
+              break;
+            case kKindDelete:
               if (live) {
-                delete_pks.emplace_back(reinterpret_cast<const char*>(bytes),
-                                        len);
+                delete_cb(tick, tid, op.delete_pks);
               }
-            }
-            if (live) {
-              delete_cb(tick, tid, delete_pks);
-            }
-          } else {  // kKindTruncate: no body; wipe the shard if live
-            if (live) {
-              truncate_cb(tick, tid);
-            }
+              break;
+            case kKindTruncate:
+              if (live) {
+                truncate_cb(tick, tid);
+              }
+              break;
           }
-        }
-      }
+        });
     }
   }
 

@@ -1,6 +1,10 @@
 hash-threshold 100
 
 statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+
+statement ok
 CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
@@ -1153,29 +1157,9 @@ ORDER BY docs_idx.id;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│__internal_decompress_strin│
-│           g(#2)           │
-│                           │
-│          ~7 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │      docs_idx.id ASC      │
-│                           │
-│          ~7 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│__internal_compress_string_│
-│        uhugeint(#2)       │
 │                           │
 │          ~7 rows          │
 └─────────────┬─────────────┘
@@ -1189,16 +1173,6 @@ QUERY PLAN
 │          ~7 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│             #1            │
-│__internal_decompress_strin│
-│           g(#2)           │
-│                           │
-│          ~7 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │         HASH_JOIN         │
 │    ────────────────────   │
 │      Join Type: INNER     │
@@ -1207,14 +1181,14 @@ QUERY PLAN
 │          ~7 rows          │              │
 └─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      ││         PROJECTION        │
+│       IRESEARCH_SCAN      ││          SEQ_SCAN         │
 │    ────────────────────   ││    ────────────────────   │
-│      Index: docs_idx      ││             #0            │
-│       Lookup: table       ││__internal_compress_string_│
-│                           ││        uhugeint(#1)       │
-│          Filter:          ││                           │
-│  ┌─────────────────────┐  ││                           │
-│  │┌───────────────────┐│  ││                           │
+│      Index: docs_idx      ││        Table: meta        │
+│       Lookup: table       ││   Type: Sequential Scan   │
+│                           ││                           │
+│          Filter:          ││        Projections:       │
+│  ┌─────────────────────┐  ││             id            │
+│  │┌───────────────────┐│  ││            tag            │
 │  ││        AND        ││  ││                           │
 │  │└─────────┬─────────┘│  ││                           │
 │  │┌─────────┴─────────┐│  ││                           │
@@ -1233,19 +1207,7 @@ QUERY PLAN
 │  sdb_inverted_index_score ││                           │
 │                           ││                           │
 │          ~7 rows          ││          ~3 rows          │
-└───────────────────────────┘└─────────────┬─────────────┘
-                             ┌─────────────┴─────────────┐
-                             │          SEQ_SCAN         │
-                             │    ────────────────────   │
-                             │        Table: meta        │
-                             │   Type: Sequential Scan   │
-                             │                           │
-                             │        Projections:       │
-                             │             id            │
-                             │            tag            │
-                             │                           │
-                             │          ~3 rows          │
-                             └───────────────────────────┘
+└───────────────────────────┘└───────────────────────────┘
 
 
 query
@@ -1856,3 +1818,7 @@ id
 
 statement ok
 DROP TABLE prefix_docs;
+
+
+statement ok
+SET disabled_optimizers = '';

@@ -1,4 +1,8 @@
 statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+
+statement ok
 CREATE TABLE t(id text);
 
 
@@ -28,17 +32,6 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│__internal_decompress_strin│
-│           g(#0)           │
-│__internal_decompress_strin│
-│           g(#1)           │
-│    CAST(#2 AS INTEGER)    │
-│                           │
-│          ~5 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │         HASH_JOIN         │
 │    ────────────────────   │
 │      Join Type: INNER     │
@@ -46,15 +39,6 @@ QUERY PLAN
 │                           │              │
 │          ~5 rows          │              │
 └─────────────┬─────────────┘              │
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│         PROJECTION        ││         PROJECTION        │
-│    ────────────────────   ││    ────────────────────   │
-│__internal_compress_string_││__internal_compress_string_│
-│        uinteger(#0)       ││        uinteger(#0)       │
-│                           ││    CAST(#1 AS TINYINT)    │
-│                           ││                           │
-│        ~1,000 rows        ││          ~3 rows          │
-└─────────────┬─────────────┘└─────────────┬─────────────┘
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │          SEQ_SCAN         ││          SEQ_SCAN         │
 │    ────────────────────   ││    ────────────────────   │
@@ -67,3 +51,7 @@ QUERY PLAN
 │                           ││                           │
 │        ~1,000 rows        ││          ~3 rows          │
 └───────────────────────────┘└───────────────────────────┘
+
+
+statement ok
+SET disabled_optimizers = '';

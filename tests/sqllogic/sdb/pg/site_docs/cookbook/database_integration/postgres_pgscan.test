@@ -45,6 +45,7 @@ INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_app.users VALUES
 query
 SELECT id, name, signups FROM pg_${__DATABASE__}.${__DATABASE__}_app.users ORDER BY id;
 ----
+id	name	signups
 1	alice	12
 2	bob	7
 3	carol	23
@@ -61,6 +62,7 @@ query rowsort
 SELECT id, name
 FROM postgres_scan('host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}', '${__DATABASE__}_app', 'users');
 ----
+id	name
 1	alice
 2	bob
 3	carol

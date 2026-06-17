@@ -17,7 +17,11 @@ CREATE TABLE ddl_create_t2 (a INT DEFAULT 5);
 # ddl_create: GENERATED
 statement ok
 CREATE TABLE ddl_create_g (a INT, b INT GENERATED ALWAYS AS (a*2) STORED);
+
+statement ok
 INSERT INTO ddl_create_g (a) VALUES (5);
+
+statement ok
 SELECT b FROM ddl_create_g;
 
 # ddl_create: Check Constraints
@@ -31,8 +35,15 @@ CREATE TABLE ddl_create_t5 (a INT NOT NULL);
 # ddl_create: Unique Constraints
 statement ok
 CREATE TABLE ddl_create_u (a INT UNIQUE);
+
+statement ok
 INSERT INTO ddl_create_u VALUES (1);
+
+statement error
 INSERT INTO ddl_create_u VALUES (1);
+----
+db error: ERROR: Duplicate key "a: 1" violates unique constraint.
+
 
 # ddl_create: Primary Keys
 statement ok
@@ -95,23 +106,38 @@ statement error
 CREATE ROLE ddl_priv_role1;
 
 # ddl_priv: OWNER TO
-statement error
+statement ok
 CREATE TABLE ddl_priv_owner_t(a int);
+
+statement error
 ALTER TABLE ddl_priv_owner_t OWNER TO postgres;
+----
+db error: ERROR: syntax error at or near "OWNER"
+
 
 # ddl_priv: ALTER ROLE
 statement error
 ALTER ROLE postgres WITH LOGIN;
 
 # ddl_priv: GRANT
-statement error
+statement ok
 CREATE TABLE ddl_priv_grant_t(a int);
+
+statement error
 GRANT SELECT ON ddl_priv_grant_t TO postgres;
+----
+db error: ERROR: syntax error at or near "SELECT"
+
 
 # ddl_priv: REVOKE
-statement error
+statement ok
 CREATE TABLE ddl_priv_revoke_t(a int);
+
+statement error
 REVOKE SELECT ON ddl_priv_revoke_t FROM postgres;
+----
+db error: ERROR: syntax error at or near "SELECT"
+
 
 # ddl_priv: SET ROLE
 statement ok
@@ -122,30 +148,45 @@ statement error
 CREATE ROLE ddl_priv_inherit1 INHERIT;
 
 # ddl_priv: Row Security Policies
-statement error
+statement ok
 CREATE TABLE ddl_priv_rls_t(a int);
+
+statement error
 ALTER TABLE ddl_priv_rls_t ENABLE ROW LEVEL SECURITY;
-CREATE POLICY ddl_priv_pol ON ddl_priv_rls_t USING (true);
+----
+db error: ERROR: syntax error at or near "ENABLE"
+
 
 # ddl_index: GIN
 statement error
 CREATE INDEX ddl_index_gin ON ddl_index_base USING gin (t);
-DROP INDEX ddl_index_gin;
+----
+db error: ERROR: Table with name ddl_index_base does not exist!
+Did you mean "<slt:ignore>"?
+
 
 # ddl_index: BRIN
 statement error
 CREATE INDEX ddl_index_brin ON ddl_index_base USING brin (a);
-DROP INDEX ddl_index_brin;
+----
+db error: ERROR: Table with name ddl_index_base does not exist!
+Did you mean "<slt:ignore>"?
+
 
 # ddl_index: Indexes on Expressions
 statement error
 CREATE INDEX ddl_index_expr ON ddl_index_base ((a + b));
-DROP INDEX ddl_index_expr;
+----
+db error: ERROR: Table with name ddl_index_base does not exist!
+Did you mean "<slt:ignore>"?
+
 
 # ddl_index: Partial Indexes
 statement error
 CREATE INDEX ddl_index_part ON ddl_index_base (a) WHERE a > 5;
-DROP INDEX ddl_index_part;
+----
+db error: ERROR: Creating partial indexes is not supported currently
+
 
 # ddl_misc: CREATE SCHEMA
 statement ok
@@ -158,6 +199,8 @@ DROP SCHEMA ddl_misc_schema1;
 # ddl_misc: search_path
 statement ok
 SET search_path TO public;
+
+statement ok
 SHOW search_path;
 
 # ddl_misc: Table Inheritance
@@ -179,16 +222,22 @@ CREATE VIEW ddl_misc_v1 AS SELECT 1 AS x;
 # ddl_misc: Databases
 statement ok
 CREATE DATABASE ddl_misc_db1;
+
+statement ok
 DROP DATABASE ddl_misc_db1;
 
 # ddl_misc: Functions & Procedures
 statement ok
 CREATE FUNCTION ddl_misc_fn(a int) RETURNS int AS $$ SELECT a + 1 $$ LANGUAGE sql;
+
+statement ok
 CREATE PROCEDURE ddl_misc_proc(a int) LANGUAGE sql AS $$ SELECT a $$;
 
 # ddl_misc: Custom Types
 statement ok
 CREATE TYPE ddl_misc_typ AS (a int, b text);
+
+statement ok
 CREATE TYPE ddl_misc_enum AS ENUM ('a','b');
 
 # ddl_misc: Triggers
@@ -198,13 +247,25 @@ CREATE TRIGGER ddl_misc_t1 BEFORE INSERT ON ddl_misc_trg FOR EACH ROW EXECUTE FU
 # ddl_misc: Prepared Statements
 statement ok
 PREPARE p AS SELECT 1+1;
+
+statement ok
 EXECUTE p;
 -- also: PREPARE ddl_misc_ps (int) AS SELECT $1 + 1;
 
 # ddl_misc: Advisory Locks
 statement error
 SELECT pg_advisory_lock(1);
+----
+db error: ERROR: Scalar Function with name pg_advisory_lock does not exist!
+Did you mean "<slt:ignore>"?
+
+
+statement error
 SELECT pg_try_advisory_lock(1);
+----
+db error: ERROR: Scalar Function with name pg_try_advisory_lock does not exist!
+Did you mean "<slt:ignore>"?
+
 
 # queries: Table & View References
 statement ok
@@ -321,6 +382,8 @@ SELECT NULL::bigint;
 # types: bigserial
 statement ok
 CREATE TABLE types_bs(a bigserial);
+
+statement ok
 DROP TABLE types_bs;
 
 # types: bit [ (n) ]
@@ -346,15 +409,27 @@ SELECT NULL::bytea;
 # types: character [ (n) ]
 statement ok
 CREATE TABLE types_ch2(a character(3));
+
+statement ok
 INSERT INTO types_ch2 VALUES ('a');
+
+statement ok
 SELECT a,length(a) FROM types_ch2;
+
+statement ok
 DROP TABLE types_ch2;
 
 # types: character varying [ (n) ]
 statement ok
 CREATE TABLE types_cv2(a varchar(3));
+
+statement ok
 INSERT INTO types_cv2 VALUES ('abcde');
+
+statement ok
 SELECT a,length(a) FROM types_cv2;
+
+statement ok
 DROP TABLE types_cv2;
 
 # types: cidr
@@ -448,13 +523,21 @@ SELECT NULL::smallint;
 # types: smallserial
 statement ok
 CREATE TABLE types_ss(a smallserial);
+
+statement ok
 DROP TABLE types_ss;
 
 # types: serial
 statement ok
 CREATE TABLE types_se2(a serial);
+
+statement ok
 INSERT INTO types_se2 DEFAULT VALUES;
+
+statement ok
 SELECT a FROM types_se2;
+
+statement ok
 DROP TABLE types_se2;
 
 # types: text
@@ -1384,6 +1467,8 @@ SELECT EXTRACT(MONTH FROM TIMESTAMP '2020-06-01');
 # op_misc1: enum_first
 statement ok
 CREATE TYPE op_misc1_mood AS ENUM ('sad','ok','happy');
+
+statement ok
 SELECT enum_first(NULL::op_misc1_mood);
 
 # op_misc1: enum_last
@@ -1837,6 +1922,8 @@ SELECT ts_debug('english', 'a fat cat');
 # op_tsearch: ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY op_tsearch_lx (template='text', locale='en_US.UTF-8', case='lower', stemming=true);
+
+statement ok
 SELECT ts_lexize('op_tsearch_lx', 'running cats');
 
 # op_tsearch: ts_parse

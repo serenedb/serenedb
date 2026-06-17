@@ -25,8 +25,9 @@
 
 #include <unicode/locid.h>
 
-#include "analyzers.hpp"
+#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/utils/icu_locale_serde.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
 #include "token_attributes.hpp"
 
@@ -39,16 +40,15 @@ namespace analysis {
 class StemmingTokenizer final : public TypedAnalyzer<StemmingTokenizer>,
                                 private util::Noncopyable {
  public:
-  struct OptionsT {
-    icu::Locale locale;
-
-    OptionsT() : locale{"C"} { locale.setToBogus(); }
+  struct Options {
+    using Owner = StemmingTokenizer;
+    icu::Locale locale = irs::MakeBogusLocale();
   };
+  static ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "stem"; }
-  static void init();  // for trigering registration in a static build
 
-  explicit StemmingTokenizer(const OptionsT& options);
+  explicit StemmingTokenizer(Options options);
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -60,7 +60,7 @@ class StemmingTokenizer final : public TypedAnalyzer<StemmingTokenizer>,
   using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
 
   attributes _attrs;
-  OptionsT _options;
+  Options _options;
   std::string _buf;
   stemmer_ptr _stemmer;
   bool _term_eof = true;

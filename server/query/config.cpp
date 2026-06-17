@@ -30,6 +30,8 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/main/valid_checker.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
@@ -91,15 +93,9 @@ IsolationLevel Config::GetIsolationLevel() const {
   return _client_ctx.transaction.GetIsolationLevel();
 }
 
-WriteConflictPolicy Config::GetWriteConflictPolicy() const {
-  auto value = Get("sdb_write_conflict_policy");
-  SDB_ASSERT(value);
-  return GetEnumValue<WriteConflictPolicy>(*value);
-}
-
-bool Config::GetReadYourOwnWrites() const {
+bool Config::GetStrictDDL() const {
   duckdb::Value value;
-  auto ok = _client_ctx.TryGetCurrentSetting("sdb_read_your_own_writes", value);
+  auto ok = _client_ctx.TryGetCurrentSetting("sdb_strict_ddl", value);
   SDB_ASSERT(ok && !value.IsNull());
   return duckdb::BooleanValue::Get(value);
 }
@@ -116,7 +112,7 @@ std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
   if (_snapshot) {
     return _snapshot;
   }
-  _snapshot = catalog::CatalogFeature::instance().Global().GetCatalogSnapshot();
+  _snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   SDB_ASSERT(_snapshot);
   return _snapshot;
 }
@@ -172,14 +168,14 @@ void Config::SetSettingChecked(std::string_view key, std::string value,
     duckdb::Value{std::move(value)});
 }
 
-void Config::ResetAll() {
-  _transaction.clear();
-
-  _client_ctx.config.user_settings = {};
-}
-
 bool Config::IsExplicitTransaction() const {
   return !_client_ctx.transaction.IsAutoCommit();
+}
+
+bool Config::IsTransactionInvalidated() const {
+  auto& txn = _client_ctx.transaction;
+  return txn.HasActiveTransaction() &&
+         duckdb::ValidChecker::IsInvalidated(txn.ActiveTransaction());
 }
 
 void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {

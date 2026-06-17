@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "analyzers.hpp"
+#include "analyzer.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "token_attributes.hpp"
@@ -39,9 +39,9 @@ class SegmentationTokenizer : public TypedAnalyzer<SegmentationTokenizer>,
     return "segmentation";
   }
 
-  static void init();
-
   struct Options {
+    using Owner = SegmentationTokenizer;
+
     // Separate input to tokens based on rules for
     enum class Separate : uint8_t {
       // TODO(mbkkt) other options?
@@ -87,10 +87,9 @@ class SegmentationTokenizer : public TypedAnalyzer<SegmentationTokenizer>,
     Separate separate = Separate::Word;
     Accept accept = Accept::AlphaNumeric;
     Convert convert = Convert::Lower;
-    bool use_ascii_optimization = true;
   };
 
-  static Analyzer::ptr make(Options&& options);
+  static Analyzer::ptr Make(Options opts);
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);

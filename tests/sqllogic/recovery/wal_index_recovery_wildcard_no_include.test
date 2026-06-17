@@ -49,19 +49,29 @@ QUERY PLAN
 │           Index:          │
 │      wal_wild_ni_idx      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
-│    AND[WILDCARD_NGRAM[b   │
-│  (string), '', has_pos=0, │
-│  parts=[<Term:\\xffpe(0, 0)│
-│ ; Term:per(1, 1); Term:erc│
-│  (1, 1); Term:rce(1, 1);  │
-│  Term:cen(1, 1); Term:ent │
-│ (1, 1); >; <Term:alp(0, 0)│
-│ ; Term:lph(1, 1); Term:pha│
-│ (1, 1); >; <Term:one(0, 0)│
-│; Term:ne\\xff(1, 1); >; ]]]│
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││   WILDCARD_NGRAM  ││  │
+│  ││    ────────────   ││  │
+│  ││    b(string) ''   ││  │
+│  ││  has_pos=0 parts=[││  │
+│  ││ <Term:\\xffpe(0, 0)││  │
+│  ││ ; Term:per(1, 1); ││  │
+│  ││   Term:erc(1, 1); ││  │
+│  ││   Term:rce(1, 1); ││  │
+│  ││   Term:cen(1, 1); ││  │
+│  ││  Term:ent(1, 1); >││  │
+│  ││ ; <Term:alp(0, 0);││  │
+│  ││   Term:lph(1, 1); ││  │
+│  ││  Term:pha(1, 1); >││  │
+│  ││ ; <Term:one(0, 0);││  │
+│  ││  Term:ne\\xff(1, 1)││  │
+│  ││       ; >; ]      ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │             b             │

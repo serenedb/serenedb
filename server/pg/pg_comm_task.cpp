@@ -67,7 +67,6 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-#include "search/inverted_index_shard.h"
 
 #define SDB_LOG_PGSQL(...) SDB_PRINT_IF(false, __VA_ARGS__)
 
@@ -168,7 +167,7 @@ PgSQLCommTaskBase::~PgSQLCommTaskBase() {
   if (_connection_ctx) {
     // Rollback unconditionally: even for auto-commit connections
     // (IsExplicitTransaction() == false), Config::_snapshot may be set and must
-    // be released via Destroy() to avoid unreleased RocksDB snapshots at
+    // be released via Destroy() to avoid leaked transaction state at
     // shutdown.
     std::ignore = _connection_ctx->Rollback();
   }
@@ -303,8 +302,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
     // Pin the catalog snapshot at connection time -- all operations
     // on this connection use the same snapshot until statement/transaction end.
-    auto snapshot =
-      catalog::CatalogFeature::instance().Global().GetCatalogSnapshot();
+    auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
     auto database = snapshot->GetDatabase(DatabaseName());
     if (!database) {
       return SendError(
@@ -429,7 +427,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       memcpy(backend_key_data.data() + 5, &_key, sizeof(_key));
       _send.Write(ToBuffer(backend_key_data), false);
 
-      _send.Write(ToBuffer(kReadyForQuery), true);
+      SendReadyForQuery();
       std::move(cleanup).Cancel();
       _success_packet = true;
     } else if (auth.auth.auth_method == hba::UserAuth::Reject ||
@@ -1100,21 +1098,53 @@ void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
   _pop_packet = state == ProcessState::DonePacket;
 }
 
+namespace {
+
+bool IsCatalogDdl(duckdb::StatementType type) {
+  using duckdb::StatementType;
+  switch (type) {
+    case StatementType::CREATE_STATEMENT:
+    case StatementType::DROP_STATEMENT:
+    case StatementType::ALTER_STATEMENT:
+    case StatementType::ATTACH_STATEMENT:
+    case StatementType::DETACH_STATEMENT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
 duckdb::unique_ptr<duckdb::PendingQueryResult>
 PgSQLCommTaskBase::PendingQueryEnsured(duckdb::PreparedStatement& prepared,
                                        duckdb::vector<duckdb::Value>& values,
                                        bool allow_stream_result) {
+  if (_connection_ctx->IsExplicitTransaction() &&
+      IsCatalogDdl(prepared.GetStatementType())) {
+    if (_connection_ctx->GetStrictDDL()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+        ERR_MSG("DDL statements are not supported inside a transaction "
+                "block: DDL commits immediately and cannot be rolled back "
+                "(sdb_strict_ddl is enabled)"));
+    }
+    _connection_ctx->AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("DDL is not transactional: the statement commits immediately "
+              "and is not undone by ROLLBACK")));
+  }
+  if (_connection_ctx->IsExplicitTransaction()) {
+    _connection_ctx->RefreshReadCommittedSnapshot();
+  }
   const auto& props = prepared.GetStatementProperties();
   const auto db_name = DatabaseName();
   _connection_ctx->EnsureCatalogSnapshot();
-  if (props.modified_databases.contains(db_name)) {
-    _connection_ctx->EnsureRocksDBTransaction();
-    _connection_ctx->EnsureRocksDBSnapshot();
-  } else if (props.read_databases.contains(db_name)) {
+  if (props.modified_databases.contains(db_name) ||
+      props.read_databases.contains(db_name)) {
     if (_connection_ctx->IsExplicitTransaction()) {
-      _connection_ctx->EnsureRocksDBTransaction();
+      _connection_ctx->MarkQueryInTransaction();
     }
-    _connection_ctx->EnsureRocksDBSnapshot();
   }
   return prepared.PendingQuery(values, allow_stream_result);
 }
@@ -1246,8 +1276,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
           return ProcessState::DonePacket;
         }
         // Fall through to fetch first chunk
-        break;
-      }
+      } break;
       case duckdb::PendingExecutionResult::RESULT_NOT_READY:
       case duckdb::PendingExecutionResult::NO_TASKS_AVAILABLE:
         // More work needed -- continue polling
@@ -1551,7 +1580,12 @@ void PgSQLCommTaskBase::SendCommandComplete(duckdb::StatementType stmt_type,
       return static_cast<size_t>(ptr - buf);
     });
   } else if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
-    _send.WriteUncommitted({" ", 1});
+    // INSERT ... RETURNING still reports "INSERT 0 N" in PG.
+    if (tag.effective_type == duckdb::StatementType::INSERT_STATEMENT) {
+      _send.WriteUncommitted({" 0 ", 3});
+    } else {
+      _send.WriteUncommitted({" ", 1});
+    }
     _send.WriteContiguousData(basics::kIntStrMaxLen, [&](auto* data) {
       char* buf = reinterpret_cast<char*>(data);
       char* ptr = absl::numbers_internal::FastIntToBuffer(rows, buf);
@@ -1646,6 +1680,19 @@ void PgSQLCommTaskBase::SendParameterStatus(std::string_view name,
   _send.Commit(false);
 }
 
+char PgSQLCommTaskBase::TransactionStatusIndicator() const noexcept {
+  if (!_connection_ctx || !_connection_ctx->IsExplicitTransaction()) {
+    return 'I';
+  }
+  return _connection_ctx->IsTransactionInvalidated() ? 'E' : 'T';
+}
+
+void PgSQLCommTaskBase::SendReadyForQuery() {
+  std::array<char, kReadyForQuery.size()> msg = kReadyForQuery;
+  msg[5] = TransactionStatusIndicator();
+  _send.Write(ToBuffer(msg), true);
+}
+
 std::string_view PgSQLCommTaskBase::StartPacket() noexcept {
   std::lock_guard lock{_queue_mutex};
   SDB_ASSERT(!_queue.empty());
@@ -1676,7 +1723,7 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
 
   if (_current_packet_type == PQ_MSG_QUERY ||
       _current_packet_type == PQ_MSG_SYNC) {
-    _send.Write(ToBuffer(kReadyForQuery), true);
+    SendReadyForQuery();
   }
   std::lock_guard lock{_queue_mutex};
   if (_current_packet_type == PQ_MSG_QUERY ||

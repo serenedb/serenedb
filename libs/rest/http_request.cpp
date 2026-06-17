@@ -21,12 +21,6 @@
 
 #include "http_request.h"
 
-#include <vpack/builder.h>
-#include <vpack/options.h>
-#include <vpack/parser.h>
-#include <vpack/validator.h>
-#include <vpack/vpack_helper.h>
-
 #include <charconv>
 
 #include "basics/debugging.h"
@@ -71,7 +65,7 @@ std::string UrlDecode(const char* begin, const char* end) {
 }  // namespace
 
 HttpRequest::HttpRequest(const ConnectionInfo& connection_info, uint64_t mid)
-  : GeneralRequest(connection_info, mid), _validated_payload(false) {
+  : GeneralRequest(connection_info, mid) {
   _content_type = ContentType::Unset;
   _content_type_response = ContentType::Json;
   SDB_ASSERT(_memory_usage == 0);
@@ -101,9 +95,6 @@ HttpRequest::~HttpRequest() {
     for (const auto& it2 : it.second) {
       expected += it2.size();
     }
-  }
-  if (_vpack_builder) {
-    expected += _vpack_builder->bufferRef().size();
   }
 
   SDB_ASSERT(_memory_usage == expected, "expected memory usage: ", expected,
@@ -265,8 +256,7 @@ void HttpRequest::setHeader(std::string key, std::string value) {
     // simon: the "requests" module by default uses the "text/plain"
     // content-types for JSON in most tests. As soon as someone fixes all the
     // tests we can enable these again.
-    if (res == ContentType::Json || res == ContentType::VPack ||
-        res == ContentType::Dump) {
+    if (res == ContentType::Json || res == ContentType::Dump) {
       _content_type = res;
       return;
     }
@@ -536,42 +526,6 @@ const std::string& HttpRequest::cookieValue(const std::string& key,
 std::string_view HttpRequest::rawPayload() const {
   return std::string_view(reinterpret_cast<const char*>(_payload.data()),
                           _payload.size());
-}
-
-vpack::Slice HttpRequest::payload(bool strict_validation) {
-  if (_content_type == ContentType::Unset ||
-      _content_type == ContentType::Json) {
-    if (!_payload.empty()) {
-      if (!_vpack_builder) {
-        SDB_ASSERT(!_validated_payload);
-        const vpack::Options* options = validationOptions(strict_validation);
-        vpack::Parser parser(options);
-        parser.parse(_payload.data(), _payload.size());
-        _vpack_builder = parser.steal();
-        _validated_payload = true;
-        _memory_usage += _vpack_builder->bufferRef().size();
-      }
-      SDB_ASSERT(_validated_payload);
-      return vpack::Slice(_vpack_builder->slice());
-    }
-    // no body
-    // fallthrough intentional
-  } else if (_content_type == ContentType::VPack) {
-    if (!_payload.empty()) {
-      if (!_validated_payload) {
-        const vpack::Options* options = validationOptions(strict_validation);
-        vpack::Validator validator(options);
-        _validated_payload = validator.validate(
-          _payload.data(), _payload.size());  // throws on error
-      }
-      SDB_ASSERT(_validated_payload);
-      return vpack::Slice(reinterpret_cast<const uint8_t*>(_payload.data()));
-    }
-    // no body
-    // fallthrough intentional
-  }
-
-  return vpack::Slice::noneSlice();
 }
 
 EncodingType HttpRequest::parseAcceptEncoding(std::string_view value) const {

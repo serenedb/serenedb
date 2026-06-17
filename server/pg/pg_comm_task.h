@@ -55,14 +55,6 @@ enum class State : uint8_t {
   ErrorRecovery,
 };
 
-inline constexpr std::string_view kZero{"", 1};
-
-inline constexpr std::string_view kAnonymObject{""};
-
-inline constexpr std::array<char, 5> kCopyDone{
-  'c', 0x00, 0x00, 0x00, 0x04,
-};
-
 using BufferView = std::string_view;
 
 template<size_t N>
@@ -116,6 +108,9 @@ class PgSQLCommTaskBase : public rest::CommTask {
   void HandleClientHello(std::string_view packet);
 
   void SendParameterStatus(std::string_view name, std::string_view value);
+
+  char TransactionStatusIndicator() const noexcept;
+  void SendReadyForQuery();
 
   void SendNotices();
   void SendError(const duckdb::ErrorData& error);

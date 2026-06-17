@@ -21,32 +21,21 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
 #include <absl/time/time.h>
 
-#include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <string>
-#include <string_view>
-#include <vector>
+#include <tuple>
 
-#include "basics/async_utils.hpp"
-#include "catalog/function.h"
-#include "catalog/identifiers/index_id.h"
-#include "catalog/types.h"
+#include "catalog/identifiers/object_id.h"
 #include "rest_server/database_path_feature.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb {
-
-struct IndexFactory;
-
 namespace search {
 
 class SearchThreadPools;
-class ResourceMutex;
 
 enum class ThreadGroup : uint8_t {
   Refresh = 0,
@@ -59,7 +48,6 @@ SearchEngine& GetSearchEngine();
 class SearchEngine final {
  public:
   inline static SearchEngine* gInstance = nullptr;
-  static SearchEngine& instance() noexcept { return *gInstance; }
 
   SearchEngine();
   ~SearchEngine();
@@ -68,7 +56,6 @@ class SearchEngine final {
   void stop();
 
   std::tuple<size_t, size_t, size_t> stats(ThreadGroup id) const;
-  std::pair<size_t, size_t> limits(ThreadGroup id) const;
   bool Queue(ThreadGroup id, absl::Duration delay,
              absl::AnyInvocable<void()>&& fn);
 

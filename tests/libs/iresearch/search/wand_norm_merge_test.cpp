@@ -47,9 +47,9 @@
 
 namespace {
 
-constexpr std::string_view kBody = "body";
-constexpr std::string_view kBody2 = "body2";
-constexpr std::string_view kId = "id";
+constexpr irs::field_id kBody = 1;
+constexpr irs::field_id kBody2 = 2;
+constexpr irs::field_id kId = 3;
 constexpr std::string_view kTerm = "x";
 
 // Emits `target_count` copies of "x" (the query term) followed by
@@ -106,14 +106,15 @@ using CountAnalyzer = MixedAnalyzer;
 class NormField final : public tests::Ifield {
  public:
   // Single-term form: tf == dl == count (legacy callers).
-  NormField(std::string_view name, size_t count)
-    : _name{name}, _value{kTerm}, _analyzer{count, 0} {}
+  NormField(irs::field_id id, size_t count)
+    : _id{id}, _value{kTerm}, _analyzer{count, 0} {}
 
   // Two-term form: tf("x") = target_count, dl = target_count + filler_count.
-  NormField(std::string_view name, size_t target_count, size_t filler_count)
-    : _name{name}, _value{kTerm}, _analyzer{target_count, filler_count} {}
+  NormField(irs::field_id id, size_t target_count, size_t filler_count)
+    : _id{id}, _value{kTerm}, _analyzer{target_count, filler_count} {}
 
-  std::string_view Name() const final { return _name; }
+  irs::field_id Id() const final { return _id; }
+  std::string_view Name() const final { return {}; }
   irs::Tokenizer& GetTokens() const final {
     _analyzer.reset(_value);
     return _analyzer;
@@ -127,7 +128,7 @@ class NormField final : public tests::Ifield {
   }
 
  private:
-  std::string _name;
+  irs::field_id _id;
   std::string _value;
   mutable MixedAnalyzer _analyzer;
 };
@@ -138,7 +139,8 @@ class IdField final : public tests::Ifield {
   explicit IdField(std::string value)
     : _value{std::move(value)}, _analyzer{1, 0, _value, ""} {}
 
-  std::string_view Name() const final { return kId; }
+  irs::field_id Id() const final { return kId; }
+  std::string_view Name() const final { return {}; }
   irs::Tokenizer& GetTokens() const final {
     _analyzer.reset(_value);
     return _analyzer;
@@ -156,9 +158,9 @@ class IdField final : public tests::Ifield {
   mutable MixedAnalyzer _analyzer;
 };
 
-auto MakeByTerm(std::string_view field, std::string_view value) {
+auto MakeByTerm(irs::field_id field, std::string_view value) {
   auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field() = field;
+  *filter->mutable_field_id() = field;
   filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
   return filter;
 }
@@ -173,7 +175,7 @@ class WandNormMergeCase : public tests::IndexTestBase {
     opts.reader_options.scorer = scorer;
     opts.norm_column_options =
       [norm_rgs, next = std::make_shared<std::atomic<irs::field_id>>(0)](
-        std::string_view) -> irs::NormColumnOptions {
+        irs::field_id) -> irs::NormColumnOptions {
       return {.id = next->fetch_add(1, std::memory_order_relaxed),
               .row_group_size = norm_rgs};
     };
@@ -216,27 +218,27 @@ class WandNormMergeCase : public tests::IndexTestBase {
     return tests::Insert(writer, p.begin(), p.end());
   }
 
-  // Read the NormColumn for `field_name` on `segment` and assert each
+  // Read the NormColumn for `field_id` on `segment` and assert each
   // (doc, expected) pair. doc_id is 1-based per segment
   // (irs::doc_limits::min()).
-  void AssertNorms(const irs::SubReader& segment, std::string_view field_name,
+  void AssertNorms(const irs::SubReader& segment, irs::field_id field_id,
                    const std::vector<std::pair<irs::doc_id_t, uint32_t>>& exp) {
-    const auto* field = segment.field(field_name);
-    ASSERT_NE(nullptr, field) << "field missing: " << field_name;
+    const auto* field = segment.field(field_id);
+    ASSERT_NE(nullptr, field) << "field missing: " << field_id;
     const auto norm_id = field->meta().norm;
     ASSERT_TRUE(irs::field_limits::valid(norm_id))
-      << "no norm id on " << field_name;
+      << "no norm id on " << field_id;
 
-    const auto* cs = segment.CsReader();
+    const auto* cs = segment.GetColReader();
     ASSERT_NE(nullptr, cs);
     const auto* column = cs->NormColumn(norm_id);
-    ASSERT_NE(nullptr, column) << "norm column missing for " << field_name;
+    ASSERT_NE(nullptr, column) << "norm column missing for " << field_id;
     ASSERT_EQ(norm_id, column->Id());
 
     for (const auto& [doc, value] : exp) {
       const auto row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
       ASSERT_EQ(value, column->Get(row))
-        << field_name << " norm mismatch doc=" << doc;
+        << field_id << " norm mismatch doc=" << doc;
     }
   }
 
@@ -244,9 +246,9 @@ class WandNormMergeCase : public tests::IndexTestBase {
   // wand-off baseline so callers can diff across snapshots.
   std::vector<irs::ScoreDoc> RunBM25(const irs::DirectoryReader& reader,
                                      const irs::Scorer& scorer,
-                                     std::string_view field, size_t k) {
+                                     irs::field_id field, size_t k) {
     irs::ByTerm filter;
-    *filter.mutable_field() = field;
+    *filter.mutable_field_id() = field;
     filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(kTerm);
 
     std::vector<irs::ScoreDoc> hits_no_wand(irs::BlockSize(k));
@@ -295,8 +297,8 @@ class WandNormMergeCase : public tests::IndexTestBase {
 };
 
 // -------------------------------------------------------------------------
-// Baseline that already passed before this round of expansion. Kept to
-// catch regressions on the simplest end of the surface.
+// Simplest baseline: a single BM25 wand round-trip across compact. Kept as
+// a regression guard at the smallest end of the surface.
 // -------------------------------------------------------------------------
 TEST_P(WandNormMergeCase, BasicBM25WandRoundTripAcrossCompact) {
   static constexpr uint32_t kCountsA[] = {1, 2, 3, 4};
@@ -386,7 +388,7 @@ TEST_P(WandNormMergeCase, NormMultiRgInOneSegment) {
   const auto* field = seg.field(kBody);
   ASSERT_NE(nullptr, field);
   const auto norm_id = field->meta().norm;
-  const auto* col = seg.CsReader()->NormColumn(norm_id);
+  const auto* col = seg.GetColReader()->NormColumn(norm_id);
   ASSERT_NE(nullptr, col);
   ASSERT_EQ(3u, col->RowGroupCount())
     << "expected 4+4+2 layout, got " << col->RowGroupCount();
@@ -526,8 +528,8 @@ TEST_P(WandNormMergeCase, NormMergeWithMask) {
   // contract, so keep them as named locals.
   auto rm1 = MakeByTerm(kId, "a_1");
   auto rm2 = MakeByTerm(kId, "a_3");
-  writer->GetBatch().Remove(*rm1);
-  writer->GetBatch().Remove(*rm2);
+  tests::Remove(*writer, *rm1);
+  tests::Remove(*writer, *rm2);
   writer->RefreshCommit();
 
   for (size_t i = 0; i < std::size(kB); ++i) {

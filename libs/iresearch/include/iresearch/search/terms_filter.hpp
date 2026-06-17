@@ -81,7 +81,7 @@ class ByTerms final : public FilterWithField<ByTermsOptions>,
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          std::string_view field,
+                                          irs::field_id field,
                                           const ByTermsOptions& options);
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;

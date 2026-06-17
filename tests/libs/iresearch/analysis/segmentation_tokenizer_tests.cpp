@@ -20,9 +20,6 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -90,9 +87,8 @@ TEST(SegmentationTokenizerTest, consts) {
 TEST_P(SegmentationTokenizerTest, alpha_no_case_test) {
   Options opt{
     .convert = Options::Convert::None,
-    .use_ascii_optimization = GetParam(),
   };
-  auto stream = SegmentationTokenizer::make(std::move(opt));
+  auto stream = SegmentationTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
     "File:Constantinople(1878)-Turkish Goverment information brocure (1950s) "
     "- Istanbul coffee house.png";
@@ -110,8 +106,8 @@ TEST_P(SegmentationTokenizerTest, alpha_no_case_test) {
 }
 
 TEST_P(SegmentationTokenizerTest, alpha_lower_case_test) {
-  Options opt{.use_ascii_optimization = GetParam()};  // Lower is default
-  auto stream = SegmentationTokenizer::make(std::move(opt));
+  Options opt{};  // Lower is default
+  auto stream = SegmentationTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
     "File:Constantinople(1878)-Turkish Goverment information brocure (1950s) "
     "- Istanbul coffee house.png";
@@ -131,9 +127,8 @@ TEST_P(SegmentationTokenizerTest, alpha_lower_case_test) {
 TEST_P(SegmentationTokenizerTest, alpha_upper_case_test) {
   Options opt{
     .convert = Options::Convert::Upper,
-    .use_ascii_optimization = GetParam(),
   };
-  auto stream = SegmentationTokenizer::make(std::move(opt));
+  auto stream = SegmentationTokenizer::Make(std::move(opt));
 
   constexpr std::string_view kData =
     "File:Constantinople(1878)-Turkish Goverment information brocure (1950s) "
@@ -155,9 +150,8 @@ TEST_P(SegmentationTokenizerTest, graphic_upper_case_test) {
   Options opt{
     .accept = Options::Accept::Graphic,
     .convert = Options::Convert::Upper,
-    .use_ascii_optimization = GetParam(),
   };
-  auto stream = SegmentationTokenizer::make(std::move(opt));
+  auto stream = SegmentationTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
     "File:Constantinople(1878)-Turkish Goverment information brocure (1950s) "
     "- Istanbul coffee house.png";
@@ -184,9 +178,8 @@ TEST_P(SegmentationTokenizerTest, all_lower_case_test) {
   Options opt{
     .accept = Options::Accept::Any,
     .convert = Options::Convert::Lower,
-    .use_ascii_optimization = GetParam(),
   };
-  auto stream = SegmentationTokenizer::make(std::move(opt));
+  auto stream = SegmentationTokenizer::Make(std::move(opt));
   constexpr std::string_view kData =
     "File:Constantinople(1878)-Turkish Goverment information brocure (1950s) "
     "- Istanbul coffee house.png";
@@ -220,8 +213,8 @@ TEST_P(SegmentationTokenizerTest, all_lower_case_test) {
 TEST_P(SegmentationTokenizerTest, chinese_glyphs_test) {
   constexpr std::u8string_view kData =
     u8"\u4ECA\u5929\u4E0B\u5348\u7684\u592A\u9633\u5F88\u6E29\u6696\u3002";
-  Options opt{.use_ascii_optimization = GetParam()};
-  auto stream = SegmentationTokenizer::make(std::move(opt));
+  Options opt{};
+  auto stream = SegmentationTokenizer::Make(std::move(opt));
 
   auto test_func = [](const std::string_view& data,
                       irs::analysis::Analyzer* p_stream) {
@@ -275,8 +268,7 @@ TEST_P(SegmentationTokenizerTest, chinese_glyphs_test) {
 }
 
 TEST(SegmentationTokenizerTest, make_empty_object) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), "{}");
+  auto stream = SegmentationTokenizer::Make(Options{});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"test", 0, 4, 0}, {"retest", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
@@ -284,9 +276,8 @@ TEST(SegmentationTokenizerTest, make_empty_object) {
 }
 
 TEST(SegmentationTokenizerTest, make_lowercase) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":\"lower\"}");
+  auto stream =
+    SegmentationTokenizer::Make(Options{.convert = Options::Convert::Lower});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"test", 0, 4, 0}, {"retest", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
@@ -294,9 +285,8 @@ TEST(SegmentationTokenizerTest, make_lowercase) {
 }
 
 TEST(SegmentationTokenizerTest, make_nonecase) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":\"none\"}");
+  auto stream =
+    SegmentationTokenizer::Make(Options{.convert = Options::Convert::None});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"Test", 0, 4, 0}, {"ReTeSt", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
@@ -304,32 +294,19 @@ TEST(SegmentationTokenizerTest, make_nonecase) {
 }
 
 TEST(SegmentationTokenizerTest, make_uppercase) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":\"upper\"}");
+  auto stream =
+    SegmentationTokenizer::Make(Options{.convert = Options::Convert::Upper});
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"TEST", 0, 4, 0}, {"RETEST", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
   AssertStream(stream.get(), data, expected);
 }
 
-TEST(SegmentationTokenizerTest, make_invalidcase) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":\"invalid\"}");
-  ASSERT_FALSE(stream);
-}
-
-TEST(SegmentationTokenizerTest, make_numbercase) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), "{\"case\":2}");
-  ASSERT_FALSE(stream);
-}
-
 TEST(SegmentationTokenizerTest, make_uppercase_alphabreak) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":\"upper\", \"break\":\"alpha\"}");
+  auto stream = SegmentationTokenizer::Make(Options{
+    .accept = Options::Accept::Alpha,
+    .convert = Options::Convert::Upper,
+  });
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"TEST", 0, 4, 0}, {"RETEST", 7, 13, 1}};
   std::string data = "Test - ReTeSt";
@@ -337,9 +314,10 @@ TEST(SegmentationTokenizerTest, make_uppercase_alphabreak) {
 }
 
 TEST(SegmentationTokenizerTest, make_uppercase_all_break) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":\"upper\", \"break\":\"all\"}");
+  auto stream = SegmentationTokenizer::Make(Options{
+    .accept = Options::Accept::Any,
+    .convert = Options::Convert::Upper,
+  });
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{{"TEST", 0, 4, 0},
                                 {" ", 4, 5, 1},
@@ -351,9 +329,10 @@ TEST(SegmentationTokenizerTest, make_uppercase_all_break) {
 }
 
 TEST(SegmentationTokenizerTest, make_uppercase_graphic_break) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":\"upper\", \"break\":\"graphic\"}");
+  auto stream = SegmentationTokenizer::Make(Options{
+    .accept = Options::Accept::Graphic,
+    .convert = Options::Convert::Upper,
+  });
   ASSERT_TRUE(stream);
   const AnalyzerTokens expected{
     {"TEST", 0, 4, 0}, {"-", 5, 6, 1}, {"RETEST", 7, 13, 2}};
@@ -361,116 +340,18 @@ TEST(SegmentationTokenizerTest, make_uppercase_graphic_break) {
   AssertStream(stream.get(), data, expected);
 }
 
-TEST(SegmentationTokenizerTest, make_uppercase_invalid_break) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":\"upper\", \"break\":\"_INVALID_\"}");
-  ASSERT_FALSE(stream);
-}
-
-TEST(SegmentationTokenizerTest, make_uppercase_invalid_number_break) {
-  auto stream = irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":\"upper\", \"break\":1}");
-  ASSERT_FALSE(stream);
-}
-
-TEST(SegmentationTokenizerTest, make_invalid_json) {
-  // load jSON invalid
-  {
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "segmentation", irs::Type<irs::text_format::Json>::get(),
-                std::string_view{}));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "segmentation", irs::Type<irs::text_format::Json>::get(), "1"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "segmentation",
-                         irs::Type<irs::text_format::Json>::get(), "\"abc\""));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "segmentation", irs::Type<irs::text_format::Json>::get(),
-                "{\"case\":1}"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "segmentation", irs::Type<irs::text_format::Json>::get(),
-                "{\"break\":1}"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "segmentation", irs::Type<irs::text_format::Json>::get(),
-                "{\"case\":1, \"break\":\"all\"}"));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "segmentation", irs::Type<irs::text_format::Json>::get(),
-                "{\"case\":\"none\", \"break\":1}"));
-  }
-}
-
-TEST(SegmentationTokenizerTest, normalize_empty_object) {
-  std::string actual;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    actual, "segmentation", irs::Type<irs::text_format::Json>::get(), "{}"));
-  ASSERT_EQ(actual, "{\n  \"break\" : \"alpha\",\n  \"case\" : \"lower\"\n}");
-}
-
-TEST(SegmentationTokenizerTest, normalize_all_none_values) {
-  std::string actual;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    actual, "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"break\":\"all\", \"case\":\"none\"}"));
-  ASSERT_EQ(actual, "{\n  \"break\" : \"all\",\n  \"case\" : \"none\"\n}");
-}
-
-TEST(SegmentationTokenizerTest, normalize_graph_upper_values) {
-  {
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "segmentation", irs::Type<irs::text_format::Json>::get(),
-      "{\"break\":\"graphic\", \"case\":\"upper\"}"));
-    ASSERT_EQ(actual,
-              "{\n  \"break\" : \"graphic\",\n  \"case\" : \"upper\"\n}");
-  }
-
-  // test vpack
-  {
-    std::string config = "{\"break\":\"graphic\", \"case\":\"upper\"}";
-    auto in_vpack = vpack::Parser::fromJson(config.c_str(), config.size());
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "segmentation", irs::Type<irs::text_format::VPack>::get(),
-      in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ("{\n  \"break\" : \"graphic\",\n  \"case\" : \"upper\"\n}",
-              out_slice.toString());
-  }
-}
-
-TEST(SegmentationTokenizerTest, normalize_invalid) {
-  std::string actual;
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "segmentation", irs::Type<irs::text_format::Json>::get(),
-    std::string_view{}));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "segmentation", irs::Type<irs::text_format::Json>::get(), "1"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "\"abc\""));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":1}"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"break\":1}"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":1, \"break\":\"all\"}"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "segmentation", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":\"none\", \"break\":1}"));
+// The legacy tests `make_invalidcase`, `make_numbercase`,
+// `make_uppercase_invalid_break`, `make_uppercase_invalid_number_break`,
+// and `make_invalid_json` all exercised JSON-parser-level type / enum
+// validation (rejecting e.g. `"case": 1`, `"break": "_INVALID_"`,
+// non-object root values, etc.). The direct-Options API uses
+// strongly-typed enums (`Options::Convert`, `Options::Accept`) so these
+// assertions are now compile-time impossibilities and collapse to the
+// happy-path enum-driven `make_*` cases above.
+TEST(SegmentationTokenizerTest, make_default_smoke) {
+  // Default-initialized Options must produce a usable analyzer.
+  auto stream = SegmentationTokenizer::Make(Options{});
+  ASSERT_NE(nullptr, stream);
 }
 
 INSTANTIATE_TEST_SUITE_P(SegmentationWithAsciiOptimization,

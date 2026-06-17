@@ -24,11 +24,10 @@
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/column_existence_filter.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -71,10 +70,10 @@ irs::ByColumnExistence MakeFilter(irs::field_id id) {
 }
 
 // Collect the set of doc_ids stored in the cs column.
-std::vector<irs::doc_id_t> ExpectedDocs(
-  const irs::SubReader& segment, const irs::columnstore::ColumnReader& column) {
+std::vector<irs::doc_id_t> ExpectedDocs(const irs::SubReader& segment,
+                                        const irs::ColumnReader& column) {
   std::vector<irs::doc_id_t> docs;
-  irs::tests::VisitBlobColumn(*segment.CsReader(), column,
+  irs::tests::VisitBlobColumn(*segment.GetColReader(), column,
                               [&](irs::doc_id_t doc, irs::bytes_view) {
                                 docs.push_back(doc);
                                 return true;
@@ -92,12 +91,17 @@ std::vector<irs::doc_id_t> DrainIterator(irs::DocIterator& it) {
 
 class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
  protected:
-  // Mirror MaskField from origin: indexed but writes no bytes.
+  // Mirror MaskField from origin: indexed but writes no bytes. Derive
+  // a stable id from the field name so each MaskField shares the same id
+  // as the matching `tests::FieldIdForRuntime` lookups used by other
+  // tests in this file.
   class MaskField : public tests::Ifield {
    public:
-    explicit MaskField(const std::string& name) : _name(name) {}
+    explicit MaskField(const std::string& name)
+      : _name(name), _id(tests::FieldIdForRuntime(name)) {}
 
     bool Write(irs::DataOutput&) const final { return true; }
+    irs::field_id Id() const final { return _id; }
     std::string_view Name() const final { return _name; }
     irs::IndexFeatures GetIndexFeatures() const noexcept final {
       return irs::IndexFeatures::None;
@@ -109,6 +113,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
    private:
     std::string _name;
+    irs::field_id _id;
     mutable irs::NullTokenizer _stream;
   };
 
@@ -123,7 +128,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
     if (field == nullptr) {
       return;
     }
-    auto* cs = doc.Columnstore();
+    auto* cs = doc.GetColWriter();
     if (cs == nullptr) {
       return;
     }
@@ -322,7 +327,7 @@ TEST(by_column_existence, ctor) {
   irs::ByColumnExistence filter;
   ASSERT_EQ(irs::Type<irs::ByColumnExistence>::id(), filter.type());
   ASSERT_EQ(irs::ByColumnExistenceOptions{}, filter.options());
-  ASSERT_EQ(irs::field_id{0}, filter.id());
+  ASSERT_EQ(irs::field_limits::invalid(), filter.id());
   ASSERT_EQ(irs::kNoBoost, filter.Boost());
 }
 
@@ -712,12 +717,16 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
       }
       ++produced_docs;
       doc.clear();
-      doc.insert(std::make_shared<tests::StringField>(all_docs_field, "all"));
+      auto all_field =
+        std::make_shared<tests::StringField>(all_docs_field, "all");
+      all_field->id = tests::FieldIdForRuntime(all_docs_field);
+      doc.insert(std::move(all_field));
       if (span_index < with_field.size() &&
           with_field[span_index] == produced_docs) {
-        doc.insert(
-          std::make_shared<tests::StringField>(some_docs_field, "some"), false,
-          true);
+        auto some_field =
+          std::make_shared<tests::StringField>(some_docs_field, "some");
+        some_field->id = tests::FieldIdForRuntime(some_docs_field);
+        doc.insert(std::move(some_field), false, true);
         span_index++;
       }
       return &doc;
@@ -745,7 +754,7 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
     add_segment(
       gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
       [&](irs::IndexWriter::Document& d, const tests::Document& src) {
-        auto* cs = d.Columnstore();
+        auto* cs = d.GetColWriter();
         if (cs == nullptr) {
           return;
         }

@@ -24,8 +24,10 @@
 
 #include <array>
 #include <iosfwd>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
 
 #include "executor.h"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace bench {
 
@@ -72,13 +74,17 @@ class IndexBuilder {
 inline constexpr auto kTextIndexFeatures =
   irs::IndexFeatures::Freq | irs::IndexFeatures::Pos | irs::IndexFeatures::Norm;
 
-struct TextField {
-  std::string_view name;
-  std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{irs::analysis::analyzers::Get(
-    "segmentation", irs::Type<irs::text_format::Json>::get(), R"({})")};
+inline constexpr irs::field_id kIdFieldId = 1;
+inline constexpr irs::field_id kTextFieldId = 2;
 
-  std::string_view Name() const noexcept { return name; }
+struct TextField {
+  irs::field_id id{irs::field_limits::invalid()};
+  std::string_view text;
+  irs::analysis::Analyzer::ptr tokenizer{
+    irs::analysis::SegmentationTokenizer::Make(
+      irs::analysis::SegmentationTokenizer::Options{})};
+
+  irs::field_id Id() const noexcept { return id; }
 
   irs::Tokenizer& GetTokens() const {
     tokenizer->reset(text);
@@ -96,8 +102,8 @@ struct Document {
   simdjson::ondemand::parser parser;
   simdjson::ondemand::document json_doc;
   std::array<TextField, 2> fields{
-    TextField{.name = "id"},
-    TextField{.name = "text"},
+    TextField{.id = kIdFieldId},
+    TextField{.id = kTextFieldId},
   };
 
   void Fill(std::string_view line);

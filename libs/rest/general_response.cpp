@@ -21,8 +21,6 @@
 
 #include "general_response.h"
 
-#include <vpack/vpack_helper.h>
-
 #include "basics/debugging.h"
 #include "basics/string_utils.h"
 
@@ -435,5 +433,4 @@ GeneralResponse::GeneralResponse(ResponseCode response_code, uint64_t mid)
   : _message_id(mid),
     _response_code(response_code),
     _content_type(ContentType::Unset),
-    _content_type_requested(ContentType::Unset),
     _generate_body(true) {}

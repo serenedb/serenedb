@@ -75,20 +75,36 @@ EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││ body(string) = fox││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
-│     TopK: 3, optimized    │
-│      Projections: id      │
+│     Top: 3, optimized     │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -101,21 +117,38 @@ EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_any(['fox', 'rabbit']) OR
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
-│  AND[OR[Term(body(string) │
-│ =fox) || Term(body(string)│
-│         =rabbit)]]        │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││       TERMS       ││  │
+│  ││    ────────────   ││  │
+│  ││  body(string) {[  ││  │
+│  ││ 'fox', 1],['rabbit││  │
+│  ││', 1],} min_match=1││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
-│     TopK: 3, optimized    │
-│      Projections: id      │
+│     Top: 3, optimized     │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -130,8 +163,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
-│  sdb_inverted_index_score │
-│            DESC           │
+│          #1 DESC          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -139,11 +171,16 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││ body(string) = fox││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -163,13 +200,6 @@ EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │           TOP_N           │
 │    ────────────────────   │
 │           Top: 3          │
@@ -181,11 +211,16 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││ body(string) = fox││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -207,20 +242,36 @@ EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY TF
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wand_small_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││ body(string) = fox││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │           Score:          │
 │  tfidf(with_norms=false)  │
 │                           │
-│          TopK: 3          │
-│      Projections: id      │
+│           Top: 3          │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

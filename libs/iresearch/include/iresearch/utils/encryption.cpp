@@ -151,15 +151,15 @@ void EncryptedOutput::FlushBuffer() {
   const auto len = Length();
   // TODO(mbkkt) we probably can make out_->Position() == offset_,
   // but needs to adjust tests
-  // TODO(mbkkt) with encryption::stream interface for rocksdb we allocate
-  // buffer inside encrypt and encrypt to it, and then copy it to our own
-  // buffer, this is mess, we need to change interace
+  // TODO(mbkkt) the encryption::stream interface allocates a buffer inside
+  // encrypt, encrypts into it, then copies into our own buffer; this is a
+  // mess, we need to change the interface
   if (!_cipher->Encrypt(_out->Position(), _buf, len)) {
     throw IoError{absl::StrCat("Buffer size ", len,
                                " is not multiple of cipher block size ",
                                _cipher->block_size())};
   }
-  _out->WriteBytes(_buf, len);
+  _out->WriteData(_buf, len);
   _offset += len;
   _pos = _buf;
 }
@@ -255,15 +255,15 @@ void EncryptedInput::SeekInternal(uint64_t pos) {
 size_t EncryptedInput::ReadInternal(byte_type* b, size_t count) {
   const auto offset = _in->Position();
 
-  const auto read = _in->ReadBytes(b, count);
+  _in->ReadData(b, count);
 
-  if (!_cipher->Decrypt(offset, b, read)) {
-    throw IoError{absl::StrCat("Buffer size ", read,
+  if (!_cipher->Decrypt(offset, b, count)) {
+    throw IoError{absl::StrCat("Buffer size ", count,
                                " is not multiple of cipher block size ",
                                _cipher->block_size())};
   }
 
-  return read;
+  return count;
 }
 
 }  // namespace irs

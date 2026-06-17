@@ -55,18 +55,6 @@ class FormatBase : public Format {
     static SegmentMetaReaderImpl gInstance;
     return memory::to_managed<SegmentMetaReader>(gInstance);
   }
-
-  FieldWriter::ptr get_field_writer(
-    bool compaction, IResourceManager& resource_manager) const final {
-    return burst_trie::MakeWriter(
-      burst_trie::Version::Min,
-      get_postings_writer(compaction, resource_manager), compaction,
-      resource_manager);
-  }
-  FieldReader::ptr get_field_reader(
-    IResourceManager& resource_manager) const final {
-    return burst_trie::MakeReader(get_postings_reader(), resource_manager);
-  }
 };
 
 template<typename F>

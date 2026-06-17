@@ -130,7 +130,7 @@ jobs:
               workflow_id: 'build-manual.yml',
               ref: dispatchRef,
               inputs: {
-                LOCATION: allArch ? 'all' : 'linux',
+                LOCATION: allArch ? 'all' : 'linux-amd64',
                 EVERYTHING: everything.toString(),
                 EXTRA_ASAN: extraAsan.toString(),
                 EXTRA_TSAN: extraTsan.toString(),

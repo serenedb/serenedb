@@ -1,0 +1,126 @@
+control substitution on
+
+# TRUNCATE then re-insert reusing the freed rowids, then crash before any
+# refresh. The pre-truncate rows are durable in the segments; the truncate and
+# the reusing inserts live only in the store WAL. Recovery streams the tail in
+# WAL order with each op on its own strictly-ascending sub-tick, so the
+# tick-bound delete (truncate) masks only the pre-truncate docs and the later
+# inserts that reuse the same rowids survive -- last-op-wins for free, no
+# same-key suppression. Only the reused rows must be present and searchable;
+# the pre-truncate content must be gone.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tr_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE tr_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO tr_t SELECT i, 'before_' || i FROM range(0, 800) AS t(i);
+
+statement ok
+CREATE INDEX tr_idx ON tr_t USING inverted(id, body tr_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) tr_t;
+
+query
+SELECT COUNT(*) FROM tr_idx WHERE body @@ ts_phrase('before_0');
+----
+count
+1
+
+# Suppress index commits, then truncate and re-insert reusing the same id
+# values (the freed rowids get reused by the store table).
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+TRUNCATE tr_t;
+
+statement ok
+INSERT INTO tr_t SELECT i, 'after_' || i FROM range(0, 800) AS t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection tr_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) tr_t;
+
+connection tr_after
+query
+SELECT COUNT(*) FROM tr_t;
+----
+count
+800
+
+connection tr_after
+query
+SELECT COUNT(*) FROM tr_idx;
+----
+count
+800
+
+# Pre-truncate content must be gone (masked by the tick-bound delete).
+connection tr_after
+query
+SELECT COUNT(*) FROM tr_idx WHERE body @@ ts_phrase('before_0');
+----
+count
+0
+
+connection tr_after
+query
+SELECT COUNT(*) FROM tr_idx WHERE body @@ ts_phrase('before_799');
+----
+count
+0
+
+# Only the reused rows survive, each exactly once (insert wins over the earlier
+# delete on the same rowid because it carries a strictly-higher sub-tick).
+connection tr_after
+query
+SELECT id FROM tr_idx WHERE body @@ ts_phrase('after_0');
+----
+id
+0
+
+connection tr_after
+query
+SELECT id FROM tr_idx WHERE body @@ ts_phrase('after_799');
+----
+id
+799
+
+connection tr_after
+query
+SELECT COUNT(*) FROM tr_idx WHERE body @@ ts_phrase('after_400');
+----
+count
+1
+
+connection tr_after
+statement ok
+DROP INDEX tr_idx;
+
+connection tr_after
+statement ok
+DROP TABLE tr_t;
+
+connection tr_after
+statement ok
+DROP TEXT SEARCH DICTIONARY tr_dict;

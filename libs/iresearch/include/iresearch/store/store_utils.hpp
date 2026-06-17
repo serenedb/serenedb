@@ -46,14 +46,6 @@ StringType ToString(const byte_type* begin) {
   return StringType(reinterpret_cast<const char_type*>(begin), size);
 }
 
-struct EnumHash {
-  template<typename T>
-  size_t operator()(T value) const {
-    static_assert(std::is_enum_v<T>);
-    return static_cast<std::underlying_type_t<T>>(value);
-  }
-};
-
 IRS_FORCE_INLINE inline void WriteZV32(DataOutput& out, int32_t v) {
   out.WriteV32(sdb::ZigZagEncode32(v));
 }
@@ -74,14 +66,14 @@ IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const char* s,
                                       size_t len) {
   SDB_ASSERT(len < std::numeric_limits<uint32_t>::max());
   out.WriteV32(static_cast<uint32_t>(len));
-  out.WriteBytes(reinterpret_cast<const byte_type*>(s), len);
+  out.WriteData(reinterpret_cast<const byte_type*>(s), len);
 }
 
 IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const byte_type* s,
                                       size_t len) {
   SDB_ASSERT(len < std::numeric_limits<uint32_t>::max());
   out.WriteV32(static_cast<uint32_t>(len));
-  out.WriteBytes(s, len);
+  out.WriteData(s, len);
 }
 
 template<typename StringType>
@@ -94,9 +86,7 @@ inline StringType ReadString(DataInput& in) {
   const size_t len = in.ReadV32();
 
   StringType str(len, 0);
-  [[maybe_unused]] const auto read =
-    in.ReadBytes(reinterpret_cast<byte_type*>(str.data()), str.size());
-  SDB_ASSERT(read == str.size());
+  in.ReadData(reinterpret_cast<byte_type*>(str.data()), str.size());
   return str;
 }
 
@@ -129,42 +119,6 @@ size_t WriteBytes(OutputIterator& out, const T& value) {
   return WriteBytes(out, &value, 1);
 }
 
-////////////////////////////////////////////////////////////////////////////////
-/// @brief read a value of the specified type from 'in'
-////////////////////////////////////////////////////////////////////////////////
-template<typename T>
-T& ReadRef(const byte_type*& in) {
-  auto& data = reinterpret_cast<T&>(*in);
-
-  in += sizeof(T);  // increment past value
-
-  return data;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief read an array of the specified type and length of 'size' from 'in'
-////////////////////////////////////////////////////////////////////////////////
-template<typename T>
-T* ReadRef(const byte_type*& in, size_t size) {
-  auto* data = reinterpret_cast<T*>(&(*in));
-
-  in += sizeof(T) * size;  // increment past value
-
-  return data;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief read a string + size into a value of type 'StringType' from 'in'
-////////////////////////////////////////////////////////////////////////////////
-template<typename StringType,
-         typename TraitsType = typename StringType::traits_type>
-StringType VReadString(const byte_type*& in) {
-  typedef typename TraitsType::char_type char_type;
-  const auto size = vread<uint64_t>(in);
-
-  return StringType(ReadRef<const char_type>(in, size), size);
-}
-
 IRS_FORCE_INLINE constexpr uint64_t ShiftPack64(uint64_t val, bool b) noexcept {
   SDB_ASSERT(val <= UINT64_C(0x7FFFFFFFFFFFFFFF));
   return (val << 1) | uint64_t(b);
@@ -192,35 +146,40 @@ class BytesViewInput : public IndexInput {
   BytesViewInput() = default;
   explicit BytesViewInput(bytes_view data) noexcept : _data{data} {}
 
-  IRS_FORCE_INLINE const byte_type* ReadData(uint64_t count) noexcept final {
+  IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t count) noexcept final {
     const auto* begin = _pos;
     _pos = begin + count;
     SDB_ASSERT(_pos <= _data.data() + _data.size());
     return begin;
   }
-  IRS_FORCE_INLINE const byte_type* ReadData(uint64_t offset,
-                                             uint64_t count) noexcept final {
+  IRS_FORCE_INLINE const byte_type* ReadStable(uint64_t offset,
+                                               uint64_t count) noexcept final {
     const auto* begin = _data.data() + offset;
     _pos = begin + count;
     SDB_ASSERT(_pos <= _data.data() + _data.size());
     return begin;
   }
 
-  IRS_FORCE_INLINE const byte_type* ReadView(uint64_t count) noexcept final {
-    return ReadData(count);
+  IRS_FORCE_INLINE const byte_type* ReadVolatile(
+    uint64_t count) noexcept final {
+    return ReadStable(count);
   }
-  IRS_FORCE_INLINE const byte_type* ReadView(uint64_t offset,
-                                             uint64_t count) noexcept final {
-    return ReadData(offset, count);
+  IRS_FORCE_INLINE const byte_type* ReadVolatile(
+    uint64_t offset, uint64_t count) noexcept final {
+    return ReadStable(offset, count);
   }
 
   IRS_FORCE_INLINE byte_type ReadByte() noexcept final {
     SDB_ASSERT(_pos < _data.data() + _data.size());
     return *_pos++;
   }
-  size_t ReadBytes(byte_type* b, size_t count) noexcept final;
-  size_t ReadBytes(uint64_t offset, byte_type* b, size_t count) noexcept final;
-  void ReadBytes(bstring& buf, size_t count);
+  using DataInput::ReadData;
+  void ReadData(byte_type* b, uint64_t count) final;
+  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t count) final {
+    BytesViewInput::ReadData(b, count);
+  }
+  void ReadData(uint64_t offset, byte_type* b, size_t count) noexcept final;
+  void ReadData(bstring& buf, size_t count);
 
   int16_t ReadI16() noexcept final { return irs::read<uint16_t>(_pos); }
   int32_t ReadI32() noexcept final { return irs::read<uint32_t>(_pos); }
@@ -280,26 +239,29 @@ class RemappedBytesViewInput final : public IndexInput {
     });
   }
 
-  const byte_type* ReadData(uint64_t count) noexcept final {
-    return _input.ReadData(count);
+  const byte_type* ReadStable(uint64_t count) noexcept final {
+    return _input.ReadStable(count);
   }
-  const byte_type* ReadData(uint64_t offset, uint64_t count) noexcept final {
-    return _input.ReadData(SourceToInternal(offset), count);
+  const byte_type* ReadStable(uint64_t offset, uint64_t count) noexcept final {
+    return _input.ReadStable(SourceToInternal(offset), count);
   }
 
-  const byte_type* ReadView(uint64_t count) noexcept final {
-    return _input.ReadView(count);
+  const byte_type* ReadVolatile(uint64_t count) noexcept final {
+    return _input.ReadVolatile(count);
   }
-  const byte_type* ReadView(uint64_t offset, uint64_t count) noexcept final {
-    return _input.ReadView(SourceToInternal(offset), count);
+  const byte_type* ReadVolatile(uint64_t offset,
+                                uint64_t count) noexcept final {
+    return _input.ReadVolatile(SourceToInternal(offset), count);
   }
 
   byte_type ReadByte() noexcept final { return _input.ReadByte(); }
-  size_t ReadBytes(byte_type* b, size_t size) noexcept final {
-    return _input.ReadBytes(b, size);
+  using DataInput::ReadData;
+  void ReadData(byte_type* b, uint64_t size) final { _input.ReadData(b, size); }
+  void ReadData(duckdb::QueryContext, byte_type* b, uint64_t size) final {
+    _input.ReadData(b, size);
   }
-  size_t ReadBytes(uint64_t offset, byte_type* b, size_t size) noexcept final {
-    return _input.ReadBytes(SourceToInternal(offset), b, size);
+  void ReadData(uint64_t offset, byte_type* b, size_t size) noexcept final {
+    _input.ReadData(SourceToInternal(offset), b, size);
   }
 
   int16_t ReadI16() noexcept final { return _input.ReadI16(); }

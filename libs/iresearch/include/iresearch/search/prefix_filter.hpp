@@ -73,7 +73,7 @@ class ByPrefix : public FilterWithField<ByPrefixOptions> {
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          const std::string_view field,
+                                          const irs::field_id field,
                                           const bytes_view prefix,
                                           size_t scored_terms_limit);
 

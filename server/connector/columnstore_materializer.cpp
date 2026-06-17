@@ -23,20 +23,20 @@
 namespace sdb::connector {
 
 ColumnstoreMaterializer::ColumnstoreMaterializer(
-  const irs::columnstore::Reader& reader,
-  std::span<const irs::field_id> column_ids,
-  std::span<const duckdb::idx_t> output_slots)
-  : _ctx{reader} {
-  SDB_ASSERT(column_ids.size() == output_slots.size());
-  _bound.reserve(column_ids.size());
-  for (size_t i = 0; i < column_ids.size(); ++i) {
-    if (const auto* r = reader.Column(column_ids[i])) {
-      _bound.push_back(Binding{
-        .reader = r,
-        .output_slot = output_slots[i],
-        .state = irs::columnstore::MakeMaterializeState(*r, _ctx),
-      });
+  const irs::ColReader& reader,
+  std::span<const ColumnstoreProjection> projections,
+  duckdb::ClientContext* context)
+  : _ctx{reader}, _context{context} {
+  _bound.reserve(projections.size());
+  for (const auto& projection : projections) {
+    const auto* column_reader =
+      reader.Column(static_cast<irs::field_id>(projection.column_id));
+    if (!column_reader) {
+      continue;
     }
+    _bound.emplace_back(column_reader, projection.output_slot,
+                        irs::MakeMaterializeState(*column_reader, _ctx),
+                        projection.extract_path, projection.extract_scan_type);
   }
 }
 

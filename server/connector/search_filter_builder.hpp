@@ -31,7 +31,6 @@
 #include "basics/result.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
-#include "connector/search_field_name.hpp"
 
 namespace sdb::connector {
 
@@ -41,7 +40,10 @@ namespace sdb::connector {
 // single uint64 fits both. Disambiguate via catalog lookup when the kind
 // matters; the writer/printer paths don't need to.
 struct SearchColumnInfo {
-  irs::field_id field_id = 0;
+  irs::field_id field_id = irs::field_limits::invalid();
+  irs::field_id null_field_id = irs::field_limits::invalid();
+  irs::field_id bool_field_id = irs::field_limits::invalid();
+  irs::field_id numeric_field_id = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
 };
@@ -65,32 +67,29 @@ using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
 // unspecified but still safely-destructible state -- caller should discard
 // it on failure).
 //
-// Per-query session options threaded into the filter builder. The
-// optimizer pipeline reads them once from the ClientContext settings
-// and forwards the same struct through its passes; tests construct
-// it directly with `_conn.context` (or any owned ClientContext).
-//
 // The ClientContext is required (reference, not pointer): the filter
 // builder needs it to resolve named catalog analyzers at filter-build
-// time (`TOKENIZE(text, 'english')` whose stub never runs).
-struct SearchFilterOptions {
-  duckdb::ClientContext& client_context;
-  // Caps the number of terms a multi-term filter (PREFIX / LIKE /
-  // RANGE / REGEXP / LEVENSHTEIN) collects for scoring. Comes from
-  // the `sdb_scored_terms_limit` session setting; the iresearch
-  // default is 1024.
-  size_t scored_terms_limit = 1024;
-  // When true, the optimizer skips pulling `ORDER BY <scorer> DESC LIMIT k`
-  // into the SearchScan, so WAND never engages even on indexes that have
-  // wand metadata. Driven by the `sdb_disable_top_k_optimization` session
-  // setting; default false (optimization on).
-  bool disable_top_k_optimization = false;
-};
-
+// time (`TOKENIZE(text, 'english')` whose stub never runs) and to read
+// the `sdb_scored_terms_limit` session setting.
 Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
-  const ColumnGetter& column_getter, const SearchFilterOptions& options,
+  const ColumnGetter& column_getter, duckdb::ClientContext& context,
   const ExpressionGetter& expr_getter = {});
+
+inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
+                                        duckdb::LogicalTypeId type_id) {
+  const auto pick = [&](irs::field_id per_kind) {
+    return irs::field_limits::valid(per_kind) ? per_kind : column_info.field_id;
+  };
+  const auto kind = catalog::term_dict::Classify(type_id);
+  if (kind == catalog::term_dict::Kind::Bool) {
+    return pick(column_info.bool_field_id);
+  }
+  if (catalog::term_dict::IsNumeric(kind)) {
+    return pick(column_info.numeric_field_id);
+  }
+  return column_info.field_id;
+}
 
 }  // namespace sdb::connector

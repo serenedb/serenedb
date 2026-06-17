@@ -49,13 +49,26 @@ EXPLAIN SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
 │    ────────────────────   │
-│      Index: vecs_hnsw     │
-│      Lookup: rocksdb      │
-│          TopK: 10         │
+│          Top: 10          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~10 rows         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      vecs_hnsw (ANN)      │
+│                           │
+│       Lookup: table       │
+│          Top: 10          │
 │          Dims: 8          │
-│      Projections: id      │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │        ~50,000 rows       │
 └───────────────────────────┘
@@ -79,14 +92,32 @@ EXPLAIN SELECT id FROM vecs_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
 │    ────────────────────   │
-│      Index: vecs_hnsw     │
-│      Lookup: rocksdb      │
-│          TopK: 10         │
+│          Top: 10          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~10 rows         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│        (id > 25000)       │
+│                           │
+│        ~10,000 rows       │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      vecs_hnsw (ANN)      │
+│                           │
+│       Lookup: table       │
 │          Dims: 8          │
-│    Filter: (#0 > 25000)   │
-│      Projections: id      │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │        ~50,000 rows       │
 └───────────────────────────┘

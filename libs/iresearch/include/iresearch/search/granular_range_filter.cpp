@@ -564,12 +564,12 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.boost *= Boost();
-  return PrepareSegment(segment, sub_ctx, field(), options());
+  return PrepareSegment(segment, sub_ctx, field_id(), options());
 }
 
 QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
                                                   const PrepareContext& ctx,
-                                                  const std::string_view field,
+                                                  const irs::field_id field,
                                                   const options_type& options) {
   switch (Classify(options)) {
     case RangeKind::Term:

@@ -21,12 +21,8 @@
 #include "catalog/column_expr.h"
 
 #include <absl/algorithm/container.h>
-#include <vpack/vpack_helper.h>
 
 #include <duckdb/common/extra_type_info.hpp>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
@@ -42,7 +38,6 @@
 
 #include "catalog/user_type.h"
 #include "connector/functions/sequence.h"
-#include "utils/velox_vpack.h"
 
 namespace sdb {
 namespace {
@@ -231,34 +226,5 @@ Refs ExtractRefs(const duckdb::QueryNode& node, RefKinds kinds) {
 
 ColumnExpr::ColumnExpr(duckdb::unique_ptr<duckdb::ParsedExpression> expr)
   : _expr(std::move(expr)) {}
-
-Result ColumnExpr::FromVPack(vpack::Slice slice, ColumnExpr& column_expr) {
-  auto blob = basics::VPackHelper::getString(slice, "duckdb_expr", {});
-  if (blob.empty()) {
-    return {ERROR_BAD_PARAMETER, "column expression must contain duckdb_expr"};
-  }
-  duckdb::MemoryStream stream(
-    reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(blob.data())),
-    blob.size());
-  duckdb::BinaryDeserializer deserializer(stream);
-  deserializer.Begin();
-  column_expr._expr = duckdb::ParsedExpression::Deserialize(deserializer);
-  deserializer.End();
-  return {};
-}
-
-void ColumnExpr::ToVPack(vpack::Builder& builder) const {
-  SDB_ASSERT(_expr);
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer(stream, duckdb::VersionStorageOptions());
-  serializer.Begin();
-  _expr->Serialize(serializer);
-  serializer.End();
-  builder.openObject();
-  builder.add("duckdb_expr",
-              std::string_view(reinterpret_cast<const char*>(stream.GetData()),
-                               stream.GetPosition()));
-  builder.close();
-}
 
 }  // namespace sdb

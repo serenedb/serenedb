@@ -1,0 +1,69 @@
+hash-threshold 100
+control substitution on
+
+# Wildcard ngram filter scoring contract.
+#
+# `template = 'wildcard'` analyzers emit n-gram tokens for ts_like queries,
+# which route through ByWildcardNgram → WildcardQuery → WildcardIterator.
+# WildcardQuery declares Boost() = kNoBoost and visit() as no-op, so the
+# query never contributes field stats. Before this test landed, the
+# WildcardIterator delegated PrepareScore + FetchScoreArgs to the inner
+# "approx" ngram iterator -- whose stats include matches the regex Check()
+# rejects, so any BM25/TFIDF score attached to a wildcard hit was computed
+# over a superset of the actual matches. Bogus.
+#
+# After the fix: WildcardIterator returns ScoreFunction::Constant(kNoBoost)
+# and inherits the base FetchScoreArgs no-op. Every wildcard match gets the
+# same constant score, no matter how many ngrams the approx visited or
+# rejected.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wc_score_dict(
+    template = 'wildcard',
+    ngramsize = 3,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+)
+
+statement ok
+CREATE TABLE wc_score_t (id BIGINT PRIMARY KEY, body VARCHAR)
+
+# Three docs that all match `ts_like('%analy%')` (contains "analy") but
+# with very different per-doc term frequencies. Pre-fix, the approx ngram
+# iterator's per-doc stats would attribute different BM25 scores to these.
+# Post-fix, all three get the same constant.
+statement ok
+INSERT INTO wc_score_t VALUES
+    (1, 'analytical'),
+    (2, 'analyse_the_analyser_before_analysing'),
+    (3, 'analysis')
+
+statement ok
+CREATE INDEX wc_score_idx ON wc_score_t
+    USING inverted(body wc_score_dict)
+    INCLUDE (body)
+
+statement ok
+VACUUM (REFRESH_TABLE) wc_score_t
+
+# All three docs match the wildcard. Compute scores per hit in a subquery,
+# then count distinct values -- BM25() must stay inside the scan, so we
+# wrap it in a derived table before aggregating.
+query
+SELECT COUNT(DISTINCT score) AS distinct_scores, COUNT(*) AS total_matches
+FROM (SELECT BM25(wc_score_idx.tableoid) AS score
+      FROM wc_score_idx
+      WHERE body @@ ts_like('%analy%')) t
+----
+distinct_scores	total_matches
+1	3
+
+# Same property for TFIDF (also goes through the score-function pipeline).
+query
+SELECT COUNT(DISTINCT score) AS distinct_scores, COUNT(*) AS total_matches
+FROM (SELECT TFIDF(wc_score_idx.tableoid) AS score
+      FROM wc_score_idx
+      WHERE body @@ ts_like('%analy%')) t
+----
+distinct_scores	total_matches
+1	3

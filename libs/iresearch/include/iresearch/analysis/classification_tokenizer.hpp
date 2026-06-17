@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
@@ -45,6 +45,7 @@ class ClassificationTokenizer final
     model_provider_f provider) noexcept;
 
   struct Options {
+    using Owner = ClassificationTokenizer;
     std::string model_location;
     double threshold = 0.0;
     int32_t top_k = 1;
@@ -54,7 +55,7 @@ class ClassificationTokenizer final
     return "classification";
   }
 
-  static void init();  // for registration in a static build
+  static ptr Make(Options opts);
 
   explicit ClassificationTokenizer(const Options& options,
                                    model_ptr mode) noexcept;

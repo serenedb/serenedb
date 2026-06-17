@@ -21,8 +21,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
+#include <simdjson.h>
 #include <zlib.h>
 
 #include <bit>
@@ -35,10 +34,13 @@
 #include "basics/bit_utils.hpp"
 #include "basics/files.h"
 #include "basics/math_utils.hpp"
+#include "basics/serializer.h"
+#include "basics/simdjson_sink.h"
 #include "executor.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_builder.h"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/search/bm25.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
@@ -371,17 +373,35 @@ void HashResults(std::vector<QueryResult>& results) {
 }
 
 std::string SerializeResults(const std::vector<QueryResult>& results) {
-  vpack::Builder builder;
-  vpack::WriteObject(builder, results);
-  auto options = vpack::Options::gDefaults;
-  options.pretty_print = true;
-  return builder.slice().toJson(&options);
+  // Drive the templated reflection-based writer through `sdb::basics::JsonSink`
+  // (simdjson::builder), emitting JSON text directly without an intermediate
+  // builder + slice round-trip.
+  simdjson::builder::string_builder sb(1024);
+  {
+    sdb::basics::JsonSink sink{sb};
+    sdb::basics::WriteObject(sink, results);
+  }
+  std::string_view body;
+  if (sb.view().get(body) != simdjson::SUCCESS) {
+    return {};
+  }
+  return std::string{body};
 }
 
 std::vector<QueryResult> DeserializeResults(std::string_view json_str) {
-  auto builder{vpack::Parser::fromJson(json_str)};
+  // Mirror SerializeResults' simdjson path on the read side: parse JSON via
+  // simdjson::ondemand and feed it through `sdb::basics::JsonSource` + the
+  // reflection reader.
+  simdjson::padded_string padded{json_str};
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document doc;
+  auto err = parser.iterate(padded).get(doc);
+  if (err != simdjson::SUCCESS) {
+    return {};
+  }
   std::vector<QueryResult> results;
-  vpack::ReadObject(builder->slice(), results);
+  sdb::basics::JsonSource source{doc};
+  sdb::basics::ReadObject(source, results);
   return results;
 }
 
@@ -419,7 +439,7 @@ struct StoredIdBatchHandler : bench::IBatchHandler {
       doc.Fill(line);
       auto trx = ctx.Insert();
       trx.Insert(doc.fields[0]);
-      irs::tests::StoreFieldAt(*trx.Columnstore(), kIdId, trx.DocId(),
+      irs::tests::StoreFieldAt(*trx.GetColWriter(), kIdId, trx.DocId(),
                                doc.fields[0]);
       trx.Insert(doc.fields[1]);
     }
@@ -460,7 +480,7 @@ std::vector<std::string> BuildDocIdMap(const irs::DirectoryReader& reader) {
     }
 
     irs::tests::VisitBlobColumn(
-      *segment.CsReader(), *column,
+      *segment.GetColReader(), *column,
       [&](irs::doc_id_t doc, irs::bytes_view payload) {
         auto idx = base + doc - irs::doc_limits::min();
         EXPECT_LT(idx, id_map.size()) << "doc_id out of range";
@@ -747,9 +767,7 @@ TEST_F(LoadTest, WikiSmall) { RunAndValidate("wiki_small"); }
 
 TEST_F(LoadTest, DisjunctionScoreAccuracy) {
   const auto& reader = gExecutor->GetReader();
-  auto scorer_ptr =
-    irs::scorers::Get(gConfig.scorer, irs::Type<irs::text_format::Json>::get(),
-                      gConfig.scorer_options, false);
+  auto scorer_ptr = irs::BM25::Make(irs::BM25::Options{});
   ASSERT_TRUE(scorer_ptr);
   const auto& scorer = *scorer_ptr;
 
@@ -772,7 +790,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
     for (size_t segment_idx = 0; auto& segment : reader) {
       for (auto term_str : terms) {
         irs::ByTerm filter;
-        *filter.mutable_field() = "text";
+        *filter.mutable_field_id() = kIdId;
         filter.mutable_options()->term =
           irs::ViewCast<irs::byte_type>(irs::bytes_view{
             reinterpret_cast<const irs::byte_type*>(term_str.data()),

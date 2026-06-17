@@ -39,7 +39,13 @@ wait_bg() {
 	BG_NAMES=()
 }
 
-run_iresearch_suites() {
+# The iresearch load test (046) is the long pole (~10 min). Unlike 042/043 it
+# does not touch the gtest-parallel cache and conflicts with no other suite, so
+# start it in the background here and let it overlap everything; the matching
+# wait_bg runs after all suites complete. 046 hard-requires the corpus -- on a
+# fetch failure we skip it (the job still fails via rc); 042 needs no corpus.
+start_iresearch_load_bg() {
+	[[ "${RUN_IRESEARCH:-false}" == "true" ]] || return 0
 	# export (not $GITHUB_ENV) so the run_bg subprocess sees CORPUS_PATH; $GITHUB_ENV only reaches later steps.
 	local corpus
 	echo "::group::iresearch-load-fetch-corpus.bash"
@@ -47,22 +53,21 @@ run_iresearch_suites() {
 		echo "FAILED: iresearch-load-fetch-corpus.bash" >&2
 		echo "::endgroup::"
 		rc=1
-		# 046 hard-requires the corpus; 042 would burn a docker run the failed job discards.
 		return
 	fi
 	export CORPUS_PATH="$corpus"
 	echo "::endgroup::"
-	run_bg bash "${STEPS}/042-ci-in-docker-run-iresearch-tests.bash"
 	run_bg bash "${STEPS}/046-ci-in-docker-run-iresearch-load-test.bash"
-	wait_bg
 }
 
 # gtest + (iresearch) + (unittest/extension) -- need the unit-test binaries, so
-# these never run on perf (which doesn't build them).
+# these never run on perf (which doesn't build them). 042 and 043 share the
+# gtest-parallel cache, so they stay sequential (foreground); the load test runs
+# in the background via start_iresearch_load_bg.
 run_test_suites() {
 	run bash "${STEPS}/043-ci-in-docker-run-serenedb-tests.bash"
 	if [[ "${RUN_IRESEARCH:-false}" == "true" ]]; then
-		run_iresearch_suites
+		run bash "${STEPS}/042-ci-in-docker-run-iresearch-tests.bash"
 	fi
 	if [[ "${RUN_EXTENSION:-false}" == "true" ]]; then
 		run bash "${STEPS}/048-ci-in-docker-run-extension-tests.bash"
@@ -95,6 +100,7 @@ perf)
 	;;
 dev | coverage)
 	# Everything, with asserts (coverage also instruments the build).
+	start_iresearch_load_bg
 	run_test_suites
 	run_serened_core
 	run bash "${STEPS}/045-ci-in-docker-run-recovery-tests.bash"
@@ -106,6 +112,7 @@ asan | tsan | msan | ubsan)
 	# full in-scope set: gtest + iresearch + extension + sqlite + sqlsmith.
 	run_serened_core
 	if [[ "${RUN_EXTRA:-false}" == "true" ]]; then
+		start_iresearch_load_bg
 		run_test_suites
 		run_sqlite_sqlsmith
 	fi
@@ -115,5 +122,8 @@ asan | tsan | msan | ubsan)
 	exit 1
 	;;
 esac
+
+# Join the backgrounded iresearch load test (no-op when none was started).
+wait_bg
 
 exit $rc

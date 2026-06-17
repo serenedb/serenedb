@@ -23,6 +23,8 @@
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/search/scorer.hpp>
 
+#include "basics/duckdb_engine.h"
+#include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
@@ -236,6 +238,7 @@ void WandTestCase::GenerateSegment(irs::ScorerPtr scorer, bool write_norms,
       if (tests::JsonDocGenerator::ValueType::STRING == data.vt) {
         auto f =
           std::make_shared<TextField>(std::string{name}, data.str, false);
+        f->id = tests::FieldIdFor(name);
         f->index_features |= irs::IndexFeatures::Norm;
         doc.indexed.push_back(f);
       }
@@ -259,6 +262,7 @@ void WandTestCase::GenerateSegmentMinNorm(irs::ScorerPtr scorer) {
       if (tests::JsonDocGenerator::ValueType::STRING == data.vt) {
         auto f =
           std::make_shared<TextField>(std::string{name}, data.str, false);
+        f->id = tests::FieldIdFor(name);
         f->index_features |= irs::IndexFeatures::Norm;
         doc.indexed.push_back(f);
       }
@@ -274,17 +278,19 @@ void WandTestCase::GenerateSegmentMinNorm(irs::ScorerPtr scorer) {
 
 void WandTestCase::AssertTermFilter(const irs::Scorer& scorer,
                                     bool wand_enabled) {
-  static constexpr std::string_view kFieldName = "name";
+  static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
   irs::ByTerm filter;
-  *filter.mutable_field() = kFieldName;
+  *filter.mutable_field_id() = kFieldId;
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
+    dir(), codec(),
+    irs::IndexReaderOptions{.scorer = &scorer,
+                            .db = &::sdb::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
-    const auto* field = segment.field(kFieldName);
+    const auto* field = segment.field(kFieldId);
     ASSERT_NE(nullptr, field);
 
     const auto can_use_wand = CanUseWand(scorer, *field);
@@ -302,20 +308,22 @@ void WandTestCase::AssertTermFilter(const irs::Scorer& scorer,
 
 void WandTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
                                            bool wand_enabled) {
-  static constexpr std::string_view kFieldName = "name";
+  static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
   irs::And conjunction;
   irs::ByTerm& filter1 = conjunction.add<irs::ByTerm>();
-  *filter1.mutable_field() = kFieldName;
+  *filter1.mutable_field_id() = kFieldId;
   irs::ByTerm& filter2 = conjunction.add<irs::ByTerm>();
-  *filter2.mutable_field() = kFieldName;
+  *filter2.mutable_field_id() = kFieldId;
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
+    dir(), codec(),
+    irs::IndexReaderOptions{.scorer = &scorer,
+                            .db = &::sdb::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
-    const auto* field = segment.field(kFieldName);
+    const auto* field = segment.field(kFieldId);
     ASSERT_NE(nullptr, field);
 
     const auto can_use_wand = CanUseWand(scorer, *field);
@@ -336,22 +344,24 @@ void WandTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
 
 void WandTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
                                            bool wand_enabled) {
-  static constexpr std::string_view kFieldName = "name";
+  static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
   irs::Or disjunction;
   irs::ByTerm& filter1 = disjunction.add<irs::ByTerm>();
-  *filter1.mutable_field() = kFieldName;
+  *filter1.mutable_field_id() = kFieldId;
   irs::ByTerm& filter2 = disjunction.add<irs::ByTerm>();
-  *filter2.mutable_field() = kFieldName;
+  *filter2.mutable_field_id() = kFieldId;
   irs::ByTerm& filter3 = disjunction.add<irs::ByTerm>();
-  *filter3.mutable_field() = kFieldName;
+  *filter3.mutable_field_id() = kFieldId;
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
+    dir(), codec(),
+    irs::IndexReaderOptions{.scorer = &scorer,
+                            .db = &::sdb::DuckDBEngine::Instance().instance()}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
-    const auto* field = segment.field(kFieldName);
+    const auto* field = segment.field(kFieldId);
     ASSERT_NE(nullptr, field);
 
     const auto can_use_wand = CanUseWand(scorer, *field);

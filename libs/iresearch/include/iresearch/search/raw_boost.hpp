@@ -24,14 +24,20 @@
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "scorers.hpp"
 
 namespace irs {
 
 struct RawBoost final : ScorerBase<RawBoost, void> {
   static constexpr std::string_view type_name() noexcept { return "raw_boost"; }
 
-  static void init();
+  struct Options {
+    using Owner = RawBoost;
+    bool operator==(const Options&) const = default;
+  };
+
+  static std::unique_ptr<RawBoost> Make(const Options& /*opts*/) {
+    return std::make_unique<RawBoost>();
+  }
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 

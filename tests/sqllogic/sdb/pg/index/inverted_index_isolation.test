@@ -26,9 +26,6 @@ statement ok
 VACUUM (REFRESH_TABLE) t;
 
 connection reader
-statement ok
-SET sdb_read_your_own_writes = 0;
-
 
 connection reader
 statement ok
@@ -67,9 +64,6 @@ statement ok
 COMMIT;
 
 connection reader_rc
-statement ok
-SET sdb_read_your_own_writes = 0;
-
 
 connection reader_rc
 statement ok
@@ -110,9 +104,6 @@ statement ok
 COMMIT;
 
 connection reader_bare
-statement ok
-SET sdb_read_your_own_writes = 0;
-
 
 connection reader_bare
 statement ok

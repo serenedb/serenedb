@@ -29,7 +29,6 @@
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/top_terms_selector.hpp"
 #include "tests_shared.hpp"
 
@@ -132,10 +131,8 @@ struct SubReader final : irs::SubReader {
   irs::DocIterator::ptr docs_iterator() const final {
     return irs::DocIterator::empty();
   }
-  const irs::TermReader* field(std::string_view) const final { return nullptr; }
-  irs::FieldIterator::ptr fields() const final {
-    return irs::FieldIterator::empty();
-  }
+  const irs::TermReader* field(irs::field_id) const final { return nullptr; }
+  std::span<const irs::field_id> field_ids() const final { return {}; }
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
 
   irs::SegmentInfo info;

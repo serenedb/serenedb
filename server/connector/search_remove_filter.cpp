@@ -59,7 +59,7 @@ irs::DocIterator::ptr SearchRemoveFilterBase::MakeIterator(
   _segment = &segment;
   _segment_mask = segment.docs_mask();
   _pending_mask = ctx.pending_docs_mask;
-  _pk_field = _segment->field(kPkFieldName);
+  _pk_field = _segment->field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _pos = 0;
   _doc = irs::doc_limits::invalid();

@@ -107,9 +107,9 @@ FieldState* OffsetsCollector::FindFieldState(
   if (!reader) {
     return nullptr;
   }
-  const auto& name = reader->meta().name;
+  const auto id = reader->meta().id;
   auto it = absl::c_find_if(
-    _entries, [&](const FieldEntry& entry) { return entry.name == name; });
+    _entries, [&](const FieldEntry& entry) { return entry.id == id; });
   return it == _entries.end() ? nullptr : &it->state;
 }
 

@@ -31,8 +31,8 @@ extern "C" {
 #include <unordered_set>
 
 #include "basics/bit_packing.hpp"
-#include "iresearch/store/store_avg_utils.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/bitpack.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "utils/write_helpers.hpp"
@@ -68,40 +68,6 @@ BytesInput& BytesInput::operator=(BytesInput&& other) noexcept {
     other.reset({});
   }
   return *this;
-}
-
-void AvgEncodeDecodeCore(size_t step, size_t count) {
-  std::vector<uint64_t> values;
-  values.reserve(count);
-  for (size_t i = 1; i <= count; ++i) {
-    values.push_back(i * step);
-  }
-
-  auto encoded = values;
-  const auto stats =
-    irs::encode::avg::encode(encoded.data(), encoded.data() + encoded.size());
-  ASSERT_EQ(values[0], std::get<0>(stats));
-  ASSERT_EQ(step, std::get<1>(stats));
-  ASSERT_EQ(irs::irstd::AllEqual(std::begin(encoded), std::end(encoded)),
-            std::get<2>(stats));
-  ASSERT_TRUE(std::all_of(encoded.begin(), encoded.end(),
-                          [](uint64_t v) { return 0 == v; }));
-
-  auto success = true;
-  auto begin = values.begin();
-  irs::encode::avg::visit(std::get<0>(stats), std::get<1>(stats),
-                          encoded.data(), encoded.data() + encoded.size(),
-                          [&begin, &success](uint64_t value) {
-                            success = success && (value == *begin);
-                            ++begin;
-                          });
-  ASSERT_TRUE(success);
-  ASSERT_EQ(values.end(), begin);
-
-  auto decoded = encoded;
-  irs::encode::avg::decode(std::get<0>(stats), std::get<1>(stats),
-                           decoded.data(), decoded.data() + decoded.size());
-  ASSERT_EQ(values, decoded);
 }
 
 void DeltaEncodeDecodeCore(size_t step, size_t count) {
@@ -852,114 +818,6 @@ TEST(store_utils_tests, delta_encode_decode) {
   tests::detail::DeltaEncodeDecodeCore(1000, 1);  // step = 1000, count = 1
 }
 
-TEST(store_utils_tests, avg_encode_decode) {
-  tests::detail::AvgEncodeDecodeCore(1, 1000);    // step = 1, count = 1000
-  tests::detail::AvgEncodeDecodeCore(128, 1000);  // step = 128, count = 1000
-
-  // single value case
-  {
-    std::vector<uint64_t> values{1000};
-
-    auto encoded = values;
-    const auto stats =
-      irs::encode::avg::encode(encoded.data(), encoded.data() + encoded.size());
-    ASSERT_EQ(1000, std::get<0>(stats));
-    ASSERT_EQ(0, std::get<1>(stats));
-    ASSERT_TRUE(std::get<2>(stats));
-    ASSERT_EQ(0, encoded[0]);
-
-    auto decoded = encoded;
-    irs::encode::avg::decode(std::get<0>(stats), std::get<1>(stats),
-                             decoded.data(), decoded.data() + decoded.size());
-    ASSERT_EQ(values, decoded);
-  }
-}
-
-TEST(store_utils_tests, avg_encode_block_read_write) {
-  auto pack = [](auto, auto, auto, auto) {
-    ASSERT_TRUE(false);  // must not be called
-  };
-
-  // rl case
-  {
-    const size_t count = 1024;  // 1024 % packed::BLOCK_SIZE_64 == 0
-    const uint64_t step = 127;
-
-    std::vector<uint64_t> values;
-    values.reserve(count);
-    uint64_t value = 0;
-    for (size_t i = 0; i < 1024; ++i) {
-      values.push_back(value += step);
-    }
-
-    // avg encode
-    auto avg_encoded = values;
-    const auto stats = irs::encode::avg::encode(
-      avg_encoded.data(), avg_encoded.data() + avg_encoded.size());
-    ASSERT_EQ(
-      irs::irstd::AllEqual(std::begin(avg_encoded), std::end(avg_encoded)),
-      std::get<2>(stats));
-
-    std::vector<uint64_t> buf;  // temporary buffer for bit packing
-    buf.resize(values.size());
-
-    irs::bstring out_buf;
-    irs::BytesOutput out(out_buf);
-    irs::encode::avg::write_block(pack, out, std::get<0>(stats),
-                                  std::get<1>(stats), avg_encoded.data(),
-                                  avg_encoded.size(), buf.data());
-
-    ASSERT_EQ(
-      irs::bytes_io<uint64_t>::vsize(step) +
-        irs::bytes_io<uint64_t>::vsize(step) +
-        irs::bytes_io<uint32_t>::vsize(irs::bitpack::kAllEqual) +
-        irs::bytes_io<uint64_t>::vsize(0),  // base + avg + bits + single value
-      out_buf.size());
-
-    {
-      tests::detail::BytesInput in(out_buf);
-      const uint64_t base = in.ReadV64();
-      const uint64_t avg = in.ReadV64();
-      const uint64_t bits = in.ReadV32();
-      ASSERT_EQ(uint32_t(irs::bitpack::kAllEqual), bits);
-      ASSERT_EQ(step, base);
-      ASSERT_EQ(step, avg);
-    }
-
-    {
-      tests::detail::BytesInput in(out_buf);
-      ASSERT_TRUE(irs::encode::avg::check_block_rl64(in, step));
-    }
-
-    {
-      uint64_t base, avg;
-      tests::detail::BytesInput in(out_buf);
-      ASSERT_TRUE(irs::encode::avg::read_block_rl64(in, base, avg));
-      ASSERT_EQ(step, base);
-      ASSERT_EQ(step, avg);
-    }
-
-    {
-      tests::detail::BytesInput in(out_buf);
-
-      const uint64_t base = in.ReadV64();
-      const uint64_t avg = in.ReadV64();
-      const uint32_t bits = in.ReadV32();
-      ASSERT_EQ(uint32_t(irs::bitpack::kAllEqual), bits);
-
-      bool success = true;
-      auto begin = values.begin();
-      irs::encode::avg::visit_block_rl64(in, base, avg, values.size(),
-                                         [&begin, &success](uint64_t value) {
-                                           success = success && *begin == value;
-                                           ++begin;
-                                         });
-      ASSERT_TRUE(success);
-      ASSERT_EQ(values.end(), begin);
-    }
-  }
-}
-
 TEST(store_utils_tests, test_remapped_bytes_view) {
   std::array<irs::byte_type, 15> data = {0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8,
                                          0x9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF};
@@ -969,22 +827,22 @@ TEST(store_utils_tests, test_remapped_bytes_view) {
     mapping.emplace_back(3, 0);
     RemappedBytesViewInput in(bytes_view(data.data(), data.size()),
                               std::move(mapping));
-    auto actual = in.ReadView(3, 2);
+    auto actual = in.ReadVolatile(3, 2);
     ASSERT_EQ(actual[0], data[0]);
     ASSERT_EQ(5, in.Position());
     std::array<irs::byte_type, 2> read;
-    ASSERT_EQ(2, in.ReadBytes(5, read.data(), 2));
+    in.ReadData(5, read.data(), 2);
     ASSERT_EQ(0x3, read[0]);
     ASSERT_EQ(0x4, read[1]);
     ASSERT_EQ(7, in.Position());
-    ASSERT_EQ(2, in.ReadBytes(read.data(), 2));
+    in.ReadData(read.data(), 2);
     ASSERT_EQ(0x5, read[0]);
     ASSERT_EQ(0x6, read[1]);
     ASSERT_EQ(9, in.Position());
-    auto actual2 = in.ReadView(4, 2);
+    auto actual2 = in.ReadVolatile(4, 2);
     ASSERT_EQ(actual2[0], data[1]);
     ASSERT_EQ(6, in.Position());
-    auto actual3 = in.ReadView(17, 1);
+    auto actual3 = in.ReadVolatile(17, 1);
     ASSERT_EQ(actual3[0], data[14]);
     ASSERT_EQ(18, in.Position());
   }
@@ -996,13 +854,13 @@ TEST(store_utils_tests, test_remapped_bytes_view) {
     mapping.emplace_back(25, 14);
     RemappedBytesViewInput in(bytes_view(data.data(), data.size()),
                               std::move(mapping));
-    auto actual = in.ReadView(3, 2);
+    auto actual = in.ReadVolatile(3, 2);
     ASSERT_EQ(actual[1], data[1]);
     ASSERT_EQ(5, in.Position());
-    auto actual2 = in.ReadView(5, 2);
+    auto actual2 = in.ReadVolatile(5, 2);
     ASSERT_EQ(actual2[0], data[7]);
     ASSERT_EQ(7, in.Position());
-    auto actual3 = in.ReadView(25, 1);
+    auto actual3 = in.ReadVolatile(25, 1);
     ASSERT_EQ(actual3[0], data[14]);
     ASSERT_EQ(26, in.Position());
   }

@@ -21,6 +21,9 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/synchronization/notification.h>
+
+#include <latch>
 #include <thread>
 
 #include "basics/file_utils_ext.hpp"
@@ -42,7 +45,7 @@ void StoreNamed(irs::IndexWriter::Document& d, const ParticleT& fields,
                 std::string_view name, irs::field_id id) {
   const auto* field = fields.template get<tests::StringField>(name);
   if (field) {
-    irs::tests::StoreFieldAt(*d.Columnstore(), id, d.DocId(), *field);
+    irs::tests::StoreFieldAt(*d.GetColWriter(), id, d.DocId(), *field);
   }
 }
 
@@ -84,7 +87,9 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
       CsvDocTemplateT() {
         fields.emplace_back(std::make_shared<tests::StringField>("id"));
+        fields.back()->id = tests::FieldIdForRuntime("id");
         fields.emplace_back(std::make_shared<tests::StringField>("label"));
+        fields.back()->id = tests::FieldIdForRuntime("label");
         reserve(fields.size());
       }
 
@@ -122,6 +127,9 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     auto total_threads = thread_count + num_import_threads + num_update_threads;
     irs::async_utils::ThreadPool<> thread_pool(total_threads);
     std::mutex mutex;
+    // notification only for the first update task, so at least one
+    // update would execute after an insert
+    std::latch inserts{static_cast<std::ptrdiff_t>(thread_count)};
 
     if (!writer) {
       auto options = irs::tests::DefaultWriterOptions();
@@ -172,7 +180,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       for (size_t i = 0; i < thread_count; ++i) {
         thread_pool.run([&mutex, &writer, thread_count, i, writer_batch_size,
                          &parsed_docs_count, &writer_commit_count,
-                         &import_again, this] {
+                         &import_again, &inserts, this] {
           {
             // wait for all threads to be registered
             std::lock_guard lock(mutex);
@@ -245,7 +253,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
           ++writer_commit_count;
           import_again.store(false);  // stop any import threads, on completion
-                                      // of any insert thread
+          // of any insert thread
+          inserts.count_down();
         });
       }
 
@@ -278,10 +287,15 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       // register update jobs
       for (size_t i = 0; i < num_update_threads; ++i) {
         thread_pool.run([&mutex, &writer, num_update_threads, i, update_skip,
-                         writer_batch_size, &writer_commit_count, this] {
+                         writer_batch_size, &writer_commit_count, &inserts,
+                         this] {
           {
             // wait for all threads to be registered
             std::lock_guard lock(mutex);
+          }
+
+          if (!i) {
+            inserts.wait();
           }
 
           CsvDocTemplateT csv_doc_template;
@@ -321,26 +335,30 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
             {
               irs::Filter::ptr filter = std::make_unique<irs::ByTerm>();
-              auto key_field = csv_doc_template.indexed.begin()->Name();
+              auto key_name = csv_doc_template.indexed.begin()->Name();
+              auto key_id = csv_doc_template.indexed.begin()->Id();
               auto key_term =
-                csv_doc_template.indexed.get<tests::StringField>(key_field)
+                csv_doc_template.indexed.get<tests::StringField>(key_name)
                   ->value();
-              auto value_field = (++(csv_doc_template.indexed.begin()))->Name();
+              auto value_name = (++(csv_doc_template.indexed.begin()))->Name();
               auto value_term =
-                csv_doc_template.indexed.get<tests::StringField>(value_field)
+                csv_doc_template.indexed.get<tests::StringField>(value_name)
                   ->value();
               std::string updated_term(value_term.data(), value_term.size());
 
               auto& filter_impl = static_cast<irs::ByTerm&>(*filter);
-              *filter_impl.mutable_field() = key_field;
+              *filter_impl.mutable_field_id() = key_id;
               filter_impl.mutable_options()->term =
                 irs::ViewCast<irs::byte_type>(key_term);
               // double up term
               updated_term.append(value_term.data(), value_term.size());
-              csv_doc_template.indexed.get<tests::StringField>(value_field)
+              csv_doc_template.indexed.get<tests::StringField>(value_name)
                 ->value(updated_term);
-              csv_doc_template.insert(
-                std::make_shared<tests::StringField>("updated"));
+              {
+                auto f = std::make_shared<tests::StringField>("updated");
+                f->id = tests::FieldIdForRuntime("updated");
+                csv_doc_template.insert(std::move(f));
+              }
 
               REGISTER_TIMER_NAMED_DETAILED("update");
               {
@@ -436,13 +454,13 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
       const auto* column = reader[i].Column(kSameId);
       if (column) {
-        irs::tests::VisitBlobColumn(*reader[i].CsReader(), *column,
+        irs::tests::VisitBlobColumn(*reader[i].GetColReader(), *column,
                                     imported_visitor);
       }
 
       column = reader[i].Column(kUpdatedId);
       if (column) {
-        irs::tests::VisitBlobColumn(*reader[i].CsReader(), *column,
+        irs::tests::VisitBlobColumn(*reader[i].GetColReader(), *column,
                                     updated_visitor);
       }
     }
@@ -571,7 +589,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       ++docs_count;
     }
 
-    auto reader = irs::DirectoryReader(dir(), codec());
+    auto reader =
+      irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(docs_count, reader[0].docs_count());
   }

@@ -34,6 +34,7 @@
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
+#include "catalog/store/store.h"
 #include "duckdb_shell.hpp"
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler_feature.h"
@@ -41,10 +42,6 @@
 #include "pg/pg_feature.h"
 #include "query/server_engine.h"
 #include "rest_server/database_path_feature.h"
-#include "rest_server/flush_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 
 namespace {
@@ -70,76 +67,71 @@ int RunServer(int argc, char** argv) {
     //    pointer; Feature::instance() works from here on.
     SslServerFeature ssl;
     DatabasePathFeature db_path;
+    catalog::CatalogStore store;
     SchedulerFeature scheduler;
-    RocksDBOptionFeature rocksdb_opt;
-    EngineFeature engine;
-    FlushFeature flush;
-    RocksDBRecoveryManager recovery;
-    catalog::CatalogFeature catalog;
     search::SearchEngine search;
     GeneralServerFeature general;
     pg::PostgresFeature pg;
 
-    // --------------------------------------------------------------
-    // Two-method lifecycle: start() does non-IO setup + spin-up of
-    // threads / sockets; stop() drains long-running threads then
-    // tears down. Construction order doubles as boot order; shutdown
-    // is strict LIFO. `stoppers` holds the stop closures of every
-    // feature that successfully started; the absl::Cleanup below
-    // drains them on scope exit -- whether that's a normal return
-    // after wait() OR an exception thrown mid-start. Either path
-    // unwinds exactly the already-started subset in reverse order.
-    // --------------------------------------------------------------
-    std::deque<std::function<void()>> stoppers;
-    absl::Cleanup drain = [&]() noexcept {
-      while (!stoppers.empty()) {
+    // Lifecycle is two explicit, flat lists: bring features UP in dependency
+    // order, then take them DOWN in a dependency order that is deliberately
+    // NOT the reverse of startup. The non-obvious edge: the scheduler must
+    // drain (it runs drop tasks that touch search) before search goes down.
+    // DuckDBEngine brackets all of this from main(). The up_* flags let DOWN
+    // skip whatever never came UP (start() threw).
+    bool up_ssl = false, up_store = false, up_scheduler = false,
+         up_catalog = false, up_search = false, up_general = false;
+
+    absl::Cleanup down = [&]() noexcept {
+      CrashHandler::SetState("stopping");
+      auto stop = [](const char* what, auto&& fn) noexcept {
         try {
-          stoppers.back()();
+          fn();
         } catch (const std::exception& ex) {
-          SDB_ERROR(GENERAL, "exception during stop: ", ex.what());
+          SDB_ERROR(GENERAL, "exception stopping ", what, ": ", ex.what());
         } catch (...) {
-          SDB_ERROR(GENERAL, "exception of unknown type during stop");
+          SDB_ERROR(GENERAL, "unknown exception stopping ", what);
         }
-        stoppers.pop_back();
+      };
+      if (up_general) {
+        stop("general", [&] { general.stop(); });
+      }
+      if (up_scheduler) {
+        stop("scheduler", [&] { scheduler.stop(); });
+      }
+      if (up_search) {
+        stop("search", [&] { search.stop(); });
+      }
+      if (up_catalog) {
+        stop("catalog", [&] { catalog::ShutdownCatalog(); });
+      }
+      if (up_store) {
+        stop("store", [&] { store.Shutdown(); });  // detach + checkpoint
+      }
+      if (up_ssl) {
+        stop("ssl", [&] { ssl.stop(); });
       }
     };
-    auto start_one = [&](auto& feature, std::function<void()> stop_fn) {
-      feature.start();
-      stoppers.push_back(std::move(stop_fn));
-    };
 
-    // 3. start -- after a successful pass the server is fully
-    //    accepting clients. The CrashHandler state strings get
-    //    stamped into /tmp/crash bundles so a fatal signal during
-    //    boot lands with a phase tag.
     CrashHandler::SetState("starting");
-    start_one(ssl, [&] { ssl.stop(); });
-    start_one(scheduler, [&] { scheduler.stop(); });
-    start_one(engine, [&] { engine.stop(); });
-    // flush has no start() work; ctor already registered metrics + gInstance,
-    // but stop() clears subscriptions so it needs a LIFO slot here.
-    stoppers.push_back([&] { flush.stop(); });
-    // recovery + pg only have start() work (no stop counterpart): WAL replay
-    // and engine-ready assertion respectively. No teardown needed.
-    recovery.start();
-    start_one(catalog, [&] { catalog.stop(); });
-    start_one(search, [&] { search.stop(); });
-    start_one(general, [&] { general.stop(); });
+    ssl.start();
+    up_ssl = true;
+    store.Initialize(db_path.directory());
+    up_store = true;
+    scheduler.start();
+    up_scheduler = true;
+    catalog::InitCatalog();
+    up_catalog = true;
+    search.start();
+    up_search = true;
+    general.start();
+    up_general = true;
     pg.start();
 
-    // Boot completed; emit a recognisable banner so operators tailing
-    // logs (and the sdb_log smoke test) can confirm the server is up.
     SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
 
-    // 4. wait for SIGTERM/SIGINT.
     CrashHandler::SetState("running");
     server.wait();
-
-    // 5. stop -- the absl::Cleanup runs stoppers in strict LIFO on
-    //    scope exit; the SetState below paints the bucket so a fatal
-    //    signal during shutdown tags the right phase. DuckDBEngine
-    //    Initialize/Shutdown brackets this whole function from main().
-    CrashHandler::SetState("stopping");
     return EXIT_SUCCESS;
   } catch (const std::exception& ex) {
     // gLogger is still up (Shutdown runs in main() after RunServer

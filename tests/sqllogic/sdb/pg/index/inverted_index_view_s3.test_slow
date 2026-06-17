@@ -594,7 +594,7 @@ CREATE VIEW json_objects_glob AS
 
 statement ok
 CREATE INDEX json_objects_glob_idx ON json_objects_glob
-  USING inverted(json view_s3_en);
+  USING inverted((json::VARCHAR) view_s3_en);
 
 
 query
@@ -606,7 +606,7 @@ count
 
 query
 SELECT count(*) FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('deadinside');
+WHERE (json::VARCHAR) @@ ts_phrase('deadinside');
 ----
 count
 6
@@ -614,7 +614,7 @@ count
 
 query
 SELECT count(*) FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('vedernikoff');
+WHERE (json::VARCHAR) @@ ts_phrase('vedernikoff');
 ----
 count
 1
@@ -622,7 +622,7 @@ count
 
 query
 SELECT count(*) FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('mass effect') OR json @@ ts_phrase('clickclack');
+WHERE (json::VARCHAR) @@ ts_phrase('mass effect') OR (json::VARCHAR) @@ ts_phrase('clickclack');
 ----
 count
 1
@@ -630,7 +630,7 @@ count
 
 query
 SELECT json FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('vedernikoff');
+WHERE (json::VARCHAR) @@ ts_phrase('vedernikoff');
 ----
 json
 {"id":1,"who":"vedernikoff","what":"want a lot of money but not want to work deadinside"}
@@ -638,7 +638,7 @@ json
 
 query
 SELECT length(json) > 0 AS has_body FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('mass effect');
+WHERE (json::VARCHAR) @@ ts_phrase('mass effect');
 ----
 has_body
 t
@@ -646,7 +646,7 @@ t
 
 query
 SELECT count(*) FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('deadinside') AND json @@ ts_phrase('parquet');
+WHERE (json::VARCHAR) @@ ts_phrase('deadinside') AND (json::VARCHAR) @@ ts_phrase('parquet');
 ----
 count
 1
@@ -654,7 +654,7 @@ count
 
 query
 SELECT count(*) FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('nothingmatcheshere');
+WHERE (json::VARCHAR) @@ ts_phrase('nothingmatcheshere');
 ----
 count
 0
@@ -662,7 +662,7 @@ count
 
 query
 SELECT count(*) FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('null');
+WHERE (json::VARCHAR) @@ ts_phrase('null');
 ----
 count
 4
@@ -670,7 +670,7 @@ count
 
 query
 SELECT json FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('krivda')
+WHERE (json::VARCHAR) @@ ts_phrase('krivda')
 ORDER BY json;
 ----
 json
@@ -679,7 +679,7 @@ json
 
 query
 SELECT json FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('kostya')
+WHERE (json::VARCHAR) @@ ts_phrase('kostya')
 ORDER BY json;
 ----
 json
@@ -688,7 +688,7 @@ json
 
 query
 SELECT json FROM json_objects_glob_idx
-WHERE json @@ ts_phrase('3am')
+WHERE (json::VARCHAR) @@ ts_phrase('3am')
 ORDER BY json;
 ----
 json

@@ -51,13 +51,17 @@ class PhraseQuery : public QueryBuilder {
     : QueryBuilder{segment},
       state{std::move(state)},
       positions{std::move(positions)},
-      boost{boost} {}
+      boost{boost},
+      has_intervals{absl::c_any_of(this->positions, [](const auto& pos) {
+        return pos.offs_max != pos.offs_min;
+      })} {}
 
   score_t Boost() const noexcept final { return boost; }
 
   StateType state;
   positions_t positions;
   score_t boost;
+  bool has_intervals;
 };
 
 class FixedPhraseQuery : public PhraseQuery<FixedPhraseState> {

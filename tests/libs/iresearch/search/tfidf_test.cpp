@@ -29,6 +29,7 @@
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_existence_filter.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
@@ -37,7 +38,6 @@
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
@@ -45,15 +45,24 @@ namespace {
 
 using namespace tests;
 
-inline constexpr irs::field_id kSeq = 1;
-inline constexpr irs::field_id kName = 2;
+// Stable per-name field ids, sourced from `tests::FieldIdFor` so the
+// canonical JSON factories and these tests agree on the id-per-name.
+[[maybe_unused]] inline constexpr irs::field_id kSeq = tests::FieldIdFor("seq");
+[[maybe_unused]] inline constexpr irs::field_id kName =
+  tests::FieldIdFor("name");
+[[maybe_unused]] inline constexpr irs::field_id kField =
+  tests::FieldIdFor("field");
+[[maybe_unused]] inline constexpr irs::field_id kPhraseAnl =
+  tests::FieldIdFor("phrase_anl");
+[[maybe_unused]] inline constexpr irs::field_id kPrefix =
+  tests::FieldIdFor("prefix");
 
 auto StoreSeq() {
   return [](irs::IndexWriter::Document& doc, const tests::Document& src) {
     const auto* seq =
-      dynamic_cast<const tests::StringField*>(src.stored.get("seq"));
+      dynamic_cast<const tests::StringField*>(src.stored.get_by_id(kSeq));
     if (seq) {
-      irs::tests::StoreFieldAt(*doc.Columnstore(), kSeq, doc.DocId(), *seq);
+      irs::tests::StoreFieldAt(*doc.GetColWriter(), kSeq, doc.DocId(), *seq);
     }
   };
 }
@@ -61,9 +70,9 @@ auto StoreSeq() {
 auto StoreName() {
   return [](irs::IndexWriter::Document& doc, const tests::Document& src) {
     const auto* name =
-      dynamic_cast<const tests::StringField*>(src.stored.get("name"));
+      dynamic_cast<const tests::StringField*>(src.stored.get_by_id(kName));
     if (name) {
-      irs::tests::StoreFieldAt(*doc.Columnstore(), kName, doc.DocId(), *name);
+      irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(), *name);
     }
   };
 }
@@ -99,16 +108,17 @@ void TfidfTestCase::TestQueryNorms() {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(
-                       name, data.str,
-                       irs::IndexFeatures::Freq | irs::IndexFeatures::Norm),
-                     true, false);
+          auto field = std::make_shared<StringField>(
+            name, data.str,
+            irs::IndexFeatures::Freq | irs::IndexFeatures::Norm);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(
-            std::make_shared<StringField>(
-              name, value, irs::IndexFeatures::Freq | irs::IndexFeatures::Norm),
-            false, true);
+          auto field = std::make_shared<StringField>(
+            name, value, irs::IndexFeatures::Freq | irs::IndexFeatures::Norm);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
 
@@ -132,7 +142,7 @@ void TfidfTestCase::TestQueryNorms() {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -184,7 +194,7 @@ void TfidfTestCase::TestQueryNorms() {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -239,8 +249,7 @@ TEST_P(TfidfTestCase, consts) {
 }
 
 TEST_P(TfidfTestCase, test_load) {
-  auto scorer = irs::scorers::Get(
-    "tfidf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+  auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{});
 
   ASSERT_NE(nullptr, scorer);
 }
@@ -248,30 +257,18 @@ TEST_P(TfidfTestCase, test_load) {
 TEST_P(TfidfTestCase, make_from_bool) {
   // `withNorms` argument
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "true");
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{.with_norms = true});
     ASSERT_NE(nullptr, scorer);
     auto& tfidf = dynamic_cast<irs::TFIDF&>(*scorer);
     ASSERT_EQ(true, tfidf.normalize());
     ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), tfidf.use_boost_as_score());
   }
-
-  // invalid `withNorms` argument
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "\"false\""));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "null"));
-  ASSERT_EQ(nullptr, irs::scorers::Get(
-                       "tfidf", irs::Type<irs::text_format::Json>::get(), "1"));
 }
 
 TEST_P(TfidfTestCase, make_from_array) {
   // default args
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::Type<irs::TFIDF>::id(), scorer->type());
     auto& tfidf = dynamic_cast<irs::TFIDF&>(*scorer);
@@ -279,83 +276,36 @@ TEST_P(TfidfTestCase, make_from_array) {
     ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), tfidf.use_boost_as_score());
   }
 
-  // default args
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "[]");
-    ASSERT_EQ(nullptr, scorer);
-  }
-
   // `withNorms` argument
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "[ true ]");
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{.with_norms = true});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::Type<irs::TFIDF>::id(), scorer->type());
     auto& tfidf = dynamic_cast<irs::TFIDF&>(*scorer);
     ASSERT_EQ(true, tfidf.normalize());
     ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), tfidf.use_boost_as_score());
   }
-
-  // invalid `withNorms` argument
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "[ \"false\" ]"));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "[ null]"));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "[ 1 ]"));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "[ {} ]"));
-  ASSERT_EQ(nullptr,
-            irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                              "[ [] ]"));
 }
 
 TEST_P(TfidfTestCase, test_normalize_features) {
   // default norms
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::IndexFeatures::Freq, scorer->GetIndexFeatures());
-  }
-
-  // with norms (as args)
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "true");
-    ASSERT_NE(nullptr, scorer);
-    ASSERT_EQ(irs::IndexFeatures::Freq | irs::IndexFeatures::Norm,
-              scorer->GetIndexFeatures());
   }
 
   // with norms
   {
-    auto scorer =
-      irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                        "{\"withNorms\": true}");
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{.with_norms = true});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::IndexFeatures::Freq | irs::IndexFeatures::Norm,
               scorer->GetIndexFeatures());
   }
 
-  // without norms (as args)
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "false");
-    ASSERT_NE(nullptr, scorer);
-    ASSERT_EQ(irs::IndexFeatures::Freq, scorer->GetIndexFeatures());
-  }
-
   // without norms
   {
-    auto scorer =
-      irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                        "{\"withNorms\": false}");
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{.with_norms = false});
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::IndexFeatures::Freq, scorer->GetIndexFeatures());
   }
@@ -377,11 +327,15 @@ TEST_P(TfidfTestCase, test_phrase) {
 
       if (data.is_string()) {
         // analyzed field
-        doc.indexed.push_back(std::make_shared<TextField>(
-          std::string(name.c_str()) + "_anl", data.str));
+        const auto anl_name = std::string(name.c_str()) + "_anl";
+        auto analyzed = std::make_shared<TextField>(anl_name, data.str);
+        analyzed->id = tests::FieldIdFor(anl_name);
+        doc.indexed.push_back(std::move(analyzed));
 
         // not analyzed field
-        doc.insert(std::make_shared<StringField>(name, data.str));
+        auto field = std::make_shared<StringField>(name, data.str);
+        field->id = tests::FieldIdFor(name);
+        doc.insert(std::move(field));
       }
     };
 
@@ -406,7 +360,7 @@ TEST_P(TfidfTestCase, test_phrase) {
   // "jumps high" with order
   {
     irs::ByPhrase filter;
-    *filter.mutable_field() = "phrase_anl";
+    *filter.mutable_field_id() = kPhraseAnl;
     auto& phrase = *filter.mutable_options();
     phrase.push_back(irs::ByTermOptions{}).term =
       irs::ViewCast<irs::byte_type>(std::string_view("jumps"));
@@ -461,14 +415,14 @@ TEST_P(TfidfTestCase, test_phrase) {
   // "cookies ca* p_e bisKuit meringue|marshmallows" with order
   {
     irs::ByPhrase filter;
-    *filter.mutable_field() = "phrase_anl";
+    *filter.mutable_field_id() = kPhraseAnl;
     auto& phrase = *filter.mutable_options();
     phrase.push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("cookies"));
     phrase.push_back<irs::ByPrefixOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("ca"));
-    phrase.push_back<irs::ByWildcardOptions>().term =
-      irs::ViewCast<irs::byte_type>(std::string_view("p_e"));
+    phrase.push_back<irs::ByWildcardOptions>() = irs::ByWildcardOptions{
+      irs::ViewCast<irs::byte_type>(std::string_view("p_e"))};
     auto& lt = phrase.push_back<irs::ByEditDistanceOptions>();
     lt.max_distance = 1;
     lt.term = irs::ViewCast<irs::byte_type>(std::string_view("biscuit"));
@@ -532,11 +486,14 @@ TEST_P(TfidfTestCase, test_query) {
       [](tests::Document& doc, const std::string& name,
          const JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str), true,
-                     false);
+          auto field = std::make_shared<StringField>(name, data.str);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value), false, true);
+          auto field = std::make_shared<StringField>(name, value);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
     add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
@@ -559,7 +516,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByTerm filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("7"));
 
@@ -610,11 +567,14 @@ TEST_P(TfidfTestCase, test_query) {
       [](tests::Document& doc, const std::string& name,
          const JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str), true,
-                     false);
+          auto field = std::make_shared<StringField>(name, data.str);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value), false, true);
+          auto field = std::make_shared<StringField>(name, value);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
     auto writer =
@@ -627,9 +587,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.reset();
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -642,9 +605,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.next();  // skip 1 doc
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -654,7 +620,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto reader =
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     irs::ByTerm filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
 
@@ -713,11 +679,14 @@ TEST_P(TfidfTestCase, test_query) {
       [](tests::Document& doc, const std::string& name,
          const JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str), true,
-                     false);
+          auto field = std::make_shared<StringField>(name, data.str);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value), false, true);
+          auto field = std::make_shared<StringField>(name, value);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
     auto writer =
@@ -730,9 +699,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.reset();
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -745,9 +717,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.next();  // skip 1 doc
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -760,14 +735,14 @@ TEST_P(TfidfTestCase, test_query) {
     {
       // doc 0, 2, 5
       auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field() = "field";
+      *sub.mutable_field_id() = kField;
       sub.mutable_options()->term =
         irs::ViewCast<irs::byte_type>(std::string_view("6"));
     }
     {
       // doc 3, 7
       auto& sub = filter.add<irs::ByTerm>();
-      *sub.mutable_field() = "field";
+      *sub.mutable_field_id() = kField;
       sub.mutable_options()->term =
         irs::ViewCast<irs::byte_type>(std::string_view("8"));
     }
@@ -828,11 +803,14 @@ TEST_P(TfidfTestCase, test_query) {
       [](tests::Document& doc, const std::string& name,
          const JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str), true,
-                     false);
+          auto field = std::make_shared<StringField>(name, data.str);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value), false, true);
+          auto field = std::make_shared<StringField>(name, value);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
     auto writer =
@@ -845,9 +823,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.reset();
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -860,9 +841,12 @@ TEST_P(TfidfTestCase, test_query) {
       gen.next();  // skip 1 doc
       while ((doc = gen.next())) {
         auto ctx = writer->GetBatch();
-        auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
-        store_seq(d, *doc);
+        {
+          auto d = ctx.Insert();
+          ASSERT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+          store_seq(d, *doc);
+        }
+        ctx.Commit();
         gen.next();  // skip 1 doc
       }
       writer->RefreshCommit();
@@ -872,7 +856,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto reader =
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     irs::ByPrefix filter;
-    *filter.mutable_field() = "prefix";
+    *filter.mutable_field_id() = kPrefix;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view(""));
 
@@ -930,7 +914,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -979,7 +963,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("8"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1028,7 +1012,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1076,7 +1060,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByRange filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1124,7 +1108,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::tests::BlobPointReader values{segment, *column};
 
     irs::ByPhrase filter;
-    *filter.mutable_field() = "field";
+    *filter.mutable_field_id() = kField;
     auto& phrase = *filter.mutable_options();
     phrase.push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("7"));
@@ -1313,54 +1297,20 @@ TEST_P(TfidfTestCase, test_query) {
 TEST_P(TfidfTestCase, test_make) {
   // default values
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), std::string_view{});
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{});
     ASSERT_NE(nullptr, scorer);
     auto& scr = dynamic_cast<irs::TFIDF&>(*scorer);
     ASSERT_FALSE(scr.normalize());
     ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), scr.use_boost_as_score());
   }
 
-  // invalid args
+  // with_norms=true
   {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "\"12345");
-    ASSERT_EQ(nullptr, scorer);
-  }
-
-  // custom value
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "true");
+    auto scorer = irs::TFIDF::Make(irs::TFIDF::Options{.with_norms = true});
     ASSERT_NE(nullptr, scorer);
     auto& scr = dynamic_cast<irs::TFIDF&>(*scorer);
     ASSERT_EQ(true, scr.normalize());
     ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), scr.use_boost_as_score());
-  }
-
-  // invalid value (non-bool)
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "42");
-    ASSERT_EQ(nullptr, scorer);
-  }
-
-  // custom values
-  {
-    auto scorer =
-      irs::scorers::Get("tfidf", irs::Type<irs::text_format::Json>::get(),
-                        "{\"withNorms\": true}");
-    ASSERT_NE(nullptr, scorer);
-    auto& scr = dynamic_cast<irs::TFIDF&>(*scorer);
-    ASSERT_EQ(true, scr.normalize());
-    ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), scr.use_boost_as_score());
-  }
-
-  // invalid values (withNorms)
-  {
-    auto scorer = irs::scorers::Get(
-      "tfidf", irs::Type<irs::text_format::Json>::get(), "{\"withNorms\": 42}");
-    ASSERT_EQ(nullptr, scorer);
   }
 }
 
@@ -1371,11 +1321,14 @@ TEST_P(TfidfTestCase, test_order) {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {  // field
-          doc.insert(std::make_shared<StringField>(name, data.str), true,
-                     false);
+          auto field = std::make_shared<StringField>(name, data.str);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), true, false);
         } else if (data.is_number()) {  // seq
           const auto value = std::to_string(data.as_number<int64_t>());
-          doc.insert(std::make_shared<StringField>(name, value), false, true);
+          auto field = std::make_shared<StringField>(name, value);
+          field->id = tests::FieldIdFor(name);
+          doc.insert(std::move(field), false, true);
         }
       });
     add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
@@ -1387,7 +1340,7 @@ TEST_P(TfidfTestCase, test_order) {
   auto& segment = *(reader.begin());
 
   irs::ByTerm query;
-  *query.mutable_field() = "field";
+  *query.mutable_field_id() = kField;
 
   auto scorer = irs::TFIDF{false, true};
 

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "basics/assert.h"
 #include "iresearch/search/boolean_filter.hpp"
 
 namespace irs {
@@ -27,26 +28,54 @@ namespace irs {
 class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
                                  public AllDocsProvider {
  public:
-  MixedBooleanFilter()
-    : _and{std::make_unique<And>()}, _or{std::make_unique<Or>()} {}
+  auto& GetRequired() const noexcept {
+    SDB_VERIFY(RequiredSlot()->type() == irs::Type<And>::id());
+    return sdb::basics::downCast<And>(*RequiredSlot());
+  }
+  auto& GetOptional() const noexcept {
+    SDB_VERIFY(OptionalSlot()->type() == irs::Type<Or>::id());
+    return sdb::basics::downCast<Or>(*OptionalSlot());
+  }
 
-  auto& GetRequired(this auto& self) noexcept { return *self._and; }
+  MixedBooleanFilter() : MixedBooleanFilter({}, {}) {}
 
-  auto& GetOptional(this auto& self) noexcept { return *self._or; }
+  MixedBooleanFilter(std::vector<Filter::ptr> required,
+                     std::vector<Filter::ptr> optional)
+    : _filters{{std::make_unique<And>(std::move(required)),
+                std::make_unique<Or>(std::move(optional))}} {}
 
-  bool empty() const noexcept { return _and->empty() && _or->empty(); }
+  MixedBooleanFilter(MixedBooleanFilter&&) = default;
+  MixedBooleanFilter& operator=(MixedBooleanFilter&&) = default;
+
+  const Filter::ptr& RequiredSlot() const noexcept { return _filters[0]; }
+  const Filter::ptr& OptionalSlot() const noexcept { return _filters[1]; }
+  Filter::ptr& RequiredSlot() noexcept { return _filters[0]; }
+  Filter::ptr& OptionalSlot() noexcept { return _filters[1]; }
+
+  bool empty() const noexcept {
+    return HasNoClauses(*RequiredSlot()) && HasNoClauses(*OptionalSlot());
+  }
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
+  std::span<Filter::ptr> GetChildren() final { return _filters; }
+
  private:
+  static bool HasNoClauses(const Filter& filter) noexcept {
+    const auto tid = filter.type();
+    if (tid == irs::Type<And>::id() || tid == irs::Type<Or>::id()) {
+      return sdb::basics::downCast<BooleanFilter>(filter).empty();
+    }
+    return false;
+  }
+
   bool equals(const Filter& rhs) const noexcept final;
 
-  And _root;
-  std::unique_ptr<And> _and;
-  std::unique_ptr<Or> _or;
+  // [_required, _optional]
+  std::array<Filter::ptr, 2> _filters;
 };
 
 }  // namespace irs

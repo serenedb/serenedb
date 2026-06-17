@@ -32,14 +32,19 @@
 #include "basics/log.h"
 #include "basics/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/merge.hpp"
-#include "iresearch/columnstore/norm_reader.hpp"
-#include "iresearch/columnstore/norm_writer.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/merge.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
+#include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/hnsw/hnsw_reader.hpp"
+#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/index/norm_column_reader.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -48,40 +53,7 @@ namespace irs {
 namespace {
 
 using DocIdMapT = ManagedVector<doc_id_t>;
-using FieldMetaMapT = absl::flat_hash_map<std::string_view, const FieldMeta*>;
-
-class NoopDirectory : public Directory {
- public:
-  static NoopDirectory& Instance() {
-    static NoopDirectory gInstance;
-    return gInstance;
-  }
-
-  DirectoryAttributes& attributes() noexcept final { return _attrs; }
-  IndexOutput::ptr create(std::string_view) noexcept final { return nullptr; }
-  bool exists(bool&, std::string_view) const noexcept final { return false; }
-  bool length(uint64_t&, std::string_view) const noexcept final {
-    return false;
-  }
-  IndexLock::ptr make_lock(std::string_view) noexcept final { return nullptr; }
-  bool mtime(std::time_t&, std::string_view) const noexcept final {
-    return false;
-  }
-  IndexInput::ptr open(std::string_view, IOAdvice) const noexcept final {
-    return nullptr;
-  }
-  bool remove(std::string_view) noexcept final { return false; }
-  bool rename(std::string_view, std::string_view) noexcept final {
-    return false;
-  }
-  bool sync(std::span<const std::string_view>) noexcept final { return false; }
-  bool visit(const Directory::visitor_f&) const final { return false; }
-
- private:
-  NoopDirectory() : Directory{ResourceManagementOptions::gDefault} {}
-
-  DirectoryAttributes _attrs;
-};
+using FieldMetaMapT = absl::flat_hash_map<field_id, IndexFeatures>;
 
 class ProgressTracker {
  public:
@@ -364,23 +336,12 @@ class CompoundFieldIterator final : public BasicTermReader {
   bool Next();
   size_t Size() const noexcept { return _field_iterators.size(); }
 
-  template<typename Visitor>
-  bool Visit(const Visitor& visitor) const {
-    for (auto& entry : _field_iterator_mask) {
-      auto& itr = _field_iterators[entry.itr_id];
-      if (!visitor(*itr.reader, *itr.remap, *entry.meta)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
   const FieldMeta& Meta() const noexcept {
     SDB_ASSERT(_current_meta);
     return *_current_meta;
   }
 
-  std::string_view name() const noexcept final { return Meta().name; }
+  field_id id() const noexcept final { return Meta().id; }
   FieldProperties properties() const noexcept final { return _props; }
   bytes_view(min)() const noexcept final { return _term_itr.MinTerm(); }
   bytes_view(max)() const noexcept final { return _term_itr.MaxTerm(); }
@@ -395,19 +356,20 @@ class CompoundFieldIterator final : public BasicTermReader {
 
  private:
   struct FieldIteratorImpl {
-    FieldIterator::ptr itr;
+    std::span<const field_id> ids;
+    size_t pos;
     const SubReader* reader;
     const DocRemap* remap;
   };
 
   struct TermIteratorImpl {
     size_t itr_id;
-    const FieldMeta* meta;
     const TermReader* reader;
   };
 
   FieldProperties _props;
-  std::string_view _current_field;
+  field_id _current_id{field_limits::invalid()};
+  FieldMeta _synthesized_meta;
   const FieldMeta* _current_meta{&FieldMeta::kEmpty};
   std::vector<TermIteratorImpl> _field_iterator_mask;
   std::vector<FieldIteratorImpl> _field_iterators;
@@ -417,65 +379,59 @@ class CompoundFieldIterator final : public BasicTermReader {
 
 void CompoundFieldIterator::Add(const SubReader& reader,
                                 const DocRemap& remap) {
-  auto it = reader.fields();
-  SDB_ASSERT(it);
-  if (it) [[likely]] {
-    _field_iterator_mask.emplace_back(_field_iterators.size(), nullptr,
-                                      nullptr);
-    _field_iterators.emplace_back(std::move(it), &reader, &remap);
-  }
+  _field_iterators.emplace_back(reader.field_ids(), size_t{0}, &reader, &remap);
 }
 
 bool CompoundFieldIterator::Next() {
-  _current_field = {};
   _progress();
 
   if (Aborted()) {
     _field_iterator_mask.clear();
     _field_iterators.clear();
+    _current_id = field_limits::invalid();
     return false;
   }
 
   for (auto& entry : _field_iterator_mask) {
-    auto& it = _field_iterators[entry.itr_id].itr;
-    SDB_ASSERT(it);
-    if (!it->next()) {
-      it.reset();
-    }
+    ++_field_iterators[entry.itr_id].pos;
   }
 
   _field_iterator_mask.clear();
+  _current_id = field_limits::invalid();
 
   for (size_t i = 0, count = _field_iterators.size(); i != count; ++i) {
     auto& field_itr = _field_iterators[i];
-    if (!field_itr.itr) {
+    if (field_itr.pos >= field_itr.ids.size()) {
       continue;
     }
-    const auto& field_meta = field_itr.itr->value().meta();
-    const auto* field_terms = field_itr.reader->field(field_meta.name);
+    const auto id = field_itr.ids[field_itr.pos];
+    if (field_limits::valid(_current_id) && id > _current_id) {
+      continue;
+    }
+    const auto* field_terms = field_itr.reader->field(id);
     if (!field_terms) {
+      ++field_itr.pos;
       continue;
     }
-    const std::string_view field_id = field_meta.name;
-    SDB_ASSERT(!IsNull(field_id));
-    SDB_ASSERT(_field_iterator_mask.empty() == IsNull(_current_field));
-    if (!IsNull(_current_field)) {
-      const auto cmp = field_id.compare(_current_field);
-      if (cmp > 0) {
-        continue;
-      }
-      if (cmp < 0) {
-        _field_iterator_mask.clear();
-      }
+    if (field_limits::valid(_current_id) && id < _current_id) {
+      _field_iterator_mask.clear();
     }
-    _current_field = field_id;
-    _current_meta = &field_meta;
-    SDB_ASSERT(field_meta.index_features <= Meta().index_features);
-    _field_iterator_mask.emplace_back(
-      TermIteratorImpl{i, &field_meta, field_terms});
+    const auto features = field_terms->meta().index_features;
+    _synthesized_meta.index_features =
+      _field_iterator_mask.empty()
+        ? features
+        : _synthesized_meta.index_features & features;
+    _current_id = id;
+    _field_iterator_mask.emplace_back(TermIteratorImpl{i, field_terms});
   }
 
-  return !IsNull(_current_field);
+  if (!field_limits::valid(_current_id)) {
+    _current_meta = &FieldMeta::kEmpty;
+    return false;
+  }
+  _synthesized_meta.id = _current_id;
+  _current_meta = &_synthesized_meta;
+  return true;
 }
 
 TermIterator::ptr CompoundFieldIterator::iterator() const {
@@ -488,13 +444,16 @@ TermIterator::ptr CompoundFieldIterator::iterator() const {
 
 bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                       IndexFeatures& index_features, const SubReader& reader) {
-  for (auto it = reader.fields(); it->next();) {
-    const auto& field_meta = it->value().meta();
+  for (auto id : reader.field_ids()) {
+    const auto* term_reader = reader.field(id);
+    if (!term_reader) {
+      continue;
+    }
+    const auto& field_meta = term_reader->meta();
     const auto [field_meta_it, is_new] =
-      field_meta_map.emplace(field_meta.name, &field_meta);
-    if (!is_new && (!IsSubsetOf(field_meta.index_features,
-                                field_meta_it->second->index_features))) {
-      return false;
+      field_meta_map.emplace(id, field_meta.index_features);
+    if (!is_new) {
+      field_meta_it->second &= field_meta.index_features;
     }
     index_features |= field_meta.index_features;
   }
@@ -525,27 +484,37 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
 const MergeWriter::FlushProgress kProgressNoop = [] { return true; };
 
 field_id MergeNormColumnFromSources(
-  columnstore::Writer& cs_writer, std::string_view field_name,
-  std::span<const columnstore::MergeSource> sources,
+  ColWriter& col_writer, field_id id, std::span<const MergeSource> sources,
   const NormColumnOptionsProvider* norm_column_options) {
+  bool any_source_has_norm = false;
+  for (const auto& src : sources) {
+    if (!src.col_reader) {
+      continue;
+    }
+    const auto* source_terms = src.reader->field(id);
+    if (source_terms && field_limits::valid(source_terms->meta().norm) &&
+        src.col_reader->NormColumn(source_terms->meta().norm) != nullptr) {
+      any_source_has_norm = true;
+      break;
+    }
+  }
   NormColumnOptions opts{};
-  if (norm_column_options && *norm_column_options) {
-    opts = (*norm_column_options)(field_name);
+  if (any_source_has_norm && norm_column_options && *norm_column_options) {
+    opts = (*norm_column_options)(id);
   }
   field_id out_id = field_limits::invalid();
-  columnstore::NormColumnWriter* norm_writer = nullptr;
+  NormColumnWriter* norm_writer = nullptr;
   uint64_t merged_row = 0;
   for (const auto& src : sources) {
-    const columnstore::NormColumnReader* nc = nullptr;
-    if (src.cs_reader != nullptr) {
-      if (const auto* source_terms = src.reader->field(field_name);
-          source_terms != nullptr &&
-          field_limits::valid(source_terms->meta().norm)) {
-        nc = src.cs_reader->NormColumn(source_terms->meta().norm);
+    const NormColumnReader* norm_reader = nullptr;
+    if (src.col_reader) {
+      if (const auto* source_terms = src.reader->field(id);
+          source_terms && field_limits::valid(source_terms->meta().norm)) {
+        norm_reader = src.col_reader->NormColumn(source_terms->meta().norm);
       }
     }
 
-    if (nc == nullptr) {
+    if (!norm_reader) {
       merged_row += src.alive_count;
       if (norm_writer) {
         norm_writer->PadTo(merged_row);
@@ -554,21 +523,23 @@ field_id MergeNormColumnFromSources(
     }
 
     if (!norm_writer) {
-      SDB_ASSERT(field_limits::valid(opts.id),
-                 "norm_column_options must return a valid id for field ",
-                 field_name);
+      SDB_ENSURE(field_limits::valid(opts.id), sdb::ERROR_INTERNAL,
+                 "MergeNormColumnFromSources: norm_column_options did not "
+                 "mint a valid id for field ",
+                 id);
       out_id = opts.id;
-      norm_writer = &cs_writer.OpenNormColumn(out_id, opts.row_group_size);
+      norm_writer = &col_writer.OpenNormColumn(out_id, opts.row_group_size);
       norm_writer->PadTo(merged_row);
     }
 
-    SDB_ASSERT(nc->RowCount() == src.reader->docs_count());
+    SDB_ASSERT(norm_reader->RowCount() == src.reader->docs_count());
     const bool has_mask = src.mask && !src.mask->empty();
-    for (size_t rg = 0, rg_count = nc->RowGroupCount(); rg < rg_count; ++rg) {
-      const auto bytes = nc->RowGroupBytes(rg);
-      const auto byte_size = nc->ByteSize(rg);
-      const auto rg_first_row = nc->RowGroupFirstRow(rg);
-      const auto n = nc->RowGroupRowCount(rg);
+    for (size_t rg = 0, rg_count = norm_reader->RowGroupCount(); rg < rg_count;
+         ++rg) {
+      const auto bytes = norm_reader->RowGroupBytes(rg);
+      const auto byte_size = norm_reader->ByteSize(rg);
+      const auto rg_first_row = norm_reader->RowGroupFirstRow(rg);
+      const auto n = norm_reader->RowGroupRowCount(rg);
       if (!has_mask) {
         norm_writer->AppendBytes(merged_row, bytes.data(), n, byte_size);
         merged_row += n;
@@ -597,32 +568,28 @@ field_id MergeNormColumnFromSources(
   return out_id;
 }
 
-using MergedNormIdMap = absl::flat_hash_map<std::string_view, field_id>;
+using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
 
 MergedNormIdMap MergeNorms(
-  columnstore::Writer* cs_writer,
-  std::span<const columnstore::MergeSource> sources,
+  ColWriter& col_writer, std::span<const MergeSource> sources,
   const FieldMetaMapT& field_meta_map,
   const NormColumnOptionsProvider* norm_column_options) {
   MergedNormIdMap out;
-  if (cs_writer == nullptr) {
-    return out;
-  }
-  for (const auto& [name, meta] : field_meta_map) {
-    if (!IsSubsetOf(IndexFeatures::Norm, meta->index_features)) {
+  for (const auto& [id, features] : field_meta_map) {
+    if (!IsSubsetOf(IndexFeatures::Norm, features)) {
       continue;
     }
-    const auto new_norm_id = MergeNormColumnFromSources(
-      *cs_writer, name, sources, norm_column_options);
+    const auto new_norm_id =
+      MergeNormColumnFromSources(col_writer, id, sources, norm_column_options);
     if (field_limits::valid(new_norm_id)) {
-      out.emplace(name, new_norm_id);
+      out.emplace(id, new_norm_id);
     }
   }
   return out;
 }
 
 struct MergedNormProvider final : public NormProvider {
-  const columnstore::Reader* reader = nullptr;
+  const ColReader* reader = nullptr;
 
   NormReader::ptr norms(field_id id) const final {
     if (reader == nullptr) {
@@ -640,8 +607,11 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  CompoundFieldIterator& field_itr,
                  const MergedNormIdMap& merged_norm_ids,
                  const MergeWriter::FlushProgress& progress,
-                 IResourceManager& rm) {
-  auto field_writer = meta.codec->get_field_writer(true, rm);
+                 IResourceManager& rm, IdxWriter& idx) {
+  auto field_writer = std::make_unique<burst_trie::FieldWriter>(
+    meta.codec->get_postings_writer(/*compaction=*/true, rm),
+    /*compaction=*/true, rm);
+  field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state);
 
   while (field_itr.Next()) {
@@ -649,7 +619,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     props.index_features = field_itr.Meta().index_features;
 
     if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
-      const auto it = merged_norm_ids.find(field_itr.Meta().name);
+      const auto it = merged_norm_ids.find(field_itr.Meta().id);
       if (it != merged_norm_ids.end()) {
         props.norm = it->second;
       }
@@ -665,11 +635,6 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   return !field_itr.Aborted();
 }
 
-// Compute the merged segment's doc_id mapping (identity for fully-live
-// sources, compacted for sources with deletes), populate the field-meta
-// map, register each source with the field iterator, and set the merged
-// segment's doc counts. Returns false if a base_id overflow happens or
-// per-source ComputeFieldMeta fails.
 bool ComputeDocMappingsAndFieldMeta(
   ManagedVector<MergeWriter::ReaderCtx>& readers, SegmentMeta& segment,
   FieldMetaMapT& field_meta_map, CompoundFieldIterator& fields_itr,
@@ -701,30 +666,24 @@ bool ComputeDocMappingsAndFieldMeta(
   return true;
 }
 
-// Borrow each source's cached columnstore::Reader from its SubReader and
-// allocate the output cs Writer. Skipped (all outputs left empty / null)
-// when the segment isn't backed by a DatabaseInstance.
-void OpenColumnstoreContexts(
-  duckdb::DatabaseInstance* db, TrackingDirectory& dir,
-  std::string_view segment_name, ManagedVector<MergeWriter::ReaderCtx>& readers,
-  std::vector<columnstore::MergeSource>& sources,
-  std::unique_ptr<columnstore::Writer>& cs_writer,
-  const ColumnOptionsProvider* column_options,
-  const NormColumnOptionsProvider* norm_column_options) {
-  if (db == nullptr) {
-    return;
-  }
+void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
+                   std::string_view segment_name,
+                   ManagedVector<MergeWriter::ReaderCtx>& readers,
+                   std::vector<MergeSource>& sources,
+                   std::unique_ptr<ColWriter>& col_writer,
+                   const ColumnOptionsProvider* column_options,
+                   const NormColumnOptionsProvider* norm_column_options) {
   sources.reserve(readers.size());
   for (auto& ctx : readers) {
-    sources.push_back(columnstore::MergeSource{
+    sources.push_back(MergeSource{
       .reader = ctx.reader,
-      .cs_reader = ctx.reader->CsReader(),
+      .col_reader = ctx.reader->GetColReader(),
       .mask = ctx.reader->docs_mask(),
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
-  cs_writer = std::make_unique<columnstore::Writer>(
-    dir, segment_name, *db, column_options, norm_column_options);
+  col_writer = std::make_unique<ColWriter>(dir, segment_name, db,
+                                           column_options, norm_column_options);
 }
 
 }  // namespace
@@ -733,13 +692,6 @@ MergeWriter::ReaderCtx::ReaderCtx(const SubReader* reader,
                                   IResourceManager& rm) noexcept
   : reader{reader}, remap{rm} {
   SDB_ASSERT(this->reader);
-}
-
-MergeWriter::MergeWriter(IResourceManager& resource_manager) noexcept
-  : _dir{NoopDirectory::Instance()}, _readers{{resource_manager}} {}
-
-MergeWriter::operator bool() const noexcept {
-  return &_dir != &NoopDirectory::Instance();
 }
 
 bool MergeWriter::Flush(SegmentMeta& segment,
@@ -769,38 +721,43 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     return false;
   }
 
-  std::vector<columnstore::MergeSource> sources;
-  std::unique_ptr<columnstore::Writer> cs_writer;
-  OpenColumnstoreContexts(_db, track_dir, segment.name, _readers, sources,
-                          cs_writer, _column_options, _norm_column_options);
+  std::vector<MergeSource> sources;
+  std::unique_ptr<ColWriter> col_writer;
+  OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
+                _column_options, _norm_column_options);
+  SDB_ASSERT(col_writer);
 
   const auto merged_norm_ids =
-    MergeNorms(cs_writer.get(), sources, field_meta_map, _norm_column_options);
+    MergeNorms(*col_writer, sources, field_meta_map, _norm_column_options);
 
   if (!progress_callback()) {
     return false;
   }
 
-  if (cs_writer && !sources.empty()) {
+  if (!sources.empty()) {
     // TODO(mbkkt) Use progress_callback?
-    columnstore::MergeInto(sources, *cs_writer, _column_options);
+    MergeInto(sources, *col_writer, _column_options);
   }
 
   if (!progress_callback()) {
     return false;
   }
 
-  std::unique_ptr<columnstore::Reader> cs_reader;
+  std::unique_ptr<ColReader> col_reader;
   MergedNormProvider norm_provider;
-  if (cs_writer) {
-    // TODO(mbkkt) Use progress_callback?
-    cs_writer->Commit(segment.docs_count);
-    _built_hnsw_graphs = cs_writer->TakeBuiltHnswGraphs();
-    if (_db && segment.docs_count != 0) {
-      cs_reader =
-        std::make_unique<columnstore::Reader>(track_dir, segment.name, *_db);
-      norm_provider.reader = cs_reader.get();
+  IdxWriter idx{track_dir, segment.name, _db};
+  col_writer->Commit(segment.docs_count);
+  auto built = col_writer->TakeBuiltHnsw();
+  if (!built.empty()) {
+    _built_hnsw_graphs.reserve(built.size());
+    for (auto& b : built) {
+      _built_hnsw_graphs.emplace(b.column_id, b.graph);
+      idx.AddHNSW(b.column_id, b.info, std::move(b.graph));
     }
+  }
+  if (segment.docs_count != 0) {
+    col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db);
+    norm_provider.reader = col_reader.get();
   }
 
   if (!progress_callback()) {
@@ -816,16 +773,23 @@ bool MergeWriter::Flush(SegmentMeta& segment,
     .index_features = index_features,
   };
 
-  if (!WriteFields(state, segment, fields_itr, merged_norm_ids,
-                   progress_callback, _readers.get_allocator().Manager())) {
+  if (segment.docs_count != 0 &&
+      !WriteFields(state, segment, fields_itr, merged_norm_ids,
+                   progress_callback, _readers.get_allocator().Manager(),
+                   idx)) {
     return false;
   }
+  idx.Commit();
 
   if (!progress_callback()) {
     return false;
   }
 
   segment.files = track_dir.FlushTracked(segment.byte_size);
+  if (segment.live_docs_count == 0) {
+    return false;
+  }
+  SDB_ASSERT(!segment.files.empty());
   result = true;
   return true;
 }

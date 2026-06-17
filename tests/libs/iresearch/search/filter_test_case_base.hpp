@@ -36,6 +36,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -45,6 +46,21 @@
 #include "tests_shared.hpp"
 
 namespace tests {
+
+template<typename F>
+irs::Filter::ptr Optimized(F filter, const irs::Scorer* scorer = nullptr) {
+  irs::Filter::ptr root = std::make_unique<F>(std::move(filter));
+  irs::Optimize(root, {.scored = scorer != nullptr});
+  return root;
+}
+
+template<typename F>
+irs::Filter::Query::ptr OptimizedPrepare(F filter,
+                                         const irs::PrepareContext& ctx) {
+  irs::Filter::ptr root = std::make_unique<F>(std::move(filter));
+  irs::Optimize(root, {.scored = ctx.scorer != nullptr});
+  return root->prepare(ctx);
+}
 
 struct DocBlockAttr : public irs::Attribute {
   const irs::doc_id_t* value = nullptr;

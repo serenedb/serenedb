@@ -21,6 +21,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "filter_test_case_base.hpp"
+#include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/proxy_filter.hpp"
@@ -142,17 +143,20 @@ class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
  public:
   ProxyFilterTestCase() {
     auto codec = irs::formats::Get("1_5simd");
-    auto writer = irs::IndexWriter::Make(_dir, codec, irs::kOmCreate);
+    auto writer = irs::IndexWriter::Make(_dir, codec, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
     {  // make dummy document so we could have non-empty index
       auto ctx = writer->GetBatch();
       for (size_t i = 0; i < GetParam(); ++i) {
         auto doc = ctx.Insert();
-        auto field = std::make_shared<tests::StringField>("foo", "bar");
+        auto field = std::make_shared<::tests::StringField>("foo", "bar");
         doc.Insert(*field);
       }
+      ctx.Commit();
     }
     writer->RefreshCommit();
-    _index = irs::DirectoryReader(_dir, codec);
+    _index =
+      irs::DirectoryReader(_dir, codec, irs::tests::DefaultReaderOptions());
     AssertSnapshotEquality(writer->GetSnapshot(), _index);
   }
 
@@ -256,27 +260,29 @@ TEST_P(ProxyFilterTestCase, test_full_dense) {
 INSTANTIATE_TEST_SUITE_P(proxy_filter_test_case, ProxyFilterTestCase,
                          ::testing::Values(10, 15, 64, 100, 128));
 
-class ProxyFilterRealFilter : public tests::FilterTestCaseBase {
+class ProxyFilterRealFilter : public ::tests::FilterTestCaseBase {
  public:
   void InitIndex() {
     auto writer = open_writer(irs::kOmCreate);
 
     std::vector<DocGeneratorBase::ptr> gens;
-    gens.emplace_back(new tests::JsonDocGenerator(
-      resource("simple_sequential.json"), &tests::GenericJsonFieldFactory));
-    gens.emplace_back(new tests::JsonDocGenerator(
+    gens.emplace_back(new ::tests::JsonDocGenerator(
+      resource("simple_sequential.json"), &::tests::GenericJsonFieldFactory));
+    gens.emplace_back(new ::tests::JsonDocGenerator(
       resource("simple_sequential_common_prefix.json"),
-      &tests::GenericJsonFieldFactory));
+      &::tests::GenericJsonFieldFactory));
     add_segments(*writer, gens);
   }
 };
+
+constexpr irs::field_id kNameFieldId = ::tests::FieldIdFor("name");
 
 TEST_P(ProxyFilterRealFilter, with_terms_filter) {
   InitIndex();
   auto rdr = open_reader();
   ProxyFilter proxy;
   auto [q, cache] = proxy.set_filter<ByTerm>(irs::IResourceManager::gNoop);
-  *q.mutable_field() = "name";
+  *q.mutable_field_id() = kNameFieldId;
   q.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("A"));
   CheckQuery(proxy, Docs{1, 33}, rdr);
@@ -288,21 +294,22 @@ TEST_P(ProxyFilterRealFilter, with_disjunction_filter) {
   ProxyFilter proxy;
   auto [root, cache] = proxy.set_filter<irs::Or>(irs::IResourceManager::gNoop);
   auto& q = root.add<ByTerm>();
-  *q.mutable_field() = "name";
+  *q.mutable_field_id() = kNameFieldId;
   q.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("A"));
   auto& q1 = root.add<ByTerm>();
-  *q1.mutable_field() = "name";
+  *q1.mutable_field_id() = kNameFieldId;
   q1.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("B"));
   CheckQuery(proxy, Docs{1, 2, 33, 34}, rdr);
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs =
+  ::tests::GetDirectories<::tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(proxy_filter_real_filter, ProxyFilterRealFilter,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})));
+INSTANTIATE_TEST_SUITE_P(
+  proxy_filter_real_filter, ProxyFilterRealFilter,
+  ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                     ::testing::Values(::tests::FormatInfo{"1_5simd"})));
 
 }  // namespace

@@ -419,27 +419,6 @@ sdb_update_module(${GIT_EXECUTABLE} "s2geometry" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 add_subdirectory(s2geometry)
 
 ################################################################################
-## ROCKSDB
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "rocksdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-
-set(WITH_GFLAGS OFF)
-add_subdirectory(rocksdb)
-add_library(rocksdb_interface INTERFACE)
-target_include_directories(
-    rocksdb_interface
-    SYSTEM
-    INTERFACE ${PROJECT_SOURCE_DIR}/third_party/rocksdb/include
-)
-target_include_directories(
-    rocksdb_interface
-    SYSTEM
-    INTERFACE ${PROJECT_SOURCE_DIR}/third_party/rocksdb
-)
-list(APPEND LINK_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/rocksdb")
-
-################################################################################
 # llhttp
 ################################################################################
 

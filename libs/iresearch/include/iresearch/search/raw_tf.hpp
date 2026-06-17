@@ -22,7 +22,6 @@
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 
 namespace irs {
 
@@ -36,7 +35,14 @@ class RawTF final : public irs::ScorerBase<RawTF, void> {
  public:
   static constexpr std::string_view type_name() noexcept { return "raw_tf"; }
 
-  static void init();  // trigger registration in static builds
+  struct Options {
+    using Owner = RawTF;
+    bool operator==(const Options&) const = default;
+  };
+
+  static std::unique_ptr<RawTF> Make(const Options& /*opts*/) {
+    return std::make_unique<RawTF>();
+  }
 
   RawTF() noexcept = default;
 

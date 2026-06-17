@@ -25,10 +25,15 @@
 
 #include "basics/bit_packing.hpp"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
+#include "formats/column/test_cs_helpers.hpp"
 #include "formats_test_case_base.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/formats_attributes.hpp"
+#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/store/mmap_directory.hpp"
@@ -150,7 +155,7 @@ class Format10TestCase : public tests::FormatTestCase {
       reader->prepare(*in, state, field.index_features);
 
       irs::bstring in_data(in->Length() - in->Position(), 0);
-      in->ReadBytes(&in_data[0], in_data.size());
+      in->ReadData(&in_data[0], in_data.size());
       const auto* begin = in_data.c_str();
 
       // read term attributes
@@ -373,7 +378,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     reader->prepare(*in, state, field.index_features);
 
     irs::bstring in_data(in->Length() - in->Position(), 0);
-    in->ReadBytes(&in_data[0], in_data.size());
+    in->ReadData(&in_data[0], in_data.size());
     const auto* begin = in_data.c_str();
 
     // read term0 attributes & postings
@@ -511,7 +516,7 @@ TEST_P(Format10TestCase, postings_read_write) {
     reader->prepare(*in, state, field.index_features);
 
     irs::bstring in_data(in->Length() - in->Position(), 0);
-    in->ReadBytes(&in_data[0], in_data.size());
+    in->ReadData(&in_data[0], in_data.size());
     const auto* begin = in_data.c_str();
 
     // cumulative attribute
@@ -594,7 +599,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
                                              irs::IndexFeatures::Offs;
 
     irs::FieldMeta field;
-    field.name = "field";
+    field.id = 1;
     field.index_features = kFeatures;
 
     irs::FlushState state{
@@ -624,7 +629,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
                                              irs::IndexFeatures::Offs;
 
     irs::FieldMeta field;
-    field.name = "field";
+    field.id = 1;
     field.index_features = kFeatures;
 
     irs::FlushState state{
@@ -653,7 +658,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
 
     irs::FieldMeta field;
-    field.name = "field";
+    field.id = 1;
     field.index_features = kFeatures;
 
     irs::FlushState state{
@@ -682,7 +687,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
 
     irs::FieldMeta field;
-    field.name = "field";
+    field.id = 1;
     field.index_features = kFeatures;
 
     irs::FlushState state{
@@ -710,7 +715,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     constexpr irs::IndexFeatures kFeatures = irs::IndexFeatures::Freq;
 
     irs::FieldMeta field;
-    field.name = "field";
+    field.id = 1;
     field.index_features = kFeatures;
 
     irs::FlushState state{
@@ -738,7 +743,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     constexpr irs::IndexFeatures kFeatures = irs::IndexFeatures::None;
 
     irs::FieldMeta field;
-    field.name = "field";
+    field.id = 1;
     field.index_features = kFeatures;
 
     irs::FlushState state{
@@ -764,7 +769,7 @@ TEST_P(Format10TestCase, ires336) {
   // bug: ires336
   auto dir = get_directory(*this);
   const std::string_view segment_name = "bug";
-  const std::string_view field = "sbiotype";
+  constexpr irs::field_id kFieldId = 1;
   const irs::bytes_view term =
     irs::ViewCast<irs::byte_type>(std::string_view("protein_coding"));
 
@@ -788,24 +793,35 @@ TEST_P(Format10TestCase, ires336) {
   };
 
   irs::FieldMeta field_meta;
-  field_meta.name = field;
+  field_meta.id = kFieldId;
   {
     tests::MockTermReader term_reader{
       trms, field_meta, (terms.empty() ? irs::bytes_view{} : *terms.begin()),
       (terms.empty() ? irs::bytes_view{} : *terms.rbegin())};
-    auto fw = get_codec()->get_field_writer(true, irs::IResourceManager::gNoop);
-    fw->prepare(flush_state);
-    fw->write(term_reader);
-    fw->end();
+    irs::IdxWriter idx{*dir, segment_name,
+                       ::sdb::DuckDBEngine::Instance().instance()};
+    irs::burst_trie::FieldWriter fw{
+      get_codec()->get_postings_writer(/*compaction=*/true,
+                                       irs::IResourceManager::gNoop),
+      /*compaction=*/true, irs::IResourceManager::gNoop};
+    fw.SetIdxWriter(idx);
+    fw.prepare(flush_state);
+    fw.write(term_reader);
+    fw.end();
+    idx.Commit();
   }
 
   irs::SegmentMeta meta;
   meta.name = segment_name;
 
-  auto fr = get_codec()->get_field_reader(irs::IResourceManager::gNoop);
-  fr->prepare(irs::ReaderState{.dir = dir.get(), .meta = &meta});
+  irs::IdxReader idx_reader{*dir, segment_name};
+  irs::burst_trie::FieldReader fr_obj{get_codec()->get_postings_reader(),
+                                      irs::IResourceManager::gNoop};
+  auto* fr = &fr_obj;
+  fr->prepare(
+    irs::ReaderState{.dir = dir.get(), .meta = &meta, .idx = &idx_reader});
 
-  auto it = fr->field(field_meta.name)->iterator(irs::SeekMode::NORMAL);
+  auto it = fr->field(field_meta.id)->iterator(irs::SeekMode::NORMAL);
   ASSERT_TRUE(it->seek(term));
 
   // ires-336 sequence
@@ -1006,7 +1022,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         reader->prepare(*in, state, field.index_features);
 
         irs::bstring in_data(in->Length() - in->Position(), 0);
-        in->ReadBytes(&in_data[0], in_data.size());
+        in->ReadData(&in_data[0], in_data.size());
         const auto* begin = in_data.c_str();
 
         irs::CookieImpl read_meta;

@@ -36,16 +36,10 @@
 #include "catalog/object.h"
 #include "catalog/sequence.h"
 #include "query/utils.h"
-#include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
 
-// NOLINTBEGIN
-enum class ColumnStoreMode : uint8_t {
-  kNormal = 0,
-  kIndexOnly = 1,
-};
-
+// Persistent on-disk catalog format.
 class Column final : public Object {
  public:
   enum GeneratedType : uint8_t {
@@ -56,10 +50,6 @@ class Column final : public Object {
   };
 
   using Id = ObjectId;
-
-  bool IsIndexOnly() const noexcept {
-    return store_mode == ColumnStoreMode::kIndexOnly;
-  }
 
   static constexpr uint64_t kMaxRealIdValue =
     std::numeric_limits<uint64_t>::max() - 1'000'000;
@@ -100,7 +90,11 @@ class Column final : public Object {
     return generated_type != GeneratedType::kNone;
   }
 
-  void WriteInternal(vpack::Builder&) const final {}
+  // Column is never persisted as a standalone Object -- it rides inside
+  // TableData (see table.cpp). The owner table id is not written; Table's ctor
+  // re-stamps it on every column after deserialization.
+  void Serialize(duckdb::Serializer& sink) const final;
+  static Column Deserialize(duckdb::Deserializer& src);
   std::shared_ptr<Object> Clone() const final;
 
   void SetId(Id id) noexcept { _id = id; }
@@ -108,31 +102,13 @@ class Column final : public Object {
   duckdb::LogicalType type;
   std::shared_ptr<ColumnExpr> expr;
   GeneratedType generated_type = GeneratedType::kNone;
-  ColumnStoreMode store_mode = ColumnStoreMode::kNormal;
 };
 
 inline std::shared_ptr<Object> Column::Clone() const {
   return std::make_shared<Column>(*this);
 }
 
-inline void VPackWrite(auto ctx, const Column& col) {
-  vpack::WriteTuple(
-    ctx.vpack(),
-    std::forward_as_tuple(col.GetId(), col.type, std::string{col.GetName()},
-                          col.expr, col.generated_type));
-}
-
-inline void VPackRead(auto ctx, Column& col) {
-  ObjectId id;
-  duckdb::LogicalType type;
-  std::string name;
-  std::shared_ptr<ColumnExpr> expr;
-  Column::GeneratedType gt = Column::kNone;
-  auto tup = std::tie(id, type, name, expr, gt);
-  vpack::ReadTuple(ctx.vpack(), tup);
-  col = Column{ctx.arg(), id, name, std::move(type), std::move(expr), gt};
-}
-
+// Persistent on-disk catalog format.
 class CheckConstraint final : public Object {
  public:
   CheckConstraint() : Object{{}, {}, {}, ObjectType::CheckConstraint} {}
@@ -143,7 +119,8 @@ class CheckConstraint final : public Object {
              ObjectType::CheckConstraint},
       expr{std::move(e)} {}
 
-  void WriteInternal(vpack::Builder&) const final {}
+  void Serialize(duckdb::Serializer& sink) const final;
+  static CheckConstraint Deserialize(duckdb::Deserializer& src);
   std::shared_ptr<Object> Clone() const final {
     return std::make_shared<CheckConstraint>(*this);
   }
@@ -156,27 +133,25 @@ class CheckConstraint final : public Object {
   std::shared_ptr<ColumnExpr> expr;
 };
 
-inline void VPackWrite(auto ctx, const CheckConstraint& c) {
-  vpack::WriteTuple(
-    ctx.vpack(),
-    std::forward_as_tuple(c.GetId(), std::string{c.GetName()}, c.expr));
-}
+// Which engine owns the table's row data. Both kinds are first-class and
+// coexist: Transactional tables live as store tables in the engine's
+// single-file database; Fast is reserved for the eventually-consistent
+// iresearch-only table engine.
+enum class TableEngine : uint8_t {
+  Transactional = 0,
+  Fast = 1,
+};
 
-inline void VPackRead(auto ctx, CheckConstraint& c) {
-  ObjectId id;
-  std::string name;
-  std::shared_ptr<ColumnExpr> expr;
-  auto tup = std::tie(id, name, expr);
-  vpack::ReadTuple(ctx.vpack(), tup);
-  c = CheckConstraint{ctx.arg(), id, name, std::move(expr)};
-}
-
-struct TableStats {
-  uint64_t num_rows = 0;
+// One FOREIGN KEY of a table: `columns` (on the owning table) reference
+// `referenced_columns` of `referenced_table`, which must be its PRIMARY KEY.
+struct TableForeignKey {
+  std::vector<Column::Id> columns;
+  ObjectId referenced_table;
+  std::vector<Column::Id> referenced_columns;
 };
 
 struct CreateTableOptions {
-  // LocalCatalog resolves the sequence name (mangling on collision), stamps
+  // Catalog resolves the sequence name (mangling on collision), stamps
   // owner_table_id, and installs the column's nextval default.
   struct SerialSequenceOption {
     Column::Id column_id;
@@ -188,6 +163,9 @@ struct CreateTableOptions {
   std::vector<Column::Id> pk_columns;
   std::vector<CheckConstraint> check_constraints;
   std::vector<SerialSequenceOption> sequences;
+  std::vector<std::vector<Column::Id>> unique_constraints;
+  std::vector<TableForeignKey> foreign_keys;
+  TableEngine engine = TableEngine::Transactional;
 };
 // NOLINTEND
 

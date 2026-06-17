@@ -48,19 +48,19 @@ namespace analysis {
 class PathHierarchyTokenizer : public TypedAnalyzer<PathHierarchyTokenizer> {
  public:
   struct Options {
+    using Owner = PathHierarchyTokenizer;
     std::string delimiter = "/";    // path separator (byte sequence)
     std::string replacement = "/";  // replacement for delimiter
     size_t buffer_size = 1024;      // term buffer size hint
-    bool reverse = false;           // reverse: domain hierarchies
     size_t skip = 0;                // skip first N tokens
+    bool reverse = false;           // reverse: domain hierarchies
   };
 
   static constexpr std::string_view type_name() noexcept {
     return "path_hierarchy";
   }
 
-  static void init();  // trigger registration in static builds
-  static Analyzer::ptr make(Options&& options);
+  static Analyzer::ptr Make(Options opts);
 
   ~PathHierarchyTokenizer() override;
 

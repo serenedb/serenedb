@@ -24,7 +24,6 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_terms_visitor.hpp"
-#include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/multiterm_query.hpp"
@@ -71,7 +70,7 @@ void ByTerms::visit(const SubReader& segment, const TermReader& field,
 
 QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          std::string_view field,
+                                          irs::field_id field,
                                           const ByTermsOptions& options) {
   const auto& [terms, min_match, merge_type] = options;
   const size_t size = terms.size();
@@ -102,36 +101,12 @@ QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
   return query;
 }
 
-namespace {
-
-// min_match == 0 means "match all documents". When scored, each matched term
-// contributes to the score, so we model it as `All OR ByTerms(min_match=1)`.
-// When unscored, the boolean optimizer collapses this back to a plain All.
-std::unique_ptr<Or> MakeMatchAllDisjunction(const ByTerms& self) {
-  auto disjunction = std::make_unique<Or>();
-  disjunction->add(self.MakeAllDocsFilter(0.F));
-  auto& terms = disjunction->add<ByTerms>();
-  terms.boost(self.Boost());
-  *terms.mutable_field() = self.field();
-  *terms.mutable_options() = self.options();
-  terms.mutable_options()->min_match = 1;
-  return disjunction;
-}
-
-}  // namespace
-
 QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx) const {
-  if (!options().terms.empty() && options().min_match == 0) {
-    return MakeMatchAllDisjunction(*this)->PrepareSegment(segment, ctx);
-  }
-  return PrepareSegment(segment, ctx.Boost(Boost()), field(), options());
+  return PrepareSegment(segment, ctx.Boost(Boost()), field_id(), options());
 }
 
 PrepareCollector::ptr ByTerms::MakeCollector(const Scorer* scorer) const {
-  if (!options().terms.empty() && options().min_match == 0) {
-    return MakeMatchAllDisjunction(*this)->MakeCollector(scorer);
-  }
   return std::make_unique<TermsCollector>(scorer, options().terms.size());
 }
 

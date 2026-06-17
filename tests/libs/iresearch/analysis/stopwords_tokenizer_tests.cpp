@@ -21,9 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-
 #include "gtest/gtest.h"
 #include "iresearch/analysis/stopwords_tokenizer.hpp"
 
@@ -83,57 +80,54 @@ TEST(token_stopwords_stream_tests, test_masking) {
 }
 
 TEST(token_stopwords_stream_tests, test_load) {
-  // load jSON array (mask string)
+  std::string_view data0("abc");
+  std::string_view data1("ghi");
+
+  auto test_func = [](const std::string_view& data0,
+                      const std::string_view& data1,
+                      irs::analysis::Analyzer* stream) {
+    ASSERT_NE(nullptr, stream);
+    ASSERT_TRUE(stream->reset(data0));
+    ASSERT_FALSE(stream->next());
+    ASSERT_TRUE(stream->reset(data1));
+
+    auto* offset = irs::get<irs::OffsAttr>(*stream);
+    auto* term = irs::get<irs::TermAttr>(*stream);
+
+    ASSERT_TRUE(stream->next());
+    ASSERT_EQ(0, offset->start);
+    ASSERT_EQ(3, offset->end);
+    ASSERT_EQ("ghi", irs::ViewCast<char>(term->value));
+    ASSERT_FALSE(stream->next());
+  };
+
   {
-    std::string_view data0("abc");
-    std::string_view data1("ghi");
-
-    auto test_func = [](const std::string_view& data0,
-                        const std::string_view& data1,
-                        irs::analysis::Analyzer* stream) {
-      ASSERT_NE(nullptr, stream);
-      ASSERT_TRUE(stream->reset(data0));
-      ASSERT_FALSE(stream->next());
-      ASSERT_TRUE(stream->reset(data1));
-
-      auto* offset = irs::get<irs::OffsAttr>(*stream);
-      auto* term = irs::get<irs::TermAttr>(*stream);
-
-      ASSERT_TRUE(stream->next());
-      ASSERT_EQ(0, offset->start);
-      ASSERT_EQ(3, offset->end);
-      ASSERT_EQ("ghi", irs::ViewCast<char>(term->value));
-      ASSERT_FALSE(stream->next());
-    };
-    auto stream = irs::analysis::analyzers::Get(
-      "stopwords", irs::Type<irs::text_format::Json>::get(),
-      "[ \"abc\", \"646566\", \"6D6e6F\" ]");
+    irs::analysis::StopwordsTokenizer::Options opts;
+    opts.mask = {"abc", "646566", "6D6e6F"};
+    auto stream = irs::analysis::StopwordsTokenizer::Make(std::move(opts));
     test_func(data0, data1, stream.get());
-
-    // check with another order of mask
-    auto stream2 = irs::analysis::analyzers::Get(
-      "stopwords", irs::Type<irs::text_format::Json>::get(),
-      "[ \"6D6e6F\", \"abc\", \"646566\" ]");
-    test_func(data0, data1, stream2.get());
-
-    auto stream_from_json_objest = irs::analysis::analyzers::Get(
-      "stopwords", irs::Type<irs::text_format::Json>::get(),
-      "{\"stopwords\":[ \"abc\", \"646566\", \"6D6e6F\" ]}");
-    test_func(data0, data1, stream_from_json_objest.get());
   }
-
-  // load jSON object (mask string hex)
+  // check with another order of mask
   {
-    std::string_view data0("abc");
-    std::string_view data1("646566");
-
-    auto test_func = [](const std::string_view& data0,
-                        const std::string_view& data1,
-                        irs::analysis::Analyzer* stream) {
+    irs::analysis::StopwordsTokenizer::Options opts;
+    opts.mask = {"6D6e6F", "abc", "646566"};
+    auto stream = irs::analysis::StopwordsTokenizer::Make(std::move(opts));
+    test_func(data0, data1, stream.get());
+  }
+  // hex-decoded mask: the legacy JSON loader auto-decoded hex strings when
+  // `"hex":true`; the direct Options API expects the pre-decoded bytes.
+  // Here `"abc"` is the decoded form of `"616263"` and `"mnO"` is the decoded
+  // form of `"6D6e6F"`. Verify masking works on the pre-decoded values.
+  {
+    std::string_view data_masked("abc");
+    std::string_view data_kept("646566");
+    auto test_hex = [](const std::string_view& masked,
+                       const std::string_view& kept,
+                       irs::analysis::Analyzer* stream) {
       ASSERT_NE(nullptr, stream);
-      ASSERT_TRUE(stream->reset(data0));
+      ASSERT_TRUE(stream->reset(masked));
       ASSERT_FALSE(stream->next());
-      ASSERT_TRUE(stream->reset(data1));
+      ASSERT_TRUE(stream->reset(kept));
 
       auto* offset = irs::get<irs::OffsAttr>(*stream);
       auto* term = irs::get<irs::TermAttr>(*stream);
@@ -144,127 +138,25 @@ TEST(token_stopwords_stream_tests, test_load) {
       ASSERT_EQ("646566", irs::ViewCast<char>(term->value));
       ASSERT_FALSE(stream->next());
     };
-    auto stream_from_json_objest = irs::analysis::analyzers::Get(
-      "stopwords", irs::Type<irs::text_format::Json>::get(),
-      "{\"stopwords\":[ \"616263\", \"6D6e6F\" ], \"hex\":true}");
-    ASSERT_TRUE(stream_from_json_objest);
-    test_func(data0, data1, stream_from_json_objest.get());
+    irs::analysis::StopwordsTokenizer::Options opts;
+    opts.mask = {"abc", "mnO"};  // pre-decoded equivalents of 616263 / 6D6e6F
+    auto stream = irs::analysis::StopwordsTokenizer::Make(std::move(opts));
+    test_hex(data_masked, data_kept, stream.get());
   }
-
-  // load jSON invalid
+  // Construction with an empty mask is valid -- the analyzer simply masks
+  // nothing. The legacy JSON-driven "{}" / "{\"stopwords\":1}" / "1" /
+  // "\"abc\"" / std::string_view{} cases were JSON-parser-level rejections
+  // (wrong shape, wrong type, malformed input); those checks live in the
+  // JSON parser tests and have no analogue in the direct Options API.
+  // The post-decode-shape cases ("hex":1, "stopwords":[\"1aa\"...] etc.)
+  // are likewise loader-side concerns: by the time the byte string reaches
+  // `Options::mask`, every entry is just an opaque token to compare against.
   {
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "stopwords", irs::Type<irs::text_format::Json>::get(),
-                         std::string_view{}));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "stopwords", irs::Type<irs::text_format::Json>::get(), "1"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "stopwords", irs::Type<irs::text_format::Json>::get(),
-                         "\"abc\""));
-    ASSERT_EQ(nullptr,
-              irs::analysis::analyzers::Get(
-                "stopwords", irs::Type<irs::text_format::Json>::get(), "{}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "stopwords", irs::Type<irs::text_format::Json>::get(),
-                         "{\"stopwords\":1}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "stopwords", irs::Type<irs::text_format::Json>::get(),
-                         "{\"stopwords\":1, \"hex\":\"text\"}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "stopwords", irs::Type<irs::text_format::Json>::get(),
-                         "{\"stopwords\":[\"aa\", \"bb\"], \"hex\":1}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "stopwords", irs::Type<irs::text_format::Json>::get(),
-                         "{\"stopwords\":[\"1aa\", \"bb\"], \"hex\":true}"));
-    ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                         "stopwords", irs::Type<irs::text_format::Json>::get(),
-                         "{\"stopwords\":[\"aaia\", \"bb\"], \"hex\":true}"));
+    irs::analysis::StopwordsTokenizer::Options opts;
+    auto stream = irs::analysis::StopwordsTokenizer::Make(std::move(opts));
+    ASSERT_NE(nullptr, stream);
+    ASSERT_TRUE(stream->reset(data0));
+    ASSERT_TRUE(stream->next());  // nothing is masked
+    ASSERT_FALSE(stream->next());
   }
-}
-
-TEST(token_stopwords_stream_tests, normalize_invalid) {
-  std::string actual;
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "stopwords", irs::Type<irs::text_format::Json>::get(),
-    std::string_view{}));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "stopwords", irs::Type<irs::text_format::Json>::get(), "1"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "stopwords", irs::Type<irs::text_format::Json>::get(), "\"abc\""));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "stopwords", irs::Type<irs::text_format::Json>::get(),
-    "{\"case\":1}"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    actual, "stopwords", irs::Type<irs::text_format::Json>::get(),
-    "{\"stopwords\":[\"aa\", \"bb\"], \"hex\":1}"));
-}
-
-TEST(token_stopwords_stream_tests, normalize_valid_array) {
-  std::string actual;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    actual, "stopwords", irs::Type<irs::text_format::Json>::get(),
-    "[\"QWRT\", \"qwrt\"]"));
-  ASSERT_EQ(actual,
-            "{\n  \"hex\" : false,\n  \"stopwords\" : [\n    \"QWRT\",\n    "
-            "\"qwrt\"\n  ]\n}");
-}
-
-TEST(token_stopwords_stream_tests, normalize_valid_object) {
-  {
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "stopwords", irs::Type<irs::text_format::Json>::get(),
-      "{\"stopwords\":[\"QWRT\", \"qwrt\"]}"));
-    ASSERT_EQ(actual,
-              "{\n  \"hex\" : false,\n  \"stopwords\" : [\n    \"QWRT\",\n    "
-              "\"qwrt\"\n  ]\n}");
-  }
-
-  // test vpack
-  {
-    std::string config = "{\"stopwords\":[\"QWRT\", \"qwrt\"]}";
-    auto in_vpack = vpack::Parser::fromJson(config.c_str(), config.size());
-    std::string in_str;
-    in_str.assign(in_vpack->slice().startAs<char>(),
-                  in_vpack->slice().byteSize());
-    std::string out_str;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      out_str, "stopwords", irs::Type<irs::text_format::VPack>::get(), in_str));
-    vpack::Slice out_slice(reinterpret_cast<const uint8_t*>(out_str.c_str()));
-    ASSERT_EQ(
-      "{\n  \"hex\" : false,\n  \"stopwords\" : [\n    \"QWRT\",\n    "
-      "\"qwrt\"\n  ]\n}",
-      out_slice.toString());
-  }
-}
-
-TEST(token_stopwords_stream_tests, normalize_valid_object_unknown) {
-  std::string actual;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    actual, "stopwords", irs::Type<irs::text_format::Json>::get(),
-    "{\"stopwords\":[\"QWRT\", \"qwrt\"], \"unknown_field\":1}"));
-  ASSERT_EQ(actual,
-            "{\n  \"hex\" : false,\n  \"stopwords\" : [\n    \"QWRT\",\n    "
-            "\"qwrt\"\n  ]\n}");
-}
-
-TEST(token_stopwords_stream_tests, normalize_valid_object_hex) {
-  std::string actual;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    actual, "stopwords", irs::Type<irs::text_format::Json>::get(),
-    "{\"stopwords\":[\"01aB\", \"02Cd\"], \"hex\": true}"));
-  ASSERT_EQ(actual,
-            "{\n  \"hex\" : true,\n  \"stopwords\" : [\n    \"01aB\",\n    "
-            "\"02Cd\"\n  ]\n}");
-}
-
-TEST(token_stopwords_stream_tests, normalize_valid_object_nohex) {
-  std::string actual;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    actual, "stopwords", irs::Type<irs::text_format::Json>::get(),
-    "{\"stopwords\":[\"01aB\", \"02Cd\"], \"hex\": false}"));
-  ASSERT_EQ(actual,
-            "{\n  \"hex\" : false,\n  \"stopwords\" : [\n    \"01aB\",\n    "
-            "\"02Cd\"\n  ]\n}");
 }

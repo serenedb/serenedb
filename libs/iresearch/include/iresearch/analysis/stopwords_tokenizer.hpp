@@ -25,7 +25,7 @@
 
 #include <absl/container/flat_hash_set.h>
 
-#include "analyzers.hpp"
+#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "token_attributes.hpp"
@@ -39,9 +39,13 @@ class StopwordsTokenizer final : public TypedAnalyzer<StopwordsTokenizer>,
  public:
   using stopwords_set = absl::flat_hash_set<std::string>;
 
-  static constexpr std::string_view type_name() noexcept { return "stopwords"; }
+  struct Options {
+    using Owner = StopwordsTokenizer;
+    stopwords_set mask;
+  };
+  static ptr Make(Options opts);
 
-  static void init();  // for trigering registration in a static build
+  static constexpr std::string_view type_name() noexcept { return "stopwords"; }
 
   explicit StopwordsTokenizer(stopwords_set&& mask);
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {

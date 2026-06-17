@@ -33,6 +33,7 @@
 
 #include "basics/containers/trivial_map.h"
 #include "basics/debugging.h"
+#include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
@@ -40,7 +41,6 @@
 #include "pg/sql_exception_macro.h"
 #include "query/config.h"
 #include "rest/version.h"
-#include "vpack/serializer.h"
 
 namespace sdb {
 
@@ -48,7 +48,7 @@ using duckdb::LogicalTypeId;
 
 namespace {
 
-template<vpack::detail::FixedString Name>
+template<basics::detail::FixedString Name>
 void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
   throw duckdb::InvalidInputException{"parameter \"%s\" cannot be changed",
                                       std::string_view{Name}.data()};
@@ -58,7 +58,7 @@ void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
 // the change. Emit a NOTICE so clients that care can see the SET is a no-op
 // on the server side; the value still flows into DuckDB session state so
 // SHOW round-trips what the client set.
-template<vpack::detail::FixedString Name>
+template<basics::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};
@@ -179,32 +179,12 @@ constexpr std::pair<std::string_view, VariableDescription>
     // / disabled_log_types / logging_storage / logging_mode. The previous
     // sdb_log_level extension option was dropped in favour of those.
     {
-      "sdb_write_conflict_policy",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the write conflict policy. Valid values are "
-        "'emit_error' (the default), 'do_nothing' (skip conflicted rows) and "
-        "'replace'.",
-        [] { return duckdb::Value{"emit_error"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (!magic_enum::enum_cast<WriteConflictPolicy>(
-                 value.ToString(), magic_enum::case_insensitive)
-                 .has_value()) {
-            throw duckdb::InvalidInputException(
-              "invalid value for parameter \"sdb_write_conflict_policy\": "
-              "\"%s\"",
-              value.ToString());
-          }
-        },
-      },
-    },
-    {
-      "sdb_read_your_own_writes",
+      "sdb_strict_ddl",
       {
         LogicalTypeId::BOOLEAN,
-        "Controls whether queries can see uncommitted writes from the current "
-        "transaction.",
-        [] { return duckdb::Value::BOOLEAN(true); },
+        "When enabled, DDL inside a transaction block fails instead of "
+        "committing immediately (DDL is not transactional).",
+        [] { return duckdb::Value::BOOLEAN(false); },
       },
     },
     {

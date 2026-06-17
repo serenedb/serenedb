@@ -1,0 +1,32 @@
+# SereneDB is its own server/product built on a vendored DuckDB. Errors that
+# refer to the *product* (instance, server, docs, the issue tracker) must say
+# SereneDB and must never link to duckdb.org. (References to the DuckDB storage
+# format -- DuckDB tables/files -- legitimately keep the DuckDB name.)
+# See https://github.com/serenedb/serenedb/issues/768.
+
+
+statement ok
+CREATE TABLE branding_t (x int);
+
+
+# Unsupported ALTER TABLE variants must report a clean feature error, not the
+# old cryptic "ALTER TABLE through DuckDB".
+
+statement error
+ALTER TABLE branding_t SET PARTITIONED BY (x);
+----
+db error: ERROR: this ALTER TABLE operation is not supported
+
+
+# Deprecated settings must not point at "the DuckDB docs".
+
+statement error
+SET http_logging_output = 'stdout';
+----
+db error: ERROR: This setting is deprecated and can no longer be used.
+
+
+statement error
+RESET http_logging_output;
+----
+db error: ERROR: This setting is deprecated and can no longer be used.

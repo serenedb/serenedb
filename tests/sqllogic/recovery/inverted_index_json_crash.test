@@ -29,7 +29,7 @@ id
 # Failpoint: rocksdb commit succeeds (WAL fsynced), then the process aborts
 # before iresearch picks up the write.
 statement ok
-SET sdb_faults = 'crash_after_rocksdb_commit';
+SET sdb_faults = 'crash_after_search_commit';
 
 statement error connection closed
 INSERT INTO jc_t VALUES (2, '{"host":"server-02"}'::json);
@@ -100,7 +100,7 @@ VACUUM (REFRESH_TABLE) jc_patch_t;
 
 connection jc_after
 statement ok
-SET sdb_faults = 'crash_after_rocksdb_commit';
+SET sdb_faults = 'crash_after_search_commit';
 
 connection jc_after
 statement error connection closed
@@ -154,7 +154,7 @@ CREATE INDEX jc_multi_idx ON jc_multi_t USING inverted(
 
 connection jc_patch_after
 statement ok
-SET sdb_faults = 'crash_after_rocksdb_commit';
+SET sdb_faults = 'crash_after_search_commit';
 
 connection jc_patch_after
 statement error connection closed
@@ -198,7 +198,7 @@ USING inverted(id, (content #>> '{user, name}') json_crash_vd);
 
 connection jc_multi_after
 statement ok
-SET sdb_faults = 'crash_after_rocksdb_commit';
+SET sdb_faults = 'crash_after_search_commit';
 
 connection jc_multi_after
 statement error connection closed
@@ -241,7 +241,7 @@ VACUUM (REFRESH_TABLE) jc_seq_t;
 
 connection jc_hash_after
 statement ok
-SET sdb_faults = 'crash_after_rocksdb_commit';
+SET sdb_faults = 'crash_after_search_commit';
 
 connection jc_hash_after
 statement ok

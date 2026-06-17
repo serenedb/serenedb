@@ -33,10 +33,10 @@ Result CreateDatabase(const ExecContext& exec, std::string_view name) {
     return r;
   }
 
-  auto database = std::make_shared<catalog::Database>(ObjectId{}, name);
+  auto database = std::make_shared<catalog::Database>(
+    ObjectId{}, catalog::DatabaseOptions{std::string{name}});
 
-  return catalog::CatalogFeature::instance().Global().CreateDatabase(
-    std::move(database));
+  return catalog::GetCatalog().CreateDatabase(std::move(database));
 }
 
 Result DropDatabase(const ExecContext& exec, std::string_view db_name,
@@ -45,8 +45,7 @@ Result DropDatabase(const ExecContext& exec, std::string_view db_name,
     return {ERROR_FORBIDDEN};
   }
 
-  return catalog::CatalogFeature::instance().Global().DropDatabase(
-    db_name, std::move(keep_alive));
+  return catalog::GetCatalog().DropDatabase(db_name, std::move(keep_alive));
 }
 
 }  // namespace sdb::catalog

@@ -79,9 +79,10 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
     it->Collect(score_func, fetcher, collector);
   }
 
-  const auto count = collector.Finalize();
-
-  return count;
+  std::sort(
+    hits.data(), hits.data() + collector.AcceptedCount(),
+    [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
+  return collector.TotalMatches();
 }
 
 inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
@@ -128,9 +129,10 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     collector.SetScoreThreshold(score_threshold);
   }
 
-  const auto count = collector.Finalize();
-
-  return count;
+  std::sort(
+    hits.data(), hits.data() + collector.AcceptedCount(),
+    [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
+  return collector.TotalMatches();
 }
 
 }  // namespace irs

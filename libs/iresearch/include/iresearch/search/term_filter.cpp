@@ -57,7 +57,7 @@ void ByTerm::Visit(const SubReader& segment, const TermReader& field,
 
 QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
                                          const PrepareContext& ctx,
-                                         const std::string_view field,
+                                         const irs::field_id field,
                                          const bytes_view term) {
   const auto* reader = segment.field(field);
   if (!reader) {

@@ -20,12 +20,10 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/minhash_tokenizer.hpp"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
+#include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "tests_shared.hpp"
 
@@ -85,35 +83,6 @@ TEST(MinHashTokenizerTest, CheckConsts) {
                 irs::Type<irs::analysis::MinHashTokenizer>::name());
 }
 
-TEST(MinHashTokenizerTest, NormalizeDefault) {
-  std::string out;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({"numHashes": 42})"));
-  const auto expected_out = vpack::Parser::fromJson(R"({"numHashes": 42})");
-  ASSERT_EQ(expected_out->slice().toString(), out);
-
-  // Failing cases
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({"numHashes": "42"})"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({"numHashes": null})"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({"numHashes": 0})"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({"numHashes": false})"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({"numHashes": []})"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({"numHashes": {}})"));
-}
-
 TEST(MinHashTokenizerTest, ConstructDefault) {
   auto assert_analyzer = [](const irs::analysis::Analyzer::ptr& stream,
                             size_t expected_num_hashes) {
@@ -123,54 +92,30 @@ TEST(MinHashTokenizerTest, ConstructDefault) {
     auto* impl =
       dynamic_cast<const irs::analysis::MinHashTokenizer*>(stream.get());
     ASSERT_NE(nullptr, impl);
-    const auto& [analyzer, num_hashes] = impl->options();
-    ASSERT_NE(nullptr, analyzer);
-    ASSERT_EQ(irs::Type<irs::StringTokenizer>::id(), analyzer->type());
-    ASSERT_EQ(expected_num_hashes, num_hashes);
+    ASSERT_EQ(expected_num_hashes, impl->num_hashes());
   };
 
-  assert_analyzer(irs::analysis::analyzers::Get(
-                    "minhash", irs::Type<irs::text_format::Json>::get(),
-                    R"({"numHashes": 42})"),
+  assert_analyzer(irs::analysis::MinHashTokenizer::Make(
+                    irs::analysis::MinHashTokenizer::Options{
+                      .analyzer = nullptr,
+                      .num_hashes = 42,
+                    }),
                   42);
 
-  // Failing cases
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"numHashes": 0})"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"numHashes": []})"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"numHashes": {}})"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"numHashes": true})"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"numHashes": null})"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"numHashes": "42"})"));
-  ASSERT_EQ(nullptr,
-            irs::analysis::analyzers::Get(
-              "minhash", irs::Type<irs::text_format::Json>::get(), R"({})"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"tokenizer":{}})"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"tokenizer":""})"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"tokenizer":null})"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"tokenizer":[]})"));
-  ASSERT_EQ(nullptr, irs::analysis::analyzers::Get(
-                       "minhash", irs::Type<irs::text_format::Json>::get(),
-                       R"({"tokenizer":42})"));
+  // .........................................................................
+  // Failing cases ported from the old JSON-based suite.
+  // JSON-internal type errors (e.g. `"numHashes": []`, `"numHashes": true`,
+  // `"numHashes": "42"`) collapse to the same direct-API failure: an Options
+  // value that Make must reject. With the Options API we exercise the two
+  // remaining failure modes: `num_hashes == 0` and a child config that
+  // itself fails to construct (already covered by CreateAnalyzer returning
+  // nullptr -- see below).
+  // .........................................................................
+  ASSERT_ANY_THROW(irs::analysis::MinHashTokenizer::Make(
+    irs::analysis::MinHashTokenizer::Options{
+      .analyzer = nullptr,
+      .num_hashes = 0,
+    }));
 }
 
 TEST(MinHashTokenizerTest, ConstructCustom) {
@@ -182,119 +127,45 @@ TEST(MinHashTokenizerTest, ConstructCustom) {
     auto* impl =
       dynamic_cast<const irs::analysis::MinHashTokenizer*>(stream.get());
     ASSERT_NE(nullptr, impl);
-    const auto& [analyzer, num_hashes] = impl->options();
-    ASSERT_EQ(expected_num_hashes, num_hashes);
-    ASSERT_NE(nullptr, analyzer);
-    ASSERT_EQ(irs::Type<irs::analysis::SegmentationTokenizer>::id(),
-              analyzer->type());
+    ASSERT_EQ(expected_num_hashes, impl->num_hashes());
   };
 
-  assert_analyzer(
-    irs::analysis::analyzers::Get(
-      "minhash", irs::Type<irs::text_format::Json>::get(),
-      R"({ "tokenizer":{"type":"segmentation"}, "numHashes": 42 })"),
-    42);
-}
-
-TEST(MinHashTokenizerTest, NormalizeCustom) {
-  std::string out;
-  const auto expected_out = vpack::Parser::fromJson(
-    R"({ "tokenizer": {
-             "type":"segmentation",
-             "properties": {"break":"alpha","case":"lower"} },
-             "numHashes": 42 })");
-
-  out.clear();
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "tokenizer":{"type":"segmentation"}, "numHashes": 42 })"));
-  ASSERT_EQ(expected_out->slice().toString(), out);
-
-  out.clear();
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "tokenizer":{"type":"segmentation", "properties":{}}, "numHashes": 42 })"));
-  ASSERT_EQ(expected_out->slice().toString(), out);
-
-  out.clear();
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "tokenizer":{"type":"segmentation", "properties":{"case":"lower"}}, "numHashes": 42 })"));
-  ASSERT_EQ(expected_out->slice().toString(), out);
-
-  out.clear();
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "tokenizer":{"type":"segmentation", "properties":{"case":"upper"}}, "numHashes": 42 })"));
-  ASSERT_NE(expected_out->slice().toString(), out);
-
-  // Failing cases
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "tokenizer":{"type":"segmentation", "properties":{}, "numHashes": 0 })"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "tokenizer":{"type":"segmentation", "properties":false, "numHashes": 42 })"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "tokenizer":{"type":"segmentation", "properties":[], "numHashes": 42 })"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "tokenizer":{"type":"segmentation", "properties":false, "numHashes": 42 })"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "tokenizer":{"type":"segmentation", "properties":null, "numHashes": 42 })"));
-  ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-    out, "minhash", irs::Type<irs::text_format::Json>::get(),
-    R"({ "tokenizer":{"type":"segmentation", "properties":42, "numHashes": 42 })"));
-}
-
-TEST(MinHashTokenizerTest, CheckOptions) {
-  using namespace irs::analysis;
-
-  MinHashTokenizer::Options opts;
-
-  ASSERT_EQ(nullptr, opts.analyzer);
-  ASSERT_EQ(1, opts.num_hashes);
+  auto child = std::make_unique<irs::analysis::TokenizerConfig>(
+    irs::analysis::TokenizerConfig{
+      irs::analysis::SegmentationTokenizer::Options{}});
+  assert_analyzer(irs::analysis::MinHashTokenizer::Make(
+                    irs::analysis::MinHashTokenizer::Options{
+                      .analyzer = std::move(child),
+                      .num_hashes = 42,
+                    }),
+                  42);
 }
 
 TEST(MinHashTokenizerTest, ConstructFromOptions) {
   using namespace irs::analysis;
 
   {
-    MinHashTokenizer stream{
-      MinHashTokenizer::Options{.analyzer = nullptr, .num_hashes = 0}};
+    MinHashTokenizer stream{nullptr, 0};
     ASSERT_NE(nullptr, irs::get<irs::TermAttr>(stream));
     ASSERT_NE(nullptr, irs::get<irs::OffsAttr>(stream));
     ASSERT_NE(nullptr, irs::get<irs::IncAttr>(stream));
-    const auto& [analyzer, num_hashes] = stream.options();
-    ASSERT_NE(nullptr, analyzer);
-    ASSERT_EQ(0, num_hashes);
-    ASSERT_EQ(irs::Type<irs::StringTokenizer>::id(), analyzer->type());
+    ASSERT_EQ(0, stream.num_hashes());
   }
 
   {
-    MinHashTokenizer stream{MinHashTokenizer::Options{
-      .analyzer = SegmentationTokenizer::make({}), .num_hashes = 42}};
+    MinHashTokenizer stream{SegmentationTokenizer::Make({}), 42};
     ASSERT_NE(nullptr, irs::get<irs::TermAttr>(stream));
     ASSERT_NE(nullptr, irs::get<irs::OffsAttr>(stream));
     ASSERT_NE(nullptr, irs::get<irs::IncAttr>(stream));
-    const auto& [analyzer, num_hashes] = stream.options();
-    ASSERT_NE(nullptr, analyzer);
-    ASSERT_EQ(42, num_hashes);
-    ASSERT_EQ(irs::Type<SegmentationTokenizer>::id(), analyzer->type());
+    ASSERT_EQ(42, stream.num_hashes());
   }
 
   {
-    MinHashTokenizer stream{MinHashTokenizer::Options{
-      .analyzer = std::make_unique<EmptyAnalyzer>(), .num_hashes = 42}};
+    MinHashTokenizer stream{std::make_unique<EmptyAnalyzer>(), 42};
     ASSERT_NE(nullptr, irs::get<irs::TermAttr>(stream));
     ASSERT_NE(nullptr, irs::get<irs::OffsAttr>(stream));
     ASSERT_NE(nullptr, irs::get<irs::IncAttr>(stream));
-    const auto& [analyzer, num_hashes] = stream.options();
-    ASSERT_NE(nullptr, analyzer);
-    ASSERT_EQ(42, num_hashes);
-    ASSERT_EQ(irs::Type<EmptyAnalyzer>::id(), analyzer->type());
+    ASSERT_EQ(42, stream.num_hashes());
     ASSERT_FALSE(stream.reset(""));
   }
 }
@@ -307,9 +178,9 @@ TEST(MinHashTokenizerTest, NextReset) {
   constexpr std::string_view kValues[]{"quick", "brown", "fox",  "jumps",
                                        "over",  "the",   "lazy", "dog"};
 
-  MinHashTokenizer stream{{.analyzer = std::make_unique<ArrayStream>(
-                             kData, std::begin(kValues), std::end(kValues)),
-                           .num_hashes = kNumHashes}};
+  MinHashTokenizer stream{std::make_unique<ArrayStream>(
+                            kData, std::begin(kValues), std::end(kValues)),
+                          kNumHashes};
 
   auto* term = irs::get<irs::TermAttr>(stream);
   ASSERT_NE(nullptr, term);

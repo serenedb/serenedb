@@ -50,9 +50,11 @@ EXPLAIN SELECT label, tag FROM vec_r_idx
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  IRESEARCH_ANN_RANGE_SCAN │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│      Index: vec_r_idx     │
+│           Index:          │
+│   vec_r_idx (ANN range)   │
+│                           │
 │      Radius: 1.000000     │
 │          Dims: 3          │
 │                           │
@@ -81,10 +83,12 @@ EXPLAIN SELECT pk, label, body FROM vec_r_idx
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  IRESEARCH_ANN_RANGE_SCAN │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│      Index: vec_r_idx     │
-│      Lookup: rocksdb      │
+│           Index:          │
+│   vec_r_idx (ANN range)   │
+│                           │
+│       Lookup: table       │
 │      Radius: 1.000000     │
 │          Dims: 3          │
 │                           │

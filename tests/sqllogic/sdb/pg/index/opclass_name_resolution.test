@@ -189,58 +189,44 @@ VACUUM (REFRESH_TABLE) parens_inc_expr;
 query
 SELECT id, a + b AS s FROM parens_inc_expr_idx ORDER BY id;
 ----
-id    s
-1     30
-2     10
+id	s
+1	30
+2	10
 
 
-# --- ARRAY: columns need built-in HNSW; expressions accept a tokenizer ---
-# Bare 'hnsw' resolves to the user dict (a text tokenizer). On an ARRAY
-# *column* it's still rejected -- raw array columns aren't tokenized. On an
-# ARRAY *expression* the tokenizer turns each element into a search term.
-# Vector search uses the parens form 'hnsw(...)', which selects the built-in
+# --- ARRAY: bare 'hnsw' resolves to the user text dict, which requires
+# VARCHAR/BLOB elements -- it cannot be applied to ARRAY/LIST of numerics.
+# Vector search uses the parens form 'hnsw(...)' which selects the built-in
 # HNSW opclass and requires ARRAY(FLOAT, N).
 
 statement ok
 CREATE TABLE shadow_hnsw_int_arr_col(id INT PRIMARY KEY, emb INT[3]);
 
 statement error
-CREATE INDEX bad_shadow_hnsw_int_arr_col_idx ON shadow_hnsw_int_arr_col USING inverted(
+CREATE INDEX shadow_hnsw_int_arr_col_idx ON shadow_hnsw_int_arr_col USING inverted(
     id, emb hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'emb' has unsupported type INTEGER[3]
+db error: ERROR: Failed to create index: Column 'emb' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
 
 
 statement ok
 CREATE TABLE shadow_hnsw_float_arr_col(id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement error
-CREATE INDEX bad_shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
+CREATE INDEX shadow_hnsw_float_arr_col_idx ON shadow_hnsw_float_arr_col USING inverted(
     id, emb hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'emb' has unsupported type FLOAT[3]
+db error: ERROR: Failed to create index: Column 'emb' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT[3])
 
 
 statement ok
 CREATE TABLE shadow_hnsw_arr_expr(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
 
-statement ok
+statement error
 CREATE INDEX shadow_hnsw_arr_expr_idx ON shadow_hnsw_arr_expr USING inverted(
     id, (array_value(x, y, z)) hnsw);
-
-statement ok
-INSERT INTO shadow_hnsw_arr_expr VALUES (1, 1, 2, 3), (2, 10, 10, 10);
-
-statement ok
-VACUUM (REFRESH_TABLE) shadow_hnsw_arr_expr;
-
-# Row 2 has the element 10; row 1 does not.
-query
-SELECT id FROM shadow_hnsw_arr_expr_idx
-WHERE (array_value(x, y, z)) @@ ts_between(10, 10, true, true) ORDER BY id;
 ----
-id
-2
+db error: ERROR: Failed to create index: Column 'array_value(x, y, z)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got FLOAT[3])
 
 
 # The parens form selects the built-in HNSW even with the shadowing dict

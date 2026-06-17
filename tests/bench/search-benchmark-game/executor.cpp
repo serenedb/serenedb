@@ -21,23 +21,24 @@
 #include "executor.h"
 
 #include <cstring>
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
+#include <iresearch/search/bm25.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <vector>
 
 #include "basics/duckdb_engine.h"
+#include "index_builder.h"
 
 namespace bench {
 
 Executor::Executor(std::string_view path, const BenchConfig& config)
-  : _scorer{irs::scorers::Get(config.scorer,
-                              irs::Type<irs::text_format::Json>::get(),
-                              config.scorer_options, false)},
-    _tokenizer{irs::analysis::analyzers::Get(
-      config.tokenizer, irs::Type<irs::text_format::Json>::get(),
-      config.tokenizer_options)},
+  : _scorer{irs::BM25::Make(irs::BM25::Options{})},
+    _tokenizer{irs::analysis::SegmentationTokenizer::Make(
+      irs::analysis::SegmentationTokenizer::Options{})},
     _format{irs::formats::Get(config.format_name, false)},
     _dir{path},
     _reader{irs::DirectoryReader(
@@ -99,20 +100,17 @@ size_t Executor::ExecuteCount(std::string_view query) {
 
 irs::Filter::ptr Executor::ParseFilter(std::string_view str) {
   auto root = std::make_unique<irs::MixedBooleanFilter>();
-  sdb::ParserContext context{*root, "text", *_tokenizer};
+  sdb::ParserContext context{*root, kTextFieldId, *_tokenizer};
   auto r = sdb::ParseQuery(context, str);
   if (!r.ok()) {
     return {};
   }
-  auto& opt = root->GetOptional();
-  auto& req = root->GetRequired();
-  if (opt.size() == 1 && req.empty()) {
-    return opt.PopBack();
+  if (root->empty()) {
+    return {};
   }
-  if (req.size() == 1 && opt.empty()) {
-    return req.PopBack();
-  }
-  return root;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = _scorer_ptr != nullptr});
+  return filter;
 }
 
 }  // namespace bench

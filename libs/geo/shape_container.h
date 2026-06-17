@@ -70,8 +70,6 @@ class ShapeContainer final {
 
   bool empty() const noexcept { return _type == Type::Empty; }
 
-  bool isAreaType() const noexcept { return _type == Type::S2Polygon; }
-
   S2Point centroid() const noexcept;
 
   bool contains(const S2Point& other) const;

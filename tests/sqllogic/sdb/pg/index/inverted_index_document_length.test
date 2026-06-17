@@ -118,11 +118,16 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: docs_idx      │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
-│ AND[PHRASE[body(string) = │
-│    <Term:fox(0, 0); >]]   │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││ body(string) = fox││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │      Score: raw_dl()      │
 │                           │

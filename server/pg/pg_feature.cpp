@@ -25,9 +25,6 @@
 #include "basics/random/random_generator.h"
 #include "pg/system_catalog.h"
 #include "rest_server/endpoint_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::pg {
 
@@ -76,10 +73,6 @@ void PostgresFeature::UnregisterTask(uint64_t key) {
   SDB_ASSERT(count == 1);
 }
 
-void PostgresFeature::start() {
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Default);
-  SDB_ASSERT(cf);
-}
+void PostgresFeature::start() {}
 
 }  // namespace sdb::pg

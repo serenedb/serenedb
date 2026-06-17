@@ -21,8 +21,6 @@
 
 #include "scheduler.h"
 
-#include <vpack/builder.h>
-
 #include <thread>
 
 #include "app/app_server.h"

@@ -53,10 +53,10 @@ enum class PhraseQueryKind {
 // A phrase with a single non-term part (prefix/wildcard/range/...) reduces to
 // that part's own filter: position matching is a no-op for one word.
 std::unique_ptr<FilterWithBoost> MakeSinglePartFilter(
-  std::string_view field, const ByPhraseOptions& options) {
+  irs::field_id field, const ByPhraseOptions& options) {
   const auto make = [&]<typename F, typename T>(const T& opts) {
     auto filter = std::make_unique<F>();
-    *filter->mutable_field() = field;
+    *filter->mutable_field_id() = field;
     *filter->mutable_options() = opts;
     return filter;
   };
@@ -66,17 +66,16 @@ std::unique_ptr<FilterWithBoost> MakeSinglePartFilter(
         return make.template operator()<ByTerm>(opts);
       } else if constexpr (std::is_same_v<T, ByPrefixOptions>) {
         return make.template operator()<ByPrefix>(opts);
-      } else if constexpr (std::is_same_v<T, ByWildcardOptions>) {
-        return make.template operator()<ByWildcard>(opts);
-      } else if constexpr (std::is_same_v<T, ByEditDistanceOptions>) {
-        return make.template operator()<ByEditDistance>(opts);
       } else if constexpr (std::is_same_v<T, ByTermsOptions>) {
         return make.template operator()<ByTerms>(opts);
       } else if constexpr (std::is_same_v<T, ByRangeOptions>) {
         return make.template operator()<ByRange>(opts);
+      } else if constexpr (std::is_same_v<T, AutomatonOptions>) {
+        return make.template operator()<AutomatonFilter>(opts);
+      } else if constexpr (std::is_same_v<T, LevenshteinAutomatonOptions>) {
+        return make.template operator()<LevenshteinAutomatonFilter>(opts);
       } else {
-        static_assert(std::is_same_v<T, ByRegexpOptions>);
-        return make.template operator()<ByRegexp>(opts);
+        SDB_UNREACHABLE();
       }
     },
     options.begin()->part);
@@ -126,16 +125,17 @@ struct GetVisitor {
       return ByPrefix::visit(segment, field, term, visitor);
     };
   }
+  field_visitor operator()(const auto&) const { SDB_UNREACHABLE(); }
 
-  field_visitor operator()(const ByWildcardOptions& part) const {
-    return ByWildcard::visitor(part.term);
+  field_visitor operator()(const AutomatonOptions& part) const {
+    return AutomatonFilter::visitor(part.acceptor);
   }
 
-  field_visitor operator()(const ByEditDistanceOptions& part) const {
+  field_visitor operator()(const LevenshteinAutomatonOptions& part) const {
     if (part.max_terms != 0) {
       return {};
     }
-    return ByEditDistance::visitor(part);
+    return LevenshteinAutomatonFilter::visitor(part);
   }
 
   field_visitor operator()(const ByTermsOptions& part) const {
@@ -152,10 +152,6 @@ struct GetVisitor {
                             FilterVisitor& visitor) {
         return ByRange::visit(segment, field, *range, visitor);
       };
-  }
-
-  field_visitor operator()(const ByRegexpOptions& part) const {
-    return ByRegexp::visitor(part.pattern, part.syntax);
   }
 };
 
@@ -233,9 +229,9 @@ bool Valid(const TermReader* reader) noexcept {
                                 FixedPhraseQuery::kRequiredFeatures;
 }
 
-PhraseQueryKind GetKind(std::string_view field,
+PhraseQueryKind GetKind(irs::field_id field,
                         const ByPhraseOptions& options) {
-  if (field.empty() || options.empty()) {
+  if (!irs::field_limits::valid(field) || options.empty()) {
     return PhraseQueryKind::kEmpty;
   }
   if (1 == options.size()) {
@@ -271,7 +267,7 @@ FixedPhraseQuery::positions_t MakeFixedPositions(
 
 QueryBuilder::ptr FixedPrepareSegment(const SubReader& segment,
                                       const PrepareContext& ctx,
-                                      std::string_view field,
+                                      irs::field_id field,
                                       const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
   const auto* scorer = ctx.collector
@@ -315,7 +311,7 @@ QueryBuilder::ptr FixedPrepareSegment(const SubReader& segment,
 
 QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
                                          const PrepareContext& ctx,
-                                         std::string_view field,
+                                         irs::field_id field,
                                          const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
   const auto* scorer =
@@ -345,8 +341,8 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
       auto& visitor =
         phrase_part_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
       if (!visitor) {
-        auto& opts = std::get<ByEditDistanceOptions>(word.part);
-        visitor = ByEditDistance::visitor(opts);
+        auto& opts = std::get<LevenshteinAutomatonOptions>(word.part);
+        visitor = LevenshteinAutomatonFilter::visitor(opts);
         all_terms_visitors.push_back(&visitor);
         top_terms_visitors.emplace_back(opts.max_terms);
       }
@@ -367,7 +363,7 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
     ptv.Reset();
 
     size_t found_parts = 0;
-    for (const auto& visitor : phrase_part_visitors) {
+    for (auto& visitor : phrase_part_visitors) {
       const auto was_terms_count = state.terms.size();
       ptv.Reset(collector.Terms().GetCollector(found_parts));
       visitor(segment, *reader, ptv);
@@ -413,38 +409,106 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
 QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   const auto sub_ctx = ctx.Boost(Boost());
-  switch (GetKind(field(), options())) {
+  switch (GetKind(field_id(), options())) {
     case PhraseQueryKind::kEmpty:
       return QueryBuilder::Empty();
     case PhraseQueryKind::kSingleTerm:
       return ByTerm::PrepareSegment(
-        segment, sub_ctx, field(),
+        segment, sub_ctx, field_id(),
         std::get<ByTermOptions>(options().begin()->part).term);
     case PhraseQueryKind::kSingleWord:
-      return MakeSinglePartFilter(field(), options())
+      return MakeSinglePartFilter(field_id(), options())
         ->PrepareSegment(segment, sub_ctx);
     case PhraseQueryKind::kFixed:
-      return FixedPrepareSegment(segment, sub_ctx, field(), options());
+      return FixedPrepareSegment(segment, sub_ctx, field_id(), options());
     case PhraseQueryKind::kVariadic:
-      return VariadicPrepareSegment(segment, sub_ctx, field(), options());
+      return VariadicPrepareSegment(segment, sub_ctx, field_id(), options());
   }
   return QueryBuilder::Empty();
 }
 
 PrepareCollector::ptr ByPhrase::MakeCollector(const Scorer* scorer) const {
-  switch (GetKind(field(), options())) {
+  switch (GetKind(field_id(), options())) {
     case PhraseQueryKind::kEmpty:
       return std::make_unique<NoopCollector>();
     case PhraseQueryKind::kSingleTerm:
       return std::make_unique<TermsCollector>(scorer, 1);
     case PhraseQueryKind::kSingleWord:
-      return MakeSinglePartFilter(field(), options())->MakeCollector(scorer);
+      return MakeSinglePartFilter(field_id(), options())->MakeCollector(scorer);
     case PhraseQueryKind::kFixed:
       return std::make_unique<TermsCollector>(scorer, options().size());
     case PhraseQueryKind::kVariadic:
       return std::make_unique<VariadicTermsCollector>(scorer, options().size());
   }
   return std::make_unique<NoopCollector>();
+}
+
+bool ByPhraseOptions::LowerParts() {
+  bool changed = false;
+  for (auto& info : _phrase) {
+    if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {
+      bstring buf;
+      const auto lim = w->scored_terms_limit;
+      info.part = ExecuteWildcard(
+        buf, bytes_view{w->term},
+        [](bytes_view term) -> phrase_part {
+          ByTermOptions opts;
+          opts.term = term;
+          return opts;
+        },
+        [lim](bytes_view term) -> phrase_part {
+          ByPrefixOptions opts;
+          opts.term = term;
+          opts.scored_terms_limit = lim;
+          return opts;
+        },
+        [lim](bytes_view term) -> phrase_part {
+          return AutomatonOptions{FromWildcard(term), term, lim};
+        });
+      changed = true;
+    } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
+      bstring buf;
+      const auto lim = r->scored_terms_limit;
+      const auto syntax = r->syntax;
+      info.part = ExecuteRegexp(
+        buf, bytes_view{r->pattern},
+        [](bytes_view term) -> phrase_part {
+          ByTermOptions opts;
+          opts.term = term;
+          return opts;
+        },
+        [lim](bytes_view prefix) -> phrase_part {
+          ByPrefixOptions opts;
+          opts.term = prefix;
+          opts.scored_terms_limit = lim;
+          return opts;
+        },
+        [lim, syntax](bytes_view pattern) -> phrase_part {
+          return AutomatonOptions{
+            FromRegexp(pattern, kDefaultMaxDfaStates, syntax), pattern, lim};
+        });
+      changed = true;
+    } else if (const auto* e = std::get_if<ByEditDistanceOptions>(&info.part);
+               e) {
+      const auto max_terms = e->max_terms;
+      info.part = ExecuteLevenshtein(
+        e->max_distance, e->provider, e->with_transpositions, e->prefix,
+        e->term, [] -> phrase_part { return ByTermsOptions{}; },
+        [&] -> phrase_part {
+          ByTermOptions opts;
+          opts.term.reserve(e->prefix.size() + e->term.size());
+          opts.term += e->prefix;
+          opts.term += e->term;
+          return opts;
+        },
+        [max_terms](const ParametricDescription& d, bytes_view prefix,
+                    bytes_view term) -> phrase_part {
+          return LevenshteinAutomatonOptions{d, prefix, term, max_terms};
+        });
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 }  // namespace irs

@@ -100,7 +100,7 @@ class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          const std::string_view field,
+                                          const irs::field_id field,
                                           const options_type& options);
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;

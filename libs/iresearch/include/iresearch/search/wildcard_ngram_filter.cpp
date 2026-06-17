@@ -30,9 +30,9 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/read_context.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/collectors.hpp"
@@ -86,19 +86,12 @@ std::shared_ptr<RE2> BuildLikeMatcher(std::string_view pattern) {
 
 class WildcardIterator : public DocIterator {
  public:
-  // Takes shared ownership of the RE2 matcher to guarantee it outlives the
-  // iterator. RE2 is immutable and thread-safe for concurrent matching, so
-  // no per-iterator clone is needed (unlike icu::RegexMatcher).
-  //
-  // Stored term list lives in the columnstore as a BLOB column; the
-  // BlobPointReader owns its own scratch + ReadContext and returns a
-  // bytes_view per doc that the varint-parsing loop below walks.
   WildcardIterator(std::shared_ptr<RE2> matcher, DocIterator::ptr&& approx,
-                   const columnstore::ColumnReader& stored_field,
-                   const columnstore::Reader& cs_reader)
+                   const ColumnReader& stored_field,
+                   const ColReader& col_reader)
     : _matcher{std::move(matcher)},
       _approx{std::move(approx)},
-      _cursor{cs_reader, stored_field} {
+      _cursor{col_reader, stored_field} {
     SDB_ASSERT(_approx);
     SDB_ASSERT(_matcher);
   }
@@ -122,6 +115,10 @@ class WildcardIterator : public DocIterator {
       return _doc = target;
     }
     return advance();
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& /*ctx*/) final {
+    return ScoreFunction::Constant(kNoBoost);
   }
 
  private:
@@ -153,7 +150,7 @@ class WildcardIterator : public DocIterator {
 
   std::shared_ptr<RE2> _matcher;
   DocIterator::ptr _approx;
-  columnstore::ColumnReader::BlobPointReader _cursor;
+  ColumnReader::BlobPointReader _cursor;
 };
 
 class WildcardQuery : public QueryBuilder {
@@ -172,17 +169,17 @@ class WildcardQuery : public QueryBuilder {
     if (!_matcher || approx == DocIterator::empty()) {
       return approx;
     }
-    SDB_ASSERT(_store_field_id != 0);
-    const auto* cs_reader = _segment.CsReader();
-    if (!cs_reader) {
+    SDB_ASSERT(irs::field_limits::valid(_store_field_id));
+    const auto* col_reader = _segment.GetColReader();
+    if (!col_reader) {
       return DocIterator::empty();
     }
-    const auto* column = cs_reader->Column(_store_field_id);
-    if (column == nullptr) {
+    const auto* column = col_reader->Column(_store_field_id);
+    if (!column) {
       return DocIterator::empty();
     }
     return memory::make_managed<WildcardIterator>(_matcher, std::move(approx),
-                                                  *column, *cs_reader);
+                                                  *column, *col_reader);
   }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
@@ -214,16 +211,16 @@ WildcardNgramKind ClassifyKind(const ByWildcardNgramOptions& opts) {
   return WildcardNgramKind::kConjunction;
 }
 
-ByPhrase MakePhraseFilter(std::string_view field, const ByPhraseOptions& part) {
+ByPhrase MakePhraseFilter(irs::field_id field, const ByPhraseOptions& part) {
   ByPhrase phrase;
-  *phrase.mutable_field() = std::string{field};
+  *phrase.mutable_field_id() = field;
   *phrase.mutable_options() = part;
   return phrase;
 }
 
-ByTerm MakeTermFilter(std::string_view field, bytes_view term) {
+ByTerm MakeTermFilter(irs::field_id field, bytes_view term) {
   ByTerm by_term;
-  *by_term.mutable_field() = std::string{field};
+  *by_term.mutable_field_id() = field;
   by_term.mutable_options()->term = bstring{term};
   return by_term;
 }
@@ -240,19 +237,21 @@ PrepareCollector::ptr ByWildcardNgram::MakeCollector(
       return std::make_unique<LimitedTermsCollector>(scorer,
                                                      kDefaultScoredTermsLimit);
     case WildcardNgramKind::kPhrase:
-      return MakePhraseFilter(field(), opts.parts.front())
+      return MakePhraseFilter(field_id(), opts.parts.front())
         .MakeCollector(scorer);
     case WildcardNgramKind::kConjunction: {
       auto compound = std::make_unique<CompoundCollector>(scorer);
       if (opts.has_pos) {
         for (const auto& part : opts.parts) {
-          compound->Add(MakePhraseFilter(field(), part).MakeCollector(scorer));
+          compound->Add(
+            MakePhraseFilter(field_id(), part).MakeCollector(scorer));
         }
       } else {
         for (const auto& part : opts.parts) {
           for (const auto& info : part) {
             compound->Add(
-              MakeTermFilter(field(), std::get<ByTermOptions>(info.part).term)
+              MakeTermFilter(field_id(),
+                             std::get<ByTermOptions>(info.part).term)
                 .MakeCollector(scorer));
           }
         }
@@ -280,17 +279,17 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
   switch (ClassifyKind(opts)) {
     case WildcardNgramKind::kTerm:
       return wrap(
-        ByTerm::PrepareSegment(segment, sub_ctx, field(), opts.token));
+        ByTerm::PrepareSegment(segment, sub_ctx, field_id(), opts.token));
     case WildcardNgramKind::kPrefix: {
       bytes_view token = opts.token;
       if (token.back() == 0xFF) {
         token = kEmptyStringView<byte_type>;
       }
-      return wrap(ByPrefix::PrepareSegment(segment, sub_ctx, field(), token,
+      return wrap(ByPrefix::PrepareSegment(segment, sub_ctx, field_id(), token,
                                            kDefaultScoredTermsLimit));
     }
     case WildcardNgramKind::kPhrase:
-      return wrap(MakePhraseFilter(field(), opts.parts.front())
+      return wrap(MakePhraseFilter(field_id(), opts.parts.front())
                     .PrepareSegment(segment, sub_ctx));
     case WildcardNgramKind::kConjunction: {
       auto* compound = dynamic_cast<CompoundCollector*>(ctx.collector);
@@ -303,7 +302,7 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
           auto child = sub_ctx;
           child.collector = &compound->Child(idx++);
           queries.emplace_back(
-            MakePhraseFilter(field(), part).PrepareSegment(segment, child));
+            MakePhraseFilter(field_id(), part).PrepareSegment(segment, child));
         }
       } else {
         for (const auto& part : opts.parts) {
@@ -311,7 +310,8 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
             auto child = sub_ctx;
             child.collector = &compound->Child(idx++);
             queries.emplace_back(
-              MakeTermFilter(field(), std::get<ByTermOptions>(info.part).term)
+              MakeTermFilter(field_id(),
+                             std::get<ByTermOptions>(info.part).term)
                 .PrepareSegment(segment, child));
           }
         }

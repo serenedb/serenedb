@@ -209,7 +209,7 @@ void Utf8TransitionsBuilder::Finish(automaton& a, automaton::StateId from) {
 
 QueryBuilder::ptr PrepareAutomatonSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          std::string_view field,
+                                          irs::field_id field,
                                           const automaton& acceptor) {
   auto matcher = MakeAutomatonMatcher(acceptor);
 

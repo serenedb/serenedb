@@ -30,22 +30,14 @@
 
 namespace irs {
 
-// Decodes a binary-encoded field name (uint64 column id + mangle byte)
-// into a human-readable string.
-std::string FieldToString(std::string_view field);
-
-// Prints filter with raw bytes for field names (identity transform).
+// Renders the filter as a DuckDB-style box tree, with raw field ids
+// (identity transform).
 std::string ToString(const Filter& f);
 
-// Prints filter with column names resolved via col_name(id).
-// Falls back to "col=ID" for unknown ids.
+// Renders the filter as a DuckDB-style box tree, with column names resolved
+// via col_name(id). Falls back to "col=ID" for unknown ids.
 std::string ToStringDemangled(
   const Filter& f,
   const std::function<std::string(sdb::catalog::Column::Id)>& col_name);
-
-template<typename Sink>
-void AbslStringify(Sink& sink, const Filter& filter) {
-  sink.Append(ToString(filter));
-}
 
 }  // namespace irs

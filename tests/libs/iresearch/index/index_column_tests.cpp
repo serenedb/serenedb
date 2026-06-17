@@ -23,7 +23,7 @@
 // The legacy IndexColumn tests drove documents end-to-end through
 // `IndexWriter::Documents()` and read per-doc payloads back through the
 // legacy `column_reader`. That subsystem is gone -- per-doc stored payloads
-// now live in `irs::columnstore::ColumnWriter`/`ColumnReader` accessed
+// now live in `irs::ColumnWriter`/`ColumnReader` accessed
 // through the new cs Writer/Reader. The ported tests below keep the
 // original names and per-test (column-density x value-shape) scenarios but
 // write/read directly through the new cs, using BLOB columns + the
@@ -45,9 +45,9 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/column_writer.hpp"
-#include "iresearch/columnstore/format.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/types.hpp"
@@ -95,10 +95,9 @@ irs::bytes_view AsBytes(const irs::bstring& buf) noexcept {
 // dependent), so the per-doc validity assertion lives in `FetchAndExpect`
 // below, which talks to the validity track via `BlobPointReader`.
 template<typename Present, typename Payload>
-void VisitAndExpect(const irs::columnstore::Reader& reader,
-                    const irs::columnstore::ColumnReader& column,
-                    uint64_t docs_count, Present is_present,
-                    Payload expected_payload) {
+void VisitAndExpect(const irs::ColReader& reader,
+                    const irs::ColumnReader& column, uint64_t docs_count,
+                    Present is_present, Payload expected_payload) {
   uint64_t visited = 0;
   irs::tests::VisitBlobColumn(
     reader, column, [&](irs::doc_id_t doc, irs::bytes_view payload) {
@@ -131,11 +130,10 @@ void VisitAndExpect(const irs::columnstore::Reader& reader,
 // Per-doc lookup via BlobPointReader (the legacy "iterate" path; on the new
 // cs there's no warm/cold cache distinction at this level).
 template<typename Present, typename Payload>
-void FetchAndExpect(const irs::columnstore::Reader& reader,
-                    const irs::columnstore::ColumnReader& column,
-                    uint64_t docs_count, Present is_present,
-                    Payload expected_payload) {
-  irs::columnstore::ColumnReader::BlobPointReader cursor{reader, column};
+void FetchAndExpect(const irs::ColReader& reader,
+                    const irs::ColumnReader& column, uint64_t docs_count,
+                    Present is_present, Payload expected_payload) {
+  irs::ColumnReader::BlobPointReader cursor{reader, column};
   for (uint64_t i = 0; i < docs_count; ++i) {
     const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
     if (is_present(doc)) {
@@ -194,11 +192,11 @@ std::vector<irs::doc_id_t> MakeScrambledDocs(uint64_t docs_count) {
 // and assert the validity/payload for each. Reused by the random-access
 // sub-scenarios in every test.
 template<typename Present, typename Payload>
-void FetchDocsAndExpect(const irs::columnstore::Reader& reader,
-                        const irs::columnstore::ColumnReader& column,
+void FetchDocsAndExpect(const irs::ColReader& reader,
+                        const irs::ColumnReader& column,
                         const std::vector<irs::doc_id_t>& docs,
                         Present is_present, Payload expected_payload) {
-  irs::columnstore::ColumnReader::BlobPointReader cursor{reader, column};
+  irs::ColumnReader::BlobPointReader cursor{reader, column};
   for (irs::doc_id_t doc : docs) {
     if (is_present(doc)) {
       ASSERT_FALSE(cursor.IsNullDoc(doc)) << "doc=" << doc;
@@ -217,11 +215,10 @@ void FetchDocsAndExpect(const irs::columnstore::Reader& reader,
 // On the new cs, FetchValidity returns false for any row >= RowCount(),
 // so a fresh BlobPointReader sees `invalid()` as out-of-bounds.
 template<typename Present, typename Payload>
-void CheckBoundaries(const irs::columnstore::Reader& reader,
-                     const irs::columnstore::ColumnReader& column,
-                     uint64_t docs_count, Present is_present,
-                     Payload expected_payload) {
-  irs::columnstore::ColumnReader::BlobPointReader cursor{reader, column};
+void CheckBoundaries(const irs::ColReader& reader,
+                     const irs::ColumnReader& column, uint64_t docs_count,
+                     Present is_present, Payload expected_payload) {
+  irs::ColumnReader::BlobPointReader cursor{reader, column};
   const auto first = irs::doc_limits::min();
   const auto last =
     static_cast<irs::doc_id_t>(docs_count + irs::doc_limits::min() - 1);
@@ -259,11 +256,11 @@ void CheckBoundaries(const irs::columnstore::Reader& reader,
 // cursor. Mirrors the legacy "seek + next(x5)" sub-scenario. Skips any
 // of the K..K+5 docs that fall outside the column's row range.
 template<typename Present, typename Payload>
-void SeekAndNextFive(const irs::columnstore::Reader& reader,
-                     const irs::columnstore::ColumnReader& column,
-                     uint64_t docs_count, irs::doc_id_t start,
-                     Present is_present, Payload expected_payload) {
-  irs::columnstore::ColumnReader::BlobPointReader cursor{reader, column};
+void SeekAndNextFive(const irs::ColReader& reader,
+                     const irs::ColumnReader& column, uint64_t docs_count,
+                     irs::doc_id_t start, Present is_present,
+                     Payload expected_payload) {
+  irs::ColumnReader::BlobPointReader cursor{reader, column};
   const irs::doc_id_t kMin = irs::doc_limits::min();
   const irs::doc_id_t kLast = static_cast<irs::doc_id_t>(docs_count + kMin - 1);
   for (int step = 0; step <= 5; ++step) {
@@ -289,14 +286,14 @@ void SeekAndNextFive(const irs::columnstore::Reader& reader,
 // "seek backwards" is to construct a fresh BlobPointReader at the
 // destination. This still proves the column can be re-entered at any row.
 template<typename Present, typename Payload>
-void SeekBackwardsAndNextFive(const irs::columnstore::Reader& reader,
-                              const irs::columnstore::ColumnReader& column,
+void SeekBackwardsAndNextFive(const irs::ColReader& reader,
+                              const irs::ColumnReader& column,
                               uint64_t docs_count, irs::doc_id_t big,
                               irs::doc_id_t small, Present is_present,
                               Payload expected_payload) {
   // Forward leg on a primary cursor.
   {
-    irs::columnstore::ColumnReader::BlobPointReader fwd{reader, column};
+    irs::ColumnReader::BlobPointReader fwd{reader, column};
     if (is_present(big)) {
       ASSERT_FALSE(fwd.IsNullDoc(big)) << "doc=" << big;
       EXPECT_EQ(AsBytes(expected_payload(big)), fwd.FetchDoc(big))
@@ -311,7 +308,7 @@ void SeekBackwardsAndNextFive(const irs::columnstore::Reader& reader,
   // version of the legacy "seek backwards" invariant -- the column
   // remains entryable at any row, regardless of any earlier cursor's
   // position.
-  irs::columnstore::ColumnReader::BlobPointReader back{reader, column};
+  irs::ColumnReader::BlobPointReader back{reader, column};
   const irs::doc_id_t kMin = irs::doc_limits::min();
   const irs::doc_id_t kLast = static_cast<irs::doc_id_t>(docs_count + kMin - 1);
   for (int step = 0; step <= 5; ++step) {
@@ -335,8 +332,8 @@ void SeekBackwardsAndNextFive(const irs::columnstore::Reader& reader,
 // legacy tests achieved by capping `kMaxDocs` at 1500 against a hard-
 // coded 1024-row block; on the new cs the row-group size is configurable
 // on the writer.
-irs::columnstore::ColumnWriter& OpenBlobColumnSmallRg(
-  irs::columnstore::Writer& w, irs::field_id id, uint32_t row_group_size) {
+irs::ColumnWriter& OpenBlobColumnSmallRg(irs::ColWriter& w, irs::field_id id,
+                                         uint32_t row_group_size) {
   return w.OpenColumn(id, duckdb::LogicalType::BLOB,
                       /*skip_validity=*/false, row_group_size,
                       duckdb::CompressionType::COMPRESSION_AUTO);
@@ -344,55 +341,26 @@ irs::columnstore::ColumnWriter& OpenBlobColumnSmallRg(
 
 }  // namespace
 
-// Empty index: no columns written, no rows. The cs file is still produced
-// (Commit always emits a footer for `target_row`) but Column(id) is null.
-// Reopen the reader to verify the empty-column property persists on disk.
+// Empty index: no columns written, no rows. The `.col` file is created
+// lazily, so a writer that opens no column and no norm writes no file, and
+// `MakeCsReader` finds nothing on disk -> nullptr. Repeated reads stay stable
+// (still nullptr each time).
 TEST_P(IndexColumnTestCase, read_empty_doc_attributes) {
   irs::MemoryDirectory dir;
   constexpr std::string_view kSegment = "empty";
-  constexpr irs::field_id kId = 0;
 
   {
     auto writer = irs::tests::MakeCsWriter(dir, kSegment);
-    // No OpenColumn, no Append. Commit at row 0 still writes the file.
-    auto filename = writer->Commit(/*target_row=*/0);
-    ASSERT_FALSE(filename.empty());
+    // No OpenColumn, no Append. With nothing opened, Commit at row 0 writes
+    // no file (verified by the nullptr reads below).
+    writer->Commit(/*target_row=*/0);
   }
 
-  auto verify_empty = [&](const irs::columnstore::Reader& reader) {
-    EXPECT_FALSE(reader.HasColumn(kId));
-    EXPECT_EQ(nullptr, reader.Column(kId));
-    // Other ids -- including ones the legacy iterator-based tests would
-    // have tried to seek with (1, 42, max field_id) -- must also be
-    // absent.
-    EXPECT_FALSE(reader.HasColumn(/*id=*/1));
-    EXPECT_EQ(nullptr, reader.Column(/*id=*/1));
-    EXPECT_FALSE(reader.HasColumn(/*id=*/42));
-    EXPECT_EQ(nullptr, reader.Column(/*id=*/42));
-    EXPECT_FALSE(reader.HasColumn(irs::field_limits::invalid()));
-    EXPECT_EQ(nullptr, reader.Column(irs::field_limits::invalid()));
-    // Norm side must be empty too: empty index means no per-field norms.
-    EXPECT_FALSE(reader.HasNormColumn(kId));
-    EXPECT_EQ(nullptr, reader.NormColumn(kId));
-    EXPECT_FALSE(reader.HasHNSW(kId));
-    EXPECT_EQ(nullptr, reader.HNSW(kId));
-    // The columns() span exposed by the cs Reader is empty.
-    EXPECT_TRUE(reader.Columns().empty());
-  };
+  // First read: no file was written, so no reader.
+  EXPECT_EQ(nullptr, irs::tests::MakeCsReader(dir, kSegment));
 
-  // First read.
-  {
-    auto reader = irs::tests::MakeCsReader(dir, kSegment);
-    ASSERT_NE(nullptr, reader);
-    verify_empty(*reader);
-  }
-
-  // Reopen to confirm the on-disk file reports the same empty shape.
-  {
-    auto reader = irs::tests::MakeCsReader(dir, kSegment);
-    ASSERT_NE(nullptr, reader);
-    verify_empty(*reader);
-  }
+  // Re-read to confirm the missing-file shape is stable.
+  EXPECT_EQ(nullptr, irs::tests::MakeCsReader(dir, kSegment));
 }
 
 // Basic write-then-read: 4 docs in a "name" column (A..D), 2 of them
@@ -437,11 +405,10 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
       }
     }
 
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
-  auto check_round_trip = [&](const irs::columnstore::Reader& reader) {
+  auto check_round_trip = [&](const irs::ColReader& reader) {
     // Invalid column id -> null.
     EXPECT_EQ(nullptr, reader.Column(/*id=*/42));
     EXPECT_FALSE(reader.HasColumn(/*id=*/42));
@@ -470,7 +437,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
 
     // Per-doc fetch.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *name_col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *name_col};
       for (size_t i = 0; i < kNameValues.size(); ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i) + irs::doc_limits::min();
         ASSERT_FALSE(cursor.IsNullDoc(doc)) << "doc=" << doc;
@@ -499,8 +466,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
     }
 
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader,
-                                                             *prefix_col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *prefix_col};
       for (irs::doc_id_t doc = irs::doc_limits::min();
            doc < irs::doc_limits::min() + kDocsCount; ++doc) {
         const auto found =
@@ -521,8 +487,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
     // verify each lookup returns the right validity/payload. A single
     // cursor is forward-only, so a backwards jump uses a fresh cursor.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader,
-                                                             *prefix_col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *prefix_col};
       // Forward sequence: 1 (present) -> 2 (null) -> 3 (null) -> 4 (present).
       ASSERT_FALSE(cursor.IsNullDoc(1));
       EXPECT_EQ("abcd", ReadStr(cursor.FetchDoc(1)));
@@ -532,20 +497,18 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes) {
       EXPECT_EQ("abcde", ReadStr(cursor.FetchDoc(4)));
 
       // Backwards jump via a second fresh cursor.
-      irs::columnstore::ColumnReader::BlobPointReader back{reader, *prefix_col};
+      irs::ColumnReader::BlobPointReader back{reader, *prefix_col};
       ASSERT_FALSE(back.IsNullDoc(1));
       EXPECT_EQ("abcd", ReadStr(back.FetchDoc(1)));
 
       // Another backwards jump: from 4 down to 2 (null).
-      irs::columnstore::ColumnReader::BlobPointReader back2{reader,
-                                                            *prefix_col};
+      irs::ColumnReader::BlobPointReader back2{reader, *prefix_col};
       EXPECT_TRUE(back2.IsNullDoc(2));
     }
 
     // Boundary checks: invalid/past-end on the prefix column.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader,
-                                                             *prefix_col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *prefix_col};
       EXPECT_TRUE(cursor.IsNullDoc(irs::doc_limits::invalid()));
       // doc 5 (past the last) and doc 6 (well past).
       EXPECT_TRUE(cursor.IsNullDoc(5));
@@ -595,12 +558,11 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_big) {
       irs::tests::AppendBlob(id_cw, doc, AsBytes(id_enc));
       irs::tests::AppendBlob(label_cw, doc, AsBytes(label_enc));
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto verify_one_column =
-    [&](const irs::columnstore::Reader& reader, irs::field_id field,
+    [&](const irs::ColReader& reader, irs::field_id field,
         std::function<std::string(irs::doc_id_t)> value_of) {
       const auto* col = reader.Column(field);
       ASSERT_NE(nullptr, col);
@@ -627,7 +589,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_big) {
 
       // Per-doc fetch path.
       {
-        irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+        irs::ColumnReader::BlobPointReader cursor{reader, *col};
         for (uint64_t i = 0; i < kDocsCount; ++i) {
           const auto doc =
             static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
@@ -638,7 +600,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_big) {
       }
     };
 
-  auto verify_both = [&](const irs::columnstore::Reader& reader) {
+  auto verify_both = [&](const irs::ColReader& reader) {
     verify_one_column(reader, kIdId, IdValue);
     verify_one_column(reader, kLabelId, LabelValue);
 
@@ -648,9 +610,8 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_big) {
     const auto* label_col = reader.Column(kLabelId);
     ASSERT_NE(nullptr, id_col);
     ASSERT_NE(nullptr, label_col);
-    irs::columnstore::ColumnReader::BlobPointReader id_cursor{reader, *id_col};
-    irs::columnstore::ColumnReader::BlobPointReader label_cursor{reader,
-                                                                 *label_col};
+    irs::ColumnReader::BlobPointReader id_cursor{reader, *id_col};
+    irs::ColumnReader::BlobPointReader label_cursor{reader, *label_col};
     for (uint64_t i = 0; i < kDocsCount; ++i) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       ASSERT_FALSE(id_cursor.IsNullDoc(doc));
@@ -736,14 +697,13 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_dense_column_dense_mask) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       irs::tests::AppendBlob(cw, doc, irs::bytes_view{});
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto always_present = [](irs::doc_id_t) { return true; };
   auto empty_payload = [](irs::doc_id_t) { return irs::bstring{}; };
 
-  auto verify = [&](const irs::columnstore::Reader& reader) {
+  auto verify = [&](const irs::ColReader& reader) {
     const auto* col = reader.Column(kId);
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
@@ -769,7 +729,7 @@ TEST_P(IndexColumnTestCase, read_write_doc_attributes_dense_column_dense_mask) {
 
     // Per-doc fetch sequentially.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         ASSERT_FALSE(cursor.IsNullDoc(doc)) << "doc=" << doc;
@@ -844,11 +804,10 @@ TEST_P(IndexColumnTestCase,
       const auto payload = MakePayload(doc);
       irs::tests::AppendBlob(cw, doc, AsBytes(payload));
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
-  auto verify = [&](const irs::columnstore::Reader& reader) {
+  auto verify = [&](const irs::ColReader& reader) {
     const auto* col = reader.Column(kId);
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
@@ -861,7 +820,7 @@ TEST_P(IndexColumnTestCase,
     // Spot-check the fixed payload width (legacy "fixed_length" was the
     // sole subscenario that asserted on the size class).
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; i += 257) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         EXPECT_EQ(8u, cursor.FetchDoc(doc).size()) << "doc=" << doc;
@@ -901,7 +860,7 @@ TEST_P(IndexColumnTestCase,
     // "fixed_length" inverted the encoding to verify the codec didn't
     // truncate or reorder bytes).
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       const std::vector<uint64_t> sample = {0,
                                             1,
                                             7,
@@ -968,14 +927,13 @@ TEST_P(IndexColumnTestCase,
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       irs::tests::AppendBlob(cw, doc, AsBytes(kPayload));
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
   auto always_present = [](irs::doc_id_t) { return true; };
   auto same_payload = [&](irs::doc_id_t) { return kPayload; };
 
-  auto verify = [&](const irs::columnstore::Reader& reader) {
+  auto verify = [&](const irs::ColReader& reader) {
     const auto* col = reader.Column(kId);
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
@@ -1016,7 +974,7 @@ TEST_P(IndexColumnTestCase,
 
     // Spot-check the 4-byte payload width across row-group boundaries.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; i += 521) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         EXPECT_EQ(4u, cursor.FetchDoc(doc).size()) << "doc=" << doc;
@@ -1026,8 +984,8 @@ TEST_P(IndexColumnTestCase,
     // Cross-cursor sanity: two independent BlobPointReaders over the same
     // constant-payload column return identical bytes for the same doc.
     {
-      irs::columnstore::ColumnReader::BlobPointReader a{reader, *col};
-      irs::columnstore::ColumnReader::BlobPointReader b{reader, *col};
+      irs::ColumnReader::BlobPointReader a{reader, *col};
+      irs::ColumnReader::BlobPointReader b{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; i += 311) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         EXPECT_EQ(a.FetchDoc(doc), b.FetchDoc(doc)) << "doc=" << doc;
@@ -1079,11 +1037,10 @@ TEST_P(IndexColumnTestCase,
       const auto enc = MakePayload(doc);
       irs::tests::AppendBlob(cw, doc, AsBytes(enc));
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
-  auto verify = [&](const irs::columnstore::Reader& reader) {
+  auto verify = [&](const irs::ColReader& reader) {
     const auto* col = reader.Column(kId);
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
@@ -1107,7 +1064,7 @@ TEST_P(IndexColumnTestCase,
 
     // Sequential per-doc fetch.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         ASSERT_FALSE(cursor.IsNullDoc(doc)) << "doc=" << doc;
@@ -1183,11 +1140,10 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
-  auto verify = [&](const irs::columnstore::Reader& reader) {
+  auto verify = [&](const irs::ColReader& reader) {
     const auto* col = reader.Column(kId);
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
@@ -1230,7 +1186,7 @@ TEST_P(IndexColumnTestCase,
     // "seek to gap + next(x5)" sub-scenario. IsPresent here is `doc % 2 ==
     // 0`, so doc=1 (min) is absent -- start the gap walk there.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       const auto gap = irs::doc_limits::min();  // doc=1, absent.
       EXPECT_TRUE(cursor.IsNullDoc(gap)) << "doc=" << gap;
       // Then walk forward over a mix of even/odd docs.
@@ -1248,7 +1204,7 @@ TEST_P(IndexColumnTestCase,
 
     // Width assertion: every present doc carries an 8-byte payload.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; i += 257) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {
@@ -1300,11 +1256,10 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
-  auto verify = [&](const irs::columnstore::Reader& reader) {
+  auto verify = [&](const irs::ColReader& reader) {
     const auto* col = reader.Column(kId);
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
@@ -1341,7 +1296,7 @@ TEST_P(IndexColumnTestCase,
 
     // seek "to gap" (a null doc) then forward.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       // doc 3 is absent (3 % 3 == 0).
       const auto gap = static_cast<irs::doc_id_t>(irs::doc_limits::min() + 2);
       EXPECT_TRUE(cursor.IsNullDoc(gap)) << "doc=" << gap;
@@ -1359,7 +1314,7 @@ TEST_P(IndexColumnTestCase,
     // Width assertion: every present doc carries the constant 4-byte
     // payload, confirming the codec didn't truncate / widen any cells.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; i += 313) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {
@@ -1413,11 +1368,10 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
-  auto verify = [&](const irs::columnstore::Reader& reader) {
+  auto verify = [&](const irs::ColReader& reader) {
     const auto* col = reader.Column(kId);
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
@@ -1439,7 +1393,7 @@ TEST_P(IndexColumnTestCase,
 
     // Per-doc fetch with explicit IsNullDoc reads on the gaps.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {
@@ -1514,11 +1468,10 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
-  auto verify = [&](const irs::columnstore::Reader& reader) {
+  auto verify = [&](const irs::ColReader& reader) {
     const auto* col = reader.Column(kId);
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
@@ -1546,7 +1499,7 @@ TEST_P(IndexColumnTestCase,
 
     // Per-doc fetch sequentially.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {
@@ -1623,11 +1576,10 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
-  auto verify = [&](const irs::columnstore::Reader& reader) {
+  auto verify = [&](const irs::ColReader& reader) {
     const auto* col = reader.Column(kId);
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
@@ -1655,7 +1607,7 @@ TEST_P(IndexColumnTestCase,
 
     // Per-doc fetch sequentially.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {
@@ -1741,11 +1693,10 @@ TEST_P(IndexColumnTestCase,
         irs::tests::AppendNullBlob(cw, doc);
       }
     }
-    auto filename = writer->Commit(kDocsCount);
-    ASSERT_FALSE(filename.empty());
+    writer->Commit(kDocsCount);
   }
 
-  auto verify = [&](const irs::columnstore::Reader& reader) {
+  auto verify = [&](const irs::ColReader& reader) {
     const auto* col = reader.Column(kId);
     ASSERT_NE(nullptr, col);
     ASSERT_TRUE(reader.HasColumn(kId));
@@ -1773,7 +1724,7 @@ TEST_P(IndexColumnTestCase,
 
     // Per-doc fetch sequentially.
     {
-      irs::columnstore::ColumnReader::BlobPointReader cursor{reader, *col};
+      irs::ColumnReader::BlobPointReader cursor{reader, *col};
       for (uint64_t i = 0; i < kDocsCount; ++i) {
         const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
         if (IsPresent(doc)) {

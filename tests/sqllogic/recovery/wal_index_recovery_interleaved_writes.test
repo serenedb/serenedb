@@ -149,14 +149,14 @@ count
 # === Pre-fault rows ===
 connection iw_after
 query
-SELECT COUNT(*) FROM iw_idx_t WHERE body @@ ts_phrase('pre seed one');
+SELECT COUNT(*) FROM iw_idx WHERE body @@ ts_phrase('pre seed one');
 ----
 count
 0
 
 connection iw_after
 query
-SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('UPDATED');
+SELECT id FROM iw_idx WHERE body @@ ts_phrase('UPDATED');
 ----
 id
 2
@@ -164,7 +164,7 @@ id
 # === START position rows ===
 connection iw_after
 query
-SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('start_pos') ORDER BY id;
+SELECT id FROM iw_idx WHERE body @@ ts_phrase('start_pos') ORDER BY id;
 ----
 id
 10
@@ -172,7 +172,7 @@ id
 
 connection iw_after
 query
-SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('token_a') ORDER BY id;
+SELECT id FROM iw_idx WHERE body @@ ts_phrase('token_a') ORDER BY id;
 ----
 id
 10
@@ -184,7 +184,7 @@ id
 # 'mid_pos' token, so it still matches.
 connection iw_after
 query
-SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('mid_pos') ORDER BY id;
+SELECT id FROM iw_idx WHERE body @@ ts_phrase('mid_pos') ORDER BY id;
 ----
 id
 20
@@ -196,7 +196,7 @@ id
 # matches mid_pos and additionally CHANGED.
 connection iw_after
 query
-SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('CHANGED') ORDER BY id;
+SELECT id FROM iw_idx WHERE body @@ ts_phrase('CHANGED') ORDER BY id;
 ----
 id
 21
@@ -205,7 +205,7 @@ id
 # === END position rows ===
 connection iw_after
 query
-SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('end_pos') ORDER BY id;
+SELECT id FROM iw_idx WHERE body @@ ts_phrase('end_pos') ORDER BY id;
 ----
 id
 30

@@ -7,7 +7,7 @@ on:
         description: "Runner label"
         type: string
         required: false
-        default: "linux"
+        default: "linux-amd64"
       PR_SHA:
         description: "Commit SHA to checkout (empty = workflow ref)"
         type: string
@@ -24,7 +24,7 @@ on:
         description: "Runner label"
         type: string
         required: false
-        default: "linux"
+        default: "linux-amd64"
       PR_SHA:
         description: "Commit SHA to checkout (fork PR support; empty = workflow ref)"
         type: string
@@ -64,6 +64,7 @@ jobs:
       - name: Prepare
         run: |
           mkdir -p out/logs
+          mkdir -p out/test-tmp
           mkdir -p "${HOME}/.cache/serenedb-cargo-target"
           for i in 1 2 3; do
             docker pull "${BUILD_IMAGE}" && break

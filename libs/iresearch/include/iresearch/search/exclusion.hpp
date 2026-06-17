@@ -26,10 +26,10 @@
 
 namespace irs {
 
-template<typename IncludeAdapter, typename ExcludeAdapters>
-class Exclusion : public DocIterator {
+template<typename IncludeAdapter, typename ExcludeAdapter>
+class ExclusionIterator : public DocIterator {
  public:
-  Exclusion(IncludeAdapter incl, ExcludeAdapters excl) noexcept
+  ExclusionIterator(IncludeAdapter incl, ExcludeAdapter excl) noexcept
     : _incl{std::move(incl)}, _excl{std::move(excl)} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -133,7 +133,7 @@ class Exclusion : public DocIterator {
   }
 
   IncludeAdapter _incl;
-  ExcludeAdapters _excl;
+  ExcludeAdapter _excl;
 };
 
 }  // namespace irs

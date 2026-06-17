@@ -458,7 +458,7 @@ inline automaton MakeAll() {
 //////////////////////////////////////////////////////////////////////////////
 QueryBuilder::ptr PrepareAutomatonSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          std::string_view field,
+                                          irs::field_id field,
                                           const automaton& acceptor);
 
 }  // namespace irs

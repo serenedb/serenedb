@@ -1,0 +1,103 @@
+control substitution on
+
+# Phase 2 bounded replay: a refresh makes batch 1 durable in the iresearch
+# segments and stamps the durable WAL cursor. Batch 2 is inserted with the
+# search commit faulted off, so it lives only in the store WAL (post-refresh,
+# un-durable in the segments). After a crash, recovery replays only the
+# un-durable tail (batch 1 is skipped via the WAL-offset cursor; the boundary
+# overlap is absorbed by the idempotent delete-then-insert), and the index is
+# fully correct -- every row searchable, none duplicated.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rd_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE rd_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX rd_idx ON rd_t USING inverted(id, body rd_dict);
+
+# Batch 1: insert, then force a durable refresh -> stamps the durable WAL cursor.
+statement ok
+INSERT INTO rd_t SELECT i, 'doc_' || i FROM range(0, 5000) AS t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rd_t;
+
+query
+SELECT COUNT(*) FROM rd_idx;
+----
+count
+5000
+
+# Batch 2: suppress the index commit so it lands only in the store WAL --
+# post-refresh, not yet durable in the segments.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO rd_t SELECT i, 'doc_' || i FROM range(5000, 7000) AS t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection rd_after
+statement ok retry 60 backoff 1s
+VACUUM (REFRESH_TABLE) rd_t;
+
+connection rd_after
+query
+SELECT COUNT(*) FROM rd_t;
+----
+count
+7000
+
+connection rd_after
+query
+SELECT COUNT(*) FROM rd_idx;
+----
+count
+7000
+
+# Durable batch 1 survived (skipped on replay, served from the segments).
+connection rd_after
+query
+SELECT id FROM rd_idx WHERE body @@ ts_phrase('doc_0');
+----
+id
+0
+
+connection rd_after
+query
+SELECT id FROM rd_idx WHERE body @@ ts_phrase('doc_4999');
+----
+id
+4999
+
+# Post-refresh tail (batch 2) replayed from the WAL.
+connection rd_after
+query
+SELECT id FROM rd_idx WHERE body @@ ts_phrase('doc_5000');
+----
+id
+5000
+
+connection rd_after
+query
+SELECT id FROM rd_idx WHERE body @@ ts_phrase('doc_6999');
+----
+id
+6999

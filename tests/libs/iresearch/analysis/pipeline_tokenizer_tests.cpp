@@ -21,21 +21,61 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-
 #include <vector>
 
 #include "gtest/gtest.h"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
+#include "iresearch/analysis/normalizing_tokenizer.hpp"
 #include "iresearch/analysis/pipeline_tokenizer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "tests_config.hpp"
 
 namespace {
+
+irs::analysis::Analyzer::ptr MakeDelimiter(std::string_view delim) {
+  return irs::analysis::DelimitedTokenizer::Make(
+    irs::analysis::DelimitedTokenizer::Options{.delimiter =
+                                                 std::string(delim)});
+}
+
+irs::analysis::Analyzer::ptr MakeNgram(size_t min_gram, size_t max_gram,
+                                       bool preserve_original) {
+  return irs::analysis::NGramTokenizerBase::Make(
+    irs::analysis::NGramTokenizerBase::Options{
+      .min_gram = min_gram,
+      .max_gram = max_gram,
+      .preserve_original = preserve_original,
+    });
+}
+
+irs::analysis::Analyzer::ptr MakeNorm(std::string_view locale,
+                                      irs::Case case_convert) {
+  return irs::analysis::NormalizingTokenizer::Make(
+    irs::analysis::NormalizingTokenizer::Options{
+      .locale = icu::Locale::createFromName(std::string(locale).c_str()),
+      .case_convert = case_convert,
+    });
+}
+
+irs::analysis::Analyzer::ptr MakeText(std::string_view locale,
+                                      irs::Case case_convert, bool stemming,
+                                      std::vector<std::string> stopwords = {},
+                                      bool accent = true) {
+  irs::analysis::TextTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName(std::string(locale).c_str());
+  opts.case_convert = case_convert;
+  opts.stemming = stemming;
+  opts.accent = accent;
+  for (auto& w : stopwords) {
+    opts.explicit_stopwords.insert(std::move(w));
+  }
+  opts.explicit_stopwords_set = true;
+  return irs::analysis::TextTokenizer::Make(std::move(opts));
+}
 
 class PipelineTestAnalyzer
   : public irs::analysis::TypedAnalyzer<PipelineTestAnalyzer>,
@@ -219,7 +259,7 @@ TEST(pipeline_token_stream_test, consts) {
 }
 
 TEST(pipeline_token_stream_test, empty_pipeline) {
-  irs::analysis::PipelineTokenizer::options_t pipeline_options;
+  std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
   irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
 
   std::string data = "quick broWn,, FOX  jumps,  over lazy dog";
@@ -227,24 +267,12 @@ TEST(pipeline_token_stream_test, empty_pipeline) {
 }
 
 TEST(pipeline_token_stream_test, many_tokenizers) {
-  auto delimiter = irs::analysis::analyzers::Get(
-    "delimiter", irs::Type<irs::text_format::Json>::get(),
-    "{\"delimiter\":\",\"}");
+  auto delimiter = MakeDelimiter(",");
+  auto delimiter2 = MakeDelimiter(" ");
+  auto text = MakeText("en_US.UTF-8", irs::Case::None, /*stemming=*/false);
+  auto ngram = MakeNgram(2, 2, /*preserve_original=*/true);
 
-  auto delimiter2 = irs::analysis::analyzers::Get(
-    "delimiter", irs::Type<irs::text_format::Json>::get(),
-    "{\"delimiter\":\" \"}");
-
-  auto text = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    "{\"locale\":\"en_US.UTF-8\", \"stopwords\":[], \"case\":\"none\", "
-    "\"stemming\":false }");
-
-  auto ngram = irs::analysis::analyzers::Get(
-    "ngram", irs::Type<irs::text_format::Json>::get(),
-    "{\"min\":2, \"max\":2, \"preserveOriginal\":true }");
-
-  irs::analysis::PipelineTokenizer::options_t pipeline_options;
+  std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
   pipeline_options.emplace_back(std::move(delimiter));
   pipeline_options.emplace_back(std::move(delimiter2));
   pipeline_options.emplace_back(std::move(text));
@@ -270,14 +298,10 @@ TEST(pipeline_token_stream_test, many_tokenizers) {
 }
 
 TEST(pipeline_token_stream_test, overlapping_ngrams) {
-  auto ngram = irs::analysis::analyzers::Get(
-    "ngram", irs::Type<irs::text_format::Json>::get(),
-    "{\"min\":6, \"max\":7, \"preserveOriginal\":false }");
-  auto ngram2 = irs::analysis::analyzers::Get(
-    "ngram", irs::Type<irs::text_format::Json>::get(),
-    "{\"min\":2, \"max\":3, \"preserveOriginal\":false }");
+  auto ngram = MakeNgram(6, 7, /*preserve_original=*/false);
+  auto ngram2 = MakeNgram(2, 3, /*preserve_original=*/false);
 
-  irs::analysis::PipelineTokenizer::options_t pipeline_options;
+  std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
   pipeline_options.emplace_back(std::move(ngram));
   pipeline_options.emplace_back(std::move(ngram2));
   irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
@@ -311,26 +335,18 @@ TEST(pipeline_token_stream_test, case_ngrams) {
     {"FOX", 12, 15, 12},
   };
   {
-    auto ngram = irs::analysis::analyzers::Get(
-      "ngram", irs::Type<irs::text_format::Json>::get(),
-      "{\"min\":3, \"max\":3, \"preserveOriginal\":false }");
-    auto norm = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en\", \"case\":\"upper\"}");
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    auto ngram = MakeNgram(3, 3, /*preserve_original=*/false);
+    auto norm = MakeNorm("en", irs::Case::Upper);
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(ngram));
     pipeline_options.emplace_back(std::move(norm));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
     AssertPipeline(&pipe, data, expected);
   }
   {
-    auto ngram = irs::analysis::analyzers::Get(
-      "ngram", irs::Type<irs::text_format::Json>::get(),
-      "{\"min\":3, \"max\":3, \"preserveOriginal\":false }");
-    auto norm = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en\", \"case\":\"upper\"}");
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    auto ngram = MakeNgram(3, 3, /*preserve_original=*/false);
+    auto norm = MakeNorm("en", irs::Case::Upper);
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(norm));
     pipeline_options.emplace_back(std::move(ngram));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
@@ -340,16 +356,12 @@ TEST(pipeline_token_stream_test, case_ngrams) {
 
 TEST(pipeline_token_stream_test, no_tokenizers) {
   std::string data = "QuIck";
-  auto norm1 = irs::analysis::analyzers::Get(
-    "norm", irs::Type<irs::text_format::Json>::get(),
-    "{\"locale\":\"en\", \"case\":\"upper\"}");
-  auto norm2 = irs::analysis::analyzers::Get(
-    "norm", irs::Type<irs::text_format::Json>::get(),
-    "{\"locale\":\"en\", \"case\":\"lower\"}");
+  auto norm1 = MakeNorm("en", irs::Case::Upper);
+  auto norm2 = MakeNorm("en", irs::Case::Lower);
   const AnalyzerTokens expected{
     {"quick", 0, 5, 0},
   };
-  irs::analysis::PipelineTokenizer::options_t pipeline_options;
+  std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
   pipeline_options.emplace_back(std::move(norm1));
   pipeline_options.emplace_back(std::move(norm2));
   irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
@@ -363,28 +375,18 @@ TEST(pipeline_token_stream_test, source_modification_tokenizer) {
                                 {"fox", 12, 15, 2},
                                 {"jump", 16, 21, 3}};
   {
-    auto text = irs::analysis::analyzers::Get(
-      "text", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en_US.UTF-8\", \"stopwords\":[], \"case\":\"none\", "
-      "\"stemming\":true }");
-    auto norm = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en\", \"case\":\"lower\"}");
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    auto text = MakeText("en_US.UTF-8", irs::Case::None, /*stemming=*/true);
+    auto norm = MakeNorm("en", irs::Case::Lower);
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(text));
     pipeline_options.emplace_back(std::move(norm));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
     AssertPipeline(&pipe, data, expected);
   }
   {
-    auto text = irs::analysis::analyzers::Get(
-      "text", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en_US.UTF-8\", \"stopwords\":[], \"case\":\"none\", "
-      "\"stemming\":true }");
-    auto norm = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en\", \"case\":\"lower\"}");
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    auto text = MakeText("en_US.UTF-8", irs::Case::None, /*stemming=*/true);
+    auto norm = MakeNorm("en", irs::Case::Lower);
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(norm));
     pipeline_options.emplace_back(std::move(text));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
@@ -393,28 +395,23 @@ TEST(pipeline_token_stream_test, source_modification_tokenizer) {
 }
 
 TEST(pipeline_token_stream_test, signle_tokenizer) {
-  auto text = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    "{\"locale\":\"en_US.UTF-8\", \"stopwords\":[], \"case\":\"lower\", "
-    "\"stemming\":true }");
+  auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/true);
   std::string data = "QuIck broWn fox jumps";
   const AnalyzerTokens expected{{"quick", 0, 5, 0},
                                 {"brown", 6, 11, 1},
                                 {"fox", 12, 15, 2},
                                 {"jump", 16, 21, 3}};
-  irs::analysis::PipelineTokenizer::options_t pipeline_options;
+  std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
   pipeline_options.emplace_back(std::move(text));
   irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
   AssertPipeline(&pipe, data, expected);
 }
 
 TEST(pipeline_token_stream_test, signle_non_tokenizer) {
-  auto norm = irs::analysis::analyzers::Get(
-    "norm", irs::Type<irs::text_format::Json>::get(),
-    "{\"locale\":\"en\", \"case\":\"lower\"}");
+  auto norm = MakeNorm("en", irs::Case::Lower);
   std::string data = "QuIck";
   const AnalyzerTokens expected{{"quick", 0, 5, 0}};
-  irs::analysis::PipelineTokenizer::options_t pipeline_options;
+  std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
   pipeline_options.emplace_back(std::move(norm));
   irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
   AssertPipeline(&pipe, data, expected);
@@ -427,26 +424,18 @@ TEST(pipeline_token_stream_test, hold_position_tokenizer) {
     {"uic", 1, 4, 1}, {"ic", 2, 4, 2},  {"ick", 2, 5, 2},   {"ck", 3, 5, 3},
   };
   {
-    auto ngram = irs::analysis::analyzers::Get(
-      "ngram", irs::Type<irs::text_format::Json>::get(),
-      "{\"min\":2, \"max\":3, \"preserveOriginal\":true }");
-    auto norm = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en\", \"case\":\"lower\"}");
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    auto ngram = MakeNgram(2, 3, /*preserve_original=*/true);
+    auto norm = MakeNorm("en", irs::Case::Lower);
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(ngram));
     pipeline_options.emplace_back(std::move(norm));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
     AssertPipeline(&pipe, data, expected);
   }
   {
-    auto ngram = irs::analysis::analyzers::Get(
-      "ngram", irs::Type<irs::text_format::Json>::get(),
-      "{\"min\":2, \"max\":3, \"preserveOriginal\":true }");
-    auto norm = irs::analysis::analyzers::Get(
-      "norm", irs::Type<irs::text_format::Json>::get(),
-      "{\"locale\":\"en\", \"case\":\"lower\"}");
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    auto ngram = MakeNgram(2, 3, /*preserve_original=*/true);
+    auto norm = MakeNorm("en", irs::Case::Lower);
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(norm));
     pipeline_options.emplace_back(std::move(ngram));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
@@ -494,7 +483,7 @@ TEST(pipeline_token_stream_test, hold_position_tokenizer2) {
 
   const AnalyzerTokens expected{{data, 0, 5, 0}, {data, 2, 3, 1}};
   {
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(tokenizer1));
     pipeline_options.emplace_back(std::move(tokenizer2));
     pipeline_options.emplace_back(std::move(tokenizer3));
@@ -504,201 +493,59 @@ TEST(pipeline_token_stream_test, hold_position_tokenizer2) {
 }
 
 TEST(pipeline_token_stream_test, test_construct) {
-  std::string config =
-    "{\"pipeline\":["
-    "{\"type\":\"delimiter\", \"properties\": {\"delimiter\":\"A\"}},"
-    "{\"type\":\"text\", "
-    "\"properties\":{\"locale\":\"en_US.UTF-8\",\"case\":\"lower\","
-    "\"accent\":false,\"stemming\":true,\"stopwords\":[\"fox\"]}},"
-    "{\"type\":\"norm\", \"properties\": {\"locale\":\"en_US.UTF-8\", "
-    "\"case\":\"upper\"}}"
-    "]}";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
+  irs::analysis::PipelineTokenizer::Options opts;
+  opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
+    irs::analysis::TokenizerConfig{
+      irs::analysis::DelimitedTokenizer::Options{.delimiter = "A"}}));
+
+  irs::analysis::TextTokenizer::Options text_opts;
+  text_opts.locale = icu::Locale::createFromName("en_US.UTF-8");
+  text_opts.case_convert = irs::Case::Lower;
+  text_opts.accent = false;
+  text_opts.stemming = true;
+  text_opts.explicit_stopwords.insert("fox");
+  text_opts.explicit_stopwords_set = true;
+  opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
+    irs::analysis::TokenizerConfig{std::move(text_opts)}));
+
+  opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
+    irs::analysis::TokenizerConfig{irs::analysis::NormalizingTokenizer::Options{
+      .locale = icu::Locale::createFromName("en_US.UTF-8"),
+      .case_convert = irs::Case::Upper,
+    }}));
+
+  auto stream = irs::analysis::PipelineTokenizer::Make(std::move(opts));
   ASSERT_NE(nullptr, stream);
   const AnalyzerTokens expected{
     {"QUICK", 0, 5, 0}, {"BROWN", 6, 11, 1}, {"JUMP", 16, 21, 2}};
   AssertPipeline(stream.get(), "QuickABrownAFOXAjUmps", expected);
-}
-
-TEST(pipeline_token_stream_test, test_normalized_construct) {
-  std::string config =
-    "{\"pipeline\":["
-    "{\"type\":\"delimiter\", \"properties\": {\"delimiter\":\"A\"}},"
-    "{\"type\":\"text\", "
-    "\"properties\":{\"locale\":\"en_US.UTF-8\",\"case\":\"lower\","
-    "  \"accent\":false,\"stemming\":true,\"stopwords\":[\"fox\"]}},"
-    "{\"type\":\"norm\", \"properties\": {\"locale\":\"en_US.UTF-8\", "
-    "\"case\":\"upper\"}}"
-    "]}";
-  std::string normalized;
-  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-    normalized, "pipeline", irs::Type<irs::text_format::Json>::get(), config));
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), normalized);
-  ASSERT_NE(nullptr, stream);
-  const AnalyzerTokens expected{
-    {"QUICK", 0, 5, 0}, {"BROWN", 6, 11, 1}, {"JUMP", 16, 21, 2}};
-  AssertPipeline(stream.get(), "QuickABrownAFOXAjUmps", expected);
-}
-
-TEST(pipeline_token_stream_test, test_construct_invalid_json) {
-  std::string config = "INVALID_JSON}";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(pipeline_token_stream_test, test_construct_not_object_json) {
-  std::string config = "[1,2,3]";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(pipeline_token_stream_test, test_construct_no_pipeline) {
-  std::string config =
-    "{\"NOT_pipeline\":["
-    "{\"type\":\"delimiter\", \"properties\": {\"delimiter\":\"A\"}},"
-    "{\"type\":\"text\", "
-    "\"properties\":{\"locale\":\"en_US.UTF-8\",\"case\":\"lower\","
-    "  \"accent\":false,\"stemming\":true,\"stopwords\":[\"fox\"]}},"
-    "{\"type\":\"norm\", \"properties\": {\"locale\":\"en_US.UTF-8\", "
-    "\"case\":\"upper\"}}"
-    "]}";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(pipeline_token_stream_test, test_construct_not_array_pipeline) {
-  std::string config = "{\"pipeline\": \"text\"}";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(pipeline_token_stream_test, test_construct_not_pipeline_objects) {
-  std::string config = "{\"pipeline\":[\"123\"]}";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(pipeline_token_stream_test, test_construct_no_type) {
-  std::string config =
-    "{\"pipeline\":["
-    "{\"type\":\"delimiter\", \"properties\": {\"delimiter\":\"A\"}},"
-    "{\"properties\":{\"locale\":\"en_US.UTF-8\",\"case\":\"lower\","
-    "  \"accent\":false,\"stemming\":true,\"stopwords\":[\"fox\"]}},"
-    "{\"type\":\"norm\", \"properties\": {\"locale\":\"en_US.UTF-8\", "
-    "\"case\":\"upper\"}}"
-    "]}";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(pipeline_token_stream_test, test_construct_non_string_type) {
-  std::string config =
-    "{\"pipeline\":[{\"type\":1, \"properties\": {\"delimiter\":\"A\"}}]}";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(pipeline_token_stream_test, test_construct_no_properties) {
-  std::string config =
-    "{\"pipeline\":["
-    "{\"type\":\"delimiter\", \"properties\": {\"delimiter\":\"A\"}},"
-    "{\"type\":\"text\"}"
-    "]}";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
-}
-
-TEST(pipeline_token_stream_test, test_construct_invalid_analyzer) {
-  std::string config =
-    "{\"pipeline\":["
-    "{\"type\":\"UNKNOWN\", \"properties\": {\"delimiter\":\"A\"}},"
-    "{\"properties\":{\"locale\":\"en_US.UTF-8\",\"case\":\"lower\","
-    "  \"accent\":false,\"stemming\":true,\"stopwords\":[\"fox\"]}},"
-    "{\"type\":\"norm\", \"properties\": {\"locale\":\"en_US.UTF-8\", "
-    "\"case\":\"upper\"}}"
-    "]}";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
 }
 
 TEST(pipeline_token_stream_test, empty_pipeline_construct) {
-  std::string config = "{\"pipeline\":[]}";
-  auto stream = irs::analysis::analyzers::Get(
-    "pipeline", irs::Type<irs::text_format::Json>::get(), config);
-  ASSERT_EQ(nullptr, stream);
+  ASSERT_ANY_THROW(irs::analysis::PipelineTokenizer::Make(
+    irs::analysis::PipelineTokenizer::Options{}));
 }
 
-TEST(pipeline_token_stream_test, normalize_json) {
-  // with unknown parameter
-  {
-    std::string config =
-      "{ \"unknown_parameter\":123,  \"pipeline\":[{\"type\":\"delimiter\", "
-      "\"properties\": {\"delimiter\":\"A\"}}]}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "pipeline", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson("{\"pipeline\":[{\"type\":\"delimiter\","
-                                      "\"properties\":{\"delimiter\":\"A\"}}]}")
-                ->toString(),
-              actual);
-  }
-  // with unknown parameter in pipeline member
-  {
-    std::string config =
-      "{\"pipeline\":[{\"unknown_parameter\":123, \"type\":\"delimiter\", "
-      "\"properties\": {\"delimiter\":\"A\"}}]}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "pipeline", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson("{\"pipeline\":[{\"type\":\"delimiter\","
-                                      "\"properties\":{\"delimiter\":\"A\"}}]}")
-                ->toString(),
-              actual);
-  }
-  // with unknown parameter in analyzer properties
-  {
-    std::string config =
-      "{\"pipeline\":[{\"type\":\"delimiter\", \"properties\": "
-      "{\"unknown_paramater\":123, \"delimiter\":\"A\"}}]}";
-    std::string actual;
-    ASSERT_TRUE(irs::analysis::analyzers::Normalize(
-      actual, "pipeline", irs::Type<irs::text_format::Json>::get(), config));
-    ASSERT_EQ(vpack::Parser::fromJson("{\"pipeline\":[{\"type\":\"delimiter\","
-                                      "\"properties\":{\"delimiter\":\"A\"}}]}")
-                ->toString(),
-              actual);
-  }
+// The legacy parser-level rejections (`test_construct_invalid_json`,
+// `test_construct_not_object_json`, `test_construct_no_pipeline`,
+// `test_construct_not_array_pipeline`, `test_construct_not_pipeline_objects`,
+// `test_construct_no_type`, `test_construct_non_string_type`,
+// `test_construct_no_properties`) all exercised JSON-parser bookkeeping
+// that has no direct analogue against the strongly-typed Options API.
+// They collapse to the `empty_pipeline_construct` and
+// `test_construct_invalid_child` assertions below.
 
-  // with unknown analyzer
-  {
-    std::string config =
-      "{\"pipeline\":[{\"type\":\"unknown\", \"properties\": "
-      "{\"unknown_paramater\":123, \"delimiter\":\"A\"}}]}";
-    std::string actual;
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      actual, "pipeline", irs::Type<irs::text_format::Json>::get(), config));
-  }
+TEST(pipeline_token_stream_test, test_construct_invalid_child) {
+  // Ported from the legacy `test_construct_invalid_analyzer` test, which
+  // fed an UNKNOWN type into the JSON parser. With the typed Options
+  // API the equivalent is a child whose `Make` returns nullptr -- e.g.
+  // a `PatternTokenizer` with an empty pattern.
+  irs::analysis::PipelineTokenizer::Options opts;
+  opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
+    irs::analysis::TokenizerConfig{
+      irs::analysis::PatternTokenizer::Options{.pattern = ""}}));
 
-  // with invalid properties
-  {
-    std::string config =
-      "{\"pipeline\":[{\"type\":\"delimiter\", \"properties\": "
-      "{\"wrong_delimiter\":\"A\"}}]}";
-    std::string actual;
-    ASSERT_FALSE(irs::analysis::analyzers::Normalize(
-      actual, "pipeline", irs::Type<irs::text_format::Json>::get(), config));
-  }
+  ASSERT_ANY_THROW(irs::analysis::PipelineTokenizer::Make(std::move(opts)));
 }
 
 TEST(pipeline_token_stream_test, analyzers_with_payload_offset) {
@@ -712,7 +559,7 @@ TEST(pipeline_token_stream_test, analyzers_with_payload_offset) {
     auto only_offset =
       std::make_unique<PipelineTestAnalyzer>(true, irs::bytes_view{});
 
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(payload_offset));
     pipeline_options.emplace_back(std::move(only_offset));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
@@ -734,7 +581,7 @@ TEST(pipeline_token_stream_test, analyzers_with_payload_offset) {
     auto only_offset =
       std::make_unique<PipelineTestAnalyzer>(true, irs::bytes_view{});
 
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(only_offset));
     pipeline_options.emplace_back(std::move(payload_offset));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
@@ -756,7 +603,7 @@ TEST(pipeline_token_stream_test, analyzers_with_payload_offset) {
     auto only_payload = std::make_unique<PipelineTestAnalyzer>(
       false, irs::bytes_view{p2, std::size(p2)});
 
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(payload_offset));
     pipeline_options.emplace_back(std::move(only_payload));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
@@ -778,7 +625,7 @@ TEST(pipeline_token_stream_test, analyzers_with_payload_offset) {
     auto only_payload = std::make_unique<PipelineTestAnalyzer>(
       false, irs::bytes_view{p2, std::size(p2)});
 
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(only_payload));
     pipeline_options.emplace_back(std::move(payload_offset));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
@@ -800,7 +647,7 @@ TEST(pipeline_token_stream_test, analyzers_with_payload_offset) {
     auto no_payload_no_offset =
       std::make_unique<PipelineTestAnalyzer>(false, irs::bytes_view{});
 
-    irs::analysis::PipelineTokenizer::options_t pipeline_options;
+    std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(only_payload));
     pipeline_options.emplace_back(std::move(no_payload_no_offset));
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
@@ -819,40 +666,28 @@ TEST(pipeline_token_stream_test, analyzers_with_payload_offset) {
 }
 
 TEST(pipeline_token_stream_test, members_visitor) {
-  auto delimiter = irs::analysis::analyzers::Get(
-    "delimiter", irs::Type<irs::text_format::Json>::get(),
-    "{\"delimiter\":\",\"}");
-
-  auto text = irs::analysis::analyzers::Get(
-    "text", irs::Type<irs::text_format::Json>::get(),
-    "{\"locale\":\"en_US.UTF-8\", \"stopwords\":[], \"case\":\"none\", "
-    "\"stemming\":false }");
-
-  auto ngram = irs::analysis::analyzers::Get(
-    "ngram", irs::Type<irs::text_format::Json>::get(),
-    "{\"min\":2, \"max\":2, \"preserveOriginal\":true }");
-
-  auto norm = irs::analysis::analyzers::Get(
-    "norm", irs::Type<irs::text_format::Json>::get(),
-    "{\"locale\":\"en\", \"case\":\"upper\"}");
+  auto delimiter = MakeDelimiter(",");
+  auto text = MakeText("en_US.UTF-8", irs::Case::None, /*stemming=*/false);
+  auto ngram = MakeNgram(2, 2, /*preserve_original=*/true);
+  auto norm = MakeNorm("en", irs::Case::Upper);
 
   std::vector<irs::TypeInfo::type_id> expected{delimiter->type(), norm->type()};
   std::vector<irs::TypeInfo::type_id> expected_nested{
     delimiter->type(), norm->type(), text->type(), ngram->type()};
-  irs::analysis::PipelineTokenizer::options_t pipeline_options;
+  std::vector<irs::analysis::Analyzer::ptr> pipeline_options;
   pipeline_options.emplace_back(std::move(delimiter));
   pipeline_options.emplace_back(std::move(norm));
   auto pipe = std::make_unique<irs::analysis::PipelineTokenizer>(
     std::move(pipeline_options));
   AssertPipelineMembers(*pipe, expected);
 
-  irs::analysis::PipelineTokenizer::options_t pipeline_options2;
+  std::vector<irs::analysis::Analyzer::ptr> pipeline_options2;
   pipeline_options2.emplace_back(std::move(text));
 
   auto pipe2 = std::make_unique<irs::analysis::PipelineTokenizer>(
     std::move(pipeline_options2));
 
-  irs::analysis::PipelineTokenizer::options_t pipeline_options3;
+  std::vector<irs::analysis::Analyzer::ptr> pipeline_options3;
   pipeline_options3.emplace_back(std::move(pipe));
   pipeline_options3.emplace_back(std::move(pipe2));
   pipeline_options3.emplace_back(std::move(ngram));

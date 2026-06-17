@@ -33,11 +33,6 @@
 #define SERENEDB_VERSION_FULL SERENEDB_VERSION " [" SERENEDB_PLATFORM "]"
 #endif
 
-namespace vpack {
-
-class Builder;
-}
-
 namespace sdb {
 namespace rest {
 
@@ -80,10 +75,6 @@ class Version {
 
   // get boost reactor type
   static std::string getBoostReactorType();
-
-  // get RocksDB version
-  static std::string getRocksDBVersion();
-
   // get OpenSSL version
   static std::string getOpenSSLVersion(bool compile_time);
 
@@ -113,9 +104,6 @@ class Version {
 
   // get detailed version information as a (multi-line) string
   static std::string getDetailed();
-
-  // VPack all data
-  static void getVPack(vpack::Builder&);
 
  public:
   static std::map<std::string, std::string> gValues;

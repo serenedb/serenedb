@@ -88,12 +88,12 @@ for tag in "${EXTRA_TAGS_ARRAY[@]}"; do
 	[ -n "$tag" ] && ALL_TAGS+=("$tag")
 done
 
-log "Creating multi-arch manifests..."
+log "Creating multi-arch manifests for: ${ALL_TAGS[*]}"
+TAG_ARGS=()
 for tag in "${ALL_TAGS[@]}"; do
-	docker manifest create --amend "${FULL_IMAGE_NAME}:${tag}" "${MANIFEST_SOURCES[@]}"
-	docker manifest push "${FULL_IMAGE_NAME}:${tag}"
-	log "  Pushed ${FULL_IMAGE_NAME}:${tag}"
+	TAG_ARGS+=(-t "${FULL_IMAGE_NAME}:${tag}")
 done
+docker buildx imagetools create "${TAG_ARGS[@]}" "${MANIFEST_SOURCES[@]}"
 
 # --- Cleanup arch-specific images ---
 for arch in "${AVAILABLE_ARCHES[@]}"; do

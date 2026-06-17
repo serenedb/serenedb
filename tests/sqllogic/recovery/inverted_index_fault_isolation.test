@@ -2,12 +2,18 @@ hash-threshold 100
 
 # Fault-armed assertions that the search scans read *exactly* what their
 # projection needs:
-#   - cs-only INCLUDE projections must not fetch PK from cs and must not
-#     call IndexSource::Materialize (which would hit RocksDB).
+#   - cs-only INCLUDE projections must not fetch PK from the columnstore and
+#     must not call IndexSource::Materialize (which would hit the store).
 #   - external-only projections must not touch the cs materializer.
 #
-# Each fault site `SDB_THROW(sdb::ERROR_DEBUG)` when armed -- queries that don't
-# exercise that path complete normally; queries that do trip surface
+# iresearch scans are eventually consistent (last-refresh), never
+# visibility-filtered: a covered projection is served entirely from the
+# index columnstore, the matched-row count is preserved across post-refresh
+# deletes, and non-INCLUDE columns of a deleted row surface as NULL while
+# the row is still emitted.
+#
+# Each fault site `SDB_THROW(sdb::ERROR_DEBUG)` when armed -- queries that
+# don't exercise that path complete normally; queries that do trip surface
 # "intentional debug error" so we can pin the routing rule in CI.
 
 statement ok
@@ -64,11 +70,12 @@ b	200
 
 
 # --- cs-only INCLUDE projection -- streaming path ---------------------
-# label + tag are both INCLUDE'd. The streaming path must:
+# label + tag are both INCLUDE'd. A covered projection is served from the
+# index columnstore only: the streaming path must
 #   - skip per-batch SegmentPkSequentialFetcher::Fetch
 #     (so SearchPkFetchFault is dormant);
 #   - skip IndexSource::Materialize
-#     (so SearchRocksDBLookupFault is dormant);
+#     (so SearchLookupFault is dormant);
 #   - go through ColumnstoreMaterializer::SelectByDocIds
 #     (so SearchIncludeFetchFault *would* trip if armed -- not armed here).
 
@@ -91,7 +98,7 @@ SET sdb_faults = '-SearchPkFetchFault'
 
 
 statement ok
-SET sdb_faults = 'SearchRocksDBLookupFault'
+SET sdb_faults = 'SearchLookupFault'
 
 
 query
@@ -105,13 +112,13 @@ b	200
 
 
 statement ok
-SET sdb_faults = '-SearchRocksDBLookupFault'
+SET sdb_faults = '-SearchLookupFault'
 
 
 # --- cs-only INCLUDE projection -- top-K path -------------------------
-# ORDER BY ts_rank ... LIMIT k drives the score_top_k path. With only
-# INCLUDE'd columns projected, the precomputed PK collection block
-# (LookupSegmentsValues) must be skipped.
+# ORDER BY BM25 ... LIMIT k drives the score_top_k path. With only
+# INCLUDE'd columns projected, the precomputed PK collection block must be
+# skipped.
 
 statement ok
 SET sdb_faults = 'SearchPkFetchFault'
@@ -131,7 +138,7 @@ SET sdb_faults = '-SearchPkFetchFault'
 
 
 statement ok
-SET sdb_faults = 'SearchRocksDBLookupFault'
+SET sdb_faults = 'SearchLookupFault'
 
 
 query
@@ -144,11 +151,11 @@ a	100
 
 
 statement ok
-SET sdb_faults = '-SearchRocksDBLookupFault'
+SET sdb_faults = '-SearchLookupFault'
 
 
 # --- external-only projection -- streaming path -----------------------
-# pk + ext_only are not INCLUDE'd, so they must come from RocksDB via
+# pk + ext_only are not INCLUDE'd, so they must come from the store via
 # IndexSource. The cs materializer must not be touched.
 
 statement ok
@@ -187,7 +194,7 @@ SET sdb_faults = '-SearchPkFetchFault'
 
 
 statement ok
-SET sdb_faults = 'SearchRocksDBLookupFault'
+SET sdb_faults = 'SearchLookupFault'
 
 
 statement error intentional debug error
@@ -197,7 +204,7 @@ SELECT pk, ext_only FROM doc_idx
 
 
 statement ok
-SET sdb_faults = '-SearchRocksDBLookupFault'
+SET sdb_faults = '-SearchLookupFault'
 
 
 # Streaming + INCLUDE projection -> must touch the cs materializer.
@@ -214,3 +221,93 @@ SELECT label, tag FROM doc_idx
 
 statement ok
 SET sdb_faults = '-SearchIncludeFetchFault'
+
+
+# --- eventually-consistent COUNT and covered SELECT after a post-refresh
+# delete (no subsequent refresh) --------------------------------------
+# The matched set is frozen at the last refresh. Deleting matched rows in a
+# committed transaction without refreshing must NOT change the count or the
+# covered projection: both still report the last-refresh matched set.
+
+statement ok
+DELETE FROM doc WHERE pk = 2
+
+
+query
+SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+2
+
+
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY label;
+----
+label	tag
+a	100
+b	200
+
+
+# The covered projection is still served entirely from the columnstore even
+# though pk=2 is gone from the store: the store-read faults stay dormant.
+
+statement ok
+SET sdb_faults = 'SearchPkFetchFault'
+
+
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY label;
+----
+label	tag
+a	100
+b	200
+
+
+statement ok
+SET sdb_faults = '-SearchPkFetchFault'
+
+
+statement ok
+SET sdb_faults = 'SearchLookupFault'
+
+
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY label;
+----
+label	tag
+a	100
+b	200
+
+
+statement ok
+SET sdb_faults = '-SearchLookupFault'
+
+
+# --- null-on-miss: NON-covered projection over a deleted row ----------
+# ext_only is not INCLUDE'd, so it is fetched by rowid at the current
+# snapshot. pk=2 was deleted after the last refresh: its row is STILL
+# returned (count preserved), ext_only reads NULL, and the INCLUDE column
+# (label) from the columnstore is still correct.
+
+query
+SELECT label, ext_only FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY label;
+----
+label	ext_only
+a	x-one
+b	NULL
+
+
+statement ok
+DROP TABLE doc
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY en

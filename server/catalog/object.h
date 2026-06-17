@@ -20,15 +20,22 @@
 
 #pragma once
 
-#include <vpack/builder.h>
-#include <vpack/iterator.h>
-#include <vpack/serializer.h>
+#include <absl/hash/hash.h>
 
+#include <atomic>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
+#include <vector>
 
 #include "basics/bit_utils.hpp"
 #include "basics/identifier.h"
+#include "basics/serialization.h"
 #include "catalog/identifiers/identifier.h"
 
 namespace sdb::catalog {
@@ -41,8 +48,8 @@ enum class ObjectType : uint8_t {
   Tombstone = 1,
   // Catalog objects start at 128.
   // Order matters: within the same parent, objects are scanned in enum order.
-  // Shards must come after their parent definition so the parent exists
-  // when the shard is registered.
+  // Indexes must come after their table so the table exists when the index
+  // is loaded.
   // Top-level (parent = instance)
   Database = 128,
   Role,
@@ -55,12 +62,8 @@ enum class ObjectType : uint8_t {
   PgSqlView,
   Sequence,
   Table,
-  // Under table - shards after their parent definition
-  TableShard,
   SecondaryIndex,
-  SecondaryIndexShard,
   InvertedIndex,
-  InvertedIndexShard,
 
   Column,           // loaded as a part of a Table, not as a separate object
   CheckConstraint,  // loaded as a part of a Table, not as a separate object
@@ -73,51 +76,6 @@ constexpr bool IsIndex(ObjectType t) noexcept {
   return t == ObjectType::SecondaryIndex || t == ObjectType::InvertedIndex;
 }
 
-constexpr bool IsIndexShard(ObjectType t) noexcept {
-  return t == ObjectType::SecondaryIndexShard ||
-         t == ObjectType::InvertedIndexShard;
-}
-
-constexpr ObjectType IndexShardType(ObjectType index_type) noexcept {
-  SDB_ASSERT(IsIndex(index_type));
-  if (index_type == ObjectType::InvertedIndex) {
-    return ObjectType::InvertedIndexShard;
-  } else {
-    SDB_ASSERT(index_type == ObjectType::SecondaryIndex);
-    return ObjectType::SecondaryIndexShard;
-  }
-}
-
-// https://www.postgresql.org/docs/current/sql-grant.html
-enum class AclMode : uint64_t {
-  NoRights = 0U,
-  Insert = 1U << 0,
-  Select = 1U << 1,
-  Update = 1U << 2,
-  Delete = 1U << 3,
-  Truncate = 1U << 4,
-  References = 1U << 5,
-  Trigger = 1U << 6,
-  Execute = 1U << 7,
-  Usage = 1U << 8,
-  Create = 1U << 9,
-  CreateTemp = 1U << 10,
-  Connect = 1U << 11,
-  Set = 1U << 12,
-  AlterSystem = 1U << 13,
-};
-
-ENABLE_BITMASK_ENUM(AclMode);
-
-struct AclItem {
-  ObjectId grantee = id::kInvalid;
-  ObjectId grantor = id::kInvalid;
-  AclMode privs = AclMode::NoRights;
-};
-
-using Acl = std::vector<AclItem>;
-using AclView = std::span<const AclItem>;
-
 class Object {
  public:
   virtual ~Object();
@@ -127,7 +85,6 @@ class Object {
       _id{other._id},
       _parent_id{other._parent_id},
       _type{other._type},
-      _acl{other._acl},
       _tombstoned{other._tombstoned.load(std::memory_order_acquire)} {}
 
   Object& operator=(const Object& other) {
@@ -136,7 +93,6 @@ class Object {
       _id = other._id;
       _parent_id = other._parent_id;
       _type = other._type;
-      _acl = other._acl;
       _tombstoned.store(other._tombstoned.load(std::memory_order_acquire),
                         std::memory_order_release);
     }
@@ -144,7 +100,6 @@ class Object {
   }
 
   ObjectId GetParentId() const noexcept { return _parent_id; }
-  auto GetAcl() const noexcept { return std::span{_acl}; }
   ObjectType GetType() const noexcept { return _type; }
   std::string_view GetName() const noexcept { return _name; }
   ObjectId GetId() const noexcept { return _id; }
@@ -156,7 +111,8 @@ class Object {
     _tombstoned.store(v, std::memory_order_release);
   }
 
-  virtual void WriteInternal(vpack::Builder&) const = 0;
+  virtual void Serialize(duckdb::Serializer&) const = 0;
+
   virtual std::shared_ptr<Object> Clone() const = 0;
 
   void SetName(std::string_view name) { _name = name; }
@@ -168,17 +124,10 @@ class Object {
   Object(ObjectId parent_id, ObjectId id, std::string_view name,
          ObjectType type);
 
-  template<typename F>
-  void WriteObject(vpack::Builder& b, F&& write_fields) const {
-    b.add("name", GetName());
-    write_fields(b);
-  }
-
   std::string _name;
   ObjectId _id;
   ObjectId _parent_id;
   ObjectType _type;
-  Acl _acl;
   std::atomic_bool _tombstoned = false;
 };
 
@@ -192,6 +141,29 @@ struct ReadContext {
   ObjectId schema_id;
   ObjectId relation_id;
 };
+
+inline std::string_view SerializeObject(const Object& obj,
+                                        duckdb::MemoryStream& stream) {
+  stream.Rewind();
+  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
+  obj.Serialize(serializer);
+  return {reinterpret_cast<const char*>(stream.GetData()),
+          stream.GetPosition()};
+}
+
+inline duckdb::MemoryStream ReadStream(std::string_view bytes) {
+  return duckdb::MemoryStream{
+    const_cast<duckdb::data_t*>(
+      reinterpret_cast<const duckdb::data_t*>(bytes.data())),
+    bytes.size()};
+}
+
+template<typename T>
+std::shared_ptr<T> DeserializeObject(std::string_view bytes, ReadContext ctx) {
+  auto stream = ReadStream(bytes);
+  duckdb::BinaryDeserializer deserializer{stream};
+  return T::Deserialize(deserializer, ctx);
+}
 
 struct ObjectByName {
   using is_transparent = void;
@@ -234,22 +206,6 @@ struct ObjectById {
     SDB_ASSERT(l);
     SDB_ASSERT(r);
     return l->GetId() == r->GetId();
-  }
-};
-
-struct ObjectMeta {
-  std::string_view name;
-  ObjectId id;
-  ObjectId parent_id;
-  AclView acl;
-
-  static ObjectMeta Make(const Object& obj) noexcept {
-    return {
-      .name = obj.GetName(),
-      .id = obj.GetId(),
-      .parent_id = obj.GetParentId(),
-      .acl = obj.GetAcl(),
-    };
   }
 };
 

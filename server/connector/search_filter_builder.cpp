@@ -63,16 +63,14 @@
 #include "basics/containers/trivial_map.h"
 #include "basics/errors.h"
 #include "basics/string_utils.h"
-#include "catalog/mangling.h"
+#include "comparison_op.hpp"
 #include "connector/json_extract_names.hpp"
-#include "connector/search_field_name.hpp"
 #include "functions/search.h"
 #include "functions/string.h"
 #include "functions/ts_common.hpp"
 #include "geo_filter_builder.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "rocksdb_filter.hpp"
 
 namespace magic_enum {
 
@@ -167,8 +165,7 @@ irs::bytes_view AsRawBytes(const duckdb::Value& value) {
 
 }  // namespace
 
-Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
-                       const SearchColumnInfo& column_info,
+Result SetupTermFilter(irs::ByTerm& filter, const SearchColumnInfo& column_info,
                        const duckdb::Value& value) {
   SDB_ASSERT(!value.IsNull(),
              "UNKNOWN and Nulls should be handled as part of IS NULL operator. "
@@ -176,7 +173,7 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
 
   auto type_id = column_info.logical_type.id();
 
-  if (auto r = MangleForType(type_id, field_name); !r.ok()) {
+  if (auto r = ValidateFilterType(type_id); !r.ok()) {
     return r;
   }
 
@@ -197,7 +194,7 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
             "Unsupported type for term filter: ", static_cast<int>(type_id)};
   }
 
-  *filter.mutable_field() = field_name;
+  *filter.mutable_field_id() = PickPerKindFieldId(column_info, type_id);
   return {};
 }
 
@@ -372,13 +369,13 @@ Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {ERROR_BAD_PARAMETER,
             "IS NULL input is not a reference to an indexed column"};
   }
-  std::string field_name;
-  MakeFieldName(column_info->field_id, field_name);
-  search::mangling::MangleNull(field_name);
   auto& term_filter =
     ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
   term_filter.boost(ctx.boost);
-  *term_filter.mutable_field() = field_name;
+  SDB_ENSURE(irs::field_limits::valid(column_info->null_field_id),
+             ERROR_INTERNAL,
+             "FromIsNull: column_info has no null_field_id allocated");
+  *term_filter.mutable_field_id() = column_info->null_field_id;
   term_filter.mutable_options()->term.assign(
     irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
   return {};
@@ -432,9 +429,7 @@ Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
                         : AddFilter<irs::ByTerm>(filter);
 
   term_filter.boost(ctx.boost);
-  std::string field_name;
-  MakeFieldName(column_info->field_id, field_name);
-  return SetupTermFilter(term_filter, field_name, *column_info, *const_val);
+  return SetupTermFilter(term_filter, *column_info, *const_val);
 }
 
 template<bool GenericVersion>
@@ -484,14 +479,11 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
     }
   }
 
-  std::string field_name;
-  MakeFieldName(column_info->field_id, field_name);
-
   auto type_id = column_info->logical_type.id();
 
-  auto setup_base_filter = [&](auto& range_filter,
-                               std::string&& fn) -> decltype(auto) {
-    *range_filter.mutable_field() = std::move(fn);
+  auto setup_base_filter = [&](auto& range_filter) -> decltype(auto) {
+    *range_filter.mutable_field_id() =
+      PickPerKindFieldId(*column_info, type_id);
     range_filter.boost(ctx.boost);
     switch (op) {
       case ComparisonOp::Lt:
@@ -516,19 +508,18 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
     SDB_UNREACHABLE();
   };
 
-  if (auto r = MangleForType(type_id, field_name); !r.ok()) {
+  if (auto r = ValidateFilterType(type_id); !r.ok()) {
     return r;
   }
 
   if (type_id == duckdb::LogicalTypeId::VARCHAR) {
     auto& range_filter = AddFilter<irs::ByRange>(filter);
     range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
-    setup_base_filter(range_filter, std::move(field_name))
-      .assign(AsRawBytes(*const_val));
+    setup_base_filter(range_filter).assign(AsRawBytes(*const_val));
   } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range_filter = AddFilter<irs::ByRange>(filter);
     range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
-    setup_base_filter(range_filter, std::move(field_name))
+    setup_base_filter(range_filter)
       .assign(irs::ViewCast<irs::byte_type>(
         irs::BooleanTokenizer::value(const_val->GetValue<bool>())));
   } else if (IsNumericTypeId(type_id)) {
@@ -536,8 +527,7 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
     range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     irs::NumericTokenizer stream;
     ResetNumericStream(stream, type_id, *const_val);
-    irs::SetGranularTerm(setup_base_filter(range_filter, std::move(field_name)),
-                         stream);
+    irs::SetGranularTerm(setup_base_filter(range_filter), stream);
   } else {
     return {ERROR_NOT_IMPLEMENTED, "Unsupported type for range comparison: ",
             static_cast<int>(type_id)};
@@ -647,19 +637,15 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {};
   }
 
-  std::string field_name;
-  MakeFieldName(column_info->field_id, field_name);
-
   auto type_id = column_info->logical_type.id();
-  auto r = MangleForType(type_id, field_name);
-  if (!r.ok()) {
+  if (auto r = ValidateFilterType(type_id); !r.ok()) {
     return r;
   }
 
   auto& terms_filter = ctx.negated ? Negate<irs::ByTerms>(filter)
                                    : AddFilter<irs::ByTerms>(filter);
   terms_filter.boost(ctx.boost);
-  *terms_filter.mutable_field() = field_name;
+  *terms_filter.mutable_field_id() = PickPerKindFieldId(*column_info, type_id);
   auto& opts = *terms_filter.mutable_options();
 
   for (const auto* value : values) {
@@ -1278,24 +1264,23 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
 
 const SearchColumnInfo* FindColumnRefInfo(
   const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref) {
-  auto info = ctx.column_getter(ref);
-  if (!info) {
-    return nullptr;
-  }
-
-  std::string cache_key;
-  MakeFieldName(info->field_id, cache_key);
-
-  auto cache_it = ctx.column_cache.find(cache_key);
+  auto cache_it = ctx.column_cache.find(ref.binding);
   if (cache_it != ctx.column_cache.end()) {
     SDB_ASSERT(cache_it->second.logical_type.id() !=
                  duckdb::LogicalTypeId::VARCHAR ||
                cache_it->second.tokenizer.analyzer);
     return &cache_it->second;
   }
-
-  return &ctx.column_cache
-            .emplace(std::move(cache_key), std::move(info.value()))
+  auto info = ctx.column_getter(ref);
+  if (!info) {
+    return nullptr;
+  }
+  if (info->logical_type.id() == duckdb::LogicalTypeId::LIST) {
+    info->logical_type = duckdb::ListType::GetChildType(info->logical_type);
+  } else if (info->logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
+    info->logical_type = duckdb::ArrayType::GetChildType(info->logical_type);
+  }
+  return &ctx.column_cache.emplace(ref.binding, std::move(info.value()))
             .first->second;
 }
 
@@ -1308,17 +1293,7 @@ const duckdb::BoundColumnRefExpression* TryGetColumnRef(
 }
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
-  switch (id) {
-    case duckdb::LogicalTypeId::TINYINT:
-    case duckdb::LogicalTypeId::SMALLINT:
-    case duckdb::LogicalTypeId::INTEGER:
-    case duckdb::LogicalTypeId::BIGINT:
-    case duckdb::LogicalTypeId::FLOAT:
-    case duckdb::LogicalTypeId::DOUBLE:
-      return true;
-    default:
-      return false;
-  }
+  return catalog::term_dict::IsNumeric(catalog::term_dict::Classify(id));
 }
 
 const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
@@ -1376,8 +1351,14 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 
   const auto unwrapped = UnwrapFieldCast(expr);
   std::optional<SearchColumnInfo> info;
+  bool matched_unwrapped = false;
   if (ctx.expr_getter) {
     info = (*ctx.expr_getter)(*unwrapped.expr);
+    if (info) {
+      matched_unwrapped = true;
+    } else {
+      info = (*ctx.expr_getter)(expr);
+    }
   }
   if (!info) {
     return nullptr;
@@ -1389,8 +1370,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     info->logical_type = duckdb::ArrayType::GetChildType(info->logical_type);
   }
 
-  // Numerics fold to DOUBLE: writer tokenises JSON numbers via reset(double).
-  if (unwrapped.override_type.has_value()) {
+  if (matched_unwrapped && unwrapped.override_type) {
     if (IsNumericTypeId(unwrapped.override_type->id())) {
       info->logical_type = duckdb::LogicalType::DOUBLE;
     } else {
@@ -1398,67 +1378,41 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     }
   }
 
-  // Key by mangle byte: INTEGER and BIGINT both fold to Numeric.
-  auto& cache_key = ctx.cache_key;
-  cache_key.clear();
-  MakeFieldName(info->field_id, cache_key);
-  if (auto r = MangleForType(info->logical_type.id(), cache_key); !r.ok()) {
+  if (auto r = ValidateFilterType(info->logical_type.id()); !r.ok()) {
     return nullptr;
   }
-  auto it = ctx.column_cache.find(cache_key);
-  if (it != ctx.column_cache.end()) {
+  info->field_id = PickPerKindFieldId(*info, info->logical_type.id());
+  auto it = ctx.expr_cache.find(info->field_id);
+  if (it != ctx.expr_cache.end()) {
     return &it->second;
   }
-
-  return &ctx.column_cache.emplace(cache_key, std::move(info.value()))
+  const auto field_id = info->field_id;
+  return &ctx.expr_cache.emplace(field_id, std::move(info.value()))
             .first->second;
 }
 
-Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name) {
-  switch (type_id) {
-    case duckdb::LogicalTypeId::VARCHAR:
-    case duckdb::LogicalTypeId::BLOB:
-      search::mangling::MangleString(field_name);
-      return {};
-    case duckdb::LogicalTypeId::BOOLEAN:
-      search::mangling::MangleBool(field_name);
-      return {};
-    case duckdb::LogicalTypeId::TINYINT:
-    case duckdb::LogicalTypeId::SMALLINT:
-    case duckdb::LogicalTypeId::INTEGER:
-    case duckdb::LogicalTypeId::BIGINT:
-    case duckdb::LogicalTypeId::FLOAT:
-    case duckdb::LogicalTypeId::DOUBLE:
-    case duckdb::LogicalTypeId::DATE:
-    case duckdb::LogicalTypeId::TIMESTAMP:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-      search::mangling::MangleNumeric(field_name);
-      return {};
-    default:
-      return {ERROR_NOT_IMPLEMENTED, "Unsupported type id ",
-              static_cast<int>(type_id), " for field mangling"};
+Result ValidateFilterType(duckdb::LogicalTypeId type_id) {
+  if (!catalog::term_dict::IsSupported(catalog::term_dict::Classify(type_id))) {
+    return {ERROR_NOT_IMPLEMENTED, "Unsupported type id ",
+            static_cast<int>(type_id), " for filter"};
   }
+  return {};
 }
 
 void ResetNumericStream(irs::NumericTokenizer& stream,
                         duckdb::LogicalTypeId type_id,
                         const duckdb::Value& value) {
-  switch (type_id) {
-    case duckdb::LogicalTypeId::TINYINT:
-    case duckdb::LogicalTypeId::SMALLINT:
-    case duckdb::LogicalTypeId::INTEGER:
-    case duckdb::LogicalTypeId::DATE:
+  switch (catalog::term_dict::Classify(type_id)) {
+    case catalog::term_dict::Kind::NumericI32:
       stream.reset(value.GetValue<int32_t>());
       break;
-    case duckdb::LogicalTypeId::BIGINT:
-    case duckdb::LogicalTypeId::TIMESTAMP:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+    case catalog::term_dict::Kind::NumericI64:
       stream.reset(value.GetValue<int64_t>());
       break;
-    case duckdb::LogicalTypeId::FLOAT:
+    case catalog::term_dict::Kind::NumericF32:
       stream.reset(value.GetValue<float>());
       break;
-    case duckdb::LogicalTypeId::DOUBLE:
+    case catalog::term_dict::Kind::NumericF64:
       stream.reset(value.GetValue<double>());
       break;
     default:
@@ -1466,12 +1420,9 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
   }
 }
 
-// Accepts numeric + DECIMAL. Range constructors cast DECIMAL bounds
-// to the column's logical type before tokenising; the comparison/term
-// paths can't because they feed `type_id` straight into
-// ResetNumericStream which doesn't handle DECIMAL.
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
-  return IsNumericTypeId(id) || id == duckdb::LogicalTypeId::DECIMAL;
+  return catalog::term_dict::IsNumeric(catalog::term_dict::Classify(id)) ||
+         id == duckdb::LogicalTypeId::DECIMAL;
 }
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
@@ -1814,22 +1765,29 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
 Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
-  const ColumnGetter& column_getter, const SearchFilterOptions& options,
+  const ColumnGetter& column_getter, duckdb::ClientContext& context,
   const ExpressionGetter& expr_getter) {
   irs::StringTokenizer identity;
-  containers::NodeHashMap<std::string, SearchColumnInfo> column_cache;
-  std::string cache_key_scratch;
+  duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
+  containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
+
+  size_t scored_terms_limit = 1024;
+  duckdb::Value v;
+  if (context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
+      !v.IsNull()) {
+    scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
+  }
 
   FilterContext ctx{
     .negated = false,
     .column_getter = column_getter,
     .expr_getter = expr_getter ? &expr_getter : nullptr,
     .column_cache = column_cache,
-    .cache_key = cache_key_scratch,
+    .expr_cache = expr_cache,
     .identity = identity,
     .tokenizer = identity,
-    .client_context = options.client_context,
-    .scored_terms_limit = options.scored_terms_limit,
+    .client_context = context,
+    .scored_terms_limit = scored_terms_limit,
   };
 
   for (const auto& expr : conjuncts) {

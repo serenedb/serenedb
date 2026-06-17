@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <unicode/locid.h>
+
 #include <atomic>
 #include <boost/iterator/iterator_facade.hpp>
 #include <filesystem>
@@ -30,12 +32,13 @@
 #include <functional>
 
 #include "basics/down_cast.h"
-#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/iterator.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
@@ -44,6 +47,162 @@ class Tokenizer;
 
 }  // namespace irs
 namespace tests {
+
+// Canonical mapping from JSON / test field-name string to a stable
+// `irs::field_id`. Test fixtures index by id (`SegmentWriter::index(field_id,
+// ...)`, `SubReader::field(field_id)`); the on-disk format never carries the
+// name. Shared JSON factories (`GenericJsonFieldFactory`, ...) and per-test
+// fixtures route their fields through this helper so every site that touches
+// the same logical column lands on the same id.
+//
+// Ids below the FNV fallback range are stable per-name and small (so they
+// stay distinct from catalog-allocated ids when both coexist). `NextId()`
+// never returns these literal values. Unknown names are hashed via FNV-1a;
+// the hash is biased away from `field_limits::invalid()`.
+//
+// Two flavors are provided:
+//   - `FieldIdFor`: constexpr; folds at compile time for string-literal call
+//     sites (per-test fixtures with hard-coded names).
+//   - `FieldIdForRuntime`: defined in the .cpp; backed by a single
+//     `absl::flat_hash_map<std::string_view, irs::field_id>` populated once
+//     so the JSON factories (per doc / per field hot path) pay O(1) hash
+//     instead of O(N) string compares. Returns the same id as the constexpr
+//     form for every input.
+//
+// Convention for per-test bench/fixture constants:
+//   When a test file declares its own `constexpr irs::field_id kFoo = 1;`
+//   for a synthetic field, prefer `tests::FieldIdFor("<unique-name>")`
+//   instead so that:
+//     - the id is guaranteed not to collide with any other test fixture's
+//       hard-coded id once the files end up linked into the same binary;
+//     - downstream tests that grep test data by name can join on the same
+//       shared mapping.
+//   Bare-int sentinels (1, 2, ...) are harmless when the test file is
+//   self-contained, but new tests should pick `FieldIdFor("...")` to
+//   avoid future collision when files cross-link.
+irs::field_id FieldIdForRuntime(std::string_view name);
+
+inline constexpr irs::field_id FieldIdFor(std::string_view name) noexcept {
+  if (name == "seq") {
+    return 1;
+  }
+  if (name == "name") {
+    return 2;
+  }
+  if (name == "same") {
+    return 3;
+  }
+  if (name == "duplicated") {
+    return 4;
+  }
+  if (name == "value") {
+    return 5;
+  }
+  if (name == "field") {
+    return 6;
+  }
+  if (name == "phrase") {
+    return 7;
+  }
+  if (name == "name_anl") {
+    return 8;
+  }
+  if (name == "name_anl_pay") {
+    return 9;
+  }
+  if (name == "prefix") {
+    return 10;
+  }
+  if (name == "title") {
+    return 11;
+  }
+  if (name == "title_anl") {
+    return 12;
+  }
+  if (name == "title_anl_pay") {
+    return 13;
+  }
+  if (name == "body") {
+    return 14;
+  }
+  if (name == "body_anl") {
+    return 15;
+  }
+  if (name == "body_anl_pay") {
+    return 16;
+  }
+  if (name == "date") {
+    return 17;
+  }
+  if (name == "datestr") {
+    return 18;
+  }
+  if (name == "id") {
+    return 19;
+  }
+  if (name == "idstr") {
+    return 20;
+  }
+  if (name == "test-field") {
+    return 21;
+  }
+  if (name == "test") {
+    return 22;
+  }
+  if (name == "name1") {
+    return 23;
+  }
+  if (name == "phrase_anl") {
+    return 24;
+  }
+  if (name == "foo") {
+    return 25;
+  }
+  if (name == "doc_bytes") {
+    return 26;
+  }
+  if (name == "doc_double") {
+    return 27;
+  }
+  if (name == "doc_float") {
+    return 28;
+  }
+  if (name == "doc_int") {
+    return 29;
+  }
+  if (name == "doc_long") {
+    return 30;
+  }
+  if (name == "doc_string") {
+    return 31;
+  }
+  if (name == "doc_text") {
+    return 32;
+  }
+  if (name == "another_column") {
+    return 33;
+  }
+  if (name == "label") {
+    return 34;
+  }
+  if (name == "updated") {
+    return 35;
+  }
+  // 64-bit FNV-1a fallback for names not in the table above.
+  uint64_t h = 14695981039346656037ull;
+  for (char c : name) {
+    h ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
+    h *= 1099511628211ull;
+  }
+  // Set bit 63 so the result is disjoint from literal ids (1..35). A name
+  // whose lower 63 bits are all-ones would still hash to all-ones after
+  // the OR (= field_limits::invalid()); guard against that explicitly.
+  h |= (1ull << 63);
+  if (h == std::numeric_limits<uint64_t>::max()) {
+    h -= 1;
+  }
+  return h;
+}
 
 //////////////////////////////////////////////////////////////////////////////
 /// @class ifield
@@ -55,6 +214,8 @@ struct Ifield {
 
   virtual irs::IndexFeatures GetIndexFeatures() const = 0;
   virtual irs::Tokenizer& GetTokens() const = 0;
+  // Field identity; the on-disk storage key.
+  virtual irs::field_id Id() const = 0;
   virtual std::string_view Name() const = 0;
   virtual bool Write(irs::DataOutput& out) const = 0;
 };
@@ -76,11 +237,14 @@ class FieldBase : public Ifield {
     return index_features;
   }
 
+  irs::field_id Id() const noexcept final { return id; }
+
   std::string_view Name() const noexcept final { return name; }
 
   void Name(std::string name) noexcept { this->name = std::move(name); }
 
   std::string name;
+  irs::field_id id{irs::field_limits::invalid()};
   irs::IndexFeatures index_features{irs::IndexFeatures::None};
 };
 
@@ -317,6 +481,14 @@ class Particle : irs::util::Noncopyable {
   bool contains(const std::string_view& name) const;
   std::vector<Ifield::ptr> find(const std::string_view& name) const;
 
+  // Id-based equivalents. Field tests bind a stable `irs::field_id` via
+  // `tests::FieldIdFor` / catalog counters; when the caller already has the
+  // id (typical for JSON-factory routes) prefer these to avoid a per-field
+  // string compare.
+  bool contains_by_id(irs::field_id id) const noexcept;
+  Ifield* get_by_id(irs::field_id id) const noexcept;
+  bool remove_by_id(irs::field_id id) noexcept;
+
   template<typename T>
   T& back() const {
     typedef
@@ -344,6 +516,15 @@ class Particle : irs::util::Noncopyable {
         type;
 
     return static_cast<type*>(get(name));
+  }
+
+  template<typename T>
+  T* get_by_id(irs::field_id id) const noexcept {
+    typedef
+      typename std::enable_if<std::is_base_of<tests::Ifield, T>::value, T>::type
+        type;
+
+    return static_cast<type*>(get_by_id(id));
   }
 
   void remove(const std::string_view& name);
@@ -610,15 +791,24 @@ class TokenizerPayload final : public irs::Tokenizer {
   irs::Tokenizer* _impl;
 };
 
+// Construct the "text" analyzer with locale=C and an empty (explicit) stopword
+// list. Mirrors the legacy registry call `tests::LegacyGetAnalyzer("text",
+// Json,
+// "{\"locale\":\"C\", \"stopwords\":[]}")`.
+inline irs::analysis::Analyzer::ptr MakeDocGenTextTokenizer() {
+  irs::analysis::TextTokenizer::Options opts;
+  opts.locale = icu::Locale::createFromName("C");
+  opts.explicit_stopwords_set = true;
+  return irs::analysis::TextTokenizer::Make(std::move(opts));
+}
+
 // field which uses text analyzer for tokenization and stemming
 template<typename T>
 class TextField : public tests::FieldBase {
  public:
   TextField(const std::string& name, bool payload = false,
             irs::IndexFeatures extra_features = irs::IndexFeatures::None)
-    : _token_stream(irs::analysis::analyzers::Get(
-        "text", irs::Type<irs::text_format::Json>::get(),
-        "{\"locale\":\"C\", \"stopwords\":[]}")) {
+    : _token_stream(MakeDocGenTextTokenizer()) {
     if (payload) {
       if (!_token_stream->reset(_value)) {
         throw irs::IllegalState{"Failed to reset stream."};
@@ -632,10 +822,7 @@ class TextField : public tests::FieldBase {
 
   TextField(const std::string& name, const T& value, bool payload = false,
             irs::IndexFeatures extra_features = irs::IndexFeatures::None)
-    : _token_stream(irs::analysis::analyzers::Get(
-        "text", irs::Type<irs::text_format::Json>::get(),
-        "{\"locale\":\"C\", \"stopwords\":[]}")),
-      _value(value) {
+    : _token_stream(MakeDocGenTextTokenizer()), _value(value) {
     if (payload) {
       if (!_token_stream->reset(_value)) {
         throw irs::IllegalState{"Failed to reset stream."};
@@ -741,8 +928,11 @@ void NormStringJsonFieldFactory(tests::Document& doc, const std::string& name,
 template<typename Indexed>
 bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend) {
   auto ctx = writer.GetBatch();
-  auto doc = ctx.Insert();
-  return doc.Insert(ibegin, iend);
+  if (!ctx.Insert().Insert(ibegin, iend)) {
+    return false;
+  }
+  ctx.Commit();
+  return true;
 }
 
 template<typename Doc>
@@ -780,6 +970,7 @@ bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
       doc.Writer().remove(current_last_doc_id - batch_size + inserted_docs++);
     }
   } while (src != nullptr);
+  ctx.Commit();
   return true;
 }
 
@@ -787,16 +978,22 @@ template<typename Indexed>
 bool Update(irs::IndexWriter& writer, const irs::Filter& filter, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  auto doc = ctx.Replace(filter);
-  return doc.Insert(ibegin, iend);
+  if (!ctx.Replace(filter).Insert(ibegin, iend)) {
+    return false;
+  }
+  ctx.Commit();
+  return true;
 }
 
 template<typename Indexed>
 bool Update(irs::IndexWriter& writer, irs::Filter::ptr&& filter, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  auto doc = ctx.Replace(std::move(filter));
-  return doc.Insert(ibegin, iend);
+  if (!ctx.Replace(std::move(filter)).Insert(ibegin, iend)) {
+    return false;
+  }
+  ctx.Commit();
+  return true;
 }
 
 template<typename Indexed>
@@ -804,8 +1001,20 @@ bool Update(irs::IndexWriter& writer,
             const std::shared_ptr<irs::Filter>& filter, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  auto doc = ctx.Replace(filter);
-  return doc.Insert(ibegin, iend);
+  if (!ctx.Replace(filter).Insert(ibegin, iend)) {
+    return false;
+  }
+  ctx.Commit();
+  return true;
+}
+
+// One-shot removal: opens a batch, queues the filter and commits it.
+// Equivalent to `auto b = writer.GetBatch(); b.Remove(filter); b.Commit();`.
+template<bool TickBound = true, typename Filter>
+void Remove(irs::IndexWriter& writer, Filter&& filter) {
+  auto trx = writer.GetBatch();
+  trx.template Remove<TickBound>(std::forward<Filter>(filter));
+  trx.Commit();
 }
 
 }  // namespace tests

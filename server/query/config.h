@@ -24,6 +24,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/setting_info.hpp>
 #include <duckdb/parser/parsed_data/transaction_info.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <string_view>
 
@@ -89,11 +90,9 @@ class Config {
   int8_t GetExtraFloatDigits() const;
   ByteaOutput GetByteaOutput() const;
   IsolationLevel GetIsolationLevel() const;
-  WriteConflictPolicy GetWriteConflictPolicy() const;
-  bool GetReadYourOwnWrites() const;
+  bool GetStrictDDL() const;
   bool IsExplicitTransaction() const;
-
-  void ResetAll();
+  bool IsTransactionInvalidated() const;
 
   void DropCatalogSnapshot() { _snapshot.reset(); }
 

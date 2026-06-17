@@ -22,8 +22,13 @@
 
 #include "basics/down_cast.h"
 #include "catalog/index.h"
-#include "storage_engine/secondary_index_shard.h"
 
+namespace duckdb {
+
+class Serializer;
+class Deserializer;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 class SecondaryIndex : public Index {
@@ -32,19 +37,11 @@ class SecondaryIndex : public Index {
                  ObjectId relation_id, std::string name,
                  std::vector<Column::Id> column_ids, bool unique);
 
-  static std::shared_ptr<SecondaryIndex> ReadInternal(vpack::Slice slice,
-                                                      ReadContext ctx);
-  void WriteInternal(vpack::Builder& builder) const final;
+  static std::shared_ptr<SecondaryIndex> Deserialize(duckdb::Deserializer& src,
+                                                     ReadContext ctx);
+  void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
   bool IsUnique() const noexcept { return _unique; }
-
-  ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, ObjectId id) const final {
-    if (is_new) {
-      return std::make_shared<SecondaryIndexShard>(GetId());
-    }
-    return std::make_shared<SecondaryIndexShard>(id, GetId());
-  }
 
   std::vector<Column::Id> GetReferencedColumnIds() const final {
     const auto ids = GetColumnIds();

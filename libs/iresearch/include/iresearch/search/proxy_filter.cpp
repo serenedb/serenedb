@@ -303,4 +303,9 @@ Filter& ProxyFilter::cache_filter(IResourceManager& memory,
   return *_cache->real_filter;
 }
 
+const Filter& ProxyFilter::inner() const noexcept {
+  SDB_ASSERT(_cache && _cache->real_filter);
+  return *_cache->real_filter;
+}
+
 }  // namespace irs

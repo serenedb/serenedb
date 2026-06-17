@@ -35,9 +35,10 @@
 #include "basics/memory.hpp"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/read_context.hpp"
+#include "geo/wkb.h"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_filter.hpp"
@@ -49,7 +50,6 @@
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs {
 namespace {
@@ -92,21 +92,15 @@ class GeoIterator : public DocIterator {
   static constexpr CostAttr::Type kExtraCost = 2;
 
  public:
-  // Stored geo bytes now live in the columnstore as a typed BLOB column. The
-  // iterator owns a BlobPointReader (per-doc fetch with row-group caching)
-  // plus a one-row Vector<BLOB> that FetchRow lands the value into. The
-  // existing parser API still expects bytes_view, so Accept() reads the
-  // resulting string_t and forwards its bytes unchanged.
-  GeoIterator(DocIterator::ptr&& approx,
-              const columnstore::ColumnReader& stored_field,
-              const columnstore::Reader& cs_reader, Parser& parser,
-              Acceptor& acceptor, FieldProperties field,
-              const byte_type* query_stats, score_t boost)
+  GeoIterator(DocIterator::ptr&& approx, const ColumnReader& stored_field,
+              const ColReader& col_reader, Parser& parser, Acceptor& acceptor,
+              FieldProperties field, const byte_type* query_stats,
+              score_t boost)
     : _stats{query_stats},
       _boost{boost},
       _field{field},
       _approx{std::move(approx)},
-      _cursor{cs_reader, stored_field},
+      _cursor{col_reader, stored_field},
       _acceptor{acceptor},
       _parser{parser} {
     std::get<CostAttr>(_attrs).reset(
@@ -204,7 +198,7 @@ class GeoIterator : public DocIterator {
 
   ShapeContainer _shape;
   DocIterator::ptr _approx;
-  columnstore::ColumnReader::BlobPointReader _cursor;
+  ColumnReader::BlobPointReader _cursor;
   Attributes _attrs;
   Acceptor& _acceptor;
   [[no_unique_address]] Parser _parser;
@@ -212,8 +206,8 @@ class GeoIterator : public DocIterator {
 
 template<typename Parser, typename Acceptor>
 DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
-                              const columnstore::ColumnReader& stored_field,
-                              const columnstore::Reader& cs_reader,
+                              const ColumnReader& stored_field,
+                              const ColReader& col_reader,
                               const SubReader& reader, const TermReader& field,
                               const byte_type* query_stats, score_t boost,
                               Parser& parser, Acceptor& acceptor) {
@@ -225,23 +219,15 @@ DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
     // TODO(mbkkt) by_terms? LazyBitsetIterator faster than disjunction
     MakeDisjunction<Disjunction>(
       {}, static_cast<irs::doc_id_t>(reader.docs_count()), std::move(itrs)),
-    stored_field, cs_reader, parser, acceptor, field.meta(), query_stats,
+    stored_field, col_reader, parser, acceptor, field.meta(), query_stats,
     boost);
 }
 
-// Per-segment geo query state
 struct GeoState {
   explicit GeoState(IResourceManager& memory) noexcept : states{{memory}} {}
 
-  // Columnstore reader for the BLOB column carrying the analyzer's per-doc
-  // StoreAttr bytes. Resolved per-segment in PrepareState via
-  // SubReader::Column.
-  const columnstore::ColumnReader* stored_field{};
-
-  // Reader using for iterate over the terms
+  const ColumnReader* stored_field{};
   const TermReader* reader{};
-
-  // Geo term states
   ManagedVector<SeekCookie::ptr> states;
 };
 
@@ -266,8 +252,8 @@ class GeoQuery : public QueryBuilder {
 
     auto* field = _state.reader;
 
-    const auto* cs_reader = segment.CsReader();
-    if (!cs_reader) {
+    const auto* col_reader = segment.GetColReader();
+    if (!col_reader) {
       return DocIterator::empty();
     }
 
@@ -283,7 +269,7 @@ class GeoQuery : public QueryBuilder {
       itrs.emplace_back(std::move(it));
     }
 
-    return MakeIterator(std::move(itrs), *_state.stored_field, *cs_reader,
+    return MakeIterator(std::move(itrs), *_state.stored_field, *col_reader,
                         segment, *_state.reader, ctx.Stats().GetStats().data(),
                         Boost(), _parser, _acceptor);
   }
@@ -299,15 +285,154 @@ class GeoQuery : public QueryBuilder {
   score_t _boost;
 };
 
-struct VPackParser {
+struct SourceJsonParser {
+  SourceJsonParser() = default;
+  // The parser/buffer hold only per-call scratch state, so copies and moves
+  // start fresh. GeoIterator copy-constructs its Parser member per segment.
+  SourceJsonParser(const SourceJsonParser&) noexcept {}
+  SourceJsonParser(SourceJsonParser&&) noexcept {}
+  SourceJsonParser& operator=(const SourceJsonParser&) = delete;
+  SourceJsonParser& operator=(SourceJsonParser&&) = delete;
+
   bool operator()(bytes_view value, ShapeContainer& shape) const {
     SDB_ASSERT(!value.empty());
-    return ParseShape<Parsing::FromIndex>(view_to_slice(value), shape, _cache,
+    const std::string_view json_str{reinterpret_cast<const char*>(value.data()),
+                                    value.size()};
+    _buffer.assign(json_str);
+    _buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+    simdjson::padded_string_view padded_view{_buffer.data(), json_str.size(),
+                                             _buffer.size()};
+    simdjson::ondemand::document doc;
+    if (_parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
+      return false;
+    }
+    simdjson::ondemand::value json;
+    if (doc.get_value().get(json) != simdjson::SUCCESS) {
+      return false;
+    }
+    return ParseShape<Parsing::FromIndex>(json, shape, _cache,
                                           coding::Options::Invalid, nullptr);
   }
 
  private:
+  mutable simdjson::ondemand::parser _parser;
+  mutable std::string _buffer;
   mutable std::vector<S2LatLng> _cache;
+};
+
+struct SourceWkbParser {
+  bool operator()(bytes_view value, ShapeContainer& shape) const {
+    SDB_ASSERT(!value.empty());
+    const std::string_view bytes{reinterpret_cast<const char*>(value.data()),
+                                 value.size()};
+    shape = {};
+    return sdb::geo::ParseShapeWKB(bytes, shape).ok();
+  }
+};
+
+// Re-parses a geopoint source column (JSON text) with the same semantics as
+// GeoPointAnalyzer::ParsePoint: a [lat, lng] array when both paths are empty,
+// otherwise an object whose latitude/longitude live at the configured paths.
+struct SourcePointParser {
+  std::vector<std::string> latitude;
+  std::vector<std::string> longitude;
+
+  SourcePointParser() = default;
+  SourcePointParser(std::vector<std::string> lat, std::vector<std::string> lng)
+    : latitude{std::move(lat)}, longitude{std::move(lng)} {}
+  SourcePointParser(const SourcePointParser& other)
+    : latitude{other.latitude}, longitude{other.longitude} {}
+  SourcePointParser(SourcePointParser&& other) noexcept
+    : latitude{std::move(other.latitude)},
+      longitude{std::move(other.longitude)} {}
+  SourcePointParser& operator=(const SourcePointParser&) = delete;
+  SourcePointParser& operator=(SourcePointParser&&) = delete;
+
+  bool operator()(bytes_view value, ShapeContainer& shape) const {
+    SDB_ASSERT(!value.empty());
+    const std::string_view json_str{reinterpret_cast<const char*>(value.data()),
+                                    value.size()};
+    _buffer.assign(json_str);
+    _buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+    simdjson::padded_string_view padded_view{_buffer.data(), json_str.size(),
+                                             _buffer.size()};
+    simdjson::ondemand::document doc;
+    if (_parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
+      return false;
+    }
+    simdjson::ondemand::value json;
+    if (doc.get_value().get(json) != simdjson::SUCCESS) {
+      return false;
+    }
+    double lat, lng;
+    if (latitude.empty()) {
+      simdjson::ondemand::array array;
+      if (json.get_array().get(array) != simdjson::SUCCESS) {
+        return false;
+      }
+      double values[2];
+      size_t i = 0;
+      for (auto element : array) {
+        if (i == 2) [[unlikely]] {
+          return false;
+        }
+        if (element.get_double().get(values[i]) != simdjson::SUCCESS)
+          [[unlikely]] {
+          return false;
+        }
+        ++i;
+      }
+      if (i != 2) [[unlikely]] {
+        return false;
+      }
+      lat = values[0];
+      lng = values[1];
+    } else {
+      simdjson::ondemand::object object;
+      if (json.get_object().get(object) != simdjson::SUCCESS) {
+        return false;
+      }
+      auto find = [&object](std::span<const std::string> path,
+                            double& out) -> bool {
+        if (path.size() == 1) {
+          return object.find_field_unordered(path.front())
+                   .get_double()
+                   .get(out) == simdjson::SUCCESS;
+        }
+        simdjson::ondemand::value current;
+        if (object.find_field_unordered(path.front()).get(current) !=
+            simdjson::SUCCESS) {
+          return false;
+        }
+        for (size_t i = 1; i + 1 < path.size(); ++i) {
+          simdjson::ondemand::object inner;
+          if (current.get_object().get(inner) != simdjson::SUCCESS) {
+            return false;
+          }
+          if (inner.find_field_unordered(path[i]).get(current) !=
+              simdjson::SUCCESS) {
+            return false;
+          }
+        }
+        simdjson::ondemand::object inner;
+        if (current.get_object().get(inner) != simdjson::SUCCESS) {
+          return false;
+        }
+        return inner.find_field_unordered(path.back()).get_double().get(out) ==
+               simdjson::SUCCESS;
+      };
+      if (!find(latitude, lat) || !find(longitude, lng)) {
+        return false;
+      }
+    }
+    shape.reset(S2LatLng::FromDegrees(lat, lng).Normalized().ToPoint(),
+                coding::Options::Invalid);
+    return true;
+  }
+
+ private:
+  mutable simdjson::ondemand::parser _parser;
+  mutable std::string _buffer;
 };
 
 struct S2ShapeParser {
@@ -371,9 +496,20 @@ QueryBuilder::ptr MakeQuery(const SubReader& segment, IResourceManager& manager,
                             GeoState&& state, score_t boost,
                             const Options& options, Acceptor&& acceptor) {
   switch (options.stored) {
-    case StoredType::VPack:
-      return memory::make_tracked<GeoQuery<VPackParser, Acceptor>>(
-        manager, segment, std::move(state), VPackParser{},
+    case StoredType::Source:
+      if (options.source_is_wkb) {
+        return memory::make_tracked<GeoQuery<SourceWkbParser, Acceptor>>(
+          manager, segment, std::move(state), SourceWkbParser{},
+          std::forward<Acceptor>(acceptor), boost);
+      }
+      if (options.source_is_point) {
+        return memory::make_tracked<GeoQuery<SourcePointParser, Acceptor>>(
+          manager, segment, std::move(state),
+          SourcePointParser{options.point_latitude, options.point_longitude},
+          std::forward<Acceptor>(acceptor), boost);
+      }
+      return memory::make_tracked<GeoQuery<SourceJsonParser, Acceptor>>(
+        manager, segment, std::move(state), SourceJsonParser{},
         std::forward<Acceptor>(acceptor), boost);
     case StoredType::S2Region:
       return memory::make_tracked<GeoQuery<S2ShapeParser, Acceptor>>(
@@ -390,8 +526,8 @@ QueryBuilder::ptr MakeQuery(const SubReader& segment, IResourceManager& manager,
 }
 
 GeoState PrepareState(const SubReader& segment, const PrepareContext& ctx,
-                      std::span<const std::string> geo_terms,
-                      std::string_view field, field_id store_field_id) {
+                      std::span<const std::string> geo_terms, irs::field_id id,
+                      field_id store_field_id) {
   SDB_ASSERT(!geo_terms.empty());
 
   std::vector<std::string_view> sorted_terms(geo_terms.begin(),
@@ -402,8 +538,8 @@ GeoState PrepareState(const SubReader& segment, const PrepareContext& ctx,
 
   GeoState state{ctx.memory};
 
-  SDB_ASSERT(store_field_id != 0);
-  const auto* reader = segment.field(field);
+  SDB_ASSERT(irs::field_limits::valid(store_field_id));
+  const auto* reader = segment.field(id);
   if (!reader) {
     return state;
   }
@@ -452,8 +588,7 @@ std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
 }
 
 QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
-                                      const PrepareContext& ctx,
-                                      std::string_view field,
+                                      const PrepareContext& ctx, irs::field_id id,
                                       const GeoDistanceFilterOptions& options,
                                       bool greater) {
   const auto& range = options.range;
@@ -489,9 +624,9 @@ QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
           // dist > 0: full cap minus the singleton center. Used to AND in
           // a ByColumnExistence gate on store_field_id; that's gone, so
           // rows without a stored geo value pass the Not-singleton check.
-          And root;
-          auto& excl = root.add<Not>().filter<GeoDistanceFilter>();
-          *excl.mutable_field() = field;
+          Exclusion root;
+          auto& excl = root.exclude<GeoDistanceFilter>();
+          *excl.mutable_field_id() = id;
           auto& opts = *excl.mutable_options();
           opts = options;
           opts.range.min = 0;
@@ -538,7 +673,7 @@ QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
   }
 
   auto state =
-    PrepareState(segment, ctx, geo_terms, field, options.store_field_id);
+    PrepareState(segment, ctx, geo_terms, id, options.store_field_id);
 
   if (incl) {
     return MakeQuery(segment, ctx.memory, std::move(state), ctx.boost, options,
@@ -550,7 +685,7 @@ QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
 }
 
 PrepareCollector::ptr PrepareOpenIntervalCollector(
-  const Scorer* scorer, std::string_view field,
+  const Scorer* scorer, irs::field_id id,
   const GeoDistanceFilterOptions& options, bool greater) {
   const auto& range = options.range;
   const auto& origin = options.origin;
@@ -576,7 +711,7 @@ PrepareCollector::ptr PrepareOpenIntervalCollector(
         if (greater) {
           And root;
           auto& excl = root.add<Not>().filter<GeoDistanceFilter>();
-          *excl.mutable_field() = std::string{field};
+          *excl.mutable_field_id() = id;
           auto& opts = *excl.mutable_options();
           opts = options;
           opts.range.min = 0;
@@ -605,8 +740,7 @@ PrepareCollector::ptr PrepareOpenIntervalCollector(
 }
 
 QueryBuilder::ptr PrepareInterval(const SubReader& segment,
-                                  const PrepareContext& ctx,
-                                  std::string_view field,
+                                  const PrepareContext& ctx, irs::field_id id,
                                   const GeoDistanceFilterOptions& options) {
   const auto& range = options.range;
   SDB_ASSERT(BoundType::Unbounded != range.min_type);
@@ -615,7 +749,7 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
   if (range.max < 0.) {
     return QueryBuilder::Empty();
   } else if (range.min < 0.) {
-    return PrepareOpenInterval(segment, ctx, field, options, false);
+    return PrepareOpenInterval(segment, ctx, id, options, false);
   }
 
   const bool min_incl = range.min_type == BoundType::Inclusive;
@@ -643,7 +777,7 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
     }
 
     auto state =
-      PrepareState(segment, ctx, geo_terms, field, options.store_field_id);
+      PrepareState(segment, ctx, geo_terms, id, options.store_field_id);
 
     return MakeQuery(segment, ctx.memory, std::move(state), ctx.boost, options,
                      [bound = FromPoint(origin)](const ShapeContainer& shape) {
@@ -677,7 +811,7 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
   }
 
   auto state =
-    PrepareState(segment, ctx, geo_terms, field, options.store_field_id);
+    PrepareState(segment, ctx, geo_terms, id, options.store_field_id);
 
   switch (size_t(min_incl) + 2 * size_t(max_incl)) {
     case 0:
@@ -703,14 +837,14 @@ QueryBuilder::ptr PrepareInterval(const SubReader& segment,
 }
 
 PrepareCollector::ptr PrepareIntervalCollector(
-  const Scorer* scorer, std::string_view field,
+  const Scorer* scorer, irs::field_id id,
   const GeoDistanceFilterOptions& options) {
   const auto& range = options.range;
 
   if (range.max < 0.) {
     return GeoCollector(scorer);
   } else if (range.min < 0.) {
-    return PrepareOpenIntervalCollector(scorer, field, options, false);
+    return PrepareOpenIntervalCollector(scorer, id, options, false);
   }
 
   return GeoCollector(scorer);
@@ -742,7 +876,7 @@ QueryBuilder::ptr GeoFilter::PrepareSegment(const SubReader& segment,
   }
 
   auto state =
-    PrepareState(segment, ctx, geo_terms, field(), options.store_field_id);
+    PrepareState(segment, ctx, geo_terms, field_id(), options.store_field_id);
 
   const auto boost = ctx.boost * this->Boost();
 
@@ -787,9 +921,10 @@ QueryBuilder::ptr GeoDistanceFilter::PrepareSegment(
     return MatchAll(segment, sub_ctx);
   }
   if (lower_bound && upper_bound) {
-    return PrepareInterval(segment, sub_ctx, field(), options);
+    return PrepareInterval(segment, sub_ctx, field_id(), options);
   } else {
-    return PrepareOpenInterval(segment, sub_ctx, field(), options, lower_bound);
+    return PrepareOpenInterval(segment, sub_ctx, field_id(), options,
+                               lower_bound);
   }
 }
 
@@ -804,9 +939,10 @@ PrepareCollector::ptr GeoDistanceFilter::MakeCollector(
     return MatchAllCollector(scorer);
   }
   if (lower_bound && upper_bound) {
-    return PrepareIntervalCollector(scorer, field(), options);
+    return PrepareIntervalCollector(scorer, field_id(), options);
   } else {
-    return PrepareOpenIntervalCollector(scorer, field(), options, lower_bound);
+    return PrepareOpenIntervalCollector(scorer, field_id(), options,
+                                        lower_bound);
   }
 }
 

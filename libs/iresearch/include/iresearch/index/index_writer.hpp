@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string_view>
 
 #include "basics/async_utils.hpp"
@@ -164,7 +165,7 @@ struct IndexWriterOptions : public SegmentOptions {
   // corruption from multiple index_writers
   bool lock_repository{true};
 
-  // Enables the typed columnstore on segments allocated by this writer.
+  // Enables the typed .col on segments allocated by this writer.
   // Lifetime of `*db` must extend until IndexWriter shutdown.
   duckdb::DatabaseInstance* db = nullptr;
 
@@ -181,7 +182,7 @@ struct IndexWriterOptions : public SegmentOptions {
 struct CommitInfo {
   uint64_t tick = writer_limits::kMaxTick;
   ProgressReportCallback progress;
-  bool reopen_columnstore = false;
+  bool reopen_reader = false;
 };
 
 // The object is using for indexing data. Only one writer can write to
@@ -352,12 +353,8 @@ class IndexWriter : private util::Noncopyable {
     SegmentWriter& Writer() noexcept { return _writer; }
 #endif
 
-    // Per-segment columnstore writer; nullptr when the index was opened
-    // without a DatabaseInstance. Callers open a typed column at switch
-    // time and append duckdb::Vectors via ColumnWriter::Append.
-    columnstore::Writer* Columnstore() noexcept {
-      return _writer.Columnstore();
-    }
+    ColWriter* GetColWriter() noexcept { return _writer.GetColWriter(); }
+
     doc_id_t DocId() const noexcept { return _doc_id; }
 
    private:
@@ -377,11 +374,7 @@ class IndexWriter : private util::Noncopyable {
     Transaction(Transaction&& other) = default;
     Transaction& operator=(Transaction&& other) = default;
 
-    ~Transaction() {
-      // FIXME(gnusi): consider calling Abort in future
-      // Commit can throw in such case -> better error handling
-      Commit();
-    }
+    ~Transaction() { Abort(); }
 
     // Create a document to filled by the caller
     // for insertion into the index index
@@ -476,6 +469,12 @@ class IndexWriter : private util::Noncopyable {
     bool Valid() const noexcept { return _writer != nullptr; }
 
     uint64_t GetQueries() const noexcept { return _queries; }
+
+    // Reserve `n` query sub-ticks without recording a query. Lets a caller that
+    // batches several Insert ops into one Transaction give each op its own
+    // strictly-ascending document tick (Insert snapshots _queries but, unlike
+    // Remove/Replace, does not advance it). Used by WAL-replay streaming.
+    void AdvanceQueries(uint64_t n = 1) noexcept { _queries += n; }
 
    private:
     bool CommitImpl(uint64_t last_tick) noexcept;
@@ -614,7 +613,7 @@ class IndexWriter : private util::Noncopyable {
   struct CompactionContext : util::Noncopyable {
     std::shared_ptr<const DirectoryReaderImpl> compaction_reader;
     Compaction candidates;
-    MergeWriter merger;
+    std::optional<MergeWriter> merger;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
@@ -634,14 +633,24 @@ class IndexWriter : private util::Noncopyable {
                        .candidates = std::move(compaction_candidates),
                        .merger = std::move(merger)} {}
 
-    ImportContext(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
-                  std::shared_ptr<const SegmentReaderImpl>&& reader,
-                  IResourceManager& resource_manager) noexcept
+    ImportContext(
+      IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
+      Compaction&& compaction_candidates,
+      std::shared_ptr<const SegmentReaderImpl>&& reader,
+      std::shared_ptr<const DirectoryReaderImpl>&& compaction_reader) noexcept
       : tick{tick},
         segment{std::move(segment)},
         refs{std::move(refs)},
         reader{std::move(reader)},
-        compaction_ctx{.merger{resource_manager}} {}
+        compaction_ctx{.compaction_reader = std::move(compaction_reader),
+                       .candidates = std::move(compaction_candidates)} {}
+
+    ImportContext(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
+                  std::shared_ptr<const SegmentReaderImpl>&& reader) noexcept
+      : tick{tick},
+        segment{std::move(segment)},
+        refs{std::move(refs)},
+        reader{std::move(reader)} {}
 
     ImportContext(ImportContext&&) = default;
 
@@ -660,15 +669,14 @@ class IndexWriter : private util::Noncopyable {
  public:
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
-    explicit FlushedSegment(
-      IndexSegment&& segment, DocMap&& old2new, DocsMask&& docs_mask,
-      size_t docs_begin,
-      columnstore::PreloadedHnswGraphs&& cs_hnsw_graphs = {}) noexcept
+    explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
+                            DocsMask&& docs_mask, size_t docs_begin,
+                            PreloadedHnswGraphs&& hnsw_graphs = {}) noexcept
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
         document_mask{{this->docs_mask.set.get_allocator()}},
-        cs_hnsw_graphs{std::move(cs_hnsw_graphs)},
+        hnsw_graphs{std::move(hnsw_graphs)},
         _docs_begin{docs_begin},
         _docs_end{_docs_begin + meta.docs_count} {}
 
@@ -687,7 +695,7 @@ class IndexWriter : private util::Noncopyable {
     // Flushed segment removals
     DocsMask docs_mask;
     DocumentMask document_mask;
-    columnstore::PreloadedHnswGraphs cs_hnsw_graphs;
+    PreloadedHnswGraphs hnsw_graphs;
     bool was_flush = false;
 
    private:

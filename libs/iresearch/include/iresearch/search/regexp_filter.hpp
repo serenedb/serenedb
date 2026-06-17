@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <memory>
+
+#include "basics/shared.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
@@ -27,37 +30,63 @@
 namespace irs {
 
 class ByRegexp;
-struct FilterVisitor;
+
+template<typename Term, typename Prefix, typename Complex>
+auto ExecuteRegexp(bstring& buf, bytes_view pattern, Term&& t, Prefix&& p,
+                   Complex&& c) {
+  switch (ComputeRegexpType(pattern)) {
+    case RegexpType::LiteralEscaped:
+      return t(UnescapeRegexp(pattern, buf));
+    case RegexpType::Literal:
+      return t(pattern);
+    case RegexpType::PrefixEscaped:
+      return p(UnescapeRegexp(ExtractRegexpPrefix(pattern), buf));
+    case RegexpType::Prefix:
+      return p(ExtractRegexpPrefix(pattern));
+    case RegexpType::Complex:
+      return c(pattern);
+    default:
+      SDB_UNREACHABLE();
+  }
+}
 
 struct ByRegexpFilterOptions {
   bstring pattern;
+  RegexpSyntax syntax{RegexpSyntax::Perl};
 
-  bool operator==(const ByRegexpFilterOptions&) const noexcept = default;
+  ByRegexpFilterOptions() = default;
+  explicit ByRegexpFilterOptions(bytes_view pattern,
+                                 RegexpSyntax syntax = RegexpSyntax::Perl)
+    : pattern{pattern}, syntax{syntax} {}
+
+  bool operator==(const ByRegexpFilterOptions& rhs) const noexcept {
+    return pattern == rhs.pattern && syntax == rhs.syntax;
+  }
 };
 
 struct ByRegexpOptions : ByRegexpFilterOptions {
   using FilterType = ByRegexp;
   using filter_options = ByRegexpFilterOptions;
+  using ByRegexpFilterOptions::ByRegexpFilterOptions;
 
   size_t scored_terms_limit{1024};
-  RegexpSyntax syntax{RegexpSyntax::Perl};
 
-  bool operator==(const ByRegexpOptions&) const noexcept = default;
+  bool operator==(const ByRegexpOptions& rhs) const noexcept = default;
 };
+
+Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
+                           RegexpSyntax syntax = RegexpSyntax::Perl,
+                           size_t scored_terms_limit = 1024,
+                           score_t boost = kNoBoost);
+
+Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
+                        RegexpSyntax syntax, size_t scored_terms_limit,
+                        score_t boost);
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
-  static field_visitor visitor(bytes_view pattern,
-                               RegexpSyntax syntax = RegexpSyntax::Perl);
-
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
-  static QueryBuilder::ptr PrepareSegment(
-    const SubReader& segment, const PrepareContext& ctx, std::string_view field,
-    bytes_view pattern, size_t scored_terms_limit,
-    RegexpSyntax syntax = RegexpSyntax::Perl);
-
-  PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };
 
 }  // namespace irs

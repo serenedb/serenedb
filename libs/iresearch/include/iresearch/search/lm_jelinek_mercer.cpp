@@ -20,12 +20,6 @@
 
 #include "lm_jelinek_mercer.hpp"
 
-#include <vpack/common.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
-#include <vpack/vpack.h>
-
 #include <cmath>
 
 #include "basics/down_cast.h"
@@ -40,7 +34,6 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 
 namespace irs {
 namespace {
@@ -51,83 +44,6 @@ constexpr const T* TryGetValue(const T* value) noexcept {
 }
 
 constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
-  return nullptr;
-}
-
-struct ObjectParams {
-  score_t lambda = LMJelinekMercer::LAMBDA();
-};
-
-Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadObjectNothrow(slice, params,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing lm_jm scorer from VPack");
-    return {};
-  }
-  if (params.lambda <= 0.f || params.lambda > 1.f ||
-      !std::isfinite(params.lambda)) {
-    SDB_ERROR(IRESEARCH, "lm_jm lambda must be in (0, 1]");
-    return {};
-  }
-  return std::make_unique<LMJelinekMercer>(params.lambda);
-}
-
-Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  ObjectParams params;
-  auto r = vpack::ReadTupleNothrow(slice, params);
-  if (!r.ok()) {
-    SDB_ERROR(IRESEARCH, "Error '", r.errorMessage(),
-              "' while constructing lm_jm scorer from VPack array");
-    return {};
-  }
-  if (params.lambda <= 0.f || params.lambda > 1.f ||
-      !std::isfinite(params.lambda)) {
-    SDB_ERROR(IRESEARCH, "lm_jm lambda must be in (0, 1]");
-    return {};
-  }
-  return std::make_unique<LMJelinekMercer>(params.lambda);
-}
-
-Scorer::ptr MakeVPack(const vpack::Slice slice) {
-  switch (slice.type()) {
-    case vpack::ValueType::Object:
-      return MakeFromObject(slice);
-    case vpack::ValueType::Array:
-      return MakeFromArray(slice);
-    default:
-      SDB_ERROR(IRESEARCH, "Invalid VPack arguments for lm_jm scorer");
-      return nullptr;
-  }
-}
-
-Scorer::ptr MakeVPack(std::string_view args) {
-  if (IsNull(args)) {
-    return std::make_unique<LMJelinekMercer>();
-  }
-  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-  return MakeVPack(slice);
-}
-
-Scorer::ptr MakeJson(std::string_view args) {
-  if (IsNull(args)) {
-    return std::make_unique<LMJelinekMercer>();
-  }
-  try {
-    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-    return MakeVPack(vpack->slice());
-  } catch (const vpack::Exception& ex) {
-    SDB_ERROR(IRESEARCH, "Caught error '", ex.what(),
-              "' while constructing VPack from JSON for lm_jm");
-  } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught error while constructing VPack from JSON for lm_jm");
-  }
   return nullptr;
 }
 
@@ -278,11 +194,6 @@ bool LMJelinekMercer::equals(const Scorer& other) const noexcept {
   }
   const auto& p = sdb::basics::downCast<LMJelinekMercer>(other);
   return p._lambda == _lambda;
-}
-
-void LMJelinekMercer::init() {
-  REGISTER_SCORER_JSON(LMJelinekMercer, MakeJson);
-  REGISTER_SCORER_VPACK(LMJelinekMercer, MakeVPack);
 }
 
 }  // namespace irs

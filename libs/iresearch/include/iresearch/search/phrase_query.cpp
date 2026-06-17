@@ -86,9 +86,6 @@ DocIterator::ptr FixedPhraseQuery::Execute(const ExecutionContext& ctx) const {
     positions.emplace_back(
       sdb::basics::downCast<FixedTermPositionImpl<false>>(pos), *position++);
   }
-  const bool has_intervals = absl::c_any_of(
-    this->positions,
-    [](const auto& pos) { return pos.offs_max != pos.offs_min; });
   if (!scorer) {
     return ResolveBool(
       has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
@@ -119,10 +116,6 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
   if (!phrase_state->reader) {
     return DocIterator::empty();
   }
-
-  const bool has_intervals = absl::c_any_of(
-    this->positions,
-    [](const auto& pos) { return pos.offs_max != pos.offs_min; });
 
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
     using Adapter = PostingAdapter<PostingIteratorBase<FixedTermTraits<true>>>;
@@ -271,10 +264,6 @@ DocIterator::ptr VariadicPhraseQuery::Execute(
   }
   SDB_ASSERT(term_state == std::end(phrase_state->terms));
 
-  const bool has_intervals = absl::c_any_of(
-    this->positions,
-    [](const auto& pos) { return pos.offs_max != pos.offs_min; });
-
   if (!scorer) {
     return ResolveBool(
       has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
@@ -325,10 +314,6 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
   if (kRequireOffs != (reader->meta().index_features & kRequireOffs)) {
     return DocIterator::empty();
   }
-
-  const bool has_intervals = absl::c_any_of(
-    this->positions,
-    [](const auto& pos) { return pos.offs_max != pos.offs_min; });
 
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
     std::vector<VariadicTermPosition<Adapter>> positions;

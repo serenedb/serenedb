@@ -127,13 +127,13 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.boost *= Boost();
-  return PrepareSegment(segment, sub_ctx, field(), options().range,
+  return PrepareSegment(segment, sub_ctx, field_id(), options().range,
                         options().scored_terms_limit);
 }
 
 QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          const std::string_view field,
+                                          const irs::field_id field,
                                           const options_type::range_type& rng,
                                           size_t /*scored_terms_limit*/) {
   // TODO: optimize unordered case

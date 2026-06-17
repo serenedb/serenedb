@@ -29,10 +29,31 @@
 
 namespace {
 
-irs::ByTerm MakeFilter(const std::string_view& field,
-                       const std::string_view term) {
+// Stable field ids for the simple_sequential / schemas fixtures.
+// Sourced from `tests::FieldIdFor` so the shared JSON factories and these
+// tests agree on the id-per-name.
+[[maybe_unused]] inline constexpr irs::field_id kNameId =
+  tests::FieldIdFor("name");
+[[maybe_unused]] inline constexpr irs::field_id kSameId =
+  tests::FieldIdFor("same");
+[[maybe_unused]] inline constexpr irs::field_id kSeqId =
+  tests::FieldIdFor("seq");
+[[maybe_unused]] inline constexpr irs::field_id kValueId =
+  tests::FieldIdFor("value");
+[[maybe_unused]] inline constexpr irs::field_id kPrefixId =
+  tests::FieldIdFor("prefix");
+[[maybe_unused]] inline constexpr irs::field_id kFieldsSchemaId =
+  tests::FieldIdFor("Fields");
+[[maybe_unused]] inline constexpr irs::field_id kNameSchemaId =
+  tests::FieldIdFor("Name");
+[[maybe_unused]] inline constexpr irs::field_id kUnregisteredFieldId =
+  tests::FieldIdFor("invalid_field");
+[[maybe_unused]] inline constexpr irs::field_id kEmptyFieldId =
+  irs::field_limits::invalid();
+
+irs::ByTerm MakeFilter(irs::field_id field, const std::string_view term) {
   irs::ByTerm q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = field;
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return q;
 }
@@ -53,20 +74,20 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     CheckQuery(irs::ByTerm(), Docs{}, Costs{0}, rdr);
 
     // empty term
-    CheckQuery(MakeFilter("name", ""), Docs{}, Costs{0}, rdr);
+    CheckQuery(MakeFilter(kNameId, ""), Docs{}, Costs{0}, rdr);
 
     // empty field
-    CheckQuery(MakeFilter("", "xyz"), Docs{}, Costs{0}, rdr);
+    CheckQuery(MakeFilter(kEmptyFieldId, "xyz"), Docs{}, Costs{0}, rdr);
 
     // search : invalid field
-    CheckQuery(MakeFilter("invalid_field", "A"), Docs{}, Costs{0}, rdr);
+    CheckQuery(MakeFilter(kUnregisteredFieldId, "A"), Docs{}, Costs{0}, rdr);
 
     // search : single term
-    CheckQuery(MakeFilter("name", "A"), Docs{1}, Costs{1}, rdr);
+    CheckQuery(MakeFilter(kNameId, "A"), Docs{1}, Costs{1}, rdr);
 
     MaxMemoryCounter counter;
     {
-      irs::ByTerm q = MakeFilter("name", "A");
+      irs::ByTerm q = MakeFilter(kNameId, "A");
 
       tests::PreparedFilter prepared{q, rdr, nullptr, counter};
       auto docs0 = prepared.Execute(0);
@@ -80,13 +101,13 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     // search : all terms
     CheckQuery(
-      MakeFilter("same", "xyz"),
+      MakeFilter(kSameId, "xyz"),
       Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
            17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
       Costs{32}, rdr);
 
     // search : empty result
-    CheckQuery(MakeFilter("same", "invalid_term"), Docs{}, Costs{0}, rdr);
+    CheckQuery(MakeFilter(kSameId, "invalid_term"), Docs{}, Costs{0}, rdr);
   }
 
   void ByTermSequentialBoost() {
@@ -101,7 +122,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     auto rdr = open_reader();
 
     // create filter
-    irs::ByTerm filter = MakeFilter("name", "A");
+    irs::ByTerm filter = MakeFilter(kNameId, "A");
     filter.boost(0.f);
 
     // create order
@@ -170,24 +191,30 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
         resource("simple_sequential.json"),
         [](tests::Document& doc, const std::string& name,
            const tests::JsonDocGenerator::JsonValue& data) {
+          const auto fid = tests::FieldIdFor(name);
           if (data.is_string()) {
-            doc.insert(std::make_shared<tests::StringField>(name, data.str));
+            auto f = std::make_shared<tests::StringField>(name, data.str);
+            f->id = fid;
+            doc.insert(std::move(f));
           } else if (data.is_null()) {
             doc.insert(std::make_shared<tests::BinaryField>());
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
+            field.id = fid;
             field.value(
               irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
           } else if (data.is_bool() && data.b) {
             doc.insert(std::make_shared<tests::BinaryField>());
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
+            field.id = fid;
             field.value(irs::ViewCast<irs::byte_type>(
               irs::BooleanTokenizer::value_true()));
           } else if (data.is_bool() && !data.b) {
             doc.insert(std::make_shared<tests::BinaryField>());
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
+            field.id = fid;
             field.value(irs::ViewCast<irs::byte_type>(
               irs::BooleanTokenizer::value_true()));
           } else if (data.is_number()) {
@@ -197,6 +224,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::DoubleField>());
               auto& field = (doc.indexed.end() - 1).as<tests::DoubleField>();
               field.Name(name);
+              field.id = fid;
               field.value(d_value);
             }
 
@@ -206,6 +234,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::FloatField>());
               auto& field = (doc.indexed.end() - 1).as<tests::FloatField>();
               field.Name(name);
+              field.id = fid;
               field.value(f_value);
             }
 
@@ -214,6 +243,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::LongField>());
               auto& field = (doc.indexed.end() - 1).as<tests::LongField>();
               field.Name(name);
+              field.id = fid;
               field.value(static_cast<int64_t>(value));
             }
 
@@ -221,6 +251,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::IntField>());
               auto& field = (doc.indexed.end() - 1).as<tests::IntField>();
               field.Name(name);
+              field.id = fid;
               field.value(static_cast<int32_t>(value));
             }
           }
@@ -239,7 +270,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto* term = irs::get<irs::TermAttr>(stream);
       ASSERT_TRUE(stream.next());
 
-      irs::ByTerm query = MakeFilter("seq", irs::ViewCast<char>(term->value));
+      irs::ByTerm query = MakeFilter(kSeqId, irs::ViewCast<char>(term->value));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -265,7 +296,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto* term = irs::get<irs::TermAttr>(stream);
       ASSERT_TRUE(stream.next());
 
-      irs::ByTerm query = MakeFilter("seq", irs::ViewCast<char>(term->value));
+      irs::ByTerm query = MakeFilter(kSeqId, irs::ViewCast<char>(term->value));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -291,7 +322,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto* term = irs::get<irs::TermAttr>(stream);
       ASSERT_TRUE(stream.next());
 
-      irs::ByTerm query = MakeFilter("value", irs::ViewCast<char>(term->value));
+      irs::ByTerm query =
+        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -317,7 +349,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto* term = irs::get<irs::TermAttr>(stream);
       ASSERT_TRUE(stream.next());
 
-      irs::ByTerm query = MakeFilter("value", irs::ViewCast<char>(term->value));
+      irs::ByTerm query =
+        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -343,7 +376,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto* term = irs::get<irs::TermAttr>(stream);
       ASSERT_TRUE(stream.next());
 
-      irs::ByTerm query = MakeFilter("value", irs::ViewCast<char>(term->value));
+      irs::ByTerm query =
+        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -369,7 +403,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto* term = irs::get<irs::TermAttr>(stream);
       ASSERT_TRUE(stream.next());
 
-      irs::ByTerm query = MakeFilter("value", irs::ViewCast<char>(term->value));
+      irs::ByTerm query =
+        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -395,7 +430,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto* term = irs::get<irs::TermAttr>(stream);
       ASSERT_TRUE(stream.next());
 
-      irs::ByTerm query = MakeFilter("value", irs::ViewCast<char>(term->value));
+      irs::ByTerm query =
+        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -421,7 +457,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto* term = irs::get<irs::TermAttr>(stream);
       ASSERT_TRUE(stream.next());
 
-      irs::ByTerm query = MakeFilter("value", irs::ViewCast<char>(term->value));
+      irs::ByTerm query =
+        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -456,7 +493,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     {
       // create filter
-      irs::ByTerm filter = MakeFilter("prefix", "abcy");
+      irs::ByTerm filter = MakeFilter(kPrefixId, "abcy");
 
       // create order
       size_t finish_count = 0;
@@ -518,26 +555,26 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     CheckQuery(irs::ByTerm(), Docs{}, rdr);
 
     // empty term
-    CheckQuery(MakeFilter("name", ""), Docs{}, rdr);
+    CheckQuery(MakeFilter(kNameId, ""), Docs{}, rdr);
 
     // empty field
-    CheckQuery(MakeFilter("", "xyz"), Docs{}, rdr);
+    CheckQuery(MakeFilter(kEmptyFieldId, "xyz"), Docs{}, rdr);
 
     // search : invalid field
-    CheckQuery(MakeFilter("invalid_field", "A"), Docs{}, rdr);
+    CheckQuery(MakeFilter(kUnregisteredFieldId, "A"), Docs{}, rdr);
 
     // search : single term
-    CheckQuery(MakeFilter("name", "A"), Docs{1}, rdr);
+    CheckQuery(MakeFilter(kNameId, "A"), Docs{1}, rdr);
 
     // search : all terms
     CheckQuery(
-      MakeFilter("same", "xyz"),
+      MakeFilter(kSameId, "xyz"),
       Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
            17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
       rdr);
 
     // search : empty result
-    CheckQuery(MakeFilter("same", "invalid_term"), Docs{}, rdr);
+    CheckQuery(MakeFilter(kSameId, "invalid_term"), Docs{}, rdr);
   }
 
   void ByTermSchemas() {
@@ -563,10 +600,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     }
 
     auto rdr = open_reader();
-    CheckQuery(MakeFilter("Fields", "FirstName"), Docs{28, 167, 194}, rdr);
+    CheckQuery(MakeFilter(kFieldsSchemaId, "FirstName"), Docs{28, 167, 194},
+               rdr);
 
     // address to the [SDD-179]
-    CheckQuery(MakeFilter("Name", "Product"), Docs{32}, rdr);
+    CheckQuery(MakeFilter(kNameSchemaId, "Product"), Docs{32}, rdr);
   }
 };
 
@@ -591,7 +629,7 @@ TEST_P(TermFilterTestCase, visit) {
     add_segment(gen);
   }
 
-  const std::string_view field = "prefix";
+  const irs::field_id field = kPrefixId;
   const auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
 
   tests::EmptyFilterVisitor visitor;
@@ -622,22 +660,25 @@ TEST(by_term_test, ctor) {
   irs::ByTerm q;
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), q.type());
   ASSERT_EQ(irs::ByTermOptions{}, q.options());
-  ASSERT_EQ("", q.field());
+  ASSERT_EQ(irs::field_limits::invalid(), q.field_id());
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 }
 
 TEST(by_term_test, equal) {
-  irs::ByTerm q = MakeFilter("field", "term");
-  ASSERT_EQ(q, MakeFilter("field", "term"));
-  ASSERT_NE(q, MakeFilter("field1", "term"));
+  constexpr irs::field_id kField = 1;
+  constexpr irs::field_id kField1 = 2;
+  irs::ByTerm q = MakeFilter(kField, "term");
+  ASSERT_EQ(q, MakeFilter(kField, "term"));
+  ASSERT_NE(q, MakeFilter(kField1, "term"));
 }
 
 TEST(by_term_test, boost) {
+  constexpr irs::field_id kField = 1;
   MaxMemoryCounter counter;
 
   // no boost
   {
-    irs::ByTerm q = MakeFilter("field", "term");
+    irs::ByTerm q = MakeFilter(kField, "term");
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
                                    counter};
@@ -650,7 +691,7 @@ TEST(by_term_test, boost) {
   // with boost
   {
     irs::score_t boost = 1.5f;
-    irs::ByTerm q = MakeFilter("field", "term");
+    irs::ByTerm q = MakeFilter(kField, "term");
     q.boost(boost);
 
     tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,

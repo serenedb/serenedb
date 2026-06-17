@@ -64,6 +64,14 @@ void CheckTemplate(std::string_view /*option*/, std::string_view value) {
                   ERR_MSG("Invalid type of text search dictionary"));
 }
 
+void CheckMaxNgramLength(std::string_view option, int value) {
+  if (value < 3) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", option, "\" must be at least 3"),
+                    ERR_HINT(kMaxNgramLength.description));
+  }
+}
+
 void CheckNgramSize(std::string_view option, int value) {
   if (value < 2) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

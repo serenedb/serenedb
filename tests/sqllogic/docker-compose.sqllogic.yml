@@ -7,6 +7,7 @@ services:
     volumes:
       - "${WORKSPACE}:/serenedb"
       - "${WORKSPACE}/out/logs:/var/log/serenedb"
+      - "${WORKSPACE}/out/test-tmp:/test-tmp"
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:
@@ -32,6 +33,7 @@ services:
       - "${WORKSPACE}/out/logs:/logs"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
       - "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}:/timing-cache"
+      - "${WORKSPACE}/out/test-tmp:/test-tmp"
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - serenedb-single
@@ -40,6 +42,8 @@ services:
       - LOG_DIR=/logs
       - RESOURCES
       - HOME=/sqllogic
+      - TMPDIR=/test-tmp
+      - SLT_TEST_DIR_SHARED=1
       - CARGO_HOME=/tmp/cargo
       - CARGO_TARGET_DIR=/cargo-target
       - SDB_TIMING_CACHE_DIR=/timing-cache

@@ -25,7 +25,6 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
-#include "catalog/local_catalog.h"
 #include "catalog/table.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"

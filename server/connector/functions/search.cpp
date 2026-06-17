@@ -776,7 +776,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // follow iresearch's Bm25 (k1 = 1.2, b = 0.75).
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::Bm25::kName}};
+      std::string{catalog::ScorerOptions::Bm25::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -790,7 +790,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // TF-IDF. `with_norms` toggles length normalisation (default false).
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::Tfidf::kName}};
+      std::string{catalog::ScorerOptions::Tfidf::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -804,7 +804,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // lambda in (0, 1]; iresearch default is 0.1.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::LmJm::kName}};
+      std::string{catalog::ScorerOptions::LmJm::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -818,7 +818,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // iresearch default is 2000.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::LmDirichlet::kName}};
+      std::string{catalog::ScorerOptions::LmDirichlet::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -832,7 +832,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // floor-at-zero clamp, so scores can be negative when tf < mu*P(t|C).
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::IndriDirichlet::kName}};
+      std::string{catalog::ScorerOptions::IndriDirichlet::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -846,7 +846,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // kernel: 'standardized' (default), 'saturated', or 'chi_squared'.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::Dfi::kName}};
+      std::string{catalog::ScorerOptions::Dfi::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -858,7 +858,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // raw_tf(tableoid) -> FLOAT -- emits raw term frequency per matched doc.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::RawBoost::kName}};
+      std::string{catalog::ScorerOptions::RawBoost::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
@@ -867,7 +867,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // raw_tf(tableoid) -> FLOAT -- emits raw term frequency per matched doc.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::RawTf::kName}};
+      std::string{catalog::ScorerOptions::RawTf::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
@@ -876,7 +876,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // raw_dl(tableoid) -> FLOAT -- emits raw document length per matched doc.
   {
     duckdb::ScalarFunctionSet set{
-      std::string{catalog::ScorerOptions::RawDL::kName}};
+      std::string{catalog::ScorerOptions::RawDL::Owner::type_name()}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     loader.RegisterFunction(std::move(set));

@@ -20,6 +20,11 @@
 
 #include "connector/duckdb_transaction.h"
 
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/transaction/transaction_manager.hpp>
+
+#include "catalog/store/store.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 
@@ -51,6 +56,15 @@ void SereneDBTransactionManager::RollbackTransaction(
   duckdb::Transaction& transaction) {}
 
 void SereneDBTransactionManager::Checkpoint(duckdb::ClientContext& context,
-                                            bool force) {}
+                                            bool force) {
+  // serenedb tables are backed by native DuckDB tables in the hidden store
+  // database. Forward the user's CHECKPOINT to the store so its WAL is flushed
+  // and deleted rows are vacuumed/compacted -- the user never names the store.
+  auto store = duckdb::DatabaseManager::Get(context).GetDatabase(
+    context, std::string{catalog::kStoreDatabaseName});
+  if (store) {
+    store->GetTransactionManager().Checkpoint(context, force);
+  }
+}
 
 }  // namespace sdb::connector

@@ -57,7 +57,15 @@ class ProxyFilter final : public Filter {
     return {sdb::basics::downCast<Base>(real), _cache};
   }
 
+  std::pair<Filter&, cache_ptr> set_filter(IResourceManager& memory,
+                                           Filter::ptr&& filter) {
+    auto& real = cache_filter(memory, std::move(filter));
+    return {real, _cache};
+  }
+
   void set_cache(cache_ptr cache) noexcept { _cache = std::move(cache); }
+
+  const Filter& inner() const noexcept;
 
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<ProxyFilter>::id();

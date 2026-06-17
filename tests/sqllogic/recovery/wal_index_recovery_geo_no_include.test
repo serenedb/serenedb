@@ -10,7 +10,8 @@ control substitution on
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY wal_geo_ni_dict(
-    template = 'geojson'
+    template = 'geojson',
+    coding = 's2point'
 );
 
 statement ok
@@ -46,11 +47,17 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: wal_geo_ni_idx   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
-│    AND[GEO_DISTANCE[geo   │
-│    (string), *, <1000]]   │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││    GEO_DISTANCE   ││  │
+│  ││    ────────────   ││  │
+│  ││  geo(string) *,   ││  │
+│  ││       <1000       ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │            geo            │

@@ -23,6 +23,7 @@
 #include <atomic>
 #include <duckdb/main/database.hpp>
 #include <iostream>
+#include <iresearch/search/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
@@ -49,7 +50,7 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
   };
   writer_opts.norm_column_options =
     [norm_row_group_size, next = std::make_shared<std::atomic<irs::field_id>>(
-                            0)](std::string_view) -> irs::NormColumnOptions {
+                            0)](irs::field_id) -> irs::NormColumnOptions {
     return {
       .id = next->fetch_add(1, std::memory_order_relaxed),
       .row_group_size = norm_row_group_size,
@@ -62,9 +63,7 @@ IndexBuilder::IndexBuilder(std::string_view path,
                            const IndexBuilderOptions& opts,
                            const BenchConfig& config)
   : _opts{opts},
-    _scorer{irs::scorers::Get(config.scorer,
-                              irs::Type<irs::text_format::Json>::get(),
-                              config.scorer_options)},
+    _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _dir{path},
     _format{irs::formats::Get(config.format_name)},
     _writer{irs::IndexWriter::Make(
@@ -199,6 +198,7 @@ void IndexBuilder::IndexFromStream(std::istream& input,
       while (batch_provider.Swap(buf)) {
         auto ctx = _writer->GetBatch();
         (*handler)(buf, ctx);
+        ctx.Commit();
         std::cout << "." << std::flush;
       }
     });

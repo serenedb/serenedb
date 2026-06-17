@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         array.cpp
         cast.cpp
+        encode_key.cpp
         inout.cpp
         json.cpp
         math.cpp

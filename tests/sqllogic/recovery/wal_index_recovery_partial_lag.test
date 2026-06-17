@@ -92,7 +92,7 @@ count
 
 connection pl_after
 query
-SELECT id FROM pl_caught_up WHERE body @@ ts_phrase('caught');
+SELECT id FROM pl_caught_up_idx WHERE body @@ ts_phrase('caught');
 ----
 id
 1
@@ -108,14 +108,14 @@ count
 
 connection pl_after
 query
-SELECT id FROM pl_lagging WHERE body @@ ts_phrase('lag added three');
+SELECT id FROM pl_lagging_idx WHERE body @@ ts_phrase('lag added three');
 ----
 id
 3
 
 connection pl_after
 query
-SELECT id FROM pl_lagging WHERE body @@ ts_phrase('lag added five');
+SELECT id FROM pl_lagging_idx WHERE body @@ ts_phrase('lag added five');
 ----
 id
 5
@@ -123,7 +123,7 @@ id
 # Original seeds still reachable in the lagging index.
 connection pl_after
 query
-SELECT id FROM pl_lagging WHERE body @@ ts_phrase('lag base one');
+SELECT id FROM pl_lagging_idx WHERE body @@ ts_phrase('lag base one');
 ----
 id
 1

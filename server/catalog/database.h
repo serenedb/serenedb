@@ -21,16 +21,25 @@
 #pragma once
 
 #include "catalog/object.h"
+#include "catalog/persistence/database.h"
 
+namespace duckdb {
+
+class Serializer;
+class Deserializer;
+
+}  // namespace duckdb
 namespace sdb::catalog {
+
+using persistence::DatabaseOptions;
 
 class Database final : public Object {
  public:
-  Database(ObjectId id, std::string_view name);
+  Database(ObjectId id, DatabaseOptions opts);
 
-  static std::shared_ptr<Database> ReadInternal(vpack::Slice slice,
-                                                ReadContext ctx);
-  void WriteInternal(vpack::Builder&) const final;
+  static std::shared_ptr<Database> Deserialize(duckdb::Deserializer& src,
+                                               ReadContext ctx);
+  void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 };
 

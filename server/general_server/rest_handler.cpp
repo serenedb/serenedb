@@ -22,7 +22,7 @@
 #include "rest_handler.h"
 
 #include <absl/strings/str_cat.h>
-#include <vpack/exception.h>
+#include <simdjson.h>
 
 #include <source_location>
 
@@ -152,14 +152,6 @@ void RestHandler::handleExceptionPtr(std::exception_ptr eptr) noexcept try {
   } catch (const Exception& ex) {
     build_exception(
       ex.code(), absl::StrCat("caught exception in ", name(), ": ", ex.what()),
-      std::source_location::current());
-  } catch (const vpack::Exception& ex) {
-    const bool is_parse_error =
-      (ex.errorCode() == vpack::Exception::kParseError ||
-       ex.errorCode() == vpack::Exception::kUnexpectedControlCharacter);
-    build_exception(
-      is_parse_error ? ERROR_HTTP_CORRUPTED_JSON : ERROR_INTERNAL,
-      absl::StrCat("caught vpack error in ", name(), ": ", ex.what()),
       std::source_location::current());
   } catch (const std::bad_alloc& ex) {
     build_exception(
@@ -315,18 +307,6 @@ void RestHandler::executeEngine(bool is_continue) {
              ex.what());
 #endif
     handleError(ex);
-  } catch (const vpack::Exception& ex) {
-#ifdef SDB_DEV
-    SDB_WARN(GENERAL, "maintainer mode: caught vpack exception in ", name(),
-             ": ", ex.what());
-#endif
-    const bool is_parse_error =
-      (ex.errorCode() == vpack::Exception::kParseError ||
-       ex.errorCode() == vpack::Exception::kUnexpectedControlCharacter);
-    Exception err(is_parse_error ? ERROR_HTTP_CORRUPTED_JSON : ERROR_INTERNAL,
-                  absl::StrCat("VPack error: ", ex.what()),
-                  std::source_location::current());
-    handleError(err);
   } catch (const std::bad_alloc& ex) {
 #ifdef SDB_DEV
     SDB_WARN(GENERAL, "maintainer mode: caught memory exception in ", name(),
@@ -358,20 +338,35 @@ void RestHandler::generateError(rest::ResponseCode code, ErrorCode error_number,
   resetResponse(code);
 
   if (_request->requestType() != rest::RequestType::Head) {
-    vpack::BufferUInt8 buffer;
-    vpack::Builder builder(buffer);
     try {
-      builder.add(vpack::Value(vpack::ValueType::Object));
-      builder.add(StaticStrings::kCode, static_cast<int>(code));
-      builder.add(StaticStrings::kError, true);
-      builder.add(StaticStrings::kErrorMessage, error_message);
-      builder.add(StaticStrings::kErrorNum, error_number.value());
-      builder.close();
+      simdjson::builder::string_builder builder;
+      builder.start_object();
+      builder.escape_and_append_with_quotes(StaticStrings::kCode);
+      builder.append_colon();
+      builder.append(static_cast<int64_t>(static_cast<int>(code)));
+      builder.append_comma();
+      builder.escape_and_append_with_quotes(StaticStrings::kError);
+      builder.append_colon();
+      builder.append_raw("true");
+      builder.append_comma();
+      builder.escape_and_append_with_quotes(StaticStrings::kErrorMessage);
+      builder.append_colon();
+      builder.escape_and_append_with_quotes(error_message);
+      builder.append_comma();
+      builder.escape_and_append_with_quotes(StaticStrings::kErrorNum);
+      builder.append_colon();
+      builder.append(static_cast<int64_t>(error_number.value()));
+      builder.end_object();
+
+      std::string_view view;
+      if (builder.view().get(view) != simdjson::SUCCESS) {
+        return;
+      }
 
       if (_request != nullptr) {
         _response->setContentType(_request->contentTypeResponse());
       }
-      _response->setPayload(std::move(buffer), vpack::Options::gDefaults);
+      _response->addRawPayload(view);
     } catch (...) {
       // exception while generating error
     }

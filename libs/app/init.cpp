@@ -22,7 +22,6 @@
 
 #include <absl/debugging/symbolize.h>
 #include <sys/resource.h>
-#include <vpack/vpack_helper.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -97,7 +96,6 @@ void InitProcess(const char* argv0) {
   //   * RaiseFdLimit              soft NOFILE -> 65535 (or hard, if lower)
   //   * random::Reset             seeds the PRNGs the basics layer holds
   //   * Version::initialize       fills the rest::Version table
-  //   * VPackHelper::initialize   wires the velocypack <-> sdb glue
   //   * FUNCTABLE_INIT            picks the zlib-ng dispatch (SIMD)
   //   * InitializeSymbolizer      lets the absl crash handler symbolize
   //   * YACLIB_INIT_DEBUG         routes yaclib's debug-asserts through us
@@ -105,7 +103,6 @@ void InitProcess(const char* argv0) {
   CheckMaxMapCount();
   random::Reset();
   rest::Version::initialize();
-  basics::VPackHelper::initialize();
   FUNCTABLE_INIT;
   absl::InitializeSymbolizer(argv0);
   YACLIB_INIT_DEBUG([](std::string_view file, std::size_t line,

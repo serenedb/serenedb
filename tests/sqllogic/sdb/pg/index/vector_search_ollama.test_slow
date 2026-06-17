@@ -89,7 +89,7 @@ CREATE INDEX docs_ann ON docs USING inverted(
 
 
 query
-EXPLAIN SELECT id FROM docs
+EXPLAIN SELECT id FROM docs_ann
 ORDER BY emb <=> ai_embed(
   'fruit',
   '${OLLAMA_MODEL}',
@@ -99,12 +99,24 @@ LIMIT 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_ANN_SCAN    │
+│           TOP_N           │
 │    ────────────────────   │
-│        Table: docs        │
-│          TopK: 3          │
+│           Top: 3          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│   Index: docs_ann (ANN)   │
+│       Lookup: table       │
+│           Top: 3          │
 │         Dims: 384         │
-│      Projections: id      │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘

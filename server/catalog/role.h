@@ -21,63 +21,53 @@
 
 #pragma once
 
-#include <vpack/builder.h>
-#include <vpack/slice.h>
+#include <absl/container/node_hash_map.h>
 
 #include <set>
+#include <string>
 
 #include "auth/common.h"
 #include "basics/containers/node_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "catalog/persistence/role.h"
 
 namespace sdb::catalog {
 
+using persistence::RoleData;
+
 class Role final : public catalog::Object {
+ public:
   struct PrivateTag {
     explicit PrivateTag() = default;
   };
-  static void fromDocumentDatabases(catalog::Role& role,
-                                    vpack::Slice databases);
 
- public:
   explicit Role(PrivateTag, ObjectId id, std::string_view name);
 
-  void WriteInternal(vpack::Builder&) const final;
+  // Capture the persistent state into a flat RoleData (used by the
+  // reflection-based Serialize path).
+  RoleData ToData() const;
+  // Construct a Role from RoleData (read-side counterpart). Static helper
+  // so Deserialize has a shared implementation.
+  static std::shared_ptr<Role> FromData(RoleData data);
+
+  void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
 
   static std::shared_ptr<catalog::Role> NewUser(std::string_view name,
                                                 std::string_view password,
                                                 ObjectId id = {});
-  static std::shared_ptr<Role> ReadInternal(vpack::Slice slice,
-                                            ReadContext ctx);
+  static std::shared_ptr<Role> Deserialize(duckdb::Deserializer& src,
+                                           ReadContext ctx);
 
   std::string_view username() const { return GetName(); }
-  std::string_view passwordMethod() const { return _password_method; }
-  std::string_view passwordSalt() const { return _password_salt; }
-  std::string_view passwordHash() const { return _password_hash; }
   bool isActive() const { return _active; }
 
-  bool checkPassword(std::string_view password) const;
-
-  // Resolve the access level for this database.
-  auth::Level configuredDBAuthLevel(std::string_view database) const;
-
-  // Resolve the access level for this database. Might fall back to
-  // the special '*' entry if the specific database is not found
-  auth::Level databaseAuthLevel(std::string_view database) const;
-
-  void updateId(Identifier id) { _id = id; }
-  void updateName(std::string_view name) { _name = name; }
-  void updatePassword(std::string_view password);
   void updateActive(bool active) { _active = active; }
 
   /// Grant specific access rights for db.
   /// The default "*" is also a valid database name
   void grantDatabase(std::string_view database, auth::Level level);
-
-  /// Removes the entry, returns true if entry existed
-  bool removeDatabase(std::string_view database);
 
  private:
   Role(ObjectId id, std::string_view name);

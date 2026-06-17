@@ -23,6 +23,7 @@
 #pragma once
 
 #include <absl/container/node_hash_map.h>
+#include <absl/functional/any_invocable.h>
 
 #include <functional>
 #include <span>
@@ -114,8 +115,12 @@ class Filter {
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 
+  virtual std::span<Filter::ptr> GetChildren() { return {}; }
+
   // kludge for optimization in And::prepare
   virtual score_t BoostImpl() const noexcept { return kNoBoost; }
+
+  static Filter::ptr empty();
 
  protected:
   virtual bool equals(const Filter& rhs) const noexcept {
@@ -165,24 +170,26 @@ class FilterWithOptions : public FilterWithType<typename Options::FilterType> {
   [[no_unique_address]] options_type _options;
 };
 
-// Convenient base class for single field filters
 template<typename Options>
 class FilterWithField : public FilterWithOptions<Options> {
  public:
   using options_type = typename FilterWithOptions<Options>::options_type;
   using FilterType = typename options_type::FilterType;
 
-  std::string_view field() const noexcept { return _field; }
-  std::string* mutable_field() noexcept { return &_field; }
+  irs::field_id field_id() const noexcept { return _field_id; }
+  irs::field_id* mutable_field_id() noexcept { return &_field_id; }
 
  protected:
   bool equals(const Filter& rhs) const noexcept final {
-    return FilterWithOptions<options_type>::equals(rhs) &&
-           _field == sdb::basics::downCast<FilterType>(rhs)._field;
+    if (!FilterWithOptions<options_type>::equals(rhs)) {
+      return false;
+    }
+    const auto& r = sdb::basics::downCast<FilterType>(rhs);
+    return _field_id == r._field_id;
   }
 
  private:
-  std::string _field;
+  irs::field_id _field_id{irs::field_limits::invalid()};
 };
 
 // Filter which returns no documents
@@ -194,6 +201,6 @@ class Empty final : public FilterWithType<Empty> {
 
 struct FilterVisitor;
 using field_visitor =
-  std::function<void(const SubReader&, const TermReader&, FilterVisitor&)>;
+  absl::AnyInvocable<void(const SubReader&, const TermReader&, FilterVisitor&)>;
 
 }  // namespace irs

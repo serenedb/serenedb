@@ -15,13 +15,19 @@ add_executable(
     random_test.cpp
     string_utils_test.cpp
     serializer_test.cpp
-    vpack_helper_test.cpp
-    inspection_test.cpp
-    vpack_load_test.cpp
-    vpack_save_test.cpp
+    serializer_binary_test.cpp
+    json_serde_test.cpp
+    json_serde_types_test.cpp
+    duckdb_roundtrip_test.cpp
+    catalog_persistence_test.cpp
 )
 
 target_link_libraries(
     serenedb-tests_basics
     PUBLIC serene_tests_connector_deps gtest
+)
+
+target_compile_definitions(
+    serenedb-tests_basics
+    PRIVATE "SDB_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/resources\""
 )

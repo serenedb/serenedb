@@ -39,12 +39,12 @@ class ClientContext;
 namespace sdb::connector {
 
 // Each entry is stored in an arena with kPrefixGap bytes reserved IMMEDIATELY
-// BEFORE the pk bytes -- the RocksDB lookup stamps [ObjectId][Column::Id]
+// BEFORE the pk bytes -- the legacy key layout stamps [ObjectId][Column::Id]
 // into the gap region per column without a second copy. `views[i]` covers the
 // pk bytes; the gap lives at `[views[i].data() - kPrefixGap, views[i].data())`.
 struct PrimaryKeysBytes {
   // = sizeof(ObjectId) + sizeof(catalog::Column::Id) -- hardcoded to avoid a
-  // catalog dependency in this header; index_source_rocksdb.cpp asserts the
+  // catalog dependency in this header; the key builders assert the
   // match.
   static constexpr size_t kPrefixGap = 16;
 
@@ -147,9 +147,13 @@ class IndexSource {
   virtual PrimaryKeyBatch CreatePkBatch() const = 0;
 
   // Materializes rows [start, start+count) of `batch` into output[0..count).
-  virtual void Materialize(duckdb::ClientContext& context,
-                           PrimaryKeyBatch& batch, duckdb::idx_t start,
-                           duckdb::idx_t count, duckdb::DataChunk& output) = 0;
+  // Returns how many rows remain: sources backed by transactional storage
+  // drop rows that are not visible to the caller's transaction (compacting
+  // `output`); everything else returns `count`.
+  virtual duckdb::idx_t Materialize(duckdb::ClientContext& context,
+                                    PrimaryKeyBatch& batch, duckdb::idx_t start,
+                                    duckdb::idx_t count,
+                                    duckdb::DataChunk& output) = 0;
 };
 
 }  // namespace sdb::connector

@@ -21,8 +21,11 @@
 
 #include "general_comm_task.h"
 
+#include <simdjson.h>
+
 #include "app/app_server.h"
 #include "auth/role_utils.h"
+#include "basics/buffer.h"
 #include "basics/encoding_utils.h"
 #include "basics/lifecycle.h"
 #include "basics/log.h"
@@ -86,10 +89,8 @@ std::shared_ptr<catalog::Database> LookupDatabaseFromRequest(
     req.setDatabaseName(StaticStrings::kDefaultDatabase);
   }
 
-  return catalog::CatalogFeature::instance()
-    .Global()
-    .GetCatalogSnapshot()
-    ->GetDatabase(req.databaseName());
+  return catalog::GetCatalog().GetCatalogSnapshot()->GetDatabase(
+    req.databaseName());
 }
 
 bool ResolveRequestContext(app::AppServer& server, GeneralRequest& req) {
@@ -133,24 +134,7 @@ void GeneralCommTask<T>::LogRequestBody(std::string_view protocol,
                                         ContentType content_type,
                                         std::string_view body,
                                         bool is_response) const {
-  std::string body_for_logging;
-  if (content_type != ContentType::VPack) {
-    body_for_logging = basics::string_utils::EscapeUnicode(body);
-  } else {
-    try {
-      vpack::Slice s{reinterpret_cast<const uint8_t*>(body.data())};
-      if (!s.isNone()) {
-        // "none" can happen if the content-type is neither JSON nor vpack
-        body_for_logging = basics::string_utils::EscapeUnicode(s.toJson());
-      }
-    } catch (...) {
-      // cannot stringify request body
-    }
-
-    if (body_for_logging.empty() && !body.empty()) {
-      body_for_logging = "potential binary data";
-    }
-  }
+  std::string body_for_logging = basics::string_utils::EscapeUnicode(body);
 
   SDB_TRACE(HTTP, "\"", protocol, (is_response ? "-response" : "-request"),
             "-body\",\"", std::bit_cast<size_t>(this), "\",\"",
@@ -178,7 +162,7 @@ Result GeneralCommTask<T>::HandleContentEncoding(GeneralRequest& req) {
     uint8_t* src = reinterpret_cast<uint8_t*>(const_cast<char*>(raw.data()));
     size_t len = raw.size();
     if (encoding == StaticStrings::kEncodingGzip) {
-      vpack::BufferUInt8 dst;
+      basics::BufferUInt8 dst;
       if (ErrorCode error = encoding::GZipUncompress(src, len, dst);
           error != ERROR_OK) {
         return {
@@ -191,7 +175,7 @@ Result GeneralCommTask<T>::HandleContentEncoding(GeneralRequest& req) {
       req.removeHeader(header);
       return {};
     } else if (encoding == StaticStrings::kEncodingDeflate) {
-      vpack::BufferUInt8 dst;
+      basics::BufferUInt8 dst;
       if (ErrorCode error = encoding::ZLibInflate(src, len, dst);
           error != ERROR_OK) {
         return {error,
@@ -204,7 +188,7 @@ Result GeneralCommTask<T>::HandleContentEncoding(GeneralRequest& req) {
       req.removeHeader(header);
       return {};
     } else if (encoding == StaticStrings::kEncodingSereneLz4) {
-      vpack::BufferUInt8 dst;
+      basics::BufferUInt8 dst;
       if (ErrorCode r = encoding::Lz4Uncompress(src, len, dst); r != ERROR_OK) {
         return {
           r, "a decoding error occurred while handling Content-Encoding: lz4"};
@@ -312,7 +296,6 @@ void GeneralCommTask<T>::ExecuteRequest(
     SDB_THROW(ERROR_INTERNAL, "invalid object setup for ExecuteRequest");
   }
 
-  response->setContentTypeRequested(request->contentTypeResponse());
   response->setGenerateBody(request->requestType() != RequestType::Head);
 
   // store the message id for error handling
@@ -340,8 +323,7 @@ void GeneralCommTask<T>::ExecuteRequest(
 
   // give up, if we cannot find a handler
   if (handler == nullptr) {
-    SendSimpleResponse(ResponseCode::NotFound, resp_type, message_id,
-                       vpack::BufferUInt8());
+    SendSimpleResponse(ResponseCode::NotFound, resp_type, message_id, {});
     return;
   }
 
@@ -438,12 +420,12 @@ Flow GeneralCommTask<T>::PrepareExecution(
 template<SocketType T>
 void GeneralCommTask<T>::SendSimpleResponse(ResponseCode code,
                                             ContentType resp_type, uint64_t mid,
-                                            vpack::BufferUInt8&& buffer) {
+                                            std::string buffer) {
   try {
     auto resp = CreateResponse(code, mid);
     resp->setContentType(resp_type);
     if (!buffer.empty()) {
-      resp->setPayload(std::move(buffer), vpack::Options::gDefaults);
+      resp->addRawPayload(buffer);
     }
     SendResponse(std::move(resp));
   } catch (...) {
@@ -458,22 +440,36 @@ template<SocketType T>
 void GeneralCommTask<T>::SendErrorResponse(
   ResponseCode code, ContentType resp_type, uint64_t message_id,
   ErrorCode error_num, std::string_view error_message /* = {} */) {
-  vpack::BufferUInt8 buffer;
-  vpack::Builder builder(buffer);
-  builder.openObject();
-  builder.add(StaticStrings::kError, error_num != ERROR_OK);
-  builder.add(StaticStrings::kErrorNum, error_num.value());
+  simdjson::builder::string_builder builder;
+  builder.start_object();
+  builder.escape_and_append_with_quotes(StaticStrings::kError);
+  builder.append_colon();
+  builder.append_raw(error_num != ERROR_OK ? "true" : "false");
+  builder.append_comma();
+  builder.escape_and_append_with_quotes(StaticStrings::kErrorNum);
+  builder.append_colon();
+  builder.append(static_cast<int64_t>(error_num.value()));
   if (error_num != ERROR_OK) {
     if (error_message.data() == nullptr) {
       error_message = GetErrorStr(error_num);
     }
     SDB_ASSERT(error_message.data() != nullptr);
-    builder.add(StaticStrings::kErrorMessage, error_message);
+    builder.append_comma();
+    builder.escape_and_append_with_quotes(StaticStrings::kErrorMessage);
+    builder.append_colon();
+    builder.escape_and_append_with_quotes(error_message);
   }
-  builder.add(StaticStrings::kCode, static_cast<int>(code));
-  builder.close();
+  builder.append_comma();
+  builder.escape_and_append_with_quotes(StaticStrings::kCode);
+  builder.append_colon();
+  builder.append(static_cast<int64_t>(static_cast<int>(code)));
+  builder.end_object();
 
-  SendSimpleResponse(code, resp_type, message_id, std::move(buffer));
+  std::string_view view;
+  if (builder.view().get(view) != simdjson::SUCCESS) {
+    return;
+  }
+  SendSimpleResponse(code, resp_type, message_id, std::string{view});
 }
 
 /// deny credentialed requests or not (only CORS)

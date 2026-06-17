@@ -24,10 +24,6 @@
 #include <absl/strings/str_cat.h>
 #include <s2/s2latlng.h>
 #include <s2/s2point_region.h>
-#include <vpack/builder.h>
-#include <vpack/iterator.h>
-#include <vpack/parser.h>
-#include <vpack/serializer.h>
 
 #include <magic_enum/magic_enum.hpp>
 #include <string>
@@ -36,12 +32,11 @@
 #include "basics/exceptions.h"
 #include "basics/log.h"
 #include "basics/result.h"
+#include "basics/serializer.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
 #include "geo/wkb.h"
-#include "iresearch/analysis/analyzers.hpp"
 #include "iresearch/search/geo_filter.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace magic_enum {
 
@@ -71,8 +66,8 @@ customize::enum_name<irs::analysis::GeoJsonAnalyzer::Coding>(
       return "s2LatLngF64";
     case irs::analysis::GeoJsonAnalyzer::Coding::S2LatLngU32:
       return "s2LatLngU32";
-    case irs::analysis::GeoJsonAnalyzer::Coding::VPack:
-      return "vpack";
+    case irs::analysis::GeoJsonAnalyzer::Coding::Source:
+      return "source";
   }
   return invalid_tag;
 }
@@ -84,92 +79,14 @@ namespace {
 using namespace sdb;
 using namespace sdb::geo;
 
-constexpr std::string_view kLatitudeParam = "latitude";
-constexpr std::string_view kLongitudeParam = "longitude";
-
-Result FromVPack(vpack::Slice object, GeoPointAnalyzer::Options& options) {
-  SDB_ASSERT(object.isObject());
-  auto r = vpack::ReadObjectNothrow(object, options,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    return {ERROR_BAD_PARAMETER,
-            absl::StrCat("Failed to parse definition, ", r.errorMessage())};
-  }
-
-  r = options.options.Validate();
-  if (!r.ok()) {
-    return r;
-  }
-
-  if (options.latitude.empty() != options.longitude.empty()) {
-    options.latitude = {};
-    options.longitude = {};
-    return {ERROR_BAD_PARAMETER,
-            absl::StrCat("'", kLatitudeParam, "' and '", kLongitudeParam,
-                         "' should be both empty or non-empty.")};
-  }
-  return {};
-}
-
-Result FromVPack(vpack::Slice object, GeoJsonAnalyzer::Options& options) {
-  SDB_ASSERT(object.isObject());
-  auto r = vpack::ReadObjectNothrow(object, options,
-                                    {
-                                      .skip_unknown = true,
-                                      .strict = false,
-                                    });
-  if (!r.ok()) {
-    return {ERROR_BAD_PARAMETER,
-            absl::StrCat("Failed to parse definition, ", r.errorMessage())};
-  }
-
-  r = options.options.Validate();
-  if (!r.ok()) {
-    return r;
-  }
-
-  return {};
-}
-
-template<typename Analyzer>
-bool ParseOptionsVPack(std::string_view args,
-                       typename Analyzer::Options& options) {
-  const auto object = irs::view_to_slice(args);
-  Result r;
-  if (!object.isObject()) {
-    r = {ERROR_BAD_PARAMETER, "Analyzer definition is not an Object"};
-  } else {
-    r = FromVPack(object, options);
-  }
-  if (!r.ok()) {
-    SDB_WARN(SEARCH, "Failed to read options for '",
-             irs::Type<Analyzer>::name(), "' analyzer, error: '",
-             r.errorMessage(), "'");
-    return false;
-  }
-  return true;
-}
-
-template<typename Analyzer>
-bool NormalizeImpl(std::string_view args, std::string& out) {
-  typename Analyzer::Options options;
-  if (!ParseOptionsVPack<Analyzer>(args, options)) {
-    return false;
-  }
-  vpack::Builder root;
-  vpack::WriteObject(root, options);
-  out.resize(root.slice().byteSize());
-  std::memcpy(&out[0], root.slice().begin(), out.size());
-  return true;
-}
-
 struct S2AnalyzerData {
   sdb::geo::coding::Options coding;
   Encoder encoder;
 };
+
+// Source coding force-includes the indexed source column and re-parses it at
+// query time, so the analyzer writes no derived StoreAttr blob.
+struct SourceAnalyzerData {};
 
 template<typename Data>
 class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
@@ -177,7 +94,7 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
   explicit GeoJsonAnalyzerImpl(const Options& options)
     : GeoJsonAnalyzer{options} {
     if constexpr (kIsS2) {
-      SDB_ASSERT(options.coding != Coding::VPack);
+      SDB_ASSERT(options.coding != Coding::Source);
       _data.coding =
         sdb::geo::coding::Options{std::to_underlying(options.coding)};
       // should be enough space for type + size or S2Point
@@ -186,18 +103,18 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
   }
 
   using GeoAnalyzer::reset;
-  bool reset(vpack::Slice slice) final {
+  bool reset(simdjson::ondemand::value json) final {
     if constexpr (kIsS2) {
       _data.encoder.clear();
-      if (!ResetImpl(slice, _data.coding, &_data.encoder)) {
+      if (!ResetImpl(json, _data.coding, &_data.encoder)) {
         return false;
       }
     } else {
-      if (!ResetImpl(slice, geo::coding::Options::Invalid, nullptr)) {
+      if (!ResetImpl(json, geo::coding::Options::Invalid, nullptr)) {
         return false;
       }
     }
-    StoreImpl(slice);
+    StoreImpl();
     return true;
   }
 
@@ -208,8 +125,8 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
       // (S2LatLngF64, S2LatLngU32) need a per-shape-type walker that emits
       // LatLng-encoded bytes either fused with the WKB read or from the
       // already-built S2 objects; S2LatLngU32 additionally needs
-      // pre-quantization (see geo_json.cpp vpack path). Callers must
-      // configure S2 coding before reaching here.
+      // pre-quantization. Callers must configure S2 coding before reaching
+      // here.
       SDB_ASSERT(geo::coding::IsOptionsS2(_data.coding) &&
                  "LatLng coding is not supported by resetWKB; "
                  "use S2Point / S2PointShapeCompact / S2PointRegionCompact");
@@ -234,18 +151,21 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
         _shape.Encode(_data.encoder, _data.coding);
       }
       ComputeAndPublishTerms();
-      StoreImpl({});
+      StoreImpl();
       return true;
     } else {
-      // VPack coding keeps the original GeoJSON bytes as the stored value
-      // (see GeoJsonAnalyzerImpl<vpack::Builder>::StoreImpl). WKB carries no
-      // JSON, so there's nothing to store -- callers must not combine VPack
-      // coding with WKB ingest (catalog/index.cpp rejects this at CREATE
-      // INDEX time).
-      SDB_ASSERT(false &&
-                 "VPack coding is not supported by resetWKB; "
-                 "no original JSON available to store");
-      return false;
+      _shape = {};
+      const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
+                                   wkb.size()};
+      if (auto r = sdb::geo::ParseShapeWKB(bytes, _shape); r.fail()) {
+        return false;
+      }
+      if (_type == Type::Point &&
+          _shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
+        return false;
+      }
+      ComputeAndPublishTerms();
+      return true;
     }
   }
 
@@ -265,11 +185,11 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
       }
       options.coding = _data.coding;
     } else {
-      options.stored = StoredType::VPack;
+      options.stored = StoredType::Source;
     }
   }
 
-  void StoreImpl(vpack::Slice slice) final;
+  void StoreImpl() final;
 
  protected:
   static constexpr bool kIsS2 = std::is_same_v<Data, S2AnalyzerData>;
@@ -298,25 +218,31 @@ void GeoAnalyzer::reset(std::vector<std::string>&& terms) noexcept {
 }
 
 bool GeoAnalyzer::reset(std::string_view value) {
-  _json_parser.clear();
-  try {
-    _json_parser.parse(value);
-  } catch (...) {
+  _json_buffer.assign(value);
+  _json_buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+  simdjson::padded_string_view padded_view{_json_buffer.data(), value.size(),
+                                           _json_buffer.size()};
+  simdjson::ondemand::document doc;
+  if (_json_parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
     return false;
   }
-  return reset(_json_parser.builder().slice());
-}
-
-bool GeoPointAnalyzer::normalize(std::string_view args, std::string& out) {
-  return NormalizeImpl<GeoPointAnalyzer>(args, out);
-}
-
-irs::analysis::Analyzer::ptr GeoPointAnalyzer::make(std::string_view args) {
-  Options options;
-  if (!ParseOptionsVPack<GeoPointAnalyzer>(args, options)) {
-    return {};
+  simdjson::ondemand::value json;
+  if (doc.get_value().get(json) != simdjson::SUCCESS) {
+    return false;
   }
-  return std::make_unique<GeoPointAnalyzer>(options);
+  return reset(json);
+}
+
+irs::analysis::Analyzer::ptr GeoPointAnalyzer::Make(Options opts) {
+  if (!opts.options.Validate().ok()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "geo_point: invalid geo options");
+  }
+  if (opts.latitude.empty() != opts.longitude.empty()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
+              "geo_point: latitude and longitude must both be set or both "
+              "empty");
+  }
+  return std::make_unique<GeoPointAnalyzer>(opts);
 }
 
 GeoPointAnalyzer::GeoPointAnalyzer(const Options& options)
@@ -327,17 +253,10 @@ GeoPointAnalyzer::GeoPointAnalyzer(const Options& options)
   SDB_ASSERT(_latitude.empty() == _longitude.empty());
 }
 
-bool GeoPointAnalyzer::reset(vpack::Slice slice) {
-  if (!ParsePoint(slice, _point)) {
+bool GeoPointAnalyzer::reset(simdjson::ondemand::value json) {
+  if (!ParsePoint(json, _point)) {
     return false;
   }
-
-  _builder.clear();
-  sdb::geo::PointToVPack(_builder, _point);
-  auto* store = irs::GetMutable<StoreAttr>(this);
-  SDB_ASSERT(store);
-  store->value = irs::slice_to_view<irs::byte_type>(_builder.slice());
-
   GeoAnalyzer::reset(_indexer.GetIndexTerms(_point.ToPoint(), {}));
   return true;
 }
@@ -354,61 +273,96 @@ bool GeoPointAnalyzer::resetWKB(bytes_view wkb) {
     return false;
   }
   _point = S2LatLng{shape.centroid()};
-
-  _builder.clear();
-  sdb::geo::PointToVPack(_builder, _point);
-  auto* store = irs::GetMutable<StoreAttr>(this);
-  SDB_ASSERT(store);
-  store->value = irs::slice_to_view<irs::byte_type>(_builder.slice());
-
   GeoAnalyzer::reset(_indexer.GetIndexTerms(_point.ToPoint(), {}));
   return true;
 }
 
 void GeoPointAnalyzer::prepare(GeoFilterOptionsBase& options) const {
   options.options = _indexer.options();
-  options.stored = StoredType::VPack;
+  options.stored = StoredType::Source;
+  options.source_is_point = true;
+  options.point_latitude = _latitude;
+  options.point_longitude = _longitude;
 }
 
-bool GeoPointAnalyzer::ParsePoint(vpack::Slice json, S2LatLng& point) const {
-  vpack::Slice lat, lng;
+bool GeoPointAnalyzer::ParsePoint(simdjson::ondemand::value json,
+                                  S2LatLng& point) const {
+  double lat, lng;
   if (_from_array) {
-    if (!json.isArray()) {
+    simdjson::ondemand::array array;
+    if (json.get_array().get(array) != simdjson::SUCCESS) {
       return false;
     }
-    vpack::ArrayIterator it{json};
-    if (it.size() != 2) {
+    double values[2];
+    size_t i = 0;
+    for (auto element : array) {
+      if (i == 2) [[unlikely]] {
+        return false;
+      }
+      if (element.get_double().get(values[i]) != simdjson::SUCCESS)
+        [[unlikely]] {
+        return false;
+      }
+      ++i;
+    }
+    if (i != 2) [[unlikely]] {
       return false;
     }
-    lat = *it;
-    it.next();
-    lng = *it;
+    lat = values[0];
+    lng = values[1];
   } else {
-    lat = json.get(_latitude);
-    lng = json.get(_longitude);
+    simdjson::ondemand::object object;
+    if (json.get_object().get(object) != simdjson::SUCCESS) {
+      return false;
+    }
+    auto find = [&object](std::span<const std::string> path,
+                          double& out) -> bool {
+      if (path.size() == 1) {
+        return object.find_field_unordered(path.front())
+                 .get_double()
+                 .get(out) == simdjson::SUCCESS;
+      }
+      simdjson::ondemand::value current;
+      if (object.find_field_unordered(path.front()).get(current) !=
+          simdjson::SUCCESS) {
+        return false;
+      }
+      for (size_t i = 1; i + 1 < path.size(); ++i) {
+        simdjson::ondemand::object inner;
+        if (current.get_object().get(inner) != simdjson::SUCCESS) {
+          return false;
+        }
+        if (inner.find_field_unordered(path[i]).get(current) !=
+            simdjson::SUCCESS) {
+          return false;
+        }
+      }
+      simdjson::ondemand::object inner;
+      if (current.get_object().get(inner) != simdjson::SUCCESS) {
+        return false;
+      }
+      return inner.find_field_unordered(path.back()).get_double().get(out) ==
+             simdjson::SUCCESS;
+    };
+    if (!find(_latitude, lat)) [[unlikely]] {
+      return false;
+    }
+    if (!find(_longitude, lng)) [[unlikely]] {
+      return false;
+    }
   }
-  if (!lat.isNumber<double>() || !lng.isNumber<double>()) [[unlikely]] {
-    return false;
-  }
-  point =
-    S2LatLng::FromDegrees(lat.getNumber<double>(), lng.getNumber<double>())
-      .Normalized();
+  point = S2LatLng::FromDegrees(lat, lng).Normalized();
   return true;
 }
 
-bool GeoJsonAnalyzer::normalize(std::string_view args, std::string& out) {
-  return NormalizeImpl<GeoJsonAnalyzer>(args, out);
-}
-
-irs::analysis::Analyzer::ptr GeoJsonAnalyzer::make(std::string_view args) {
-  Options options;
-  if (!ParseOptionsVPack<GeoJsonAnalyzer>(args, options)) {
-    return {};
+irs::analysis::Analyzer::ptr GeoJsonAnalyzer::Make(Options opts) {
+  if (!opts.options.Validate().ok()) {
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "geo_json: invalid geo options");
   }
-  if (options.coding == Coding::VPack) {
-    return std::make_unique<GeoJsonAnalyzerImpl<vpack::Builder>>(options);
+  if (opts.coding == Coding::Source) {
+    return std::make_unique<GeoJsonAnalyzerImpl<SourceAnalyzerData>>(opts);
   }
-  return std::make_unique<GeoJsonAnalyzerImpl<S2AnalyzerData>>(options);
+  return std::make_unique<GeoJsonAnalyzerImpl<S2AnalyzerData>>(opts);
 }
 
 GeoJsonAnalyzer::GeoJsonAnalyzer(const Options& options)
@@ -416,20 +370,21 @@ GeoJsonAnalyzer::GeoJsonAnalyzer(const Options& options)
     _type{options.type},
     _coding{options.coding} {}
 
-bool GeoJsonAnalyzer::ResetImpl(vpack::Slice data, geo::coding::Options options,
+bool GeoJsonAnalyzer::ResetImpl(simdjson::ondemand::value json,
+                                geo::coding::Options options,
                                 Encoder* encoder) {
+  // Centroid skips shape serialization: StoreImpl encodes the centroid point
+  // instead. For a Point input the centroid equals the point, so the stored
+  // bytes are identical to a full point serialization.
+  const bool without_serialization = _type == Type::Centroid;
   if (_type != Type::Point) {
-    const auto type = geo::json::ParseType(data);
-    const bool without_serialization =
-      _type == Type::Centroid && type != geo::json::Type::Point &&
-      type != geo::json::Type::Unknown;  // treat UNKNOWN as Array
     if (!ParseShape<Parsing::GeoJson>(
-          data, _shape, _cache,
+          json, _shape, _cache,
           without_serialization ? geo::coding::Options::Invalid : options,
           without_serialization ? nullptr : encoder)) {
       return false;
     }
-  } else if (!ParseShape<Parsing::OnlyPoint>(data, _shape, _cache, options,
+  } else if (!ParseShape<Parsing::OnlyPoint>(json, _shape, _cache, options,
                                              encoder)) {
     return false;
   }
@@ -458,21 +413,10 @@ void GeoJsonAnalyzer::ComputeAndPublishTerms() {
 }
 
 template<>
-void GeoJsonAnalyzerImpl<vpack::Builder>::StoreImpl(vpack::Slice slice) {
-  if (_type == Type::Centroid) {
-    SDB_ASSERT(!_shape.empty());
-    const S2LatLng centroid{_shape.centroid()};
-    _data.clear();
-    sdb::geo::PointToVPack(_data, centroid);
-    slice = _data.slice();
-  }
-  auto* store = irs::GetMutable<StoreAttr>(this);
-  SDB_ASSERT(store);
-  store->value = irs::slice_to_view<irs::byte_type>(slice);
-}
+void GeoJsonAnalyzerImpl<SourceAnalyzerData>::StoreImpl() {}
 
 template<>
-void GeoJsonAnalyzerImpl<S2AnalyzerData>::StoreImpl(vpack::Slice) {
+void GeoJsonAnalyzerImpl<S2AnalyzerData>::StoreImpl() {
   if (_data.encoder.length() == 0) {
     SDB_ASSERT(_type == Type::Centroid);
     SDB_ASSERT(_data.coding != geo::coding::Options::Invalid);
@@ -494,13 +438,6 @@ void GeoJsonAnalyzerImpl<S2AnalyzerData>::StoreImpl(vpack::Slice) {
   auto* store = irs::GetMutable<StoreAttr>(this);
   SDB_ASSERT(store);
   store->value = data;
-}
-
-void GeoAnalyzer::init() {
-  REGISTER_ANALYZER_VPACK(GeoPointAnalyzer, GeoPointAnalyzer::make,
-                          GeoPointAnalyzer::normalize);
-  REGISTER_ANALYZER_VPACK(GeoJsonAnalyzer, GeoJsonAnalyzer::make,
-                          GeoJsonAnalyzer::normalize);
 }
 
 }  // namespace irs::analysis

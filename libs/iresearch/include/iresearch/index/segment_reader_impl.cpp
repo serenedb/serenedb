@@ -22,15 +22,17 @@
 
 #include "segment_reader_impl.hpp"
 
+#include <duckdb/common/types.hpp>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/columnstore/column_reader.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/hnsw.hpp"
-#include "iresearch/columnstore/norm_reader.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
+#include "iresearch/formats/hnsw/hnsw_reader.hpp"
+#include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/index/norm_column_reader.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -114,6 +116,12 @@ class MaskDocIterator : public DocIterator {
     CollectImpl(*this, scorer, fetcher, collector);
   }
 
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    return _it->PrepareScore(ctx);
+  }
+
+  void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
+
  private:
   const DocumentMask& _mask;
   DocIterator::ptr _it;
@@ -185,18 +193,22 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   SDB_ASSERT(meta.codec);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
-  reader->_field_reader =
-    meta.codec->get_field_reader(*dir.ResourceManager().readers);
-  if (options.index) {
-    reader->_field_reader->prepare(
-      ReaderState{.dir = &dir, .meta = &meta, .scorer = options.scorer});
-  }
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options);
+  reader->_field_reader = std::make_shared<burst_trie::FieldReader>(
+    meta.codec->get_postings_reader(), *dir.ResourceManager().readers);
+  if (options.index) {
+    reader->_field_reader->prepare(ReaderState{
+      .dir = &dir,
+      .meta = &meta,
+      .scorer = options.scorer,
+      .idx = reader->_data->idx_reader.get(),
+    });
+  }
   return reader;
 }
 
-std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenColumnStore(
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
   const Directory& dir, const SegmentMeta& meta,
   const IndexReaderOptions& options) const {
   SDB_ASSERT(meta == _info);
@@ -227,29 +239,26 @@ uint64_t SegmentReaderImpl::CountMappedMemory() const {
 }
 
 NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
-  if (!_data || !_data->cs_reader) {
+  if (!_data) {
     return {};
   }
-  const auto* nc = _data->cs_reader->NormColumn(field);
+  const auto* nc = _data->col_reader->NormColumn(field);
   if (!nc) {
     return {};
   }
   return MakePersistedNormReader(*nc);
 }
 
-const columnstore::ColumnReader* SegmentReaderImpl::Column(
-  field_id field) const {
-  if (!_data->cs_reader) {
-    return nullptr;
-  }
-  return _data->cs_reader->Column(field);
+const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
+  return _data->col_reader->Column(field);
 }
 
-const columnstore::HNSWReader* SegmentReaderImpl::HNSW(field_id field) const {
-  if (!_data->cs_reader) {
+const HnswReader* SegmentReaderImpl::HNSW(field_id field) const {
+  if (!_data) {
     return nullptr;
   }
-  return _data->cs_reader->HNSW(field);
+  auto it = _data->hnsw_by_id.find(field);
+  return it == _data->hnsw_by_id.end() ? nullptr : it->second;
 }
 
 DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
@@ -275,11 +284,28 @@ DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
                                          const SegmentMeta& meta,
                                          const IndexReaderOptions& options) {
-  if (options.db == nullptr) {
-    return;
+  SDB_ASSERT(options.db);
+  col_reader = std::make_unique<ColReader>(dir, meta.name, *options.db);
+  idx_reader = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_graphs);
+
+  const auto entries = idx_reader->HNSWEntries();
+  hnsw_readers.reserve(entries.size());
+  hnsw_by_id.reserve(entries.size());
+  for (const auto& [id, entry] : entries) {
+    const auto* column_reader = col_reader->Column(id);
+    if (!column_reader) {
+      continue;
+    }
+    HNSWInfo info = entry.info;
+    const auto& col_type = column_reader->Type();
+    if (col_type.id() == duckdb::LogicalTypeId::ARRAY) {
+      info.d = static_cast<int>(duckdb::ArrayType::GetSize(col_type));
+    }
+    auto hnsw_reader =
+      std::make_unique<HnswReader>(id, entry.graph, info, *column_reader);
+    hnsw_by_id.emplace(id, hnsw_reader.get());
+    hnsw_readers.push_back(std::move(hnsw_reader));
   }
-  cs_reader = std::make_unique<columnstore::Reader>(dir, meta.name, *options.db,
-                                                    options.cs_hnsw_graphs);
 }
 
 }  // namespace irs

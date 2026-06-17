@@ -53,6 +53,8 @@ PrepareCollector::ptr Filter::MakeCollector(const Scorer* /*scorer*/) const {
   return std::make_unique<NoopCollector>();
 }
 
+Filter::ptr Filter::empty() { return std::make_unique<Empty>(); }
+
 QueryBuilder::ptr Empty::PrepareSegment(const SubReader&,
                                         const PrepareContext&) const {
   return memory::to_managed<EmptyQueryBuilder>(gEmptyQuery);

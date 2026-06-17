@@ -23,7 +23,6 @@
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
@@ -125,14 +124,11 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
   auto args = ParseLevenshteinArgs(func);
 
-  std::string field_name;
-  MakeFieldName(column_info.field_id, field_name);
-  search::mangling::MangleString(field_name);
-
   auto& edit_filter = ctx.negated ? Negate<irs::ByEditDistance>(filter)
                                   : AddFilter<irs::ByEditDistance>(filter);
   edit_filter.boost(ctx.boost);
-  *edit_filter.mutable_field() = field_name;
+  *edit_filter.mutable_field_id() =
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto& edit_opts = *edit_filter.mutable_options();
   FillByEditDistanceOptions(args, edit_opts);
   edit_opts.max_terms = ctx.scored_terms_limit;

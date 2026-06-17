@@ -24,6 +24,7 @@
 #include <duckdb/parser/expression/operator_expression.hpp>
 
 #include "basics/assert.h"
+#include "basics/serializer.h"
 
 namespace sdb::catalog {
 
@@ -52,6 +53,33 @@ std::optional<size_t> CheckConstraint::IsNotNull(
     }
   }
   return std::nullopt;
+}
+
+void Column::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(
+    sink, std::forward_as_tuple(GetId(), type, std::string{GetName()}, expr,
+                                generated_type));
+}
+
+Column Column::Deserialize(duckdb::Deserializer& src) {
+  std::tuple<ObjectId, duckdb::LogicalType, std::string,
+             std::shared_ptr<ColumnExpr>, GeneratedType>
+    tup;
+  basics::ReadTuple(src, tup);
+  auto& [id, type, name, expr, gt] = tup;
+  return Column{ObjectId{}, id, name, std::move(type), std::move(expr), gt};
+}
+
+void CheckConstraint::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(
+    sink, std::forward_as_tuple(GetId(), std::string{GetName()}, expr));
+}
+
+CheckConstraint CheckConstraint::Deserialize(duckdb::Deserializer& src) {
+  std::tuple<ObjectId, std::string, std::shared_ptr<ColumnExpr>> tup;
+  basics::ReadTuple(src, tup);
+  auto& [id, name, expr] = tup;
+  return CheckConstraint{ObjectId{}, id, name, std::move(expr)};
 }
 
 }  // namespace sdb::catalog

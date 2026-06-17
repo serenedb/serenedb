@@ -333,23 +333,32 @@ void RegisterNormalize(duckdb::ExtensionLoader& loader) {
 template<Norm N>
 void RegisterNorm(duckdb::ExtensionLoader& loader) {
   std::string name;
+  irs::HNSWMetric metric;
+  ScoreEmit score_emit = ScoreEmit::Identity;
   if constexpr (N == Norm::L1) {
     name = kL1Norm;
+    metric = irs::HNSWMetric::L1;
   } else if constexpr (N == Norm::L2) {
     name = kL2Norm;
+    metric = irs::HNSWMetric::L2Sqr;
+    score_emit = ScoreEmit::Sqrt;
   } else {
     SDB_UNREACHABLE();
   }
-  const duckdb::ScalarFunction float_fn(
+  duckdb::ScalarFunction float_fn(
     {duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT,
                                 duckdb::optional_idx{})},
     duckdb::LogicalType::FLOAT, ArrayNormExecutor<N, float, float>,
     ScalarArrayBind);
-  const duckdb::ScalarFunction double_fn(
+  duckdb::ScalarFunction double_fn(
     {duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
                                 duckdb::optional_idx{})},
     duckdb::LogicalType::DOUBLE, ArrayNormExecutor<N, double, double>,
     ScalarArrayBind);
+  float_fn.SetExtraFunctionInfo<AnnFunctionInfo>(
+    metric, duckdb::OrderType::ASCENDING, /*is_norm=*/true, score_emit);
+  double_fn.SetExtraFunctionInfo<AnnFunctionInfo>(
+    metric, duckdb::OrderType::ASCENDING, /*is_norm=*/true, score_emit);
   duckdb::ScalarFunctionSet norm{name};
   norm.AddFunction(float_fn);
   norm.AddFunction(double_fn);
@@ -360,41 +369,61 @@ template<Distance D>
 void RegisterDistance(duckdb::ExtensionLoader& loader) {
   std::string name;
   std::string op_name;
+  irs::HNSWMetric metric;
+  duckdb::OrderType order = duckdb::OrderType::ASCENDING;
+  ScoreEmit score_emit = ScoreEmit::Identity;
   if constexpr (D == Distance::L1) {
     name = kL1Distance;
     op_name = kL1DistanceOp;
+    metric = irs::HNSWMetric::L1;
   } else if constexpr (D == Distance::L2) {
     name = kL2Distance;
     op_name = kL2DistanceOp;
+    metric = irs::HNSWMetric::L2Sqr;
+    score_emit = ScoreEmit::Sqrt;
   } else if constexpr (D == Distance::L2Sqr) {
     name = kL2SqrDistance;
+    metric = irs::HNSWMetric::L2Sqr;
   } else if constexpr (D == Distance::Cosine) {
     name = kCosineDistance;
     op_name = kCosineDistanceOp;
+    metric = irs::HNSWMetric::Cosine;
   } else if constexpr (D == Distance::CosineSimilarity) {
     name = kCosineSimilarity;
+    metric = irs::HNSWMetric::Cosine;
+    order = duckdb::OrderType::DESCENDING;
+    score_emit = ScoreEmit::OneMinus;
   } else if constexpr (D == Distance::IP) {
     name = kIP;
+    metric = irs::HNSWMetric::NegativeIP;
+    order = duckdb::OrderType::DESCENDING;
+    score_emit = ScoreEmit::Negate;
   } else if constexpr (D == Distance::NegativeIP) {
     name = kNegativeIP;
     op_name = kNegativeIPDistanceOp;
+    metric = irs::HNSWMetric::NegativeIP;
   } else {
     SDB_UNREACHABLE();
   }
-  const duckdb::ScalarFunction float_fn(
+  duckdb::ScalarFunction float_fn(
     {duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT,
                                 duckdb::optional_idx{}),
      duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT,
                                 duckdb::optional_idx{})},
     duckdb::LogicalType::FLOAT, ArrayDistanceExecutor<D, float, float>,
     ScalarArrayBind);
-  const duckdb::ScalarFunction double_fn(
+  duckdb::ScalarFunction double_fn(
     {duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
                                 duckdb::optional_idx{}),
      duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
                                 duckdb::optional_idx{})},
     duckdb::LogicalType::DOUBLE, ArrayDistanceExecutor<D, double, double>,
     ScalarArrayBind);
+  float_fn.SetExtraFunctionInfo<AnnFunctionInfo>(metric, order,
+                                                 /*is_norm=*/false, score_emit);
+  double_fn.SetExtraFunctionInfo<AnnFunctionInfo>(metric, order,
+                                                  /*is_norm=*/false,
+                                                  score_emit);
   duckdb::ScalarFunctionSet distance{name};
   distance.AddFunction(float_fn);
   distance.AddFunction(double_fn);

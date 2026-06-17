@@ -31,6 +31,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "basics/duckdb_engine.h"
 #include "basics/file_utils_ext.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -42,10 +43,8 @@
 #include "iresearch/store/fs_directory.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/delta_compression.hpp"
 #include "iresearch/utils/fstext/fst_table_matcher.hpp"
 #include "iresearch/utils/index_utils.hpp"
-#include "iresearch/utils/lz4compression.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "iresearch/utils/vector.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
@@ -55,24 +54,24 @@ using namespace std::literals;
 
 namespace {
 
-// Per-doc cs column id used by tests in this file. `kName` keys the
+// Per-doc cs column id used by tests in this file. `kNameColumnId` keys the
 // column that holds the document's "name" StringField -- it backs the
-// `segment.Column(kName)` read-back paths the tests use to validate
+// `segment.Column(kNameColumnId)` read-back paths the tests use to validate
 // per-doc bytes after insertion.
-inline constexpr irs::field_id kName = 1;
+inline constexpr irs::field_id kNameColumnId = 1;
 inline constexpr irs::field_id kNameUpper = 2;
 
 inline void CaptureNameLikeFields(irs::IndexWriter::Document& d,
                                   const tests::Particle& indexed) {
   if (const auto* name =
         dynamic_cast<const tests::StringField*>(indexed.get("name"))) {
-    if (auto* cs = d.Columnstore(); cs != nullptr) {
-      irs::tests::StoreFieldAt(*cs, kName, d.DocId(), *name);
+    if (auto* cs = d.GetColWriter(); cs != nullptr) {
+      irs::tests::StoreFieldAt(*cs, kNameColumnId, d.DocId(), *name);
     }
   }
   if (const auto* name_upper =
         dynamic_cast<const tests::StringField*>(indexed.get("NAME"))) {
-    if (auto* cs = d.Columnstore(); cs != nullptr) {
+    if (auto* cs = d.GetColWriter(); cs != nullptr) {
       irs::tests::StoreFieldAt(*cs, kNameUpper, d.DocId(), *name_upper);
     }
   }
@@ -94,44 +93,50 @@ inline bool ProbeWritable(const tests::Particle& indexed) {
 }
 
 // Insert one doc into `writer` and capture per-doc "name"/"NAME"
-// StringField bytes into the cs columns keyed by `kName`/`kNameUpper`.
+// StringField bytes into the cs columns keyed by `kNameColumnId`/`kNameUpper`.
 inline bool InsertWithName(irs::IndexWriter& writer,
                            const tests::Document& src) {
   auto ctx = writer.GetBatch();
-  auto d = ctx.Insert();
-  if (!d.Insert(src.indexed.begin(), src.indexed.end())) {
-    return false;
+  {
+    auto d = ctx.Insert();
+    if (!d.Insert(src.indexed.begin(), src.indexed.end())) {
+      return false;
+    }
+    if (!ProbeWritable(src.indexed)) {
+      d.Writer().rollback();
+      return false;
+    }
+    CaptureNameLikeFields(d, src.indexed);
   }
-  if (!ProbeWritable(src.indexed)) {
-    d.Writer().rollback();
-    return false;
-  }
-  CaptureNameLikeFields(d, src.indexed);
+  ctx.Commit();
   return true;
 }
 
 // Update analogue of `InsertWithName`: replaces docs matching `filter`
 // with `src.indexed`, and forwards the "name" StringField (if any) into
-// the per-doc cs column keyed by `kName`.
+// the per-doc cs column keyed by `kNameColumnId`.
 template<typename Filter>
 bool UpdateWithName(irs::IndexWriter& writer, Filter&& filter,
                     const tests::Document& src) {
   auto ctx = writer.GetBatch();
-  auto d = ctx.Replace(std::forward<Filter>(filter));
-  if (!d.Insert(src.indexed.begin(), src.indexed.end())) {
-    return false;
+  {
+    auto d = ctx.Replace(std::forward<Filter>(filter));
+    if (!d.Insert(src.indexed.begin(), src.indexed.end())) {
+      return false;
+    }
+    if (!ProbeWritable(src.indexed)) {
+      d.Writer().rollback();
+      return false;
+    }
+    CaptureNameLikeFields(d, src.indexed);
   }
-  if (!ProbeWritable(src.indexed)) {
-    d.Writer().rollback();
-    return false;
-  }
-  CaptureNameLikeFields(d, src.indexed);
+  ctx.Commit();
   return true;
 }
 
 // Batched variant: drains `gen` in `batch_size`-sized batches, mirrors
 // `tests::InsertBatch`, and additionally captures per-doc "name"
-// StringField bytes into the cs column keyed by `kName`.
+// StringField bytes into the cs column keyed by `kNameColumnId`.
 template<typename DocGenerator, typename ExpectedSegment>
 bool InsertBatchWithName(irs::IndexWriter& writer, DocGenerator& gen,
                          ExpectedSegment& segment, size_t batch_size) {
@@ -158,34 +163,53 @@ bool InsertBatchWithName(irs::IndexWriter& writer, DocGenerator& gen,
       d.Writer().remove(current_last_doc_id - batch_size + inserted_docs++);
     }
   } while (src != nullptr);
+  ctx.Commit();
   return true;
 }
 
-irs::Filter::ptr MakeByTerm(std::string_view name, std::string_view value) {
+// Stable per-name field ids, sourced from the canonical
+// `tests::FieldIdFor` mapping in doc_generator.hpp. Tests still spell the
+// name as a `kXxxFieldId` constant for readability; the value comes from a
+// single, project-wide table so shared factories and per-test factories
+// land on the same id (otherwise indexed fields collide on
+// `field_limits::invalid()` and `segment.field(id)` returns nullptr).
+inline constexpr irs::field_id kNameFieldId = tests::FieldIdFor("name");
+inline constexpr irs::field_id kName1FieldId = tests::FieldIdFor("name1");
+inline constexpr irs::field_id kSameFieldId = tests::FieldIdFor("same");
+inline constexpr irs::field_id kDuplicatedFieldId =
+  tests::FieldIdFor("duplicated");
+inline constexpr irs::field_id kValueFieldId = tests::FieldIdFor("value");
+inline constexpr irs::field_id kTestFieldId = tests::FieldIdFor("test");
+inline constexpr irs::field_id kNameAnlPayFieldId =
+  tests::FieldIdFor("name_anl_pay");
+
+using tests::FieldIdFor;
+
+irs::Filter::ptr MakeByTerm(irs::field_id field_id, std::string_view value) {
   auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field() = name;
+  *filter->mutable_field_id() = field_id;
   filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
   return filter;
 }
 
-irs::Filter::ptr MakeByTermOrByTerm(std::string_view name0,
+irs::Filter::ptr MakeByTermOrByTerm(irs::field_id field_id0,
                                     std::string_view value0,
-                                    std::string_view name1,
+                                    irs::field_id field_id1,
                                     std::string_view value1) {
   auto filter = std::make_unique<irs::Or>();
   filter->add<irs::ByTerm>() =
-    std::move(static_cast<irs::ByTerm&>(*MakeByTerm(name0, value0)));
+    std::move(static_cast<irs::ByTerm&>(*MakeByTerm(field_id0, value0)));
   filter->add<irs::ByTerm>() =
-    std::move(static_cast<irs::ByTerm&>(*MakeByTerm(name1, value1)));
+    std::move(static_cast<irs::ByTerm&>(*MakeByTerm(field_id1, value1)));
   return filter;
 }
 
 irs::Filter::ptr MakeOr(
-  const std::vector<std::pair<std::string_view, std::string_view>>& parts) {
+  const std::vector<std::pair<irs::field_id, std::string_view>>& parts) {
   auto filter = std::make_unique<irs::Or>();
-  for (const auto& [name, value] : parts) {
+  for (const auto& [field_id, value] : parts) {
     filter->add<irs::ByTerm>() =
-      std::move(static_cast<irs::ByTerm&>(*MakeByTerm(name, value)));
+      std::move(static_cast<irs::ByTerm&>(*MakeByTerm(field_id, value)));
   }
   return filter;
 }
@@ -208,12 +232,12 @@ class SubReaderMock final : public irs::SubReader {
     return std::move(it);
   }
 
-  irs::FieldIterator::ptr fields() const final {
+  std::span<const irs::field_id> field_ids() const final {
     EXPECT_FALSE(true);
-    return nullptr;
+    return {};
   }
 
-  const irs::TermReader* field(std::string_view) const final {
+  const irs::TermReader* field(irs::field_id) const final {
     EXPECT_FALSE(true);
     return nullptr;
   }
@@ -229,6 +253,21 @@ namespace tests {
 
 irs::IndexWriterOptions CsDefaultWriterOptions() {
   return irs::tests::DefaultWriterOptions();
+}
+
+irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts) {
+  if (opts.db == nullptr) {
+    opts.db = &::sdb::DuckDBEngine::Instance().instance();
+    opts.reader_options.db = &::sdb::DuckDBEngine::Instance().instance();
+  }
+  // With a cs writer present, a Norm-featured field requires a
+  // norm_column_options callback (FieldsData::emplace asserts it). Provide
+  // the shared monotonic allocator when a fixture didn't set one. This only
+  // affects fields that actually carry the Norm feature.
+  if (!opts.norm_column_options) {
+    opts.norm_column_options = irs::tests::MakeNormColumnOptionsProvider();
+  }
+  return opts;
 }
 
 irs::IndexReaderOptions CsDefaultReaderOptions() {
@@ -307,13 +346,16 @@ void IndexTestBase::write_segment(irs::IndexWriter& writer,
     segment.insert(*src);
 
     auto ctx = writer.GetBatch();
-    auto doc = ctx.Insert();
-    ASSERT_TRUE(doc.Insert(src->indexed.begin(), src->indexed.end()));
-    if (store) {
-      store(doc, *src);
-    } else {
-      CaptureNameLikeFields(doc, src->indexed);
+    {
+      auto doc = ctx.Insert();
+      ASSERT_TRUE(doc.Insert(src->indexed.begin(), src->indexed.end()));
+      if (store) {
+        store(doc, *src);
+      } else {
+        CaptureNameLikeFields(doc, src->indexed);
+      }
     }
+    ctx.Commit();
   }
 
   if (writer.Comparator()) {
@@ -389,7 +431,9 @@ class IndexTestCase : public tests::IndexTestBase {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {
-          doc.insert(std::make_shared<tests::StringField>(name, data.str));
+          auto field = std::make_shared<tests::StringField>(name, data.str);
+          field->id = FieldIdFor(name);
+          doc.insert(std::move(field));
         }
       });
 
@@ -452,12 +496,12 @@ class IndexTestCase : public tests::IndexTestBase {
 
       // add insert/remove/import
       {
-        auto query_doc4 = MakeByTerm("name", "D");
+        auto query_doc4 = MakeByTerm(kNameFieldId, "D");
         auto reader = irs::DirectoryReader(data_dir, nullptr,
                                            irs::tests::DefaultReaderOptions());
 
         ASSERT_TRUE(InsertWithName(*writer, *doc6));
-        writer->GetBatch().Remove(std::move(query_doc4));
+        tests::Remove(*writer, std::move(query_doc4));
         ASSERT_TRUE(writer->Import(irs::DirectoryReader(
           data_dir, nullptr, irs::tests::DefaultReaderOptions())));
       }
@@ -607,11 +651,11 @@ class IndexTestCase : public tests::IndexTestBase {
     std::vector<irs::SeekTermIterator::ptr> expected_term_itrs;
 
     auto& actual_segment = actual_reader[0];
-    auto actual_terms = actual_segment.field("name_anl_pay");
+    auto actual_terms = actual_segment.field(kNameAnlPayFieldId);
     ASSERT_FALSE(!actual_terms);
 
     for (size_t i = 0; i < thread_count; ++i) {
-      auto field = expected_index[0].fields().find("name_anl_pay");
+      auto field = expected_index[0].fields().find(kNameAnlPayFieldId);
       ASSERT_NE(expected_index[0].fields().end(), field);
       expected_terms.emplace_back(&field->second);
       ASSERT_TRUE(nullptr != expected_terms.back());
@@ -940,7 +984,9 @@ class IndexTestCase : public tests::IndexTestBase {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (tests::JsonDocGenerator::ValueType::STRING == data.vt) {
-          doc.insert(std::make_shared<tests::StringField>(name, data.str));
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
         }
       });
     const tests::Document* doc1 = gen.next();
@@ -992,10 +1038,10 @@ class IndexTestCase : public tests::IndexTestBase {
       // segment #1
       {
         auto& segment = reader[0];
-        const auto* column = segment.Column(kName);
+        const auto* column = segment.Column(kNameColumnId);
         ASSERT_NE(nullptr, column);
         irs::tests::BlobPointReader values{segment, *column};
-        auto terms = segment.field("same");
+        auto terms = segment.field(kSameFieldId);
         ASSERT_NE(nullptr, terms);
         auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
         ASSERT_TRUE(term_itr->next());
@@ -1009,10 +1055,10 @@ class IndexTestCase : public tests::IndexTestBase {
       // segment #1
       {
         auto& segment = reader[1];
-        auto* column = segment.Column(kName);
+        auto* column = segment.Column(kNameColumnId);
         ASSERT_NE(nullptr, column);
         irs::tests::BlobPointReader values{segment, *column};
-        auto terms = segment.field("same");
+        auto terms = segment.field(kSameFieldId);
         ASSERT_NE(nullptr, terms);
         auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
         ASSERT_TRUE(term_itr->next());
@@ -1097,10 +1143,10 @@ class IndexTestCase : public tests::IndexTestBase {
                                          irs::tests::DefaultReaderOptions());
       ASSERT_EQ(1, reader.size());
       auto& segment = reader[0];  // assume 0 is id of first/only segment
-      auto* column = segment.Column(kName);
+      auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -1125,7 +1171,7 @@ class IndexTestCase : public tests::IndexTestBase {
     // Field can be stored but can not be indexed due to lack of attributes in
     // tokenizer
     struct FieldT {
-      std::string_view Name() const { return "test_field"; }
+      irs::field_id Id() const { return 1; }
 
       irs::IndexFeatures GetIndexFeatures() const {
         return irs::IndexFeatures::None;
@@ -1134,7 +1180,7 @@ class IndexTestCase : public tests::IndexTestBase {
       irs::Tokenizer& GetTokens() { return token_stream; }
 
       bool Write(irs::DataOutput& out) const {
-        irs::WriteStr(out, Name());
+        irs::WriteStr(out, std::string_view{"test_field"});
         return true;
       }
 
@@ -1171,10 +1217,10 @@ class IndexTestCase : public tests::IndexTestBase {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(1, segment.live_docs_count());
-    auto* column = segment.Column(kName);
+    auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -1209,7 +1255,7 @@ class IndexTestCase : public tests::IndexTestBase {
       auto read_columns = [&expected_docs, &reader]() {
         size_t i = 0;
         for (auto& segment : reader) {
-          auto* column = segment.Column(kName);
+          auto* column = segment.Column(kNameColumnId);
           if (!column) {
             return false;
           }
@@ -1273,226 +1319,18 @@ class IndexTestCase : public tests::IndexTestBase {
     }
   }
 
-  void IterateFields() {
-    std::vector<std::string_view> names{
-      "06D36", "0OY4F", "1DTSP", "1KCSY", "2NGZD", "3ME9S", "4UIR7", "68QRT",
-      "6XTTH", "7NDWJ", "9QXBA", "A8MSE", "CNH1B", "I4EWS", "JXQKH", "KPQ7R",
-      "LK1MG", "M47KP", "NWCBQ", "OEKKW", "RI1QG", "TD7H7", "U56E5", "UKETS",
-      "UZWN7", "V4DLA", "W54FF", "Z4K42", "ZKQCU", "ZPNXJ"};
-
-    ASSERT_TRUE(std::is_sorted(names.begin(), names.end()));
-
-    struct {
-      std::string_view Name() const { return name; }
-
-      irs::IndexFeatures GetIndexFeatures() const {
-        return irs::IndexFeatures::None;
-      }
-
-      irs::Tokenizer& GetTokens() const {
-        stream.reset(name);
-        return stream;
-      }
-
-      std::string_view name;
-      mutable irs::StringTokenizer stream;
-    } field;
-
-    // insert attributes
-    {
-      auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
-                                           irs::tests::DefaultWriterOptions());
-      ASSERT_NE(nullptr, writer);
-
-      {
-        auto ctx = writer->GetBatch();
-        auto doc = ctx.Insert();
-
-        for (auto& name : names) {
-          field.name = name;
-          doc.Insert(field);
-        }
-
-        ASSERT_TRUE(doc);
-      }
-
-      writer->RefreshCommit();
-      AssertSnapshotEquality(*writer);
-    }
-
-    // iterate over fields
-    {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
-      ASSERT_EQ(1, reader.size());
-      auto& segment = *(reader.begin());
-
-      auto actual = segment.fields();
-
-      for (auto expected = names.begin(); expected != names.end();) {
-        ASSERT_TRUE(actual->next());
-        ASSERT_EQ(*expected, actual->value().meta().name);
-        ++expected;
-      }
-      ASSERT_FALSE(actual->next());
-      ASSERT_FALSE(actual->next());
-    }
-
-    // seek over fields
-    {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
-      ASSERT_EQ(1, reader.size());
-      auto& segment = *(reader.begin());
-
-      auto actual = segment.fields();
-
-      for (auto expected = names.begin(), prev = expected;
-           expected != names.end();) {
-        ASSERT_TRUE(actual->seek(*expected));
-        ASSERT_EQ(*expected, actual->value().meta().name);
-
-        if (prev != expected) {
-          ASSERT_TRUE(actual->seek(*prev));  // can't seek backwards
-          ASSERT_EQ(*expected, actual->value().meta().name);
-        }
-
-        // seek to the same value
-        ASSERT_TRUE(actual->seek(*expected));
-        ASSERT_EQ(*expected, actual->value().meta().name);
-
-        prev = expected;
-        ++expected;
-      }
-      ASSERT_FALSE(actual->next());               // reached the end
-      ASSERT_FALSE(actual->seek(names.front()));  // can't seek backwards
-      ASSERT_FALSE(actual->next());
-    }
-
-    // seek before the first element
-    {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
-      ASSERT_EQ(1, reader.size());
-      auto& segment = *(reader.begin());
-
-      auto actual = segment.fields();
-      auto expected = names.begin();
-
-      const auto key = std::string_view("0");
-      ASSERT_TRUE(key < names.front());
-      ASSERT_TRUE(actual->seek(key));
-      ASSERT_EQ(*expected, actual->value().meta().name);
-
-      ++expected;
-      for (auto prev = names.begin(); expected != names.end();) {
-        ASSERT_TRUE(actual->next());
-        ASSERT_EQ(*expected, actual->value().meta().name);
-
-        if (prev != expected) {
-          ASSERT_TRUE(actual->seek(*prev));  // can't seek backwards
-          ASSERT_EQ(*expected, actual->value().meta().name);
-        }
-
-        // seek to the same value
-        ASSERT_TRUE(actual->seek(*expected));
-        ASSERT_EQ(*expected, actual->value().meta().name);
-
-        prev = expected;
-        ++expected;
-      }
-      ASSERT_FALSE(actual->next());               // reached the end
-      ASSERT_FALSE(actual->seek(names.front()));  // can't seek backwards
-      ASSERT_FALSE(actual->next());
-    }
-
-    // seek after the last element
-    {
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
-      ASSERT_EQ(1, reader.size());
-      auto& segment = *(reader.begin());
-
-      auto actual = segment.fields();
-
-      const auto key = std::string_view("~");
-      ASSERT_TRUE(key > names.back());
-      ASSERT_FALSE(actual->seek(key));
-      ASSERT_FALSE(actual->next());               // reached the end
-      ASSERT_FALSE(actual->seek(names.front()));  // can't seek backwards
-    }
-
-    // seek in between
-    {
-      std::vector<std::pair<std::string_view, std::string_view>> seeks{
-        {"0B", names[1]}, {names[1], names[1]},   {"0", names[1]},
-        {"D", names[13]}, {names[13], names[13]}, {names[12], names[13]},
-        {"P", names[20]}, {"Z", names[27]}};
-
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
-      ASSERT_EQ(1, reader.size());
-      auto& segment = *(reader.begin());
-
-      auto actual = segment.fields();
-
-      for (auto& seek : seeks) {
-        auto& key = seek.first;
-        auto& expected = seek.second;
-
-        ASSERT_TRUE(actual->seek(key));
-        ASSERT_EQ(expected, actual->value().meta().name);
-      }
-
-      const auto key = std::string_view("~");
-      ASSERT_TRUE(key > names.back());
-      ASSERT_FALSE(actual->seek(key));
-      ASSERT_FALSE(actual->next());               // reached the end
-      ASSERT_FALSE(actual->seek(names.front()));  // can't seek backwards
-    }
-
-    // seek in between + next
-    {
-      std::vector<std::pair<std::string_view, size_t>> seeks{
-        {"0B", 1}, {"D", 13}, {"O", 19}, {"P", 20}, {"Z", 27}};
-
-      auto reader = irs::DirectoryReader(dir(), codec(),
-                                         irs::tests::DefaultReaderOptions());
-      ASSERT_EQ(1, reader.size());
-      auto& segment = *(reader.begin());
-
-      for (auto& seek : seeks) {
-        auto& key = seek.first;
-        auto expected = names.begin() + seek.second;
-
-        auto actual = segment.fields();
-
-        ASSERT_TRUE(actual->seek(key));
-        ASSERT_EQ(*expected, actual->value().meta().name);
-
-        for (++expected; expected != names.end(); ++expected) {
-          ASSERT_TRUE(actual->next());
-          ASSERT_EQ(*expected, actual->value().meta().name);
-        }
-
-        ASSERT_FALSE(actual->next());               // reached the end
-        ASSERT_FALSE(actual->seek(names.front()));  // can't seek backwards
-      }
-    }
-  }
-
   void InsertDocWithNullEmptyTerm() {
     class Field {
      public:
-      Field(std::string&& name, const std::string_view& value)
+      Field(irs::field_id id, const std::string_view& value)
         : _stream(std::make_unique<irs::StringTokenizer>()),
-          _name(std::move(name)),
+          _id(id),
           _value(value) {}
       Field(Field&& other) noexcept
         : _stream(std::move(other._stream)),
-          _name(std::move(other._name)),
+          _id(other._id),
           _value(std::move(other._value)) {}
-      std::string_view Name() const { return _name; }
+      irs::field_id Id() const { return _id; }
       irs::Tokenizer& GetTokens() const {
         _stream->reset(_value);
         return *_stream;
@@ -1503,7 +1341,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
      private:
       mutable std::unique_ptr<irs::StringTokenizer> _stream;
-      std::string _name;
+      irs::field_id _id;
       std::string_view _value;
     };
 
@@ -1514,16 +1352,16 @@ class IndexTestCase : public tests::IndexTestBase {
       // doc0: empty, nullptr
       {
         std::vector<Field> doc;
-        doc.emplace_back(std::string("name"), std::string_view("", 0));
-        doc.emplace_back(std::string("name"), std::string_view{});
+        doc.emplace_back(kNameFieldId, std::string_view("", 0));
+        doc.emplace_back(kNameFieldId, std::string_view{});
         ASSERT_TRUE(tests::Insert(*writer, doc.begin(), doc.end()));
       }
       // doc1: nullptr, empty, nullptr
       {
         std::vector<Field> doc;
-        doc.emplace_back(std::string("name1"), std::string_view{});
-        doc.emplace_back(std::string("name1"), std::string_view("", 0));
-        doc.emplace_back(std::string("name"), std::string_view{});
+        doc.emplace_back(kName1FieldId, std::string_view{});
+        doc.emplace_back(kName1FieldId, std::string_view("", 0));
+        doc.emplace_back(kNameFieldId, std::string_view{});
         ASSERT_TRUE(tests::Insert(*writer, doc.begin(), doc.end()));
       }
       writer->RefreshCommit();
@@ -1538,16 +1376,12 @@ class IndexTestCase : public tests::IndexTestBase {
       auto& segment = reader[0];
 
       {
-        size_t count = 0;
-        auto fields = segment.fields();
-        while (fields->next()) {
-          ++count;
-        }
-        ASSERT_EQ(2, count);
+        const auto ids = segment.field_ids();
+        ASSERT_EQ(2u, ids.size());
       }
 
       {
-        auto* field = segment.field("name");
+        auto* field = segment.field(kNameFieldId);
         ASSERT_NE(nullptr, field);
         ASSERT_EQ(1, field->size());
         ASSERT_EQ(2, field->docs_count());
@@ -1558,7 +1392,7 @@ class IndexTestCase : public tests::IndexTestBase {
       }
 
       {
-        auto* field = segment.field("name1");
+        auto* field = segment.field(kName1FieldId);
         ASSERT_NE(nullptr, field);
         ASSERT_EQ(1, field->size());
         ASSERT_EQ(1, field->docs_count());
@@ -1672,6 +1506,10 @@ class IndexTestCase : public tests::IndexTestBase {
 void IndexTestCase::DocsBitUnion(irs::IndexFeatures features,
                                  size_t docs_count_per_term) {
   tests::StringViewField field("0", features);
+  // Stable field id assigned for this fixture's lone "0" field so the
+  // reader-side `segment.field(id)` lookup matches what the writer registers.
+  constexpr irs::field_id kZeroFieldId = 100;
+  field.id = kZeroFieldId;
   const auto docs_count = docs_count_per_term * 2 + 1;
   std::vector<uint64_t> expected_a;
   std::vector<uint64_t> expected_b;
@@ -1698,6 +1536,7 @@ void IndexTestCase::DocsBitUnion(irs::IndexFeatures features,
 
       field.value("C");
       ASSERT_TRUE(docs.Insert().Insert(field));
+      docs.Commit();
     }
 
     writer->RefreshCommit();
@@ -1711,13 +1550,13 @@ void IndexTestCase::DocsBitUnion(irs::IndexFeatures features,
   ASSERT_EQ(docs_count, segment.docs_count());
   ASSERT_EQ(docs_count, segment.live_docs_count());
 
-  const auto* term_reader = segment.field(field.Name());
+  const auto* term_reader = segment.field(field.Id());
   ASSERT_NE(nullptr, term_reader);
   ASSERT_EQ(docs_count, term_reader->docs_count());
   ASSERT_EQ(3, term_reader->size());
   ASSERT_EQ("A", irs::ViewCast<char>(term_reader->min()));
   ASSERT_EQ("C", irs::ViewCast<char>(term_reader->max()));
-  ASSERT_EQ(field.Name(), term_reader->meta().name);
+  ASSERT_EQ(field.Id(), term_reader->meta().id);
   ASSERT_EQ(field.GetIndexFeatures(), term_reader->meta().index_features);
 
   irs::SeekCookie::ptr cookies[2];
@@ -1766,6 +1605,7 @@ TEST_P(IndexTestCase, s2sequence) {
 
     std::string str;
     auto field = std::make_shared<tests::StringField>("value");
+    field->id = kValueFieldId;
     tests::Document doc;
     doc.indexed.push_back(field);
 
@@ -1795,9 +1635,9 @@ TEST_P(IndexTestCase, s2sequence) {
   ASSERT_NE(nullptr, reader);
   ASSERT_EQ(1, reader->size());
   auto& segment = (*reader)[0];
-  auto* field = segment.field("value");
+  auto* field = segment.field(kValueFieldId);
   ASSERT_NE(nullptr, field);
-  auto& expected_field = index().front().fields().at("value");
+  auto& expected_field = index().front().fields().at(kValueFieldId);
 
   {
     auto terms = field->iterator(irs::SeekMode::RandomOnly);
@@ -1948,12 +1788,10 @@ TEST_P(IndexTestCase, serene_demo_docs) {
   assert_index();
 }
 
-TEST_P(IndexTestCase, check_fields_order) { IterateFields(); }
-
 TEST_P(IndexTestCase, check_attributes_order) {
   // The legacy test exercised `segment.columns()` -- a name-ordered
   // iterator over columnstore attributes. The new typed columnstore
-  // (`irs::columnstore::Reader`) addresses columns by `field_id`, not
+  // (`irs::ColReader`) addresses columns by `field_id`, not
   // name, and exposes no equivalent ordered iterator. The original
   // assertion (alphabetical iteration / `seek(name)`) has no analogue
   // in the new API.
@@ -1978,7 +1816,7 @@ TEST_P(IndexTestCase, writer_bulk_insert) {
   // and the "drop the doc when its serializer Write() returns false"
   // semantics of the inline STORE path. Action templating is gone --
   // `Document::Insert` is inverted-indexing-only -- and STORE is now
-  // handled out-of-band via `Document::Columnstore()` + `StoreFieldAt`,
+  // handled out-of-band via `Document::GetColWriter()` + `StoreFieldAt`,
   // which has no drop-on-failure hook. The exact mixed-INDEX/STORE
   // validity matrix the test asserts no longer maps to a single API call.
   GTEST_SKIP() << "Legacy Insert<Action::INDEX|STORE> drop-on-fail "
@@ -2309,7 +2147,11 @@ TEST_P(IndexTestCase, concurrent_add_remove_mt) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
   std::vector<const tests::Document*> docs;
@@ -2320,7 +2162,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_mt) {
   }
 
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -2344,7 +2186,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_mt) {
     std::thread thread2([&writer, &query_doc1, &first_doc]() {
       while (!first_doc)
         ;  // busy-wait until first document loaded
-      writer->GetBatch().Remove(std::move(query_doc1));
+      tests::Remove(*writer, std::move(query_doc1));
     });
 
     thread0.join();
@@ -2371,10 +2213,10 @@ TEST_P(IndexTestCase, concurrent_add_remove_mt) {
 
     for (size_t i = 0, count = reader.size(); i < count; ++i) {
       auto& segment = reader[i];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -2396,7 +2238,11 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -2408,7 +2254,8 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
   {
     std::condition_variable cond;
     std::mutex mutex;
-    auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
+    auto query_doc1_doc2 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
     std::unique_lock lock{mutex};
@@ -2428,7 +2275,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
     AssertSnapshotEquality(*writer);
 
     // remove docs
-    writer->GetBatch().Remove(*(query_doc1_doc2.get()));
+    tests::Remove(*writer, *(query_doc1_doc2.get()));
 
     // re-add docs into a single segment
     {
@@ -2460,6 +2307,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
 
       // FIXME TODO add once segment_context will not block flush_all()
       // ASSERT_TRUE(stop);
+      ctx.Commit();
     }
 
     thread.join();
@@ -2480,7 +2328,8 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
   // remove added docs, add same docs again commit separate thread after end of
   // add
   {
-    auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
+    auto query_doc1_doc2 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -2491,7 +2340,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
     AssertSnapshotEquality(*writer);
 
     // remove docs
-    writer->GetBatch().Remove(*(query_doc1_doc2.get()));
+    tests::Remove(*writer, *(query_doc1_doc2.get()));
 
     // re-add docs into a single segment
     {
@@ -2507,6 +2356,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_overlap_commit_mt) {
         doc.Insert(doc2->indexed.begin(), doc2->indexed.end());
         CaptureNameLikeFields(doc, doc2->indexed);
       }
+      ctx.Commit();
     }
 
     std::thread thread([&]() -> void {
@@ -2528,7 +2378,11 @@ TEST_P(IndexTestCase, document_context) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -2564,15 +2418,15 @@ TEST_P(IndexTestCase, document_context) {
 
   // remove without tick
   {
-    auto query_doc1 = MakeByTerm("name", "A");
-    auto query_doc3 = MakeByTerm("name", "C");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+    auto query_doc3 = MakeByTerm(kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove<false>(*query_doc1);
+    tests::Remove<false>(*writer, *query_doc1);
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    writer->GetBatch().Remove(*query_doc3);
+    tests::Remove(*writer, *query_doc3);
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     auto reader =
@@ -2581,10 +2435,10 @@ TEST_P(IndexTestCase, document_context) {
     EXPECT_EQ(3, reader.docs_count());
     EXPECT_EQ(2, reader.live_docs_count());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -2619,7 +2473,7 @@ TEST_P(IndexTestCase, document_context) {
                 field_cond_lock,
                 std::chrono::milliseconds(10000)));  // verify commit() finishes
     {
-      irs::IndexWriter::Transaction(std::move(ctx));
+      ctx.Commit();
     }  // release ctx before join() in case of test failure
     thread1.join();
 
@@ -2627,10 +2481,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -2643,7 +2497,7 @@ TEST_P(IndexTestCase, document_context) {
 
   // holding document_context after remove across commit does not block
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -2685,7 +2539,7 @@ TEST_P(IndexTestCase, document_context) {
     //  FIXME TODO add once segment_context will not block flush_all()
     // ASSERT_TRUE(commit);
     {
-      irs::IndexWriter::Transaction(std::move(ctx));
+      ctx.Commit();
     }  // release ctx before join() in case of test failure
     thread1.join();
     // FIXME TODO add once segment_context will not block flush_all()
@@ -2696,10 +2550,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -2713,7 +2567,7 @@ TEST_P(IndexTestCase, document_context) {
   // holding document_context after replace across commit does not block (single
   // doc)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -2759,7 +2613,7 @@ TEST_P(IndexTestCase, document_context) {
     //  flush_all()
     // ASSERT_TRUE(commit);
     {
-      irs::IndexWriter::Transaction(std::move(ctx));
+      ctx.Commit();
     }  // release ctx before join() in case of test failure
     thread1.join();
     // FIXME TODO add once segment_context will not block
@@ -2770,10 +2624,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -2798,6 +2652,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc1->indexed.begin(), doc1->indexed.end()));
         CaptureNameLikeFields(doc, doc1->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -2807,10 +2662,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -2846,10 +2701,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -2879,6 +2734,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -2888,10 +2744,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -2929,6 +2785,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -2938,10 +2795,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -2982,6 +2839,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -2993,10 +2851,10 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of first segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3010,10 +2868,10 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of second segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3027,7 +2885,7 @@ TEST_P(IndexTestCase, document_context) {
 
   // rollback removals
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -3047,10 +2905,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -3063,7 +2921,7 @@ TEST_P(IndexTestCase, document_context) {
 
   // rollback removals + some more
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -3079,6 +2937,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3088,10 +2947,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -3107,8 +2966,8 @@ TEST_P(IndexTestCase, document_context) {
 
   // rollback removals split over multiple segment_writers
   {
-    auto query_doc1 = MakeByTerm("name", "A");
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
     auto options = irs::tests::DefaultWriterOptions();
     options.segment_docs_max = 1;  // each doc will have its own segment
     auto writer = open_writer(irs::kOmCreate, options);
@@ -3136,6 +2995,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3147,10 +3007,10 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of first segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3164,10 +3024,10 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of second segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3181,7 +3041,7 @@ TEST_P(IndexTestCase, document_context) {
 
   // rollback replace (single doc)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -3205,10 +3065,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -3221,7 +3081,7 @@ TEST_P(IndexTestCase, document_context) {
 
   // rollback replace (single doc) + some more
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -3251,10 +3111,10 @@ TEST_P(IndexTestCase, document_context) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -3299,6 +3159,7 @@ TEST_P(IndexTestCase, document_context) {
         CaptureNameLikeFields(doc, doc4->indexed);
       }
       // implicit commit and flush
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3314,10 +3175,10 @@ TEST_P(IndexTestCase, document_context) {
       auto& segment = reader[0];  // assume 0 is id of first segment
       EXPECT_EQ(2, segment.docs_count());
       EXPECT_EQ(1, segment.live_docs_count());
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3333,10 +3194,10 @@ TEST_P(IndexTestCase, document_context) {
       auto& segment = reader[1];  // assume 1 is id of second segment
       EXPECT_EQ(1, segment.docs_count());
       EXPECT_EQ(1, segment.live_docs_count());
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3389,10 +3250,10 @@ TEST_P(IndexTestCase, document_context) {
       auto& segment = reader[0];  // assume 0 is id of first segment
       EXPECT_EQ(2 + kWordSize, segment.docs_count());
       EXPECT_EQ(2, segment.live_docs_count());
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3411,8 +3272,8 @@ TEST_P(IndexTestCase, document_context) {
 
   // rollback replacements (single doc) split over multiple segment_writers
   {
-    auto query_doc1 = MakeByTerm("name", "A");
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
     auto options = irs::tests::DefaultWriterOptions();
     options.segment_docs_max = 1;  // each doc will have its own segment
     auto writer = open_writer(irs::kOmCreate, options);
@@ -3438,6 +3299,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc4->indexed.begin(), doc4->indexed.end()));
         CaptureNameLikeFields(doc, doc4->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3449,10 +3311,10 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of first segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3466,10 +3328,10 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of second segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3501,6 +3363,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3512,10 +3375,10 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of first segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3529,10 +3392,10 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of second segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3579,13 +3442,13 @@ TEST_P(IndexTestCase, document_context) {
 
         {
           auto& segment = reader[0]; // assume 0 is id of first
-       segment const auto* column = segment.Column(kName);
+       segment const auto* column = segment.Column(kNameColumnId);
           ASSERT_NE(nullptr, column);
           auto values = column->iterator(irs::ColumnHint::kNormal);
           ASSERT_NE(nullptr, values);
           auto* actual_value = irs::get<irs::PayAttr>(*values);
           ASSERT_NE(nullptr, actual_value);
-          auto terms = segment.field("same");
+          auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
           auto termItr = terms->iterator(irs::SeekMode::NORMAL);
           ASSERT_TRUE(termItr->next());
@@ -3600,13 +3463,13 @@ TEST_P(IndexTestCase, document_context) {
 
         {
           auto& segment = reader[1]; // assume 1 is id of second
-       segment const auto* column = segment.Column(kName);
+       segment const auto* column = segment.Column(kNameColumnId);
           ASSERT_NE(nullptr, column);
           auto values = column->iterator(irs::ColumnHint::kNormal);
           ASSERT_NE(nullptr, values);
           auto* actual_value = irs::get<irs::PayAttr>(*values);
           ASSERT_NE(nullptr, actual_value);
-          auto terms = segment.field("same");
+          auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
           auto termItr = terms->iterator(irs::SeekMode::NORMAL);
           ASSERT_TRUE(termItr->next());
@@ -3621,13 +3484,13 @@ TEST_P(IndexTestCase, document_context) {
 
         {
           auto& segment = reader[2]; // assume 2 is id of third
-       segment const auto* column = segment.Column(kName);
+       segment const auto* column = segment.Column(kNameColumnId);
           ASSERT_NE(nullptr, column);
           auto values = column->iterator(irs::ColumnHint::kNormal);
           ASSERT_NE(nullptr, values);
           auto* actual_value = irs::get<irs::PayAttr>(*values);
           ASSERT_NE(nullptr, actual_value);
-          auto terms = segment.field("same");
+          auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
           auto termItr = terms->iterator(irs::SeekMode::NORMAL);
           ASSERT_TRUE(termItr->next());
@@ -3661,6 +3524,7 @@ TEST_P(IndexTestCase, document_context) {
         ASSERT_TRUE(doc.Insert(doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
+      ctx.Commit();
     }
 
     writer->RefreshCommit();
@@ -3672,10 +3536,10 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of first segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3689,10 +3553,10 @@ TEST_P(IndexTestCase, document_context) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of second segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -3738,13 +3602,13 @@ TEST_P(IndexTestCase, document_context) {
 
         {
           auto& segment = reader[0]; // assume 0 is id of first
-       segment const auto* column = segment.Column(kName);
+       segment const auto* column = segment.Column(kNameColumnId);
           ASSERT_NE(nullptr, column);
           auto values = column->iterator(irs::ColumnHint::kNormal);
           ASSERT_NE(nullptr, values);
           auto* actual_value = irs::get<irs::PayAttr>(*values);
           ASSERT_NE(nullptr, actual_value);
-          auto terms = segment.field("same");
+          auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
           auto termItr = terms->iterator(irs::SeekMode::NORMAL);
           ASSERT_TRUE(termItr->next());
@@ -3759,13 +3623,13 @@ TEST_P(IndexTestCase, document_context) {
 
         {
           auto& segment = reader[1]; // assume 1 is id of second
-       segment const auto* column = segment.Column(kName);
+       segment const auto* column = segment.Column(kNameColumnId);
           ASSERT_NE(nullptr, column);
           auto values = column->iterator(irs::ColumnHint::kNormal);
           ASSERT_NE(nullptr, values);
           auto* actual_value = irs::get<irs::PayAttr>(*values);
           ASSERT_NE(nullptr, actual_value);
-          auto terms = segment.field("same");
+          auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
           auto termItr = terms->iterator(irs::SeekMode::NORMAL);
           ASSERT_TRUE(termItr->next());
@@ -3780,13 +3644,13 @@ TEST_P(IndexTestCase, document_context) {
 
         {
           auto& segment = reader[2]; // assume 2 is id of third
-       segment const auto* column = segment.Column(kName);
+       segment const auto* column = segment.Column(kNameColumnId);
           ASSERT_NE(nullptr, column);
           auto values = column->iterator(irs::ColumnHint::kNormal);
           ASSERT_NE(nullptr, values);
           auto* actual_value = irs::get<irs::PayAttr>(*values);
           ASSERT_NE(nullptr, actual_value);
-          auto terms = segment.field("same");
+          auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
           auto termItr = terms->iterator(irs::SeekMode::NORMAL);
           ASSERT_TRUE(termItr->next());
@@ -3809,7 +3673,11 @@ TEST_P(IndexTestCase, get_term) {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {
-          doc.insert(std::make_shared<tests::StringField>(name, data.str));
+          {
+            auto f = std::make_shared<tests::StringField>(name, data.str);
+            f->id = tests::FieldIdFor(name);
+            doc.insert(std::move(f));
+          }
         }
       });
 
@@ -3819,7 +3687,7 @@ TEST_P(IndexTestCase, get_term) {
   auto reader = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   auto& segment = (*reader)[0];
-  auto* field = segment.field("name");
+  auto* field = segment.field(kNameFieldId);
   ASSERT_NE(nullptr, field);
 
   {
@@ -3842,7 +3710,11 @@ TEST_P(IndexTestCase, read_documents) {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {
-          doc.insert(std::make_shared<tests::StringField>(name, data.str));
+          {
+            auto f = std::make_shared<tests::StringField>(name, data.str);
+            f->id = tests::FieldIdFor(name);
+            doc.insert(std::move(f));
+          }
         }
       });
 
@@ -3858,7 +3730,7 @@ TEST_P(IndexTestCase, read_documents) {
     std::array<irs::doc_id_t, 10> docs{};
     auto begin = docs.begin();
     auto end = docs.end();
-    auto* field = segment.field("name");
+    auto* field = segment.field(kNameFieldId);
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("invalid"sv);
     auto acceptor = [&](irs::doc_id_t doc) {
@@ -3877,7 +3749,7 @@ TEST_P(IndexTestCase, read_documents) {
     std::array<irs::doc_id_t, 10> docs{};
     auto begin = docs.begin();
     auto end = docs.end();
-    auto* field = segment.field("name");
+    auto* field = segment.field(kNameFieldId);
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("A"sv);
     auto acceptor = [&](irs::doc_id_t doc) {
@@ -3895,7 +3767,7 @@ TEST_P(IndexTestCase, read_documents) {
   // singleton term declined by acceptor
   {
     size_t calls = 0;
-    auto* field = segment.field("name");
+    auto* field = segment.field(kNameFieldId);
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("A"sv);
     auto acceptor = [&](irs::doc_id_t doc) {
@@ -3911,7 +3783,7 @@ TEST_P(IndexTestCase, read_documents) {
     std::array<irs::doc_id_t, 10> docs{};
     auto begin = docs.begin();
     auto end = docs.end();
-    auto* field = segment.field("name");
+    auto* field = segment.field(kNameFieldId);
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("C"sv);
     auto acceptor = [&](irs::doc_id_t doc) {
@@ -3931,7 +3803,7 @@ TEST_P(IndexTestCase, read_documents) {
     std::array<irs::doc_id_t, 10> docs{};
     auto begin = docs.begin();
     auto end = docs.end();
-    auto* field = segment.field("duplicated");
+    auto* field = segment.field(kDuplicatedFieldId);
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
     auto acceptor = [&](irs::doc_id_t doc) {
@@ -3956,7 +3828,7 @@ TEST_P(IndexTestCase, read_documents) {
     std::array<irs::doc_id_t, 3> docs{};
     auto begin = docs.begin();
     auto end = docs.end();
-    auto* field = segment.field("duplicated");
+    auto* field = segment.field(kDuplicatedFieldId);
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
     auto acceptor = [&](irs::doc_id_t doc) {
@@ -3974,7 +3846,7 @@ TEST_P(IndexTestCase, read_documents) {
   // regular term, nothing requested
   {
     size_t calls = 0;
-    auto* field = segment.field("duplicated");
+    auto* field = segment.field(kDuplicatedFieldId);
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
     auto acceptor = [&](irs::doc_id_t doc) {
@@ -3991,7 +3863,7 @@ TEST_P(IndexTestCase, read_documents) {
     std::array<irs::doc_id_t, 10> docs{};
     auto begin = docs.begin();
     auto end = docs.end();
-    auto* field = segment.field("duplicated");
+    auto* field = segment.field(kDuplicatedFieldId);
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
     auto acceptor = [&](irs::doc_id_t doc) {
@@ -4019,7 +3891,11 @@ TEST_P(IndexTestCase, doc_removal) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -4046,10 +3922,10 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4062,13 +3938,13 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: add + remove 1st (as reference)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(*(query_doc1.get()));
+    tests::Remove(*writer, *(query_doc1.get()));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4076,10 +3952,10 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4092,13 +3968,13 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: add + remove 1st (as unique_ptr)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4106,10 +3982,10 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4122,14 +3998,13 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: add + remove 1st (as shared_ptr)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(
-      std::shared_ptr<irs::Filter>(std::move(query_doc1)));
+    tests::Remove(*writer, std::shared_ptr<irs::Filter>(std::move(query_doc1)));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4137,10 +4012,10 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4153,12 +4028,12 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: remove + add
   {
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    writer->GetBatch().Remove(std::move(query_doc2));  // not present yet
+    tests::Remove(*writer, std::move(query_doc2));  // not present yet
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -4167,10 +4042,10 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4186,12 +4061,12 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: add + remove + readd
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -4200,10 +4075,10 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4216,18 +4091,18 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: add + remove, old segment: remove
   {
-    auto query_doc2 = MakeByTerm("name", "B");
-    auto query_doc3 = MakeByTerm("name", "C");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
+    auto query_doc3 = MakeByTerm(kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(std::move(query_doc3));
+    tests::Remove(*writer, std::move(query_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // document mask with 'doc3' created
-    writer->GetBatch().Remove(std::move(query_doc2));
+    tests::Remove(*writer, std::move(query_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(
       *writer);  // new document mask with 'doc2','doc3' created
@@ -4236,10 +4111,10 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4252,7 +4127,8 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: add + add, old segment: remove + remove + add
   {
-    auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
+    auto query_doc1_doc2 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4260,7 +4136,7 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc2));
+    tests::Remove(*writer, std::move(query_doc1_doc2));
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -4269,10 +4145,10 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4285,7 +4161,7 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: add, old segment: remove
   {
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4294,7 +4170,7 @@ TEST_P(IndexTestCase, doc_removal) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(std::move(query_doc2));
+    tests::Remove(*writer, std::move(query_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4304,10 +4180,10 @@ TEST_P(IndexTestCase, doc_removal) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of old segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -4321,10 +4197,10 @@ TEST_P(IndexTestCase, doc_removal) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of new segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -4338,7 +4214,8 @@ TEST_P(IndexTestCase, doc_removal) {
 
   // new segment: add + remove, old segment: remove
   {
-    auto query_doc1_doc3 = MakeByTermOrByTerm("name", "A", "name", "C");
+    auto query_doc1_doc3 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4348,7 +4225,7 @@ TEST_P(IndexTestCase, doc_removal) {
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
-    writer->GetBatch().Remove(std::move(query_doc1_doc3));
+    tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4358,10 +4235,10 @@ TEST_P(IndexTestCase, doc_removal) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of old segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -4375,10 +4252,10 @@ TEST_P(IndexTestCase, doc_removal) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of new segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -4395,9 +4272,10 @@ TEST_P(IndexTestCase, doc_removal) {
   // segment: remove
   {
     auto query_doc2_doc6_doc9 =
-      MakeOr({{"name", "B"}, {"name", "F"}, {"name", "I"}});
-    auto query_doc3_doc7 = MakeByTermOrByTerm("name", "C", "name", "G");
-    auto query_doc4 = MakeByTerm("name", "D");
+      MakeOr({{kNameFieldId, "B"}, {kNameFieldId, "F"}, {kNameFieldId, "I"}});
+    auto query_doc3_doc7 =
+      MakeByTermOrByTerm(kNameFieldId, "C", kNameFieldId, "G");
+    auto query_doc4 = MakeByTerm(kNameFieldId, "D");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4405,18 +4283,18 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));  // B
     ASSERT_TRUE(InsertWithName(*writer, *doc3));  // C
     ASSERT_TRUE(InsertWithName(*writer, *doc4));  // D
-    writer->GetBatch().Remove(std::move(query_doc4));
+    tests::Remove(*writer, std::move(query_doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc5));  // E
     ASSERT_TRUE(InsertWithName(*writer, *doc6));  // F
     ASSERT_TRUE(InsertWithName(*writer, *doc7));  // G
-    writer->GetBatch().Remove(std::move(query_doc3_doc7));
+    tests::Remove(*writer, std::move(query_doc3_doc7));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc8));  // H
     ASSERT_TRUE(InsertWithName(*writer, *doc9));  // I
-    writer->GetBatch().Remove(std::move(query_doc2_doc6_doc9));
+    tests::Remove(*writer, std::move(query_doc2_doc6_doc9));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4426,10 +4304,10 @@ TEST_P(IndexTestCase, doc_removal) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of old-old segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -4443,10 +4321,10 @@ TEST_P(IndexTestCase, doc_removal) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of old segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -4460,10 +4338,10 @@ TEST_P(IndexTestCase, doc_removal) {
 
     {
       auto& segment = reader[2];  // assume 2 is id of new segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -4483,7 +4361,11 @@ TEST_P(IndexTestCase, doc_update) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -4494,11 +4376,11 @@ TEST_P(IndexTestCase, doc_update) {
 
   // another shitty case for update
   {
-    auto query_doc1 = MakeByTerm("name", "A");
-    auto query_doc2 = MakeByTerm("name", "B");
-    auto query_doc3 = MakeByTerm("name", "C");
-    auto query_doc4 = MakeByTerm("name", "D");
-    auto query_doc5 = MakeByTerm("name", "E");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
+    auto query_doc3 = MakeByTerm(kNameFieldId, "C");
+    auto query_doc4 = MakeByTerm(kNameFieldId, "D");
+    auto query_doc5 = MakeByTerm(kNameFieldId, "E");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4556,7 +4438,7 @@ TEST_P(IndexTestCase, doc_update) {
 
   // new segment update (as reference)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4569,10 +4451,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4585,7 +4467,7 @@ TEST_P(IndexTestCase, doc_update) {
 
   // new segment update (as unique_ptr)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4598,10 +4480,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4614,7 +4496,7 @@ TEST_P(IndexTestCase, doc_update) {
 
   // new segment update (as shared_ptr)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4628,10 +4510,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4644,7 +4526,7 @@ TEST_P(IndexTestCase, doc_update) {
 
   // old segment update
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4662,8 +4544,8 @@ TEST_P(IndexTestCase, doc_update) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of old segment
-      auto terms = segment.field("same");
-      const auto* column = segment.Column(kName);
+      auto terms = segment.field(kSameFieldId);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_NE(nullptr, terms);
@@ -4679,10 +4561,10 @@ TEST_P(IndexTestCase, doc_update) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of new segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -4697,9 +4579,9 @@ TEST_P(IndexTestCase, doc_update) {
 
   // 3x updates (same segment)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
-    auto query_doc2 = MakeByTerm("name", "B");
-    auto query_doc3 = MakeByTerm("name", "C");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
+    auto query_doc3 = MakeByTerm(kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4714,10 +4596,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4730,9 +4612,9 @@ TEST_P(IndexTestCase, doc_update) {
 
   // 3x updates (different segments)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
-    auto query_doc2 = MakeByTerm("name", "B");
-    auto query_doc3 = MakeByTerm("name", "C");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
+    auto query_doc3 = MakeByTerm(kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4753,10 +4635,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4769,7 +4651,7 @@ TEST_P(IndexTestCase, doc_update) {
 
   // no matching documnts
   {
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4785,10 +4667,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size()) << reader.live_docs_count();
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4801,14 +4683,14 @@ TEST_P(IndexTestCase, doc_update) {
 
   // update + delete (same segment)
   {
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
-    writer->GetBatch().Remove(*(query_doc2));  // remove no longer existent
+    tests::Remove(*writer, *(query_doc2));  // remove no longer existent
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4816,10 +4698,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4835,7 +4717,7 @@ TEST_P(IndexTestCase, doc_update) {
 
   // update + delete (different segments)
   {
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4846,7 +4728,7 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(*(query_doc2));  // remove no longer existent
+    tests::Remove(*writer, *(query_doc2));  // remove no longer existent
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -4856,10 +4738,10 @@ TEST_P(IndexTestCase, doc_update) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of old segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -4873,10 +4755,10 @@ TEST_P(IndexTestCase, doc_update) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of new segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -4891,13 +4773,13 @@ TEST_P(IndexTestCase, doc_update) {
 
   // delete + update (same segment)
   {
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(*(query_doc2));
+    tests::Remove(*writer, *(query_doc2));
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2),
                                *doc3));  // update no longer existent
     writer->RefreshCommit();
@@ -4907,10 +4789,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4923,7 +4805,7 @@ TEST_P(IndexTestCase, doc_update) {
 
   // delete + update (different segments)
   {
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -4931,7 +4813,7 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(*(query_doc2));
+    tests::Remove(*writer, *(query_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2),
@@ -4943,10 +4825,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4960,14 +4842,14 @@ TEST_P(IndexTestCase, doc_update) {
   // delete + update then update (2nd - update of modified doc)
   // (same segment)
   {
-    auto query_doc2 = MakeByTerm("name", "B");
-    auto query_doc3 = MakeByTerm("name", "C");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
+    auto query_doc3 = MakeByTerm(kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    writer->GetBatch().Remove(*(query_doc2));
+    tests::Remove(*writer, *(query_doc2));
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc3), *doc4));
     writer->RefreshCommit();
@@ -4977,10 +4859,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -4994,8 +4876,8 @@ TEST_P(IndexTestCase, doc_update) {
   // delete + update then update (2nd - update of modified doc)
   // (different segments)
   {
-    auto query_doc2 = MakeByTerm("name", "B");
-    auto query_doc3 = MakeByTerm("name", "C");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
+    auto query_doc3 = MakeByTerm(kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -5003,7 +4885,7 @@ TEST_P(IndexTestCase, doc_update) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(*(query_doc2));
+    tests::Remove(*writer, *(query_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(UpdateWithName(*writer, *(query_doc2), *doc3));
@@ -5017,10 +4899,10 @@ TEST_P(IndexTestCase, doc_update) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -5053,7 +4935,7 @@ TEST_P(IndexTestCase, doc_update) {
     auto doc2 = gen.next();
     auto doc3 = gen.next();
     auto doc4 = gen.next();
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
 
     auto opts = irs::tests::DefaultWriterOptions();
 
@@ -5108,10 +4990,10 @@ TEST_P(IndexTestCase, doc_update) {
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(5, segment.docs_count());
     ASSERT_EQ(2, segment.live_docs_count());
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -5133,7 +5015,9 @@ TEST_P(IndexTestCase, import_reader) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        auto field = std::make_shared<tests::StringField>(name, data.str);
+        field->id = FieldIdFor(name);
+        doc.insert(std::move(field));
       }
     });
 
@@ -5194,7 +5078,7 @@ TEST_P(IndexTestCase, import_reader) {
 
   // add a reader with 1 segment no live-docs
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     irs::MemoryDirectory data_dir;
     auto data_writer = irs::IndexWriter::Make(
       data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -5218,7 +5102,7 @@ TEST_P(IndexTestCase, import_reader) {
 
     ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
     data_writer->RefreshCommit();
-    data_writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*data_writer, std::move(query_doc1));
     data_writer->RefreshCommit();
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // ensure the writer has an initial
@@ -5270,10 +5154,10 @@ TEST_P(IndexTestCase, import_reader) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(2, segment.docs_count());
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -5289,7 +5173,7 @@ TEST_P(IndexTestCase, import_reader) {
 
   // add a reader with 1 sparse segment
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     irs::MemoryDirectory data_dir;
     auto data_writer = irs::IndexWriter::Make(
       data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -5298,7 +5182,7 @@ TEST_P(IndexTestCase, import_reader) {
 
     ASSERT_TRUE(InsertWithName(*data_writer, *doc1));
     ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
-    data_writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*data_writer, std::move(query_doc1));
     data_writer->RefreshCommit();
     ASSERT_TRUE(writer->Import(irs::DirectoryReader(
       data_dir, codec(), irs::tests::DefaultReaderOptions())));
@@ -5310,10 +5194,10 @@ TEST_P(IndexTestCase, import_reader) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(1, segment.docs_count());
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -5348,10 +5232,10 @@ TEST_P(IndexTestCase, import_reader) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(4, segment.docs_count());
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -5373,7 +5257,7 @@ TEST_P(IndexTestCase, import_reader) {
 
   // add a reader with 2 sparse segments
   {
-    auto query_doc2_doc3 = MakeOr({{"name", "B"}, {"name", "C"}});
+    auto query_doc2_doc3 = MakeOr({{kNameFieldId, "B"}, {kNameFieldId, "C"}});
     irs::MemoryDirectory data_dir;
     auto data_writer = irs::IndexWriter::Make(
       data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -5385,7 +5269,7 @@ TEST_P(IndexTestCase, import_reader) {
     data_writer->RefreshCommit();
     ASSERT_TRUE(InsertWithName(*data_writer, *doc3));
     ASSERT_TRUE(InsertWithName(*data_writer, *doc4));
-    data_writer->GetBatch().Remove(std::move(query_doc2_doc3));
+    tests::Remove(*data_writer, std::move(query_doc2_doc3));
     data_writer->RefreshCommit();
     ASSERT_TRUE(writer->Import(irs::DirectoryReader(
       data_dir, codec(), irs::tests::DefaultReaderOptions())));
@@ -5397,10 +5281,10 @@ TEST_P(IndexTestCase, import_reader) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(2, segment.docs_count());
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -5416,7 +5300,7 @@ TEST_P(IndexTestCase, import_reader) {
 
   // add a reader with 2 mixed segments
   {
-    auto query_doc4 = MakeByTerm("name", "D");
+    auto query_doc4 = MakeByTerm(kNameFieldId, "D");
     irs::MemoryDirectory data_dir;
     auto data_writer = irs::IndexWriter::Make(
       data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -5428,7 +5312,7 @@ TEST_P(IndexTestCase, import_reader) {
     data_writer->RefreshCommit();
     ASSERT_TRUE(InsertWithName(*data_writer, *doc3));
     ASSERT_TRUE(InsertWithName(*data_writer, *doc4));
-    data_writer->GetBatch().Remove(std::move(query_doc4));
+    tests::Remove(*data_writer, std::move(query_doc4));
     data_writer->RefreshCommit();
     ASSERT_TRUE(writer->Import(irs::DirectoryReader(
       data_dir, codec(), irs::tests::DefaultReaderOptions())));
@@ -5440,10 +5324,10 @@ TEST_P(IndexTestCase, import_reader) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(3, segment.docs_count());
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -5462,7 +5346,7 @@ TEST_P(IndexTestCase, import_reader) {
 
   // new: add + add + delete, old: import
   {
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
     irs::MemoryDirectory data_dir;
     auto data_writer = irs::IndexWriter::Make(
       data_dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -5473,8 +5357,8 @@ TEST_P(IndexTestCase, import_reader) {
     ASSERT_TRUE(InsertWithName(*data_writer, *doc2));
     data_writer->RefreshCommit();
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(
-      std::move(query_doc2));  // should not match any documents
+    tests::Remove(*writer,
+                  std::move(query_doc2));  // should not match any documents
     ASSERT_TRUE(writer->Import(irs::DirectoryReader(
       data_dir, codec(), irs::tests::DefaultReaderOptions())));
     writer->RefreshCommit();
@@ -5487,10 +5371,10 @@ TEST_P(IndexTestCase, import_reader) {
     {
       auto& segment = reader[0];  // assume 0 is id of imported segment
       ASSERT_EQ(2, segment.docs_count());
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -5507,10 +5391,10 @@ TEST_P(IndexTestCase, import_reader) {
     {
       auto& segment = reader[1];  // assume 1 is id of original segment
       ASSERT_EQ(1, segment.docs_count());
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -5529,7 +5413,11 @@ TEST_P(IndexTestCase, refresh_reader) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -5557,10 +5445,10 @@ TEST_P(IndexTestCase, refresh_reader) {
   {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -5578,9 +5466,9 @@ TEST_P(IndexTestCase, refresh_reader) {
   {
     auto writer =
       open_writer(irs::kOmAppend, irs::tests::DefaultWriterOptions());
-    auto query_doc2 = MakeByTerm("name", "B");
+    auto query_doc2 = MakeByTerm(kNameFieldId, "B");
 
-    writer->GetBatch().Remove(std::move(query_doc2));
+    tests::Remove(*writer, std::move(query_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
@@ -5590,10 +5478,10 @@ TEST_P(IndexTestCase, refresh_reader) {
     {
       ASSERT_EQ(1, reader.size());
       auto& segment = reader[0];  // assume 0 is id of first/only segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -5611,10 +5499,10 @@ TEST_P(IndexTestCase, refresh_reader) {
       reader = reader.Reopen();
       ASSERT_EQ(1, reader.size());
       auto& segment = reader[0];  // assume 0 is id of first/only segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -5642,10 +5530,10 @@ TEST_P(IndexTestCase, refresh_reader) {
   {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -5660,10 +5548,10 @@ TEST_P(IndexTestCase, refresh_reader) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of first segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -5677,10 +5565,10 @@ TEST_P(IndexTestCase, refresh_reader) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of second segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -5700,9 +5588,9 @@ TEST_P(IndexTestCase, refresh_reader) {
   {
     auto writer =
       open_writer(irs::kOmAppend, irs::tests::DefaultWriterOptions());
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
 
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
@@ -5713,10 +5601,10 @@ TEST_P(IndexTestCase, refresh_reader) {
 
     {
       auto& segment = reader[0];  // assume 0 is id of first segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -5730,10 +5618,10 @@ TEST_P(IndexTestCase, refresh_reader) {
 
     {
       auto& segment = reader[1];  // assume 1 is id of second segment
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -5751,10 +5639,10 @@ TEST_P(IndexTestCase, refresh_reader) {
     reader = reader.Reopen();
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of second segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -5869,7 +5757,11 @@ TEST_P(IndexTestCase, segment_column_user_system) {
       // add 2 identical fields (without storing) to trigger non-default
       // norm value
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -5879,9 +5771,10 @@ TEST_P(IndexTestCase, segment_column_user_system) {
   // add 2 identical fields (without storing) to trigger non-default norm
   // value
   for (size_t i = 2; i; --i) {
-    doc0.insert(std::make_shared<tests::StringField>("test-field", "test-value",
-                                                     irs::IndexFeatures::Norm),
-                true, false);
+    auto f = std::make_shared<tests::StringField>("test-field", "test-value",
+                                                  irs::IndexFeatures::Norm);
+    f->id = kTestFieldId;
+    doc0.insert(std::move(f), true, false);
   }
 
   const tests::Document* doc1 = gen.next();
@@ -5907,7 +5800,7 @@ TEST_P(IndexTestCase, segment_column_user_system) {
   ASSERT_EQ(3, segment.docs_count());  // total count of documents
 
   auto* field =
-    segment.field("test-field");  // 'norm' column added by doc0 above
+    segment.field(kTestFieldId);  // 'norm' column added by doc0 above
   ASSERT_NE(nullptr, field);
 
   ASSERT_TRUE(
@@ -5919,12 +5812,12 @@ TEST_P(IndexTestCase, segment_column_user_system) {
   // actually surfaces it before we move on to the cs read-back path.
   ASSERT_NE(nullptr, segment.norms(field->meta().norm));
 
-  const auto* column = segment.Column(kName);
+  const auto* column = segment.Column(kNameColumnId);
   ASSERT_NE(nullptr, column);
   irs::tests::BlobPointReader values{segment, *column};
   ASSERT_EQ(expected_name.size() + 1,
             segment.docs_count());  // total count of documents (+1 for doc0)
-  auto terms = segment.field("same");
+  auto terms = segment.field(kSameFieldId);
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
   ASSERT_TRUE(term_itr->next());
@@ -5976,7 +5869,11 @@ TEST_P(IndexTestCase, import_concurrent) {
     [&names](tests::Document& doc, const std::string& name,
              const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
 
         if (name == "name") {
           names.emplace(data.str.data, data.str.size);
@@ -6047,10 +5944,10 @@ TEST_P(IndexTestCase, import_concurrent) {
 
   size_t removed = 0;
   for (auto& segment : reader) {
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -6093,7 +5990,11 @@ TEST_P(IndexTestCase, concurrent_compaction) {
     [&names](tests::Document& doc, const std::string& name,
              const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
 
         if (name == "name") {
           names.emplace(data.str.data, data.str.size);
@@ -6173,10 +6074,10 @@ TEST_P(IndexTestCase, concurrent_compaction) {
 
   size_t removed = 0;
   auto& segment = reader[0];
-  const auto* column = segment.Column(kName);
+  const auto* column = segment.Column(kNameColumnId);
   ASSERT_NE(nullptr, column);
   irs::tests::BlobPointReader values{segment, *column};
-  auto terms = segment.field("same");
+  auto terms = segment.field(kSameFieldId);
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
   ASSERT_TRUE(term_itr->next());
@@ -6203,7 +6104,11 @@ TEST_P(IndexTestCase, concurrent_compaction_dedicated_commit) {
     [&names](tests::Document& doc, const std::string& name,
              const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
 
         if (name == "name") {
           names.emplace(data.str.data, data.str.size);
@@ -6297,10 +6202,10 @@ TEST_P(IndexTestCase, concurrent_compaction_dedicated_commit) {
 
   size_t removed = 0;
   auto& segment = reader[0];
-  const auto* column = segment.Column(kName);
+  const auto* column = segment.Column(kNameColumnId);
   ASSERT_NE(nullptr, column);
   irs::tests::BlobPointReader values{segment, *column};
-  auto terms = segment.field("same");
+  auto terms = segment.field(kSameFieldId);
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
   ASSERT_TRUE(term_itr->next());
@@ -6327,7 +6232,11 @@ TEST_P(IndexTestCase, concurrent_compaction_two_phase_dedicated_commit) {
     [&names](tests::Document& doc, const std::string& name,
              const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
 
         if (name == "name") {
           names.emplace(data.str.data, data.str.size);
@@ -6423,10 +6332,10 @@ TEST_P(IndexTestCase, concurrent_compaction_two_phase_dedicated_commit) {
 
   size_t removed = 0;
   auto& segment = reader[0];
-  const auto* column = segment.Column(kName);
+  const auto* column = segment.Column(kNameColumnId);
   ASSERT_NE(nullptr, column);
   irs::tests::BlobPointReader values{segment, *column};
-  auto terms = segment.field("same");
+  auto terms = segment.field(kSameFieldId);
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
   ASSERT_TRUE(term_itr->next());
@@ -6453,7 +6362,11 @@ TEST_P(IndexTestCase, concurrent_compaction_cleanup) {
     [&names](tests::Document& doc, const std::string& name,
              const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
 
         if (name == "name") {
           names.emplace(data.str.data, data.str.size);
@@ -6534,10 +6447,10 @@ TEST_P(IndexTestCase, concurrent_compaction_cleanup) {
 
   size_t removed = 0;
   auto& segment = reader[0];
-  const auto* column = segment.Column(kName);
+  const auto* column = segment.Column(kNameColumnId);
   ASSERT_NE(nullptr, column);
   irs::tests::BlobPointReader values{segment, *column};
-  auto terms = segment.field("same");
+  auto terms = segment.field(kSameFieldId);
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
   ASSERT_TRUE(term_itr->next());
@@ -6559,7 +6472,11 @@ TEST_P(IndexTestCase, compact_single_segment) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -6624,14 +6541,13 @@ TEST_P(IndexTestCase, compact_single_segment) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    auto query_doc1 = MakeByTerm("name", "A");
-    writer->GetBatch().Remove(*query_doc1);
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+    tests::Remove(*writer, *query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_EQ(
-      3,
-      irs::DirectoryCleaner::clean(
-        dir()));  // segments_1 + stale segment meta + unused column store
+      2,
+      irs::DirectoryCleaner::clean(dir()));  // segments_1 + stale segment meta
     ASSERT_EQ(1, irs::DirectoryReader(this->dir(), codec(),
                                       irs::tests::DefaultReaderOptions())
                    .size());
@@ -6665,11 +6581,11 @@ TEST_P(IndexTestCase, compact_single_segment) {
     // assume 0 is 'merged' segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -6683,17 +6599,21 @@ TEST_P(IndexTestCase, compact_single_segment) {
 }
 
 TEST_P(IndexTestCase, segment_compact_long_running) {
-  // The new cs writes `<segment>.cs` for every committed segment. Use the
-  // third segment's expected `.cs` file as the BlockingDirectory trigger;
+  // The new cs writes `<segment>.col` for every committed segment. Use the
+  // third segment's expected `.col` file as the BlockingDirectory trigger;
   // the test gates compaction on its create().
-  const auto blocker = std::string{"_3.cs"};
+  const auto blocker = std::string{"_3.col"};
 
   tests::JsonDocGenerator gen(
     resource("simple_sequential.json"),
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -6818,11 +6738,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // assume 0 is 'segment 3'
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -6836,11 +6756,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // assume 1 is 'segment 4'
     {
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -6854,11 +6774,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // assume 2 is merged segment
     {
       auto& segment = reader[2];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -6876,7 +6796,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
   // long running transaction + segment removal
   {
     SetUp();  // recreate directory
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
 
     tests::BlockingDirectory dir(this->dir(), blocker);
     auto writer =
@@ -6934,7 +6854,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // add several segments in background
     // segment 3
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);                  // commit transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));  // segments_2
@@ -6974,11 +6894,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // assume 0 is 'segment 2'
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -6992,11 +6912,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // assume 1 is 'segment 3'
     {
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -7010,11 +6930,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // assume 1 is 'segment 4'
     {
       auto& segment = reader[2];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -7029,7 +6949,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
   // long running transaction + document removal
   {
     SetUp();  // recreate directory
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
 
     tests::BlockingDirectory dir(this->dir(), blocker);
     auto writer =
@@ -7094,11 +7014,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
 
     // remove doc1 in background
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
-    // unused column store
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));
+    // No unused column store: a remove-only batch no longer creates a `.col`.
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
 
     dir.intermediate_commits_lock.unlock();  // finish compaction
     compaction_thread.join();  // wait for the compaction to complete
@@ -7125,11 +7045,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // assume 0 is 'merged segment'
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       ASSERT_EQ(3, segment.docs_count());       // total count of documents
       ASSERT_EQ(2, segment.live_docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -7171,7 +7091,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
   // long running transaction + document removal
   {
     SetUp();  // recreate directory
-    auto query_doc1_doc4 = MakeByTermOrByTerm("name", "A", "name", "D");
+    auto query_doc1_doc4 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "D");
 
     tests::BlockingDirectory dir(this->dir(), blocker);
     auto writer =
@@ -7237,11 +7158,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
 
     // remove doc1 in background
-    writer->GetBatch().Remove(*query_doc1_doc4);
+    tests::Remove(*writer, *query_doc1_doc4);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
-    //  unused column store
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir));
+    // No unused column store: a remove-only batch no longer creates a `.col`.
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
 
     dir.intermediate_commits_lock.unlock();  // finish compaction
     compaction_thread.join();  // wait for the compaction to complete
@@ -7272,11 +7193,11 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // assume 0 is 'merged segment'
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       ASSERT_EQ(4, segment.docs_count());       // total count of documents
       ASSERT_EQ(2, segment.live_docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -7339,7 +7260,11 @@ TEST_P(IndexTestCase, segment_compact_clear_commit) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -7499,7 +7424,11 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -7586,11 +7515,11 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     // assume 0 is merged segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -7671,11 +7600,11 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     // assume 0 is merged segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -7692,11 +7621,11 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     // assume 1 is the newly created segment (doc3+doc4)
     {
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -7783,11 +7712,11 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     // assume 0 is merged segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -7804,11 +7733,11 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     // assume 1 is the newly crated segment
     {
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(3, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -7833,7 +7762,11 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -7922,11 +7855,11 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
 
   for (size_t i = 0; i < segments_count / 2; ++i) {
     auto& segment = reader[i];
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
     ASSERT_EQ(2, segment.docs_count());  // total count of documents
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -7978,7 +7911,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -8080,11 +8017,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 0 is merged segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -8188,11 +8125,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 0 is the existing segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -8209,11 +8146,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 1 is merged segment
     {
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -8329,11 +8266,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 0 is the existing segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -8350,11 +8287,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 1 is merged segment
     {
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -8371,11 +8308,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 2 is the last added segment
     {
       auto& segment = reader[2];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -8393,7 +8330,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // compact with deletes
   {
     SetUp();
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
 
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -8417,7 +8354,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8448,7 +8385,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // writer still holds a reference to segments_2
     // because it's under compaction
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // unused column store
+    // No unused column store: a remove-only batch no longer creates a `.col`.
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8482,11 +8420,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 0 is merged segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       ASSERT_EQ(3, segment.docs_count());       // total count of documents
       ASSERT_EQ(2, segment.live_docs_count());  // total count of live documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -8528,7 +8466,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // compact with deletes
   {
     SetUp();
-    auto query_doc1_doc4 = MakeByTermOrByTerm("name", "A", "name", "D");
+    auto query_doc1_doc4 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "D");
 
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -8553,7 +8492,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    writer->GetBatch().Remove(*query_doc1_doc4);
+    tests::Remove(*writer, *query_doc1_doc4);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8581,7 +8520,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     writer->RefreshCommit();
     // commit transaction (will commit removal)
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // unused column store
+    // No unused column store: a remove-only batch no longer creates a `.col`.
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8615,11 +8555,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 0 is merged segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       ASSERT_EQ(4, segment.docs_count());       // total count of documents
       ASSERT_EQ(2, segment.live_docs_count());  // total count of live documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -8664,8 +8604,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // compact with delete committed and pending
   {
     SetUp();
-    auto query_doc1 = MakeByTerm("name", "A");
-    auto query_doc4 = MakeByTerm("name", "D");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+    auto query_doc4 = MakeByTerm(kNameFieldId, "D");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
@@ -8689,7 +8629,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8717,11 +8657,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_FALSE(writer->Compact(
       irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
 
-    writer->GetBatch().Remove(*query_doc4);
+    tests::Remove(*writer, *query_doc4);
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge + delete
-    ASSERT_EQ(count + 6, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8744,12 +8684,12 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       // assume 0 is merged segment
       {
         auto& segment = reader[0];
-        const auto* column = segment.Column(kName);
+        const auto* column = segment.Column(kNameColumnId);
         ASSERT_NE(nullptr, column);
         ASSERT_EQ(4, segment.docs_count());  // total count of documents
         ASSERT_EQ(2,
                   segment.live_docs_count());  // total count of live documents
-        auto terms = segment.field("same");
+        auto terms = segment.field(kSameFieldId);
         ASSERT_NE(nullptr, terms);
         auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
         ASSERT_TRUE(term_itr->next());
@@ -8801,10 +8741,10 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // remove one doc from new and old segment to make conolidation do
     // something
-    auto query_doc3 = MakeByTerm("name", "C");
-    auto query_doc5 = MakeByTerm("name", "E");
-    writer->GetBatch().Remove(*query_doc3);
-    writer->GetBatch().Remove(*query_doc5);
+    auto query_doc3 = MakeByTerm(kNameFieldId, "C");
+    auto query_doc5 = MakeByTerm(kNameFieldId, "E");
+    tests::Remove(*writer, *query_doc3);
+    tests::Remove(*writer, *query_doc5);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -8825,7 +8765,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // repeatable compaction of already compacted segment
   {
     SetUp();
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
@@ -8854,7 +8794,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8899,8 +8839,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // phase commit
   {
     SetUp();
-    auto query_doc1 = MakeByTerm("name", "A");
-    auto query_doc4 = MakeByTerm("name", "D");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+    auto query_doc4 = MakeByTerm(kNameFieldId, "D");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
@@ -8929,7 +8869,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8954,7 +8894,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
         writer->RefreshCommit();
         AssertSnapshotEquality(*writer);
         // new transaction with passed 1st phase
-        writer->GetBatch().Remove(*query_doc4);
+        tests::Remove(*writer, *query_doc4);
         writer->RefreshBegin();
         auto sub_policy =
           irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
@@ -8978,7 +8918,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // check commit rollback and compaction
   {
     SetUp();
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
@@ -8998,7 +8938,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
 
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     // this compaction will be postponed
     ASSERT_TRUE(writer->Compact(
@@ -9009,14 +8949,14 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     writer->RefreshAbort();
 
-    // leftovers cleanup
-    ASSERT_EQ(2, irs::DirectoryCleaner::clean(dir()));
+    // leftovers cleanup (aborted compaction segment no longer emits a `.col`)
+    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
 
     // still pending
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    writer->GetBatch().Remove(*query_doc1);
+    tests::Remove(*writer, *query_doc1);
     // make next commit
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -9050,7 +8990,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // compact with deletes + inserts
   {
     SetUp();
-    auto query_doc1_doc4 = MakeByTermOrByTerm("name", "A", "name", "D");
+    auto query_doc1_doc4 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "D");
 
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -9075,7 +9016,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    writer->GetBatch().Remove(*query_doc1_doc4);
+    tests::Remove(*writer, *query_doc1_doc4);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -9104,7 +9045,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     writer->RefreshCommit();
     // commit transaction (will commit removal)
     AssertSnapshotEquality(*writer);
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  //  unused column store
+    // No unused column store: a remove-only batch no longer creates a `.col`.
+    ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -9140,11 +9082,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 0 is merged segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       ASSERT_EQ(4, segment.docs_count());       // total count of documents
       ASSERT_EQ(2, segment.live_docs_count());  // total count of live documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -9188,12 +9130,12 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 1 is the recently added segment
     {
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(1, segment.docs_count());       // total count of documents
       ASSERT_EQ(1, segment.live_docs_count());  // total count of live documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -9208,7 +9150,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // compact with deletes + inserts
   {
     SetUp();
-    auto query_doc1_doc4 = MakeByTermOrByTerm("name", "A", "name", "D");
+    auto query_doc1_doc4 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "D");
 
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -9269,15 +9212,15 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    writer->GetBatch().Remove(*query_doc1_doc4);
+    tests::Remove(*writer, *query_doc1_doc4);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge + removal
 
     // +1 for segments,
     // +1 for segment 1 meta,
-    // +1 for segment 2 meta + unused column store,
+    // +1 for segment 2 meta,
     // +1 for segments_2
-    ASSERT_EQ(count + 5, irs::DirectoryCleaner::clean(dir()));
+    ASSERT_EQ(count + 4, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -9303,12 +9246,12 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 1 is the recently added segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(1, segment.docs_count());       // total count of documents
       ASSERT_EQ(1, segment.live_docs_count());  // total count of live documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -9322,11 +9265,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 0 is merged segment
     {
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       ASSERT_EQ(4, segment.docs_count());       // total count of documents
       ASSERT_EQ(2, segment.live_docs_count());  // total count of live documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -9371,7 +9314,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
   // compact with deletes + inserts
   {
     SetUp();
-    auto query_doc3_doc4 = MakeOr({{"name", "C"}, {"name", "D"}});
+    auto query_doc3_doc4 = MakeOr({{kNameFieldId, "C"}, {kNameFieldId, "D"}});
 
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -9450,7 +9393,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    writer->GetBatch().Remove(*query_doc3_doc4);
+    tests::Remove(*writer, *query_doc3_doc4);
 
     // commit pending merge + removal
     // pending compaction will fail (because segment 2 will have no live
@@ -9462,8 +9405,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // +2 for segments_2 + unused column store, +1 for segments_2
-    ASSERT_EQ(num_files_compaction_segment + num_files_segment_2 + 2 + 1,
+    // +1 for segments_2, +1 for segments_2
+    ASSERT_EQ(num_files_compaction_segment + num_files_segment_2 + 1 + 1,
               irs::DirectoryCleaner::clean(dir()));
 
     // validate structure (doesn't take removals into account)
@@ -9484,12 +9427,12 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 0 is first segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(2, segment.docs_count());       // total count of documents
       ASSERT_EQ(2, segment.live_docs_count());  // total count of live documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -9507,12 +9450,12 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // assume 1 is the recently added segment
     {
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(1, segment.docs_count());       // total count of documents
       ASSERT_EQ(1, segment.live_docs_count());  // total count of live documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -9708,7 +9651,11 @@ TEST_P(IndexTestCase, segment_compact) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -9727,12 +9674,12 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // remove empty new segment
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9743,14 +9690,14 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // remove empty old segment
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9761,7 +9708,8 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // remove empty old, defragment new
   {
-    auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
+    auto query_doc1_doc2 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9770,7 +9718,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(std::move(query_doc1_doc2));
+    tests::Remove(*writer, std::move(query_doc1_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9788,11 +9736,11 @@ TEST_P(IndexTestCase, segment_compact) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
     ASSERT_EQ(1, segment.docs_count());  // total count of documents
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -9805,7 +9753,8 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // remove empty old, defragment new
   {
-    auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
+    auto query_doc1_doc2 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9814,7 +9763,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
-    writer->GetBatch().Remove(std::move(query_doc1_doc2));
+    tests::Remove(*writer, std::move(query_doc1_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -9831,11 +9780,11 @@ TEST_P(IndexTestCase, segment_compact) {
       irs::DirectoryReader(dir(), codec(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];  // assume 0 is id of first/only segment
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
     ASSERT_EQ(1, segment.docs_count());  // total count of documents
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -9848,7 +9797,8 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // remove empty old, defragment old
   {
-    auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
+    auto query_doc1_doc2 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9859,7 +9809,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc2));
+    tests::Remove(*writer, std::move(query_doc1_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -9877,10 +9827,10 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(1, segment.docs_count());  // total count of documents
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -9893,7 +9843,8 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // remove empty old, defragment old
   {
-    auto query_doc1_doc2 = MakeByTermOrByTerm("name", "A", "name", "B");
+    auto query_doc1_doc2 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "B");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9904,7 +9855,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc2));
+    tests::Remove(*writer, std::move(query_doc1_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -9922,10 +9873,10 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(1, segment.docs_count());  // total count of documents
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -9949,7 +9900,7 @@ TEST_P(IndexTestCase, segment_compact) {
   // do defragment old segment with uncommited removal (i.e. do not consider
   // uncomitted removals)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9957,7 +9908,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(merge_if_masked));
@@ -9976,7 +9927,7 @@ TEST_P(IndexTestCase, segment_compact) {
   // do not defragment old segment with uncommited removal (i.e. do not
   // consider uncomitted removals)
   {
-    auto query_doc1 = MakeByTerm("name", "A");
+    auto query_doc1 = MakeByTerm(kNameFieldId, "A");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -9984,7 +9935,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1));
+    tests::Remove(*writer, std::move(query_doc1));
     ASSERT_TRUE(writer->Compact(merge_if_masked));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -10013,7 +9964,8 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // merge new+old segment
   {
-    auto query_doc1_doc3 = MakeByTermOrByTerm("name", "A", "name", "C");
+    auto query_doc1_doc3 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10023,7 +9975,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
-    writer->GetBatch().Remove(std::move(query_doc1_doc3));
+    tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10042,10 +9994,10 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(2, segment.docs_count());  // total count of documents
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -10061,7 +10013,8 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // merge new+old segment
   {
-    auto query_doc1_doc3 = MakeByTermOrByTerm("name", "A", "name", "C");
+    auto query_doc1_doc3 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10071,7 +10024,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
-    writer->GetBatch().Remove(std::move(query_doc1_doc3));
+    tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10090,10 +10043,10 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(2, segment.docs_count());  // total count of documents
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -10109,7 +10062,8 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // merge old+old segment
   {
-    auto query_doc1_doc3 = MakeByTermOrByTerm("name", "A", "name", "C");
+    auto query_doc1_doc3 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10121,7 +10075,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc3));
+    tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10140,10 +10094,10 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(2, segment.docs_count());  // total count of documents
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -10159,7 +10113,8 @@ TEST_P(IndexTestCase, segment_compact) {
 
   // merge old+old segment
   {
-    auto query_doc1_doc3 = MakeByTermOrByTerm("name", "A", "name", "C");
+    auto query_doc1_doc3 =
+      MakeByTermOrByTerm(kNameFieldId, "A", kNameFieldId, "C");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10171,7 +10126,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc3));
+    tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10190,10 +10145,10 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(2, segment.docs_count());  // total count of documents
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -10210,7 +10165,7 @@ TEST_P(IndexTestCase, segment_compact) {
   // merge old+old+old segment
   {
     auto query_doc1_doc3_doc5 =
-      MakeOr({{"name", "A"}, {"name", "C"}, {"name", "E"}});
+      MakeOr({{kNameFieldId, "A"}, {kNameFieldId, "C"}, {kNameFieldId, "E"}});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10226,7 +10181,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc6));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc3_doc5));
+    tests::Remove(*writer, std::move(query_doc1_doc3_doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10246,10 +10201,10 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(3, segment.docs_count());  // total count of documents
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -10269,7 +10224,7 @@ TEST_P(IndexTestCase, segment_compact) {
   // merge old+old+old segment
   {
     auto query_doc1_doc3_doc5 =
-      MakeOr({{"name", "A"}, {"name", "C"}, {"name", "E"}});
+      MakeOr({{kNameFieldId, "A"}, {kNameFieldId, "C"}, {kNameFieldId, "E"}});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10285,7 +10240,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_TRUE(InsertWithName(*writer, *doc6));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc1_doc3_doc5));
+    tests::Remove(*writer, std::move(query_doc1_doc3_doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_TRUE(writer->Compact(always_merge));
@@ -10305,10 +10260,10 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_EQ(1, reader.size());
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(3, segment.docs_count());  // total count of documents
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -10342,7 +10297,11 @@ TEST_P(IndexTestCase, segment_compact) {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {
-          doc.insert(std::make_shared<tests::StringField>(name, data.str));
+          {
+            auto f = std::make_shared<tests::StringField>(name, data.str);
+            f->id = tests::FieldIdFor(name);
+            doc.insert(std::move(f));
+          }
         }
       });
 
@@ -10367,7 +10326,7 @@ TEST_P(IndexTestCase, segment_compact) {
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(6, segment.docs_count());  // total count of documents
 
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
 
@@ -10375,7 +10334,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, upper_case_column);
     irs::tests::BlobPointReader upper_case_values{segment, *upper_case_column};
 
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -10421,7 +10380,11 @@ TEST_P(IndexTestCase, segment_compact) {
       [](tests::Document& doc, const std::string& name,
          const tests::JsonDocGenerator::JsonValue& data) {
         if (data.is_string()) {
-          doc.insert(std::make_shared<tests::StringField>(name, data.str));
+          {
+            auto f = std::make_shared<tests::StringField>(name, data.str);
+            f->id = tests::FieldIdFor(name);
+            doc.insert(std::move(f));
+          }
         }
       });
 
@@ -10446,7 +10409,7 @@ TEST_P(IndexTestCase, segment_compact) {
     auto& segment = reader[0];           // assume 0 is id of first/only segment
     ASSERT_EQ(6, segment.docs_count());  // total count of documents
 
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
 
@@ -10454,7 +10417,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, upper_case_column);
     irs::tests::BlobPointReader upper_case_values{segment, *upper_case_column};
 
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
@@ -10490,7 +10453,11 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -10533,12 +10500,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     {
       std::unordered_set<std::string_view> expected_name = {"A", "B", "C", "D"};
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(expected_name.size(),
                 segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -10557,12 +10524,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     {
       std::unordered_set<std::string_view> expected_name = {"E", "F"};
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(expected_name.size(),
                 segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -10609,12 +10576,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       auto& segment = reader[0];  // assume 0 is id of first segment
       ASSERT_EQ(expected_name.size(),
                 segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
 
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -10633,12 +10600,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       auto& segment = reader[1];  // assume 1 is id of second segment
       ASSERT_EQ(expected_name.size(),
                 segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
 
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -10680,12 +10647,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(expected_name.size(),
               segment.docs_count());  // total count of documents
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
 
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -10726,12 +10693,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       auto& segment = reader[0];  // assume 0 is id of first segment
       ASSERT_EQ(expected_name.size(),
                 segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
 
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -10749,12 +10716,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
 
       auto& segment = reader[1];  // assume 1 is id of second segment
       ASSERT_EQ(expected_name.size(), segment.docs_count());
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
 
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -10771,7 +10738,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
   // valid docs count policy (merge)
   {
     auto query_doc2_doc3_doc4 =
-      MakeOr({{"name", "B"}, {"name", "C"}, {"name", "D"}});
+      MakeOr({{kNameFieldId, "B"}, {kNameFieldId, "C"}, {kNameFieldId, "D"}});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10781,7 +10748,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc2_doc3_doc4));
+    tests::Remove(*writer, std::move(query_doc2_doc3_doc4));
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -10800,12 +10767,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(expected_name.size(),
               segment.docs_count());  // total count of documents
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
 
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -10821,7 +10788,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
   // valid docs count policy (not modified)
   {
     auto query_doc2_doc3_doc4 =
-      MakeOr({{"name", "B"}, {"name", "C"}, {"name", "D"}});
+      MakeOr({{kNameFieldId, "B"}, {kNameFieldId, "C"}, {kNameFieldId, "D"}});
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10831,7 +10798,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc2_doc3_doc4));
+    tests::Remove(*writer, std::move(query_doc2_doc3_doc4));
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -10853,12 +10820,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       ASSERT_EQ(expected_name.size() + 3,
                 segment.docs_count());  // total count of documents (+3 ==
                                         // B, C, D masked)
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
 
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       for (auto docs_itr =
@@ -10878,12 +10845,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       auto& segment = reader[1];  // assume 1 is id of second segment
       ASSERT_EQ(expected_name.size(),
                 segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
 
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -10899,7 +10866,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
 
   // valid segment fill policy (merge)
   {
-    auto query_doc2_doc4 = MakeByTermOrByTerm("name", "B", "name", "D");
+    auto query_doc2_doc4 =
+      MakeByTermOrByTerm(kNameFieldId, "B", kNameFieldId, "D");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10911,7 +10879,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc2_doc4));
+    tests::Remove(*writer, std::move(query_doc2_doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     irs::index_utils::CompactionDocsFill options;
@@ -10929,12 +10897,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     auto& segment = reader[0];  // assume 0 is id of first/only segment
     ASSERT_EQ(expected_name.size(),
               segment.docs_count());  // total count of documents
-    auto terms = segment.field("same");
+    auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
 
-    const auto* column = segment.Column(kName);
+    const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -10949,7 +10917,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
 
   // valid segment fill policy (not modified)
   {
-    auto query_doc2_doc4 = MakeByTermOrByTerm("name", "B", "name", "D");
+    auto query_doc2_doc4 =
+      MakeByTermOrByTerm(kNameFieldId, "B", kNameFieldId, "D");
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
@@ -10961,7 +10930,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    writer->GetBatch().Remove(std::move(query_doc2_doc4));
+    tests::Remove(*writer, std::move(query_doc2_doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     irs::index_utils::CompactionDocsFill options;
@@ -10982,12 +10951,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       ASSERT_EQ(
         expected_name.size() + 1,
         segment.docs_count());  // total count of documents (+1 == B masked)
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
 
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       for (auto docs_itr =
@@ -11008,12 +10977,12 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       ASSERT_EQ(
         expected_name.size() + 1,
         segment.docs_count());  // total count of documents (+1 == D masked)
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
 
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       for (auto docs_itr =
@@ -11035,7 +11004,11 @@ TEST_P(IndexTestCase, segment_options) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -11083,7 +11056,7 @@ TEST_P(IndexTestCase, segment_options) {
     // ^^^ expecting timeout because pool should block indefinitely
 
     {
-      irs::IndexWriter::Transaction(std::move(ctx));
+      ctx.Commit();
     }  // force flush of GetBatch(), i.e. ulock segment
     // ASSERT_EQ(std::cv_status::no_timeout, cond.wait_for(lock, 1000ms));
     lock.unlock();
@@ -11101,12 +11074,12 @@ TEST_P(IndexTestCase, segment_options) {
     {
       std::unordered_set<std::string_view> expected_name = {"A", "B"};
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(expected_name.size(),
                 segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -11146,12 +11119,12 @@ TEST_P(IndexTestCase, segment_options) {
     {
       std::unordered_set<std::string_view> expected_name = {"A"};
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(expected_name.size(),
                 segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -11170,12 +11143,12 @@ TEST_P(IndexTestCase, segment_options) {
     {
       std::unordered_set<std::string_view> expected_name = {"B"};
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_EQ(expected_name.size(),
                 segment.docs_count());  // total count of documents
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -11215,12 +11188,12 @@ TEST_P(IndexTestCase, segment_options) {
     {
       std::unordered_set<std::string_view> expected_name = {"A"};
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       // total count of documents
       ASSERT_EQ(expected_name.size(), segment.docs_count());
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -11239,12 +11212,12 @@ TEST_P(IndexTestCase, segment_options) {
     {
       std::unordered_set<std::string_view> expected_name = {"B"};
       auto& segment = reader[1];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       // total count of documents
       ASSERT_EQ(expected_name.size(), segment.docs_count());
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -11274,11 +11247,14 @@ TEST_P(IndexTestCase, segment_options) {
     // prevent segment from being flushed
     {
       auto ctx = writer->GetBatch();
-      auto doc = ctx.Insert(true);
+      {
+        auto doc = ctx.Insert(true);
 
-      ASSERT_TRUE(
-        doc.Insert(std::begin(doc2->indexed), std::end(doc2->indexed)));
-      CaptureNameLikeFields(doc, doc2->indexed);
+        ASSERT_TRUE(
+          doc.Insert(std::begin(doc2->indexed), std::end(doc2->indexed)));
+        CaptureNameLikeFields(doc, doc2->indexed);
+      }
+      ctx.Commit();
     }
 
     ASSERT_TRUE(writer->RefreshCommit());
@@ -11293,12 +11269,12 @@ TEST_P(IndexTestCase, segment_options) {
     {
       std::unordered_set<std::string_view> expected_name = {"A", "B"};
       auto& segment = reader[0];
-      const auto* column = segment.Column(kName);
+      const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       // total count of documents
       ASSERT_EQ(expected_name.size(), segment.docs_count());
-      auto terms = segment.field("same");
+      auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
@@ -11381,16 +11357,16 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove) {
 
   ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
-  auto query_doc1 = MakeByTerm("name", "A");
-  writer->GetBatch().Remove(*(query_doc1.get()));
+  auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+  tests::Remove(*writer, *(query_doc1.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
   // remove for initial segment to trigger compaction
   // compaction is needed to force opening all file handles and make
   // cached readers indeed hold reference to a file
-  auto query_doc3 = MakeByTerm("name", "C");
-  writer->GetBatch().Remove(*(query_doc3.get()));
+  auto query_doc3 = MakeByTerm(kNameFieldId, "C");
+  tests::Remove(*writer, *(query_doc3.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11443,18 +11419,18 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove_all) {
 
   ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
-  auto query_doc1 = MakeByTerm("name", "A");
-  writer->GetBatch().Remove(*(query_doc1.get()));
-  auto query_doc2 = MakeByTerm("name", "B");
-  writer->GetBatch().Remove(*(query_doc2.get()));
+  auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+  tests::Remove(*writer, *(query_doc1.get()));
+  auto query_doc2 = MakeByTerm(kNameFieldId, "B");
+  tests::Remove(*writer, *(query_doc2.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
   // remove for initial segment to trigger compaction
   // compaction is needed to force opening all file handles and make
   // cached readers indeed hold reference to a file
-  auto query_doc3 = MakeByTerm("name", "C");
-  writer->GetBatch().Remove(*(query_doc3.get()));
+  auto query_doc3 = MakeByTerm(kNameFieldId, "C");
+  tests::Remove(*writer, *(query_doc3.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11500,10 +11476,10 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment) {
   ASSERT_GT(count, 0);
 
   // Remove all documents from segment
-  auto query_doc1 = MakeByTerm("name", "A");
-  writer->GetBatch().Remove(*(query_doc1.get()));
-  auto query_doc2 = MakeByTerm("name", "B");
-  writer->GetBatch().Remove(*(query_doc2.get()));
+  auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+  tests::Remove(*writer, *(query_doc1.get()));
+  auto query_doc2 = MakeByTerm(kNameFieldId, "B");
+  tests::Remove(*writer, *(query_doc2.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   {
@@ -11552,10 +11528,10 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);  //  segment 2
 
-  auto query_doc1 = MakeByTerm("name", "A");
-  writer->GetBatch().Remove(*(query_doc1.get()));
-  auto query_doc3 = MakeByTerm("name", "C");
-  writer->GetBatch().Remove(*(query_doc3.get()));
+  auto query_doc1 = MakeByTerm(kNameFieldId, "A");
+  tests::Remove(*writer, *(query_doc1.get()));
+  auto query_doc3 = MakeByTerm(kNameFieldId, "C");
+  tests::Remove(*writer, *(query_doc3.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -11564,10 +11540,10 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
   ASSERT_TRUE(writer->Compact(
     irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
   // Remove all documents from 'new' segment
-  auto query_doc4 = MakeByTerm("name", "D");
-  writer->GetBatch().Remove(*(query_doc4.get()));
-  auto query_doc2 = MakeByTerm("name", "B");
-  writer->GetBatch().Remove(*(query_doc2.get()));
+  auto query_doc4 = MakeByTerm(kNameFieldId, "D");
+  tests::Remove(*writer, *(query_doc4.get()));
+  auto query_doc2 = MakeByTerm(kNameFieldId, "B");
+  tests::Remove(*writer, *(query_doc2.get()));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
   {
@@ -11616,6 +11592,7 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
   };
 
   struct EmptyField {
+    irs::field_id Id() const { return kTestFieldId; }
     std::string_view Name() const { return "test"; };
     irs::IndexFeatures GetIndexFeatures() const {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
@@ -11634,8 +11611,11 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
     // no norms is written as there is nothing to index
     {
       auto docs = writer->GetBatch();
-      auto doc = docs.Insert();
-      ASSERT_TRUE(doc.Insert(empty));
+      {
+        auto doc = docs.Insert();
+        ASSERT_TRUE(doc.Insert(empty));
+      }
+      docs.Commit();
     }
 
     // we don't write default norms
@@ -11643,17 +11623,23 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
       const tests::StringField field(static_cast<std::string>(empty.Name()),
                                      "bar", empty.GetIndexFeatures());
       auto docs = writer->GetBatch();
-      auto doc = docs.Insert();
-      ASSERT_TRUE(doc.Insert(field));
+      {
+        auto doc = docs.Insert();
+        ASSERT_TRUE(doc.Insert(field));
+      }
+      docs.Commit();
     }
 
     {
       const tests::StringField field(static_cast<std::string>(empty.Name()),
                                      "bar", empty.GetIndexFeatures());
       auto docs = writer->GetBatch();
-      auto doc = docs.Insert();
-      ASSERT_TRUE(doc.Insert(field));
-      ASSERT_TRUE(doc.Insert(field));
+      {
+        auto doc = docs.Insert();
+        ASSERT_TRUE(doc.Insert(field));
+        ASSERT_TRUE(doc.Insert(field));
+      }
+      docs.Commit();
     }
 
     writer->RefreshCommit();
@@ -11668,17 +11654,15 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
     ASSERT_EQ(3, segment.docs_count());
     ASSERT_EQ(3, segment.live_docs_count());
 
-    auto field = segment.fields();
-    ASSERT_NE(nullptr, field);
-    ASSERT_TRUE(field->next());
-    auto& field_reader = field->value();
-    ASSERT_EQ(empty.Name(), field_reader.meta().name);
+    const auto ids = segment.field_ids();
+    ASSERT_EQ(1u, ids.size());
+    const auto* field_reader = segment.field(ids.front());
+    ASSERT_NE(nullptr, field_reader);
+    ASSERT_EQ(ids.front(), field_reader->meta().id);
     ASSERT_TRUE(irs::IsSubsetOf(irs::IndexFeatures::Norm,
-                                field_reader.meta().index_features));
-    const auto norm = field_reader.meta().norm;
+                                field_reader->meta().index_features));
+    const auto norm = field_reader->meta().norm;
     ASSERT_TRUE(irs::field_limits::valid(norm));
-    ASSERT_FALSE(field->next());
-    ASSERT_FALSE(field->next());
 
     auto norm_reader = segment.norms(norm);
     ASSERT_NE(nullptr, norm_reader);
@@ -11696,7 +11680,9 @@ TEST_P(IndexTestCase11, compact_old_format) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        auto field = std::make_shared<tests::StringField>(name, data.str);
+        field->id = FieldIdFor(name);
+        doc.insert(std::move(field));
       }
     });
   const tests::Document* doc1 = gen.next();
@@ -11741,7 +11727,11 @@ TEST_P(IndexTestCase11, clean_writer_with_payload) {
     [](tests::Document& doc, const std::string& name,
        const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
-        doc.insert(std::make_shared<tests::StringField>(name, data.str));
+        {
+          auto f = std::make_shared<tests::StringField>(name, data.str);
+          f->id = tests::FieldIdFor(name);
+          doc.insert(std::move(f));
+        }
       }
     });
 
@@ -12060,11 +12050,13 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 1)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick - 10);
       AssertSnapshotEquality(*writer);
     }
@@ -12072,11 +12064,13 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 0)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
       AssertSnapshotEquality(*writer);
     }
@@ -12111,22 +12105,26 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 1)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick - 10);
     }
 
     // insert document (trx 0)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
     }
 
@@ -12153,22 +12151,26 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 0)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
     }
 
     // insert document (trx 1)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
     }
 
@@ -12202,22 +12204,26 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 0)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
     }
 
     // insert document (trx 1)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
       trx.Commit(expected_tick);
     }
 
@@ -12253,11 +12259,14 @@ TEST_P(IndexTestCase11, commit_payload) {
     // insert document (trx 0)
     {
       auto trx = writer->GetBatch();
-      auto doc = trx.Insert();
-      doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
-      CaptureNameLikeFields(doc, doc0->indexed);
-      doc.Insert(doc0->stored.begin(), doc0->stored.end());
-      ASSERT_TRUE(doc);
+      {
+        auto doc = trx.Insert();
+        doc.Insert(doc0->indexed.begin(), doc0->indexed.end());
+        CaptureNameLikeFields(doc, doc0->indexed);
+        doc.Insert(doc0->stored.begin(), doc0->stored.end());
+        ASSERT_TRUE(doc);
+      }
+      trx.Commit();
     }
 
     writer->RefreshCommit();
@@ -12308,7 +12317,7 @@ TEST_P(IndexTestCase11, testExternalGeneration) {
     // subcontext with remove
     {
       auto trx2 = writer->GetBatch();
-      trx2.Remove(MakeByTerm("name", "A"));
+      trx2.Remove(MakeByTerm(kNameFieldId, "A"));
       trx2.Commit(4);
     }
     trx.Commit(3);
@@ -12360,7 +12369,7 @@ TEST_P(IndexTestCase11, testExternalGenerationDifferentStart) {
     // subcontext with remove
     {
       auto trx2 = writer->GetBatch();
-      trx2.Remove(MakeByTerm("name", "A"));
+      trx2.Remove(MakeByTerm(kNameFieldId, "A"));
       trx2.Commit(4);
     }
     trx.Commit(3);
@@ -12372,7 +12381,13 @@ TEST_P(IndexTestCase11, testExternalGenerationDifferentStart) {
   auto reader = irs::DirectoryReader(directory, nullptr,
                                      irs::tests::DefaultReaderOptions());
   if (dynamic_cast<irs::MemoryDirectory*>(&directory) == nullptr) {
-    EXPECT_EQ(GetResourceManager().file_descriptors.Counter(), 4);
+    // MMapDirectory keeps payload files memory-mapped, so only the
+    // non-mappable streams contribute to the file_descriptors counter;
+    // file-system based directories also retain an fd for the per-field
+    // `.idx` file introduced by the current index format.
+    const size_t expected_fd =
+      dynamic_cast<irs::MMapDirectory*>(&directory) != nullptr ? 4 : 5;
+    EXPECT_EQ(GetResourceManager().file_descriptors.Counter(), expected_fd);
   }
   auto mapped_memory = reader.CountMappedMemory();
 #ifdef __linux__
@@ -12418,7 +12433,7 @@ TEST_P(IndexTestCase11, testExternalGenerationRemoveBeforeInsert) {
     // subcontext with remove
     {
       auto trx2 = writer->GetBatch();
-      trx2.Remove(MakeByTerm("name", "A"));
+      trx2.Remove(MakeByTerm(kNameFieldId, "A"));
       trx2.Commit(2);
     }
     trx.Commit(4);
@@ -12459,8 +12474,8 @@ TEST_P(IndexTestCase14, buffered_column_reopen) {
 
 // Minimal stand-ins for the original HNSW search fixtures. Bodies of the
 // two tests below `GTEST_SKIP()` -- the production HNSW path is now driven
-// through the typed columnstore (`columnstore::Writer::AttachHNSW`,
-// `columnstore::HNSWReader`) and `SubReader::Search(field_id, ...)`; the
+// through the typed columnstore (`ColWriter::AttachHNSW`,
+// `HnswReader`) and `SubReader::Search(field_id, ...)`; the
 // legacy `irs::ColumnInfo`/`IndexWriterOptions::column_info` lambda and
 // `DirectoryReader::Search(name, info, buffer)` overloads the original
 // tests built on are gone. SQL-level coverage lives at

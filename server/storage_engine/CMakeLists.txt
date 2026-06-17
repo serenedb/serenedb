@@ -1,9 +1,1 @@
-target_sources(
-    sereneserver
-    PRIVATE
-        engine_feature.cpp
-        health_data.cpp
-        table_shard.cpp
-        index_shard.cpp
-        search_engine.cpp
-)
+target_sources(sereneserver PRIVATE search_engine.cpp)

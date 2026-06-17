@@ -229,7 +229,7 @@ class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
   const Config& _config;
   std::optional<catalog::MaterializedData> _data;
 
-  void WriteInternal(vpack::Builder& build) const final {}
+  void Serialize(duckdb::Serializer&) const final {}
 };
 
 template<typename T>

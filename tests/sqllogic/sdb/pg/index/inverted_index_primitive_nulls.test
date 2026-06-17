@@ -80,11 +80,16 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │     Index: prim_n_idx     │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[t(string) =   │
-│    <Term:one(0, 0); >]]   │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││  t(string) = one  ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │           pk (l)          │

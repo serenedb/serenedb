@@ -46,23 +46,21 @@
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
-#include "connector/duckdb_primary_key.h"
-#include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_search_sink_writer.h"
-#include "connector/duckdb_secondary_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/index_expression.hpp"
+#include "connector/inverted_store_index.h"
 #include "connector/json_extract_names.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
-#include "connector/search_field_name.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
 #include "pg/progress_tracker.h"
-#include "search/inverted_index_shard.h"
-#include "storage_engine/secondary_index_shard.h"
+#include "pg/sql_exception_macro.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 namespace {
@@ -71,31 +69,7 @@ struct InsertColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   size_t input_col_idx;
-  catalog::ColumnStoreMode store_mode;
 };
-
-// `chunk_columns` is the chunk-ordered list of columns the scan projects
-// (state->columns). For each indexed column, find its chunk position; the
-// secondary writer's BuildSK reads from chunk.data[input_col_idx].
-std::vector<duckdb_secondary_key::SKColumn> BuildSKColumnsForBackfill(
-  const catalog::Index& index,
-  std::span<const InsertColumnMeta> chunk_columns) {
-  std::vector<duckdb_secondary_key::SKColumn> result;
-  result.reserve(index.GetColumnIds().size());
-
-  for (auto col_id : index.GetColumnIds()) {
-    for (size_t i = 0; i < chunk_columns.size(); ++i) {
-      if (chunk_columns[i].id == col_id) {
-        result.push_back(duckdb_secondary_key::SKColumn{
-          .input_col_idx = i,
-          .type = chunk_columns[i].duckdb_type,
-        });
-        break;
-      }
-    }
-  }
-  return result;
-}
 
 struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   bool created = false;
@@ -111,7 +85,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   ObjectId table_id;
   std::string table_key;
   std::vector<InsertColumnMeta> columns;
-  std::vector<duckdb_primary_key::PKColumn> pk_columns;
 
   duckdb::idx_t file_row_number_col_idx = 0;
   duckdb::idx_t file_index_col_idx = 0;
@@ -121,7 +94,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   bool has_generated_pk_col = false;
   // No PK column in the chunk -- Sink synthesises a monotonic counter.
   bool is_view_synth_pk = false;
-  bool is_view_rocksdb_pk = false;
 
   std::atomic<int64_t> view_row_counter_atomic{0};
   std::atomic<duckdb::idx_t> backfill_count_atomic{0};
@@ -130,9 +102,8 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::vector<std::string> row_keys;
-  duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
 
-  std::shared_ptr<IndexShard> index_shard;
+  std::shared_ptr<search::InvertedIndexStorage> index_storage;
   std::shared_ptr<const catalog::Snapshot> snapshot_for_providers;
   std::shared_ptr<catalog::Index> index_for_providers;
 
@@ -144,7 +115,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
     search_trx.reset();
     if (created && !finalized) {
       try {
-        auto& catalog = catalog::CatalogFeature::instance().Global();
+        auto& catalog = catalog::GetCatalog();
         std::ignore =
           catalog.DropIndex(database_name, schema_name, index_name, true);
       } catch (...) {
@@ -156,7 +127,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
 struct CreateIndexLocalState : public duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
-  duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
   std::vector<std::string> row_keys;
 
   ~CreateIndexLocalState() override {
@@ -206,8 +176,6 @@ duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
-  state->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
-    duckdb::BufferAllocator::Get(context));
   state->database_id = _database_id;
   state->database_name = _schema_entry.catalog.GetName();
   state->schema_name = _schema_entry.name;
@@ -219,8 +187,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     state->progress = sdb_state->progress.get();
   }
 
-  auto& catalog_feature = catalog::CatalogFeature::instance();
-  auto& catalog_impl = catalog_feature.Global();
+  auto& catalog_impl = catalog::GetCatalog();
 
   // Determine index type
   if (absl::EqualsIgnoreCase(_info->index_type, "inverted")) {
@@ -348,8 +315,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
 
     create_result = catalog_impl.CreateInvertedIndex(
-      _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,
-      std::move(idx_columns), std::move(options),
+      context, _database_id, _schema_entry.name, _relation->GetName(),
+      _info->index_name, std::move(idx_columns), std::move(options),
       {.create_with_tombstone = true});
   } else {
     bool unique =
@@ -378,19 +345,21 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   if (state->progress) {
     state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
   }
-  auto shard = snapshot->GetIndexShard(catalog_index->GetId());
-  SDB_ASSERT(shard);
-  state->index_shard = shard;
+  // Inverted indexes carry their iresearch storage (bound in CreateIndexImpl);
+  // secondary indexes do not, so this is null for them.
+  auto inverted =
+    snapshot->GetObject<catalog::InvertedIndex>(catalog_index->GetId());
+  auto storage = inverted ? inverted->GetData() : nullptr;
+  state->index_storage = storage;
 
-  if (shard->GetType() == catalog::ObjectType::InvertedIndex) {
-    auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
+  if (storage) {
     // Must be set before StartTasks so the first Commit's meta_payload records
     // it.
     if (auto it = _info->options.find("_sdb_iceberg_snapshot_id");
         it != _info->options.end()) {
-      inverted_shard.SetIcebergSnapshotId(it->second.GetValue<int64_t>());
+      storage->SetIcebergSnapshotId(it->second.GetValue<int64_t>());
     }
-    inverted_shard.StartTasks();
+    storage->StartTasks();
   }
 
   auto* table_ptr = TableOrNull();
@@ -414,7 +383,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         .id = col.GetId(),
         .duckdb_type = col.type,
         .input_col_idx = chunk_idx,
-        .store_mode = col.store_mode,
       });
     }
   } else {
@@ -429,7 +397,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         .id = columns[i].GetId(),
         .duckdb_type = columns[i].type,
         .input_col_idx = i,
-        .store_mode = columns[i].store_mode,
       });
     }
   }
@@ -438,57 +405,18 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   if (auto it = _info->options.find("_sdb_view_fast_path_pk");
       !table_ptr && it != _info->options.end()) {
     const auto kind = it->second.GetValue<std::string>();
-    if (kind == "rocksdb_explicit_pk") {
-      state->is_view_rocksdb_pk = true;
-    } else if (kind == "rocksdb_rowid") {
-      // Same wire format as a table-backed no-PK index.
-      state->has_generated_pk_col = true;
-    } else {
-      state->is_external = true;
-      if (kind == "file_index_plus_row_number") {
-        state->is_glob_external = true;
-        state->file_index_col_idx = state->columns.size();
-        state->file_row_number_col_idx = state->columns.size() + 1;
-      }
+    state->is_external = true;
+    if (kind == "file_index_plus_row_number" ||
+        kind == "file_index_plus_duckdb_rowid") {
+      state->is_glob_external = true;
+      state->file_index_col_idx = state->columns.size();
+      state->file_row_number_col_idx = state->columns.size() + 1;
     }
   }
   if (table_ptr) {
-    state->has_generated_pk_col = table_ptr->PKColumns().empty();
-    state->is_view_synth_pk = false;
-    // PK chunk positions: each PK column's chunk index is its position in
-    // the projection. BuildCreateIndexProjection guarantees PK columns are
-    // present in the projection when there's an explicit PK.
-    if (!state->has_generated_pk_col) {
-      auto projected =
-        projection |
-        std::views::transform(
-          [&](size_t pos) -> const catalog::Column& { return columns[pos]; });
-      state->pk_columns =
-        duckdb_primary_key::BuildPKColumns(projected, table_ptr->PKColumns());
-    }
-  } else if (state->is_view_rocksdb_pk) {
-    auto& view = basics::downCast<const catalog::PgSqlView>(*_relation);
-    auto fp = ResolveViewFastPath(context, view);
-    SDB_ASSERT(fp && fp->base_table,
-               "rocksdb_explicit_pk fast-path lost ViewFastPath::base_table");
-    auto base_t = fp->base_table;
-    const auto& base_cols = base_t->Columns();
-    const auto& pk_ids = base_t->PKColumns();
-    state->pk_columns.reserve(pk_ids.size());
-    duckdb::idx_t trailing_pos = state->columns.size();
-    for (auto pk_id : pk_ids) {
-      for (const auto& c : base_cols) {
-        if (c.GetId() == pk_id) {
-          state->pk_columns.push_back(duckdb_primary_key::PKColumn{
-            .input_col_idx = trailing_pos,
-            .type = c.type,
-          });
-          ++trailing_pos;
-          break;
-        }
-      }
-    }
-    state->has_generated_pk_col = false;
+    // Store-table postings are keyed by the native rowid the scan appends
+    // after the projection, regardless of the declared PK.
+    state->has_generated_pk_col = true;
     state->is_view_synth_pk = false;
   } else if (state->is_external) {
     state->is_view_synth_pk = false;
@@ -500,22 +428,14 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     state->is_view_synth_pk = true;
   }
 
-  auto& conn_ctx = GetSereneDBContext(context);
   auto index = snapshot->GetObject<catalog::Index>(catalog_index->GetId());
   SDB_ASSERT(index);
 
   if (state->index_type == catalog::ObjectType::SecondaryIndex) {
-    auto& sec_index = basics::downCast<const catalog::SecondaryIndex>(*index);
-    auto sk_columns = BuildSKColumnsForBackfill(*index, state->columns);
-    auto& trx = conn_ctx.GetRocksDBTransaction();
-
-    if (sec_index.IsUnique()) {
-      state->writer = std::make_unique<DuckDBSecondarySinkInsertWriter<true>>(
-        trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
-    } else {
-      state->writer = std::make_unique<DuckDBSecondarySinkInsertWriter<false>>(
-        trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
-    }
+    // Table-backed secondary indexes are mirrored as native store indexes;
+    // the store CREATE INDEX builds from existing rows itself. View-backed
+    // secondary indexes are rejected at bind time.
+    SDB_ASSERT(table_ptr);
   } else {
     state->snapshot_for_providers = snapshot;
     state->index_for_providers = index;
@@ -535,36 +455,27 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   }
   auto* gstate_ptr =
     sink_state ? &sink_state->Cast<CreateIndexGlobalState>() : nullptr;
-  if (!gstate_ptr || !gstate_ptr->created || !gstate_ptr->index_shard ||
+  if (!gstate_ptr || !gstate_ptr->created || !gstate_ptr->index_storage ||
       !gstate_ptr->index_for_providers) {
     return duckdb::make_uniq<duckdb::LocalSinkState>();
   }
   auto& gstate = *gstate_ptr;
 
-  auto& inverted_shard =
-    basics::downCast<search::InvertedIndexShard>(*gstate.index_shard);
+  auto& inverted_storage = *gstate.index_storage;
   const auto& inverted_index =
     basics::downCast<const catalog::InvertedIndex>(*gstate.index_for_providers);
 
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-    inverted_shard.GetTransaction());
-  lstate->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
-    duckdb::BufferAllocator::Get(context.client));
+    inverted_storage.GetTransaction());
 
   auto tokenizer_provider =
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
-  auto store_values_provider = MakeStoreValuesProvider(inverted_index);
-  auto is_text_indexed_provider = MakeIsTextIndexedProvider(inverted_index);
-  auto hnsw_info_provider = MakeHNSWInfoProvider(inverted_index);
-  auto expr_tokenizer_provider = MakeExpressionTokenizerProvider(
-    gstate.snapshot_for_providers, inverted_index);
+  auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
   auto indexed_exprs = MakeIndexedExpressions(inverted_index, context.client);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),
-    gstate.index_for_providers->GetColumnIds(),
-    std::move(store_values_provider), std::move(is_text_indexed_provider),
-    std::move(hnsw_info_provider), std::move(expr_tokenizer_provider),
+    gstate.index_for_providers->GetColumnIds(), std::move(entry_info_provider),
     std::move(indexed_exprs));
 
   return lstate;
@@ -577,7 +488,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   if (!gstate.created) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -595,8 +505,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   }
 
   auto* writer = parallel ? lstate->writer.get() : gstate.writer.get();
-  auto* serializer =
-    parallel ? lstate->serializer.get() : gstate.serializer.get();
   auto& row_keys = parallel ? lstate->row_keys : gstate.row_keys;
 
   // Row key layout: [ObjectId][ColumnId(reserved)][PK bytes].
@@ -663,36 +571,20 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       append_row_number_key(pks[fmt.sel->get_index(row)]);
     }
   } else {
-    std::vector<duckdb::UnifiedVectorFormat> pk_formats;
-    duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      duckdb_primary_key::MakeColumnKey(
-        pk_formats, gstate.pk_columns, row, gstate.table_key, [](auto) {},
-        row_keys.emplace_back());
-    }
+    SDB_UNREACHABLE();
   }
 
   writer->Init(num_rows, chunk);
 
-  DuckDBColumnSerializer::SstWriter noop{nullptr};
+  std::vector<std::string_view> view_row_keys{row_keys.begin(), row_keys.end()};
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
       continue;
     }
 
-    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
-                                /*have_nulls=*/true};
-    if (!writer->SwitchColumn(desc, chunk.data[col.input_col_idx], num_rows)) {
-      continue;
-    }
-
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(row_keys[row], col.id);
-    }
-
-    DuckDBSinkIndexWriter* writer_ptr = writer;
-    serializer->WriteColumn(noop, chunk.data[col.input_col_idx], num_rows,
-                            row_keys, {&writer_ptr, 1}, desc);
+    const ColumnDescriptor desc{col.id, col.duckdb_type};
+    writer->SwitchColumn(desc, chunk.data[col.input_col_idx], view_row_keys,
+                         num_rows);
   }
 
   if (auto indexed_exprs = writer->IndexedExpressions();
@@ -700,9 +592,9 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     auto slot_to_col_ids = gstate.columns |
                            std::views::transform(&InsertColumnMeta::id) |
                            std::ranges::to<std::vector<catalog::Column::Id>>();
-    EvaluateAndWriteIndexedExpressions(
-      *writer, indexed_exprs, chunk, gstate.table_id, slot_to_col_ids,
-      context.client, num_rows, row_keys, *serializer);
+    EvaluateAndWriteIndexedExpressions(*writer, indexed_exprs, chunk,
+                                       gstate.table_id, slot_to_col_ids,
+                                       context.client, num_rows, row_keys);
   }
 
   writer->Finish();
@@ -719,6 +611,9 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   duckdb::OperatorSinkCombineInput& input) const {
   if (auto* lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state)) {
     lstate->writer.reset();
+    if (lstate->search_trx) {
+      lstate->search_trx->Commit();
+    }
     lstate->search_trx.reset();
   }
   return duckdb::SinkCombineResultType::FINISHED;
@@ -734,26 +629,24 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
 
   if (gstate.index_type == catalog::ObjectType::InvertedIndex &&
-      gstate.index_shard) {
+      gstate.index_storage) {
     if (gstate.progress) {
       gstate.progress->SetPhase(pg::create_index_progress::Phase::Committing);
     }
     gstate.writer.reset();
     gstate.search_trx.reset();
 
-    auto& inverted_shard =
-      basics::downCast<search::InvertedIndexShard>(*gstate.index_shard);
-    auto future = inverted_shard.CommitWait();
-    std::ignore = std::move(future).Get().Ok();
+    auto& inverted_storage = *gstate.index_storage;
+    inverted_storage.Refresh();
     SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
-    inverted_shard.FinishCreation();
+    inverted_storage.FinishCreation();
   }
 
   if (gstate.progress) {
     gstate.progress->SetPhase(pg::create_index_progress::Phase::Finalizing);
   }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
-  auto& catalog = catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::GetCatalog();
   auto r = catalog.RemoveTombstone(_database_id, gstate.schema_name,
                                    gstate.index_name);
   if (!r.ok()) {
@@ -797,6 +690,14 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
 
   auto* sdb_catalog = dynamic_cast<SereneDBCatalog*>(&op.table.ParentCatalog());
   if (!sdb_catalog) {
+    if (op.table.type == duckdb::CatalogType::TABLE_ENTRY &&
+        op.table.Cast<duckdb::TableCatalogEntry>().IsDuckTable() &&
+        op.info->options.contains(InvertedStoreIndex::kIndexIdOption)) {
+      // Store tables (identified by the mirror's linkage options) build
+      // through the generic pipeline (build callbacks + create_instance);
+      // other duck tables (temp, user attaches) keep the error below.
+      return input.planner.CreateDefaultIndexPlan(op, input.table_scan);
+    }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("cannot CREATE INDEX on ", op.table.ParentCatalog().GetName(),

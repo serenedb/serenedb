@@ -21,11 +21,8 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 #include <unicode/locid.h>
-#include <vpack/builder.h>
-#include <vpack/value.h>
-#include <vpack/value_type.h>
 
-#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -48,6 +45,7 @@
 #include <utility>
 
 #include "basics/assert.h"
+#include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
@@ -100,8 +98,7 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   const auto missing_ok = args[1].GetValue<bool>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto& catalog_feature = catalog::CatalogFeature::instance();
-  auto& catalog = catalog_feature.Global();
+  auto& catalog = catalog::GetCatalog();
 
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 

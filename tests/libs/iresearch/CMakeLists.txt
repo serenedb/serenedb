@@ -5,6 +5,7 @@ set(iresearch-tests_sources
     ./analysis/classification_tokenizer_test.cpp
     ./analysis/nearest_neighbors_tokenizer_test.cpp
     ./analysis/ngram_tokenizer_test.cpp
+    ./analysis/sparse_ngram_tokenizer_test.cpp
     ./analysis/minhash_tokenizer_test.cpp
     ./analysis/multi_delimited_tokenizer_tests.cpp
     ./analysis/pipeline_tokenizer_tests.cpp
@@ -20,6 +21,7 @@ set(iresearch-tests_sources
     ./analysis/tokenizer_tests.cpp
     ./analysis/pattern_tokenizer_tests.cpp
     ./formats/column/columnstore_test.cpp
+    ./formats/column/variant_shredding_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
     ./formats/sparse_bitmap_test.cpp
@@ -27,7 +29,6 @@ set(iresearch-tests_sources
     ./formats/formats_test_case_base.cpp
     ./formats/skip_list_test.cpp
     ./store/directory_test_case.cpp
-    ./store/caching_directory_test.cpp
     ./store/directory_cleaner_tests.cpp
     ./store/memory_index_output_tests.cpp
     ./store/store_utils_tests.cpp
@@ -56,7 +57,6 @@ set(iresearch-tests_sources
     ./search/regexp_filter_test.cpp
     ./search/levenshtein_filter_test.cpp
     ./search/index_reader_test.cpp
-    ./search/scorers_tests.cpp
     ./search/bitset_doc_iterator_test.cpp
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
@@ -96,7 +96,6 @@ set(iresearch-tests_sources
     ./utils/bitvector_tests.cpp
     ./utils/encryption_test.cpp
     ./utils/container_utils_tests.cpp
-    ./utils/compression_test.cpp
     ./utils/crc_test.cpp
     ./utils/file_utils_tests.cpp
     ./utils/object_pool_tests.cpp

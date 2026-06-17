@@ -251,18 +251,21 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│      IRESEARCH_COUNT      │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │           Index:          │
 │      vedernikoff_idx      │
 │                           │
-│      Lookup: rocksdb      │
-│                           │
 │          Filter:          │
-│  AND[PHRASE[b(string) =   │
-│  <Term:pudge(0, 0); >] && │
-│  PHRASE[b(string) = <Term │
-│      :game(0, 0); >]]     │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││       TERMS       ││  │
+│  ││    ────────────   ││  │
+│  ││ b(string) {['game'││  │
+│  ││ , 1],['pudge', 1] ││  │
+│  ││   ,} min_match=2  ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │          Output:          │
 │       row-count only      │
@@ -335,14 +338,10 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │   Table: biksalen_memes   │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             c             │
+│   Type: Sequential Scan   │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -356,14 +355,10 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │   Table: biksalen_memes   │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             c             │
+│   Type: Sequential Scan   │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -377,14 +372,10 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │   Table: biksalen_memes   │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             c             │
+│   Type: Sequential Scan   │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -426,11 +417,7 @@ EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b tes
 │         TABLE_SCAN        │
 │    ────────────────────   │
 │   Table: biksalen_memes   │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             c             │
+│   Type: Sequential Scan   │
 │                           │
 │                           │
 │                           │
@@ -489,11 +476,11 @@ INSERT INTO babsky_src VALUES
   (5, 'krivda writes sql at night', 'clickclack university');
 
 statement count 5
-COPY babsky_src TO '/tmp/${__DATABASE__}_babsky_memes.parquet' (FORMAT PARQUET);
+COPY babsky_src TO '${__TEST_DIR__}/babsky_memes.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW babsky_ext AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_babsky_memes.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/babsky_memes.parquet');
 
 statement ok
 CREATE INDEX babsky_ext_idx ON babsky_ext USING inverted(a, b test_english, c test_english);
@@ -562,11 +549,11 @@ INSERT INTO text_idx_src VALUES
   (5, 'krivda writes sql at night', 'clickclack university');
 
 statement count 5
-COPY text_idx_src TO '/tmp/${__DATABASE__}_text_idx_memes.csv';
+COPY text_idx_src TO '${__TEST_DIR__}/text_idx_memes.csv';
 
 statement ok
 CREATE VIEW text_idx_ext AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_text_idx_memes.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/text_idx_memes.csv');
 
 statement ok
 CREATE INDEX text_idx_ext_idx ON text_idx_ext USING inverted(a, b test_english, c test_english);
@@ -633,11 +620,11 @@ INSERT INTO score_parquet_src VALUES
   (3, 'the lazy dog');
 
 statement count 3
-COPY score_parquet_src TO '/tmp/${__DATABASE__}_score_parquet.parquet' (FORMAT PARQUET);
+COPY score_parquet_src TO '${__TEST_DIR__}/score_parquet.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW score_parquet_ext AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_score_parquet.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/score_parquet.parquet');
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY score_en(
@@ -683,8 +670,13 @@ QUERY PLAN
 │      Lookup: parquet      │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[b(string) =   │
-│    <Term:fox(0, 0); >]]   │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││  b(string) = fox  ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -730,11 +722,11 @@ INSERT INTO score_text_src VALUES
   (3, 'the lazy dog');
 
 statement count 3
-COPY score_text_src TO '/tmp/${__DATABASE__}_score_text.csv';
+COPY score_text_src TO '${__TEST_DIR__}/score_text.csv';
 
 statement ok
 CREATE VIEW score_text_ext AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_score_text.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/score_text.csv');
 
 statement ok
 CREATE INDEX score_text_idx ON score_text_ext USING inverted(a, b score_en);
@@ -817,11 +809,11 @@ INSERT INTO dense_pq_src VALUES
   (8, 'common word theta here', 'group west side');
 
 statement count 8
-COPY dense_pq_src TO '/tmp/${__DATABASE__}_dense_pq.parquet' (FORMAT PARQUET);
+COPY dense_pq_src TO '${__TEST_DIR__}/dense_pq.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW dense_pq_ext AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_dense_pq.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/dense_pq.parquet');
 
 statement ok
 CREATE INDEX dense_pq_idx ON dense_pq_ext USING inverted(a, b test_english, c test_english);
@@ -941,11 +933,11 @@ INSERT INTO dense_csv_src VALUES
   (5, 'shared term epsilon info', 'dept red color');
 
 statement count 5
-COPY dense_csv_src TO '/tmp/${__DATABASE__}_dense_csv.csv';
+COPY dense_csv_src TO '${__TEST_DIR__}/dense_csv.csv';
 
 statement ok
 CREATE VIEW dense_csv_ext AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_dense_csv.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/dense_csv.csv');
 
 
 query
@@ -998,9 +990,15 @@ QUERY PLAN
 │        Lookup: csv        │
 │                           │
 │          Filter:          │
-│  AND[PHRASE[b(string) =   │
-│  <Term:shared(0, 0); Term │
-│      :term(1, 1); >]]     │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││       PHRASE      ││  │
+│  ││    ────────────   ││  │
+│  ││ b(string) = <Term ││  │
+│  ││   :shared(0, 0);  ││  │
+│  ││ Term:term(1, 1); >││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
 │                           │
 │        Projections:       │
 │             b             │
@@ -1064,11 +1062,11 @@ INSERT INTO vedernikoff_src VALUES
   (5, 'shared term epsilon info', 'dept red color');
 
 statement count 5
-COPY vedernikoff_src TO '/tmp/${__DATABASE__}_vedernikoff.jsonl' (FORMAT json);
+COPY vedernikoff_src TO '${__TEST_DIR__}/vedernikoff.jsonl' (FORMAT json);
 
 statement ok
 CREATE VIEW vedernikoff_ext AS
-  SELECT * FROM read_json('/tmp/${__DATABASE__}_vedernikoff.jsonl');
+  SELECT * FROM read_json('${__TEST_DIR__}/vedernikoff.jsonl');
 
 statement ok
 CREATE INDEX vedernikoff_idx ON vedernikoff_ext USING inverted(a, b test_english, c test_english);
@@ -1281,3 +1279,71 @@ SELECT * FROM no_pk_index WHERE word @@ ts_phrase('bad') LIMIT 1;
 ----
 word
 word is bad: 1
+
+
+# --- Same column listed twice with different tokenizers is rejected.
+# Without an explicit check, the second `ApplyOpclassToEntry` call would
+# silently overwrite the first tokenizer's settings on the shared entry
+# slot, leaving stored data unsearchable by the dropped tokenizer.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_kw(template = 'keyword');
+
+statement ok
+CREATE TABLE dup_tok (id INTEGER PRIMARY KEY, txt VARCHAR);
+
+statement error
+CREATE INDEX dup_tok_idx ON dup_tok USING inverted(id, txt tok_kw, txt test_english);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+# Same column listed twice with the same tokenizer is also rejected --
+# nothing to merge, just user mistake.
+statement error
+CREATE INDEX dup_tok_same_idx ON dup_tok USING inverted(id, txt tok_kw, txt tok_kw);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+# A bare column (no opclass) implicitly binds the default tokenizer, so it
+# counts as a tokenizer entry too. Listing the same bare column twice or a
+# bare column alongside an explicit tokenizer opclass on the same column must
+# also be rejected by the dedup path in `IsTokenizerOpclass`.
+statement error
+CREATE INDEX dup_tok_bare_idx ON dup_tok USING inverted(id, txt, txt);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+statement error
+CREATE INDEX dup_tok_bare_mix_idx ON dup_tok USING inverted(id, txt, txt tok_kw);
+----
+db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+
+
+# Stacking a tokenizer with `included()` on the same column stays legal:
+# `included()` attaches columnstore-storage to the entry without binding a
+# tokenizer, so it composes with one tokenizer cleanly.
+statement ok
+CREATE INDEX dup_tok_stack_idx ON dup_tok USING inverted(id, txt tok_kw, txt included());
+
+# The stacked index must serve both the tokenizer-driven filter path and the
+# columnstore-fetch path that `included(...)` enables.
+statement ok
+INSERT INTO dup_tok VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+
+statement ok
+VACUUM (REFRESH_TABLE) dup_tok;
+
+query
+SELECT id, txt FROM dup_tok_stack_idx WHERE txt @@ 'alpha';
+----
+id	txt
+1	alpha
+
+query
+SELECT id, txt FROM dup_tok_stack_idx WHERE txt @@ 'gamma';
+----
+id	txt
+3	gamma

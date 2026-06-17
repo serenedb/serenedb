@@ -22,8 +22,16 @@
 
 #pragma once
 
+#include <memory>
+#include <string_view>
+
 #include "iresearch/formats/formats.hpp"
 
+namespace irs {
+
+class IdxWriter;
+
+}  // namespace irs
 namespace irs::burst_trie {
 
 enum class Version : int32_t {
@@ -35,11 +43,45 @@ enum class Version : int32_t {
   Max = Min,
 };
 
-FieldWriter::ptr MakeWriter(Version version, PostingsWriter::ptr&& writer,
-                            bool compaction,
-                            IResourceManager& resource_manager);
+class FieldWriter final {
+ public:
+  FieldWriter(PostingsWriter::ptr pw, bool compaction, IResourceManager& rm,
+              Version version = Version::Max);
+  ~FieldWriter();
 
-FieldReader::ptr MakeReader(PostingsReader::ptr&& reader,
-                            IResourceManager& resource_manager);
+  FieldWriter(const FieldWriter&) = delete;
+  FieldWriter& operator=(const FieldWriter&) = delete;
+
+  void SetIdxWriter(IdxWriter& idx) noexcept;
+  void prepare(const FlushState& state);
+  void write(const BasicTermReader& reader);
+  void end();
+
+ private:
+  class Impl;
+  std::unique_ptr<Impl> _impl;
+};
+
+class FieldReader final {
+ public:
+  FieldReader(PostingsReader::ptr pr, IResourceManager& rm);
+  ~FieldReader();
+
+  FieldReader(const FieldReader&) = delete;
+  FieldReader& operator=(const FieldReader&) = delete;
+
+  uint64_t CountMappedMemory() const;
+  void prepare(const ReaderState& state);
+
+  const TermReader* field(field_id id) const;
+
+  std::span<const field_id> field_ids() const noexcept;
+
+  size_t size() const noexcept;
+
+ private:
+  class Impl;
+  std::unique_ptr<Impl> _impl;
+};
 
 }  // namespace irs::burst_trie

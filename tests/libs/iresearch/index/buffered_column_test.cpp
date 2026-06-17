@@ -23,7 +23,7 @@
 
 // The legacy `irs::BufferedColumn` is being removed (task #6). The four
 // tests here keep the name+shape but exercise the surviving norm-column
-// write path (`irs::columnstore::NormColumnWriter` via `Writer::Open
+// write path (`irs::NormColumnWriter` via `Writer::Open
 // NormColumn`) -- BufferedColumn's role was to stage per-doc norm bytes
 // before flush, and the new NormColumnWriter replaces it.
 
@@ -33,10 +33,10 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
-#include "iresearch/columnstore/column_writer.hpp"
-#include "iresearch/columnstore/format.hpp"
-#include "iresearch/columnstore/norm_reader.hpp"
-#include "iresearch/columnstore/norm_writer.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_writer.hpp"
+#include "iresearch/formats/column/norm_reader.hpp"
+#include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
 
@@ -49,12 +49,12 @@ class BufferedColumnTestCase : public ::testing::TestWithParam<bool> {
   }
 };
 
-// Returns true iff `dir` contains a file named `segment_name + ".cs"`.
+// Returns true iff `dir` contains a file named `segment_name + ".col"`.
 // Used to assert that Rollback() leaves the directory clean.
 bool HasCsFile(const irs::Directory& dir, std::string_view segment_name) {
   bool exists = false;
   std::string fn{segment_name};
-  fn.append(".cs");
+  fn.append(".col");
   if (!dir.exists(exists, fn)) {
     return false;
   }
@@ -69,7 +69,7 @@ TEST_P(BufferedColumnTestCase, Ctor) {
   // BufferedColumn.
   irs::MemoryDirectory dir;
   {
-    irs::columnstore::Writer w{dir, "ctor_seg", Db()};
+    irs::ColWriter w{dir, "ctor_seg", Db()};
     auto& nw = w.OpenNormColumn(/*id=*/1, /*row_group_size=*/128);
     EXPECT_EQ(nw.Id(), 1);
     EXPECT_EQ(nw.RowCount(), 0u);
@@ -83,7 +83,7 @@ TEST_P(BufferedColumnTestCase, Ctor) {
     nw.Append(2, 7);
     EXPECT_EQ(nw.RowCount(), 3u);
 
-    // Rollback -- the eagerly-created `.cs` file stays on disk as an
+    // Rollback -- the eagerly-created `.col` file stays on disk as an
     // orphan. The directory cleaner sweeps it later; the writer itself
     // does not remove (matches the legacy `.csd` writer contract).
     w.Rollback();
@@ -94,41 +94,40 @@ TEST_P(BufferedColumnTestCase, Ctor) {
 TEST_P(BufferedColumnTestCase, FlushEmpty) {
   // BufferedColumn::Flush on an empty buffer was a no-op + the segment's
   // column meta wasn't written. New cs analogue: open the norm column,
-  // append nothing, Rollback() the writer => no .cs file appears.
+  // append nothing, Rollback() the writer => no .col file appears.
 
   // --- (1) Rollback path on a norm-only writer ----------------------------
   {
     irs::MemoryDirectory dir;
     {
-      irs::columnstore::Writer w{dir, "flush_empty_rb", Db()};
+      irs::ColWriter w{dir, "flush_empty_rb", Db()};
       auto& nw = w.OpenNormColumn(/*id=*/3, /*row_group_size=*/128);
       EXPECT_EQ(nw.RowCount(), 0u);
       w.Rollback();
     }
-    // Eagerly-created `.cs` file is left as an orphan post-Rollback; the
+    // Eagerly-created `.col` file is left as an orphan post-Rollback; the
     // directory cleaner sweeps it later (legacy `.csd` writer contract).
     EXPECT_TRUE(HasCsFile(dir, "flush_empty_rb"));
   }
 
   // --- (2) Commit-with-zero-padding produces a 0-row group ---------------
   // Writer::Commit pads the norm column to target_row before flushing; a
-  // typed column with one row + an unused norm column => the .cs file
+  // typed column with one row + an unused norm column => the .col file
   // exists, the typed column has one row, the norm column has one
   // implicit zero-padded row (NonZeroCount == 0, Sum == 0).
   {
     irs::MemoryDirectory dir;
     {
-      irs::columnstore::Writer w{dir, "flush_empty_typed", Db()};
+      irs::ColWriter w{dir, "flush_empty_typed", Db()};
       w.OpenNormColumn(/*id=*/3, /*row_group_size=*/128);
       auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
       duckdb::Vector v{duckdb::LogicalType::BIGINT, 1};
       duckdb::FlatVector::GetDataMutable<int64_t>(v)[0] = 42;
       duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
       cw.Append(0, v, 1);
-      auto filename = w.Commit(/*target_row=*/1);
-      ASSERT_FALSE(filename.empty());
+      w.Commit(/*target_row=*/1);
     }
-    irs::columnstore::Reader r{dir, "flush_empty_typed", Db()};
+    irs::ColReader r{dir, "flush_empty_typed", Db()};
     EXPECT_TRUE(r.HasColumn(1));
     ASSERT_TRUE(r.HasNormColumn(3));
     const auto* norm = r.NormColumn(3);
@@ -154,14 +153,14 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     constexpr uint64_t kRowCount = 256;
     constexpr uint32_t kRowGroupSize = 64;  // 4 row groups
     {
-      irs::columnstore::Writer w{dir, "dup_zero", Db()};
+      irs::ColWriter w{dir, "dup_zero", Db()};
       auto& nw = w.OpenNormColumn(/*id=*/9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, /*value=*/0);
       }
       w.Commit(kRowCount);
     }
-    irs::columnstore::Reader r{dir, "dup_zero", Db()};
+    irs::ColReader r{dir, "dup_zero", Db()};
     ASSERT_TRUE(r.HasNormColumn(9));
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
@@ -180,15 +179,14 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     constexpr uint32_t kRepeatedValue = 42;
     constexpr uint32_t kRowGroupSize = 1024;
     {
-      irs::columnstore::Writer w{dir, "dup_value", Db()};
+      irs::ColWriter w{dir, "dup_value", Db()};
       auto& nw = w.OpenNormColumn(/*id=*/9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, kRepeatedValue);
       }
-      auto filename = w.Commit(kRowCount);
-      ASSERT_FALSE(filename.empty());
+      w.Commit(kRowCount);
     }
-    irs::columnstore::Reader r{dir, "dup_value", Db()};
+    irs::ColReader r{dir, "dup_value", Db()};
     ASSERT_TRUE(r.HasNormColumn(9));
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
@@ -210,14 +208,14 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     constexpr uint32_t kRepeatedValue = 7;
     constexpr uint32_t kRowGroupSize = 100;
     {
-      irs::columnstore::Writer w{dir, "dup_rg", Db()};
+      irs::ColWriter w{dir, "dup_rg", Db()};
       auto& nw = w.OpenNormColumn(/*id=*/9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, kRepeatedValue);
       }
       w.Commit(kRowCount);
     }
-    irs::columnstore::Reader r{dir, "dup_rg", Db()};
+    irs::ColReader r{dir, "dup_rg", Db()};
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowGroupCount(), 3u);

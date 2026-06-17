@@ -43,26 +43,4 @@ ExecContext::ExecContext(std::string_view user, std::string_view dbname,
 
 const ExecContext& ExecContext::superuser() { return kSuperuser; }
 
-std::shared_ptr<const ExecContext> ExecContext::superuserAsShared() {
-  return {std::shared_ptr<const ExecContext>{}, &kSuperuser};
-}
-
-bool ExecContext::isAuthEnabled() { return false; }
-
-bool ExecContext::canUseDatabase(std::string_view /*db*/,
-                                 auth::Level requested) const {
-  return requested <= _database_auth_level;
-}
-
-std::shared_ptr<ExecContext> ExecContext::create(std::string_view user,
-                                                 std::string_view dbname,
-                                                 ObjectId database_id) {
-  return std::make_shared<ExecContext>(user, dbname, database_id);
-}
-
-std::shared_ptr<Superuser> Superuser::create(std::string_view database,
-                                             ObjectId database_id) {
-  return std::make_shared<Superuser>(database, database_id);
-}
-
 }  // namespace sdb

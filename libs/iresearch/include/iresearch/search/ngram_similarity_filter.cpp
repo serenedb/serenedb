@@ -43,9 +43,9 @@ size_t MinMatchCount(size_t terms_count, float_t threshold) noexcept {
 
 QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx,
-  std::string_view field_name, const std::vector<irs::bstring>& ngrams,
+  irs::field_id field_name, const std::vector<irs::bstring>& ngrams,
   float_t threshold) {
-  if (ngrams.empty() || field_name.empty()) {
+  if (ngrams.empty() || !irs::field_limits::valid(field_name)) {
     return QueryBuilder::Empty();
   }
   const auto terms_count = ngrams.size();
@@ -106,7 +106,7 @@ PrepareCollector::ptr ByNGramSimilarity::MakeCollector(
   const Scorer* scorer) const {
   const auto& ngrams = options().ngrams;
   const auto terms_count = ngrams.size();
-  if (ngrams.empty() || field().empty()) {
+  if (ngrams.empty() || !irs::field_limits::valid(field_id())) {
     return std::make_unique<NoopCollector>();
   }
   const auto min_match_count = MinMatchCount(terms_count, options().threshold);

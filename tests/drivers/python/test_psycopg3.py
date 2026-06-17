@@ -19,6 +19,7 @@ import re
 
 import psycopg
 import pytest
+from psycopg.pq import TransactionStatus
 from spec_loader import (
     PROTOCOL_MODES,
     TypeSpec,
@@ -189,3 +190,77 @@ def test_standard_conforming_strings(conn: psycopg.Connection):
     # Real drivers (pgjdbc, npgsql) tolerate both, but the spec is "on"/"off".
     # Tracked as a SereneDB compat divergence; once fixed, drop the alt.
     assert val in (b"on", b"off", b"true", b"false")
+
+
+# ---- ReadyForQuery transaction-status wiring -------------------------------
+
+def test_ready_for_query_transaction_status():
+    """ReadyForQuery must carry the live txn status (I/T/E), not a constant."""
+    table = f"rfq_status_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs())  # default autocommit=False
+    try:
+        # Nothing executed yet: idle, outside any transaction block -> 'I'.
+        assert c.pgconn.transaction_status == TransactionStatus.IDLE
+
+        # Seed a table + row in autocommit so the failing INSERT below hits a
+        # live PK constraint (not an in-transaction-DDL "does not exist").
+        c.autocommit = True
+        with c.cursor() as cur:
+            cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+            cur.execute(f'CREATE TABLE "{table}" (id int primary key)')
+            cur.execute(f'INSERT INTO "{table}" VALUES (1)')
+        c.autocommit = False
+
+        # The first statement opens an implicit transaction block -> 'T'.
+        with c.cursor() as cur:
+            cur.execute("SELECT 1")
+        assert c.pgconn.transaction_status == TransactionStatus.INTRANS
+
+        # A primary-key violation invalidates the transaction -> failed 'E'.
+        with pytest.raises(psycopg.Error):
+            with c.cursor() as cur:
+                cur.execute(f'INSERT INTO "{table}" VALUES (1)')
+        assert c.pgconn.transaction_status == TransactionStatus.INERROR
+
+        # ROLLBACK ends the block -> back to idle.
+        c.rollback()
+        assert c.pgconn.transaction_status == TransactionStatus.IDLE
+    finally:
+        c.autocommit = True
+        with c.cursor() as cur:
+            cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.close()
+
+
+def test_managed_transaction_commit_persists():
+    """commit() under autocommit=False must actually send COMMIT and persist.
+
+    With the bug the status byte stayed 'I', so psycopg treated commit() as a
+    no-op; the INSERT was never committed and a second session saw nothing.
+    """
+    table = f"rfq_commit_{os.getpid()}"
+    writer = psycopg.connect(**conn_kwargs())  # default autocommit=False
+    try:
+        writer.autocommit = True
+        with writer.cursor() as cur:
+            cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+            cur.execute(f'CREATE TABLE "{table}" (id int primary key, v text)')
+        writer.autocommit = False
+
+        with writer.cursor() as cur:
+            cur.execute(f'INSERT INTO "{table}" VALUES (1, %s)', ("hello",))
+        writer.commit()
+
+        # A separate session only sees the row if COMMIT really went out.
+        reader = psycopg.connect(**conn_kwargs())
+        try:
+            with reader.cursor() as cur:
+                cur.execute(f'SELECT v FROM "{table}" WHERE id = 1')
+                assert cur.fetchone() == ("hello",)
+        finally:
+            reader.close()
+    finally:
+        writer.autocommit = True
+        with writer.cursor() as cur:
+            cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+        writer.close()

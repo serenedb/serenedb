@@ -47,6 +47,7 @@ add_library(
     basics/duckdb_engine.cpp
     basics/log.cpp
     basics/log_flags.cpp
+    basics/zstd_context.cpp
 )
 
 set(FUNCTION2_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/function2")
@@ -85,6 +86,7 @@ target_link_libraries(
         zlib
         icu
         lz4_static
+        zstd::zstd # basics/zstd_context.cpp (reusable zstd contexts)
         serene_build_id
         # The SDB_* logger hot path forwards directly to duckdb::Logger
         # virtuals; we need duckdb's headers (and the Logger vtable) at

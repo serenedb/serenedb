@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
+#include "basics/zstd_context.hpp"
 #include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
@@ -44,9 +45,6 @@ class ColumnDataCollection;
 class MemoryStream;
 
 }  // namespace duckdb
-
-struct ZSTD_CCtx_s;
-
 namespace sdb::search {
 
 class SearchDbWal {
@@ -93,16 +91,12 @@ class SearchDbWal {
     PendingChunk Finish();
 
    private:
-    struct CCtxDeleter {
-      void operator()(ZSTD_CCtx_s* cctx) const noexcept;
-    };
-
     PendingChunk _pending;
     std::unique_ptr<duckdb::BufferedFileWriter> _writer;
     // Reused across Append() calls (Rewind keeps the backing buffer).
     std::unique_ptr<duckdb::MemoryStream> _stream;
-
-    std::unique_ptr<ZSTD_CCtx_s, CCtxDeleter> _cctx;
+    // Reused zstd context: created once, reset per Append (ZSTD_compressCCtx).
+    basics::ZstdCCtxPtr _cctx;
     // Reused zstd output buffer (grows to the high-water compressed size).
     std::vector<uint8_t> _comp;
   };

@@ -46,6 +46,7 @@
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/log.h"
+#include "basics/zstd_context.hpp"
 
 namespace sdb::search {
 namespace {
@@ -267,11 +268,6 @@ void VisitSectionsOps(Cursor& c, std::vector<uint64_t>& seg_scratch,
   }
 }
 
-struct ZstdDCtxDeleter {
-  void operator()(ZSTD_DCtx* d) const noexcept { ZSTD_freeDCtx(d); }
-};
-using ZstdDCtxPtr = std::unique_ptr<ZSTD_DCtx, ZstdDCtxDeleter>;
-
 void ReplayChunkFile(
   duckdb::FileSystem& fs, const std::string& chunk_path, ZSTD_DCtx* dctx,
   const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t pk_base) const>&
@@ -362,17 +358,12 @@ void SearchDbWal::PendingChunk::ReclaimIfUncommitted() noexcept {
   }
 }
 
-void SearchDbWal::ChunkWriter::CCtxDeleter::operator()(
-  ZSTD_CCtx_s* cctx) const noexcept {
-  ZSTD_freeCCtx(cctx);  // no-op on nullptr
-}
-
 SearchDbWal::ChunkWriter::ChunkWriter(
   PendingChunk pending, std::unique_ptr<duckdb::BufferedFileWriter> writer)
   : _pending(std::move(pending)),
     _writer(std::move(writer)),
     _stream(std::make_unique<duckdb::MemoryStream>()),
-    _cctx(ZSTD_createCCtx()) {}
+    _cctx(basics::MakeZstdCCtx()) {}
 SearchDbWal::ChunkWriter::ChunkWriter(ChunkWriter&&) noexcept = default;
 SearchDbWal::ChunkWriter& SearchDbWal::ChunkWriter::operator=(
   ChunkWriter&&) noexcept = default;
@@ -709,7 +700,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
   std::unordered_set<std::string> referenced;  // surviving chunk-file paths
   std::vector<uint64_t> seg_scratch;           // reused by ParseOp across
   std::vector<std::string_view> pk_scratch;    // records
-  ZstdDCtxPtr dctx{ZSTD_createDCtx()};  // reused across all chunk-file frames
+  auto dctx = basics::MakeZstdDCtx();  // reused across all chunk-file frames
 
   for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
     duckdb::BufferedFileReader reader(_fs, path.string().c_str());

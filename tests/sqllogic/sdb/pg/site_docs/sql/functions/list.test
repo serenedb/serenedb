@@ -39,7 +39,8 @@ l.list_apply(lambda x, i: {'filter': g(x, i), 'result': f(x, i)})
     .list_filter(lambda x: x.filter)
     .list_apply(lambda x: x.result)
 ----
-db error: ERROR: syntax error at or near "l"
+db error: ERROR: Referenced column "l" was not found because the FROM clause is missing
+
 
 # DOCS_TEST: example_005
 
@@ -311,10 +312,11 @@ list_sort
 
 # DOCS_TEST_BODY
 
-statement error
+query
 [-5, 1, 3, 5, NULL, NULL]
 ----
-db error: ERROR: syntax error at or near "\["
+list_value
+{-5,1,3,5,NULL,NULL}
 
 # DOCS_TEST: example_031
 
@@ -330,10 +332,11 @@ list_sort
 
 # DOCS_TEST_BODY
 
-statement error
+query
 [1, 2, 3, NULL]
 ----
-db error: ERROR: syntax error at or near "\["
+list_value
+{1,2,3,NULL}
 
 # DOCS_TEST: example_033
 
@@ -349,10 +352,11 @@ list_sort
 
 # DOCS_TEST_BODY
 
-statement error
+query
 [NULL, 3, 2, 1]
 ----
-db error: ERROR: syntax error at or near "\["
+list_value
+{NULL,3,2,1}
 
 # DOCS_TEST: example_035
 
@@ -368,10 +372,11 @@ list_sort
 
 # DOCS_TEST_BODY
 
-statement error
+query
 [-5, 1, 3, 5, NULL, NULL]
 ----
-db error: ERROR: syntax error at or near "\["
+list_value
+{-5,1,3,5,NULL,NULL}
 
 # DOCS_TEST: example_037
 
@@ -387,10 +392,11 @@ list_reverse_sort
 
 # DOCS_TEST_BODY
 
-statement error
+query
 [3, 2, 1, NULL]
 ----
-db error: ERROR: syntax error at or near "\["
+list_value
+{3,2,1,NULL}
 
 # DOCS_TEST: example_039
 

@@ -185,4 +185,4 @@ regexp_extract
 query error
 SELECT regexp_extract('serened_0_7_1', '^(\w+)_(\d+)_(\d+)', ['tool', 'major', 'minor', 'fix']);
 ----
-db error: ERROR: Not enough capturing groups \(3\) for provided names \(4\)
+db error: ERROR: Not enough capturing groups (3) for provided names (4)

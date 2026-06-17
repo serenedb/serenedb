@@ -79,6 +79,7 @@ SELECT format('{}', BLOB '\x00hello');
 ----
 db error: ERROR: invalid hexadecimal digit: "h"
 
+
 # DOCS_TEST: example_008
 
 # DOCS_TEST_BODY
@@ -230,6 +231,7 @@ SELECT printf('%s != %s', true, false);
 ----
 db error: ERROR: invalid format specifier
 
+
 # DOCS_TEST: example_019
 
 # DOCS_TEST_BODY
@@ -260,6 +262,7 @@ query error
 SELECT printf('%s', BLOB '\x00hello');
 ----
 db error: ERROR: invalid hexadecimal digit: "h"
+
 
 # DOCS_TEST: example_021
 
@@ -300,6 +303,7 @@ SELECT printf('%b', 123_456_789);
 ----
 db error: ERROR: invalid format specifier
 
+
 # DOCS_TEST: example_025
 
 # DOCS_TEST_BODY
@@ -326,6 +330,7 @@ query error
 SELECT printf('%_d',  123_456_789);
 ----
 db error: ERROR: invalid format specifier
+
 
 # DOCS_TEST: example_026
 

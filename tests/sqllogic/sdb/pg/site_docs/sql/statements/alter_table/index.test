@@ -17,51 +17,41 @@ CREATE TABLE integers (i INTEGER, j INTEGER);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ADD COLUMN k INTEGER;
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ADD COLUMN l INTEGER DEFAULT 10;
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 DROP k;
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ALTER i TYPE VARCHAR;
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ALTER i SET DATA TYPE VARCHAR USING concat(i, '_', j);
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_007
 
@@ -71,7 +61,8 @@ statement error
 ALTER TABLE integers
 ALTER COLUMN i SET DEFAULT 10;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
+
 
 # DOCS_TEST: example_008
 
@@ -81,7 +72,8 @@ statement error
 ALTER TABLE integers
 ALTER COLUMN i DROP DEFAULT;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
+
 
 # DOCS_TEST: example_009
 
@@ -91,7 +83,8 @@ statement error
 ALTER TABLE integers
 ALTER COLUMN i SET NOT NULL;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
+
 
 # DOCS_TEST: example_010
 
@@ -101,7 +94,8 @@ statement error
 ALTER TABLE integers
 ALTER COLUMN i DROP NOT NULL;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
+
 
 # DOCS_TEST: example_011
 
@@ -153,6 +147,7 @@ ADD PRIMARY KEY (i);
 ----
 db error: ERROR: BindAlterAddIndex not supported by this catalog
 
+
 # DOCS_TEST: example_014
 
 statement ok
@@ -189,11 +184,9 @@ INSERT INTO integers VALUES (1, 10), (2, 20);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ADD COLUMN k INTEGER;
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_018
 
@@ -211,11 +204,9 @@ INSERT INTO integers VALUES (1, 10), (2, 20);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ADD k INTEGER;
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_019
 
@@ -233,11 +224,9 @@ INSERT INTO integers VALUES (1, 10, 100), (2, 20, 200);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ADD COLUMN l INTEGER DEFAULT 10;
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_020
 
@@ -255,11 +244,9 @@ INSERT INTO integers VALUES (1, 10, 100), (2, 20, 200);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 DROP COLUMN k;
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_021
 
@@ -277,11 +264,9 @@ INSERT INTO integers VALUES (1, 10, 100), (2, 20, 200);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 DROP k;
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_022
 
@@ -299,11 +284,9 @@ INSERT INTO integers VALUES (1, 10, 100), (2, 20, 200);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ALTER i TYPE VARCHAR;
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_023
 
@@ -321,11 +304,9 @@ INSERT INTO integers VALUES (1, 10, 100), (2, 20, 200);
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE integers
 ALTER i SET DATA TYPE VARCHAR USING concat(i, '_', j);
-----
-db error: ERROR: ALTER TABLE through DuckDB
 
 # DOCS_TEST: example_025
 
@@ -347,7 +328,8 @@ statement error
 ALTER TABLE integers
 ALTER COLUMN i SET DEFAULT 10;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
+
 
 # DOCS_TEST: example_026
 
@@ -369,7 +351,8 @@ statement error
 ALTER TABLE integers
 ALTER COLUMN i DROP DEFAULT;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
+
 
 # DOCS_TEST: example_027
 
@@ -393,6 +376,7 @@ ADD PRIMARY KEY (i);
 ----
 db error: ERROR: BindAlterAddIndex not supported by this catalog
 
+
 # DOCS_TEST: example_028
 
 statement ok
@@ -415,6 +399,7 @@ ADD PRIMARY KEY (i, j);
 ----
 db error: ERROR: BindAlterAddIndex not supported by this catalog
 
+
 # DOCS_TEST: example_029
 
 # DOCS_TEST_BODY
@@ -423,7 +408,8 @@ statement error
 ALTER TABLE my_table
 SET ('option_name' = 'value');
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
+
 
 # DOCS_TEST: example_030
 
@@ -433,7 +419,8 @@ statement error
 ALTER TABLE my_table
 RESET ('option_name');
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
+
 
 # DOCS_TEST: example_031
 
@@ -443,11 +430,11 @@ statement error
 ALTER TABLE my_table
 SET ('option1' = 'value1', 'option2' = 'value2');
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
 
 
 statement error
 ALTER TABLE my_table
 RESET ('option1', 'option2');
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported

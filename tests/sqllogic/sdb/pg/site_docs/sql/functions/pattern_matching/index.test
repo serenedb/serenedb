@@ -71,13 +71,13 @@ f
 query
 SELECT 'a%c' LIKE 'a$%c' ESCAPE '$';
 ----
-like_escape
+?column?
 t
 
 query
 SELECT 'azc' LIKE 'a$%c' ESCAPE '$';
 ----
-like_escape
+?column?
 f
 
 # DOCS_TEST: example_005
@@ -87,7 +87,7 @@ f
 query
 SELECT 'A%c' ILIKE 'a$%c' ESCAPE '$';
 ----
-ilike_escape
+?column?
 t
 
 # DOCS_TEST: example_006

@@ -29,6 +29,7 @@ SELECT CAST(999 AS TINYINT);
 ----
 db error: ERROR: Type INT32 with value 999 can't be cast because the value is out of range for the destination type INT8
 
+
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
@@ -48,6 +49,7 @@ SELECT CAST('NotANumber' AS INTEGER);
 ----
 db error: ERROR: Could not convert string 'NotANumber' to INT32
 
+
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
@@ -55,7 +57,8 @@ db error: ERROR: Could not convert string 'NotANumber' to INT32
 query error
 SELECT CAST(CAST([1, 2, 3] AS VARCHAR) AS INTEGER[]);
 ----
-db error: ERROR: Failed to parse array literal: malformed array literal: must be wrapped in \{\}
+db error: ERROR: Failed to parse array literal: malformed array literal: must be wrapped in {}
+
 
 # DOCS_TEST: example_006
 

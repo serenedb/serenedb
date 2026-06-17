@@ -1,0 +1,132 @@
+# ALTER TABLE ... ADD/DROP/RENAME COLUMN <struct>.<field>
+#
+# Struct sub-field operations rewrite the stored values of the column (the
+# store engine re-encodes; added fields are backfilled with NULL). Catalog
+# metadata (the column's STRUCT type) is updated in the same write.
+
+statement ok
+CREATE TABLE t (id INTEGER, s STRUCT(i INTEGER, j INTEGER));
+
+statement ok
+INSERT INTO t VALUES (1, ROW(10, 20)), (2, NULL), (3, ROW(30, 40));
+
+# ADD field -- existing rows get NULL, NULL struct stays NULL
+
+statement ok
+ALTER TABLE t ADD COLUMN s.k INTEGER;
+
+query
+SELECT id, s FROM t ORDER BY id;
+----
+id	s
+1	(10,20,)
+2	NULL
+3	(30,40,)
+
+query
+SELECT typeof(s) FROM t LIMIT 1;
+----
+typeof
+STRUCT(i INTEGER, j INTEGER, k INTEGER)
+
+# RENAME field -- values preserved under the new name
+
+statement ok
+ALTER TABLE t RENAME COLUMN s.j TO v;
+
+query
+SELECT typeof(s) FROM t LIMIT 1;
+----
+typeof
+STRUCT(i INTEGER, v INTEGER, k INTEGER)
+
+# DROP field
+
+statement ok
+ALTER TABLE t DROP COLUMN s.i;
+
+query
+SELECT id, s FROM t ORDER BY id;
+----
+id	s
+1	(20,)
+2	NULL
+3	(40,)
+
+query
+SELECT typeof(s) FROM t LIMIT 1;
+----
+typeof
+STRUCT(v INTEGER, k INTEGER)
+
+# Writes use the new layout
+
+statement ok
+INSERT INTO t VALUES (4, ROW(99, 88));
+
+query
+SELECT s FROM t WHERE id = 4;
+----
+s
+(99,88)
+
+# Nested struct -- dotted path
+
+statement ok
+CREATE TABLE n (id INTEGER, s STRUCT(a INTEGER, sub STRUCT(p INTEGER, q INTEGER)));
+
+statement ok
+INSERT INTO n VALUES (1, ROW(1, ROW(2, 3))), (2, NULL);
+
+statement ok
+ALTER TABLE n ADD COLUMN s.sub.r INTEGER;
+
+statement ok
+ALTER TABLE n RENAME COLUMN s.sub.p TO pp;
+
+statement ok
+ALTER TABLE n DROP COLUMN s.sub.q;
+
+query
+SELECT typeof(s) FROM n LIMIT 1;
+----
+typeof
+STRUCT(a INTEGER, sub STRUCT(pp INTEGER, r INTEGER))
+
+query
+SELECT id, s FROM n ORDER BY id;
+----
+id	s
+1	(1,"(2,)")
+2	NULL
+
+# IF NOT EXISTS / IF EXISTS short-circuit to a no-op
+
+statement ok
+ALTER TABLE t ADD COLUMN IF NOT EXISTS s.k INTEGER;
+
+statement ok
+ALTER TABLE t DROP COLUMN IF EXISTS s.absent;
+
+query
+SELECT typeof(s) FROM t LIMIT 1;
+----
+typeof
+STRUCT(v INTEGER, k INTEGER)
+
+# Errors
+
+statement error field already exists in column "s"
+ALTER TABLE t ADD COLUMN s.k INTEGER;
+
+statement error column or field of "s" does not exist in "t"
+ALTER TABLE t DROP COLUMN s.absent;
+
+statement error field "id" is not a struct
+ALTER TABLE t ADD COLUMN id.x INTEGER;
+
+statement ok
+DROP TABLE t;
+
+statement ok
+DROP TABLE n;

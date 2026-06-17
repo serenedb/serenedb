@@ -89,10 +89,10 @@ equi_width_bins
 # DOCS_TEST: hash
 # DOCS_TEST_BODY
 query
-SELECT hash('🦆') AS hash;
+SELECT hash('🌊') AS hash;
 ----
 hash
-4164431626903154684
+12255790945742965276
 
 # DOCS_TEST: if
 # DOCS_TEST_BODY
@@ -196,18 +196,18 @@ x
 # DOCS_TEST: sha1
 # DOCS_TEST_BODY
 query
-SELECT sha1('🦆') AS sha1;
+SELECT sha1('🌊') AS sha1;
 ----
 sha1
-949bf843dc338be348fb9525d1eb535d31241d76
+be25fe9cf30cf5c01ae2054b60a5e5511e966d98
 
 # DOCS_TEST: sha256
 # DOCS_TEST_BODY
 query
-SELECT sha256('🦆') AS sha256;
+SELECT sha256('🌊') AS sha256;
 ----
 sha256
-d7a5c5e0d1d94c32218539e7e47d4ba9c3c7b77d61332fb60d633dde89e473fb
+8db6bed4743d5a6159e0742df0fded8377d1250420aeda292e41ffa20eba806e
 
 # DOCS_TEST: stats
 # DOCS_TEST_BODY

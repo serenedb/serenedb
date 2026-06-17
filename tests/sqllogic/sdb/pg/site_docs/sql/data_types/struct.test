@@ -451,49 +451,40 @@ INSERT INTO test VALUES (ROW(1, 1)), (ROW(2, 2));
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE test ADD COLUMN s.k INTEGER;
-----
-db error: ERROR: this ALTER TABLE operation is not supported
-
 
 query
 FROM test;
 ----
 s
-(1,1)
-(2,2)
+(1,1,)
+(2,2,)
 
 # DOCS_TEST: example_039
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 ALTER TABLE test DROP COLUMN s.i;
-----
-db error: ERROR: this ALTER TABLE operation is not supported
-
 
 query
 FROM test;
 ----
 s
-(1,1)
-(2,2)
+(1,)
+(2,)
 
 # DOCS_TEST: example_040
 
 # DOCS_TEST_BODY
 
-statement error
-ALTER TABLE test RENAME s.j TO v1;
-----
-db error: ERROR: this ALTER TABLE operation is not supported
-
+statement ok
+ALTER TABLE test RENAME COLUMN s.j TO v1;
 
 query
 FROM test;
 ----
 s
-(1,1)
-(2,2)
+(1,)
+(2,)

@@ -33,104 +33,55 @@ statement ok
 INSERT INTO example VALUES
     ('{ "family": "terrestrial", "species": [ "mercury", "venus", "earth", null ] }');
 
-# DOCS_TEST_RAW
-#| SELECT json_extract(j, '$.family') FROM example;
-
 # DOCS_TEST_BODY
 
-control substitution off
-
 query
-SELECT json_extract(j, '$.family') FROM example;
+SELECT json_extract(j, 'family') FROM example;
 ----
 json_extract
-NULL
-
-control substitution on
+"terrestrial"
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-query error
-SELECT j->'$.family' FROM example;
+query
+SELECT j->'family' FROM example;
 ----
-substitution failed: Missing variable name
+?column?
+"terrestrial"
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-query error
-SELECT j->'$.species[0]' FROM example;
+query
+SELECT j->>'family' FROM example;
 ----
-substitution failed: Missing variable name
+?column?
+terrestrial
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
-query error
-SELECT j->'$.species[*]' FROM example;
+query
+SELECT j->'species' FROM example;
 ----
-substitution failed: Missing variable name
+?column?
+[ "mercury", "venus", "earth", null ]
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
-query error
-SELECT j->>'$.species[*]' FROM example;
-----
-substitution failed: Missing variable name
-
-# DOCS_TEST: example_008
-
-# DOCS_TEST_BODY
-
-query error
-SELECT j->'$.species'->0 FROM example;
-----
-substitution failed: Missing variable name
-
-# DOCS_TEST: example_009
-
-# DOCS_TEST_BODY
-
 query
-SELECT j->'species'->['/0', '/1'] FROM example;
+SELECT j->'species'->0 FROM example;
 ----
 ?column?
-{"\\"mercury\\"","\\"venus\\""}
+"mercury"
 
-# DOCS_TEST: example_010
-
-# DOCS_TEST_BODY
-
-query error
-SELECT json_extract_string(j, '$.family') FROM example;
-----
-substitution failed: Missing variable name
-
-# DOCS_TEST: example_011
-
-# DOCS_TEST_BODY
-
-query error
-SELECT j->>'$.family' FROM example;
-----
-substitution failed: Missing variable name
-
-# DOCS_TEST: example_012
-
-# DOCS_TEST_BODY
-
-query error
-SELECT j->>'$.species[0]' FROM example;
-----
-substitution failed: Missing variable name
-
-# DOCS_TEST: example_013
+# DOCS_TEST: example_008
 
 # DOCS_TEST_BODY
 
@@ -140,15 +91,87 @@ SELECT j->'species'->>0 FROM example;
 ?column?
 mercury
 
-# DOCS_TEST: example_014
+# DOCS_TEST: example_009
 
 # DOCS_TEST_BODY
 
 query
-SELECT j->'species'->>['/0', '/1'] FROM example;
+SELECT j->'species'->-1 FROM example;
 ----
 ?column?
-{mercury,venus}
+null
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_extract_string(j, 'family') FROM example;
+----
+json_extract_string
+terrestrial
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_RAW
+#| SELECT json_value(j, '$.family') FROM example;
+
+# DOCS_TEST_BODY
+
+control substitution off
+
+query
+SELECT json_value(j, '$.family') FROM example;
+----
+json_value
+"terrestrial"
+
+control substitution on
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_RAW
+#| SELECT json_value(j, '$.species[0]') FROM example;
+
+# DOCS_TEST_BODY
+
+control substitution off
+
+query
+SELECT json_value(j, '$.species[0]') FROM example;
+----
+json_value
+"mercury"
+
+control substitution on
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT json_value(j, '/species/1') FROM example;
+----
+json_value
+"venus"
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_RAW
+#| SELECT json_extract('{"a": [10, 20]}', '$.a[1]');
+
+# DOCS_TEST_BODY
+
+control substitution off
+
+query
+SELECT json_extract('{"a": [10, 20]}', '$.a[1]');
+----
+json_extract
+20
+
+control substitution on
+
 
 # DOCS_TEST: example_015
 
@@ -194,28 +217,43 @@ json_extract
 
 # DOCS_TEST_BODY
 
-query error
+control substitution off
+
+query
 SELECT json_extract('{"mercury": [1, 2, 3]}', '$.mercury[0]');
 ----
-substitution failed: Missing variable name
+json_extract
+1
+
+control substitution on
 
 # DOCS_TEST: example_019
 
 # DOCS_TEST_BODY
 
-query error
+control substitution off
+
+query
 SELECT json_extract('{"mercury": [1, 2, 3]}', '$.mercury[#-1]');
 ----
-substitution failed: Missing variable name
+json_extract
+3
+
+control substitution on
 
 # DOCS_TEST: example_020
 
 # DOCS_TEST_BODY
 
-query error
+control substitution off
+
+query
 SELECT json_extract('{"mercury.venus": [1, 2, 3]}', '$."mercury.venus"[1]');
 ----
-substitution failed: Missing variable name
+json_extract
+2
+
+control substitution on
 
 # DOCS_TEST: example_021
 
@@ -272,7 +310,7 @@ query
 SELECT j.family FROM example;
 ----
 family
-"terrestrial"
+NULL
 
 # DOCS_TEST: example_024
 
@@ -282,7 +320,7 @@ query
 SELECT j.species[0] FROM example;
 ----
 species
-"mercury"
+NULL
 
 # DOCS_TEST: example_025
 
@@ -338,19 +376,29 @@ json_array_length
 
 # DOCS_TEST_BODY
 
-query error
+control substitution off
+
+query
 SELECT json_array_length(j, '$.species') FROM example;
 ----
-substitution failed: Missing variable name
+json_array_length
+4
+
+control substitution on
 
 # DOCS_TEST: example_031
 
 # DOCS_TEST_BODY
 
-query error
+control substitution off
+
+query
 SELECT json_array_length(j, ['$.species']) FROM example;
 ----
-substitution failed: Missing variable name
+json_array_length
+{4}
+
+control substitution on
 
 # DOCS_TEST: example_032
 
@@ -523,6 +571,7 @@ SELECT json_transform_strict(j, '{"family": "TINYINT", "coolness": "DOUBLE"}') F
 ----
 db error: ERROR: Failed to cast value to numerical: "gas_giant"
 
+
 # DOCS_TEST: example_048
 
 statement ok
@@ -547,25 +596,35 @@ INSERT INTO example VALUES
 
 query
 SELECT je.*, je.rowid
-FROM example AS e, json_each(e.j) AS je;
+FROM example AS e, json_each(e.j) AS je
+ORDER BY e.j::TEXT, je.id;
 ----
 key	value	type	atom	id	parent	fullkey	path	rowid
+family	"gas_giant"	VARCHAR	"gas_giant"	2	NULL	$.family	$	0
+species	["jupiter","saturn"]	ARRAY	NULL	4	NULL	$.species	$	1
+has_rings	true	BOOLEAN	true	8	NULL	$.has_rings	$	2
 family	"terrestrial"	VARCHAR	"terrestrial"	2	NULL	$.family	$	0
 species	["mercury","venus"]	ARRAY	NULL	4	NULL	$.species	$	1
 coolness	42.42	DOUBLE	42.42	8	NULL	$.coolness	$	2
-family	"gas_giant"	VARCHAR	"gas_giant"	2	NULL	$.family	$	0
-species	["jupiter","saturn"]	ARRAY	NULL	4	NULL	$.species	$	1
-hair	true	BOOLEAN	true	8	NULL	$.hair	$	2
 
 # DOCS_TEST: example_050
 
 # DOCS_TEST_BODY
 
-query error
+control substitution off
+
+query
 SELECT je.*, je.rowid
-FROM example AS e, json_each(e.j, '$.species') AS je;
+FROM example AS e, json_each(e.j, '$.species') AS je
+ORDER BY e.j::TEXT, je.id;
 ----
-substitution failed: Missing variable name
+key	value	type	atom	id	parent	fullkey	path	rowid
+0	"jupiter"	VARCHAR	"jupiter"	5	NULL	$.species[0]	$.species	0
+1	"saturn"	VARCHAR	"saturn"	6	NULL	$.species[1]	$.species	1
+0	"mercury"	VARCHAR	"mercury"	5	NULL	$.species[0]	$.species	0
+1	"venus"	VARCHAR	"venus"	6	NULL	$.species[1]	$.species	1
+
+control substitution on
 
 # DOCS_TEST: example_051
 
@@ -573,18 +632,19 @@ substitution failed: Missing variable name
 
 query
 SELECT je.key, je.value, je.type, je.id, je.parent, je.fullkey, je.rowid
-FROM example AS e, json_tree(e.j) AS je;
+FROM example AS e, json_tree(e.j) AS je
+ORDER BY e.j::TEXT, je.id;
 ----
 key	value	type	id	parent	fullkey	rowid
+NULL	{"family":"gas_giant","species":["jupiter","saturn"],"has_rings":true}	OBJECT	0	NULL	$	0
+family	"gas_giant"	VARCHAR	2	0	$.family	1
+species	["jupiter","saturn"]	ARRAY	4	0	$.species	2
+0	"jupiter"	VARCHAR	5	4	$.species[0]	3
+1	"saturn"	VARCHAR	6	4	$.species[1]	4
+has_rings	true	BOOLEAN	8	0	$.has_rings	5
 NULL	{"family":"terrestrial","species":["mercury","venus"],"coolness":42.42}	OBJECT	0	NULL	$	0
 family	"terrestrial"	VARCHAR	2	0	$.family	1
 species	["mercury","venus"]	ARRAY	4	0	$.species	2
 0	"mercury"	VARCHAR	5	4	$.species[0]	3
 1	"venus"	VARCHAR	6	4	$.species[1]	4
 coolness	42.42	DOUBLE	8	0	$.coolness	5
-NULL	{"family":"gas_giant","species":["jupiter","saturn"],"has_rings":true}	OBJECT	0	NULL	$	0
-family	"gas_giant"	VARCHAR	2	0	$.family	1
-species	["jupiter","saturn"]	ARRAY	4	0	$.species	2
-0	"jupiter"	VARCHAR	5	4	$.species[0]	3
-1	"saturn"	VARCHAR	6	4	$.species[1]	4
-hair	true	BOOLEAN	8	0	$.hair	5

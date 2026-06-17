@@ -12,10 +12,12 @@ bytea
 
 # DOCS_TEST_BODY
 
-query error
-SELECT '\xAA\xAB\xAC'::BLOB;
+query
+SELECT '\xAAABAC'::BLOB;
 ----
-db error: ERROR: invalid hexadecimal digit: "\\"
+bytea
+\\xaaabac
+
 
 # DOCS_TEST: example_003
 

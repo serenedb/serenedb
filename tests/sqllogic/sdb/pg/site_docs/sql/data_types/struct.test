@@ -247,20 +247,16 @@ CREATE TABLE t1 (s STRUCT(v VARCHAR, i INTEGER));
 statement ok
 INSERT INTO t1 VALUES (row('a', 42));
 
+# DOCS_TEST: example_019
+
+# DOCS_TEST_BODY
+
 query
 SELECT * FROM t1;
 ----
 s
 (a,42)
 
-# DOCS_TEST: example_019
-
-# DOCS_TEST_BODY
-
-statement error
-{'v': a, 'i': 42}
-----
-db error: ERROR: syntax error at or near "\{"
 
 # DOCS_TEST: example_020
 
@@ -281,8 +277,11 @@ CREATE TABLE t1 AS (
 
 # DOCS_TEST_BODY
 
-statement ok
+statement error
 CREATE TABLE t2 AS SELECT row('a');
+----
+db error: ERROR: A table cannot be created from an unnamed struct
+
 
 # DOCS_TEST: example_022
 
@@ -294,6 +293,7 @@ FROM
     (SELECT {'x': 42} AS a);
 ----
 db error: ERROR: STRUCT to STRUCT cast must have at least one matching member
+
 
 # DOCS_TEST: example_023
 
@@ -454,7 +454,7 @@ INSERT INTO test VALUES (ROW(1, 1)), (ROW(2, 2));
 statement error
 ALTER TABLE test ADD COLUMN s.k INTEGER;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
 
 
 query
@@ -471,7 +471,7 @@ s
 statement error
 ALTER TABLE test DROP COLUMN s.i;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
 
 
 query
@@ -488,7 +488,7 @@ s
 statement error
 ALTER TABLE test RENAME s.j TO v1;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: this ALTER TABLE operation is not supported
 
 
 query

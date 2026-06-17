@@ -11,7 +11,12 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE __docs_noop_5893ec35_001 (i INTEGER);
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1'
+);
 
 # DOCS_TEST: example_004
 
@@ -24,7 +29,12 @@ CREATE TABLE __docs_noop_5893ec35_001 (i INTEGER);
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE __docs_noop_5893ec35_002 (i INTEGER);
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1'
+);
 
 # DOCS_TEST: example_005
 
@@ -33,8 +43,11 @@ CREATE TABLE __docs_noop_5893ec35_002 (i INTEGER);
 statement ok
 CREATE TABLE table_name (id INTEGER);
 
-statement error (?i).*
+statement error
 COPY table_name TO 's3://s3-bucket/filename.parquet';
+----
+db error: ERROR: Unable to connect to URL s3://s3-bucket/filename.parquet: <slt:ignore>
+
 
 # DOCS_TEST: example_006
 
@@ -48,11 +61,17 @@ COPY table_name TO 's3://s3-bucket/filename.parquet';
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE __docs_noop_5893ec35_003 (i INTEGER);
+CREATE OR REPLACE SECRET (
+    TYPE gcs,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+);
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
-statement error (?i).*
+statement error
 COPY table_name TO 'gs://gcs_bucket/filename.parquet';
+----
+db error: ERROR: Unable to connect to URL gs://gcs_bucket/filename.parquet: <slt:ignore>

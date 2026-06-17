@@ -14,7 +14,13 @@ control substitution on
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE __docs_noop_2a4fbb77_001 (i INTEGER);
+CREATE OR REPLACE SECRET my_secret (
+    TYPE s3,
+    KEY_ID 'tid_xxxxxxxxxxxx',
+    SECRET 'tsec_xxxxxxxxxxxxxxxxxxxxxxxx',
+    REGION 'auto',
+    ENDPOINT 'fly.storage.tigris.dev'
+);
 
 # DOCS_TEST: example_002
 

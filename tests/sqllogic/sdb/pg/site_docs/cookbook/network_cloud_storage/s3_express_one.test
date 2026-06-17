@@ -7,7 +7,8 @@ control substitution on
 statement error
 s3express-⟨availability_zone⟩.⟨region⟩.amazonaws.com
 ----
-db error: ERROR: syntax error at or near "s3express"
+db error: ERROR: Referenced column "s3express" was not found because the FROM clause is missing
+
 
 # DOCS_TEST: example_002
 
@@ -23,7 +24,13 @@ db error: ERROR: syntax error at or near "s3express"
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE __docs_noop_01d3a915_001 (i INTEGER);
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1',
+    ENDPOINT 's3express-use1-az5.us-east-1.amazonaws.com'
+);
 
 # DOCS_TEST: example_003
 

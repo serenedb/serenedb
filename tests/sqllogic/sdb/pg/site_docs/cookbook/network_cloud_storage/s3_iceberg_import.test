@@ -13,7 +13,12 @@ control substitution on
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE __docs_noop_f6ee28f4_001 (i INTEGER);
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    REGION 'us-east-1'
+);
 
 # DOCS_TEST: example_004
 
@@ -25,8 +30,16 @@ CREATE TABLE __docs_noop_f6ee28f4_001 (i INTEGER);
 
 # DOCS_TEST_BODY
 
-statement ok
-CREATE TABLE __docs_noop_f6ee28f4_002 (i INTEGER);
+statement error
+CREATE OR REPLACE SECRET (
+    TYPE s3,
+    PROVIDER credential_chain
+);
+----
+db error: ERROR: Secret provider 'credential_chain' for type 's3' does not exist, but it exists in the aws extension.
+
+This feature relies on the "aws" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
 
 # DOCS_TEST: example_005
 
@@ -34,7 +47,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, 'alpha', 10),
     (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_iceberg_import_example_005_1_id_metadata_json.json' (FORMAT json);
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_iceberg_import_example_005_1_iceberg_table_file.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -42,6 +55,10 @@ COPY (SELECT * FROM (VALUES
 
 # DOCS_TEST_BODY
 
-query error db error: ERROR: Fails to parse iceberg metadata from /tmp/\$\{__DATABASE__\}_cookbook_network_cloud_storage_s3_iceberg_import_example_005_1_id_metadata_json\.json
+query
 SELECT *
-FROM iceberg_scan('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_iceberg_import_example_005_1_id_metadata_json.json');
+FROM read_parquet('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_s3_iceberg_import_example_005_1_iceberg_table_file.parquet');
+----
+id	name	value
+1	alpha	10
+2	beta	20

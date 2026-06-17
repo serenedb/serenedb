@@ -12,7 +12,11 @@ control substitution on
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE IF NOT EXISTS __docs_noop_cded4207_001 (i INTEGER);
+CREATE OR REPLACE SECRET (
+    TYPE gcs,
+    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
+    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+);
 
 # DOCS_TEST: example_002
 

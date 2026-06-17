@@ -176,15 +176,23 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT *, filename
+SELECT
+    id,
+    name,
+    value,
+    replace(
+        filename,
+        '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_007_1_',
+        'test/'
+    ) AS filename
 FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_007_1_parquet_*.parquet')
 ORDER BY filename, id;
 ----
 id	name	value	filename
-1	alpha	10	/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_007_1_parquet_1.parquet
-2	beta	20	/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_007_1_parquet_1.parquet
-1	alpha	10	/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_007_1_parquet_2.parquet
-2	beta	20	/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_007_1_parquet_2.parquet
+1	alpha	10	test/parquet_1.parquet
+2	beta	20	test/parquet_1.parquet
+1	alpha	10	test/parquet_2.parquet
+2	beta	20	test/parquet_2.parquet
 
 # DOCS_TEST: example_008
 
@@ -269,13 +277,19 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT *
+SELECT * REPLACE (
+    replace(
+        file_name,
+        '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet',
+        'test.parquet'
+    ) AS file_name
+)
 FROM parquet_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet');
 ----
 file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	column_id	file_offset	num_values	path_in_schema	type	stats_min	stats_max	stats_null_count	stats_distinct_count	stats_min_value	stats_max_value	compression	encodings	index_page_offset	dictionary_page_offset	data_page_offset	total_compressed_size	total_uncompressed_size	key_value_metadata	bloom_filter_offset	bloom_filter_length	min_is_exact	max_is_exact	row_group_compressed_bytes	geo_bbox	geo_types
-/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
-/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet	0	2	3	<slt:ignore>	1	<slt:ignore>	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
-/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_010_1_test_parquet.parquet	0	2	3	<slt:ignore>	2	<slt:ignore>	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+test.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+test.parquet	0	2	3	<slt:ignore>	1	<slt:ignore>	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+test.parquet	0	2	3	<slt:ignore>	2	<slt:ignore>	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
 
 # DOCS_TEST: example_011
 
@@ -292,11 +306,17 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT *
+SELECT * REPLACE (
+    replace(
+        file_name,
+        '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_011_1_test_parquet.parquet',
+        'test.parquet'
+    ) AS file_name
+)
 FROM parquet_file_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_011_1_test_parquet.parquet');
 ----
 file_name	created_by	num_rows	num_row_groups	format_version	encryption_algorithm	footer_signing_key_metadata	file_size_bytes	footer_size	column_orders
-/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_011_1_test_parquet.parquet	<slt:ignore>	2	1	1	NULL	NULL	<slt:ignore>	<slt:ignore>	{ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder())}
+test.parquet	<slt:ignore>	2	1	1	NULL	NULL	<slt:ignore>	<slt:ignore>	{ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder())}
 
 # DOCS_TEST: example_012
 
@@ -350,14 +370,20 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT *
+SELECT * REPLACE (
+    replace(
+        file_name,
+        '/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet',
+        'test.parquet'
+    ) AS file_name
+)
 FROM parquet_schema('/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet');
 ----
 file_name	name	type	type_length	repetition_type	num_children	converted_type	scale	precision	field_id	logical_type	duckdb_type	column_id
-/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet	duckdb_schema	NULL	NULL	REQUIRED	3	NULL	NULL	NULL	NULL	NULL	NULL	0
-/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet	id	INT32	NULL	OPTIONAL	NULL	INT_32	NULL	NULL	NULL	NULL	INTEGER	1
-/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet	name	BYTE_ARRAY	NULL	OPTIONAL	NULL	UTF8	NULL	NULL	NULL	NULL	VARCHAR	2
-/tmp/${__DATABASE__}_data_import_and_export_parquet_overview_example_013_1_test_parquet.parquet	value	INT32	NULL	OPTIONAL	NULL	INT_32	NULL	NULL	NULL	NULL	INTEGER	3
+test.parquet	duckdb_schema	NULL	NULL	REQUIRED	3	NULL	NULL	NULL	NULL	NULL	NULL	0
+test.parquet	id	INT32	NULL	OPTIONAL	NULL	INT_32	NULL	NULL	NULL	NULL	INTEGER	1
+test.parquet	name	BYTE_ARRAY	NULL	OPTIONAL	NULL	UTF8	NULL	NULL	NULL	NULL	VARCHAR	2
+test.parquet	value	INT32	NULL	OPTIONAL	NULL	INT_32	NULL	NULL	NULL	NULL	INTEGER	3
 
 # DOCS_TEST: example_014
 

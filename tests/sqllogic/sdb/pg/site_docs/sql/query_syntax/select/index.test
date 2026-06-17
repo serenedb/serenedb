@@ -157,10 +157,17 @@ address	city	street_name	income	zip	country	population	number1	number2
 
 # DOCS_TEST_BODY
 
-query error
-SELECT COLUMNS('number\d+') FROM addresses;
+query ?? rowsort
+SELECT COLUMNS('number[0-9]+') FROM addresses;
 ----
-substitution failed: Invalid escape sequence: \\d
+number1	number2
+1	10
+2	20
+3	30
+4	40
+5	50
+6	60
+
 
 # DOCS_TEST: example_009
 
@@ -201,11 +208,18 @@ id	name	col1	col2	some column name	i	a	b	c	number	number1	number2
 
 # DOCS_TEST_BODY
 
-query error
-SELECT COLUMNS('number\d+')
+query ?? rowsort
+SELECT COLUMNS('number[0-9]+')
 FROM addresses;
 ----
-substitution failed: Invalid escape sequence: \\d
+number1	number2
+1	10
+2	20
+3	30
+4	40
+5	50
+6	60
+
 
 # DOCS_TEST: example_013
 

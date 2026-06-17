@@ -89,13 +89,13 @@ userid	completed
 
 statement ok
 COPY (
-    SELECT '{"duck":42}' AS line
+    SELECT '{"a":42}' AS line
     UNION ALL
-    SELECT '{"goose":[1,2,3]}' AS line
+    SELECT '{"b":[1,2,3]}' AS line
 ) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_004_1_birds_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
-#| FROM read_json_objects('birds.json', format = 'unstructured');
+#| FROM read_json_objects('data.json', format = 'unstructured');
 
 # DOCS_TEST_BODY
 
@@ -103,20 +103,20 @@ query
 FROM read_json_objects('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_004_1_birds_json.json', format = 'unstructured');
 ----
 json
-{"duck":42}
-{"goose":[1,2,3]}
+{"a":42}
+{"b":[1,2,3]}
 
 # DOCS_TEST: example_005
 
 statement ok
 COPY (
-    SELECT '{"duck":42}' AS line
+    SELECT '{"a":42}' AS line
     UNION ALL
-    SELECT '{"goose":[1,2,3]}' AS line
+    SELECT '{"b":[1,2,3]}' AS line
 ) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_005_1_birds_nd_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
-#| FROM read_json_objects('birds-nd.json', format = 'newline_delimited');
+#| FROM read_json_objects('data-nd.json', format = 'newline_delimited');
 
 # DOCS_TEST_BODY
 
@@ -124,18 +124,18 @@ query
 FROM read_json_objects('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_005_1_birds_nd_json.json', format = 'newline_delimited');
 ----
 json
-{"duck":42}
-{"goose":[1,2,3]}
+{"a":42}
+{"b":[1,2,3]}
 
 # DOCS_TEST: example_006
 
 statement ok
 COPY (
-    SELECT '[{"duck":42},{"goose":[1,2,3]}]' AS line
+    SELECT '[{"a":42},{"b":[1,2,3]}]' AS line
 ) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_006_1_birds_array_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
-#| FROM read_json_objects('birds-array.json', format = 'array');
+#| FROM read_json_objects('data-array.json', format = 'array');
 
 # DOCS_TEST_BODY
 
@@ -143,26 +143,26 @@ query
 FROM read_json_objects('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_006_1_birds_array_json.json', format = 'array');
 ----
 json
-{"duck":42}
-{"goose":[1,2,3]}
+{"a":42}
+{"b":[1,2,3]}
 
 # DOCS_TEST: example_007
 
 statement ok
 COPY (
-    SELECT '{"duck":42,"goose":[1,2,3]}' AS line
+    SELECT '{"a":42,"b":[1,2,3]}' AS line
 ) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_1_birds1_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 statement ok
 COPY (
-    SELECT '{"duck":43,"goose":[4,5,6],"swan":3.3}' AS line
+    SELECT '{"a":43,"b":[4,5,6],"c":3.3}' AS line
 ) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_2_birds2_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| SELECT *
 #| FROM read_json(
-#|     ['birds1.json', 'birds2.json'],
-#|     columns = {duck: 'INTEGER', goose: 'INTEGER[]', swan: 'DOUBLE'}
+#|     ['data1.json', 'data2.json'],
+#|     columns = {a: 'INTEGER', b: 'INTEGER[]', c: 'DOUBLE'}
 #| );
 
 # DOCS_TEST_BODY
@@ -171,10 +171,10 @@ query
 SELECT *
 FROM read_json(
     ['/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_1_birds1_json.json', '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_007_2_birds2_json.json'],
-    columns = {duck: 'INTEGER', goose: 'INTEGER[]', swan: 'DOUBLE'}
+    columns = {a: 'INTEGER', b: 'INTEGER[]', c: 'DOUBLE'}
 );
 ----
-duck	goose	swan
+a	b	c
 42	{1,2,3}	NULL
 43	{4,5,6}	3.3
 
@@ -182,33 +182,33 @@ duck	goose	swan
 
 statement ok
 COPY (
-    SELECT '{"duck":42,"goose":[1,2,3]}' AS line
+    SELECT '{"a":42,"b":[1,2,3]}' AS line
 ) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_1.json.gz' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '', COMPRESSION 'GZIP');
 
 statement ok
 COPY (
-    SELECT '{"duck":43,"goose":[4,5,6]}' AS line
+    SELECT '{"a":43,"b":[4,5,6]}' AS line
 ) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_2.json.gz' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '', COMPRESSION 'GZIP');
 
 # DOCS_TEST_RAW
-#| SELECT goose, duck FROM read_json('*.json.gz');
+#| SELECT b, a FROM read_json('*.json.gz');
 #|
-#| SELECT goose, duck FROM '*.json.gz';
+#| SELECT b, a FROM '*.json.gz';
 
 # DOCS_TEST_BODY
 
 query
-SELECT goose, duck FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_*.json.gz');
+SELECT b, a FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_*.json.gz');
 ----
-goose	duck
+b	a
 {1,2,3}	42
 {4,5,6}	43
 
 
 query
-SELECT goose, duck FROM '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_*.json.gz';
+SELECT b, a FROM '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_008_1_json_gz_*.json.gz';
 ----
-goose	duck
+b	a
 {1,2,3}	42
 {4,5,6}	43
 
@@ -216,14 +216,14 @@ goose	duck
 
 statement ok
 COPY (
-    SELECT '{"duck":42,"goose":4.2}' AS line
+    SELECT '{"a":42,"b":4.2}' AS line
     UNION ALL
-    SELECT '{"duck":43,"goose":4.3}' AS line
+    SELECT '{"a":43,"b":4.3}' AS line
 ) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_009_1_birds_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| SELECT *
-#| FROM read_json('birds.json');
+#| FROM read_json('data.json');
 
 # DOCS_TEST_BODY
 
@@ -232,7 +232,7 @@ SELECT
     *
 FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_009_1_birds_json.json');
 ----
-duck	goose
+a	b
 42	4.2
 43	4.3
 
@@ -240,14 +240,14 @@ duck	goose
 
 statement ok
 COPY (
-    SELECT '{"duck":42,"goose":[1,2,3]}' AS line
+    SELECT '{"a":42,"b":[1,2,3]}' AS line
     UNION ALL
-    SELECT '{"duck":43,"goose":[4,5,6]}' AS line
+    SELECT '{"a":43,"b":[4,5,6]}' AS line
 ) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_010_1_birds_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| SELECT *
-#| FROM read_json('birds-records.json');
+#| FROM read_json('data-records.json');
 
 # DOCS_TEST_BODY
 
@@ -255,7 +255,7 @@ query
 SELECT *
 FROM read_json('/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_010_1_birds_records_json.json');
 ----
-duck	goose
+a	b
 42	{1,2,3}
 43	{4,5,6}
 
@@ -263,14 +263,14 @@ duck	goose
 
 statement ok
 COPY (
-    SELECT '{"duck":42,"goose":[1,2,3]}' AS line
+    SELECT '{"a":42,"b":[1,2,3]}' AS line
     UNION ALL
-    SELECT '{"duck":43,"goose":[4,5,6]}' AS line
+    SELECT '{"a":43,"b":[4,5,6]}' AS line
 ) TO '/tmp/${__DATABASE__}_data_import_and_export_json_loading_json_example_015_1_birds_records_json.json' (FORMAT csv, HEADER false, DELIMITER '|', QUOTE '');
 
 # DOCS_TEST_RAW
 #| SELECT *
-#| FROM read_json('birds-records.json', records = false);
+#| FROM read_json('data-records.json', records = false);
 
 # DOCS_TEST_BODY
 

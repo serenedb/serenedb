@@ -64,7 +64,8 @@ map_entries
 query error
 SELECT * FROM ('my_file.parquet').read_parquet();
 ----
-db error: ERROR: syntax error at or near "\)"
+db error: ERROR: syntax error at or near "."
+
 
 # DOCS_TEST: example_007
 
@@ -80,7 +81,9 @@ Did you mean "<slt:ignore>"?
 query error
 SELECT (2).ifnull(0);
 ----
-db error: ERROR: Wrong number of arguments to IFNULL\.
+db error: ERROR: Scalar Function with name ifnull does not exist!
+Did you mean "fill"?
+
 
 # DOCS_TEST: example_008
 

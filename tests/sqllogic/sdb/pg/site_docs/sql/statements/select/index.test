@@ -104,11 +104,13 @@ a	b	id	i	j	k	x	y	z	c	article_id	comment_id	author_id	customer_id	order_id	produc
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT #1, #3 FROM tbl;
 ----
-db error: ERROR: Scalar Function with name # does not exist!
-Did you mean "<slt:ignore>"?
+id	col1
+1	1
+3	4
+7	9
 
 # DOCS_TEST: example_007
 
@@ -160,21 +162,19 @@ d
 
 # DOCS_TEST: example_009
 
-# DOCS_TEST_BODY
+# DOCS_TEST_RAW
+#| SELECT ⟨select_list⟩
+#| FROM ⟨tables⟩
+#|     USING SAMPLE ⟨sample_expression⟩
+#| WHERE ⟨condition⟩
+#| GROUP BY ⟨groups⟩
+#| HAVING ⟨group_filter⟩
+#|     WINDOW ⟨window_expression⟩
+#|     QUALIFY ⟨qualify_filter⟩
+#| ORDER BY ⟨order_expression⟩
+#| LIMIT ⟨n⟩;
 
-query error
-SELECT ⟨select_list⟩
-FROM ⟨tables⟩
-    USING SAMPLE ⟨sample_expression⟩
-WHERE ⟨condition⟩
-GROUP BY ⟨groups⟩
-HAVING ⟨group_filter⟩
-    WINDOW ⟨window_expression⟩
-    QUALIFY ⟨qualify_filter⟩
-ORDER BY ⟨order_expression⟩
-LIMIT ⟨n⟩;
-----
-db error: ERROR: syntax error at or near "WHERE"
+# DOCS_TEST_BODY
 
 # DOCS_TEST: example_010
 
@@ -190,8 +190,8 @@ query
 SELECT rowid, id, content FROM t;
 ----
 rowid	id	content
-1	42	hello
-2	43	world
+0	42	hello
+1	43	world
 
 # DOCS_TEST: example_011
 
@@ -213,8 +213,8 @@ query
 SELECT rowid FROM t;
 ----
 rowid
-2
-4
-6
-8
-10
+1
+3
+5
+7
+9

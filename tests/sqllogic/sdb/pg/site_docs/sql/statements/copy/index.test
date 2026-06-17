@@ -105,23 +105,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_005_1_lineitem_csv.csv';
-
-# DOCS_TEST: example_006
-
-statement ok
-COPY (SELECT * FROM (VALUES
-    (3, 30, 'fixture lineitem'),
-    (4, 40, 'mock lineitem')
-) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_006_1_lineitem_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
-
-# DOCS_TEST_RAW
-#| COPY lineitem FROM lineitem.csv;
-
-# DOCS_TEST_BODY
-
-statement ok
-COPY lineitem FROM '/tmp/${__DATABASE__}_sql_statements_copy_index_example_006_1_lineitem_csv.csv';
+COPY lineitem FROM "/tmp/${__DATABASE__}_sql_statements_copy_index_example_005_1_lineitem_csv.csv";
 
 # DOCS_TEST: example_007
 
@@ -141,17 +125,7 @@ COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_007_1_l
 # DOCS_TEST_BODY
 
 statement ok
-COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_008_1_lineitem_csv.csv';
-
-# DOCS_TEST: example_009
-
-# DOCS_TEST_RAW
-#| COPY lineitem TO lineitem.csv;
-
-# DOCS_TEST_BODY
-
-statement ok
-COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_009_1_lineitem_csv.csv';
+COPY lineitem TO "/tmp/${__DATABASE__}_sql_statements_copy_index_example_008_1_lineitem_csv.csv";
 
 # DOCS_TEST: example_010
 

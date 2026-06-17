@@ -39,56 +39,64 @@ j
 
 # DOCS_TEST_BODY
 
-query error
-WITH t(x) AS (⟨complex_query⟩)
+query
+WITH t(x) AS (SELECT 42)
 SELECT *
 FROM
     t AS t1,
     t AS t2,
     t AS t3;
 ----
-db error: ERROR: syntax error at or near "⟨complex_query⟩"
+x	x	x
+42	42	42
+
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT *
 FROM
-    (⟨complex_query⟩) AS t1(x),
-    (⟨complex_query⟩) AS t2(x),
-    (⟨complex_query⟩) AS t3(x);
+    (SELECT 42) AS t1(x),
+    (SELECT 42) AS t2(x),
+    (SELECT 42) AS t3(x);
 ----
-db error: ERROR: syntax error at or near "\)"
+x	x	x
+42	42	42
+
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
-query error
-WITH t(x) AS MATERIALIZED (⟨complex_query⟩)
+query
+WITH t(x) AS MATERIALIZED (SELECT 42)
 SELECT *
 FROM
     t AS t1,
     t AS t2,
     t AS t3;
 ----
-db error: ERROR: syntax error at or near "⟨complex_query⟩"
+x	x	x
+42	42	42
+
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
-query error
-WITH t(x) AS NOT MATERIALIZED (⟨complex_query⟩)
+query
+WITH t(x) AS NOT MATERIALIZED (SELECT 42)
 SELECT *
 FROM
     t AS t1,
     t AS t2,
     t AS t3;
 ----
-db error: ERROR: syntax error at or near "⟨complex_query⟩"
+x	x	x
+42	42	42
+
 
 # DOCS_TEST: example_008
 

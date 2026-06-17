@@ -82,16 +82,31 @@ CALL dbgen(sf = 1);
 db error: ERROR: Table with name supplier does not exist!
 Did you mean "<slt:ignore>"?
 
+
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-query error
+query
 SUMMARIZE lineitem;
 ----
-db error: ERROR: unrecognized configuration parameter "lineitem"
-
-Did you mean: "client_encoding"
+column_name	column_type	min	max	approx_unique	avg	std	q25	q50	q75	count	null_percentage
+l_orderkey	BIGINT	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_partkey	BIGINT	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_suppkey	BIGINT	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_linenumber	BIGINT	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_quantity	DECIMAL(15,2)	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_extendedprice	DECIMAL(15,2)	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_discount	DECIMAL(15,2)	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_tax	DECIMAL(15,2)	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_returnflag	VARCHAR	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_linestatus	VARCHAR	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_shipdate	DATE	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_commitdate	DATE	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_receiptdate	DATE	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_shipinstruct	VARCHAR	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_shipmode	VARCHAR	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_comment	VARCHAR	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
 
 # DOCS_TEST: example_005
 

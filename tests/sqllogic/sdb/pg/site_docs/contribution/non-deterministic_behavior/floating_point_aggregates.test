@@ -1,16 +1,42 @@
 # DOCS_TEST: example_003
 
+# DOCS_TEST_RAW
+#| CREATE TABLE tbl AS
+#|     SELECT 'ABCDEFG'[floor(random() * 7 + 1)::INT] AS s, random() AS x, i AS y
+#|     FROM range(1, 1_000_000) r(i);
+#|
+#| SELECT s, stddev(x) AS standard_deviation, corr(x, y) AS correlation
+#| FROM tbl
+#| GROUP BY s
+#| ORDER BY s;
+#| ----
+#| s	standard_deviation	correlation
+#| A	0.2892	0.0036
+#| B	0.2887	-0.0024
+#| C	0.2889	-0.0059
+#| D	0.2885	0.0036
+#| E	0.2888	0.0043
+#| F	0.2887	0.0016
+#| G	0.2880	0.0018
+
 # DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE tbl AS
-    SELECT 'ABCDEFG'[floor(random() * 7 + 1)::INT] AS s, 3.7 AS x, i AS y
+    SELECT 'ABCDEFG'[floor(random() * 7 + 1)::INT] AS s, random() AS x, i AS y
     FROM range(1, 1_000_000) r(i);
 
-query error
+query
 SELECT s, stddev(x) AS standard_deviation, corr(x, y) AS correlation
 FROM tbl
 GROUP BY s
 ORDER BY s;
 ----
-db error: ERROR: Unsupported vector type
+s	standard_deviation	correlation
+A	<slt:ignore>	<slt:ignore>
+B	<slt:ignore>	<slt:ignore>
+C	<slt:ignore>	<slt:ignore>
+D	<slt:ignore>	<slt:ignore>
+E	<slt:ignore>	<slt:ignore>
+F	<slt:ignore>	<slt:ignore>
+G	<slt:ignore>	<slt:ignore>

@@ -1,4 +1,4 @@
-control substitution on
+control substitution off
 
 # DOCS_TEST: example_001
 

@@ -23,5 +23,6 @@ ATTACH '/tmp/${__DATABASE__}_contribution_footprint_of_serenedb_reclaiming_space
 statement ok
 ATTACH '/tmp/${__DATABASE__}_contribution_footprint_of_serenedb_reclaiming_space_example_001_1_db2_db.csv' AS db2;
 
+skipif pg-wire-extended
 statement ok
 COPY FROM DATABASE db1 TO db2;

@@ -10,13 +10,19 @@ PostgreSQL 18.3 (SereneDB 26.06.0)
 
 # DOCS_TEST: example_002
 
+# DOCS_TEST_RAW
+#| PRAGMA version;
+#| ----
+#| library_version	source_id	codename
+#| v1.6.0-dev7012	5212023fb8	Development Version
+
 # DOCS_TEST_BODY
 
 query
 PRAGMA version;
 ----
 library_version	source_id	codename
-v1.6.0-dev6983	fa097f1572	Development Version
+<slt:ignore>	<slt:ignore>	Development Version
 
 # DOCS_TEST: example_003
 

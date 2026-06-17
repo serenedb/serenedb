@@ -53,5 +53,9 @@ COPY (SELECT * FROM (VALUES
 
 # DOCS_TEST_BODY
 
-query error db error: ERROR: No files found that match the pattern "/tmp/\$\{__database__\}_cookbook_network_cloud_storage_http_import_example_005_1_holdings_parquet\.parquet"
+query
 SELECT * FROM '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_005_1_holdings_parquet.parquet';
+----
+duck	goose	swan
+1	[2,3]	4.5
+2	[5,8]	9.5

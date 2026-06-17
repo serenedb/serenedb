@@ -15,7 +15,8 @@ FROM ...
 JOIN ...  -- this join is performed first
 JOIN ...;
 ----
-db error: ERROR: syntax error at or near "\.\."
+db error: ERROR: syntax error at or near "."
+
 
 # DOCS_TEST: example_003
 
@@ -32,7 +33,7 @@ statement error
 CREATE OR REPLACE TEMPORARY TABLE t1 AS
     ...;
 ----
-db error: ERROR: syntax error at or near "\.\."
+db error: ERROR: syntax error at or near "."
 
 
 statement error
@@ -40,14 +41,15 @@ statement error
 CREATE OR REPLACE TEMPORARY TABLE t2 AS
     SELECT * FROM t1 ...;
 ----
-db error: ERROR: syntax error at or near "\.\."
+db error: ERROR: syntax error at or near "."
 
 
 query error
 -- compute the final result using t2
 SELECT * FROM t1 ...
 ----
-db error: ERROR: syntax error at or near "\.\."
+db error: ERROR: syntax error at or near "."
+
 
 # DOCS_TEST: example_005
 

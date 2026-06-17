@@ -72,6 +72,7 @@ SELECT * FROM postgres_query('pg_${__DATABASE__}', 'SELECT 1.0 / 0.0');
 ----
 db error: ERROR: Failed to prepare COPY "COPY (SELECT "?column?" FROM (SELECT 1.0 / 0.0) AS __unnamed_subquery ) TO STDOUT (FORMAT "binary");": ERROR:  division by zero
 
+
 # DOCS_TEST: example_003
 
 # DOCS_TEST_RAW
@@ -86,6 +87,7 @@ SELECT * FROM postgres_query('pg_${__DATABASE__}', 'SELECT true UNION SELECT 1')
 db error: ERROR: Failed to prepare query "SELECT true UNION SELECT 1": ERROR:  UNION types boolean and integer cannot be matched
 LINE 1: SELECT true UNION SELECT 1
                                  ^
+
 
 # DOCS_TEST: example_004
 
@@ -103,6 +105,7 @@ LINE 1: SELECT 1 == 1
                  ^
 HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.
 
+
 # DOCS_TEST: example_005
 
 # DOCS_TEST_RAW
@@ -118,6 +121,7 @@ db error: ERROR: Failed to execute query "BEGIN TRANSACTION ISOLATION LEVEL REPE
 CREATE TABLE mytable (v mytype)": ERROR:  type "mytype" does not exist
 LINE 2: CREATE TABLE mytable (v mytype)
                                 ^
+
 
 statement ok
 DETACH pg_${__DATABASE__};

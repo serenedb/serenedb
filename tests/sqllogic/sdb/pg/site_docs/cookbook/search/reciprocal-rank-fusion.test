@@ -62,5 +62,5 @@ ORDER BY rrf DESC, m.id
 LIMIT 5;
 ----
 id	title	rrf
-8	Alien	0.01639
 7	Star Trek: The Motion Picture	0.01639
+8	Alien	0.01639

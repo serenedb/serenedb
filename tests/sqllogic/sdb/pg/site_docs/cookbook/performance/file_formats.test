@@ -8,7 +8,8 @@ statement error
 .mode line
 SELECT Prompt FROM sniff_csv('part-0001.csv');
 ----
-db error: ERROR: syntax error at or near "\."
+db error: ERROR: syntax error at or near "."
+
 
 # DOCS_TEST: example_002
 
@@ -30,7 +31,7 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-FROM read_csv('/tmp/${__DATABASE__}_cookbook_performance_file_formats_example_002_1_part_csv_*.csv', auto_detect=false, delim=',', quote='"', escape='"', new_line='\n', skip=0, header=true, columns={'hello': 'BIGINT', 'world': 'VARCHAR'});
+FROM read_csv('/tmp/${__DATABASE__}_cookbook_performance_file_formats_example_002_1_part_csv_*.csv', auto_detect=false, delim=',', quote='"', escape='"', new_line='\\n', skip=0, header=true, columns={'hello': 'BIGINT', 'world': 'VARCHAR'});
 ----
 hello	world
 1	alpha

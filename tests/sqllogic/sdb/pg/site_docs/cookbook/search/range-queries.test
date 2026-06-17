@@ -50,12 +50,12 @@ WHERE genre @@ ts_gt('drama')
 ORDER BY id;
 ----
 id	title	genre
-8	Alien	sci-fi
-7	Star Trek: The Motion Picture	sci-fi
-5	Harry Potter and the Order of the Phoenix	fantasy
-3	The Matrix Revolutions	sci-fi
-2	The Matrix Reloaded	sci-fi
 1	The Matrix	sci-fi
+2	The Matrix Reloaded	sci-fi
+3	The Matrix Revolutions	sci-fi
+5	Harry Potter and the Order of the Phoenix	fantasy
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi
 
 # DOCS_TEST: example_002
 
@@ -68,9 +68,9 @@ WHERE genre @@ ts_le('comedy')
 ORDER BY id;
 ----
 id	title	genre
-10	The Grand Budapest Hotel	comedy
-6	Scary Movie	comedy
 4	Jurassic Park	adventure
+6	Scary Movie	comedy
+10	The Grand Budapest Hotel	comedy
 
 # DOCS_TEST: example_003
 
@@ -83,10 +83,10 @@ WHERE genre @@ ts_ge('comedy') AND genre @@ ts_le('fantasy')
 ORDER BY genre, id;
 ----
 id	title	genre
-5	Harry Potter and the Order of the Phoenix	fantasy
-9	Café Society	drama
-10	The Grand Budapest Hotel	comedy
 6	Scary Movie	comedy
+10	The Grand Budapest Hotel	comedy
+9	Café Society	drama
+5	Harry Potter and the Order of the Phoenix	fantasy
 
 # DOCS_TEST: example_004
 
@@ -99,12 +99,12 @@ WHERE NOT (genre @@ ts_le('drama'))
 ORDER BY id;
 ----
 id	title	genre
-8	Alien	sci-fi
-7	Star Trek: The Motion Picture	sci-fi
-5	Harry Potter and the Order of the Phoenix	fantasy
-3	The Matrix Revolutions	sci-fi
-2	The Matrix Reloaded	sci-fi
 1	The Matrix	sci-fi
+2	The Matrix Reloaded	sci-fi
+3	The Matrix Revolutions	sci-fi
+5	Harry Potter and the Order of the Phoenix	fantasy
+7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi
 
 # DOCS_TEST: example_005
 
@@ -117,5 +117,5 @@ WHERE genre @@ ts_ge('sci-fi') AND description @@ ts_phrase('galaxy')
 ORDER BY id;
 ----
 id	title	genre
-8	Alien	sci-fi
 7	Star Trek: The Motion Picture	sci-fi
+8	Alien	sci-fi

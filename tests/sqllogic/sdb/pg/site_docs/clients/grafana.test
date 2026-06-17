@@ -14,5 +14,5 @@ FROM articles
 ORDER BY published_at;
 ----
 time	views
-2025-03-01	5100
 2025-01-15	4200
+2025-03-01	5100

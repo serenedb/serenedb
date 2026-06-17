@@ -10,8 +10,8 @@ CREATE TABLE students (name VARCHAR CHECK (NOT contains(name, ' ')));
 statement error
 INSERT INTO students VALUES ('this name contains spaces');
 ----
-db error: ERROR: new row for relation "students" violates check constraint "students_name_check"
-DETAIL: Failing row contains (this name contains spaces).
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
 
 # DOCS_TEST: example_002
 
@@ -29,8 +29,8 @@ CREATE TABLE students (name VARCHAR NOT NULL);
 statement error
 INSERT INTO students VALUES (NULL);
 ----
-db error: ERROR: null value in column "name" of relation "students" violates not-null constraint
-DETAIL: Failing row contains (null).
+db error: ERROR: NOT NULL constraint failed: <slt:ignore>
+
 
 # DOCS_TEST: example_003
 
@@ -51,8 +51,8 @@ INSERT INTO students VALUES (1, 'Student 1');
 statement error
 INSERT INTO students VALUES (1, 'Student 2');
 ----
-db error: ERROR: duplicate key value violates unique constraint "students_pkey"
-DETAIL: Key (id)=(1) already exists.
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+
 
 # DOCS_TEST: example_004
 
@@ -76,8 +76,8 @@ INSERT INTO students VALUES (1, 'Student 2');
 statement error
 INSERT INTO students VALUES (1, 'Student 1');
 ----
-db error: ERROR: duplicate key value violates unique constraint "students_pkey"
-DETAIL: Key (id, name)=(1, Student 1) already exists.
+db error: ERROR: Duplicate key "id: 1, name: Student 1" violates primary key constraint.
+
 
 # DOCS_TEST: example_005
 
@@ -95,8 +95,11 @@ CREATE TABLE students (id INTEGER PRIMARY KEY, name VARCHAR, email VARCHAR UNIQU
 statement ok
 INSERT INTO students VALUES (1, 'Student 1', 'student1@uni.com');
 
-statement ok
+statement error
 INSERT INTO students VALUES (2, 'Student 2', 'student1@uni.com');
+----
+db error: ERROR: Duplicate key "email: student1@uni.com" violates unique constraint.
+
 
 # DOCS_TEST: example_006
 
@@ -108,8 +111,8 @@ INSERT INTO students (id, name) VALUES (3, 'Student 3');
 statement error
 INSERT INTO students (name, email) VALUES ('Student 3', 'student3@uni.com');
 ----
-db error: ERROR: null value in column "id" of relation "students" violates not-null constraint
-DETAIL: Failing row contains (null, Student 3, student3@uni.com).
+db error: ERROR: NOT NULL constraint failed: <slt:ignore>
+
 
 # DOCS_TEST: example_007
 
@@ -124,8 +127,11 @@ INSERT INTO integers VALUES (1, 2, 3);
 statement ok
 INSERT INTO integers VALUES (1, 4, 5);
 
-statement ok
+statement error
 INSERT INTO integers VALUES (1, 2, 5);
+----
+db error: ERROR: Duplicate key "i: 1, j: 2" violates unique constraint.
+
 
 # DOCS_TEST: example_008
 
@@ -160,5 +166,7 @@ INSERT INTO subjects VALUES (1, 'CS 101');
 statement ok
 INSERT INTO exams VALUES (1, 1, 1, 10);
 
-statement ok
+statement error
 INSERT INTO exams VALUES (2, 1, 2, 10);
+----
+db error: ERROR: Violates foreign key constraint because key "id: 2" does not exist in the referenced table

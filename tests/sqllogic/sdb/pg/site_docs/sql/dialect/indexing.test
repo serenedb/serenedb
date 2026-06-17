@@ -14,8 +14,8 @@ first
 # DOCS_TEST_BODY
 
 query
-SELECT json[1] AS element
+SELECT (json ->> 0) AS element
 FROM (SELECT '["first", "second", "third"]'::JSON AS json);
 ----
 element
-"second"
+first

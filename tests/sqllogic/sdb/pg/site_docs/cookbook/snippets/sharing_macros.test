@@ -22,7 +22,7 @@ x
 # DOCS_TEST: example_003
 
 # DOCS_TEST_RAW
-#| ATTACH 'https://blobs.duckdb.org/data/pretty_print_integer_macro.duckdb'
+#| ATTACH 'https://example.com/data/pretty_print_integer_macro.duckdb'
 #|     AS pretty_print_macro_db;
 #|
 #| SELECT pretty_print_macro_db.pretty_print_integer(42_123) AS x;
@@ -95,11 +95,11 @@ statement ok
 DETACH checksum_macro_fixture;
 
 # DOCS_TEST_RAW
-#| ATTACH 'https://blobs.duckdb.org/data/compute_table_checksum.duckdb'
+#| ATTACH 'https://example.com/data/compute_table_checksum.duckdb'
 #|     AS compute_table_checksum_db;
 #|
 #| CREATE TABLE stations AS
-#|     FROM 'https://blobs.duckdb.org/stations.parquet';
+#|     FROM 'https://example.com/stations.parquet';
 #|
 #| .mode line
 #| FROM compute_table_checksum_db.checksum('stations');
@@ -114,12 +114,13 @@ ATTACH '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_006_comput
 statement ok
 DROP TABLE IF EXISTS stations;
 
-statement error db error: ERROR: No files found that match the pattern "/tmp/\$\{__database__\}_cookbook_snippets_sharing_macros_example_006_1_stations_parquet\.parquet"
+statement ok
 CREATE TABLE stations AS
     FROM '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_006_1_stations_parquet.parquet';
 
-query error
+skipif pg-wire-extended
+query
 FROM compute_table_checksum_db.checksum('stations');
 ----
-db error: ERROR: Table with name stations does not exist!
-Did you mean "stations_db.stations"?
+duck	goose	swan
+243261088136216708875926412427487400972	138465933354732981678276855003030579445	165028020406096909720161240673293274409

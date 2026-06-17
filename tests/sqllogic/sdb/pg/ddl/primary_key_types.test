@@ -1,0 +1,230 @@
+# Primary key / unique constraint type matrix.
+#
+# Scalar key columns are enforced by the store table's DuckDB ART (any scalar
+# type works -- a duplicate is rejected). Nested-type key columns cannot be
+# indexed by the ART, so they are rejected at DDL with a clear error rather
+# than silently creating the table with the constraint dropped (unenforced
+# uniqueness). Nested keys are planned to be supported via the encoded-key
+# index (sdb_encode_key).
+
+
+# ---- scalar PK types: uniqueness enforced (duplicate -> error) ----
+
+statement ok
+CREATE TABLE pk_i32(k INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_i32 VALUES (1, 'a');
+
+
+statement error
+INSERT INTO pk_i32 VALUES (1, 'b');
+----
+db error: ERROR: Duplicate key "k: 1" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_u64(k UBIGINT PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_u64 VALUES (1, 'a');
+
+
+statement error
+INSERT INTO pk_u64 VALUES (1, 'b');
+----
+db error: ERROR: Duplicate key "k: 1" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_i128(k HUGEINT PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_i128 VALUES (1, 'a');
+
+
+statement error
+INSERT INTO pk_i128 VALUES (1, 'b');
+----
+db error: ERROR: Duplicate key "k: 1" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_u128(k UHUGEINT PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_u128 VALUES (1, 'a');
+
+
+statement error
+INSERT INTO pk_u128 VALUES (1, 'b');
+----
+db error: ERROR: Duplicate key "k: 1" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_dec(k DECIMAL(20,4) PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_dec VALUES (1.5, 'a');
+
+
+statement error
+INSERT INTO pk_dec VALUES (1.5, 'b');
+----
+db error: ERROR: Duplicate key "k: 1.5000" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_uuid(k UUID PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_uuid VALUES ('00000000-0000-0000-0000-000000000001', 'a');
+
+
+statement error
+INSERT INTO pk_uuid VALUES ('00000000-0000-0000-0000-000000000001', 'b');
+----
+db error: ERROR: Duplicate key "k: 00000000-0000-0000-0000-000000000001" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_str(k VARCHAR PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_str VALUES ('x', 'a');
+
+
+statement error
+INSERT INTO pk_str VALUES ('x', 'b');
+----
+db error: ERROR: Duplicate key "k: x" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_blob(k BLOB PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_blob VALUES ('\x01', 'a');
+
+
+statement error
+INSERT INTO pk_blob VALUES ('\x01', 'b');
+----
+db error: ERROR: Duplicate key "k: \x01" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_bool(k BOOLEAN PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_bool VALUES (true, 'a');
+
+
+statement error
+INSERT INTO pk_bool VALUES (true, 'b');
+----
+db error: ERROR: Duplicate key "k: true" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_date(k DATE PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_date VALUES ('2020-01-01', 'a');
+
+
+statement error
+INSERT INTO pk_date VALUES ('2020-01-01', 'b');
+----
+db error: ERROR: Duplicate key "k: 2020-01-01" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_ts(k TIMESTAMP PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_ts VALUES ('2020-01-01 00:00:00', 'a');
+
+
+statement error
+INSERT INTO pk_ts VALUES ('2020-01-01 00:00:00', 'b');
+----
+db error: ERROR: Duplicate key "k: 2020-01-01 00:00:00" violates primary key constraint.
+
+
+statement ok
+CREATE TABLE pk_dbl(k DOUBLE PRIMARY KEY, v TEXT);
+
+
+statement ok
+INSERT INTO pk_dbl VALUES (1.5, 'a');
+
+
+statement error
+INSERT INTO pk_dbl VALUES (1.5, 'b');
+----
+db error: ERROR: Duplicate key "k: 1.5" violates primary key constraint.
+
+
+# ---- composite scalar PK: enforced; only the full tuple must be unique ----
+
+statement ok
+CREATE TABLE pk_comp(a INTEGER, b TEXT, v TEXT, PRIMARY KEY (a, b));
+
+
+statement ok
+INSERT INTO pk_comp VALUES (1, 'x', 'one');
+
+
+statement error
+INSERT INTO pk_comp VALUES (1, 'x', 'two');
+----
+db error: ERROR: Duplicate key "a: 1, b: x" violates primary key constraint.
+
+
+statement ok
+INSERT INTO pk_comp VALUES (1, 'y', 'three');
+
+
+# ---- nested-type key columns: rejected at DDL (not silently unenforced) ----
+
+statement error
+CREATE TABLE pk_struct(k STRUCT(a INT) PRIMARY KEY, v TEXT);
+----
+db error: ERROR: primary key column "k" has unsupported nested type STRUCT(a INTEGER)
+
+
+statement error
+CREATE TABLE pk_list(k INT[] PRIMARY KEY, v TEXT);
+----
+db error: ERROR: primary key column "k" has unsupported nested type INTEGER[]
+
+
+statement error
+CREATE TABLE complex_pk (a INTEGER, b INTEGER[] PRIMARY KEY);
+----
+db error: ERROR: primary key column "b" has unsupported nested type INTEGER[]
+
+
+statement error
+CREATE TABLE pk_map(k MAP(INTEGER, INTEGER) PRIMARY KEY, v TEXT);
+----
+db error: ERROR: primary key column "k" has unsupported nested type MAP(INTEGER, INTEGER)
+
+
+statement error
+CREATE TABLE uq_struct(id INT PRIMARY KEY, k STRUCT(a INT), UNIQUE(k));
+----
+db error: ERROR: unique constraint column "k" has unsupported nested type STRUCT(a INTEGER)

@@ -1,0 +1,54 @@
+# INCLUDE (included opclass) column type round-trip matrix.
+#
+# An INCLUDE column is stored in the inverted index's columnstore and returned
+# by SELECT col FROM idx. The columnstore writer/reader are physical-type
+# generic (codec keyed on physical type, full LogicalType persisted), so every
+# scalar and nested type round-trips -- including the ones the *indexed*
+# (term_dict) path rejects (UBIGINT/HUGEINT/UHUGEINT/DECIMAL/UUID/INTERVAL/BIT).
+# This pins that contract.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY iit_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+
+statement ok
+CREATE TABLE iit(
+    id INTEGER PRIMARY KEY,
+    c_u64 UBIGINT, c_i128 HUGEINT, c_u128 UHUGEINT, c_dec DECIMAL(20,4),
+    c_uuid UUID, c_iv INTERVAL, c_bit BIT, c_list INTEGER[],
+    body TEXT);
+
+
+statement ok
+CREATE INDEX iit_idx ON iit USING inverted(
+    c_u64 included(), c_i128 included(), c_u128 included(), c_dec included(),
+    c_uuid included(), c_iv included(), c_bit included(), c_list included(),
+    body iit_dict);
+
+
+statement ok
+INSERT INTO iit VALUES (
+    1, 42, 42, 42, 1.5,
+    '00000000-0000-0000-0000-00000000002a', INTERVAL '1 day', '101'::BIT(3),
+    [1, 2, 3], 'hello world');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iit;
+
+
+query
+SELECT c_u64, c_i128, c_u128, c_dec FROM iit_idx WHERE body @@ ts_phrase('hello world');
+----
+c_u64 c_i128 c_u128 c_dec
+42 42 42 1.5000
+
+
+query
+SELECT c_uuid, c_iv, c_bit, c_list FROM iit_idx WHERE body @@ ts_phrase('hello world');
+----
+c_uuid c_iv c_bit c_list
+00000000-0000-0000-0000-00000000002a 1 day 101 {1,2,3}

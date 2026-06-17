@@ -33,9 +33,6 @@
 #include "catalog/table_options.h"
 
 namespace sdb {
-
-class IndexShard;
-
 namespace catalog {
 
 inline constexpr std::string_view kIncludedKind = "included";
@@ -73,11 +70,6 @@ struct CreateIndexColumn {
     SDB_ASSERT(!IsIndexedExpression());
     return catalog_column;
   }
-
-  void SetCatalogColumn(const catalog::Column* col) noexcept {
-    SDB_ASSERT(!IsIndexedExpression());
-    catalog_column = col;
-  }
 };
 
 class Index : public Object {
@@ -91,9 +83,6 @@ class Index : public Object {
   virtual std::vector<Column::Id> GetReferencedColumnIds() const = 0;
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
-
-  virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, ObjectId id) const = 0;
 
   virtual ~Index() = default;
 

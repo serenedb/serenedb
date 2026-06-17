@@ -52,7 +52,6 @@
 #include "catalog/persistence/secondary_index.h"
 #include "catalog/persistence/sequence.h"
 #include "catalog/persistence/table.h"
-#include "catalog/persistence/table_stats.h"
 #include "catalog/persistence/tokenizer.h"
 
 namespace sdb::catalog::persistence {
@@ -245,10 +244,6 @@ TEST(CatalogPersistence, role_data) {
                                   .password_hash = "hash",
                                   .db_access = {{"db1", auth::Level::RW}},
                                 });
-}
-
-TEST(CatalogPersistence, table_stats) {
-  CheckFixture("table_stats.bin", TableStats{.num_rows = 42});
 }
 
 TEST(CatalogPersistence, inverted_index_options) {

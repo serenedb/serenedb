@@ -76,16 +76,7 @@ class ExecContext : public RequestContext {
 
   ~ExecContext() override = default;
 
-  /// Always false until post-RBAC auth lands.
-  static bool isAuthEnabled();
-
   static const ExecContext& superuser();
-  static std::shared_ptr<const ExecContext> superuserAsShared();
-
-  /// create user context
-  static std::shared_ptr<ExecContext> create(std::string_view user,
-                                             std::string_view db,
-                                             ObjectId database_id);
 
   /// an internal user is none / ro / rw for all collections / dbs
   /// mainly used to override further permission resolution
@@ -96,9 +87,6 @@ class ExecContext : public RequestContext {
     return isInternal() && _system_db_auth_level == auth::Level::RW &&
            _database_auth_level == auth::Level::RW;
   }
-
-  /// is allowed to manage users, create databases, ...
-  bool isAdminUser() const noexcept { return _is_admin_user; }
 
   virtual bool isCanceled() const { return false; }
   virtual void cancel() {}
@@ -112,21 +100,6 @@ class ExecContext : public RequestContext {
 
   /// authentication level on _system. Always RW for superuser
   auth::Level systemAuthLevel() const noexcept { return _system_db_auth_level; }
-
-  /// Authentication level on database selected in the current
-  ///        request scope. Should almost always contain something,
-  ///        if this thread originated from HTTP
-  auth::Level databaseAuthLevel() const noexcept {
-    return _database_auth_level;
-  }
-
-  /// returns true if auth level is above or equal `requested`
-  bool canUseDatabase(auth::Level requested) const noexcept {
-    return requested <= _database_auth_level;
-  }
-
-  /// returns true if auth level is above or equal `requested`
-  bool canUseDatabase(std::string_view db, auth::Level requested) const;
 
  protected:
   /// current user, may be empty for internal users
@@ -154,12 +127,6 @@ struct Superuser final : ExecContext {
                   auth::Level::RW,
                   auth::Level::RW,
                   true} {}
-
-  static std::shared_ptr<Superuser> create(std::string_view database,
-                                           ObjectId database_id);
-  static std::shared_ptr<Superuser> System() {
-    return create(StaticStrings::kDefaultDatabase, id::kSystemDB);
-  }
 };
 
 }  // namespace sdb

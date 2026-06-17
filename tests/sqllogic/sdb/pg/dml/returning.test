@@ -1,0 +1,101 @@
+# RETURNING on INSERT / UPDATE / DELETE, with and without an inverted index
+# on the table (the index forces the commit-time append/delete path).
+# RETURNING does not accept ORDER BY (PG), so the multi-row checks below use
+# single-row statements; the final ordered SELECT pins the table state.
+
+statement ok
+CREATE TABLE ret_plain(a INTEGER PRIMARY KEY, b TEXT, c INTEGER);
+
+query
+INSERT INTO ret_plain VALUES (3, 'gamma', 30) RETURNING a, c, b;
+----
+a	c	b
+3	30	gamma
+
+query
+INSERT INTO ret_plain (a, b) VALUES (4, 'delta') RETURNING a, c;
+----
+a	c
+4	NULL
+
+statement count 2
+INSERT INTO ret_plain VALUES (1, 'alpha', 10), (2, 'beta', 20);
+
+query
+UPDATE ret_plain SET c = 11 WHERE a = 1 RETURNING a, c;
+----
+a	c
+1	11
+
+query
+DELETE FROM ret_plain WHERE a = 4 RETURNING a, b;
+----
+a	b
+4	delta
+
+query
+SELECT a, b, c FROM ret_plain ORDER BY a;
+----
+a	b	c
+1	alpha	11
+2	beta	20
+3	gamma	30
+
+statement ok
+DROP TABLE ret_plain;
+
+
+# Same, but the table carries an inverted index: INSERT/UPDATE/DELETE all
+# drive the search-index sink at commit, and RETURNING must still report the
+# affected rows.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ret_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE ret_idx(a INTEGER PRIMARY KEY, body TEXT, c INTEGER);
+
+statement ok
+CREATE INDEX ret_idx_inv ON ret_idx USING inverted(body ret_dict);
+
+query
+INSERT INTO ret_idx VALUES (1, 'red apple', 10) RETURNING a, body;
+----
+a	body
+1	red apple
+
+statement count 1
+INSERT INTO ret_idx VALUES (2, 'green pear', 20);
+
+query
+UPDATE ret_idx SET body = 'ripe apple' WHERE a = 1 RETURNING a, body;
+----
+a	body
+1	ripe apple
+
+query
+DELETE FROM ret_idx WHERE a = 2 RETURNING a, body;
+----
+a	body
+2	green pear
+
+statement ok
+VACUUM (REFRESH_TABLE) ret_idx;
+
+# The index reflects the post-DML state: 'apple' matches the updated row 1,
+# 'pear' (deleted row 2) matches nothing.
+query
+SELECT a FROM ret_idx_inv WHERE body @@ ts_phrase('apple') ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM ret_idx_inv WHERE body @@ ts_phrase('pear');
+----
+a
+
+statement ok
+DROP TABLE ret_idx;

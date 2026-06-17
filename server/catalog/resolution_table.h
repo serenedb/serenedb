@@ -256,21 +256,9 @@ class ResolutionTable {
 
   auto GetRoleIds() const { return *_roles | std::views::values; }
 
-  auto GetSchemaIds(ObjectId db_id) const {
-    auto it = _schemas->find(db_id);
-    SDB_ASSERT(it != _schemas->end());
-    return *it->second | std::views::values;
-  }
-
   auto GetRelationIds(ObjectId schema_id) const {
     auto it = _relations->find(schema_id);
     SDB_ASSERT(it != _relations->end());
-    return *it->second | std::views::values;
-  }
-
-  auto GetFunctionIds(ObjectId schema_id) const {
-    auto it = _functions->find(schema_id);
-    SDB_ASSERT(it != _functions->end());
     return *it->second | std::views::values;
   }
 

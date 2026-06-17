@@ -45,21 +45,6 @@ constexpr containers::TrivialSet kGeoAnalyzers = [](auto selector) {
 
 }  // namespace
 
-void Features::Visit(std::function<void(std::string_view)> visitor) const {
-  if (HasFeatures(irs::IndexFeatures::Freq)) {
-    visitor(irs::Type<irs::FreqAttr>::name());
-  }
-  if (HasFeatures(irs::IndexFeatures::Pos)) {
-    visitor(irs::Type<irs::PosAttr>::name());
-  }
-  if (HasFeatures(irs::IndexFeatures::Offs)) {
-    visitor(irs::Type<irs::OffsAttr>::name());
-  }
-  if (HasFeatures(irs::IndexFeatures::Norm)) {
-    visitor(irs::Type<irs::Norm>::name());
-  }
-}
-
 bool Features::Add(std::string_view feature_name) {
   if (feature_name == irs::Type<irs::PosAttr>::name()) {
     _index_features |= irs::IndexFeatures::Pos;

@@ -22,7 +22,6 @@
 
 #include "basics/down_cast.h"
 #include "catalog/index.h"
-#include "storage_engine/secondary_index_shard.h"
 
 namespace duckdb {
 
@@ -43,14 +42,6 @@ class SecondaryIndex : public Index {
   void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
   bool IsUnique() const noexcept { return _unique; }
-
-  ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, ObjectId id) const final {
-    if (is_new) {
-      return std::make_shared<SecondaryIndexShard>(GetId());
-    }
-    return std::make_shared<SecondaryIndexShard>(id, GetId());
-  }
 
   std::vector<Column::Id> GetReferencedColumnIds() const final {
     const auto ids = GetColumnIds();

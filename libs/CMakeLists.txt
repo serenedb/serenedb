@@ -169,8 +169,6 @@ target_include_directories(serene PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 
 target_include_directories(serene SYSTEM PUBLIC ${OPENSSL_INCLUDE_DIR})
 
-target_link_libraries(serene PUBLIC rocksdb_interface)
-
 add_dependencies(serene errorfiles exitcodefiles)
 
 add_subdirectory(geo)

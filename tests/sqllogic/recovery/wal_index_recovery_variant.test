@@ -1,0 +1,91 @@
+control substitution on
+
+# VARIANT survives WAL replay through an inverted index's INCLUDE columnstore.
+#
+# A VARIANT INCLUDE column is stored as VARCHAR-with-JSON-alias in the .col
+# file. The pre-crash row is made durable by a refresh; the post-crash rows
+# (an int, a string, a bool, and a json object variant) live only in the
+# store WAL with the search commit faulted off. On restart the index's cs
+# must be rebuilt from the WAL so every payload reads back from the index.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY var_rec_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE var_rec_t(id INTEGER PRIMARY KEY, body TEXT, payload VARIANT);
+
+statement ok
+CREATE INDEX var_rec_idx ON var_rec_t
+  USING inverted(body var_rec_dict) INCLUDE (payload);
+
+# Pre-crash row, made durable in the segments + cs by a refresh.
+statement ok
+INSERT INTO var_rec_t VALUES (1, 'alpha bravo', 42::variant);
+
+statement ok
+VACUUM (REFRESH_TABLE) var_rec_t;
+
+query
+SELECT id, payload FROM var_rec_idx WHERE body @@ ts_phrase('alpha');
+----
+id	payload
+1	42
+
+# Post-crash rows: suppress the index commit so they land only in the store
+# WAL, post-refresh and not yet durable in the segments.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO var_rec_t VALUES
+  (2, 'charlie delta', 'hello'::variant),
+  (3, 'echo foxtrot', true::variant),
+  (4, 'golf hotel', '{"a": 42}'::json::variant);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection var_after
+statement ok retry 60 backoff 1s
+VACUUM (REFRESH_TABLE) var_rec_t;
+
+# Pre-crash row's VARIANT still served from cs.
+connection var_after
+query
+SELECT id, payload FROM var_rec_idx WHERE body @@ ts_phrase('alpha');
+----
+id	payload
+1	42
+
+# Post-crash rows replayed from the WAL: each VARIANT shape round-trips
+# through the rebuilt cs (int, string, bool, json object).
+connection var_after
+query
+SELECT id, payload FROM var_rec_idx ORDER BY id;
+----
+id	payload
+1	42
+2	"hello"
+3	true
+4	{"a":42}
+
+# Post-crash rows are searchable via the recovered inverted index.
+connection var_after
+query
+SELECT payload FROM var_rec_idx WHERE body @@ ts_phrase('echo foxtrot');
+----
+payload
+true

@@ -14,7 +14,7 @@ if [ "$1" = "serened" ]; then
 	RUNTIME_CONFIG="/tmp/serened.conf"
 	if [ -f "$CONFIG_FILE" ]; then
 		cp "$CONFIG_FILE" "$RUNTIME_CONFIG"
-		set -- "$@" --config "$RUNTIME_CONFIG"
+		set -- "$@" "--flagfile=$RUNTIME_CONFIG"
 		echo "Config: $RUNTIME_CONFIG"
 	fi
 

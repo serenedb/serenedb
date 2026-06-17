@@ -1,0 +1,103 @@
+# A single transaction may write to only one real (storage-backed) database.
+# serenedb tables route their writes to the hidden store, so a serenedb table
+# write and an attached-duckdb write in the same transaction are rejected and
+# rolled back -- the storage-less catalog facade is exempt (ForwardWrites), but
+# the store it forwards to still counts as the one writable database.
+
+control substitution on
+
+
+statement ok
+CREATE TABLE local_t(x INTEGER);
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/cross_db_write.duckdb' AS ext;
+
+
+statement ok
+CREATE TABLE ext.main.ext_t(x INTEGER);
+
+
+# serenedb table then attached duckdb in one transaction -> rejected
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO local_t VALUES (1);
+
+
+statement error
+INSERT INTO ext.main.ext_t VALUES (1);
+----
+db error: ERROR: Attempting to write to database "<slt:ignore>" in a transaction that has already modified database "<slt:ignore>" - a single transaction can only write to a single attached database.
+
+
+statement ok
+ROLLBACK;
+
+
+# both sides rolled back
+query
+SELECT count(*) FROM local_t;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM ext.main.ext_t;
+----
+count
+0
+
+
+# the symmetric order is rejected too: attached duckdb then serenedb table
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO ext.main.ext_t VALUES (2);
+
+
+statement error
+INSERT INTO local_t VALUES (2);
+----
+db error: ERROR: Attempting to write to database "<slt:ignore>" in a transaction that has already modified database "<slt:ignore>" - a single transaction can only write to a single attached database.
+
+
+statement ok
+ROLLBACK;
+
+
+# writing only one database per transaction is fine
+statement ok
+INSERT INTO local_t VALUES (3);
+
+
+statement ok
+INSERT INTO ext.main.ext_t VALUES (3);
+
+
+query
+SELECT count(*) FROM local_t;
+----
+count
+1
+
+
+query
+SELECT count(*) FROM ext.main.ext_t;
+----
+count
+1
+
+
+statement ok
+DETACH ext;
+
+
+statement ok
+DROP TABLE local_t;

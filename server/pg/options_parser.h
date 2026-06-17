@@ -115,8 +115,6 @@ class OptionsParser {
  protected:
   template<const OptionInfo& Info, typename T = OptionInfo::CppType<Info.type>>
   T EraseOptionOrDefault(std::string_view prefix = "") {
-    static_assert(Info.type != OptionInfo::Type::Enum,
-                  "Use EnumOptionInfo overload for enum options");
     constexpr bool kIsBool = Info.type == OptionInfo::Type::Boolean;
     constexpr bool kIsString = Info.type == OptionInfo::Type::String;
     if (const auto option = EraseOption(Info, !kIsBool, prefix)) {
@@ -149,48 +147,6 @@ class OptionsParser {
         ERR_MSG("required parameter \"", Info.name, "\" was not found"));
     }
     return Info.GetDefaultValue<T>();
-  }
-
-  template<const auto& Info>
-    requires std::is_enum_v<
-      typename std::remove_cvref_t<decltype(Info)>::enum_type>
-  auto EraseOptionOrDefault(std::string_view prefix = "") {
-    using E = typename std::remove_cvref_t<decltype(Info)>::enum_type;
-
-    auto make_hint = [&] {
-      return absl::StrCat(
-        "Allowed values: ",
-        absl::StrJoin(Info.base.enum_values, ", ",
-                      [](std::string* out, std::string_view v) {
-                        absl::StrAppend(out, absl::AsciiStrToUpper(v));
-                      }));
-    };
-
-    if (const auto option = EraseOption(Info.base, true, prefix)) {
-      auto raw = TryExtract<std::string>(*option);
-      if (!raw) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG(Info.base.ErrorMessage(_operation, option->ToString())),
-          ERR_HINT(make_hint()));
-      }
-      auto result =
-        magic_enum::enum_cast<E>(*raw, magic_enum::case_insensitive);
-      if (!result) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG(Info.base.ErrorMessage(_operation, *raw)),
-                        ERR_HINT(make_hint()));
-      }
-      return *result;
-    }
-
-    if (Info.base.IsRequired()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-        ERR_MSG("required parameter \"", Info.base.name, "\" was not found"));
-    }
-
-    return Info.base.template GetDefaultValue<E>();
   }
 
   // requires_parameter == presence flag like ... WITH (FLAG)

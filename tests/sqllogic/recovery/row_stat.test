@@ -1,0 +1,57 @@
+statement ok
+SET disabled_optimizers = 'compressed_materialization';
+
+
+statement ok
+CREATE TABLE t(id text);
+
+
+statement count 1000
+INSERT INTO t
+SELECT ((x * x + x + 1) % 1000)::text FROM generate_series(1, 1000) AS t(x);
+
+
+statement ok
+CREATE TABLE f(id text primary key, value int);
+
+
+statement count 3
+INSERT INTO f VALUES ('3', 1), ('7', 2), ('13', 3);
+
+
+query
+EXPLAIN SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│           value           │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         HASH_JOIN         │
+│    ────────────────────   │
+│      Join Type: INNER     │
+│    Conditions: id = id    ├──────────────┐
+│                           │              │
+│          ~5 rows          │              │
+└─────────────┬─────────────┘              │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│          SEQ_SCAN         ││          SEQ_SCAN         │
+│    ────────────────────   ││    ────────────────────   │
+│          Table: t         ││          Table: f         │
+│   Type: Sequential Scan   ││   Type: Sequential Scan   │
+│      Projections: id      ││                           │
+│                           ││        Projections:       │
+│                           ││             id            │
+│                           ││           value           │
+│                           ││                           │
+│        ~1,000 rows        ││          ~3 rows          │
+└───────────────────────────┘└───────────────────────────┘
+
+
+statement ok
+SET disabled_optimizers = '';

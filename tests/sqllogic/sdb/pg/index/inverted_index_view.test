@@ -14,7 +14,7 @@ statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body
       UNION ALL SELECT 2, 'anchin reads manga'
       UNION ALL SELECT 3, 'pudge plays again')
-TO '/tmp/${__DATABASE__}_view_idx.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/view_idx.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY view_idx_en(
@@ -28,7 +28,7 @@ CREATE TEXT SEARCH DICTIONARY view_idx_en(
 );
 
 statement ok
-CREATE VIEW pq_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_idx.parquet');
+CREATE VIEW pq_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/view_idx.parquet');
 
 # CREATE INDEX on a view over read_parquet auto-detects file_row_number as
 # PK (fast-path); no WITH (pk = ...) needed.
@@ -221,16 +221,16 @@ pudge plays again	c
 statement count 2
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body
       UNION ALL SELECT 2, 'anchin reads manga')
-TO '/tmp/${__DATABASE__}_glob_a.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/glob_a.parquet' (FORMAT PARQUET);
 
 statement count 2
 COPY (SELECT 3 AS id, 'pudge plays again' AS body
       UNION ALL SELECT 4, 'krivda writes sql')
-TO '/tmp/${__DATABASE__}_glob_b.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/glob_b.parquet' (FORMAT PARQUET);
 
 statement ok
 CREATE VIEW pq_glob AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_glob_*.parquet');
+  SELECT * FROM read_parquet('${__TEST_DIR__}/glob_*.parquet');
 
 statement ok
 CREATE INDEX pq_glob_idx ON pq_glob USING inverted(id, body view_idx_en);
@@ -259,16 +259,16 @@ id	body
 statement count 2
 COPY (SELECT 10 AS id, 'pudge goes mid' AS body
       UNION ALL SELECT 11, 'anchin reads manga')
-TO '/tmp/${__DATABASE__}_glob_a.csv';
+TO '${__TEST_DIR__}/glob_a.csv';
 
 statement count 2
 COPY (SELECT 12 AS id, 'pudge plays again' AS body
       UNION ALL SELECT 13, 'krivda writes sql')
-TO '/tmp/${__DATABASE__}_glob_b.csv';
+TO '${__TEST_DIR__}/glob_b.csv';
 
 statement ok
 CREATE VIEW csv_glob AS
-  SELECT * FROM read_csv('/tmp/${__DATABASE__}_glob_*.csv');
+  SELECT * FROM read_csv('${__TEST_DIR__}/glob_*.csv');
 
 statement ok
 CREATE INDEX csv_glob_idx ON csv_glob USING inverted(id, body view_idx_en);
@@ -291,16 +291,16 @@ id	body
 statement count 2
 COPY (SELECT 20 AS id, 'pudge goes mid' AS body
       UNION ALL SELECT 21, 'anchin reads manga')
-TO '/tmp/${__DATABASE__}_glob_a.jsonl' (FORMAT json);
+TO '${__TEST_DIR__}/glob_a.jsonl' (FORMAT json);
 
 statement count 2
 COPY (SELECT 22 AS id, 'pudge plays again' AS body
       UNION ALL SELECT 23, 'krivda writes sql')
-TO '/tmp/${__DATABASE__}_glob_b.jsonl' (FORMAT json);
+TO '${__TEST_DIR__}/glob_b.jsonl' (FORMAT json);
 
 statement ok
 CREATE VIEW json_glob AS
-  SELECT * FROM read_json('/tmp/${__DATABASE__}_glob_*.jsonl');
+  SELECT * FROM read_json('${__TEST_DIR__}/glob_*.jsonl');
 
 statement ok
 CREATE INDEX json_glob_idx ON json_glob USING inverted(id, body view_idx_en);
@@ -328,10 +328,10 @@ COPY (SELECT 100 AS id, 'one alpha' AS body
       UNION ALL SELECT 103, 'four delta'
       UNION ALL SELECT 104, 'pudge appears late'
       UNION ALL SELECT 105, 'six epsilon')
-TO '/tmp/${__DATABASE__}_multi_rg.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 2);
+TO '${__TEST_DIR__}/multi_rg.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 2);
 
 statement ok
-CREATE VIEW pq_multi_rg AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_multi_rg.parquet');
+CREATE VIEW pq_multi_rg AS SELECT * FROM read_parquet('${__TEST_DIR__}/multi_rg.parquet');
 
 statement ok
 CREATE INDEX pq_multi_rg_idx ON pq_multi_rg USING inverted(id, body view_idx_en);
@@ -353,10 +353,10 @@ statement count 3
 COPY (SELECT 1 AS id, 'foo' AS body
       UNION ALL SELECT 2, 'bar baz'
       UNION ALL SELECT 3, 'foo foo foo foo')
-TO '/tmp/${__DATABASE__}_topk.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/topk.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE VIEW topk_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_topk.parquet');
+CREATE VIEW topk_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/topk.parquet');
 
 statement ok
 CREATE INDEX topk_idx ON topk_v USING inverted(id, body view_idx_en);
@@ -378,7 +378,7 @@ id	body
 # pk_specs to confirm the bare-scan path uses the index everywhere.
 
 statement ok
-CREATE VIEW bare_pq_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_idx.parquet');
+CREATE VIEW bare_pq_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/view_idx.parquet');
 
 statement ok
 CREATE INDEX bare_pq_idx ON bare_pq_v USING inverted(id, body view_idx_en);
@@ -396,10 +396,10 @@ COPY (SELECT 10 AS id, 'one' AS body
       UNION ALL SELECT 11, 'two'
       UNION ALL SELECT 12, 'three'
       UNION ALL SELECT 13, 'four')
-TO '/tmp/${__DATABASE__}_bare.csv';
+TO '${__TEST_DIR__}/bare.csv';
 
 statement ok
-CREATE VIEW bare_csv_v AS SELECT * FROM read_csv('/tmp/${__DATABASE__}_bare.csv');
+CREATE VIEW bare_csv_v AS SELECT * FROM read_csv('${__TEST_DIR__}/bare.csv');
 
 statement ok
 CREATE INDEX bare_csv_idx ON bare_csv_v USING inverted(id, body view_idx_en);

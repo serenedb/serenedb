@@ -6,7 +6,6 @@ target_sources(
         drop_task.cpp
         schema.cpp
         databases.cpp
-        local_catalog.cpp
         catalog.cpp
         object.cpp
         table_options.cpp
@@ -21,7 +20,6 @@ target_sources(
         secondary_index.cpp
         inverted_index.cpp
         scorer_options.cpp
+        store/store.cpp
         tokenizer.cpp
 )
-
-add_subdirectory(identifiers)

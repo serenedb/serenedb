@@ -29,18 +29,15 @@ enum class PkSpec : uint8_t {
   FileIndexPlusRowNumber,
   FileOffset,
   FileIndexPlusOffset,
-  RocksDBExplicitPK,
-  RocksDBGeneratedRowId,
+  // Native duckdb files read via read_duckdb: the duckdb rowid is the PK.
+  DuckDBRowId,
+  FileIndexPlusDuckDBRowId,
 };
 
 constexpr bool IsGlobPK(PkSpec spec) noexcept {
   return spec == PkSpec::FileIndexPlusRowNumber ||
-         spec == PkSpec::FileIndexPlusOffset;
-}
-
-constexpr bool IsRocksPK(PkSpec spec) noexcept {
-  return spec == PkSpec::RocksDBExplicitPK ||
-         spec == PkSpec::RocksDBGeneratedRowId;
+         spec == PkSpec::FileIndexPlusOffset ||
+         spec == PkSpec::FileIndexPlusDuckDBRowId;
 }
 
 }  // namespace sdb::catalog

@@ -46,7 +46,7 @@ SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData() {
   values.reserve(kThreadGroups.size());
   for (const auto& [thread_group, thread_group_name] : kThreadGroups) {
     auto [active, pending, threads] =
-      search::SearchEngine::instance().stats(thread_group);
+      search::GetSearchEngine().stats(thread_group);
 
     values.push_back({
       .task_type = thread_group_name,

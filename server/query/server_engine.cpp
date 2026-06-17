@@ -28,15 +28,16 @@
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 
+#include "catalog/store/store.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_tokenizer_function.h"
-#include "connector/duckdb_truncate_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
 #include "connector/functions/cast.h"
 #include "connector/functions/embedding/embedding.h"
+#include "connector/functions/encode_key.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/json.h"
 #include "connector/functions/math.h"
@@ -45,6 +46,7 @@
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
 #include "connector/functions/vector.h"
+#include "connector/inverted_store_index.h"
 #include "connector/pg_logical_types.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
@@ -221,11 +223,15 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
+  catalog::RegisterCatalogStoreFunctions(db);
+
   connector::RegisterTokenizerPragma(db);
 
   connector::RegisterPgCasts(db);
 
   connector::RegisterPgMathFunctions(db);
+
+  connector::RegisterKeyEncodingFunctions(db);
 
   connector::RegisterPgSystemFunctions(db);
 
@@ -241,8 +247,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterVacuumFunction(db);
 
-  connector::RegisterTruncateFunction(db);
-
   connector::RegisterSearchFunctions(db);
 
   connector::RegisterVectorFunctions(db);
@@ -256,10 +260,13 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   // PhysicalCreateIndex (which requires DuckTableEntry).
   auto& index_types = db.config.GetIndexTypes();
   for (auto& name : {"secondary", "btree", "inverted"}) {
-    index_types.RegisterIndexType({
-      .name = name,
-      .create_plan = &connector::SereneDBCreateIndexPlan,
-    });
+    duckdb::IndexType type;
+    type.name = name;
+    type.create_plan = &connector::SereneDBCreateIndexPlan;
+    if (std::string_view{name} == "inverted") {
+      connector::AttachInvertedStoreIndexCallbacks(type);
+    }
+    index_types.RegisterIndexType(type);
   }
 
   // Register filesystem for COPY FROM STDIN support.

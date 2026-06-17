@@ -165,26 +165,6 @@ std::shared_ptr<Role> Role::Deserialize(duckdb::Deserializer& src,
   return FromData(std::move(data));
 }
 
-bool catalog::Role::checkPassword(std::string_view password) const {
-  std::string hash;
-  auto res = HexHashFromData(_password_method,
-                             absl::StrCat(_password_salt, password), hash);
-  if (res != ERROR_OK) {
-    SDB_THROW(res, "Could not calculate hex-hash from input");
-  }
-  return _password_hash == hash;
-}
-
-void catalog::Role::updatePassword(std::string_view password) {
-  std::string hash;
-  auto res = HexHashFromData(_password_method,
-                             absl::StrCat(_password_salt, password), hash);
-  if (res != ERROR_OK) {
-    SDB_THROW(res, "Could not calculate hex-hash from input");
-  }
-  _password_hash = hash;
-}
-
 void catalog::Role::grantDatabase(std::string_view database,
                                   auth::Level level) {
   if (database.empty() || level == auth::Level::Undefined) {
@@ -208,50 +188,6 @@ void catalog::Role::grantDatabase(std::string_view database,
     // will need to be adjusted
     _db_access.try_emplace(database, DBAuthContext(level));
   }
-}
-
-/// Removes the entry, returns true if entry existed
-bool catalog::Role::removeDatabase(std::string_view database) {
-  if (database.empty()) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Cannot remove rights for empty db name");
-  }
-  if (_name == StaticStrings::kDefaultUser &&
-      database == StaticStrings::kDefaultDatabase) {
-    SDB_THROW(ERROR_FORBIDDEN, "Cannot remove access level of '",
-              StaticStrings::kDefaultUser, "' to ",
-              StaticStrings::kDefaultDatabase);
-  }
-  SDB_DEBUG(GENERAL, _name, ": Removing grant on ", database);
-  return _db_access.erase(database) > 0;
-}
-
-// Resolve the access level for this database.
-auth::Level catalog::Role::configuredDBAuthLevel(
-  std::string_view database) const {
-  auto it = _db_access.find(database);
-  if (it != _db_access.end()) {  // found specific grant
-    return it->second.database_auth_level;
-  }
-  return auth::Level::Undefined;
-}
-
-auth::Level catalog::Role::databaseAuthLevel(std::string_view database) const {
-  auto lvl = configuredDBAuthLevel(database);
-  if (lvl == auth::Level::Undefined && database != "*") {
-    // take best from wildcard or _system
-    auto it = _db_access.find("*");
-    if (it != _db_access.end()) {
-      lvl = std::max(it->second.database_auth_level, lvl);
-    }
-    if (database != StaticStrings::kDefaultDatabase) {
-      it = _db_access.find(StaticStrings::kDefaultDatabase);
-      if (it != _db_access.end()) {
-        lvl = std::max(it->second.database_auth_level, lvl);
-      }
-    }
-  }
-
-  return std::max(lvl, auth::Level::None);
 }
 
 std::shared_ptr<Object> Role::Clone() const {

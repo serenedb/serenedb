@@ -99,11 +99,6 @@ void FormatGroup(std::string& out, const OptionGroup& group, int indent) {
           absl::StrAppend(
             &out, " [default: ", std::get<double>(opt.default_value), "]");
           break;
-        case OptionInfo::Type::Enum:
-          absl::StrAppend(
-            &out, " [default: ", std::get<std::string_view>(opt.default_value),
-            ", values: ", absl::StrJoin(opt.enum_values, ", "), "]");
-          break;
       }
     }
     absl::StrAppend(&out, " - ", opt.description, "\n");

@@ -43,12 +43,17 @@ using persistence::TableData;
 Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
              std::vector<Column> columns, std::vector<Column::Id> pk_columns,
              std::vector<CheckConstraint> check_constraints,
-             ObjectId generated_pk_seq_id)
+             ObjectId generated_pk_seq_id, TableEngine engine,
+             std::vector<std::vector<Column::Id>> unique_constraints,
+             std::vector<TableForeignKey> foreign_keys)
   : Object{schema_id, id, std::string{name}, ObjectType::Table},
     _columns{std::move(columns)},
     _pk_columns{std::move(pk_columns)},
     _check_constraints{std::move(check_constraints)},
-    _generated_pk_seq_id{generated_pk_seq_id} {
+    _generated_pk_seq_id{generated_pk_seq_id},
+    _engine{engine},
+    _unique_constraints{std::move(unique_constraints)},
+    _foreign_keys{std::move(foreign_keys)} {
   for (auto& col : _columns) {
     col.SetParentId(_id);
   }
@@ -64,7 +69,8 @@ std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
   return std::make_shared<Table>(
     ctx.schema_id, ctx.id, data.name, std::move(data.columns),
     std::move(data.pk_columns), std::move(data.check_constraints),
-    data.generated_pk_seq_id);
+    data.generated_pk_seq_id, data.engine, std::move(data.unique_constraints),
+    std::move(data.foreign_keys));
 }
 
 void Table::Serialize(duckdb::Serializer& sink) const {
@@ -74,6 +80,9 @@ void Table::Serialize(duckdb::Serializer& sink) const {
     .pk_columns = _pk_columns,
     .check_constraints = _check_constraints,
     .generated_pk_seq_id = _generated_pk_seq_id,
+    .engine = _engine,
+    .unique_constraints = _unique_constraints,
+    .foreign_keys = _foreign_keys,
   };
   basics::WriteTuple(sink, data);
 }
@@ -147,7 +156,8 @@ Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
 std::shared_ptr<Object> Table::Clone() const {
   auto cloned = std::make_shared<Table>(
     GetParentId(), GetId(), GetName(), _columns, _pk_columns,
-    _check_constraints, _generated_pk_seq_id);
+    _check_constraints, _generated_pk_seq_id, _engine, _unique_constraints,
+    _foreign_keys);
   cloned->SetTombstoned(Tombstoned());
   return cloned;
 }
@@ -172,6 +182,53 @@ std::shared_ptr<Table> Table::DropColumn(Column::Id column_id) const {
   std::erase_if(cloned->_columns,
                 [&](const Column& c) { return c.GetId() == column_id; });
   std::erase(cloned->_pk_columns, column_id);
+  std::erase_if(cloned->_unique_constraints, [&](const auto& cols) {
+    return absl::c_contains(cols, column_id);
+  });
+  std::erase_if(cloned->_foreign_keys, [&](const TableForeignKey& fk) {
+    return absl::c_contains(fk.columns, column_id);
+  });
+  return cloned;
+}
+
+Result Table::AddColumn(std::shared_ptr<Table>& result, Column column,
+                        bool if_not_exists) const {
+  for (const auto& c : _columns) {
+    if (c.GetName() == column.GetName()) {
+      if (if_not_exists) {
+        return {};
+      }
+      return Result{ERROR_SERVER_DUPLICATE_NAME};
+    }
+  }
+  auto new_table = basics::downCast<Table>(Clone());
+  column.SetParentId(new_table->GetId());
+  new_table->_columns.push_back(std::move(column));
+  result = std::move(new_table);
+  return {};
+}
+
+Result Table::ChangeColumnType(std::shared_ptr<Table>& result,
+                               std::string_view column_name,
+                               duckdb::LogicalType new_type) const {
+  auto it = absl::c_find_if(
+    _columns, [&](const Column& c) { return c.GetName() == column_name; });
+  if (it == _columns.end()) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto new_table = basics::downCast<Table>(Clone());
+  new_table->_columns[std::distance(_columns.begin(), it)].type =
+    std::move(new_type);
+  result = std::move(new_table);
+  return {};
+}
+
+std::shared_ptr<Table> Table::DropForeignKeysReferencing(
+  ObjectId referenced_table) const {
+  auto cloned = basics::downCast<Table>(Clone());
+  std::erase_if(cloned->_foreign_keys, [&](const TableForeignKey& fk) {
+    return fk.referenced_table == referenced_table;
+  });
   return cloned;
 }
 

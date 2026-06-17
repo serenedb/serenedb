@@ -29,7 +29,6 @@ set(iresearch-tests_sources
     ./formats/formats_test_case_base.cpp
     ./formats/skip_list_test.cpp
     ./store/directory_test_case.cpp
-    ./store/caching_directory_test.cpp
     ./store/directory_cleaner_tests.cpp
     ./store/memory_index_output_tests.cpp
     ./store/store_utils_tests.cpp

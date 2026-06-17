@@ -8,6 +8,7 @@ services:
     volumes:
       - "${WORKSPACE}:/workspace:ro"
       - "${WORKSPACE}/out/logs:/logs"
+      - "${WORKSPACE}/out/test-tmp:/test-tmp"
     environment:
       - HOME=/tmp
       - TARBALL_NAME
@@ -18,7 +19,7 @@ services:
         mkdir -p /tmp/serenedb &&
         tar -xzf /workspace/$TARBALL_NAME -C /tmp/serenedb --strip-components=1 &&
         exec /tmp/serenedb/usr/bin/serened \
-          --config /tmp/serenedb/etc/serenedb/serened.conf \
+          --flagfile=/tmp/serenedb/etc/serenedb/serened.conf \
           --server_endpoints pgsql+tcp://0.0.0.0:7890 \
       '
 
@@ -31,9 +32,12 @@ services:
       - "${WORKSPACE}/tests/sqllogic:/sqllogic"
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "${WORKSPACE}/out/logs:/logs"
+      - "${WORKSPACE}/out/test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
     environment:
       - HOME=/sqllogic
+      - TMPDIR=/test-tmp
+      - SLT_TEST_DIR_SHARED=1
       - CARGO_HOME=/tmp/cargo
       - CARGO_TARGET_DIR=/cargo-target
     networks:

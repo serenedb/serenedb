@@ -38,11 +38,11 @@ statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body, 9.99::DOUBLE AS price, 'cat-a' AS extra
       UNION ALL SELECT 2, 'anchin reads manga', 19.99::DOUBLE, 'cat-b'
       UNION ALL SELECT 3, 'pudge plays again', 4.50::DOUBLE, 'cat-a')
-TO '/tmp/${__DATABASE__}_view_inc.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/view_inc.parquet' (FORMAT PARQUET);
 
 
 statement ok
-CREATE VIEW pq_inc_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_inc.parquet');
+CREATE VIEW pq_inc_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/view_inc.parquet');
 
 
 statement ok

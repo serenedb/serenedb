@@ -22,6 +22,14 @@ INSERT INTO t1 VALUES (123, 123), (123, 123), (123, 123) ON CONFLICT DO NOTHING;
 statement count 1
 DELETE FROM t1 WHERE a = 123;
 
+onlyif serenedb # native constraint error
+statement error
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+----
+db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
 ----
@@ -29,6 +37,14 @@ db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
 DETAIL: Key (a)=(1) already exists.
 
 
+onlyif serenedb # native constraint error
+statement error
+INSERT INTO t1 VALUES (1, 10), (4, 40), (5, 50);
+----
+db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO t1 VALUES (1, 10), (4, 40), (5, 50);
 ----
@@ -49,6 +65,14 @@ a	b
 4	400
 5	500
 
+onlyif serenedb # native constraint error
+statement error
+INSERT INTO t1 VALUES (100, 100), (100, 100);
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "100"
+
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO t1 VALUES (100, 100), (100, 100);
 ----
@@ -76,6 +100,14 @@ a	b
 1	10
 
 # But still cannot insert into table as values is in transaction
+onlyif serenedb # native constraint error
+statement error
+INSERT INTO t2 VALUES (1, 42);
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1"
+
+
+skipif serenedb # Postgres error
 statement error
 INSERT INTO t2 VALUES (1, 42);
 ----

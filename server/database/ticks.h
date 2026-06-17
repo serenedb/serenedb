@@ -31,6 +31,4 @@ Tick NewTickServer(uint64_t count = 1);
 
 void UpdateTickServer(Tick tick);
 
-Tick GetCurrentTickServer();
-
 }  // namespace sdb

@@ -38,14 +38,13 @@
 #include "catalog/scorer_options.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
-#include "connector/rocksdb_filter.hpp"
 
 namespace irs {
 
 class IndexReader;
 }
 
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
 
@@ -56,11 +55,6 @@ struct SereneDBScanBindData;
 enum class ScanSourceKind : uint8_t {
   FullTable,
   Search,
-  SecondaryIndex,
-  PkPoint,
-  PkRange,
-  SkPoint,
-  SkRange,
 };
 
 struct ScanSource {
@@ -75,11 +69,6 @@ struct ScanSource {
   virtual std::unique_ptr<ScanSource> Clone() const = 0;
 
   bool IsSearchLike() const noexcept { return _kind == ScanSourceKind::Search; }
-
-  bool IsSkLike() const noexcept {
-    return _kind == ScanSourceKind::SecondaryIndex ||
-           _kind == ScanSourceKind::SkPoint || _kind == ScanSourceKind::SkRange;
-  }
 
   template<typename T>
   const T& Cast() const {
@@ -182,67 +171,6 @@ struct SearchScan : ScanSource {
 bool WandEnabled(const catalog::InvertedIndex* index,
                  const std::optional<catalog::ScorerOptions>& scorer);
 
-struct SecondaryIndexScan : ScanSource {
-  SecondaryIndexScan() : ScanSource(ScanSourceKind::SecondaryIndex) {}
-
-  ObjectId shard_id;
-  bool is_unique = false;
-
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-struct PkPointScan : ScanSource {
-  PkPointScan() : ScanSource(ScanSourceKind::PkPoint) {}
-
-  std::vector<catalog::Column::Id> column_ids;  // PK columns in order
-  std::vector<ResolvedPoint> points;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-struct PkRangeScan : ScanSource {
-  PkRangeScan() : ScanSource(ScanSourceKind::PkRange) {}
-
-  std::vector<catalog::Column::Id> column_ids;  // PK columns in order
-  std::vector<ResolvedRange> ranges;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-struct SkPointScan : ScanSource {
-  SkPointScan() : ScanSource(ScanSourceKind::SkPoint) {}
-
-  ObjectId shard_id;
-  bool is_unique = false;
-  std::vector<catalog::Column::Id> column_ids;  // SK columns in order
-  std::vector<ResolvedPoint> points;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
-struct SkRangeScan : ScanSource {
-  SkRangeScan() : ScanSource(ScanSourceKind::SkRange) {}
-
-  ObjectId shard_id;
-  bool is_unique = false;
-  std::vector<catalog::Column::Id> column_ids;  // SK columns in order
-  std::vector<ResolvedRange> ranges;
-
-  void AppendSummary(
-    const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
-  std::unique_ptr<ScanSource> Clone() const final;
-};
-
 enum class ScanEntryKind : uint8_t {
   BaseTable,
   InvertedIndex,
@@ -256,12 +184,6 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   std::vector<catalog::Column::Id> column_ids;
   std::vector<duckdb::LogicalType> column_types;
-  // Set by BindCreateIndex on the underlying LogicalGet's bind data so the
-  // scan-init layer knows it is feeding a CREATE INDEX backfill rather than
-  // a user query. Used to relax the read-side check on sdb_indexonly columns
-  // (the backfill is allowed to project them; for empty/lossless cases it
-  // simply finds no data, which is the intended outcome).
-  bool is_create_index = false;
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
   ScanEntryKind entry_kind = ScanEntryKind::BaseTable;
 
@@ -361,18 +283,6 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
 inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
-
-duckdb::TableFunction CreateTableFullscanFunction();
-
-duckdb::TableFunction CreatePKPointsLookupFunction();
-
-duckdb::TableFunction CreatePKRangesScanFunction();
-
-duckdb::TableFunction CreateSKFullscanFunction();
-
-duckdb::TableFunction CreateSKPointsLookupFunction();
-
-duckdb::TableFunction CreateSKRangesScanFunction();
 
 duckdb::TableFunction CreateIResearchScanFunction();
 

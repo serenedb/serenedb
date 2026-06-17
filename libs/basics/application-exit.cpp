@@ -33,6 +33,4 @@ namespace sdb {
   FatalErrorExitCode(EXIT_FAILURE);
 }
 
-[[noreturn]] void FatalErrorAbort() noexcept { std::abort(); }
-
 }  // namespace sdb

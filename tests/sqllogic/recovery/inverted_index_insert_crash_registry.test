@@ -1,0 +1,100 @@
+control substitution on
+control max-async-connections 5
+
+# Crash after INSERT but before the iresearch commit reaches durability. The
+# inverted index's iresearch storage is attached to the InvertedIndex catalog
+# object. On restart the storage must be re-created at boot from the index
+# definition BEFORE WAL replay, so the post-checkpoint INSERT delta replays into
+# it and search results survive. Then DROP INDEX on the recovered index
+# exercises directory removal on a boot-created storage.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY reg_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE reg_t(a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO reg_t VALUES (1, 'alpha bravo charlie');
+
+statement ok
+CREATE INDEX reg_idx ON reg_t USING inverted(a, b reg_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) reg_t;
+
+query
+SELECT a FROM reg_idx WHERE b @@ ts_phrase('alpha bravo');
+----
+a
+1
+
+# Freeze the iresearch commit; rows land in the WAL but never reach the index
+# in this process.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO reg_t VALUES (2, 'delta echo foxtrot'), (3, 'golf hotel india');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- server restarts here: boot recreates the registry shard, WAL replay
+#     feeds the un-durable delta into it ---
+
+connection reg_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) reg_t;
+
+connection reg_after
+query
+SELECT a FROM reg_idx WHERE b @@ ts_phrase('alpha');
+----
+a
+1
+
+connection reg_after
+query
+SELECT a FROM reg_idx WHERE b @@ ts_phrase('delta echo');
+----
+a
+2
+
+connection reg_after
+query
+SELECT a FROM reg_idx WHERE b @@ ts_phrase('golf hotel');
+----
+a
+3
+
+# Dropping the recovered index removes its registry shard + directory cleanly.
+connection reg_after
+statement ok
+DROP INDEX reg_idx;
+
+connection reg_after
+query
+SELECT COUNT(*) FROM pg_class WHERE relname = 'reg_idx';
+----
+count
+0
+
+connection reg_after
+statement ok
+DROP TABLE reg_t;
+
+connection reg_after
+statement ok
+DROP TEXT SEARCH DICTIONARY reg_dict;

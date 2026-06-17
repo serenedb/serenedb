@@ -53,7 +53,7 @@ QUERY PLAN
 │           Index:          │
 │      wal_geo_src_idx      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │

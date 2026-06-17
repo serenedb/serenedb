@@ -21,36 +21,10 @@
 
 #pragma once
 
-#include <magic_enum/magic_enum.hpp>
-
 #include "basics/containers/flat_hash_map.h"
 
 namespace sdb {
 
 using Tick = uint64_t;
 
-enum class WriteConflictPolicy : uint8_t {
-  EmitError,
-  DoNothing,
-  Replace,
-};
-
 }  // namespace sdb
-namespace magic_enum {
-
-template<>
-[[maybe_unused]] constexpr customize::customize_t
-customize::enum_name<sdb::WriteConflictPolicy>(
-  sdb::WriteConflictPolicy value) noexcept {
-  switch (value) {
-    case sdb::WriteConflictPolicy::EmitError:
-      return "emit_error";
-    case sdb::WriteConflictPolicy::DoNothing:
-      return "do_nothing";
-    case sdb::WriteConflictPolicy::Replace:
-      return "replace";
-  }
-  return default_tag;
-}
-
-}  // namespace magic_enum

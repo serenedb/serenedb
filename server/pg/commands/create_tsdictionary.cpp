@@ -466,7 +466,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string_view prefix,
     const irs::analysis::SparseNGramTokenizer::Options* parent) {
     irs::analysis::SparseNGramTokenizer::Options opts;
-    int parent_len = parent ? parent->max_ngram_length : 0;
+    int parent_len = parent ? static_cast<int>(parent->max_ngram_length) : 0;
     opts.max_ngram_length = Resolve<tokenizer_options::kMaxNgramLength>(
       prefix, parent ? &parent_len : nullptr);
     opts.covering = Resolve<tokenizer_options::kCovering>(
@@ -956,7 +956,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
     std::make_shared<catalog::Tokenizer>(ObjectId{}, ObjectId{}, name, features,
                                          norm_row_group_size, std::move(cfg));
 
-  auto& catalog = catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::GetCatalog();
   auto r = catalog.CreateTokenizer(db_id, schema, std::move(tokenizer));
 
   if (!r.ok() && !if_not_exists) {

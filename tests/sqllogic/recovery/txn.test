@@ -95,7 +95,7 @@ DROP TABLE IF EXISTS t_rr;
 
 
 ###############################################################################
-# 2. Crash before RocksDB commit (crash_before_rocksdb_commit)
+# 2. Crash before RocksDB commit (crash_before_search_commit)
 #    Server crashes during COMMIT, before RocksDB persists.
 #    Data must NOT survive recovery.
 ###############################################################################
@@ -115,7 +115,7 @@ INSERT INTO t_pre_commit VALUES (1, 10);
 # Arm: crash right before rocksdb commit
 connection rr_after
 statement ok
-SET sdb_faults = 'crash_before_rocksdb_commit';
+SET sdb_faults = 'crash_before_search_commit';
 
 connection rr_after
 statement ok
@@ -144,7 +144,7 @@ DROP TABLE t_pre_commit;
 
 
 ###############################################################################
-# 3. Crash after RocksDB commit (crash_after_rocksdb_commit)
+# 3. Crash after RocksDB commit (crash_after_search_commit)
 #    Server crashes during COMMIT, after RocksDB persists.
 #    Data MUST survive recovery.
 ###############################################################################
@@ -164,7 +164,7 @@ INSERT INTO t_post_commit VALUES (1, 10);
 # Arm: crash right after rocksdb commit
 connection rr_pre
 statement ok
-SET sdb_faults = 'crash_after_rocksdb_commit';
+SET sdb_faults = 'crash_after_search_commit';
 
 connection rr_pre
 statement ok

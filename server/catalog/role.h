@@ -61,31 +61,13 @@ class Role final : public catalog::Object {
                                            ReadContext ctx);
 
   std::string_view username() const { return GetName(); }
-  std::string_view passwordMethod() const { return _password_method; }
-  std::string_view passwordSalt() const { return _password_salt; }
-  std::string_view passwordHash() const { return _password_hash; }
   bool isActive() const { return _active; }
 
-  bool checkPassword(std::string_view password) const;
-
-  // Resolve the access level for this database.
-  auth::Level configuredDBAuthLevel(std::string_view database) const;
-
-  // Resolve the access level for this database. Might fall back to
-  // the special '*' entry if the specific database is not found
-  auth::Level databaseAuthLevel(std::string_view database) const;
-
-  void updateId(Identifier id) { _id = id; }
-  void updateName(std::string_view name) { _name = name; }
-  void updatePassword(std::string_view password);
   void updateActive(bool active) { _active = active; }
 
   /// Grant specific access rights for db.
   /// The default "*" is also a valid database name
   void grantDatabase(std::string_view database, auth::Level level);
-
-  /// Removes the entry, returns true if entry existed
-  bool removeDatabase(std::string_view database);
 
  private:
   Role(ObjectId id, std::string_view name);

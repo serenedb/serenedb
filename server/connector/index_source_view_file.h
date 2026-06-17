@@ -21,21 +21,14 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/common/types/vector_cache.hpp>
-#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <span>
-#include <string_view>
-#include <vector>
 
-#include "catalog/table_options.h"
-#include "connector/index_source.h"
-#include "connector/view_fast_path.h"
+#include "connector/index_source_view.h"
 
 namespace sdb::connector {
 
-class ViewFileIndexSourceBase : public IndexSource {
+class ViewFileIndexSourceBase : public ViewIndexSourceBase {
  protected:
   ViewFileIndexSourceBase(duckdb::ClientContext& context,
                           ViewFastPath fast_path,
@@ -43,30 +36,9 @@ class ViewFileIndexSourceBase : public IndexSource {
                           std::span<const duckdb::LogicalType> projected_types,
                           std::span<const catalog::Column::Id> bind_column_ids);
 
-  ViewFastPath _fast_path;
   duckdb::TableFunction _lookup_func;
   duckdb::unique_ptr<duckdb::FunctionData> _bind_data;
   duckdb::vector<duckdb::ColumnIndex> _column_indexes;
-  std::vector<duckdb::idx_t> _real_proj_slots;
-  duckdb::vector<duckdb::LogicalType> _scratch_types;
-  duckdb::vector<duckdb::LogicalType> _projected_types;
-  // nullptr when scratch and projected types match.
-  std::vector<duckdb::unique_ptr<duckdb::ExpressionExecutor>> _cast_executors;
-  // ExpressionExecutor holds the Expression by ref, must outlive it.
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> _cast_expressions;
-
-  // Per-column alias to where the TF should write. Matching columns alias
-  // output directly so the TF's writes land in the caller's buffer; cast
-  // columns keep their own (file-typed) buffer that we cast at end of call.
-  duckdb::DataChunk _tf_target;
-
-  // Sort scratch reused per call. Sorting goes through these instead of the
-  // caller's PrimaryKeyBatch because ANN / range scans persist their batch
-  // across many slices and mutating it would break later slices.
-  std::vector<duckdb::idx_t> _sort_perm;
-  std::vector<int64_t> _sorted_rows;
-  std::vector<int64_t> _sorted_files;
-  std::vector<duckdb::idx_t> _output_positions;
 };
 
 class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
@@ -80,9 +52,10 @@ class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
   PrimaryKeyBatch CreatePkBatch() const final {
     return PrimaryKeyBatch{std::in_place_type<PrimaryKeyI64>};
   }
-  void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
-                   duckdb::idx_t start, duckdb::idx_t count,
-                   duckdb::DataChunk& output) final;
+  duckdb::idx_t Materialize(duckdb::ClientContext& context,
+                            PrimaryKeyBatch& batch, duckdb::idx_t start,
+                            duckdb::idx_t count,
+                            duckdb::DataChunk& output) final;
 
  private:
   duckdb::unique_ptr<duckdb::GlobalTableFunctionState> _lookup_gstate;
@@ -99,9 +72,10 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
   PrimaryKeyBatch CreatePkBatch() const final {
     return PrimaryKeyBatch{std::in_place_type<PrimaryKeyI64I64>};
   }
-  void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
-                   duckdb::idx_t start, duckdb::idx_t count,
-                   duckdb::DataChunk& output) final;
+  duckdb::idx_t Materialize(duckdb::ClientContext& context,
+                            PrimaryKeyBatch& batch, duckdb::idx_t start,
+                            duckdb::idx_t count,
+                            duckdb::DataChunk& output) final;
 
  private:
   // Per-file lookup state, built lazily on first hit and reused across batches.

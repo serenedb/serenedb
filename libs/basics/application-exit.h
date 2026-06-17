@@ -27,6 +27,4 @@ namespace sdb {
 
 [[noreturn]] void FatalErrorExit() noexcept;
 
-[[noreturn]] void FatalErrorAbort() noexcept;
-
 }  // namespace sdb

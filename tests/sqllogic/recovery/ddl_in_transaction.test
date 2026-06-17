@@ -1,0 +1,127 @@
+# ----------------------------------------------------------------------
+# DDL inside explicit transaction blocks.
+#
+# Default: DDL is statement-committed -- it survives ROLLBACK (a NOTICE is
+# emitted), while DML in the same transaction rolls back normally.
+# With sdb_strict_ddl enabled, DDL inside a transaction block fails with
+# SQLSTATE 25001 instead.
+#
+# Hosted under recovery/ because the SET GLOBAL case below mutates a global
+# setting; each test here runs against its own serened instance, so other
+# parallel test sessions can't inherit it.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE ddl_txn_t1(id INTEGER PRIMARY KEY, v INTEGER);
+
+
+# Pre-existing limitation (also on main): the transaction's pinned catalog
+# snapshot predates the CREATE, so the new table is not visible inside the
+# same transaction block.
+statement error
+INSERT INTO ddl_txn_t1 VALUES (1, 10);
+----
+db error: ERROR: Table with name ddl_txn_t1 does not exist!
+<slt:ignore>
+
+
+statement ok
+ROLLBACK;
+
+
+# The CREATE survived the rollback.
+query
+SELECT count(*) FROM ddl_txn_t1;
+----
+count
+0
+
+
+statement ok
+INSERT INTO ddl_txn_t1 VALUES (1, 10);
+
+
+query
+SELECT count(*) FROM ddl_txn_t1;
+----
+count
+1
+
+
+statement ok
+SET sdb_strict_ddl = true;
+
+
+statement ok
+BEGIN;
+
+
+statement error
+CREATE TABLE ddl_txn_t2(id INTEGER);
+----
+db error: ERROR: DDL statements are not supported inside a transaction block: DDL commits immediately and cannot be rolled back (sdb_strict_ddl is enabled)
+
+
+statement ok
+ROLLBACK;
+
+
+statement error
+SELECT count(*) FROM ddl_txn_t2;
+----
+db error: ERROR: Table with name ddl_txn_t2 does not exist!
+<slt:ignore>
+
+
+# DROP is DDL too.
+statement ok
+BEGIN;
+
+
+statement error
+DROP TABLE ddl_txn_t1;
+----
+db error: ERROR: DDL statements are not supported inside a transaction block: DDL commits immediately and cannot be rolled back (sdb_strict_ddl is enabled)
+
+
+statement ok
+ROLLBACK;
+
+
+# Autocommit DDL is unaffected by strict mode.
+statement ok
+CREATE TABLE ddl_txn_t3(id INTEGER);
+
+
+statement ok
+SET sdb_strict_ddl = false;
+
+
+# GLOBAL scope: a fresh connection inherits strictness.
+statement ok
+SET GLOBAL sdb_strict_ddl = true;
+
+
+connection strict_global
+statement ok
+BEGIN;
+
+
+connection strict_global
+statement error
+CREATE TABLE ddl_txn_t4(id INTEGER);
+----
+db error: ERROR: DDL statements are not supported inside a transaction block: DDL commits immediately and cannot be rolled back (sdb_strict_ddl is enabled)
+
+
+connection strict_global
+statement ok
+ROLLBACK;
+
+
+statement ok
+SET GLOBAL sdb_strict_ddl = false;

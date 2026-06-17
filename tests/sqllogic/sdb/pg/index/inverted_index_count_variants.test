@@ -136,7 +136,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │       Index: ct_idx       │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │       Projections: x      │
 │                           │
 │          ~5 rows          │

@@ -69,9 +69,10 @@ QUERY PLAN
 │          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │   Table: variant_values   │
+│   Type: Sequential Scan   │
 │       Projections: x      │
 │                           │
 │          ~4 rows          │
@@ -101,9 +102,10 @@ QUERY PLAN
 │          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │   Table: variant_values   │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
@@ -128,9 +130,10 @@ EXPLAIN SELECT id FROM variant_values;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │   Table: variant_values   │
+│   Type: Sequential Scan   │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -171,11 +174,12 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: variant_pk     │
-│       Filter: (id=2)      │
+│   Type: Sequential Scan   │
 │       Projections: x      │
+│     Filters: (id = 2)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -201,14 +205,16 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: variant_pk     │
-│       Filter: (id=3)      │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │             id            │
 │             x             │
+│                           │
+│     Filters: (id = 3)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘
@@ -226,11 +232,12 @@ EXPLAIN SELECT id FROM variant_pk WHERE id = 1;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│  ROCKSDB_PK_POINTS_LOOKUP │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │     Table: variant_pk     │
-│       Filter: (id=1)      │
+│   Type: Sequential Scan   │
 │      Projections: id      │
+│     Filters: (id = 1)     │
 │                           │
 │           ~1 row          │
 └───────────────────────────┘

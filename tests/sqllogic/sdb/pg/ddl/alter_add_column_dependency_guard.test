@@ -1,0 +1,96 @@
+# GUARD TEST -- documents a latent catalog invariant, not a feature.
+#
+# Catalog ReplaceObject does NOT reconcile the per-Column entries in
+# Snapshot::_objects after ALTER ADD COLUMN. So IF a dependency edge keyed by a
+# newly-added column id ever persisted, a later DROP ... CASCADE would walk to
+# that column id and hit SDB_ASSERT(col) -- the column entry would be missing
+# from _objects.
+#
+# That path is UNREACHABLE today because every dependency-bearing ADD COLUMN is
+# rejected before the edge can persist: a volatile column DEFAULT such as
+# nextval('seq') is refused, so no sequence dependency is recorded and
+# DROP SEQUENCE ... RESTRICT is not blocked.
+#
+# This test PINS that current behavior. If a future change starts persisting the
+# default-dependency edge keyed by the new column id, DROP SEQUENCE ... RESTRICT
+# below would begin to FAIL (blocked by the dependency) and trip this test --
+# flagging that catalog ReplaceObject must reconcile Snapshot::_objects
+# (mirroring AddDependencies) or DROP ... CASCADE will hit SDB_ASSERT(col).
+#
+# Observed engine divergence on the rejected ALTER: the simple-query path errors
+# with "Referenced update column c not found in table!" (and leaves the wire
+# session in an aborted transaction -- cleared by the ROLLBACK below); the
+# extended path rejects it earlier with "Cannot prepare multiple statements at
+# once!" (the sequence-backed default decomposes into ALTER + a backfill). Both
+# outcomes mean no dependency edge is recorded -- the load-bearing fact here.
+
+statement ok
+CREATE SEQUENCE s;
+
+
+statement ok
+CREATE TABLE t(id INT);
+
+
+# ALTER ADD COLUMN with a sequence-backed DEFAULT is rejected; no
+# default-dependency edge keyed by the new column id is ever recorded.
+statement error (?i)referenced update column|multiple statements
+ALTER TABLE t ADD COLUMN c INT DEFAULT nextval('s');
+
+
+# Clear the aborted-transaction state the simple-query error leaves behind
+# (no-op on the extended path, which has no open transaction).
+statement ok
+ROLLBACK;
+
+
+# No dependency edge was recorded, so RESTRICT does NOT block the drop. This is
+# the load-bearing assertion: if it ever starts failing, the _objects
+# reconciliation gap above has become reachable.
+statement ok
+DROP SEQUENCE s RESTRICT;
+
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 's';
+----
+count
+0
+
+
+statement ok
+DROP TABLE t;
+
+
+# Fresh setup: DROP SEQUENCE ... CASCADE must not crash / assert even after the
+# same rejected dependency-bearing ADD COLUMN.
+statement ok
+CREATE SEQUENCE sc;
+
+
+statement ok
+CREATE TABLE tc(id INT);
+
+
+statement error (?i)referenced update column|multiple statements
+ALTER TABLE tc ADD COLUMN c INT DEFAULT nextval('sc');
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+DROP SEQUENCE sc CASCADE;
+
+
+# Server is alive and the table survived the cascade.
+query
+SELECT count(*) FROM pg_class WHERE relname IN ('sc', 'tc');
+----
+count
+1
+
+
+statement ok
+DROP TABLE tc;

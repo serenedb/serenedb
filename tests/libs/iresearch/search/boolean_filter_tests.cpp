@@ -22,7 +22,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "filter_test_case_base.hpp"
-#include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/all_filter.hpp"

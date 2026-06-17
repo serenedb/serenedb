@@ -34,14 +34,4 @@ bool DuckDBSearchSinkInsertWriter::SwitchColumn(
   return false;
 }
 
-bool DuckDBSearchSinkUpdateWriter::SwitchColumn(
-  const ColumnDescriptor& col, const duckdb::Vector& vec,
-  std::span<const std::string_view> row_keys, duckdb::idx_t count) {
-  if (IsIndexed(col.id)) {
-    SwitchFieldImpl(static_cast<irs::field_id>(col.id), col.type, vec, row_keys,
-                    count);
-  }
-  return false;
-}
-
 }  // namespace sdb::connector

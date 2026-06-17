@@ -26,7 +26,6 @@
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
-#include "iresearch/index/column_finalizer.hpp"
 #include "iresearch/index/column_info.hpp"
 
 namespace duckdb {

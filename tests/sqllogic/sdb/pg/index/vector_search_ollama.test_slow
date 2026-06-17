@@ -110,7 +110,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │   Index: docs_ann (ANN)   │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 3          │
 │         Dims: 384         │
 │                           │

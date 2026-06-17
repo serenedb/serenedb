@@ -55,14 +55,6 @@ enum class State : uint8_t {
   ErrorRecovery,
 };
 
-inline constexpr std::string_view kZero{"", 1};
-
-inline constexpr std::string_view kAnonymObject{""};
-
-inline constexpr std::array<char, 5> kCopyDone{
-  'c', 0x00, 0x00, 0x00, 0x04,
-};
-
 using BufferView = std::string_view;
 
 template<size_t N>

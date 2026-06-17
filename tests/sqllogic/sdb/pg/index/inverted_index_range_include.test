@@ -88,7 +88,7 @@ QUERY PLAN
 │           Index:          │
 │   vec_r_idx (ANN range)   │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │      Radius: 1.000000     │
 │          Dims: 3          │
 │                           │

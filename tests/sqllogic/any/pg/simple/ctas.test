@@ -185,7 +185,7 @@ EXPLAIN CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x)
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│    SDB_CREATE_TABLE_AS    │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │      GENERATE_SERIES      │
@@ -232,7 +232,7 @@ EXPLAIN ANALYZE CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10)
 <slt:ignore>
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         EXTENSION         │
+│      CREATE_TABLE_AS      │
 │    ────────────────────   │
 │                           │
 │           1 row           │

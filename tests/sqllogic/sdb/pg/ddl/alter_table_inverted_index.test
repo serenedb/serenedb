@@ -1,0 +1,168 @@
+# ALTER TABLE on a table that carries an inverted index. The data plane is a
+# DuckDB store table, so ADD / DROP / ALTER COLUMN are delegated to it and kept
+# in sync with the inverted index:
+#   - RENAME column/table/index: the index follows (it keys columns by id).
+#   - ADD COLUMN: index-neutral; a DEFAULT backfills existing rows.
+#   - DROP COLUMN: a column an index covers cascade-drops that index (PG
+#     column->index cascade); a non-indexed column leaves the index intact.
+#   - ALTER COLUMN TYPE: allowed for a non-indexed column; rejected for an
+#     indexed one (the index stores values of the old type -- drop it first).
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ati_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+
+statement ok
+CREATE TABLE ati_t(id INTEGER PRIMARY KEY, body TEXT, tag TEXT, extra INTEGER);
+
+
+statement ok
+CREATE INDEX ati_idx ON ati_t USING inverted(body ati_dict) INCLUDE (extra);
+
+
+statement count 2
+INSERT INTO ati_t VALUES (1, 'alpha bravo', 'x', 10), (2, 'charlie delta', 'y', 20);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ati_t;
+
+
+query
+SELECT id, extra FROM ati_idx WHERE body @@ ts_phrase('alpha');
+----
+id	extra
+1	10
+
+
+# RENAME an indexed column: the index follows; search by the new name works.
+statement ok
+ALTER TABLE ati_t RENAME COLUMN body TO body2;
+
+
+query
+SELECT id, extra FROM ati_idx WHERE body2 @@ ts_phrase('charlie');
+----
+id	extra
+2	20
+
+
+# RENAME an INCLUDE'd column: still projected from the index columnstore.
+statement ok
+ALTER TABLE ati_t RENAME COLUMN extra TO extra2;
+
+
+query
+SELECT id, extra2 FROM ati_idx WHERE body2 @@ ts_phrase('alpha');
+----
+id	extra2
+1	10
+
+
+# ADD COLUMN with a DEFAULT: index-neutral; existing rows backfilled, search
+# still works, and the new column is queryable.
+statement ok
+ALTER TABLE ati_t ADD COLUMN score INTEGER DEFAULT 100;
+
+
+query
+SELECT id, extra2 FROM ati_idx WHERE body2 @@ ts_phrase('charlie');
+----
+id	extra2
+2	20
+
+
+query
+SELECT id, score FROM ati_t ORDER BY id;
+----
+id	score
+1	100
+2	100
+
+
+# RENAME the table: the index follows it, and DML after the rename still syncs.
+statement ok
+ALTER TABLE ati_t RENAME TO ati_t2;
+
+
+statement count 1
+INSERT INTO ati_t2 VALUES (3, 'echo foxtrot', 'z', 30, 100);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ati_t2;
+
+
+query
+SELECT id, extra2 FROM ati_idx WHERE body2 @@ ts_phrase('echo');
+----
+id	extra2
+3	30
+
+
+# RENAME the inverted index itself.
+statement ok
+ALTER INDEX ati_idx RENAME TO ati_idx2;
+
+
+query
+SELECT id FROM ati_idx2 WHERE body2 @@ ts_phrase('alpha');
+----
+id
+1
+
+
+# DROP a non-indexed column: the index is unaffected.
+statement ok
+ALTER TABLE ati_t2 DROP COLUMN tag;
+
+
+query
+SELECT id FROM ati_idx2 WHERE body2 @@ ts_phrase('delta');
+----
+id
+2
+
+
+# ALTER COLUMN TYPE of a non-indexed column.
+statement ok
+ALTER TABLE ati_t2 ALTER COLUMN score TYPE BIGINT;
+
+
+# ALTER COLUMN TYPE of an indexed column is rejected (drop the index first).
+statement error
+ALTER TABLE ati_t2 ALTER COLUMN body2 TYPE VARCHAR(100);
+----
+db error: ERROR: cannot alter type of column "body2" because index "ati_idx2" depends on it; drop the index first
+
+
+# DROP the indexed column: the inverted index covering it is cascade-dropped.
+statement ok
+ALTER TABLE ati_t2 DROP COLUMN body2;
+
+
+# The index is gone; the table itself survives and stays queryable.
+statement error
+SELECT id FROM ati_idx2;
+----
+db error: ERROR: Table with name ati_idx2 does not exist!<slt:ignore>
+
+
+query
+SELECT id, extra2, score FROM ati_t2 ORDER BY id;
+----
+id	extra2	score
+1	10	100
+2	20	100
+3	30	100
+
+
+statement ok
+DROP TABLE ati_t2;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ati_dict;

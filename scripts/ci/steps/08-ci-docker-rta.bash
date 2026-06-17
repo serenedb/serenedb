@@ -14,6 +14,7 @@ fi
 
 echo "=== Docker RTA: ${DOCKER_TEST_IMAGE} ==="
 mkdir -p "${WORKSPACE}/out/logs"
+mkdir -p "${WORKSPACE}/out/test-tmp"
 
 export DOCKER_UID="$(id -u)"
 export DOCKER_GID="$(id -g)"

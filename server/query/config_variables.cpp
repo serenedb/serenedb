@@ -179,32 +179,12 @@ constexpr std::pair<std::string_view, VariableDescription>
     // / disabled_log_types / logging_storage / logging_mode. The previous
     // sdb_log_level extension option was dropped in favour of those.
     {
-      "sdb_write_conflict_policy",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the write conflict policy. Valid values are "
-        "'emit_error' (the default), 'do_nothing' (skip conflicted rows) and "
-        "'replace'.",
-        [] { return duckdb::Value{"emit_error"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (!magic_enum::enum_cast<WriteConflictPolicy>(
-                 value.ToString(), magic_enum::case_insensitive)
-                 .has_value()) {
-            throw duckdb::InvalidInputException(
-              "invalid value for parameter \"sdb_write_conflict_policy\": "
-              "\"%s\"",
-              value.ToString());
-          }
-        },
-      },
-    },
-    {
-      "sdb_read_your_own_writes",
+      "sdb_strict_ddl",
       {
         LogicalTypeId::BOOLEAN,
-        "Controls whether queries can see uncommitted writes from the current "
-        "transaction.",
-        [] { return duckdb::Value::BOOLEAN(true); },
+        "When enabled, DDL inside a transaction block fails instead of "
+        "committing immediately (DDL is not transactional).",
+        [] { return duckdb::Value::BOOLEAN(false); },
       },
     },
     {

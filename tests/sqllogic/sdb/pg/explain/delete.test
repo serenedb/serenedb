@@ -7,9 +7,10 @@ EXPLAIN select * from t;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │          Table: t         │
+│   Type: Sequential Scan   │
 │                           │
 │        Projections:       │
 │          column1          │
@@ -24,25 +25,10 @@ EXPLAIN delete from t where column2 = 42;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│       (column2 = 42)      │
-│                           │
-│          ~0 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
-│    ────────────────────   │
-│          Table: t         │
-│                           │
-│        Projections:       │
-│          column2          │
-│          column1          │
-│                           │
-│          ~0 rows          │
+│        EMPTY_RESULT       │
 └───────────────────────────┘
 
 
@@ -51,13 +37,13 @@ EXPLAIN delete from t;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         EXTENSION         │
+│           DELETE          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │          Table: t         │
-│    Projections: column1   │
+│   Type: Sequential Scan   │
 │                           │
 │          ~0 rows          │
 └───────────────────────────┘

@@ -25,7 +25,7 @@
 
 namespace sdb::connector {
 
-// Index entry for SereneDB indexes (secondary RocksDB-sorted-column indexes
+// Index entry for SereneDB indexes (secondary indexes
 // and inverted iresearch indexes).  Exists primarily so DuckDB recognises
 // the index name during DROP INDEX and routes to our DropObject.
 class SereneDBIndexEntry final : public duckdb::IndexCatalogEntry {

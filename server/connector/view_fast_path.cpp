@@ -44,6 +44,7 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
 
+#include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
 #include "connector/duckdb_table_entry.h"
@@ -59,6 +60,7 @@ TableFunction MakeCSVLookupTableFunction();
 TableFunction MakeJSONLookupTableFunction();
 TableFunction MakeJSONObjectsLookupTableFunction();
 TableFunction MakeTextLookupTableFunction();
+TableFunction MakeDuckDBLookupTableFunction();
 
 }  // namespace duckdb
 namespace sdb::connector {
@@ -121,6 +123,12 @@ const RegistryEntry kRegistry[] = {
     .single_pk_spec = catalog::PkSpec::FileRowNumber,
     .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
     .make_lookup = duckdb::MakeTextLookupTableFunction,
+  },
+  {
+    .function_name = "read_duckdb",
+    .single_pk_spec = catalog::PkSpec::DuckDBRowId,
+    .glob_pk_spec = catalog::PkSpec::FileIndexPlusDuckDBRowId,
+    .make_lookup = duckdb::MakeDuckDBLookupTableFunction,
   },
   // TODO: read_avro, postgres_scan / postgres_query.
 };
@@ -267,6 +275,21 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.pk_spec = registry_entry->glob_pk_spec;
       return out;
     }
+    if (cat_type == "duckdb") {
+      auto& src_catalog = entry.ParentCatalog();
+      if (src_catalog.IsSystemCatalog() || src_catalog.IsTemporaryCatalog() ||
+          src_catalog.InMemory()) {
+        return std::nullopt;
+      }
+      ViewFastPath out;
+      out.function_name = "read_duckdb";
+      out.catalog_ref = CatalogTableRef{.catalog = src_catalog.GetName(),
+                                        .schema = entry.ParentSchema().name,
+                                        .table = entry.name};
+      out.projection_columns = std::move(projection_columns);
+      out.pk_spec = catalog::PkSpec::DuckDBRowId;
+      return out;
+    }
     if (cat_type == "serenedb") {
       const auto* sdb_entry = dynamic_cast<const SereneDBTableEntry*>(&entry);
       if (!sdb_entry) {
@@ -276,11 +299,16 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       if (!sdb_table) {
         return std::nullopt;
       }
+      // The table's rows live in the hidden store table; views over it ride
+      // the same rowid-keyed machinery as views over attached databases.
       ViewFastPath out;
-      out.pk_spec = sdb_table->PKColumns().empty()
-                      ? catalog::PkSpec::RocksDBGeneratedRowId
-                      : catalog::PkSpec::RocksDBExplicitPK;
-      out.base_table = std::move(sdb_table);
+      out.catalog_ref =
+        CatalogTableRef{.catalog = std::string{catalog::kStoreDatabaseName},
+                        .schema = "main",
+                        .table = catalog::StoreTableName(
+                          entry.ParentCatalog().GetName(),
+                          entry.ParentSchema().name, entry.name)};
+      out.pk_spec = catalog::PkSpec::DuckDBRowId;
       out.projection_columns = std::move(projection_columns);
       return out;
     }
@@ -411,24 +439,12 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 }
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
-  if (fp.pk_spec == catalog::PkSpec::RocksDBExplicitPK) {
-    SDB_ASSERT(fp.base_table);
-    const auto& base_cols = fp.base_table->Columns();
-    const auto& pk_ids = fp.base_table->PKColumns();
-    std::vector<duckdb::column_t> result;
-    result.reserve(pk_ids.size());
-    for (auto pk_id : pk_ids) {
-      for (size_t i = 0; i < base_cols.size(); ++i) {
-        if (base_cols[i].GetId() == pk_id) {
-          result.push_back(static_cast<duckdb::column_t>(i));
-          break;
-        }
-      }
-    }
-    return result;
+  if (fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
+    return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
-  if (fp.pk_spec == catalog::PkSpec::RocksDBGeneratedRowId) {
-    return {kColumnIdentifierGeneratedPk};
+  if (fp.pk_spec == catalog::PkSpec::FileIndexPlusDuckDBRowId) {
+    return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
+            duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
   if (catalog::IsGlobPK(fp.pk_spec)) {
     return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
@@ -438,7 +454,6 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
 }
 
 duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp) {
-  SDB_ASSERT(!catalog::IsRocksPK(fp.pk_spec));
   const auto* entry = LookupRegistry(fp.function_name);
   SDB_ENSURE(entry, ERROR_INTERNAL,
              "fast-path classification missing for function ",
@@ -462,7 +477,6 @@ void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept {
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
-  SDB_ASSERT(!catalog::IsRocksPK(fp.pk_spec));
   if (fp.catalog_ref) {
     auto& entry =
       duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
@@ -553,9 +567,6 @@ int64_t ExtractIcebergSnapshotId(duckdb::FunctionData& bind_data) noexcept {
 }
 
 std::string FormatLookupLabel(const ViewFastPath& fp) {
-  if (catalog::IsRocksPK(fp.pk_spec)) {
-    return "rocksdb";
-  }
   if (fp.function_name == "iceberg_scan") {
     return "iceberg";
   }

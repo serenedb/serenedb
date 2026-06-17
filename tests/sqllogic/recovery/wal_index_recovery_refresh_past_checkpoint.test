@@ -1,0 +1,155 @@
+control substitution on
+
+# THE CRITICAL GUARD for the exact durable WAL cursor.
+#
+# A checkpoint truncates the store WAL and starts a fresh generation. A later
+# refresh makes a post-checkpoint batch durable in the iresearch segments and
+# stamps the durable cursor in that SAME generation -- so on recovery the cursor
+# generation matches the loaded checkpoint iteration and the refreshed rows are
+# claimed (skipped) by exact byte offset. Then an un-refreshed tail is written
+# and the server crashes. Recovery replays only the tail; the refreshed rows are
+# served from the segments. Exact counts, no duplicates, no missing rows.
+#
+# If the durable cursor stamps the wrong generation (the pre-fix off-by-one: the
+# refresh stamped GetCheckpointIteration() while the checkpoint persisted
+# iteration+1), the generation never matches on recovery, durable_offset is
+# forced to 0, and -- with the dedup gone -- the refreshed rows would be replayed
+# AGAIN on top of the durable segments, inflating every count. If the offset
+# over-claims, the tail goes missing. This guard pins both.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rpc_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE rpc_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX rpc_idx ON rpc_t USING inverted(id, body rpc_dict);
+
+# Seed batch, then checkpoint -> truncates the store WAL and bumps the
+# checkpoint iteration; the post-checkpoint WAL starts fresh.
+statement ok
+INSERT INTO rpc_t SELECT i, 'seed_' || i FROM range(0, 1000) AS t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rpc_t;
+
+statement ok
+CHECKPOINT;
+
+# Post-checkpoint batch, made durable in the segments by a refresh that stamps
+# the durable cursor in the NEW generation past the checkpoint baseline.
+statement ok
+INSERT INTO rpc_t SELECT i, 'mid_' || i FROM range(1000, 3000) AS t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rpc_t;
+
+query
+SELECT COUNT(*) FROM rpc_idx;
+----
+count
+3000
+
+# Un-refreshed tail: index commits suppressed so it lives only in the store WAL
+# (post-refresh, never durable in the segments). Recovery must replay it once.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO rpc_t SELECT i, 'tail_' || i FROM range(3000, 3500) AS t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection rpc_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) rpc_t;
+
+connection rpc_after
+query
+SELECT COUNT(*) FROM rpc_t;
+----
+count
+3500
+
+# Exact count: the refreshed rows are claimed by the durable cursor (not
+# re-replayed), the tail is replayed exactly once. No duplicates, none missing.
+connection rpc_after
+query
+SELECT COUNT(*) FROM rpc_idx;
+----
+count
+3500
+
+# Seed batch (durable before the checkpoint) still searchable.
+connection rpc_after
+query
+SELECT id FROM rpc_idx WHERE body @@ ts_phrase('seed_0');
+----
+id
+0
+
+# Post-checkpoint refreshed batch served from the segments.
+connection rpc_after
+query
+SELECT id FROM rpc_idx WHERE body @@ ts_phrase('mid_1000');
+----
+id
+1000
+
+connection rpc_after
+query
+SELECT id FROM rpc_idx WHERE body @@ ts_phrase('mid_2999');
+----
+id
+2999
+
+# Un-refreshed tail replayed from the WAL.
+connection rpc_after
+query
+SELECT id FROM rpc_idx WHERE body @@ ts_phrase('tail_3000');
+----
+id
+3000
+
+connection rpc_after
+query
+SELECT id FROM rpc_idx WHERE body @@ ts_phrase('tail_3499');
+----
+id
+3499
+
+# A refreshed row must appear exactly once (no duplicate posting from a
+# re-replay of the durable batch).
+connection rpc_after
+query
+SELECT COUNT(*) FROM rpc_idx WHERE body @@ ts_phrase('mid_1500');
+----
+count
+1
+
+connection rpc_after
+statement ok
+DROP INDEX rpc_idx;
+
+connection rpc_after
+statement ok
+DROP TABLE rpc_t;
+
+connection rpc_after
+statement ok
+DROP TEXT SEARCH DICTIONARY rpc_dict;

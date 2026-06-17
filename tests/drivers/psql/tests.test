@@ -966,6 +966,18 @@ skipif postgres
 ----
 > \copy: arguments required
 
+# COPY FROM STDIN over the wire: every CopyData row must land exactly once
+# (regression: the copy-in stream replay used to re-serve a handle's own
+# bytes and double every row).
+create table {schema}.copyin_t (x int);<NL>\copy {schema}.copyin_t from stdin<NL>1<NL>2<NL>3<NL>\.<NL>select count(*) as n, count(distinct x) as d from {schema}.copyin_t;<NL>drop table {schema}.copyin_t;
+----
+> +---+---+
+> | n | d |
+> +---+---+
+> | 3 | 3 |
+> +---+---+
+> (1 row)
+
 \lo
 ----
 > invalid command \lo
@@ -1140,7 +1152,7 @@ skipif postgres
 > +------+-------+---------+-------------+
 > (0 rows)
 
-# serened access methods: rocksdb/iresearch back tables;
+# serened access methods: iresearch backs tables;
 # secondary/inverted back indexes (server/catalog/object.h). PG ships
 # heap/btree/gin/... -- entirely different storage layer.
 skipif postgres
@@ -1152,10 +1164,9 @@ skipif postgres
 > +-----------+-------+
 > | inverted  | Index |
 > | iresearch | Table |
-> | rocksdb   | Table |
 > | secondary | Index |
 > +-----------+-------+
-> (4 rows)
+> (3 rows)
 
 # serened's pg_opclass surfaces the `hnsw` builtin (inverted AM, FLOAT[])
 # plus every CREATE TEXT SEARCH DICTIONARY as an inverted-AM opclass.

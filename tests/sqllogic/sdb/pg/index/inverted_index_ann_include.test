@@ -105,7 +105,7 @@ QUERY PLAN
 │           Index:          │
 │      vec_t_idx (ANN)      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 1          │
 │          Dims: 3          │
 │                           │

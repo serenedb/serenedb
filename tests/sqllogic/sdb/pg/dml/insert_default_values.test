@@ -1,0 +1,53 @@
+# INSERT with an omitted column / explicit DEFAULT into an inverted-indexed
+# table: the DEFAULT value must be materialized into the INCLUDE columnstore
+# and returned by an index scan. The DEFAULT-expansion bind path differs from
+# explicit VALUES, so the indexed write must still see the filled-in value.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY idv_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+
+statement ok
+CREATE TABLE idv(id INTEGER PRIMARY KEY, body TEXT, n INTEGER DEFAULT 42);
+
+
+statement ok
+CREATE INDEX idv_idx ON idv USING inverted(body idv_dict, n included());
+
+
+# Omitted trailing column -> DEFAULT fills n.
+statement ok
+INSERT INTO idv(id, body) VALUES (1, 'hello world');
+
+
+# Explicit DEFAULT marker -> same default path.
+statement ok
+INSERT INTO idv VALUES (2, 'goodbye moon', DEFAULT);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) idv;
+
+
+query
+SELECT id, n FROM idv_idx WHERE body @@ ts_phrase('hello world');
+----
+id n
+1 42
+
+
+query
+SELECT id, n FROM idv_idx WHERE body @@ ts_phrase('goodbye moon');
+----
+id n
+2 42
+
+
+statement ok
+DROP TABLE idv;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY idv_dict;

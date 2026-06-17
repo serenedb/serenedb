@@ -1,0 +1,87 @@
+control substitution on
+control max-async-connections 5
+
+# Crash mid CREATE INVERTED INDEX, after the build but before the tombstone is
+# removed. The index lives in the catalog under its dropped (tombstoned) name
+# and its iresearch storage is attached to the immutable InvertedIndex catalog
+# object. On restart the half-created index must be dropped (boot drop-task:
+# storage re-opened at bind, then directory removal) and the table must stay
+# usable and re-indexable. Pins the CREATE-INDEX crash-recovery seam.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cc_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE cc_t(a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO cc_t VALUES (1, 'alpha bravo charlie'), (2, 'delta echo foxtrot');
+
+statement ok
+SET sdb_faults = 'crash_before_remove_tombstone';
+
+statement error connection closed
+CREATE INDEX cc_idx ON cc_t USING inverted(a, b cc_dict);
+
+# --- server restarts here ---
+
+# The half-created index is cleaned up; no such index in the catalog.
+connection cc_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) FROM pg_class WHERE relname = 'cc_idx';
+----
+count
+0
+
+# The base table and its rows survive.
+connection cc_after
+query
+SELECT COUNT(*) FROM cc_t;
+----
+count
+2
+
+# The table is re-indexable -- the registry has no stale shard for the id and
+# the directory was removed, so a fresh CREATE INDEX of the same name succeeds.
+connection cc_after
+statement ok
+RESET sdb_faults;
+
+connection cc_after
+statement ok
+CREATE INDEX cc_idx ON cc_t USING inverted(a, b cc_dict);
+
+connection cc_after
+statement ok
+VACUUM (REFRESH_TABLE) cc_t;
+
+# Both pre-crash rows are searchable through the rebuilt index.
+connection cc_after
+query
+SELECT a, b FROM cc_idx WHERE b @@ ts_phrase('alpha bravo');
+----
+a	b
+1	alpha bravo charlie
+
+connection cc_after
+query
+SELECT a, b FROM cc_idx WHERE b @@ ts_phrase('delta echo');
+----
+a	b
+2	delta echo foxtrot
+
+connection cc_after
+statement ok
+DROP TABLE cc_t;
+
+connection cc_after
+statement ok
+DROP TEXT SEARCH DICTIONARY cc_dict;

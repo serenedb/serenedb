@@ -66,36 +66,6 @@ class ColumnstoreMaterializer {
 
   bool HasAny() const noexcept { return !_bound.empty(); }
 
-  size_t BindingCount() const noexcept { return _bound.size(); }
-  duckdb::idx_t BindingOutputSlot(size_t i) const noexcept {
-    SDB_ASSERT(i < _bound.size());
-    return _bound[i].output_slot;
-  }
-  const irs::ColumnReader& BindingReader(size_t i) const noexcept {
-    SDB_ASSERT(i < _bound.size());
-    return *_bound[i].reader;
-  }
-
-  // Write one binding's slice into `out_vec` starting at `output_start`.
-  // Callers that need an unusual output shape (e.g. score-order's per-binding
-  // Vector, sliced later through a DICTIONARY_VECTOR) go through this.
-  template<typename DocIds>
-  void MaterializeBinding(size_t i, const DocIds& doc_ids,
-                          duckdb::Vector& out_vec,
-                          duckdb::idx_t output_start) const {
-    SDB_ASSERT(i < _bound.size());
-    SDB_IF_FAILURE("SearchIncludeFetchFault") { SDB_THROW(ERROR_DEBUG); }
-    const auto& b = _bound[i];
-    if (b.IsExtract()) {
-      SDB_ASSERT(_context);
-      irs::MaterializeExtractNode(*b.reader, *b.state, doc_ids, b.extract_path,
-                                  b.extract_scan_type, out_vec, output_start,
-                                  *_context);
-      return;
-    }
-    irs::MaterializeNode(*b.reader, *b.state, doc_ids, out_vec, output_start);
-  }
-
   template<typename DocIds>
   void SelectByDocIds(const DocIds& doc_ids, duckdb::DataChunk& output,
                       duckdb::idx_t output_start) const {

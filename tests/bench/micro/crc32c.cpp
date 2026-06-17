@@ -31,10 +31,6 @@
 #include <folly/hash/Checksum.h>
 #endif
 
-#ifdef BENCH_ROCKSDB
-#include <util/crc32c.h>
-#endif
-
 namespace {
 
 std::string TestString(size_t len) {
@@ -64,18 +60,6 @@ void BmCalculateFolly(benchmark::State& state) {
     benchmark::DoNotOptimize(data);
     auto crc = folly::crc32c(reinterpret_cast<const uint8_t*>(data.data()),
                              data.size(), 2);
-    benchmark::DoNotOptimize(crc);
-  }
-}
-#endif
-
-#ifdef BENCH_ROCKSDB
-void BmCalculateRocksDB(benchmark::State& state) {
-  int len = state.range(0);
-  std::string data = TestString(len);
-  for (auto s : state) {
-    benchmark::DoNotOptimize(data);
-    auto crc = rocksdb::crc32c::Extend(2, data.data(), data.size());
     benchmark::DoNotOptimize(crc);
   }
 }
@@ -113,10 +97,6 @@ BENCHMARK(BmCalculateAbseil)->ARGS2;
 
 #ifdef BENCH_FOLLY
 BENCHMARK(BmCalculateFolly)->ARGS2;
-#endif
-
-#ifdef BENCH_ROCKSDB
-BENCHMARK(BmCalculateRocksDB)->ARGS2;
 #endif
 
 }  // namespace

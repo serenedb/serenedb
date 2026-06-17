@@ -38,7 +38,8 @@ query error
 -- Attempting to double these values produces an overflow
 SELECT i + i FROM integers;
 ----
-db error: ERROR: Overflow in addition of INT32 \(1073741824 \+ 1073741824\)!
+db error: ERROR: Overflow in addition of INT32 (1073741824 + 1073741824)!
+
 
 # DOCS_TEST: example_003
 

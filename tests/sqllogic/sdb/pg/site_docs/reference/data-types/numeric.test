@@ -29,25 +29,21 @@ account_id	balance	high_precision
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 -- Create a table with a large numeric
 CREATE TABLE numerics(i) AS
 VALUES (POWER(2, 126)::NUMERIC(38,0));
-----
-db error: ERROR: Unsupported column type for RocksDB serialization: DECIMAL
 
-
-query error
+statement error
 -- This produces an overflow
 SELECT i + i FROM numerics;
 ----
-db error: ERROR: Table with name numerics does not exist!
-Did you mean "<slt:ignore>"?
+db error: ERROR: Overflow in addition of DECIMAL(38) (85070591730234615865843651857942052864 + 85070591730234615865843651857942052864);
 
 
-query error
+query
 -- Using try() returns NULL instead of an error
 SELECT TRY(i + i) FROM numerics;
 ----
-db error: ERROR: Table with name numerics does not exist!
-Did you mean "<slt:ignore>"?
+?column?
+NULL

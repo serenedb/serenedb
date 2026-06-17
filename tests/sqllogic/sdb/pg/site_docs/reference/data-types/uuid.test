@@ -9,12 +9,9 @@ CREATE TABLE users (
     username TEXT
 );
 
-statement error
+statement ok
 -- Insert a record with automatic UUID generation
 INSERT INTO users (username) VALUES ('alice');
-----
-db error: ERROR: Unsupported column type for RocksDB serialization: UUID
-
 
 query
 -- Generate a UUID with timestamp

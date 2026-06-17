@@ -64,10 +64,8 @@ COPY
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 COPY
     (FROM generate_series(100_000))
-    TO 'output-directory'
-    (FORMAT parquet, ROW_GROUP_SIZE 20_000, ROW_GROUPS_PER_FILE 2);
-----
-(?i)Failed to create directory .*
+    TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_tips_example_004_output_directory'
+    (FORMAT parquet, ROW_GROUP_SIZE 20_000, ROW_GROUPS_PER_FILE 2, OVERWRITE);

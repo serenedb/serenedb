@@ -24,6 +24,7 @@ db error: ERROR: Scalar Function with name "current_date" is not in the catalog,
 
 This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
@@ -53,6 +54,7 @@ INSERT INTO master_ducks VALUES
 db error: ERROR: Scalar Function with name "current_date" is not in the catalog, but it exists in the icu extension.
 
 This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
 
 # DOCS_TEST: example_003
 
@@ -86,6 +88,7 @@ db error: ERROR: Scalar Function with name "current_date" is not in the catalog,
 
 This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
@@ -113,6 +116,7 @@ WHERE target.is_current = false
 db error: ERROR: Scalar Function with name "current_date" is not in the catalog, but it exists in the icu extension.
 
 This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
 
 # DOCS_TEST: example_005
 

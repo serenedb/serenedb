@@ -209,6 +209,7 @@ db error: ERROR: unrecognized configuration parameter "hive_partitioning"
 
 Did you mean: "partitioned_write_flush_threshold"
 
+
 # DOCS_TEST: example_008
 
 statement ok

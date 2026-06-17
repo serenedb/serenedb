@@ -47,7 +47,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: fo_score_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -71,7 +71,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: fo_score_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -100,7 +100,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: fo_score_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -124,7 +124,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │             Index: fo_score_idx             │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│
@@ -155,7 +155,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: fo_score_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -179,7 +179,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: fo_score_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -210,7 +210,7 @@ QUERY PLAN
 │           Index:          │
 │      fo_score_ng_idx      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -244,7 +244,7 @@ QUERY PLAN
 │           Index:          │
 │      fo_score_ng_idx      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -278,7 +278,7 @@ QUERY PLAN
 │           Index:          │
 │      fo_score_ng_idx      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -316,7 +316,7 @@ QUERY PLAN
 │           Index:          │
 │      fo_score_ng_idx      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -357,7 +357,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: fo_score_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -383,7 +383,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: fo_score_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -414,7 +414,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │             Index: fo_score_idx             │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│
@@ -441,7 +441,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │             Index: fo_score_idx             │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│
@@ -472,7 +472,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: fo_score_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -500,7 +500,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │             Index: fo_score_idx             │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│
@@ -533,7 +533,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: fo_score_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -557,7 +557,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │             Index: fo_score_idx             │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│
@@ -588,7 +588,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Index: fo_score_idx    │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
@@ -616,7 +616,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │             Index: fo_score_idx             │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│

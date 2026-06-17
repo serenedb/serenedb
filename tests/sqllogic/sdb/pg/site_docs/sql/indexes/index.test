@@ -13,8 +13,8 @@ INSERT INTO my_table SELECT range FROM range(3_000);
 statement error
 UPDATE my_table SET i = i + 1;
 ----
-db error: ERROR: duplicate key value violates unique constraint "my_table_pkey"
-DETAIL: Key (i)=(1) already exists.
+db error: ERROR: Duplicate key "i: 2048" violates primary key constraint.
+
 
 # DOCS_TEST: example_002
 
@@ -66,5 +66,10 @@ CREATE TABLE fk_table (id INTEGER REFERENCES pk_table(id));
 statement ok
 INSERT INTO fk_table VALUES (1);
 
-statement ok
+statement error
 UPDATE pk_table SET payload = ['world'] WHERE id = 1;
+----
+db error: ERROR: Violates foreign key constraint because key "id: 1" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation
+
+
+

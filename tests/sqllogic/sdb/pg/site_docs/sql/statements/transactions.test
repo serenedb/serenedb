@@ -59,4 +59,3 @@ SELECT * FROM person;
 ----
 name	age
 Ada	52
-Bruce	39

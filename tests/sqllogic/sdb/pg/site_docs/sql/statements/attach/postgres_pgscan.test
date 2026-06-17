@@ -82,5 +82,3 @@ DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_shop;
 
 statement ok
 DETACH pg_${__DATABASE__};
-</content>
-</invoke>

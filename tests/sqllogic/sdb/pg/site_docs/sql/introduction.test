@@ -206,14 +206,14 @@ VALUES ('San Francisco', -194.0, 53.0);
 
 # DOCS_TEST_BODY
 
-query
+query ???????? rowsort
 SELECT *
 FROM weather, cities
 WHERE city = name;
 ----
 city	temp_lo	temp_hi	prcp	date	name	lat	lon
-San Francisco	46	50	0.25	1994-11-27	San Francisco	-194	53
 San Francisco	43	57	0	1994-11-29	San Francisco	-194	53
+San Francisco	46	50	0.25	1994-11-27	San Francisco	-194	53
 
 # DOCS_TEST: example_018
 
@@ -226,14 +226,14 @@ VALUES ('San Francisco', -194.0, 53.0);
 
 # DOCS_TEST_BODY
 
-query
+query ??????? rowsort
 SELECT city, temp_lo, temp_hi, prcp, date, lon, lat
 FROM weather, cities
 WHERE city = name;
 ----
 city	temp_lo	temp_hi	prcp	date	lon	lat
-San Francisco	46	50	0.25	1994-11-27	53	-194
 San Francisco	43	57	0	1994-11-29	53	-194
+San Francisco	46	50	0.25	1994-11-27	53	-194
 
 # DOCS_TEST: example_019
 
@@ -246,15 +246,15 @@ VALUES ('San Francisco', -194.0, 53.0);
 
 # DOCS_TEST_BODY
 
-query
+query ??????? rowsort
 SELECT weather.city, weather.temp_lo, weather.temp_hi,
        weather.prcp, weather.date, cities.lon, cities.lat
 FROM weather, cities
 WHERE cities.name = weather.city;
 ----
 city	temp_lo	temp_hi	prcp	date	lon	lat
-San Francisco	46	50	0.25	1994-11-27	53	-194
 San Francisco	43	57	0	1994-11-29	53	-194
+San Francisco	46	50	0.25	1994-11-27	53	-194
 
 # DOCS_TEST: example_020
 
@@ -267,14 +267,14 @@ VALUES ('San Francisco', -194.0, 53.0);
 
 # DOCS_TEST_BODY
 
-query
+query ???????? rowsort
 SELECT *
 FROM weather
 INNER JOIN cities ON weather.city = cities.name;
 ----
 city	temp_lo	temp_hi	prcp	date	name	lat	lon
-San Francisco	46	50	0.25	1994-11-27	San Francisco	-194	53
 San Francisco	43	57	0	1994-11-29	San Francisco	-194	53
+San Francisco	46	50	0.25	1994-11-27	San Francisco	-194	53
 
 # DOCS_TEST: example_021
 
@@ -287,16 +287,16 @@ VALUES ('San Francisco', -194.0, 53.0);
 
 # DOCS_TEST_BODY
 
-query
+query ???????? rowsort
 SELECT *
 FROM weather
 LEFT OUTER JOIN cities ON weather.city = cities.name;
 ----
 city	temp_lo	temp_hi	prcp	date	name	lat	lon
-San Francisco	46	50	0.25	1994-11-27	San Francisco	-194	53
-San Francisco	43	57	0	1994-11-29	San Francisco	-194	53
 Hayward	37	54	NULL	1994-11-29	NULL	NULL	NULL
 Oakland	45	58	0.1	1994-11-30	NULL	NULL	NULL
+San Francisco	43	57	0	1994-11-29	San Francisco	-194	53
+San Francisco	46	50	0.25	1994-11-27	San Francisco	-194	53
 
 # DOCS_TEST: example_022
 

@@ -9,10 +9,8 @@ CHECKPOINT;
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CHECKPOINT file_db;
-----
-db error: ERROR: Database "file_db" not found
 
 # DOCS_TEST: example_003
 

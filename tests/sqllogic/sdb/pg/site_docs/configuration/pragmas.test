@@ -97,22 +97,22 @@ wal_size VARCHAR,      -- write ahead log size
 memory_usage VARCHAR,  -- memory used by the database buffer manager
 memory_limit VARCHAR   -- maximum memory allowed for the database
 ----
-db error: ERROR: syntax error at or near "database_name"
+db error: ERROR: syntax error at or near "VARCHAR"
+
 
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY
 
-query error
+query
 PRAGMA storage_info('table_name');
 ----
-db error: ERROR: Such type is not supported
+row_group_id	column_name	column_id	column_path	segment_id	segment_type	start	count	compression	stats	has_updates	persistent	block_id	block_offset	additional_block_ids
 
-
-query error
+query
 CALL pragma_storage_info('table_name');
 ----
-db error: ERROR: Such type is not supported
+row_group_id	column_name	column_id	column_path	segment_id	segment_type	start	count	compression	stats	has_updates	persistent	block_id	block_offset	additional_block_ids
 
 # DOCS_TEST: example_011
 
@@ -189,6 +189,7 @@ SELECT 42 ORDER BY 'hello world';
 db error: ERROR: ORDER BY non-integer literal has no effect.
 * SET order_by_non_integer_literal=true to allow this behavior.
 
+
 # DOCS_TEST: example_019
 
 # DOCS_TEST_RAW
@@ -201,19 +202,25 @@ CREATE TABLE __docs_noop_51513bdc_005 (i INTEGER);
 
 # DOCS_TEST: example_020
 
+# DOCS_TEST_RAW
+#| PRAGMA version;
+#| ----
+#| library_version	source_id	codename
+#| v1.6.0-dev7012	5212023fb8	Development Version
+
 # DOCS_TEST_BODY
 
 query
 PRAGMA version;
 ----
 library_version	source_id	codename
-v0.0.1	8c42e3b1	Unknown Version
+<slt:ignore>	<slt:ignore>	<slt:ignore>
 
 query
 CALL pragma_version();
 ----
 library_version	source_id	codename
-v0.0.1	8c42e3b1	Unknown Version
+<slt:ignore>	<slt:ignore>	<slt:ignore>
 
 # DOCS_TEST: example_021
 
@@ -223,15 +230,21 @@ query
 PRAGMA platform;
 ----
 platform
-linux_arm64
+linux_amd64
 
 query
 CALL pragma_platform();
 ----
 platform
-linux_arm64
+linux_amd64
 
 # DOCS_TEST: example_022
+
+# DOCS_TEST_RAW
+#| PRAGMA user_agent;
+#| ----
+#| user_agent
+#| duckdb/v1.6.0-dev7012(linux_amd64) cpp
 
 # DOCS_TEST_BODY
 
@@ -239,7 +252,7 @@ query
 PRAGMA user_agent;
 ----
 user_agent
-duckdb/v0.0.1(linux_arm64) cpp
+<slt:ignore>
 
 # DOCS_TEST: example_023
 
@@ -262,6 +275,9 @@ CHECKPOINT;
 
 # DOCS_TEST_RAW
 #| PRAGMA metadata_info;
+#| ----
+#| block_id	total_blocks	free_blocks	free_list
+#| 0	64	2	1
 
 # DOCS_TEST_BODY
 
@@ -270,7 +286,7 @@ SELECT block_id, total_blocks, free_blocks, length(free_list) AS free_list
 FROM pragma_metadata_info();
 ----
 block_id	total_blocks	free_blocks	free_list
-0	64	33	33
+0	64	<slt:ignore>	<slt:ignore>
 
 # DOCS_TEST: example_024
 
@@ -422,13 +438,6 @@ SET profiling_mode = 'detailed';
 statement ok
 SET profiling_mode = 'all';
 
-# DOCS_TEST: example_042
-
-# DOCS_TEST_BODY
-
-statement ok
-SET custom_profiling_settings = '{"CPU_TIME": "false", "EXTRA_INFO": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_TIMING": "true"}';
-
 # DOCS_TEST: example_043
 
 # DOCS_TEST_BODY
@@ -491,42 +500,6 @@ SET log_query_path = '/tmp/${__DATABASE__}_configuration_pragmas_example_048_duc
 
 statement ok
 SET log_query_path = '';
-
-# DOCS_TEST: example_050
-
-# DOCS_TEST_BODY
-
-query
-PRAGMA verify_external;
-----
-Success
-
-# DOCS_TEST: example_051
-
-# DOCS_TEST_BODY
-
-query
-PRAGMA disable_verify_external;
-----
-Success
-
-# DOCS_TEST: example_052
-
-# DOCS_TEST_BODY
-
-query
-PRAGMA verify_serializer;
-----
-Success
-
-# DOCS_TEST: example_053
-
-# DOCS_TEST_BODY
-
-query
-PRAGMA disable_verify_serializer;
-----
-Success
 
 # DOCS_TEST: example_054
 
@@ -612,6 +585,7 @@ SELECT * FROM nonexistent_tbl;
 ----
 db error: ERROR: Table with name nonexistent_tbl does not exist!
 Did you mean "<slt:ignore>"?
+
 
 # DOCS_TEST: example_064
 

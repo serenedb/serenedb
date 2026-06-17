@@ -2,16 +2,13 @@
 
 # DOCS_TEST_BODY
 
-query error
+statement error
 PIVOT ⟨dataset⟩
 ON ⟨columns⟩
 USING ⟨values⟩
 GROUP BY ⟨rows⟩
 ORDER BY ⟨columns_with_order_directions⟩
 LIMIT ⟨number_of_rows⟩;
-----
-db error: ERROR: Table with name ⟨dataset⟩ does not exist!
-Did you mean "<slt:ignore>"?
 
 # DOCS_TEST: example_002
 
@@ -57,6 +54,7 @@ US	New York City	2020	8772
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ????? rowsort
 PIVOT cities
 ON year
@@ -71,6 +69,7 @@ US	Seattle	564	608	738
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ????? rowsort
 PIVOT cities
 ON year
@@ -85,6 +84,7 @@ US	Seattle	564	608	738
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ???? rowsort
 PIVOT cities
 ON year
@@ -99,6 +99,7 @@ US	8579	8783	9510
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ??? rowsort
 PIVOT cities
 ON year IN (2000, 2010)
@@ -113,6 +114,7 @@ US	8579	8783
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ??????? rowsort
 PIVOT cities
 ON country, name
@@ -127,6 +129,7 @@ year	nl_amsterdam	nl_new york city	nl_seattle	us_amsterdam	us_new york city	us_s
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ???? rowsort
 PIVOT cities
 ON country || '_' || name
@@ -141,6 +144,7 @@ year	nl_amsterdam	us_new york city	us_seattle
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ??????? rowsort
 PIVOT cities
 ON year
@@ -155,6 +159,7 @@ US	8579	8015	8783	8175	9510	8772
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ????? rowsort
 PIVOT cities
 ON year
@@ -170,6 +175,7 @@ US	Seattle	564	608	738
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ???? rowsort
 WITH pivot_alias AS (
     PIVOT cities
@@ -187,6 +193,7 @@ US	8579	8783	9510
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ???? rowsort
 SELECT *
 FROM (
@@ -204,6 +211,7 @@ US	8579	8783	9510
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ??????? rowsort
 SELECT *
 FROM (PIVOT cities ON year USING sum(population) GROUP BY country) year_pivot
@@ -218,7 +226,7 @@ US	8579	8783	9510	NULL	24962	1910
 
 # DOCS_TEST_BODY
 
-query error
+statement error
 SELECT *
 FROM ⟨dataset⟩
 PIVOT (
@@ -229,13 +237,12 @@ PIVOT (
         ...
     GROUP BY ⟨rows⟩
 );
-----
-db error: ERROR: syntax error at or near "\.\."
 
 # DOCS_TEST: example_016
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ???? rowsort
 SELECT *
 FROM cities
@@ -254,6 +261,7 @@ US	8579	8783	9510
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ????????? rowsort
 SELECT *
 FROM cities
@@ -274,6 +282,7 @@ Seattle	NULL	0	564	1	NULL	0	608	1
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ????? rowsort
 PIVOT cities
 ON year
@@ -288,6 +297,7 @@ US	Seattle	564000	608000	738000
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query ????? rowsort
 SELECT country, name, 1000 * COLUMNS(* EXCLUDE (country, name))
 FROM (

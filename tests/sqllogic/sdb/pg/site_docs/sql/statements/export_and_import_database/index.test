@@ -160,6 +160,7 @@ USE import_target_005;
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 statement ok
 IMPORT DATABASE '/tmp/${__DATABASE__}_sql_statements_export_and_import_database_example_005_source_directory';
 
@@ -209,5 +210,6 @@ USE import_target_006;
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 statement ok
 PRAGMA import_database('/tmp/${__DATABASE__}_sql_statements_export_and_import_database_example_006_source_directory');

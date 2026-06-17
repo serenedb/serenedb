@@ -83,7 +83,7 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
       }
       return std::make_unique<ColumnReader>(
         id, std::move(node.type), std::move(node.validity_pointers),
-        std::move(variant_rgs), std::move(node.distinct_hll));
+        std::move(variant_rgs), std::move(node.hyperloglog));
     }
     case duckdb::LogicalTypeId::STRUCT: {
       struct_children.reserve(node.child_columns.size());
@@ -103,7 +103,7 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
     id, std::move(node.type), std::move(node.pointers),
     std::move(node.validity_pointers), std::move(element_child),
     std::move(struct_children), array_size, fully_shredded,
-    std::move(node.distinct_hll));
+    std::move(node.hyperloglog));
 }
 
 namespace {
@@ -152,7 +152,7 @@ ColumnReader::ColumnReader(
   std::unique_ptr<ColumnReader> element_child,
   std::vector<std::unique_ptr<ColumnReader>> struct_children,
   uint64_t array_size, bool fully_shredded,
-  duckdb::shared_ptr<duckdb::HyperLogLog> distinct_hll)
+  duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog)
   : _id{id},
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
@@ -162,7 +162,7 @@ ColumnReader::ColumnReader(
     _child{std::move(element_child)},
     _array_size{array_size},
     _struct_fields{std::move(struct_children)},
-    _distinct_hll{std::move(distinct_hll)} {
+    _hyperloglog{std::move(hyperloglog)} {
   if (!_validity_pointers.empty()) {
     _validity_offsets.reserve(_validity_pointers.size() + 1);
     uint64_t vtotal = 0;
@@ -236,13 +236,13 @@ ColumnReader::ColumnReader(
 ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
                            std::vector<duckdb::DataPointer> validity_pointers,
                            std::vector<VariantRgReader> variant_rgs,
-                           duckdb::shared_ptr<duckdb::HyperLogLog> distinct_hll)
+                           duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog)
   : _id{id},
     _type{std::move(type)},
     _validity_pointers{std::move(validity_pointers)},
     _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _variant_rgs{std::move(variant_rgs)},
-    _distinct_hll{std::move(distinct_hll)} {
+    _hyperloglog{std::move(hyperloglog)} {
   SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::VARIANT);
   if (!_validity_pointers.empty()) {
     _validity_offsets.reserve(_validity_pointers.size() + 1);

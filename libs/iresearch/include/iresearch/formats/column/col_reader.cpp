@@ -112,9 +112,9 @@ PersistentColumnData DeserializeColumnData(duckdb::Deserializer& obj) {
     });
   node.fully_shredded =
     obj.ReadPropertyWithExplicitDefault<bool>(5, "fully_shredded", true);
-  node.distinct_hll =
+  node.hyperloglog =
     obj.ReadPropertyWithDefault<duckdb::shared_ptr<duckdb::HyperLogLog>>(
-      6, "distinct_hll");
+      6, "hyperloglog");
   return node;
 }
 

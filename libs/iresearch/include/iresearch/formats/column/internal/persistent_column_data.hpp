@@ -86,7 +86,7 @@ struct PersistentColumnData {
   uint64_t list_global_running = 0;
   bool fully_shredded = true;
   // Root node only; set when the column tracks distinct values.
-  duckdb::shared_ptr<duckdb::HyperLogLog> distinct_hll;
+  duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
 };
 
 // Top-level entry for one column: id + recursive metadata root.
@@ -111,7 +111,7 @@ inline PersistentColumnData Clone(const PersistentColumnData& src) {
   PersistentColumnData out;
   out.type = src.type;
   out.fully_shredded = src.fully_shredded;
-  out.distinct_hll = src.distinct_hll;
+  out.hyperloglog = src.hyperloglog;
   out.pointers.reserve(src.pointers.size());
   for (const auto& p : src.pointers) {
     out.pointers.emplace_back(CloneDataPointer(p));

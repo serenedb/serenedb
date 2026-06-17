@@ -1,7 +1,7 @@
 control substitution on
 
 # Column statistics persist in the .col footer: per-rowgroup min/max + null
-# flags (in the rowgroup DataPointers) and the optional approx_distinct
+# flags (in the rowgroup DataPointers) and the optional hyperloglog
 # HyperLogLog. After a serened restart they must reload identically -- the
 # merged stats the optimizer sees (min/max, null flags, approx_unique) are
 # rebuilt at reader open from the on-disk footer, so a crash must not lose
@@ -26,7 +26,7 @@ INSERT INTO stat_rec
 statement ok
 CREATE INDEX stat_rec_idx ON stat_rec
     USING inverted(id)
-    INCLUDE (small, big, s included (approx_distinct = true))
+    INCLUDE (small, big, s included (hyperloglog = true))
 
 statement ok
 VACUUM (REFRESH_TABLE) stat_rec
@@ -48,7 +48,7 @@ SELECT stats(big)::VARCHAR FROM stat_rec_idx LIMIT 1;
 stats
 {'has_no_null': true, 'has_null': false, 'max': 4611686018427387904, 'min': 4611686018427387904}
 
-# approx_distinct HLL over 's' (50 distinct values).
+# hyperloglog HLL over 's' (50 distinct values).
 query
 SELECT (stats(s)).approx_unique::BIGINT BETWEEN 40 AND 60 AS ok
 FROM stat_rec_idx LIMIT 1;

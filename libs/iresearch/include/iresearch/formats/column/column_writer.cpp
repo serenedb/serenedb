@@ -60,7 +60,7 @@ namespace irs {
 ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
                            uint32_t row_group_size, WriteContext& write_ctx,
                            FooterColumnEntry& entry, bool skip_validity,
-                           bool approx_distinct)
+                           bool hyperloglog)
   : _id{id},
     _type{std::move(type)},
     _row_group_size{row_group_size},
@@ -69,19 +69,17 @@ ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
     _staging{_type, _row_group_size,
              duckdb::VectorDataInitialization::UNINITIALIZED},
     _skip_validity{skip_validity},
-    _approx_distinct{approx_distinct} {
+    _hyperloglog{hyperloglog} {
   SDB_ASSERT(_row_group_size != 0);
-  if (approx_distinct) {
-    _entry->root.distinct_hll = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
-    _hashes = duckdb::make_uniq<duckdb::Vector>(duckdb::LogicalType::HASH,
-                                                _row_group_size);
+  if (hyperloglog) {
+    _entry->root.hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
   }
 }
 
-bool ColumnWriter::ApproxDistinct() const noexcept { return _approx_distinct; }
+bool ColumnWriter::HasHyperLogLog() const noexcept { return _hyperloglog; }
 
-void ColumnWriter::SetDistinctHll(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
-  _entry->root.distinct_hll = std::move(hll);
+void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
+  _entry->root.hyperloglog = std::move(hll);
 }
 
 void ColumnWriter::PadNullsTo(uint64_t start_row) {
@@ -631,9 +629,10 @@ void ColumnWriter::FlushRowGroup() {
     return;
   }
 
-  if (_approx_distinct) {
-    duckdb::VectorOperations::Hash(_staging, *_hashes, _filled);
-    _entry->root.distinct_hll->Update(_staging, *_hashes);
+  if (_hyperloglog) {
+    duckdb::Vector hashes{duckdb::LogicalType::HASH, _filled};
+    duckdb::VectorOperations::Hash(_staging, hashes, _filled);
+    _entry->root.hyperloglog->Update(_staging, hashes);
   }
 
   FlushNode(*_write_ctx, _type, _staging, _filled, _row_group_first_doc,

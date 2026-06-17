@@ -38,21 +38,20 @@
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
 
 namespace irs {
-
 namespace {
 
-class HLLMerger {
+class HyperLogLogMerger {
  public:
   void Init() {
-    _hll = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
+    _hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
     _hashes = duckdb::make_uniq<duckdb::Vector>(duckdb::LogicalType::HASH,
                                                 STANDARD_VECTOR_SIZE);
   }
 
   void MergeWithoutDelete(const ColumnReader& col) {
-    const auto* src = col.DistinctHll();
+    const auto* src = col.HyperLogLog();
     SDB_ASSERT(src);
-    _hll->Merge(*src);
+    _hyperloglog->Merge(*src);
   }
 
   void MergeWithDelete(const duckdb::Vector& values,
@@ -71,13 +70,15 @@ class HLLMerger {
       }
     }
     duckdb::FlatVector::SetSize(*_hashes, kept);
-    _hll->Update(*_hashes);
+    _hyperloglog->Update(*_hashes);
   }
 
-  duckdb::shared_ptr<duckdb::HyperLogLog> Get() && { return std::move(_hll); }
+  duckdb::shared_ptr<duckdb::HyperLogLog> Get() && {
+    return std::move(_hyperloglog);
+  }
 
  private:
-  duckdb::shared_ptr<duckdb::HyperLogLog> _hll;
+  duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
   duckdb::unique_ptr<duckdb::Vector> _hashes;
 };
 
@@ -116,9 +117,9 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       output.AttachHnsw(field_id_v, *opts.hnsw_info);
     }
 
-    HLLMerger hll;
-    if (opts.approx_distinct) {
-      hll.Init();
+    HyperLogLogMerger hyperloglog;
+    if (opts.hyperloglog) {
+      hyperloglog.Init();
     }
 
     uint64_t out_doc = 0;
@@ -139,8 +140,8 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       const auto* mask = s.mask;
       const bool has_mask = mask && !mask->empty();
 
-      if (opts.approx_distinct && !has_mask) {
-        hll.MergeWithoutDelete(*col);
+      if (opts.hyperloglog && !has_mask) {
+        hyperloglog.MergeWithoutDelete(*col);
       }
 
       ReadContext src_ctx{*src};
@@ -174,8 +175,8 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
           }
           if (kept > 0) {
             cw.Append(out_doc, batch, sel, kept);
-            if (opts.approx_distinct) {
-              hll.MergeWithDelete(batch, sel, kept);
+            if (opts.hyperloglog) {
+              hyperloglog.MergeWithDelete(batch, sel, kept);
             }
             out_doc += kept;
           }
@@ -188,8 +189,8 @@ void MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       }
     }
 
-    if (opts.approx_distinct) {
-      cw.SetDistinctHll(std::move(hll).Get());
+    if (opts.hyperloglog) {
+      cw.SetHyperLogLog(std::move(hyperloglog).Get());
     }
   }
 }

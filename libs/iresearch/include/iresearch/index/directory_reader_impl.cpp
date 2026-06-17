@@ -59,7 +59,7 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
 
   struct Accumulator {
     duckdb::unique_ptr<duckdb::BaseStatistics> stats;
-    duckdb::unique_ptr<duckdb::HyperLogLog> distinct;
+    duckdb::unique_ptr<duckdb::HyperLogLog> hyperloglog;
   };
   sdb::containers::FlatHashMap<field_id, Accumulator> col2stats;
 
@@ -76,17 +76,17 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
       continue;
     }
     for (const auto& column : col_reader->Columns()) {
-      auto& [stats, distinct] = col2stats[column->Id()];
+      auto& [stats, hyperloglog] = col2stats[column->Id()];
       if (!stats) {
         stats = column->MergedStatistics().ToUnique();
       } else {
         stats->Merge(column->MergedStatistics());
       }
-      if (const auto* hll = column->DistinctHll()) {
-        if (!distinct) {
-          distinct = hll->Copy();
+      if (const auto* src_hyperloglog = column->HyperLogLog()) {
+        if (!hyperloglog) {
+          hyperloglog = src_hyperloglog->Copy();
         } else {
-          distinct->Merge(*hll);
+          hyperloglog->Merge(*src_hyperloglog);
         }
       }
     }
@@ -97,9 +97,10 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
   }
 
   for (auto& [field, merged] : col2stats) {
-    auto& [stats, distinct] = merged;
-    if (distinct) {
-      const auto cnt = std::min<uint64_t>(distinct->Count(), live_docs_count);
+    auto& [stats, hyperloglog] = merged;
+    if (hyperloglog) {
+      const auto cnt =
+        std::min<uint64_t>(hyperloglog->Count(), live_docs_count);
       stats->SetDistinctCount(cnt);
     }
     column_stats[field] = std::move(stats);

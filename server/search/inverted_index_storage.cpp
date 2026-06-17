@@ -196,7 +196,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
         .row_group_size = entry->row_group_size,
         .compression = entry->compression,
         .hnsw_info = index.GetHNSWInfo(id),
-        .approx_distinct = entry->approx_distinct,
+        .hyperloglog = entry->hyperloglog,
       };
     }
     if (static_cast<catalog::Column::Id>(id) ==

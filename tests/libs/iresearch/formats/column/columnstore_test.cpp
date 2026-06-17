@@ -23,9 +23,9 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/vector.hpp>
-#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
@@ -1218,16 +1218,14 @@ uint64_t ReferenceDistinctCount(const std::vector<int64_t>& values) {
   return hll.Count();
 }
 
-TEST_F(IRSColumnstoreTest, MergeIntoReusesDistinctHll) {
+TEST_F(IRSColumnstoreTest, MergeIntoReusesHyperLogLog) {
   irs::MemoryDirectory dir{};
   constexpr irs::field_id kId = 9;
   constexpr uint64_t kRowsA = 40;
   constexpr uint64_t kRowsB = 50;
 
   irs::ColumnOptionsProvider column_options =
-    [](irs::field_id) -> irs::ColumnOptions {
-    return {.approx_distinct = true};
-  };
+    [](irs::field_id) -> irs::ColumnOptions { return {.hyperloglog = true}; };
 
   {
     irs::ColWriter w{dir, "src_a", Db(), &column_options};
@@ -1254,8 +1252,8 @@ TEST_F(IRSColumnstoreTest, MergeIntoReusesDistinctHll) {
 
   irs::ColReader ra{dir, "src_a", Db()};
   irs::ColReader rb{dir, "src_b", Db()};
-  ASSERT_NE(ra.Column(kId)->DistinctHll(), nullptr);
-  ASSERT_NE(rb.Column(kId)->DistinctHll(), nullptr);
+  ASSERT_NE(ra.Column(kId)->HyperLogLog(), nullptr);
+  ASSERT_NE(rb.Column(kId)->HyperLogLog(), nullptr);
 
   {
     irs::ColWriter w{dir, "merged", Db(), &column_options};
@@ -1276,21 +1274,19 @@ TEST_F(IRSColumnstoreTest, MergeIntoReusesDistinctHll) {
   irs::ColReader r{dir, std::string{"merged"}, Db()};
   const auto* col = r.Column(kId);
   ASSERT_NE(col, nullptr);
-  const auto* hll = col->DistinctHll();
+  const auto* hll = col->HyperLogLog();
   ASSERT_NE(hll, nullptr);
   EXPECT_EQ(hll->Count(), ReferenceDistinctCount({0, 1, 2, 3, 4, 5, 6, 7}));
 }
 
-TEST_F(IRSColumnstoreTest, MergeIntoRebuildsDistinctHllWithDeletes) {
+TEST_F(IRSColumnstoreTest, MergeIntoRebuildsHyperLogLogWithDeletes) {
   irs::MemoryDirectory dir{};
   constexpr irs::field_id kId = 9;
   constexpr uint64_t kRowsA = 8;
   constexpr uint64_t kRowsB = 8;
 
   irs::ColumnOptionsProvider column_options =
-    [](irs::field_id) -> irs::ColumnOptions {
-    return {.approx_distinct = true};
-  };
+    [](irs::field_id) -> irs::ColumnOptions { return {.hyperloglog = true}; };
 
   {
     irs::ColWriter w{dir, "src_a", Db(), &column_options};
@@ -1348,22 +1344,20 @@ TEST_F(IRSColumnstoreTest, MergeIntoRebuildsDistinctHllWithDeletes) {
   irs::ColReader r{dir, std::string{"merged"}, Db()};
   const auto* col = r.Column(kId);
   ASSERT_NE(col, nullptr);
-  const auto* hll = col->DistinctHll();
+  const auto* hll = col->HyperLogLog();
   ASSERT_NE(hll, nullptr);
   EXPECT_EQ(hll->Count(),
             ReferenceDistinctCount({0, 2, 4, 6, 100, 102, 104, 106}));
 }
 
-TEST_F(IRSColumnstoreTest, MergeIntoMixedDistinctHll) {
+TEST_F(IRSColumnstoreTest, MergeIntoMixedHyperLogLog) {
   irs::MemoryDirectory dir{};
   constexpr irs::field_id kId = 9;
   constexpr uint64_t kRowsA = 4;
   constexpr uint64_t kRowsB = 6;
 
   irs::ColumnOptionsProvider column_options =
-    [](irs::field_id) -> irs::ColumnOptions {
-    return {.approx_distinct = true};
-  };
+    [](irs::field_id) -> irs::ColumnOptions { return {.hyperloglog = true}; };
 
   {
     irs::ColWriter w{dir, "src_a", Db(), &column_options};
@@ -1416,7 +1410,7 @@ TEST_F(IRSColumnstoreTest, MergeIntoMixedDistinctHll) {
   irs::ColReader r{dir, std::string{"merged"}, Db()};
   const auto* col = r.Column(kId);
   ASSERT_NE(col, nullptr);
-  const auto* hll = col->DistinctHll();
+  const auto* hll = col->HyperLogLog();
   ASSERT_NE(hll, nullptr);
   EXPECT_EQ(hll->Count(), ReferenceDistinctCount({0, 1, 2, 3, 10, 12, 14}));
 }

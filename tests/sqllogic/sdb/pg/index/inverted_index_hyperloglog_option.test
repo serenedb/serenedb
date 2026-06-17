@@ -1,4 +1,4 @@
-# Per-column `approx_distinct` option on INCLUDE columns. When enabled,
+# Per-column `hyperloglog` option on INCLUDE columns. When enabled,
 # the columnstore writer tracks the column's NDV in a HyperLogLog that is
 # persisted per segment, unioned across segments at scan time, and exposed
 # to the optimizer as approx_unique (used for join-order cardinality
@@ -21,8 +21,8 @@ SELECT i, i % 100, 'tag-' || (i % 7)::VARCHAR, i FROM range(10000) t(i);
 
 statement ok
 CREATE INDEX dc_t_idx ON dc_t USING inverted(pk)
-  INCLUDE (v included (approx_distinct = true),
-           s included (approx_distinct = true),
+  INCLUDE (v included (hyperloglog = true),
+           s included (hyperloglog = true),
            plain);
 
 statement ok
@@ -92,7 +92,7 @@ count	count
 # --- 5. Non-boolean value rejected at parse time --------------------------
 statement error
 CREATE INDEX dc_bad ON dc_t USING inverted(pk)
-  INCLUDE (v included (approx_distinct = 'banana'));
+  INCLUDE (v included (hyperloglog = 'banana'));
 
 # --- 6. Unknown included option still rejected ----------------------------
 statement error
@@ -108,7 +108,7 @@ CREATE TABLE dc_compact (pk INTEGER PRIMARY KEY, v BIGINT)
 
 statement ok
 CREATE INDEX dc_compact_idx ON dc_compact USING inverted(pk)
-  INCLUDE (v included (approx_distinct = true))
+  INCLUDE (v included (hyperloglog = true))
 
 # Three segments with overlapping values; union NDV = 7 ({1..7}).
 statement ok

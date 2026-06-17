@@ -285,22 +285,22 @@ statement ok
 DROP TABLE IF EXISTS t;
 
 statement ok
-CREATE TABLE t (t INTEGER, x INTEGER);
+CREATE TABLE t (i INTEGER, x INTEGER);
 
 statement ok
 INSERT INTO t VALUES
-    (1, 1),
-    (2, 2);
+    (1, 10),
+    (2, 20);
 
 # DOCS_TEST_BODY
 
-query ?
+query
 SELECT t
 FROM t;
 ----
 t
-1
-2
+(1,10)
+(2,20)
 
 # DOCS_TEST: example_011
 
@@ -590,10 +590,10 @@ statement ok
 USE $__DATABASE__;
 
 statement ok
-DROP TABLE IF EXISTS l_regions;
+DROP TABLE IF EXISTS l_nations;
 
 statement ok
-DROP TABLE IF EXISTS l_nations;
+DROP TABLE IF EXISTS l_regions;
 
 # DOCS_TEST_BODY
 
@@ -944,7 +944,8 @@ CREATE TABLE t (x INTEGER);
 query error
 SELECT * FROM t JOIN t USING(x);
 ----
-(?i)Ambiguous reference to table .*duplicate alias .*explicitly alias one of the tables using "AS my_alias"
+db error: ERROR: Ambiguous reference to table "<slt:ignore>.public.t" (duplicate alias "<slt:ignore>.public.t", explicitly alias one of the tables using "AS my_alias")
+
 
 # DOCS_TEST: example_042
 

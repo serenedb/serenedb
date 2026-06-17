@@ -17,4 +17,9 @@ statement error
 ALTER TABLE tbl
 ALTER COLUMN col TYPE INTEGER;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+db error: ERROR: Conversion Error: Could not convert string 'asdf' to INT32
+
+LINE 1: <slt:ignore>
+
+
+

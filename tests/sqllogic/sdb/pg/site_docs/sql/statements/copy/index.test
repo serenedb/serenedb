@@ -185,6 +185,7 @@ CREATE TABLE db1.tbl1 AS SELECT 42 AS x, 3 AS y;
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 statement ok
 COPY FROM DATABASE db1 TO db2;
 
@@ -339,13 +340,28 @@ COPY lineitem FROM (getvariable('source_file'));
 
 # DOCS_TEST: example_022
 
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 30, 'fixture lineitem'),
+    (4, 40, 'mock lineitem')
+) AS t("l_orderkey", "l_partkey", "l_comment")) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_022_1_lineitem_json.json' (FORMAT json);
+
+# DOCS_TEST_RAW
+#| PREPARE v1 AS COPY lineitem FROM ($1);
+#|
+#| EXECUTE v1('lineitem.json');
+
 # DOCS_TEST_BODY
 
-statement error substitution failed: No such variable: \$1
-PREPARE v1 AS COPY lineitem FROM ($1);
+control substitution off
 
-query error db error: ERROR: Prepared statement "v1" does not exist
-EXECUTE v1('lineitem.json');
+statement ok
+PREPARE copy_from_param AS COPY lineitem FROM ($1);
+
+control substitution on
+
+statement ok
+EXECUTE copy_from_param('/tmp/${__DATABASE__}_sql_statements_copy_index_example_022_1_lineitem_json.json');
 
 # DOCS_TEST: example_023
 
@@ -410,10 +426,17 @@ COPY lineitem TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_025_1_l
 
 # DOCS_TEST: example_026
 
+# DOCS_TEST_RAW
+#| COPY lineitem TO 'lineitem.tsv' (DELIMITER '\t', HEADER false);
+
 # DOCS_TEST_BODY
 
-statement error substitution failed: Invalid escape sequence: \\t
-COPY lineitem TO 'lineitem.tsv' (DELIMITER '\t', HEADER false);
+control substitution off
+
+statement ok
+COPY lineitem TO '/tmp/copy_index_example_026_lineitem.tsv' (DELIMITER '\t', HEADER false);
+
+control substitution on
 
 # DOCS_TEST: example_027
 
@@ -492,19 +515,22 @@ COPY (SELECT 'hello world') TO (getvariable('target_file'));
 
 # DOCS_TEST: example_034
 
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DEALLOCATE v1;
+# DOCS_TEST_RAW
+#| PREPARE v1 AS COPY (SELECT 42 AS i) TO $1;
+#|
+#| EXECUTE v1('file.csv');
 
 # DOCS_TEST_BODY
 
-statement error substitution failed: No such variable: \$1
-PREPARE v1 AS COPY (SELECT 42 AS i) to $1;
+control substitution off
 
-query error db error: ERROR: Prepared statement "v1" does not exist
-EXECUTE v1('file.csv');
+statement ok
+PREPARE copy_to_param AS COPY (SELECT 42 AS i) TO $1;
+
+control substitution on
+
+statement ok
+EXECUTE copy_to_param('/tmp/${__DATABASE__}_sql_statements_copy_index_example_034_1_file_csv.csv');
 
 # DOCS_TEST: example_035
 

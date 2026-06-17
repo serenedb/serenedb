@@ -5,8 +5,16 @@
 statement ok
 CREATE TABLE tbl (col STRUCT(i INTEGER));
 
-statement error
+statement ok
+INSERT INTO tbl VALUES ({'i': 1});
+
+statement ok
 ALTER TABLE tbl
-ALTER col TYPE USING struct_insert(col, a := 42, b := NULL::VARCHAR);
+ALTER col TYPE STRUCT(i INTEGER, a INTEGER, b VARCHAR)
+USING struct_insert(col, a := 42, b := NULL::VARCHAR);
+
+query
+SELECT col FROM tbl;
 ----
-db error: ERROR: ALTER TABLE through DuckDB
+col
+(1,42,)

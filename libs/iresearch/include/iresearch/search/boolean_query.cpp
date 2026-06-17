@@ -119,30 +119,22 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
 
 }  // namespace
 
-DocIterator::ptr BooleanQuery::execute(const ExecutionContext& old) const {
+DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
   if (empty()) {
     return DocIterator::empty();
   }
+  return execute(ctx, begin(), end());
+}
 
-  SDB_ASSERT(_excl);
-  const auto excl_begin = this->excl_begin();
-  const auto end = this->end();
+DocIterator::ptr ExclusionQuery::execute(const ExecutionContext& old) const {
   ExecutionContext ctx{old};
-  if (excl_begin != end) {
-    // TODO(mbkkt) enable back?
-    ctx.wand.wand_enabled = false;
-  }
+  // TODO(mbkkt) enable back?
+  ctx.wand.wand_enabled = false;
 
-  auto incl = execute(ctx, begin(), excl_begin);
-
-  if (excl_begin == end) {
-    return incl;
-  }
-
-  // TODO(gnusi): rewrite this to use ByTerms
+  auto incl = _include->execute(ctx);
 
   ScoreAdapters excl_itrs;
-  excl_itrs.reserve(std::distance(excl_begin, end));
+  excl_itrs.reserve(_excludes.size());
 
   using TermWithFreq = PostingIteratorBase<
     IteratorTraitsImpl<FormatTraits128, true, false, false>>;
@@ -153,8 +145,8 @@ DocIterator::ptr BooleanQuery::execute(const ExecutionContext& old) const {
   bool excl_has_term_without_freq = false;
   bool excl_has_abstract = false;
 
-  for (auto it = excl_begin; it != end; ++it) {
-    auto docs = (*it)->execute(ctx);
+  for (const auto& exclude : _excludes) {
+    auto docs = exclude->execute(ctx);
     if (doc_limits::eof(docs->value())) {
       continue;
     }
@@ -176,12 +168,14 @@ DocIterator::ptr BooleanQuery::execute(const ExecutionContext& old) const {
     [&]<typename IncludeAdapter, typename ExcludeAdapter> -> DocIterator::ptr {
     using ExcludeAdapters = std::vector<ExcludeAdapter>;
     if (excl_itrs.size() == 1) {
-      return memory::make_managed<Exclusion<IncludeAdapter, ExcludeAdapter>>(
+      return memory::make_managed<
+        ExclusionIterator<IncludeAdapter, ExcludeAdapter>>(
         IncludeAdapter{std::move(incl)},
         ExcludeAdapter{std::move(excl_itrs[0])});
     }
     if constexpr (std::is_same_v<ExcludeAdapters, ScoreAdapters>) {
-      return memory::make_managed<Exclusion<IncludeAdapter, ExcludeAdapters>>(
+      return memory::make_managed<
+        ExclusionIterator<IncludeAdapter, ExcludeAdapters>>(
         IncludeAdapter{std::move(incl)}, std::move(excl_itrs));
     } else {
       ExcludeAdapters excl;
@@ -189,7 +183,8 @@ DocIterator::ptr BooleanQuery::execute(const ExecutionContext& old) const {
       for (auto& it : excl_itrs) {
         excl.emplace_back(std::move(it));
       }
-      return memory::make_managed<Exclusion<IncludeAdapter, ExcludeAdapters>>(
+      return memory::make_managed<
+        ExclusionIterator<IncludeAdapter, ExcludeAdapters>>(
         IncludeAdapter{std::move(incl)}, std::move(excl));
     }
   };
@@ -225,41 +220,47 @@ void BooleanQuery::visit(const SubReader& segment,
     return;
   }
 
-  // FIXME(gnusi): visit exclude group?
-  for (auto it = begin(), end = excl_begin(); it != end; ++it) {
+  for (auto it = begin(), last = end(); it != last; ++it) {
     (*it)->visit(segment, visitor, boost);
   }
 }
 
 void BooleanQuery::prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
-                           queries_t queries, size_t exclude_start) {
+                           queries_t queries) {
   // apply boost to the current node
   _boost *= ctx.boost;
   // nothrow block
   _queries = std::move(queries);
-  _excl = exclude_start;
   _merge_type = merge_type;
 }
 
-void BooleanQuery::prepare(const PrepareContext& ctx, ScoreMergeType merge_type,
-                           std::span<const Filter* const> incl,
-                           std::span<const Filter* const> excl) {
-  queries_t queries{{ctx.memory}};
-  queries.reserve(incl.size() + excl.size());
-  // prepare included
-  for (const auto* filter : incl) {
-    queries.emplace_back(filter->prepare(ctx));
+Filter::Query::ptr PrepareExclusion(const PrepareContext& ctx,
+                                    const Filter::ptr& include,
+                                    std::span<const Filter::ptr> excludes) {
+  SDB_ASSERT(!excludes.empty());
+  Filter::Query::ptr incl;
+  if (include == nullptr) {
+    auto all = AllDocsProvider::Default(kNoBoost);
+    incl = all->prepare(ctx);
+  } else {
+    incl = include->prepare(ctx);
   }
-  // prepare excluded
-  for (const auto* filter : excl) {
-    // exclusion part does not affect scoring at all
-    queries.emplace_back(filter->prepare({
-      .index = ctx.index,
-      .memory = ctx.memory,
-      .ctx = ctx.ctx,
-    }));
+
+  // exclusion part does not affect scoring at all
+  const PrepareContext excl_ctx{
+    .index = ctx.index,
+    .memory = ctx.memory,
+    .ctx = ctx.ctx,
+  };
+  std::vector<Filter::Query::ptr> excl;
+  excl.reserve(excludes.size());
+  for (const auto& exclude : excludes) {
+    SDB_ASSERT(exclude);
+    excl.emplace_back(exclude->prepare(excl_ctx));
   }
-  prepare(ctx, merge_type, std::move(queries), incl.size());
+
+  return memory::make_tracked<ExclusionQuery>(ctx.memory, std::move(incl),
+                                              std::move(excl));
 }
 
 DocIterator::ptr AndQuery::execute(const ExecutionContext& ctx, iterator begin,
@@ -308,15 +309,20 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
     });
 }
 
-void BoostQuery::Prepare(const PrepareContext& ctx, const BooleanFilter& req,
-                         const Or& opt) {
-  SDB_ASSERT(!req.empty());
+void BoostQuery::Prepare(const PrepareContext& ctx, const Filter& req,
+                         const Filter& opt) {
   _req = req.prepare(ctx);
-  const auto opt_ctx = ctx.Boost(opt.Boost());
-  _opt.reserve(opt.size());
-  for (const auto& opt_filter : opt) {
-    _opt.emplace_back(opt_filter->prepare(opt_ctx));
+  const auto tid = opt.type();
+  if (tid == irs::Type<And>::id() || tid == irs::Type<Or>::id()) {
+    const auto& opt_bool = sdb::basics::downCast<BooleanFilter>(opt);
+    const auto opt_ctx = ctx.Boost(opt_bool.Boost());
+    _opt.reserve(opt_bool.size());
+    for (const auto& opt_filter : opt_bool) {
+      _opt.emplace_back(opt_filter->prepare(opt_ctx));
+    }
+    return;
   }
+  _opt.emplace_back(opt.prepare(ctx));
 }
 
 DocIterator::ptr BoostQuery::execute(const ExecutionContext& old) const {

@@ -25,6 +25,7 @@ SELECT * FROM geometries;
 ----
 db error: ERROR: Such type is not supported
 
+
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
@@ -54,6 +55,7 @@ INSERT INTO points VALUES
   (5, 'MULTIPOINT (POINT (30 10), POINT Z (30 10 5))');
 ----
 db error: ERROR: Failed to parse geometry: Expected number at offset 12
+
 
 # DOCS_TEST: example_003
 
@@ -197,10 +199,11 @@ DROP TABLE IF EXISTS geometries;
 statement ok
 CREATE TABLE geometries as select 'POINT Z (30 10 5)'::GEOMETRY as geom;
 
-query error
+query
 SELECT stats(geom) AS geom_stats FROM geometries;
 ----
-db error: ERROR: Such type is not supported
+geom_stats
+{"approx_unique":1,"extent":{"x_max":30.0,"x_min":30.0,"y_max":10.0,"y_min":10.0,"z_max":5.0,"z_min":5.0},"has_empty_geom":false,"has_empty_part":false,"has_no_null":true,"has_non_empty_geom":true,"has_non_empty_part":true,"has_null":false}
 
 # DOCS_TEST: example_006
 
@@ -222,6 +225,7 @@ The coordinate system definition may be incomplete or invalid. Your options are 
 * Provide a full coordinate system definition in e.g. "PROJJSON" or "WKT2" format
 * Set the 'ignore_unknown_crs' configuration option to drop the coordinate system from the resulting geometry type and make this error go away
 
+
 # DOCS_TEST: example_008
 
 # DOCS_TEST_BODY
@@ -235,6 +239,7 @@ select 'POINT(1 2)'::GEOMETRY('DUCK:1337') AS my_point;
 ----
 db error: ERROR: Such type is not supported
 
+
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY
@@ -243,6 +248,7 @@ query error
 SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY, 'OGC:CRS84') AS with_crs;
 ----
 db error: ERROR: Such type is not supported
+
 
 # DOCS_TEST: example_011
 
@@ -258,6 +264,7 @@ query error
 SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84'), '') AS no_crs;
 ----
 db error: ERROR: Such type is not supported
+
 
 # DOCS_TEST: example_012
 

@@ -2,11 +2,19 @@
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query
 SELECT TIMESTAMP_NS '1992-09-20 11:30:00.123456789';
 ----
 timestamp_ns
 1992-09-20 11:30:00.123456
+
+onlyif pg-wire-extended
+query
+SELECT TIMESTAMP_NS '1992-09-20 11:30:00.123456789';
+----
+timestamp_ns
+1992-09-20 11:30:00.123457
 
 # DOCS_TEST: example_002
 
@@ -22,11 +30,19 @@ timestamp
 
 # DOCS_TEST_BODY
 
+skipif pg-wire-extended
 query
 SELECT TIMESTAMP_MS '1992-09-20 11:30:00.123456789';
 ----
 timestamp_ms
 1970-01-09 07:09:48.600123
+
+onlyif pg-wire-extended
+query
+SELECT TIMESTAMP_MS '1992-09-20 11:30:00.123456789';
+----
+timestamp_ms
+1992-09-20 11:30:00.123
 
 # DOCS_TEST: example_004
 
@@ -70,10 +86,11 @@ SELECT
     timezone('UTC', TIMESTAMPTZ '2001-02-16 04:38:40 Europe/Berlin') AS naive2;
 ----
 db error: ERROR: An error occurred while trying to automatically install the required extension 'icu:
-Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_extension" not found.
+Extension "<slt:ignore>icu.duckdb_extension" not found.
 Extension "icu" is an existing extension.
 
 Install it first using "INSTALL icu".
+
 
 # DOCS_TEST: example_008
 
@@ -135,6 +152,7 @@ db error: ERROR: Setting with name "calendar" is not in the catalog, but it exis
 
 This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
+
 # DOCS_TEST: example_013
 
 # DOCS_TEST_BODY
@@ -147,6 +165,7 @@ ORDER BY 1;
 db error: ERROR: Table Function with name "icu_calendar_names" is not in the catalog, but it exists in the icu extension.
 
 This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
 
 # DOCS_TEST: example_014
 

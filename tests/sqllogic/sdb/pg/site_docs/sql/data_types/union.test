@@ -5,10 +5,8 @@
 statement ok
 CREATE TABLE tbl1 (u UNION(num INTEGER, str VARCHAR));
 
-statement error
+statement ok
 INSERT INTO tbl1 VALUES (1), ('two'), (union_value(str := 'three'));
-----
-db error: ERROR: Unsupported column type for RocksDB serialization: UNION
 
 # DOCS_TEST: example_002
 
@@ -19,33 +17,42 @@ SELECT u FROM tbl1;
 ----
 db error: ERROR: Such type is not supported
 
+
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT union_extract(u, 'str') AS str
 FROM tbl1;
 ----
-db error: ERROR: Unsupported vector type
+str
+NULL
+two
+three
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT u.str
 FROM tbl1;
 ----
-db error: ERROR: Unsupported vector type
+str
+NULL
+two
+three
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-skipif serenedb
-
 query
 SELECT union_tag(u) AS t
 FROM tbl1;
 ----
+t
+num
+str
+str

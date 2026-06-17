@@ -17,6 +17,7 @@ SELECT {'test': [MAP([1, 5], [42.1, 45]), MAP([1, 5], [42.1, 45])]};
 ----
 connection closed
 
+
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY

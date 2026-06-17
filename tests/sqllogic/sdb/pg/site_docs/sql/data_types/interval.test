@@ -109,6 +109,7 @@ SELECT
 ----
 db error: ERROR: SELECT clause without selection list
 
+
 # DOCS_TEST: example_008
 
 # DOCS_TEST_BODY

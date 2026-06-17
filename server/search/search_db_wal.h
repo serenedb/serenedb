@@ -44,40 +44,11 @@ class ColumnDataCollection;
 class MemoryStream;
 
 }  // namespace duckdb
+
+struct ZSTD_CCtx_s;
+
 namespace sdb::search {
 
-// Self-contained, rocksdb-free write-ahead log for a database's search-backed
-// tables (`StorageKind::kSearch`). One instance per database (owned by the
-// search engine, keyed by db_id): a single central commit log shared by all of
-// the database's search shards, so a transaction touching several search tables
-// commits all-or-nothing behind one fsync. Chunk files stay per-shard.
-//
-// Layout under `<wal_dir>`. Names are fixed-width 16-hex, so lexicographic
-// order == numeric order:
-//   <016x first_tick>.swal                       central commit segments
-//                                                 (append-only); the name is
-//                                                 the tick of the segment's
-//                                                 FIRST record.
-//   chunks/<table_id>/<016x seg_id>.swchunk      per-shard bulk chunk files
-//                                                 (referenced by a record).
-//
-// A commit appends ONE central record carrying a monotonic `tick` and a list of
-// per-shard sections -- one for each search table the transaction wrote. Each
-// section is a shard header plus an ordered op manifest:
-//   record  = [u64 tick][u32 shard_count][ section x shard_count ]
-//   section = [u64 table_id][u32 op_count][ op x op_count ]
-//   op      = [u8 kind][kind body]
-//     INLINE    -- small inserts: the rows are serialised into the op.
-//     REFERENCE -- bulk inserts: the op lists `seg_id`s of chunk files that
-//     hold
-//                  the rows (streamed in parallel during Sink).
-// The column layout is NOT recorded -- replay rebuilds it from the catalog
-// (recovery runs after the catalog loads). Insert-only today.
-// Frame: [u64 size][u64 checksum][payload], where payload begins with
-// [u64 tick] at a fixed offset (readable without deserialising the rest).
-//
-// The public API identifies tables by catalog `ObjectId`; only the on-disk
-// record + chunk path store the raw `.id()` (the wire format is a plain u64).
 class SearchDbWal {
  public:
   class PendingChunk {
@@ -122,10 +93,16 @@ class SearchDbWal {
     PendingChunk Finish();
 
    private:
+    struct CCtxDeleter {
+      void operator()(ZSTD_CCtx_s* cctx) const noexcept;
+    };
+
     PendingChunk _pending;
     std::unique_ptr<duckdb::BufferedFileWriter> _writer;
     // Reused across Append() calls (Rewind keeps the backing buffer).
     std::unique_ptr<duckdb::MemoryStream> _stream;
+
+    std::unique_ptr<ZSTD_CCtx_s, CCtxDeleter> _cctx;
     // Reused zstd output buffer (grows to the high-water compressed size).
     std::vector<uint8_t> _comp;
   };

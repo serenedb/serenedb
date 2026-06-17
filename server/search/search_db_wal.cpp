@@ -267,10 +267,16 @@ void VisitSectionsOps(Cursor& c, std::vector<uint64_t>& seg_scratch,
   }
 }
 
+struct ZstdDCtxDeleter {
+  void operator()(ZSTD_DCtx* d) const noexcept { ZSTD_freeDCtx(d); }
+};
+using ZstdDCtxPtr = std::unique_ptr<ZSTD_DCtx, ZstdDCtxDeleter>;
+
 void ReplayChunkFile(
-  duckdb::FileSystem& fs, const std::string& chunk_path,
+  duckdb::FileSystem& fs, const std::string& chunk_path, ZSTD_DCtx* dctx,
   const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t pk_base) const>&
     emit) {
+  SDB_ASSERT(dctx);
   duckdb::BufferedFileReader reader(fs, chunk_path.c_str());
   std::vector<uint8_t> comp_buf;
   std::vector<uint8_t> raw_buf;
@@ -295,8 +301,8 @@ void ReplayChunkFile(
     uint32_t src_len = 0;
     if (codec == kChunkCodecZstd) {
       raw_buf.resize(raw_len);
-      const size_t got =
-        ZSTD_decompress(raw_buf.data(), raw_len, comp_buf.data(), comp_len);
+      const size_t got = ZSTD_decompressDCtx(dctx, raw_buf.data(), raw_len,
+                                             comp_buf.data(), comp_len);
       SDB_ENSURE(!ZSTD_isError(got) && got == raw_len, ERROR_INTERNAL,
                  "corrupt search chunk file '", chunk_path,
                  "': zstd decompress failed (", raw_len, " expected)");
@@ -356,11 +362,17 @@ void SearchDbWal::PendingChunk::ReclaimIfUncommitted() noexcept {
   }
 }
 
+void SearchDbWal::ChunkWriter::CCtxDeleter::operator()(
+  ZSTD_CCtx_s* cctx) const noexcept {
+  ZSTD_freeCCtx(cctx);  // no-op on nullptr
+}
+
 SearchDbWal::ChunkWriter::ChunkWriter(
   PendingChunk pending, std::unique_ptr<duckdb::BufferedFileWriter> writer)
   : _pending(std::move(pending)),
     _writer(std::move(writer)),
-    _stream(std::make_unique<duckdb::MemoryStream>()) {}
+    _stream(std::make_unique<duckdb::MemoryStream>()),
+    _cctx(ZSTD_createCCtx()) {}
 SearchDbWal::ChunkWriter::ChunkWriter(ChunkWriter&&) noexcept = default;
 SearchDbWal::ChunkWriter& SearchDbWal::ChunkWriter::operator=(
   ChunkWriter&&) noexcept = default;
@@ -380,8 +392,12 @@ void SearchDbWal::ChunkWriter::Append(duckdb::DataChunk& chunk,
   if (_comp.size() < bound) {
     _comp.resize(bound);
   }
-  const size_t comp = ZSTD_compress(_comp.data(), _comp.size(),
-                                    _stream->GetData(), raw_len, kZstdLevel);
+  // Reuse this writer's context (ZSTD_compressCCtx resets it per call) so each
+  // chunk doesn't allocate + free its own.
+  SDB_ASSERT(_cctx);
+  const size_t comp =
+    ZSTD_compressCCtx(_cctx.get(), _comp.data(), _comp.size(),
+                      _stream->GetData(), raw_len, kZstdLevel);
   uint8_t codec = kChunkCodecZstd;
   const uint8_t* payload = _comp.data();
   auto payload_len = static_cast<uint32_t>(comp);
@@ -693,6 +709,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
   std::unordered_set<std::string> referenced;  // surviving chunk-file paths
   std::vector<uint64_t> seg_scratch;           // reused by ParseOp across
   std::vector<std::string_view> pk_scratch;    // records
+  ZstdDCtxPtr dctx{ZSTD_createDCtx()};  // reused across all chunk-file frames
 
   for (const auto& [first_tick, path] : EnumerateSegments(_wal_dir)) {
     duckdb::BufferedFileReader reader(_fs, path.string().c_str());
@@ -739,7 +756,7 @@ uint64_t SearchDbWal::Recover(const ShardExistsFn& exists_of,
                 referenced.insert(chunk_path);  // survives the orphan sweep
                 if (live) {
                   ReplayChunkFile(
-                    _fs, chunk_path,
+                    _fs, chunk_path, dctx.get(),
                     [&](duckdb::DataChunk& chunk, uint64_t pk_base) {
                       insert_cb(tick, tid, pk_base, chunk);
                     });

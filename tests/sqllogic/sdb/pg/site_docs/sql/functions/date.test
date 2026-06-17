@@ -1,0 +1,151 @@
+# DOCS_TEST: date_add
+# DOCS_TEST_BODY
+query
+SELECT date_add(DATE '1992-09-15', INTERVAL 2 MONTH) AS date_add;
+----
+date_add
+1992-11-15 00:00:00
+
+# DOCS_TEST: date_diff
+# DOCS_TEST_BODY
+query
+SELECT date_diff('month', DATE '1992-09-15', DATE '1992-11-14') AS date_diff;
+----
+date_diff
+2
+
+# DOCS_TEST: date_part
+# DOCS_TEST_BODY
+query
+SELECT date_part('year', DATE '1992-09-20') AS date_part;
+----
+date_part
+1992
+
+# DOCS_TEST: date_sub
+# DOCS_TEST_BODY
+query
+SELECT date_sub('month', DATE '1992-09-15', DATE '1992-11-14') AS date_sub;
+----
+date_sub
+1
+
+# DOCS_TEST: date_trunc
+# DOCS_TEST_BODY
+query
+SELECT date_trunc('month', DATE '1992-03-07') AS date_trunc;
+----
+date_trunc
+1992-03-01 00:00:00
+
+# DOCS_TEST: dayname
+# DOCS_TEST_BODY
+query
+SELECT dayname(DATE '1992-09-20') AS dayname;
+----
+dayname
+Sunday
+
+# DOCS_TEST: days_in_month
+# DOCS_TEST_BODY
+query
+SELECT days_in_month(DATE '1992-02-15') AS days_in_month;
+----
+days_in_month
+29
+
+# DOCS_TEST: extract
+# DOCS_TEST_BODY
+query
+SELECT extract('year' FROM DATE '1992-09-20') AS extract;
+----
+extract
+1992
+
+# DOCS_TEST: greatest
+# DOCS_TEST_BODY
+query
+SELECT greatest(DATE '1992-09-20', DATE '1992-03-07') AS greatest;
+----
+greatest
+1992-09-20
+
+# DOCS_TEST: isfinite
+# DOCS_TEST_BODY
+query
+SELECT isfinite(DATE '1992-03-07') AS isfinite;
+----
+isfinite
+t
+
+# DOCS_TEST: isinf
+# DOCS_TEST_BODY
+query
+SELECT isinf(DATE '-infinity') AS isinf;
+----
+isinf
+t
+
+# DOCS_TEST: julian
+# DOCS_TEST_BODY
+query
+SELECT julian(DATE '1992-09-20') AS julian;
+----
+julian
+2448886
+
+# DOCS_TEST: last_day
+# DOCS_TEST_BODY
+query
+SELECT last_day(DATE '1992-09-20') AS last_day;
+----
+last_day
+1992-09-30
+
+# DOCS_TEST: least
+# DOCS_TEST_BODY
+query
+SELECT least(DATE '1992-09-20', DATE '1992-03-07') AS least;
+----
+least
+1992-03-07
+
+# DOCS_TEST: make_date
+# DOCS_TEST_BODY
+query
+SELECT make_date(1992, 9, 20) AS make_date;
+----
+make_date
+1992-09-20
+
+# DOCS_TEST: monthname
+# DOCS_TEST_BODY
+query
+SELECT monthname(DATE '1992-09-20') AS monthname;
+----
+monthname
+September
+
+# DOCS_TEST: strftime
+# DOCS_TEST_BODY
+query
+SELECT strftime(DATE '1992-01-01', '%a, %-d %B %Y') AS strftime;
+----
+strftime
+Wed, 1 January 1992
+
+# DOCS_TEST: time_bucket_offset
+# DOCS_TEST_BODY
+query
+SELECT time_bucket(INTERVAL '2 months', DATE '1992-04-20', INTERVAL '1 month') AS time_bucket;
+----
+time_bucket
+1992-04-01
+
+# DOCS_TEST: time_bucket_origin
+# DOCS_TEST_BODY
+query
+SELECT time_bucket(INTERVAL '2 weeks', DATE '1992-04-20', DATE '1992-04-01') AS time_bucket;
+----
+time_bucket
+1992-04-15

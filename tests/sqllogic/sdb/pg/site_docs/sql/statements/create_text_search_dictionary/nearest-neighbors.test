@@ -1,12 +1,19 @@
+control substitution on
+
 # DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| CREATE TEXT SEARCH DICTIONARY nn_dict (
+#|     template = 'nearest_neighbors',
+#|     MODELLOCATION = '/models/cooking.bin',
+#|     TOPK = 2
+#| );
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CREATE TEXT SEARCH DICTIONARY nn_dict (
     template = 'nearest_neighbors',
-    MODELLOCATION = '/models/cooking.bin',
+    MODELLOCATION = '${RESOURCES}/tests/iresearch/model_cooking.bin',
     TOPK = 2
 );
-----
-db error: ERROR: File "/models/cooking\.bin" referenced by option "modellocation" does not exist

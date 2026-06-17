@@ -58,11 +58,12 @@ SELECT col_A FROM (SELECT 'x' AS col_a);
 col_a
 x
 
-query error
+statement error
 SELECT col_á FROM (SELECT 'x' AS col_a);
 ----
 db error: ERROR: Referenced column "col_á" not found in FROM clause!
 Candidate bindings: "col_a"
+
 
 # DOCS_TEST: example_006
 

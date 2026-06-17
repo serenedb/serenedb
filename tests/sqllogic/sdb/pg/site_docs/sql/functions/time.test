@@ -1,0 +1,39 @@
+# DOCS_TEST: date_diff
+# DOCS_TEST_BODY
+query
+SELECT date_diff('hour', TIME '01:02:03', TIME '06:01:03') AS date_diff;
+----
+date_diff
+5
+
+# DOCS_TEST: date_part
+# DOCS_TEST_BODY
+query
+SELECT date_part('minute', TIME '14:21:13') AS date_part;
+----
+date_part
+21
+
+# DOCS_TEST: date_sub
+# DOCS_TEST_BODY
+query
+SELECT date_sub('hour', TIME '01:02:03', TIME '06:01:03') AS date_sub;
+----
+date_sub
+4
+
+# DOCS_TEST: extract
+# DOCS_TEST_BODY
+query
+SELECT extract('hour' FROM TIME '14:21:13') AS extract;
+----
+extract
+14
+
+# DOCS_TEST: make_time
+# DOCS_TEST_BODY
+query
+SELECT make_time(13, 34, 27.123456) AS make_time;
+----
+make_time
+13:34:27.123456

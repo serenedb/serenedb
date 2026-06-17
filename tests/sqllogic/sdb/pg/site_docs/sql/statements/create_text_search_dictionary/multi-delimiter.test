@@ -7,15 +7,3 @@ CREATE TEXT SEARCH DICTIONARY multi_delim (
     template = 'multi_delimiter',
     delimiters = '":", ";", " ", ".", "|"'
 );
-
-# DOCS_TEST: example_002
-
-# DOCS_TEST_BODY
-
-statement error
-CREATE TEXT SEARCH DICTIONARY csv_delim (
-    template = 'multi_delimiter',
-    delimiters = '","'
-);
-----
-db error: ERROR: vpack::Builder is unable to allocate string

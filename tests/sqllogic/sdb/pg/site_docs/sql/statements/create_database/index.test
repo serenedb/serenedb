@@ -3,6 +3,9 @@
 # DOCS_TEST_BODY
 
 statement ok
+DROP DATABASE IF EXISTS app_production;
+
+statement ok
 CREATE DATABASE app_production;
 
 # DOCS_TEST: example_002

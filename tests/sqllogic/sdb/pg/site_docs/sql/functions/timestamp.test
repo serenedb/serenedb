@@ -1,0 +1,269 @@
+# DOCS_TEST: age_two
+# DOCS_TEST_BODY
+query
+SELECT age(TIMESTAMP '2001-04-10', TIMESTAMP '1992-09-20') AS age;
+----
+age
+8 years 6 mons 20 days
+
+# DOCS_TEST: century
+# DOCS_TEST_BODY
+query
+SELECT century(TIMESTAMP '1992-03-22') AS century;
+----
+century
+20
+
+# DOCS_TEST: date_diff
+# DOCS_TEST_BODY
+query
+SELECT date_diff('hour', TIMESTAMP '1992-09-30 23:59:59', TIMESTAMP '1992-10-01 01:58:00') AS diff;
+----
+diff
+2
+
+# DOCS_TEST: date_part_list
+# DOCS_TEST_BODY
+query
+SELECT date_part(['year', 'month', 'day'], TIMESTAMP '1992-09-20 20:38:40') AS parts;
+----
+parts
+(1992,9,20)
+
+# DOCS_TEST: date_part
+# DOCS_TEST_BODY
+query
+SELECT date_part('minute', TIMESTAMP '1992-09-20 20:38:40') AS minute;
+----
+minute
+38
+
+# DOCS_TEST: date_sub
+# DOCS_TEST_BODY
+query
+SELECT date_sub('hour', TIMESTAMP '1992-09-30 23:59:59', TIMESTAMP '1992-10-01 01:58:00') AS sub;
+----
+sub
+1
+
+# DOCS_TEST: date_trunc
+# DOCS_TEST_BODY
+query
+SELECT date_trunc('hour', TIMESTAMP '1992-09-20 20:38:40') AS truncated;
+----
+truncated
+1992-09-20 20:00:00
+
+# DOCS_TEST: dayname
+# DOCS_TEST_BODY
+query
+SELECT dayname(TIMESTAMP '1992-03-22') AS dayname;
+----
+dayname
+Sunday
+
+# DOCS_TEST: epoch_ms
+# DOCS_TEST_BODY
+query
+SELECT epoch_ms(TIMESTAMP '2021-08-03 11:59:44.123456') AS ms;
+----
+ms
+1627991984123
+
+# DOCS_TEST: epoch_ns
+# DOCS_TEST_BODY
+query
+SELECT epoch_ns(TIMESTAMP '2021-08-03 11:59:44.123456') AS ns;
+----
+ns
+1627991984123456000
+
+# DOCS_TEST: epoch_us
+# DOCS_TEST_BODY
+query
+SELECT epoch_us(TIMESTAMP '2021-08-03 11:59:44.123456') AS us;
+----
+us
+1627991984123456
+
+# DOCS_TEST: epoch
+# DOCS_TEST_BODY
+query
+SELECT epoch('2022-11-07 08:43:04'::TIMESTAMP) AS seconds;
+----
+seconds
+1667810584
+
+# DOCS_TEST: extract
+# DOCS_TEST_BODY
+query
+SELECT extract('hour' FROM TIMESTAMP '1992-09-20 20:38:48') AS hour;
+----
+hour
+20
+
+# DOCS_TEST: greatest
+# DOCS_TEST_BODY
+query
+SELECT greatest(TIMESTAMP '1992-09-20 20:38:48', TIMESTAMP '1992-03-22 01:02:03.1234') AS greatest;
+----
+greatest
+1992-09-20 20:38:48
+
+# DOCS_TEST: isfinite
+# DOCS_TEST_BODY
+query
+SELECT isfinite(TIMESTAMP '1992-03-07') AS isfinite;
+----
+isfinite
+t
+
+# DOCS_TEST: isinf
+# DOCS_TEST_BODY
+query
+SELECT isinf(TIMESTAMP '-infinity') AS isinf;
+----
+isinf
+t
+
+# DOCS_TEST: julian
+# DOCS_TEST_BODY
+query
+SELECT julian(TIMESTAMP '1992-03-22 01:02:03.1234') AS julian;
+----
+julian
+2448704.043091706
+
+# DOCS_TEST: last_day
+# DOCS_TEST_BODY
+query
+SELECT last_day(TIMESTAMP '1992-03-22 01:02:03.1234') AS last_day;
+----
+last_day
+1992-03-31
+
+# DOCS_TEST: make_timestamp_parts
+# DOCS_TEST_BODY
+query
+SELECT make_timestamp(1992, 9, 20, 13, 34, 27.123456) AS ts;
+----
+ts
+1992-09-20 13:34:27.123456
+
+# DOCS_TEST: make_timestamp_us
+# DOCS_TEST_BODY
+query
+SELECT make_timestamp(1667810584123456) AS ts;
+----
+ts
+2022-11-07 08:43:04.123456
+
+# DOCS_TEST: make_timestamp_ms
+# DOCS_TEST_BODY
+query
+SELECT make_timestamp_ms(1667810584123) AS ts;
+----
+ts
+2022-11-07 08:43:04.123
+
+# DOCS_TEST: make_timestamp_ns
+# DOCS_TEST_BODY
+query
+SELECT make_timestamp_ns(1667810584123456789) AS ts;
+----
+ts
+2022-11-07 08:43:04.123456
+
+# DOCS_TEST: monthname
+# DOCS_TEST_BODY
+query
+SELECT monthname(TIMESTAMP '1992-09-20') AS monthname;
+----
+monthname
+September
+
+# DOCS_TEST: strftime
+# DOCS_TEST_BODY
+query
+SELECT strftime(TIMESTAMP '1992-01-01 20:38:40', '%a, %-d %B %Y - %I:%M:%S %p') AS formatted;
+----
+formatted
+Wed, 1 January 1992 - 08:38:40 PM
+
+# DOCS_TEST: strptime_list
+# DOCS_TEST_BODY
+query
+SELECT strptime('4/15/2023 10:56:00', ['%d/%m/%Y %H:%M:%S', '%m/%d/%Y %H:%M:%S']) AS ts;
+----
+ts
+2023-04-15 10:56:00
+
+# DOCS_TEST: strptime
+# DOCS_TEST_BODY
+query
+SELECT strptime('Wed, 1 January 1992 - 08:38:40 PM', '%a, %-d %B %Y - %I:%M:%S %p') AS ts;
+----
+ts
+1992-01-01 20:38:40
+
+# DOCS_TEST: time_bucket_offset
+# DOCS_TEST_BODY
+query
+SELECT time_bucket(INTERVAL '10 minutes', TIMESTAMP '1992-04-20 15:26:00-07', INTERVAL '5 minutes') AS bucket;
+----
+bucket
+1992-04-20 15:25:00
+
+# DOCS_TEST: time_bucket_origin
+# DOCS_TEST_BODY
+query
+SELECT time_bucket(INTERVAL '2 weeks', TIMESTAMP '1992-04-20 15:26:00', TIMESTAMP '1992-04-01 00:00:00') AS bucket;
+----
+bucket
+1992-04-15 00:00:00
+
+# DOCS_TEST: try_strptime_list
+# DOCS_TEST_BODY
+query
+SELECT try_strptime('4/15/2023 10:56:00', ['%d/%m/%Y %H:%M:%S', '%m/%d/%Y %H:%M:%S']) AS ts;
+----
+ts
+2023-04-15 10:56:00
+
+# DOCS_TEST: try_strptime
+# DOCS_TEST_BODY
+query
+SELECT try_strptime('Wed, 1 January 1992 - 08:38:40 PM', '%a, %-d %B %Y - %I:%M:%S %p') AS ts;
+----
+ts
+1992-01-01 20:38:40
+
+# DOCS_TEST: generate_series
+# DOCS_TEST_BODY
+query
+SELECT * FROM generate_series(TIMESTAMP '2001-04-10', TIMESTAMP '2001-04-11', INTERVAL 30 MINUTE) ORDER BY 1 LIMIT 3;
+----
+generate_series
+2001-04-10 00:00:00
+2001-04-10 00:30:00
+2001-04-10 01:00:00
+
+# DOCS_TEST: range
+# DOCS_TEST_BODY
+query
+SELECT * FROM range(TIMESTAMP '2001-04-10', TIMESTAMP '2001-04-11', INTERVAL 30 MINUTE) ORDER BY 1 LIMIT 3;
+----
+range
+2001-04-10 00:00:00
+2001-04-10 00:30:00
+2001-04-10 01:00:00
+
+# DOCS_TEST: least
+
+# DOCS_TEST_BODY
+
+query
+SELECT least(TIMESTAMP '1992-03-22 01:02:03', TIMESTAMP '1993-08-14 08:22:33') AS least;
+----
+least
+1992-03-22 01:02:03

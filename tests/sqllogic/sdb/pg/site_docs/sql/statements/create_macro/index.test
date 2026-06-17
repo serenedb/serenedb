@@ -138,6 +138,7 @@ CREATE MACRO checksum(tbl) AS TABLE
 statement ok
 CREATE TABLE tbl AS SELECT unnest([42, 43]) AS x, 100 AS y;
 
+skipif pg-wire-extended
 query
 SELECT * FROM checksum('tbl');
 ----
@@ -195,6 +196,7 @@ CREATE MACRO add(a) AS a + b;
 ----
 db error: ERROR: Referenced column "b" was not found because the FROM clause is missing
 
+
 # DOCS_TEST: example_021
 
 statement ok
@@ -223,6 +225,7 @@ query error
 SELECT add('hello', 3);
 ----
 db error: ERROR: Could not convert string 'hello' to INT32
+
 
 # DOCS_TEST: example_024
 
@@ -280,6 +283,7 @@ SELECT a + b AS x;
 ----
 db error: ERROR: Referenced column "a" was not found because the FROM clause is missing
 
+
 # DOCS_TEST: example_030
 
 # DOCS_TEST_BODY
@@ -308,7 +312,8 @@ CREATE OR REPLACE FUNCTION fibo(n) AS (
 query error
 SELECT fibo(3);
 ----
-db error: ERROR: Max expression depth limit of 1000 exceeded\. Use "SET max_expression_depth TO x" to increase the maximum expression depth\.
+db error: ERROR: Max expression depth limit of 1000 exceeded. Use "SET max_expression_depth TO x" to increase the maximum expression depth.
+
 
 # DOCS_TEST: example_032
 

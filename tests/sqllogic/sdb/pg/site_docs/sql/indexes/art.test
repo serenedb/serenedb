@@ -70,6 +70,3 @@ statement error
 UPDATE pk_table SET payload = ['world'] WHERE id = 1;
 ----
 db error: ERROR: Violates foreign key constraint because key "id: 1" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation
-
-
-

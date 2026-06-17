@@ -1,0 +1,610 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR, category VARCHAR, dual VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted (id, body en, category, dual en) INCLUDE (dual);
+
+statement ok
+INSERT INTO docs VALUES
+    (1, 'quick brown fox jumps over lazy dog', 'sci-fi', 'x'),
+    (2, 'quick red fox jumps over lazy dog', 'sci-fi', NULL),
+    (3, 'slow grey turtle sleeps', 'drama', 'y'),
+    (4, 'something else entirely', 'comedy', 'z');
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+statement ok
+CREATE TABLE titles (id INTEGER PRIMARY KEY, title VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bigram (template = 'ngram', mingram = 2, maxgram = 2, frequency = true, position = true);
+
+statement ok
+CREATE INDEX titles_idx ON titles USING inverted (id, title bigram);
+
+statement ok
+INSERT INTO titles VALUES (1, 'hello'), (2, 'help'), (3, 'world'), (4, 'held');
+
+statement ok
+VACUUM (REFRESH_TABLE) titles;
+
+statement ok
+CREATE TABLE vecs (id INTEGER, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX vecs_l2 ON vecs USING inverted (id, emb hnsw (metric = 'l2'));
+
+statement ok
+INSERT INTO vecs VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [0, 0, 1]::FLOAT[3]);
+
+statement ok
+VACUUM (REFRESH_TABLE) vecs;
+
+statement ok
+CREATE TABLE vecs_c (id INTEGER, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX vecs_cos ON vecs_c USING inverted (id, emb hnsw (metric = 'cosine'));
+
+statement ok
+INSERT INTO vecs_c VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 1, 0]::FLOAT[3]), (3, [1, 1, 0]::FLOAT[3]);
+
+statement ok
+VACUUM (REFRESH_TABLE) vecs_c;
+
+statement ok
+CREATE TABLE vecs_l (id INTEGER, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX vecs_l1 ON vecs_l USING inverted (id, emb hnsw (metric = 'l1'));
+
+statement ok
+INSERT INTO vecs_l VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [0, 0, 1]::FLOAT[3]);
+
+statement ok
+VACUUM (REFRESH_TABLE) vecs_l;
+
+statement ok
+CREATE TABLE geo (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY gj (template = 'geojson', coding = 's2point');
+
+statement ok
+CREATE INDEX geo_idx ON geo USING inverted (id, geo gj);
+
+statement ok
+INSERT INTO geo VALUES
+    (1, 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84')),
+    (2, 'POINT(37.7 55.8)'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) geo;
+
+# DOCS_TEST: column--tsquery
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: ts_phrase
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: ts_tokenize
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ ts_tokenize('quick', 'keyword') ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: ts_like
+# DOCS_TEST_BODY
+query
+SELECT id, category FROM docs_idx WHERE category @@ ts_like('sci%') ORDER BY id;
+----
+id	category
+1	sci-fi
+2	sci-fi
+
+# DOCS_TEST: ts_starts_with
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ ts_starts_with('turt') ORDER BY id;
+----
+id
+3
+
+# DOCS_TEST: ts_regexp
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ ts_regexp('qu.*ck') ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: ts_levenshtein
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ ts_levenshtein('quikc', 2) ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: ts_ngram
+# DOCS_TEST_BODY
+query
+SELECT id, title FROM titles_idx WHERE title @@ ts_ngram('hello', 0.3) ORDER BY id;
+----
+id	title
+1	hello
+2	help
+4	held
+
+# DOCS_TEST: ts_between
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE id @@ ts_between(2, 3, true, true) ORDER BY id;
+----
+id
+2
+3
+
+# DOCS_TEST: ts_lt
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE id @@ ts_lt(3) ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: ts_le
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE id @@ ts_le(2) ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: ts_gt
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE id @@ ts_gt(3) ORDER BY id;
+----
+id
+4
+
+# DOCS_TEST: ts_ge
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE id @@ ts_ge(3) ORDER BY id;
+----
+id
+3
+4
+
+# DOCS_TEST: ts_any
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ ts_any(['quick', 'grey'], 1) ORDER BY id;
+----
+id
+1
+2
+3
+
+# DOCS_TEST: ts_all
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ ts_all([ts_phrase('quick'), ts_phrase('brown')]) ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: ts_compound
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ ts_compound(ts_phrase('quick'), ts_phrase('grey'), [ts_phrase('lazy')]) ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: ts_is_null
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE dual @@ ts_is_null() ORDER BY id;
+----
+id
+2
+
+# DOCS_TEST: ts_is_not_null
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE dual @@ ts_is_not_null() ORDER BY id;
+----
+id
+1
+3
+4
+
+# DOCS_TEST: a--b-or
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ (ts_phrase('brown') || ts_phrase('grey')) ORDER BY id;
+----
+id
+1
+3
+
+# DOCS_TEST: a--b-and
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ (ts_phrase('quick') && ts_phrase('brown')) ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: -a-not
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ (ts_phrase('quick') && !!ts_phrase('brown')) ORDER BY id;
+----
+id
+2
+
+# DOCS_TEST: a--b-phrase
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ ('quick' ## 1 ## 'fox') ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: a--factor-boost
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ (ts_phrase('fox') || ts_phrase('quick') ^ 2.0) ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: to_tsquery
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ to_tsquery('quick AND brown') ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: plainto_tsquery
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ plainto_tsquery('quick brown') ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: phraseto_tsquery
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ phraseto_tsquery('over lazy dog') ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: websearch_to_tsquery
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ websearch_to_tsquery('"quick brown" OR "grey turtle"') ORDER BY id;
+----
+id
+1
+3
+
+# DOCS_TEST: tsquery_phrase
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ tsquery_phrase('quick'::TSQUERY, 'fox'::TSQUERY, 2) ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: phrase_matches
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE phrase_matches(body, 'quick brown') ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: ngram_matches
+# DOCS_TEST_BODY
+query
+SELECT id, title FROM titles_idx WHERE ngram_matches(title, 'hello', 0.3) ORDER BY id;
+----
+id	title
+1	hello
+2	help
+4	held
+
+# DOCS_TEST: levenshtein_matches
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE levenshtein_matches(body, 'quikc', 2) ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: has_all_tokens
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE has_all_tokens(body, ['quick', 'brown']) ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: has_any_tokens
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE has_any_tokens(body, ['grey', 'red'], 1) ORDER BY id;
+----
+id
+2
+3
+
+# DOCS_TEST: bm25
+# DOCS_TEST_BODY
+query
+SELECT id, BM25(docs_idx.tableoid) AS score
+FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+1	1.036356
+2	1.036356
+
+# DOCS_TEST: tfidf
+# DOCS_TEST_BODY
+query
+SELECT id, TFIDF(docs_idx.tableoid) AS score
+FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+1	0.98082924
+2	0.98082924
+
+# DOCS_TEST: lm_jm
+# DOCS_TEST_BODY
+query
+SELECT id, lm_jm(docs_idx.tableoid) AS score
+FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+1	0
+2	0
+
+# DOCS_TEST: lm_dirichlet
+# DOCS_TEST_BODY
+query
+SELECT id, lm_dirichlet(docs_idx.tableoid) AS score
+FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+1	0
+2	0
+
+# DOCS_TEST: indri_dirichlet
+# DOCS_TEST_BODY
+query
+SELECT id, indri_dirichlet(docs_idx.tableoid) AS score
+FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+1	0
+2	0
+
+# DOCS_TEST: dfi
+# DOCS_TEST_BODY
+query
+SELECT id, dfi(docs_idx.tableoid) AS score
+FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+1	0
+2	0
+
+# DOCS_TEST: raw_tf
+# DOCS_TEST_BODY
+query
+SELECT id, raw_tf(docs_idx.tableoid) AS score
+FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+1	1
+2	1
+
+# DOCS_TEST: raw_boost
+# DOCS_TEST_BODY
+query
+SELECT id, raw_boost(docs_idx.tableoid) AS score
+FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+1	1
+2	1
+
+# DOCS_TEST: raw_dl
+# DOCS_TEST_BODY
+query
+SELECT id, raw_dl(docs_idx.tableoid) AS score
+FROM docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+1	0
+2	0
+
+# DOCS_TEST: ts_highlight
+# DOCS_TEST_BODY
+query
+SELECT ts_highlight('the quick brown fox', [4, 9]) AS snippet;
+----
+snippet
+the <b>quick</b> brown fox
+
+# DOCS_TEST: ts_highlight_options
+# DOCS_TEST_BODY
+query
+SELECT ts_highlight('the quick brown fox', [4, 9], 'StartSel=<mark>, StopSel=</mark>') AS snippet;
+----
+snippet
+the <mark>quick</mark> brown fox
+
+# DOCS_TEST: ts_offsets
+# DOCS_TEST_BODY
+query
+SELECT id, ts_offsets(docs_idx.body) AS offsets FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id	offsets
+1	{12,15}
+2	{10,13}
+
+# DOCS_TEST: l2_distance
+# DOCS_TEST_BODY
+query
+SELECT id FROM vecs_l2 ORDER BY l2_distance(emb, [0, 0, 0]::FLOAT[3]) LIMIT 2;
+----
+id
+1
+3
+
+# DOCS_TEST: cosine_distance
+# DOCS_TEST_BODY
+query
+SELECT id FROM vecs_cos ORDER BY cosine_distance(emb, [1, 0, 0]::FLOAT[3]) LIMIT 2;
+----
+id
+1
+3
+
+# DOCS_TEST: l1_distance
+# DOCS_TEST_BODY
+query
+SELECT id FROM vecs_l1 ORDER BY l1_distance(emb, [0, 0, 0]::FLOAT[3]) LIMIT 2;
+----
+id
+1
+3
+
+# DOCS_TEST: a---b-distance
+# DOCS_TEST_BODY
+query
+SELECT id FROM vecs_l2 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+3
+
+# DOCS_TEST: st_intersects
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM geo_idx
+WHERE ST_Intersects(geo, 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84'))
+ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: st_contains
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM geo_idx
+WHERE ST_Contains(geo, 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84'))
+ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: st_distance_between
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM geo_idx
+WHERE ST_Distance_Between(geo, 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84'), 0, 5000)
+ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: st_distance_centroid
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM geo_idx
+WHERE ST_Distance_Centroid(geo, 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84')) < 5000
+ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: ts_lexize
+# DOCS_TEST_BODY
+query
+SELECT ts_lexize('en', 'Quick BROWN') AS ts_lexize;
+----
+ts_lexize
+{quick,brown}

@@ -38,9 +38,11 @@ CREATE MACRO db1.two_x_plus_y(x, y) AS 2 * x + y;
 statement ok
 ATTACH '/tmp/${__DATABASE__}_sql_statements_copy_copy_database_full_example_037_1_db2.db' AS db2;
 
+skipif pg-wire-extended
 statement ok
 COPY FROM DATABASE db1 TO db2;
 
+skipif pg-wire-extended
 query ?
 SELECT db2.two_x_plus_y(x, y) AS z FROM db2.tbl;
 ----

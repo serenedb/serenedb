@@ -1,0 +1,130 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TABLE articles (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    body VARCHAR
+);
+
+statement ok
+INSERT INTO articles VALUES
+    (1, 'Inverted indexes', 'Full text search over tokenized columns'),
+    (2, 'Vector search', 'Approximate nearest neighbor search with HNSW'),
+    (3, 'Geospatial search', 'Indexing GeoJSON shapes for spatial queries');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX articles_idx ON articles
+    USING inverted (id, title english_dict, body english_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+query
+SELECT id, title FROM articles_idx WHERE body @@ 'search' ORDER BY id;
+----
+id	title
+1	Inverted indexes
+2	Vector search
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE pages (
+    id INTEGER PRIMARY KEY,
+    body VARCHAR,
+    url VARCHAR
+);
+
+statement ok
+INSERT INTO pages VALUES
+    (1, 'getting started guide', 'https://example.com/start'),
+    (2, 'advanced tuning tips', 'https://example.com/tuning');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX pages_idx ON pages
+    USING inverted (id, body english_dict)
+    INCLUDE (url);
+
+statement ok
+VACUUM (REFRESH_TABLE) pages;
+
+query
+SELECT id, url FROM pages_idx WHERE body @@ 'tuning' ORDER BY id;
+----
+id	url
+2	https://example.com/tuning
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE products (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR,
+    category VARCHAR
+);
+
+statement ok
+INSERT INTO products VALUES
+    (1, 'Running shoes', 'footwear'),
+    (2, 'Leather belt', 'accessories'),
+    (3, 'Sandals', 'footwear');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX products_idx ON products
+    USING inverted (id, name english_dict, category);
+
+statement ok
+VACUUM (REFRESH_TABLE) products;
+
+query
+SELECT id, name FROM products_idx WHERE category @@ 'footwear' ORDER BY id;
+----
+id	name
+1	Running shoes
+3	Sandals
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query ?
+SELECT ts_lexize('english_dict', 'Running SHOES');
+----
+ts_lexize
+{running,shoes}
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE VIEW recent_articles AS
+    SELECT id, title, body FROM articles WHERE id >= 2;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX recent_articles_idx ON recent_articles
+    USING inverted (id, body english_dict);
+
+query
+SELECT id, title FROM recent_articles_idx WHERE body @@ 'search' ORDER BY id;
+----
+id	title
+2	Vector search

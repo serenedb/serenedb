@@ -1,0 +1,236 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE t1 (x INTEGER);
+
+statement ok
+INSERT INTO t1 VALUES (1), (2);
+
+statement ok
+CREATE TABLE t2 (x INTEGER);
+
+statement ok
+INSERT INTO t2 VALUES (3);
+
+# DOCS_TEST: alias
+# DOCS_TEST_BODY
+query
+SELECT alias(column1) FROM (SELECT 1 AS column1) t;
+----
+alias
+column1
+
+# DOCS_TEST: can_cast_implicitly
+# DOCS_TEST_BODY
+query
+SELECT can_cast_implicitly(1::BIGINT, 1::SMALLINT) AS can_cast_implicitly;
+----
+can_cast_implicitly
+f
+
+# DOCS_TEST: coalesce
+# DOCS_TEST_BODY
+query
+SELECT coalesce(NULL, NULL, 'default_string') AS coalesce;
+----
+coalesce
+default_string
+
+# DOCS_TEST: constant_or_null
+# DOCS_TEST_BODY
+query
+SELECT constant_or_null(42, NULL) AS constant_or_null;
+----
+constant_or_null
+NULL
+
+# DOCS_TEST: create_sort_key
+# DOCS_TEST_BODY
+query
+SELECT create_sort_key('abc', 'ASC NULLS FIRST') AS create_sort_key;
+----
+create_sort_key
+\\x0262636400
+
+# DOCS_TEST: current_schema
+# DOCS_TEST_BODY
+query
+SELECT current_schema() AS current_schema;
+----
+current_schema
+public
+
+# DOCS_TEST: current_schemas
+# DOCS_TEST_BODY
+query
+SELECT current_schemas(true) AS current_schemas;
+----
+current_schemas
+{pg_catalog,public}
+
+# DOCS_TEST: current_setting
+# DOCS_TEST_BODY
+query
+SELECT current_setting('access_mode') AS current_setting;
+----
+current_setting
+automatic
+
+# DOCS_TEST: equi_width_bins
+# DOCS_TEST_BODY
+query
+SELECT equi_width_bins(0.1, 2.7, 4, true) AS equi_width_bins;
+----
+equi_width_bins
+{0.5,1,1.5,2,2.5,3}
+
+# DOCS_TEST: hash
+# DOCS_TEST_BODY
+query
+SELECT hash('🦆') AS hash;
+----
+hash
+4164431626903154684
+
+# DOCS_TEST: if
+# DOCS_TEST_BODY
+query
+SELECT if(2 > 1, 3, 4) AS if;
+----
+if
+3
+
+# DOCS_TEST: ifnull
+# DOCS_TEST_BODY
+query
+SELECT ifnull(NULL, 'default_string') AS ifnull;
+----
+ifnull
+default_string
+
+# DOCS_TEST: is_histogram_other_bin
+# DOCS_TEST_BODY
+query
+SELECT is_histogram_other_bin('') AS is_histogram_other_bin;
+----
+is_histogram_other_bin
+t
+
+# DOCS_TEST: md5
+# DOCS_TEST_BODY
+query
+SELECT md5('abc') AS md5;
+----
+md5
+900150983cd24fb0d6963f7d28e17f72
+
+# DOCS_TEST: md5_number_lower
+# DOCS_TEST_BODY
+query
+SELECT md5_number_lower('abc') AS md5_number_lower;
+----
+md5_number_lower
+8250560606382298838
+
+# DOCS_TEST: md5_number_upper
+# DOCS_TEST_BODY
+query
+SELECT md5_number_upper('abc') AS md5_number_upper;
+----
+md5_number_upper
+12704604231530709392
+
+# DOCS_TEST: nullif
+# DOCS_TEST_BODY
+query
+SELECT nullif(1 + 1, 2) AS nullif;
+----
+nullif
+NULL
+
+# DOCS_TEST: parse_formatted_bytes
+# DOCS_TEST_BODY
+query
+SELECT parse_formatted_bytes('1.5 GiB') AS parse_formatted_bytes;
+----
+parse_formatted_bytes
+1610612736
+
+# DOCS_TEST: pg_typeof
+# DOCS_TEST_BODY
+query
+SELECT pg_typeof('abc') AS pg_typeof;
+----
+pg_typeof
+text
+
+# DOCS_TEST: query
+# DOCS_TEST_BODY
+query
+SELECT * FROM query('SELECT 42 AS x');
+----
+x
+42
+
+# DOCS_TEST: query_table
+# DOCS_TEST_BODY
+query
+SELECT * FROM query_table('t1') ORDER BY x;
+----
+x
+1
+2
+
+# DOCS_TEST: query_table_union
+# DOCS_TEST_BODY
+query
+SELECT * FROM query_table(['t1', 't2'], true) ORDER BY x;
+----
+x
+1
+2
+3
+
+# DOCS_TEST: sha1
+# DOCS_TEST_BODY
+query
+SELECT sha1('🦆') AS sha1;
+----
+sha1
+949bf843dc338be348fb9525d1eb535d31241d76
+
+# DOCS_TEST: sha256
+# DOCS_TEST_BODY
+query
+SELECT sha256('🦆') AS sha256;
+----
+sha256
+d7a5c5e0d1d94c32218539e7e47d4ba9c3c7b77d61332fb60d633dde89e473fb
+
+# DOCS_TEST: stats
+# DOCS_TEST_BODY
+query
+SELECT stats(5) AS stats;
+----
+stats
+{"approx_unique":1,"has_no_null":true,"has_null":false,"max":5,"min":5}
+
+# DOCS_TEST: typeof
+# DOCS_TEST_BODY
+query
+SELECT typeof('abc') AS typeof;
+----
+typeof
+VARCHAR
+
+# DOCS_TEST: repeat_row
+# DOCS_TEST_BODY
+query
+SELECT * FROM repeat_row(1, 2, 'foo', num_rows = 3);
+----
+column0	column1	column2
+1	2	foo
+1	2	foo
+1	2	foo

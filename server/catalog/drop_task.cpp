@@ -131,11 +131,6 @@ Result IndexDrop::Finalize() {
 
 AsyncResult IndexDrop::Execute() {
   if (_type == catalog::ObjectType::InvertedIndex && _is_root) {
-    // Seam (b): wait until the index's iresearch storage is fully released
-    // (catalog snapshots holding the dropped index gone, in-flight transactions
-    // / replay sessions gone, background tasks drained via their expired
-    // weak_ptr) BEFORE the directory is removed -- so no live holder touches a
-    // removed dir. _data is the storage weak captured at drop time.
     if (!_data.expired()) {
       return yaclib::MakeFuture<Result>(ERROR_LOCKED);
     }
@@ -156,7 +151,6 @@ AsyncResult IndexDrop::Execute() {
 Result TableDrop::Finalize() {
   SDB_IF_FAILURE("crash_before_seq_counter_wipe") { SDB_IMMEDIATE_ABORT(); }
   auto& server = GetCatalogStore();
-  // Indexes and their storage.
   auto r = server.DropEntry(_id);
   if (!r.ok()) {
     return r;
@@ -196,7 +190,6 @@ AsyncResult TableDrop::Execute() {
 
 Result SchemaDrop::Finalize() {
   auto& server = GetCatalogStore();
-  // Standalone seq counter rows -- DropEntry only sweeps definition rows.
   auto r = server.VisitDefinitions(
     _id, catalog::ObjectType::Sequence,
     [&](CatalogStore::Key key, std::string_view) -> Result {

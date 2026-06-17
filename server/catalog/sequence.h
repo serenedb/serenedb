@@ -67,13 +67,8 @@ class Sequence final : public Object {
     return ObjectId{_options.owner_table_id};
   }
 
-  // Hand out [base, base+count-1]; returns base. The counter persists
-  // before the atomic increment, so a crash burns the range but never
-  // reuses it.
   uint64_t Reserve(uint64_t count);
 
-  // Caller guarantees Write is never called on this Sequence. Used by the
-  // auto-PK path which is invisible to setval.
   uint64_t ReserveWriteUnsafe(uint64_t count);
 
   uint64_t Read() const;
@@ -93,7 +88,6 @@ class Sequence final : public Object {
   uint64_t ReserveCached(uint64_t count);
   uint64_t AdvanceCounter(uint64_t count);
   uint64_t RefillCache(uint64_t count);
-  // Persists the absolute counter value; requires _cnt_mtx held.
   void Persist(uint64_t value);
 };
 

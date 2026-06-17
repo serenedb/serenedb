@@ -46,9 +46,6 @@ class Transaction : public Config {
 #endif
 
   void OnNewStatement();
-  // Restarts a writeless explicit engine transaction under READ COMMITTED
-  // so the upcoming statement sees freshly committed changes. Must run
-  // outside the query lifecycle (before the statement starts).
   void RefreshReadCommittedSnapshot();
 
   // Pre-commit work that needs an active transaction (revert SET LOCAL for
@@ -57,20 +54,12 @@ class Transaction : public Config {
   // Pre-rollback counterpart -- restores all SET values.
   void PreRollback() noexcept;
 
-  // Commit the search-index leg synchronously with the store table changes:
-  // called inside the engine commit, after store durability but before the
-  // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
-  // un-committed in-flight batch. Idempotent -- a no-op once the staged
-  // transactions have been committed (or when there were none).
   void CommitSearch() noexcept;
 
   Result Commit();
 
   Result Rollback();
 
-  // True once any statement that reads or writes the current database ran
-  // inside the active explicit transaction; gates late SET TRANSACTION
-  // ISOLATION LEVEL changes.
   bool HadQueryInTransaction() const noexcept {
     return _had_query_in_transaction;
   }
@@ -82,13 +71,6 @@ class Transaction : public Config {
     _search_transactions.erase(index_id);
   }
 
-  // Pin every staged search transaction into the iresearch flush context so a
-  // concurrent refresh waits for it to settle before committing on tick. Call
-  // at feed time (after staging this batch, BEFORE the store WAL bytes are
-  // written) so the refresh's WAL-offset durable cursor never claims a
-  // transaction whose iresearch leg has not been flushed. RegisterFlush is a
-  // no-op until an active segment exists (docs staged) and idempotent after,
-  // so registering all transactions each feed is safe and cheap.
   void RegisterSearchFlush() noexcept {
     for (auto& [index_id, entry] : _search_transactions) {
       if (entry.transaction) {
@@ -117,8 +99,6 @@ class Transaction : public Config {
       }
 
       if (index->GetType() != catalog::ObjectType::InvertedIndex) {
-        // Secondary indexes are native ART on the store table; nothing to
-        // feed here.
         continue;
       }
       auto storage =
@@ -129,8 +109,6 @@ class Transaction : public Config {
       if (!entry.transaction) {
         entry.transaction = std::make_unique<irs::IndexWriter::Transaction>(
           storage->GetTransaction());
-        // Keep the storage alive and reachable for Commit() without a catalog
-        // re-lookup.
         entry.storage = storage;
       }
       visit(*entry.transaction, *index);

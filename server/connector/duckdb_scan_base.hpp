@@ -337,10 +337,6 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   return num_rows;
 }
 
-// Returns the number of rows in `output`. Inverted scans are eventually
-// consistent: matched rows (as of the last refresh) are never dropped for
-// visibility; non-INCLUDE columns are read from the store at the current
-// snapshot and are NULL if the row is gone.
 template<typename Gstate, typename Lstate>
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
                             duckdb::DataChunk& output,

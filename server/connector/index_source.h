@@ -147,9 +147,6 @@ class IndexSource {
   virtual PrimaryKeyBatch CreatePkBatch() const = 0;
 
   // Materializes rows [start, start+count) of `batch` into output[0..count).
-  // Returns how many rows remain: sources backed by transactional storage
-  // drop rows that are not visible to the caller's transaction (compacting
-  // `output`); everything else returns `count`.
   virtual duckdb::idx_t Materialize(duckdb::ClientContext& context,
                                     PrimaryKeyBatch& batch, duckdb::idx_t start,
                                     duckdb::idx_t count,

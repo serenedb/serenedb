@@ -345,8 +345,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   if (state->progress) {
     state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
   }
-  // Inverted indexes carry their iresearch storage (bound in CreateIndexImpl);
-  // secondary indexes do not, so this is null for them.
   auto inverted =
     snapshot->GetObject<catalog::InvertedIndex>(catalog_index->GetId());
   auto storage = inverted ? inverted->GetData() : nullptr;
@@ -414,8 +412,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
   }
   if (table_ptr) {
-    // Store-table postings are keyed by the native rowid the scan appends
-    // after the projection, regardless of the declared PK.
     state->has_generated_pk_col = true;
     state->is_view_synth_pk = false;
   } else if (state->is_external) {
@@ -432,9 +428,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   SDB_ASSERT(index);
 
   if (state->index_type == catalog::ObjectType::SecondaryIndex) {
-    // Table-backed secondary indexes are mirrored as native store indexes;
-    // the store CREATE INDEX builds from existing rows itself. View-backed
-    // secondary indexes are rejected at bind time.
     SDB_ASSERT(table_ptr);
   } else {
     state->snapshot_for_providers = snapshot;
@@ -693,9 +686,6 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     if (op.table.type == duckdb::CatalogType::TABLE_ENTRY &&
         op.table.Cast<duckdb::TableCatalogEntry>().IsDuckTable() &&
         op.info->options.contains(InvertedStoreIndex::kIndexIdOption)) {
-      // Store tables (identified by the mirror's linkage options) build
-      // through the generic pipeline (build callbacks + create_instance);
-      // other duck tables (temp, user attaches) keep the error below.
       return input.planner.CreateDefaultIndexPlan(op, input.table_scan);
     }
     THROW_SQL_ERROR(

@@ -75,9 +75,6 @@ int RunServer(int argc, char** argv) {
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency
     // order, then take them DOWN in a dependency order that is deliberately
-    // NOT the reverse of startup. The non-obvious edge: the scheduler must
-    // drain (it runs drop tasks that touch search) before search goes down.
-    // DuckDBEngine brackets all of this from main(). The up_* flags let DOWN
     // skip whatever never came UP (start() threw).
     bool up_ssl = false, up_store = false, up_scheduler = false,
          up_catalog = false, up_search = false, up_general = false;
@@ -106,7 +103,7 @@ int RunServer(int argc, char** argv) {
         stop("catalog", [&] { catalog::ShutdownCatalog(); });
       }
       if (up_store) {
-        stop("store", [&] { store.Shutdown(); });  // detach + checkpoint
+        stop("store", [&] { store.Shutdown(); });
       }
       if (up_ssl) {
         stop("ssl", [&] { ssl.stop(); });

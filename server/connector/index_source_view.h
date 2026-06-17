@@ -35,19 +35,11 @@
 
 namespace sdb::connector {
 
-// Shared plumbing for view-backed materializers that fetch source rows by
-// numeric PK: projection mapping, scratch/cast handling, and sort scratch.
-// Derived classes provide the actual row fetch (lookup TF for file readers,
-// DataTable::Fetch for catalog tables).
 class ViewIndexSourceBase : public IndexSource {
  protected:
   explicit ViewIndexSourceBase(ViewFastPath fast_path)
     : _fast_path{std::move(fast_path)} {}
 
-  // Maps each projected output column to a source column and builds the
-  // cast/scratch state. `col_by_name` resolves a view projection name to a
-  // source column index; `add_source_column` records the source column in
-  // the derived class's fetch bookkeeping and returns its source type.
   void InitProjection(
     duckdb::ClientContext& context,
     std::span<const duckdb::idx_t> projected_columns,
@@ -56,17 +48,11 @@ class ViewIndexSourceBase : public IndexSource {
     absl::FunctionRef<duckdb::idx_t(std::string_view)> col_by_name,
     absl::FunctionRef<duckdb::LogicalType(duckdb::idx_t)> add_source_column);
 
-  // Fetches want sorted lookups (parquet row-group skipping, csv/json
-  // forward cursor, DataTable::Fetch result alignment); fills _sorted_rows
-  // (+ _sorted_files) and _output_positions.
   void SortRows(const PrimaryKeyI64& pk, duckdb::idx_t start,
                 duckdb::idx_t count);
   void SortFilesRows(const PrimaryKeyI64I64& pk, duckdb::idx_t start,
                      duckdb::idx_t count);
 
-  // Match cols alias output directly so fetch writes land there in-place;
-  // cast cols keep _tf_target's own (source-typed) buffer for the
-  // end-of-call cast.
   void AliasOutput(duckdb::DataChunk& output);
   void RunCastPass(duckdb::DataChunk& output, duckdb::idx_t row_count);
 
@@ -74,19 +60,11 @@ class ViewIndexSourceBase : public IndexSource {
   std::vector<duckdb::idx_t> _real_proj_slots;
   duckdb::vector<duckdb::LogicalType> _scratch_types;
   duckdb::vector<duckdb::LogicalType> _projected_types;
-  // nullptr when scratch and projected types match.
   std::vector<duckdb::unique_ptr<duckdb::ExpressionExecutor>> _cast_executors;
-  // ExpressionExecutor holds the Expression by ref, must outlive it.
   std::vector<duckdb::unique_ptr<duckdb::Expression>> _cast_expressions;
 
-  // Per-column alias to where the fetch should write. Matching columns alias
-  // output directly; cast columns keep their own (source-typed) buffer that
-  // RunCastPass converts at end of call.
   duckdb::DataChunk _tf_target;
 
-  // Sort scratch reused per call. Sorting goes through these instead of the
-  // caller's PrimaryKeyBatch because ANN / range scans persist their batch
-  // across many slices and mutating it would break later slices.
   std::vector<duckdb::idx_t> _sort_perm;
   std::vector<int64_t> _sorted_rows;
   std::vector<int64_t> _sorted_files;

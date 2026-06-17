@@ -24,13 +24,9 @@ namespace duckdb {
 
 class DatabaseInstance;
 
-}  // namespace duckdb
+}
 namespace sdb::connector {
 
-// sdb_encode_key(ANY...) -> BLOB: order-preserving key encoding used by
-// encoded-key (nested-type) unique indexes on store tables. NULL in any
-// argument yields NULL (the index then skips the row -- Postgres NULLS
-// DISTINCT); nested element NULLs encode as markers.
 void RegisterKeyEncodingFunctions(duckdb::DatabaseInstance& db);
 
-}  // namespace sdb::connector
+}

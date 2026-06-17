@@ -72,8 +72,6 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
       auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
       std::vector<IndexedExpression> indexed_exprs;
       if constexpr (Kind == DuckDBWriteKind::Insert) {
-        // Deletes are key-only; skipping the deserialization also keeps
-        // rollback paths (no usable transaction context) working.
         indexed_exprs = MakeIndexedExpressions(
           inverted_index,
           expr_context ? *expr_context : conn_ctx.GetClientContext());

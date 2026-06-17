@@ -477,9 +477,6 @@ std::shared_ptr<Object> InvertedIndex::Clone() const {
                                       .schema_id = GetParentId(),
                                       .relation_id = GetRelationId(),
                                     });
-  // Carry the iresearch runtime storage to the new metadata version: a clone
-  // (e.g. rename) is the same index backed by the same on-disk storage (keyed
-  // by ids, not name), so the runtime must survive the metadata mutation.
   cloned->SetData(_data);
   return cloned;
 }

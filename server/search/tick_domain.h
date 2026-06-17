@@ -27,13 +27,6 @@
 
 namespace sdb::search {
 
-// Process-global monotonic source of search commit ticks. Each committed
-// write transaction reserves a contiguous range so that, per index writer,
-// first_tick (= last_tick - queries) always lies strictly above the
-// previously committed tick. Seeded at boot with the maximum tick persisted
-// in any inverted-index commit meta, so ticks stay monotonic across
-// restarts. Starts at 1: tick 0 is the writer's reserved kMinTick and must
-// never be handed out.
 class TickDomain {
  public:
   static TickDomain& Instance() noexcept {
@@ -41,7 +34,6 @@ class TickDomain {
     return domain;
   }
 
-  // Reserve `count` ticks and return the LAST tick of the reserved range.
   Tick Advance(uint64_t count) noexcept {
     return _tick.fetch_add(count, std::memory_order_relaxed) + count;
   }

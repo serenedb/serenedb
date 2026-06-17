@@ -167,7 +167,6 @@ PgSQLCommTaskBase::~PgSQLCommTaskBase() {
   if (_connection_ctx) {
     // Rollback unconditionally: even for auto-commit connections
     // (IsExplicitTransaction() == false), Config::_snapshot may be set and must
-    // be released via Destroy() to avoid leaked transaction state at
     // shutdown.
     std::ignore = _connection_ctx->Rollback();
   }
@@ -1580,7 +1579,6 @@ void PgSQLCommTaskBase::SendCommandComplete(duckdb::StatementType stmt_type,
       return static_cast<size_t>(ptr - buf);
     });
   } else if (return_type == duckdb::StatementReturnType::QUERY_RESULT) {
-    // INSERT ... RETURNING still reports "INSERT 0 N" in PG.
     if (tag.effective_type == duckdb::StatementType::INSERT_STATEMENT) {
       _send.WriteUncommitted({" 0 ", 3});
     } else {

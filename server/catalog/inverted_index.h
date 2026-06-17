@@ -47,7 +47,7 @@ namespace sdb::search {
 
 class InvertedIndexStorage;
 
-}  // namespace sdb::search
+}
 namespace sdb::catalog {
 namespace term_dict {
 
@@ -236,11 +236,6 @@ class InvertedIndex final : public Index {
 
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
-  // Mutable iresearch runtime storage (writer/reader/refresh) for this index,
-  // held behind a shared_ptr on the otherwise-immutable metadata object: a COW
-  // snapshot clone shares the same storage, a row feed never clones the
-  // catalog, and a metadata mutation (Clone) carries it forward. nullptr until
-  // the index is bound to its storage (CREATE INDEX / boot recovery).
   const std::shared_ptr<search::InvertedIndexStorage>& GetData()
     const noexcept {
     return _data;

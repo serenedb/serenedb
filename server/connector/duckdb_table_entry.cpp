@@ -105,9 +105,6 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
       table_bind->display_name = name;
     }
   }
-  // tableoid binds on tables (scoring functions and PG compatibility take
-  // it as an argument); scoring rewrites consume the reference before any
-  // scan would have to materialize it.
   function.get_virtual_columns = StoreScanVirtualColumns;
   return function;
 }

@@ -458,9 +458,6 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SereneDBCatalog::LookupSchema(
 void SereneDBCatalog::ScanSchemas(
   duckdb::ClientContext& context,
   std::function<void(duckdb::SchemaCatalogEntry&)> callback) {
-  // Internal connections (catalog store, appenders) have no serenedb
-  // session; error-path suggestion scans walk every attached catalog and
-  // must see this one as empty instead of dying on the missing state.
   if (!context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey)) {
     return;
@@ -643,9 +640,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto store_constraints =
     duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),
                                     store_entry.name, store_entry.GetColumns());
-  // Facade-bound CHECK constraints can reference facade-only functions
-  // (bound with macros expanded); the store mirror demotes those, so they
-  // ride the insert from here. Column layouts match by construction.
   for (auto& constraint : op.bound_constraints) {
     if (constraint->type == duckdb::ConstraintType::CHECK) {
       store_constraints.push_back(std::move(constraint));
@@ -721,8 +715,6 @@ duckdb::unique_ptr<duckdb::MergeIntoOperator> PlanStoreMergeIntoAction(
                                     store_entry.name, store_entry.GetColumns());
   auto return_types = op.types;
   if (op.return_chunk) {
-    // For RETURNING the last column is the merge_action, added by the merge
-    // operator itself.
     return_types.pop_back();
   }
 
@@ -763,7 +755,6 @@ duckdb::unique_ptr<duckdb::MergeIntoOperator> PlanStoreMergeIntoAction(
         std::move(set_types), cardinality, op.return_chunk, !op.return_chunk,
         duckdb::OnConflictAction::THROW, nullptr, nullptr,
         std::move(on_conflict_filter), std::move(columns_to_fetch), false);
-      // Transform expressions map merge-join output -> table columns.
       if (!action.column_index_map.empty()) {
         duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> new_exprs;
         for (auto& col : op.table.GetColumns().Physical()) {
@@ -797,8 +788,6 @@ duckdb::unique_ptr<duckdb::MergeIntoOperator> PlanStoreMergeIntoAction(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) {
-  // DuckDB routes INSERT ON CONFLICT through MergeInto as well; this is a
-  // near-copy of DuckCatalog::PlanMergeInto targeting the store table.
   auto& table_entry = RequireBaseTable(op.table);
   auto& store_entry =
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
@@ -1085,7 +1074,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     // Project only what the backfill actually needs: index columns + PK
     // columns (or ROW_ID for generated PK). Replaces the previous
     // "every non-PK column" default which made every CREATE INDEX scan
-    // redundantly read the whole table.
     auto projection =
       BuildCreateIndexProjection(sdb_table->Columns(), sdb_table->PKColumns(),
                                  create_index_info->column_ids);

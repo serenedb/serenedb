@@ -29,10 +29,6 @@
 
 namespace sdb::connector {
 
-// Shared rowid-keyed materializer over a table with native storage: rows
-// are fetched by rowid from the live catalog entry through the caller's
-// transaction, so reads are consistent with any in-transaction changes to
-// the source. Subclasses resolve the table entry and the projection.
 class RowIdFetchIndexSource : public ViewIndexSourceBase {
  public:
   PrimaryKeyBatch CreatePkBatch() const final {
@@ -49,11 +45,7 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
 
   void SetTable(duckdb::TableCatalogEntry& table) { _table = &table; }
 
-  // Registers a fetch column for the table's storage index, deduplicating
-  // repeats, and records the output slot mapping. Returns the column type.
   duckdb::LogicalType AddFetchColumn(const duckdb::ColumnDefinition& col);
-  // Appends the rowid fetch column and sizes the fetch chunk; call after
-  // InitProjection.
   void FinishInit(duckdb::ClientContext& context);
 
  private:
@@ -65,7 +57,6 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
   duckdb::DataChunk _fetch_chunk;
 };
 
-// Views over a table living in an attached database with native storage.
 class ViewTableIndexSource final : public RowIdFetchIndexSource {
  public:
   ViewTableIndexSource(duckdb::ClientContext& context, ViewFastPath fast_path,
@@ -74,8 +65,6 @@ class ViewTableIndexSource final : public RowIdFetchIndexSource {
                        std::span<const catalog::Column::Id> bind_column_ids);
 };
 
-// SereneDB tables: postings carry the store-table rowid; rows are fetched
-// from the hidden store table backing the facade entry.
 class TableRowIdIndexSource final : public RowIdFetchIndexSource {
  public:
   TableRowIdIndexSource(duckdb::ClientContext& context,

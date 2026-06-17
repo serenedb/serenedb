@@ -1,37 +1,4 @@
 #!/usr/bin/env bash
-# bench_storage_old_vs_new.sh -- storage-engine benchmark: the OLD rocksdb
-# table plane (the pinned main baseline binary) vs the NEW native duckdb
-# store tables (the current branch's perf binary), over the same pg wire.
-#
-# Both servers speak the same protocol and run the same workload set, so the
-# delta is the storage layer: row format, WAL/fsync policy, index machinery,
-# search feeding. Workload matrix follows docs/remove_rocksdb_plan.md #10.
-#
-# Each server is its own process with its own datadir, and is started, fully
-# benchmarked, and KILLED before the other is ever launched. pgbench drives
-# sustained QPS; perf stat -p <pid> captures cycles/instructions for the same
-# window (cycles-per-query is thread-count independent). Single-statement
-# workloads (bulk load, index build, recovery) are wall-clocked over
-# PERF_STORAGE_REPS repetitions and report the median as 1/seconds "tps".
-#
-# The OLD side only changes when the baseline binary changes: measured once,
-# cached in results/baselines-storage/old.tsv, reused across branch
-# iterations (PERF_REMEASURE_OLD=1 refreshes).
-#
-# Isolation: pass PERF_ISOLATE=1 (REQUIRES sudo) to build a real cgroup-v2
-# cpuset partition that the kernel keeps co-tenants off -- the script reserves
-# the top PERF_ISOLATE_PHYS physical cores (both SMT siblings) in an exclusive
-# (partition=root) cgroup, herds every other movable task into a complementary
-# cgroup pinned to the remaining cores, runs the bench inside the shield, and
-# restores the cgroups on exit. Without PERF_ISOLATE (default), there is no
-# cpuset partition, so this script falls back to plain taskset affinity: server
-# pinned to PERF_SERVER_CORES, pgbench to PERF_CLIENT_CORES (disjoint sets,
-# whole physical cores incl. SMT siblings), plus a loadavg gate
-# (PERF_QUIET_LOAD) before every measured window. Affinity does not keep
-# co-tenants off the cores -- prefer PERF_ISOLATE=1 for publishable numbers.
-#
-# Pre-reqs: pgbench, perf, the baseline binary, the branch perf binary.
-# No other serened on the ports.
 
 set -euo pipefail
 
@@ -63,69 +30,28 @@ IO_THREADS="${PERF_STORAGE_IO_THREADS:-4}"
 QUIET_LOAD="${PERF_QUIET_LOAD:-8}"
 QUIET_WAIT_SECS="${PERF_QUIET_WAIT_SECS:-600}"
 
-# Whole physical cores (both SMT siblings per line) sorted by first cpu. Used by
-# both the cpuset shield (below) and the no-sudo core-selection block.
-phys_cores() { # emit thread_siblings_list lines sorted by first cpu
+phys_cores() {
 	cat /sys/devices/system/cpu/cpu[0-9]*/topology/thread_siblings_list |
 		sort -t, -k1,1n -u
 }
 
-# --- optional sudo cgroup-v2 cpuset shield (PERF_ISOLATE=1) ------------------
-# Opt-in EXCLUSIVE-core reservation. Unlike the default taskset path (affinity
-# only -- co-tenants can still land on "our" cores), this carves a real
-# cgroup-v2 cpuset partition so the kernel scheduler keeps every other movable
-# task off the reserved cores. REQUIRES sudo: if sudo is unavailable it FAILS
-# (no silent fallback). Cannot be exercised in CI without passwordless sudo;
-# this box is cgroup v2 (cgroup2fs), nproc=32, 16 physical cores each with two
-# SMT siblings (cpu N + cpu N+16).
-#
-# Cores reserved (PERF_ISOLATE_PHYS=9 physical cores by default = the top 9
-# physical cores 7..15 and their SMT siblings 23..31):
-#     reserved (shield)  = 7-15,23-31      (18 logical cpus)
-#     complement (rest)  = 0-6,16-22       (14 logical cpus, incl. cpu0/16
-#                                            housekeeping + irq affinity)
-# The shield set is exported as PERF_BENCH_CORES; the core-selection block below
-# then splits it ~2/3 server, ~1/3 client exactly as it does under the (absent)
-# run_bench_isolated.sh wrapper.
-#
-# cgroup-v2 cpuset partition semantics used here:
-#   * A parent must list a controller in cgroup.subtree_control before a child
-#     can use it; we enable `cpuset` on the root's subtree_control (and undo it
-#     on exit only if we enabled it).
-#   * Both children get their own cgroup dir under the unified hierarchy root.
-#   * cpuset.cpus is set BEFORE cpuset.cpus.partition is flipped to "root":
-#     an exclusive (root) partition requires its cpus to be settable-exclusive
-#     (disjoint from siblings, subset of parent's effective cpus). We set the
-#     complement first, then the shield, then flip the shield to "root".
-#   * Tasks are moved by writing PIDs to cgroup.procs. Kernel threads and other
-#     cgroups' unmovable tasks are skipped (their writes fail with EINVAL/EBUSY
-#     -> tolerated). The bench's own shell is migrated into the shield so every
-#     serened/pgbench/psql it spawns inherits the reserved cpuset.
 ISOLATE="${PERF_ISOLATE:-0}"
 ISOLATE_PHYS="${PERF_ISOLATE_PHYS:-9}"
 CG_ROOT="/sys/fs/cgroup"
 CG_SHIELD="${CG_ROOT}/sdb_bench_shield"
 CG_REST="${CG_ROOT}/sdb_bench_rest"
-ISO_ENABLED_CPUSET=0 # 1 if WE added cpuset to root subtree_control (undo on exit)
-ISO_ACTIVE=0         # 1 once the shield exists (drives teardown)
+ISO_ENABLED_CPUSET=0
+ISO_ACTIVE=0
 
-# sudo wrappers: every privileged step goes through these. setup_cpuset_shield
-# primes credentials once with `sudo -v` (prompts for the password); subsequent
-# calls reuse the cached timestamp, so the user types their password at most
-# once at the start of the run.
 _su() { sudo "$@"; }
 
-# Write VALUE into FILE as root via tee (sudo can't redirect with '>').
 _su_write() { printf '%s' "$2" | sudo tee "$1" >/dev/null; }
 
 teardown_cpuset_shield() {
 	((ISO_ACTIVE == 1)) || return 0
-	# Move every task back to the root cgroup before deleting the children
-	# (a non-empty cgroup with an exclusive partition cannot be rmdir'd).
 	local cg pid
 	for cg in "${CG_SHIELD}" "${CG_REST}"; do
 		[[ -e "${cg}/cgroup.procs" ]] || continue
-		# Demote out of the exclusive partition first so cpus are released.
 		sudo tee "${cg}/cpuset.cpus.partition" >/dev/null 2>&1 <<<"member" || true
 		while read -r pid; do
 			[[ -n "${pid}" ]] || continue
@@ -133,7 +59,6 @@ teardown_cpuset_shield() {
 		done < <(sudo cat "${cg}/cgroup.procs" 2>/dev/null || true)
 		sudo rmdir "${cg}" 2>/dev/null || true
 	done
-	# Only revert subtree_control if we were the ones who enabled cpuset there.
 	if ((ISO_ENABLED_CPUSET == 1)); then
 		sudo tee "${CG_ROOT}/cgroup.subtree_control" >/dev/null 2>&1 <<<"-cpuset" || true
 	fi
@@ -142,7 +67,6 @@ teardown_cpuset_shield() {
 }
 
 setup_cpuset_shield() {
-	# Hard requirement: sudo present and usable. No silent fallback.
 	command -v sudo >/dev/null 2>&1 || {
 		echo "PERF_ISOLATE=1 requires sudo, which is not installed. Aborting." >&2
 		exit 1
@@ -160,8 +84,6 @@ setup_cpuset_shield() {
 		exit 1
 	}
 
-	# Reserved = top ISOLATE_PHYS physical cores (both SMT siblings each);
-	# complement = everything else (keeps cpu0/16 for housekeeping + irqs).
 	mapfile -t _iso_cs < <(phys_cores)
 	local _tot=${#_iso_cs[@]}
 	((ISOLATE_PHYS < _tot)) || {
@@ -184,33 +106,23 @@ setup_cpuset_shield() {
 	echo "   shield (reserved) cpus = ${SHIELD_CPUS}"
 	echo "   rest   (complement) cpus = ${REST_CPUS}"
 
-	# Enable cpuset on the root subtree if not already; remember so teardown
-	# only reverts what we changed.
 	if ! grep -qw cpuset "${CG_ROOT}/cgroup.subtree_control"; then
 		_su_write "${CG_ROOT}/cgroup.subtree_control" "+cpuset"
 		ISO_ENABLED_CPUSET=1
 	fi
 
-	ISO_ACTIVE=1 # from here on, teardown must run on exit
+	ISO_ACTIVE=1
 
-	# Create both children.
 	_su mkdir -p "${CG_SHIELD}" "${CG_REST}"
 
-	# Complement first: set its cpus, then move all movable root tasks into it so
-	# the shield cpus are freed up for an exclusive partition.
 	_su_write "${CG_REST}/cpuset.cpus" "${REST_CPUS}"
 	_su_write "${CG_REST}/cpuset.mems" "0"
 	local _pid
 	while read -r _pid; do
 		[[ -n "${_pid}" ]] || continue
-		# Unmovable kernel/other-cgroup tasks fail here -> tolerated.
 		printf '%s' "${_pid}" | sudo tee "${CG_REST}/cgroup.procs" >/dev/null 2>&1 || true
 	done < <(sudo cat "${CG_ROOT}/cgroup.procs" 2>/dev/null || true)
 
-	# Shield: set cpus, claim them as exclusive, then promote to a "root"
-	# partition. Newer cgroup-v2 kernels REQUIRE cpuset.cpus.exclusive to be set
-	# first, otherwise the flip records "root invalid (Cpu list in cpuset.cpus not
-	# exclusive)". The exclusive write is best-effort (older kernels lack the file).
 	_su_write "${CG_SHIELD}/cpuset.cpus" "${SHIELD_CPUS}"
 	_su_write "${CG_SHIELD}/cpuset.mems" "0"
 	if [[ -e "${CG_SHIELD}/cpuset.cpus.exclusive" ]]; then
@@ -220,30 +132,19 @@ setup_cpuset_shield() {
 	local _part
 	_part="$(sudo cat "${CG_SHIELD}/cpuset.cpus.partition" 2>/dev/null || echo '?')"
 	if [[ "${_part}" != root ]]; then
-		# No hard exclusive partition (kernel/sibling constraints). Do NOT abort:
-		# every other movable task was already herded into the REST cgroup (the
-		# complement cpus), so the shield cpus stay effectively reserved -- soft
-		# isolation, fine for benchmarking. The shield stays a plain (member)
-		# cpuset pinned to SHIELD_CPUS and we continue.
 		echo "   note: exclusive partition unavailable (partition='${_part}') -- using soft" >&2
 		echo "   isolation: other tasks are confined to the rest cgroup off these cpus" >&2
 	fi
 
-	# Move THIS bench shell into the shield so all serened/pgbench/psql it forks
-	# inherit the reserved cpuset.
 	printf '%s' "$$" | sudo tee "${CG_SHIELD}/cgroup.procs" >/dev/null || {
 		echo "could not move bench shell ($$) into the shield. Aborting." >&2
 		exit 1
 	}
 
-	# Hand the reserved set to the core-selection block.
 	export PERF_BENCH_CORES="${SHIELD_CPUS}"
 	echo "   PERF_BENCH_CORES=${PERF_BENCH_CORES} (partition=root)"
 }
 
-# Install the EXIT trap BEFORE building the shield so a later failure (missing
-# binary, etc.) still tears the cgroups down. CUR_PID/CUR_DATA are empty here;
-# cleanup tolerates that.
 CUR_PID=""
 CUR_DATA=""
 cleanup() {
@@ -257,18 +158,12 @@ if [[ "${ISOLATE}" == 1 ]]; then
 	setup_cpuset_shield
 fi
 
-# --- core selection ---------------------------------------------------------
-# Inside run_bench_isolated.sh, PERF_BENCH_CORES is the reserved set: split it
-# server/client. Without it, derive whole physical cores (both SMT siblings)
-# from topology: server gets the top PERF_SERVER_PHYS physical cores, clients
-# the PERF_CLIENT_PHYS below them, leaving cpu0's housekeeping alone.
 SERVER_PHYS="${PERF_SERVER_PHYS:-6}"
 CLIENT_PHYS="${PERF_CLIENT_PHYS:-3}"
 if [[ -n "${PERF_SERVER_CORES:-}" && -n "${PERF_CLIENT_CORES:-}" ]]; then
 	SERVER_CORES="${PERF_SERVER_CORES}"
 	CLIENT_CORES="${PERF_CLIENT_CORES}"
 elif [[ -n "${PERF_BENCH_CORES:-}" ]]; then
-	# Reserved set from the isolation wrapper: server takes ~2/3, clients 1/3.
 	IFS=',' read -r -a _parts <<<"${PERF_BENCH_CORES}"
 	_cpus=()
 	for _p in "${_parts[@]}"; do
@@ -332,8 +227,6 @@ done
 
 mkdir -p "${OUT_DIR}" "${BASELINE_DIR}"
 
-# Wait for a quiet machine before each measured window; proceed with a warning
-# (and record the loadavg) if it never quiets down.
 wait_quiet() {
 	local waited=0
 	while :; do
@@ -378,13 +271,6 @@ stop_serened() {
 	CUR_PID=""
 }
 
-# guard <label> <reason> <fn> [args...]: run a workload GROUP's fixture-setup +
-# run; if any statement in it fails (e.g. the OLD baseline rejects newer SQL)
-# log a skip line and CONTINUE to the next group instead of aborting the whole
-# run. The body runs in a SUBSHELL so errexit still stops it at the first
-# failing statement, while the set +e/-e bracketing keeps that failure from
-# killing the outer script. run_pgb/run_wall only read CUR_PID (never reassign
-# it), so the subshell boundary is safe here.
 guard() {
 	local label="$1" reason="$2"
 	shift 2
@@ -398,7 +284,6 @@ guard() {
 	return 0
 }
 
-# --- pgbench workload scripts ------------------------------------------------
 mkdir -p "${OUT_DIR}/wl"
 cat >"${OUT_DIR}/wl/insert.sql" <<'EOF'
 \set id random(1, 999999999999)
@@ -432,9 +317,6 @@ cat >"${OUT_DIR}/wl/nextval.sql" <<'EOF'
 INSERT INTO bench_seq (v) VALUES (1);
 EOF
 
-# --- new workload matrix -----------------------------------------------------
-# Writes into an inverted-indexed table: insert high-range ids (above the seed)
-# so no PK conflict, exercising the search-feed path on every commit.
 cat >"${OUT_DIR}/wl/insert_inv.sql" <<'EOF'
 \set id random(100000000, 999999999)
 \set r random(0, 49)
@@ -449,64 +331,45 @@ cat >"${OUT_DIR}/wl/delete_inv.sql" <<'EOF'
 \set id random(1, 300000)
 DELETE FROM bench_inv WHERE id = :id;
 EOF
-# Upsert that always hits the conflict (id within the seeded range). DO NOTHING
-# is the only ON CONFLICT form the OLD baseline accepts -- it rejects every DO
-# UPDATE variant with "Unsupported MERGE INTO action type for SereneDB", so the
-# richest form that runs on both binaries is DO NOTHING (exercises the
-# conflict-detect path on every insert; the row is never rewritten).
 cat >"${OUT_DIR}/wl/upsert.sql" <<'EOF'
 \set id random(1, 100000)
 INSERT INTO bench_upd (id, v) VALUES (:id, 0) ON CONFLICT DO NOTHING;
 EOF
-# Insert into a table with two secondary indexes (writes both).
 cat >"${OUT_DIR}/wl/insert_sk.sql" <<'EOF'
 \set id random(100000000, 999999999)
 \set a random(0, 1000000)
 \set b random(0, 1000000)
 INSERT INTO bench_sk (id, a, b) VALUES ((:id)::BIGINT, :a, :b);
 EOF
-# Insert into a UNIQUE-constrained column (effectively unique value range).
 cat >"${OUT_DIR}/wl/insert_uniq.sql" <<'EOF'
 \set id random(100000000, 999999999)
 \set u random(1, 9000000000000000000)
 INSERT INTO bench_uniq (id, u) VALUES ((:id)::BIGINT, (:u)::BIGINT);
 EOF
-# Point DELETE on a plain (PK-only) table.
 cat >"${OUT_DIR}/wl/delete_point.sql" <<'EOF'
 \set id random(1, 2000000)
 DELETE FROM bench_del WHERE id = :id;
 EOF
-# Many small committed txns into an inverted-indexed serial table.
 cat >"${OUT_DIR}/wl/txn_small.sql" <<'EOF'
 BEGIN;
 INSERT INTO bench_txn(body) SELECT 'tok' || g FROM generate_series(1, 10) g;
 COMMIT;
 EOF
-# Aborted txns: same small insert, rolled back -- abort cost.
 cat >"${OUT_DIR}/wl/rollback.sql" <<'EOF'
 BEGIN;
 INSERT INTO bench_txn(body) SELECT 'tok' || g FROM generate_series(1, 10) g;
 ROLLBACK;
 EOF
-# Search that materializes a row column from the base table (vs id-only). The
-# `@@` match must run against the index relation (bench_txt_idx); projecting the
-# non-indexed `pad` column there forces the row to be materialized from the base
-# table, which is the path under test. Querying the base table directly errors
-# ("TSQUERY expression evaluated outside an `@@` match") on both binaries.
 cat >"${OUT_DIR}/wl/search_materialize.sql" <<'EOF'
 \set tok random(0, 49)
 SELECT id, pad FROM bench_txt_idx WHERE body @@ ts_phrase('token' || :tok) LIMIT 10;
 EOF
-# Plain-table insert sweep (used at several client counts).
 cat >"${OUT_DIR}/wl/insert_sweep.sql" <<'EOF'
 \set id random(1, 999999999999)
 \set v random(0, 999)
 INSERT INTO bench_sweep (id, v, pad) VALUES ((:id)::BIGINT, (:v)::BIGINT, 'padpadpadpadpad');
 EOF
 
-# run_pgb <label> <sqlfile> <mode> [clients] [extra pgbench args...]
-# Optional PGB_NO_WARMUP=1 in the environment skips the warmup window (used by
-# the cold-read workload that wants first-touch latency post-restart).
 run_pgb() {
 	local label="$1" sqlfile="$2" mode="$3" clients="${4:-${CLIENTS}}"
 	shift 4 || true
@@ -515,7 +378,6 @@ run_pgb() {
 	local stat_log="${OUT_DIR}/stat_${label}.txt"
 	local log_prefix="${OUT_DIR}/pgblog_${label}"
 	wait_quiet
-	# warmup (skipped for cold-read measurement)
 	if [[ "${PGB_NO_WARMUP:-0}" != 1 ]]; then
 		taskset -c "${CLIENT_CORES}" pgbench -h 127.0.0.1 -p "${PORT}" -U postgres \
 			-n -f "${sqlfile}" -M "${mode}" -c "${clients}" -j "${JOBS}" -T 2 \
@@ -538,8 +400,6 @@ run_pgb() {
 	cycles=$(awk '/cycles/{gsub(/[^0-9]/,"",$1); print $1; exit}' "${stat_log}" 2>/dev/null)
 	insns=$(awk '/instructions/{gsub(/[^0-9]/,"",$1); print $1; exit}' "${stat_log}" 2>/dev/null)
 	load="$(awk '{print $1}' /proc/loadavg)"
-	# p50/p99 of per-transaction latency (field 3, microseconds) from the
-	# pgbench sample logs. A parse failure must never abort the run -> default 0.
 	p50=0
 	p99=0
 	read -r p50 p99 < <(
@@ -565,9 +425,6 @@ run_pgb() {
 		"${label}" "${tps:-0}" "${lat:-0}" "${p50}" "${p99}" "${load}"
 }
 
-# run_wall <label> <reps> <setup-sql> <timed-sql> <teardown-sql>
-# Wall-clocks ONE statement, median over reps; rows are tps=1/median so the
-# summary ratio machinery applies. Setup/teardown run untimed around each rep.
 run_wall() {
 	local label="$1" reps="$2" setup="$3" timed="$4" teardown="$5"
 	local times=()
@@ -590,8 +447,6 @@ run_wall() {
 	printf '  %-26s median=%-8ss (1/t=%.3f) load=%s\n' "${label}" "${med}" "${tps}" "${load}"
 }
 
-# run_recovery <srv> <datadir>: kill -9 the running server, wall-clock
-# restart-to-ready (includes search index rebuild on the new side), reps times.
 run_recovery() {
 	local srv="$1" datadir="$2"
 	local times=()
@@ -623,8 +478,6 @@ bench_server() {
 	start_serened "${srv}" "${datadir}"
 	wait_up "${OUT_DIR}/serened_${srv}.log"
 
-	# Seed the shared fixtures. The text-search dictionary is created EARLY so
-	# the indexed-write group below can build its inverted index on it.
 	"${PSQL[@]}" \
 		-c "CREATE TEXT SEARCH DICTIONARY bench_dict(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);" \
 		-c "CREATE TABLE bench_ins (id BIGINT PRIMARY KEY, v BIGINT, pad TEXT);" \
@@ -633,17 +486,11 @@ bench_server() {
 		-c "CREATE TABLE bench_seq (id BIGSERIAL PRIMARY KEY, v INTEGER);" \
 		>/dev/null
 
-	# 1. single-row INSERT, autocommit, 1 client (fsync-per-commit probe).
 	run_pgb "${srv}_insert_1c" "${OUT_DIR}/wl/insert.sql" prepared 1
-	# 2. concurrent small writers, same table.
 	run_pgb "${srv}_insert_${CLIENTS}c" "${OUT_DIR}/wl/insert.sql" prepared "${CLIENTS}"
-	# 3. point UPDATE churn.
 	run_pgb "${srv}_update_${CLIENTS}c" "${OUT_DIR}/wl/update.sql" prepared "${CLIENTS}"
-	# 4. nextval-heavy insert.
 	run_pgb "${srv}_nextval_${CLIENTS}c" "${OUT_DIR}/wl/nextval.sql" prepared "${CLIENTS}"
 
-	# --- A. writes into INDEXED tables (highest value) -----------------------
-	# Inverted-indexed table: every commit drives the search-feed/settle path.
 	grp_inv_writes() {
 		"${PSQL[@]}" \
 			-c "CREATE TABLE bench_inv (id BIGINT PRIMARY KEY, body TEXT);" \
@@ -656,11 +503,9 @@ bench_server() {
 	}
 	guard "${srv}_inv_writes" "inverted-table writes unsupported" grp_inv_writes
 
-	# Upsert: INSERT .. ON CONFLICT DO UPDATE, always hits the conflict path.
 	guard "${srv}_upsert_${CLIENTS}c" "ON CONFLICT unsupported" \
 		run_pgb "${srv}_upsert_${CLIENTS}c" "${OUT_DIR}/wl/upsert.sql" prepared "${CLIENTS}"
 
-	# Two secondary indexes: each insert writes both.
 	grp_sk_writes() {
 		"${PSQL[@]}" \
 			-c "CREATE TABLE bench_sk (id BIGINT PRIMARY KEY, a INTEGER, b INTEGER);" \
@@ -670,14 +515,12 @@ bench_server() {
 	}
 	guard "${srv}_insert_sk_${CLIENTS}c" "secondary-index writes unsupported" grp_sk_writes
 
-	# UNIQUE constraint enforcement on every insert (values effectively unique).
 	grp_uniq_writes() {
 		"${PSQL[@]}" -c "CREATE TABLE bench_uniq (id BIGINT PRIMARY KEY, u BIGINT UNIQUE);" >/dev/null
 		run_pgb "${srv}_insert_uniq_${CLIENTS}c" "${OUT_DIR}/wl/insert_uniq.sql" prepared "${CLIENTS}"
 	}
 	guard "${srv}_insert_uniq_${CLIENTS}c" "UNIQUE constraint unsupported" grp_uniq_writes
 
-	# --- B. point DELETE on a plain (PK-only) table --------------------------
 	grp_delete_point() {
 		"${PSQL[@]}" \
 			-c "CREATE TABLE bench_del (id BIGINT PRIMARY KEY, v BIGINT);" \
@@ -686,14 +529,11 @@ bench_server() {
 	}
 	guard "${srv}_delete_point_${CLIENTS}c" "point delete unsupported" grp_delete_point
 
-	# 5. bulk INSERT .. SELECT 1M rows (wall clock).
 	run_wall "${srv}_bulk_insert_1m" "${REPS}" \
 		"CREATE TABLE bench_bulk (id INTEGER PRIMARY KEY, grp INTEGER, val DOUBLE PRECISION, pad TEXT);" \
 		"INSERT INTO bench_bulk SELECT x, x % 100, x * 0.5, 'padpadpadpadpad' || x FROM generate_series(1, 1000000) t(x);" \
 		"DROP TABLE bench_bulk;"
 
-	# --- C. COPY (server-side files in OUT_DIR) ------------------------------
-	# copy_out first: it also produces copy_data.csv consumed by copy_in.
 	grp_copy_out() {
 		run_wall "${srv}_copy_out_1m" "${REPS}" "" \
 			"COPY (SELECT x, x % 100, x * 0.5, 'pad' || x FROM generate_series(1, 1000000) t(x)) TO '${OUT_DIR}/copy_data.csv' (FORMAT csv);" \
@@ -709,7 +549,6 @@ bench_server() {
 	}
 	guard "${srv}_copy_in_1m" "COPY FROM file unsupported" grp_copy_in
 
-	# --- D. transactions (serial-PK inverted-indexed table) ------------------
 	grp_txn() {
 		"${PSQL[@]}" \
 			-c "CREATE TABLE bench_txn (id BIGSERIAL PRIMARY KEY, body TEXT);" \
@@ -722,27 +561,21 @@ bench_server() {
 	}
 	guard "${srv}_txn" "transactional inverted writes unsupported" grp_txn
 
-	# Scan fixture: 500k rows + plain index on grp.
 	"${PSQL[@]}" \
 		-c "CREATE TABLE bench_big (id INTEGER PRIMARY KEY, grp INTEGER, val DOUBLE PRECISION, pad TEXT);" \
 		-c "INSERT INTO bench_big SELECT x, x % 100, x * 0.5, 'padpadpadpadpad' || x FROM generate_series(1, 500000) t(x);" \
 		>/dev/null
 
-	# 6-8. PK point lookups / PK range sums / full-scan aggregate.
 	run_pgb "${srv}_pk_lookup" "${OUT_DIR}/wl/lookup.sql" prepared "${CLIENTS}"
 	run_pgb "${srv}_pk_range" "${OUT_DIR}/wl/range.sql" prepared "${CLIENTS}"
 	run_pgb "${srv}_fullscan_agg" "${OUT_DIR}/wl/agg.sql" prepared 2
 
-	# 9. secondary index: build (wall) + filtered count through it.
 	run_wall "${srv}_sk_build" "${REPS}" "" \
 		"CREATE INDEX bench_big_grp ON bench_big(grp);" \
 		"DROP INDEX bench_big_grp;"
 	"${PSQL[@]}" -c "CREATE INDEX bench_big_grp ON bench_big(grp);" >/dev/null
 	run_pgb "${srv}_sk_lookup" "${OUT_DIR}/wl/sk_lookup.sql" prepared "${CLIENTS}"
 
-	# 10. inverted index: build over 200k texts (wall) + scored fetch. The
-	# non-indexed `pad` column exists so search_materialize can fetch a column
-	# that is NOT in the inverted index (forcing a base-table row materialize).
 	"${PSQL[@]}" \
 		-c "CREATE TABLE bench_txt (id INTEGER PRIMARY KEY, body TEXT, pad TEXT);" \
 		-c "INSERT INTO bench_txt SELECT x, 'lorem ipsum dolor sit amet word' || (x % 1000) || ' token' || (x % 50), 'padpadpadpadpad' || x FROM generate_series(1, 200000) t(x);" \
@@ -753,11 +586,9 @@ bench_server() {
 	"${PSQL[@]}" -c "CREATE INDEX bench_txt_idx ON bench_txt USING inverted(body bench_dict);" >/dev/null
 	"${PSQL[@]}" -c "VACUUM (REFRESH_TABLE) bench_txt;" >/dev/null
 	run_pgb "${srv}_search_fetch" "${OUT_DIR}/wl/search.sql" prepared "${CLIENTS}"
-	# G. search that materializes row columns from the base table.
 	guard "${srv}_search_materialize" "search materialize unsupported" \
 		run_pgb "${srv}_search_materialize" "${OUT_DIR}/wl/search_materialize.sql" prepared "${CLIENTS}"
 
-	# --- E. TRUNCATE (reseed each rep so it truncates a populated table) ------
 	guard "${srv}_truncate_plain" "TRUNCATE plain unsupported" \
 		run_wall "${srv}_truncate_plain" "${REPS}" \
 		"DROP TABLE IF EXISTS bench_trunc; CREATE TABLE bench_trunc (id INTEGER PRIMARY KEY, v BIGINT); INSERT INTO bench_trunc SELECT x, x FROM generate_series(1, 200000) t(x);" \
@@ -769,7 +600,6 @@ bench_server() {
 		"TRUNCATE bench_trunci;" \
 		"DROP TABLE IF EXISTS bench_trunci;"
 
-	# --- F. bulk variants ----------------------------------------------------
 	grp_bulk_insert_inv() {
 		"${PSQL[@]}" \
 			-c "CREATE TABLE bench_inv2 (id BIGINT PRIMARY KEY, body TEXT);" \
@@ -790,13 +620,11 @@ bench_server() {
 		"DELETE FROM bench_bdel WHERE id <= 250000;" \
 		"DROP TABLE IF EXISTS bench_bdel;"
 
-	# --- H. maintenance ------------------------------------------------------
 	guard "${srv}_vacuum_refresh" "VACUUM REFRESH_TABLE unsupported" \
 		run_wall "${srv}_vacuum_refresh" "${REPS}" "" \
 		"VACUUM (REFRESH_TABLE) bench_inv;" \
 		""
 
-	# --- K. scaling (full profile only) --------------------------------------
 	if full_only; then
 		run_wall "${srv}_bulk_insert_100k" "${REPS}" \
 			"DROP TABLE IF EXISTS bench_scale; CREATE TABLE bench_scale (id INTEGER PRIMARY KEY, grp INTEGER, val DOUBLE PRECISION, pad TEXT);" \
@@ -806,7 +634,6 @@ bench_server() {
 			"DROP TABLE IF EXISTS bench_scale; CREATE TABLE bench_scale (id INTEGER PRIMARY KEY, grp INTEGER, val DOUBLE PRECISION, pad TEXT);" \
 			"INSERT INTO bench_scale SELECT x, x % 100, x * 0.5, 'padpadpadpadpad' || x FROM generate_series(1, 10000000) t(x);" \
 			"DROP TABLE IF EXISTS bench_scale;"
-		# Insert concurrency sweep on a plain table.
 		grp_insert_sweep() {
 			"${PSQL[@]}" \
 				-c "DROP TABLE IF EXISTS bench_sweep;" \
@@ -820,9 +647,6 @@ bench_server() {
 		guard "${srv}_insert_sweep" "insert sweep unsupported" grp_insert_sweep
 	fi
 
-	# --- J. footprint + memory: datadir bytes and peak RSS (VmHWM), read from
-	# the ORIGINAL PID before the kill-9 recovery restart (which resets VmHWM),
-	# so peak RSS captures the bulk-load + CREATE INDEX peak.
 	local dirbytes peakrss load
 	dirbytes="$(du -sb "${datadir}" 2>/dev/null | awk '{print $1+0}')"
 	peakrss="$(awk '/^VmHWM:/{print $2+0}' "/proc/${CUR_PID}/status" 2>/dev/null)"
@@ -834,11 +658,8 @@ bench_server() {
 	printf '  %-26s datadir_bytes=%s\n' "${srv}_datadir_bytes" "${dirbytes:-0}"
 	printf '  %-26s peak_rss_kb=%s\n' "${srv}_peak_rss_kb" "${peakrss:-0}"
 
-	# 11. recovery: kill -9, time restart-to-ready with the data above.
 	run_recovery "${srv}" "${datadir}"
 
-	# I. cold read: first-touch PK lookups against the just-restarted server,
-	# WITHOUT the warmup window, to capture post-restart latency.
 	PGB_NO_WARMUP=1 run_pgb "${srv}_pk_lookup_cold" "${OUT_DIR}/wl/lookup.sql" prepared "${CLIENTS}"
 
 	stop_serened

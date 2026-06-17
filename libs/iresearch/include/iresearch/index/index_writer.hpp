@@ -470,10 +470,6 @@ class IndexWriter : private util::Noncopyable {
 
     uint64_t GetQueries() const noexcept { return _queries; }
 
-    // Reserve `n` query sub-ticks without recording a query. Lets a caller that
-    // batches several Insert ops into one Transaction give each op its own
-    // strictly-ascending document tick (Insert snapshots _queries but, unlike
-    // Remove/Replace, does not advance it). Used by WAL-replay streaming.
     void AdvanceQueries(uint64_t n = 1) noexcept { _queries += n; }
 
    private:

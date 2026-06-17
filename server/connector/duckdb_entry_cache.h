@@ -30,7 +30,6 @@ namespace sdb::connector {
 
 // Hierarchical cache of DuckDB CatalogEntry objects.
 // Structure: databases[db_id] -> schemas[name] -> entries[name].
-// Lives on Snapshot. Thread-safe.
 class DuckDBEntryCache {
  public:
   // Called by SereneDBCatalog::LookupSchema

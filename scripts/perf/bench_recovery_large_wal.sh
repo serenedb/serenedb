@@ -1,24 +1,4 @@
 #!/usr/bin/env bash
-# bench_recovery_large_wal.sh -- recovery-speed A/B: OLD rocksdb table plane
-# (pinned main baseline) vs NEW native duckdb store tables (branch perf binary),
-# under a LARGE inverted-indexed dataset with a controlled post-checkpoint WAL
-# delta. This is the metric the no-rebuild recovery design exists for: recovery
-# cost should track the WAL delta (O(delta)), NOT the table size (O(table)).
-#
-# Per binary, on its own datadir (the two storage formats are not
-# interchangeable):
-#   1. build a large inverted-indexed text table (TABLE_ROWS),
-#   2. CHECKPOINT so the bulk is durable in the checkpoint, not the WAL,
-#   3. disable auto-checkpoint, then append DELTA_ROWS -- the "large WAL" that a
-#      crash leaves un-checkpointed,
-#   4. kill -9, then wall-clock restart-to-search-ready (a search query must
-#      return the pre-crash hit count, so the index delta really is applied),
-#   5. repeat REPS times on the same datadir (replay is idempotent; the WAL is
-#      never truncated because auto-checkpoint stays off and kill -9 skips the
-#      clean-shutdown checkpoint), report the median.
-#
-# Pre-reqs: psql, the baseline binary, the branch perf binary. No other serened
-# on PORT.
 
 set -euo pipefail
 
@@ -93,8 +73,6 @@ wait_up() {
 	return 1
 }
 
-# Block until a search over the indexed table returns the expected hit count,
-# i.e. the post-checkpoint delta is fully applied to the inverted index.
 wait_search_ready() {
 	local want="$1"
 	for _ in $(seq 1 4000); do
@@ -126,8 +104,6 @@ bench_one() {
 		-c "VACUUM (REFRESH_TABLE) rec_txt;" \
 		-c "CHECKPOINT;" >/dev/null
 
-	# Disable auto-checkpoint, then append the delta so it lands in the WAL and
-	# stays there (tolerate the old binary lacking these settings).
 	"${PSQL[@]}" \
 		-c "SET GLOBAL wal_autocheckpoint='1TB';" \
 		-c "SET GLOBAL checkpoint_threshold='1TB';" 2>/dev/null || true

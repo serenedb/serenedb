@@ -48,8 +48,6 @@ enum class ObjectType : uint8_t {
   Tombstone = 1,
   // Catalog objects start at 128.
   // Order matters: within the same parent, objects are scanned in enum order.
-  // Indexes must come after their table so the table exists when the index
-  // is loaded.
   // Top-level (parent = instance)
   Database = 128,
   Role,

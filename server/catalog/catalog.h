@@ -223,19 +223,12 @@ struct Snapshot {
     ObjectId db_id, ObjectId schema_id, ObjectId table_id,
     const std::shared_ptr<Index>& index, bool is_root);
 
-  // Store-table name of `table_id` ("db.schema.table"), or nullopt when
-  // the id is unset (self-referencing FK) or not resolvable.
   std::optional<std::string> ComposeStoreTableName(ObjectId table_id) const;
 
-  // Cross-tree fixups for DROP seed. Composition cleanup is async.
   DropPlan ComputeDropPlan(ObjectId seed) const;
-  // Plan for ALTER TABLE DROP COLUMN: rewrite the owning table without the
-  // column and cascade-drop every index covering it (PG column->index cascade).
   DropPlan ComputeColumnDropPlan(ObjectId table_id, ObjectId col_id) const;
   void CommitDropPlan(CatalogStore::WriteContext& ctx,
                       const DropPlan& plan) const;
-  // Apply cross-tree mutations in-memory; schedule IndexDrop tasks for
-  // cascade-dropped indexes (column->index cascade).
   void ApplyDropPlan(ObjectId db_id, DropPlan& plan);
 
   bool CheckSchemaEmptyDependency(ObjectId schema_id) const;
@@ -461,8 +454,6 @@ class Catalog final {
   CatalogStore* _engine;
 };
 
-// Builds the single in-process catalog, loads boot state, bootstraps the
-// default role, and attaches the databases. Throws on failure.
 void InitCatalog();
 void ShutdownCatalog();
 

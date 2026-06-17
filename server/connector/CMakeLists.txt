@@ -54,7 +54,6 @@ target_link_libraries(
 )
 
 # TODO(Dronplane): why not make public includes for sereneserver so we avoid this ugly line below?
-# sereneserver is a single monolithic target without proper include dirs setup
 target_include_directories(serene_connector PUBLIC "${CMAKE_SOURCE_DIR}/server")
 
 # view_fast_path.cpp reads iceberg-bound snapshot ids; iceberg's REST

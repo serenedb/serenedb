@@ -90,7 +90,7 @@ duckdb::unique_ptr<duckdb::PreparedStatement> PrepareOrFatal(
 
 Result Exec(duckdb::PreparedStatement& stmt,
             duckdb::vector<duckdb::Value> values) {
-  auto res = stmt.Execute(values, /*allow_stream_result=*/false);
+  auto res = stmt.Execute(values, false);
   if (res->HasError()) {
     return {ERROR_INTERNAL, res->GetError()};
   }
@@ -171,9 +171,6 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
     }
     if (def.kind == StoreIndexDef::Kind::Plain &&
         (it->type.HasAlias() || it->type.id() == duckdb::LogicalTypeId::ENUM)) {
-      // Catalog-named types (enums, composites, JSON) cannot be re-parsed
-      // by the store connection during the ART build; such keys stay
-      // unenforced like nested types.
       return false;
     }
     if (std::ranges::find(def.columns, it->GetName()) == def.columns.end()) {
@@ -187,8 +184,6 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
     }
   }
   if (index.GetType() == ObjectType::InvertedIndex) {
-    // Indexed-expression dependencies must be in the index's column set so
-    // duckdb initializes their chunk vectors for the BoundIndex appends.
     const auto& inverted = basics::downCast<const InvertedIndex>(index);
     for (const auto& [field_id, entry] : inverted.GetEntries()) {
       if (const auto* expr = entry.GetExpressionData()) {
@@ -232,10 +227,6 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
         def.not_null.push_back(mirror_pos[*idx]);
       }
     } else if (constraint.expr && constraint.expr->HasExpr()) {
-      // Function calls bind against the catalog visible to the store
-      // connection -- session/catalog-dependent functions (sequences,
-      // user macros) capture the wrong context there. Those checks stay
-      // facade-side; the facade passes them to inserts itself.
       bool has_function = false;
       auto scan = [&](this auto& self,
                       const duckdb::ParsedExpression& e) -> void {
@@ -259,8 +250,6 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
         cols, [&](const auto& c) { return c.GetId() == col_id; });
       SDB_ASSERT(it != cols.end());
       if (it->type.IsNested()) {
-        // ART cannot index nested types; such keys stay unenforced in the
-        // store table until the encoded-key indexes land.
         out.clear();
         return;
       }
@@ -683,10 +672,6 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
           }
           auto res = _conn->Query(sql);
           if (res->HasError() && !entry.def.empty()) {
-            // The DEFAULT may call a function the store connection can't
-            // resolve (sequences, user macros bind facade-side). Add the
-            // column without it; existing rows get NULL and the facade fills
-            // the default for future inserts.
             SDB_WARN(GENERAL, "store table \"", entry.store_table.name,
                      "\": ADD COLUMN \"", entry.name_a,
                      "\" DEFAULT not mirrored: ", res->GetError());
@@ -718,12 +703,9 @@ Result CatalogStore::ExecuteEntries(std::vector<WriteContext::Entry>& entries) {
 }
 
 Result CatalogStore::ExecuteCreateStoreTable(const StoreTableDef& def) {
-  auto r = ExecuteCreateStoreTableImpl(def, /*with_checks=*/true);
+  auto r = ExecuteCreateStoreTableImpl(def, true);
   if (r.fail() && !def.checks.empty()) {
-    // CHECK expressions may reference functions that only the facade
-    // database can resolve; such constraints stay facade-side (unenforced)
-    // rather than failing the table.
-    auto retry = ExecuteCreateStoreTableImpl(def, /*with_checks=*/false);
+    auto retry = ExecuteCreateStoreTableImpl(def, false);
     if (retry.ok()) {
       SDB_WARN(GENERAL, "store table \"", def.name,
                "\": CHECK constraints were not mirrored: ", r.errorMessage());
@@ -888,7 +870,7 @@ Result CatalogStore::VisitDefinitions(
   {
     absl::MutexLock lock{&_mutex};
     duckdb::vector<duckdb::Value> params{IdValue(parent_id), TypeValue(type)};
-    res = _select_definitions->Execute(params, /*allow_stream_result=*/false);
+    res = _select_definitions->Execute(params, false);
   }
   if (res->HasError()) {
     return {ERROR_INTERNAL, res->GetError()};
@@ -1051,7 +1033,7 @@ Result CatalogStore::GetSequenceValue(ObjectId sequence_id, uint64_t& value) {
   {
     absl::MutexLock lock{&_seq_mutex};
     duckdb::vector<duckdb::Value> params{IdValue(sequence_id)};
-    res = _select_sequence->Execute(params, /*allow_stream_result=*/false);
+    res = _select_sequence->Execute(params, false);
   }
   if (res->HasError()) {
     return {ERROR_INTERNAL, res->GetError()};
@@ -1070,9 +1052,9 @@ void CatalogStore::EnsureSystemDatabase() {
                                  [&](Key key, std::string_view) -> Result {
                                    if (key.id == id::kSystemDB) {
                                      has_system = true;
-                                     return {ERROR_INTERNAL};  // found, stop
+                                     return {ERROR_INTERNAL};
                                    }
-                                   return {};  // keep scanning
+                                   return {};
                                  });
 
   if (has_system) {
@@ -1149,8 +1131,6 @@ duckdb::unique_ptr<duckdb::FunctionData> BindInitSequences(
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitBootGlobal(
   duckdb::ClientContext&, duckdb::TableFunctionInitInput&) {
-  // Default MaxThreads() == 1 caps the pipeline at one thread: the boot
-  // maps are built lock-free.
   return duckdb::make_uniq<duckdb::GlobalTableFunctionState>();
 }
 

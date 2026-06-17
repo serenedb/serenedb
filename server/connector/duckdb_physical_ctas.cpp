@@ -45,11 +45,6 @@ struct CTASGlobalState final : public duckdb::GlobalSinkState {
   std::string database_name;
   std::string schema_name;
   std::string table_name;
-  // Appends ride a dedicated connection: the store table was created on
-  // the catalog-store connection mid-statement, so it is invisible to (and
-  // would write-write conflict with) the user transaction. The table only
-  // becomes user-visible at the RemoveTombstone rename, so rows committed
-  // through this connection appear atomically.
   std::unique_ptr<duckdb::Connection> store_conn;
   std::unique_ptr<duckdb::Appender> appender;
   duckdb::idx_t insert_count = 0;
@@ -153,8 +148,6 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->schema_name = _schema.name;
   state->table_name = table_info.table;
 
-  // The store table keeps its tombstone name until RemoveTombstone renames
-  // it on success.
   state->store_conn = std::make_unique<duckdb::Connection>(*context.db);
   state->appender = std::make_unique<duckdb::Appender>(
     *state->store_conn, std::string{catalog::kStoreDatabaseName}, "main",
@@ -187,8 +180,6 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
     gstate.appender.reset();
     gstate.store_conn.reset();
   }
-  // Rows are durable in the store but the table is still tombstone-named;
-  // recovery must drop it. Name kept from the SST-ingest era.
   SDB_IF_FAILURE("crash_sst_sink_after_ingest") { SDB_IMMEDIATE_ABORT(); }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
   auto& catalog = catalog::GetCatalog();

@@ -26,9 +26,6 @@
 namespace sdb::connector {
 
 // Physical operator for CREATE TABLE AS SELECT on SereneDB tables.
-// Creates the catalog table (tombstoned) in GetGlobalSinkState, appends
-// rows natively to the hidden store table, and removes the tombstone in
-// Finalize; the destructor drops the table when the query fails.
 class SereneDBPhysicalCTAS : public duckdb::PhysicalOperator {
  public:
   SereneDBPhysicalCTAS(duckdb::PhysicalPlan& plan,

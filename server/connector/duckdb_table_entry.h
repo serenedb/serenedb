@@ -69,7 +69,6 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
-  // Resolves the hidden store table backing this facade entry.
   duckdb::TableCatalogEntry& ResolveStoreEntry(
     duckdb::ClientContext& context) const;
 

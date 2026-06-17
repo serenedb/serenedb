@@ -26,9 +26,6 @@
 
 namespace sdb::connector {
 
-// Pass-through operator above the native insert: feeds the session
-// progress reporter (pg_stat_progress_copy) with per-chunk tuple/byte
-// counts and identifies the facade table for the reporter factory.
 class SereneDBPhysicalProgress final : public duckdb::PhysicalOperator {
  public:
   SereneDBPhysicalProgress(duckdb::PhysicalPlan& plan,

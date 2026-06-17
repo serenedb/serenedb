@@ -56,7 +56,6 @@ size_t WriteImpl(char* p, const T& v) noexcept {
     absl::big_endian::Store64(p, v.id());
     return sizeof(T);
   } else if constexpr (std::is_same_v<T, std::string_view>) {
-    // TODO(gnusi): std::string_view must be last
     std::memcpy(p, v.data(), v.size());
     return v.size();
   } else {
@@ -69,7 +68,6 @@ size_t WriteImpl(char* p, const T& v) noexcept {
 
 template<typename... Args>
 void Concat(std::string& str, const Args&... args) {
-  // TODO(mbkkt) maybe amortized?
   basics::StrResize(str, (detail::GetByteSizeImpl(args) + ...));
   auto* p = str.data();
   ((p += detail::WriteImpl(p, args)), ...);
@@ -77,7 +75,6 @@ void Concat(std::string& str, const Args&... args) {
 
 template<typename... Args>
 void Append(std::string& str, const Args&... args) {
-  // TODO(mbkkt) maybe amortized?
   const auto old_size = str.size();
   basics::StrResize(str, (detail::GetByteSizeImpl(args) + ...) + old_size);
   auto* p = str.data() + old_size;

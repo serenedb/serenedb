@@ -107,7 +107,6 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
   if (scan_source && scan_source->Kind() == ScanSourceKind::Search) {
     return InvertedIndexCardinality(*this);
   }
-  // No row-count statistics are tracked; let the optimizer use its defaults.
   return nullptr;
 }
 

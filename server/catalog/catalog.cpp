@@ -129,13 +129,11 @@ Snapshot::Snapshot() = default;
 Snapshot::~Snapshot() = default;
 
 std::shared_ptr<Snapshot> Snapshot::Clone() const {
-  // TODO(gnusi): COW
   auto result = std::make_shared<Snapshot>();
   result->_resolution_table = _resolution_table;
   result->_objects = _objects;
   result->_deps = _deps;
   result->_in_load = _in_load;
-  // New snapshot starts with empty DuckDB cache (lazily populated)
   return result;
 }
 
@@ -176,8 +174,6 @@ std::shared_ptr<SchemaDrop> Snapshot::CreateSchemaDrop(
   return drop_task;
 }
 
-// Store-table name of `table_id` ("db.schema.table"), or nullopt when
-// the id is unset (self-referencing FK) or not resolvable.
 std::optional<std::string> Snapshot::ComposeStoreTableName(
   ObjectId table_id) const {
   if (!table_id.isSet()) {
@@ -235,9 +231,6 @@ std::shared_ptr<TableDrop> Snapshot::CreateTableDrop(
 std::shared_ptr<IndexDrop> Snapshot::CreateIndexDrop(
   ObjectId db_id, ObjectId schema_id, ObjectId table_id,
   const std::shared_ptr<Index>& index, bool is_root) {
-  // Capture the iresearch storage handle (weak) so the async IndexDrop can wait
-  // for every holder (snapshots, txns, tasks) to release before removing the
-  // on-disk directory. Secondary indexes have no storage -> empty weak.
   std::weak_ptr<search::InvertedIndexStorage> data;
   if (index->GetType() == ObjectType::InvertedIndex) {
     data = basics::downCast<const InvertedIndex>(*index).GetData();
@@ -279,7 +272,6 @@ Result Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
     }
     return AddObjectDefinition<ViewDependency>(parent_id, std::move(object));
   } else if constexpr (std::is_same_v<T, Sequence>) {
-    // Sequences share the relation namespace (PG: pg_class.relkind='S').
     auto r = AddToResolution<ResolveType::Relation>(parent_id, object->GetId(),
                                                     object->GetName(), replace);
     if (!r.ok()) {
@@ -388,9 +380,6 @@ template<typename Dep, typename Member, typename Edge>
 void Snapshot::ModifyDependency(ObjectId target, Member Dep::* mem,
                                 const Edge& edge, EdgeAction action) {
   if (!_deps.TryGetDependency(target)) {
-    // unset target: pg_catalog/information_schema ref -- no edge to track.
-    // missing Dep: graph traversal reached the same target twice, fine
-    // on Delete (firstly we delete auto drop dependencies and then cascade).
     SDB_ASSERT(_in_load || action == EdgeAction::Delete || !target.isSet());
     return;
   }
@@ -525,7 +514,6 @@ void Snapshot::ModifyViewDependencies(ObjectId schema_id, const PgSqlView& view,
       &SequenceDependency::views, view_id, action);
   }
   for (const auto& ref : refs.relations) {
-    // Table or View -- both inherit RelationDependency.views.
     ModifyDependency(
       Resolve<ResolveType::Relation, ObjectType::Table, ObjectType::PgSqlView>(
         database_id, schema_id, ref.catalog, ref.schema, ref.name),
@@ -567,7 +555,7 @@ void Snapshot::ModifyFunctionDependencies(ObjectId schema_id,
     auto target = Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
       database_id, schema_id, ref.catalog, ref.schema, ref.name);
     if (target == fn_id) {
-      continue;  // skip self
+      continue;
     }
     ModifyDependency(target, &PgSqlFunctionDependency::functions, fn_id,
                      action);
@@ -667,7 +655,6 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
       GetDependencyForWrite<SchemaDependency>(parent_id)->types.insert(id);
       break;
     case ObjectType::Sequence: {
-      // Owned sequences live under the table only
       const auto& seq = basics::downCast<Sequence>(obj);
       if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
         GetDependencyForWrite<TableDependency>(owner)->owned_sequences.insert(
@@ -1109,8 +1096,6 @@ Result Snapshot::ReplaceObject(ObjectId parent_id, std::string_view old_name,
       return r;
     }
   } else {
-    // Name unchanged, but must refresh the string_view to point to new
-    // object's _name
     auto r = _resolution_table.AddObject<Type>(parent_id, new_object->GetName(),
                                                new_object->GetId(), true);
     SDB_ASSERT(r.ok());
@@ -1120,9 +1105,6 @@ Result Snapshot::ReplaceObject(ObjectId parent_id, std::string_view old_name,
   SDB_ASSERT(it != _objects.end());
   SDB_ASSERT((*it)->GetId() == new_object->GetId());
   auto old_object = *it;
-  // Refresh reverse-edges if the object's body changed. Replaces of
-  // objects without body (Role, Sequence, ...) are pure name/value
-  // swaps and need no edge fixups.
   switch (new_object->GetType()) {
     case ObjectType::Table:
       ModifyTableDependencies(parent_id, basics::downCast<Table>(*old_object),
@@ -1175,7 +1157,6 @@ std::shared_ptr<T> Snapshot::GetDependencyForWrite(ObjectId id) {
   return dep;
 }
 
-// Cross-tree fixups for DROP seed. Composition cleanup is async.
 DropPlan Snapshot::ComputeDropPlan(ObjectId seed) const {
   auto lookup = [this](ObjectId id) { return GetObject(id); };
   auto indexes_using_col = [this](ObjectId table_id, ObjectId col_id) {
@@ -1195,10 +1176,6 @@ DropPlan Snapshot::ComputeDropPlan(ObjectId seed) const {
   return DropEmitter{seed, lookup, indexes_using_col, dep_lookup}.ComputePlan();
 }
 
-// Plan for ALTER TABLE DROP COLUMN: rewrite the owning table without the
-// column and cascade-drop every index covering it (PG column->index cascade).
-// The column has no dependency edges of its own, so this is built directly
-// rather than seeded into DropEmitter (which walks a seed's dependents).
 DropPlan Snapshot::ComputeColumnDropPlan(ObjectId table_id,
                                          ObjectId col_id) const {
   DropPlan plan;
@@ -1221,10 +1198,6 @@ DropPlan Snapshot::ComputeColumnDropPlan(ObjectId table_id,
 void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
                               const DropPlan& plan) const {
   duckdb::MemoryStream stream;
-  // Store-side index drops precede the column ALTERs below: a covering
-  // index must be gone before its column can be dropped, and enforcement
-  // (UNIQUE) must stop the moment the drop commits. The async task only
-  // sweeps index storage and definitions.
   for (auto idx_id : plan.index_drops) {
     if (auto idx = GetObject<Index>(idx_id)) {
       ctx.WriteTombstone(idx->GetRelationId(), idx_id);
@@ -1234,8 +1207,6 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
   for (const auto& [tid, rw] : plan.table_rewrites) {
     ctx.PutDefinition(rw.schema_id, ObjectType::Table, tid,
                       catalog::SerializeObject(*rw.table, stream));
-    // Cascades can drop columns of surviving tables (e.g. a column whose
-    // dependency lived in the dropped schema) -- the store table follows.
     if (rw.table->GetEngine() != TableEngine::Transactional ||
         rw.table->Tombstoned()) {
       continue;
@@ -1267,9 +1238,6 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
     auto rewritten =
       MakeStoreTableDef(database->GetName(), schema_obj->GetName(), *rw.table);
     if (rewritten.columns.empty()) {
-      // Dropping the last column is refused by ALTER; recreate instead
-      // (PG keeps the zero-column table). TODO(M2): rows must survive
-      // this once the store tables hold the data.
       ctx.DropStoreTable(store_name);
       ctx.CreateStoreTable(std::move(rewritten));
       continue;
@@ -1289,10 +1257,6 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
     if (dropped_columns.empty()) {
       continue;
     }
-    // Surviving store indexes block the ALTER whenever they cover a
-    // column positioned after the dropped one; recreate them around the
-    // drop (data lives in the rows / iresearch, so rebuilds are cheap
-    // and inverted instances carry no state of their own).
     std::vector<std::shared_ptr<Index>> surviving;
     if (auto table_deps = GetDependency<TableDependency>(tid)) {
       for (auto idx_id : table_deps->indexes) {
@@ -1326,8 +1290,6 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
   }
 }
 
-// Apply cross-tree mutations in-memory; schedule IndexDrop tasks for
-// cascade-dropped indexes (column->index cascade).
 void Snapshot::ApplyDropPlan(ObjectId db_id, DropPlan& plan) {
   for (const auto& [schema_id, view_id] : plan.view_drops) {
     if (auto v = GetObject<PgSqlView>(view_id)) {
@@ -1357,8 +1319,8 @@ void Snapshot::ApplyDropPlan(ObjectId db_id, DropPlan& plan) {
     if (!table) {
       continue;
     }
-    auto task = CreateIndexDrop(db_id, table->GetParentId(), table_id, idx,
-                                /*is_root=*/true);
+    auto task =
+      CreateIndexDrop(db_id, table->GetParentId(), table_id, idx, true);
     UnregisterObject(std::move(idx), table_id);
     DropTask::Schedule(std::move(task)).Detach();
   }
@@ -1379,7 +1341,6 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       RemoveObjectDefinition(id, child_id);
     }
   };
-  // Drop from parent deps
   if (root) {
     switch (obj->GetType()) {
       case ObjectType::Database:
@@ -1437,8 +1398,6 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
         schema_deps->types.erase(id);
       } break;
       case ObjectType::Sequence: {
-        // owned sequences live under the table;
-        // free-standing CREATE SEQUENCE under the schema.
         const auto& seq = basics::downCast<Sequence>(*obj);
         if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
           auto table_deps = GetDependencyForWrite<TableDependency>(owner);
@@ -1458,7 +1417,6 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
         SDB_UNREACHABLE();
     }
   }
-  // Drop childs
   switch (obj->GetType()) {
     case ObjectType::Database: {
       auto db_deps = GetDependency<DatabaseDependency>(id);
@@ -1481,8 +1439,6 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       if (obj->GetType() == ObjectType::Table) {
         const auto& table_deps =
           basics::downCast<TableDependency>(*relation_deps);
-        // Owned sequences are parented under the schema (same parent_id
-        // as the table), not the table -- unlike indexes.
         auto owned_sequences = table_deps.owned_sequences;
         for (auto seq_id : owned_sequences) {
           if (root) {
@@ -1493,12 +1449,9 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
           }
         }
       }
-      // TODO(codeworse): Avoid copy, maybe erase_if?
       auto index_ids = relation_deps->indexes;
       for (auto index_id : index_ids) {
         if (root) {
-          // Indexes are not erased from the resolution table during DROP --
-          // they're nested in schema scope. Erase explicitly.
           auto index = GetObject<Index>(index_id);
           UnregisterObject(index, id, false);
         } else {
@@ -1632,8 +1585,6 @@ Result Catalog::RegisterType(ObjectId database_id, ObjectId schema_id,
 Result Catalog::CreateDatabase(std::shared_ptr<Database> database) {
   const auto database_id = database->GetId();
 
-  // TODO(gnusi): make it atomic
-
   absl::MutexLock lock{&_mutex};
   return Apply(
     _snapshot, _snapshot_mutex,
@@ -1739,7 +1690,7 @@ Result Catalog::CreateIndexImpl(std::string_view relation_schema,
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       duckdb::MemoryStream stream;
-      {  // Write index definition
+      {
         auto bytes = catalog::SerializeObject(*index, stream);
         r = _engine->CreateDefinition(index->GetRelationId(), index->GetType(),
                                       index->GetId(), bytes);
@@ -1747,13 +1698,10 @@ Result Catalog::CreateIndexImpl(std::string_view relation_schema,
           return r;
         }
       }
-      // The inverted index's mutable iresearch storage hangs off the metadata
-      // object itself, so the CREATE INDEX build (GetGlobalSinkState) reaches
-      // it via the index's GetData(). Bind it here, before the build runs.
       if (index->GetType() == ObjectType::InvertedIndex) {
         const auto& inverted = basics::downCast<const InvertedIndex>(*index);
-        inverted.SetData(search::InvertedIndexStorage::Create(
-          inverted.GetId(), inverted, /*is_new=*/true));
+        inverted.SetData(search::InvertedIndexStorage::Create(inverted.GetId(),
+                                                              inverted, true));
       }
       {
         auto table = clone->template GetObject<Table>(index->GetRelationId());
@@ -1778,8 +1726,6 @@ Result Catalog::CreateIndexImpl(std::string_view relation_schema,
       return Result{};
     },
     [&](auto& clone) {
-      // Unregistering drops the index (and its just-bound storage) from the
-      // clone; mirrors the prior rollback, which only dropped the registry ref.
       clone->UnregisterObject(index, index->GetRelationId(), true);
     });
 }
@@ -1943,8 +1889,7 @@ Result Catalog::CreateView(ObjectId database_id, std::string_view schema,
             !r.ok()) {
           return r;
         }
-      } else if (auto r = clone->RegisterObject(view, *schema_id,
-                                                /*replace=*/false);
+      } else if (auto r = clone->RegisterObject(view, *schema_id, false);
                  !r.ok()) {
         return r;
       }
@@ -2040,8 +1985,7 @@ Result Catalog::CreateFunction(ObjectId database_id, std::string_view schema,
             !r.ok()) {
           return r;
         }
-      } else if (auto r = clone->RegisterObject(function, *schema_id,
-                                                /*replace=*/false);
+      } else if (auto r = clone->RegisterObject(function, *schema_id, false);
                  !r.ok()) {
         return r;
       }
@@ -2070,11 +2014,6 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
   if (auto r = TableNameValidator::validateName(options.name); !r.ok()) {
     return r;
   }
-  // Uniqueness keys are enforced by the store table's DuckDB ART, which cannot
-  // index nested types. Reject a nested-type key column up front with a clear
-  // error instead of silently creating the table with the constraint dropped
-  // (the store-side names_for clears it otherwise). Scalar key types are
-  // handled natively by the ART.
   auto reject_nested_key = [&](std::span<const Column::Id> ids,
                                std::string_view what) -> Result {
     for (auto col_id : ids) {
@@ -2109,8 +2048,6 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  // PG mangles `<table>_<col>_seq` with a numeric suffix on collision. Done
-  // under the mutex so concurrent CREATE TABLEs can't race on it.
   auto pick_unique_name = [&](std::string_view base) {
     std::string candidate{base};
     for (size_t i = 1;
@@ -2130,8 +2067,6 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
                                                     std::move(args)));
   };
 
-  // Columns come in with whatever owner_table_id callers set (unused);
-  // Table's constructor stamps the real id on each.
   auto table_id = NextId();
 
   std::vector<std::shared_ptr<Sequence>> sequences;
@@ -2151,9 +2086,6 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
       std::make_shared<Sequence>(*schema_id, ObjectId{}, std::move(seq_opts)));
   }
 
-  // Tables without an explicit PK get an auto-PK owned sequence. Table
-  // holds its id directly so the insert path doesn't have to scan
-  // owned_sequences for it.
   ObjectId generated_pk_seq_id;
   if (options.pk_columns.empty()) {
     auto resolved = pick_unique_name(absl::StrCat(options.name, "_pk_seq"));
@@ -2217,8 +2149,6 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
       }
     }
     if (operation_options.create_with_tombstone) {
-      // Not-yet-committed (CTAS) tables live under the dropped name; commit
-      // renames to the public name (RemoveTombstone), failure drops by id.
       store_table->name = DroppedStoreTableName(table->GetId());
     }
   }
@@ -2244,9 +2174,6 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
         }
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      // PutDefinition copies into the catalog store batch, so one reused stream
-      // is enough: each view is consumed before the next serialize overwrites
-      // it.
       duckdb::MemoryStream stream;
       return _engine->Write([&](auto& ctx) {
         ctx.PutDefinition(*schema_id, ObjectType::Table, table->GetId(),
@@ -2648,9 +2575,6 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
               renamed_columns = true;
             }
           }
-          // Newly added columns -> mirror to the store table. A constant
-          // DEFAULT backfills existing rows; the store handler retries without
-          // it when the expression calls a facade-only function.
           for (const auto& new_col : updated->Columns()) {
             if (new_col.GetId() == Column::kGeneratedPKId) {
               continue;
@@ -2669,9 +2593,6 @@ Result Catalog::ChangeTable(ObjectId database_id, std::string_view schema,
                                new_col.type.ToString(), std::move(default_sql));
           }
           if (renamed_columns) {
-            // Mirrored index definitions embed column names;
-            // recreate them against the renamed table (rowid
-            // postings and row data are untouched).
             auto deps =
               _snapshot->GetDependency<TableDependency>(updated->GetId());
             auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
@@ -2761,7 +2682,6 @@ Result Catalog::DropDatabase(std::string_view name,
       }
       clone->UnregisterObject(std::move(database), id::kInstance);
       clone->ApplyDropPlan(*database_id, plan);
-      // Check that SereneDB won't open this database after reboot
       SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
       DropTask::Schedule(std::move(task)).Detach();
       return Result{};
@@ -2806,7 +2726,6 @@ Result Catalog::DropSchema(std::string_view database, std::string_view name,
       }
       clone->UnregisterObject(std::move(schema), *database_id);
       clone->ApplyDropPlan(*database_id, plan);
-      // Check that SereneDB won't open this schema after reboot
       SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
       DropTask::Schedule(std::move(task)).Detach();
       return Result{};
@@ -2946,8 +2865,6 @@ Result Catalog::ChangeColumnType(ObjectId database_id, std::string_view schema,
   }
   const auto col_id = col_it->GetId();
 
-  // The index stores values of the column's old type; a type change would
-  // leave them inconsistent. Reject and let the user drop the index first.
   if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
     for (auto idx_id : td->indexes) {
       auto idx = _snapshot->GetObject<Index>(idx_id);
@@ -2994,10 +2911,6 @@ Result Catalog::ChangeColumnType(ObjectId database_id, std::string_view schema,
           if (store_name.empty()) {
             return;
           }
-          // The store blocks ALTER COLUMN TYPE while any index depends on the
-          // table; drop the mirrored store indexes, change the type, then
-          // recreate them (the data lives in the rows / iresearch, so the
-          // rebuild carries no state of its own).
           std::vector<StoreIndexDef> recreate;
           auto deps = _snapshot->GetDependency<TableDependency>(*table_id);
           auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
@@ -3067,8 +2980,6 @@ Result Catalog::RemoveTombstone(ObjectId database_id, std::string_view schema,
     }
   });
 
-  // Unlike most catalog operations that clone the snapshot, here we modify the
-  // object in-place because the tombstone flag is simple in-memory state.
   auto& schema_obj = basics::downCast<Object>(*object);
   schema_obj.SetTombstoned(false);
 
@@ -3105,8 +3016,6 @@ Result Catalog::DropIndex(std::string_view database, std::string_view schema,
                       pg::ToPgObjectTypeName(obj->GetType())};
       }
       auto index = basics::downCast<Index>(std::move(obj));
-      // Store-side index drop is synchronous: UNIQUE enforcement must stop
-      // when DROP INDEX commits, not when the async sweep runs.
       if (auto r = _engine->Write([&](auto& ctx) {
             ctx.WriteTombstone(index->GetRelationId(), *index_id);
             ctx.DropStoreIndex(*index_id);
@@ -3115,7 +3024,6 @@ Result Catalog::DropIndex(std::string_view database, std::string_view schema,
         return r;
       }
 
-      // Check that SereneDB won't open this index after reboot
       SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
 
       auto task = clone->CreateIndexDrop(*database_id, *schema_id,
@@ -3216,7 +3124,7 @@ Result Catalog::DropSequence(std::string_view database, std::string_view schema,
 
       auto wr = _engine->Write([&](auto& ctx) {
         ctx.DropDefinition(*schema_id, ObjectType::Sequence, *seq_id);
-        ctx.DropSequence(*seq_id);  // counter row in same atomic batch
+        ctx.DropSequence(*seq_id);
         clone->CommitDropPlan(ctx, plan);
       });
       if (!wr.ok()) {
@@ -3566,8 +3474,6 @@ class OpenDatabase {
 
   Catalog& _catalog;
 
-  // Names of the database/schema currently being walked; the boot walk is
-  // strictly nested, so plain members suffice.
   std::string _database_name;
   std::string _schema_name;
 
@@ -3753,14 +3659,10 @@ Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
 
 Result OpenDatabase::RegisterInvertedStorage(
   const std::shared_ptr<Index>& index) {
-  // The inverted index's durable state is its iresearch segment directory; the
-  // storage is (re)opened from it here and bound onto the index. Must run
-  // before InitInvertedIndexes/BindStoreTableIndexes so WAL replay resolves it
-  // via index->GetData().
   return basics::SafeCall([&] {
     const auto& inverted = basics::downCast<const InvertedIndex>(*index);
-    inverted.SetData(search::InvertedIndexStorage::Create(
-      inverted.GetId(), inverted, /*is_new=*/false));
+    inverted.SetData(
+      search::InvertedIndexStorage::Create(inverted.GetId(), inverted, false));
     return Result{};
   });
 }
@@ -3915,6 +3817,8 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   return {};
 }
 
+std::shared_ptr<Catalog> gCatalog;
+
 }  // namespace
 
 template<typename T>
@@ -3928,14 +3832,8 @@ ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   return database;
 }
 
-namespace {
-
-std::shared_ptr<Catalog> g_catalog;
-
-}  // namespace
-
 void InitCatalog() {
-  g_catalog = std::make_shared<Catalog>();
+  gCatalog = std::make_shared<Catalog>();
 
   if (auto r = GetCatalogStore().LoadBootState(); !r.ok()) {
     SDB_THROW(std::move(r));
@@ -3951,9 +3849,6 @@ void InitCatalog() {
 
   // Bootstrap the default `postgres` role on first start. AddRoles() has
   // already loaded any persisted roles; if none exist we mint the root user
-  // and persist it via CreateRole(), which persists it so it survives across
-  // restarts. RBAC isn't implemented yet, so the password is empty and auth
-  // checks are skipped.
   if (GetCatalog().GetCatalogSnapshot()->GetRoles().empty()) {
     auto root = Role::NewUser(StaticStrings::kDefaultUser, "", id::kRootUser);
     if (auto br = GetCatalog().CreateRole(std::move(root)); !br.ok()) {
@@ -3990,7 +3885,7 @@ void InitCatalog() {
   }
 }
 
-void ShutdownCatalog() { g_catalog.reset(); }
+void ShutdownCatalog() { gCatalog.reset(); }
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id) {
   return GetDatabaseImpl(database_id);
@@ -4001,8 +3896,8 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
 }
 
 Catalog& GetCatalog() {
-  SDB_ASSERT(g_catalog, "Catalog is not initialized");
-  return *g_catalog;
+  SDB_ASSERT(gCatalog, "Catalog is not initialized");
+  return *gCatalog;
 }
 
 }  // namespace sdb::catalog

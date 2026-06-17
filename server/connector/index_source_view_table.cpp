@@ -58,8 +58,6 @@ duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
 duckdb::TableCatalogEntry& ResolveStoreTableEntry(
   duckdb::ClientContext& context, const duckdb::TableCatalogEntry& scan_entry,
   const catalog::Table& table) {
-  // The scan entry is the facade table or one of its index entries; either
-  // way it shares the table's database and schema.
   auto store_name =
     catalog::StoreTableName(scan_entry.ParentCatalog().GetName(),
                             scan_entry.ParentSchema().name, table.GetName());
@@ -112,8 +110,6 @@ ViewTableIndexSource::ViewTableIndexSource(
   : RowIdFetchIndexSource{std::move(fast_path)} {
   auto& table = ResolveTableEntry(context, _fast_path);
   SetTable(table);
-  // Registers the attached database with the meta transaction, keeping it
-  // alive for the query even if it is detached concurrently.
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   const auto& columns = table.GetColumns();
   containers::FlatHashMap<std::string_view, duckdb::idx_t> name_to_col;
@@ -150,8 +146,6 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   SetTable(table);
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   const auto& columns = table.GetColumns();
-  // Store physical positions follow the facade column order minus the
-  // generated PK; map catalog column ids through that order.
   containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> id_to_pos;
   id_to_pos.reserve(sdb_table.Columns().size());
   duckdb::idx_t pos = 0;
@@ -194,8 +188,6 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   AliasOutput(output);
   _tf_target.SetCardinality(count);
 
-  // Rows deleted in the source since CREATE INDEX produce no fetch result --
-  // pre-null every slot so stale rowids surface as NULLs instead of garbage.
   for (duckdb::idx_t c = 0; c < _col_to_fetch.size(); ++c) {
     auto& dst = _tf_target.data[c];
     for (duckdb::idx_t k = 0; k < count; ++k) {

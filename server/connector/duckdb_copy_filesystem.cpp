@@ -149,9 +149,6 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
     total += static_cast<int64_t>(read);
     if (_buffer && read > 0) {
       _buffer->append(out, read);
-      // The bytes this handle drained are already delivered to its caller;
-      // only LATER opens may replay them. Without this the handle's next
-      // DoRead re-serves its own appends and the stream duplicates.
       _buffer_offset = _buffer->size();
     }
     if (read == 0) {

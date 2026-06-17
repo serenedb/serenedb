@@ -29,7 +29,6 @@ enum class PkSpec : uint8_t {
   FileIndexPlusRowNumber,
   FileOffset,
   FileIndexPlusOffset,
-  // Native duckdb files read via read_duckdb: the duckdb rowid is the PK.
   DuckDBRowId,
   FileIndexPlusDuckDBRowId,
 };

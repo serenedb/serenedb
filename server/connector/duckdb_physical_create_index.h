@@ -39,14 +39,11 @@ class SereneDBSchemaEntry;
 // Pipeline: TableScan -> SereneDBPhysicalCreateIndex (sink)
 //
 // Lifecycle:
-//   Sink:               receive data chunks, write to index storage (backfill)
 //   GetGlobalSinkState: create index in catalog with tombstone
-//   Finalize:           Refresh (inverted) + RemoveTombstone
 //   On error:           destructor drops the index (rollback)
 class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
  public:
   // `relation` is the SereneDB-catalog object the index is built on: either
-  // a `catalog::Table` or a `catalog::PgSqlView`
   // (foreign-source-backed). `view_columns` is the synthesised column list
   // when `relation` is a view (Tables expose Columns() directly); ignored
   // for tables.

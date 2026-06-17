@@ -117,8 +117,6 @@ struct IndexDrop final : public DropTask {
                             _id.id());
   }
 
-  // The store-index DROP is the gate; the inverted index's iresearch storage is
-  // drained inside Execute (weak_ptr wait) before the directory removal.
   bool AllowToDropDependencies() const noexcept final { return true; }
 
   std::string_view GetName() const noexcept final { return "index drop"; }
@@ -156,10 +154,6 @@ struct TableDrop final : public DropTask {
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)} {}
 
-  // FK linkage entries must go before ANY table drop in the transaction:
-  // a live back-reference makes duckdb refuse dropping the main-key table,
-  // and the cascade emission order is arbitrary. Removing both directions
-  // up front makes the drops order-independent.
   void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const {
     if (_store_name.empty()) {
       return;
@@ -170,11 +164,6 @@ struct TableDrop final : public DropTask {
     }
   }
 
-  // Drops the store table synchronously in the same transaction that
-  // tombstones the drop, freeing the public name immediately (renames are
-  // unsafe for FK-involved tables: duckdb keeps back-references by name).
-  // No-op when the table has no store table (Fast engine) or lives under
-  // the dropped name (CTAS); Finalize's drop-by-id covers the latter.
   void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
     if (!_store_name.empty()) {
       ctx.DropStoreTable(_store_name);

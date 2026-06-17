@@ -171,7 +171,6 @@ ResolvedName ResolveName(const VacuumBindData& bind, Scope scope,
       out.object = bind.name;
     } break;
     case Scope::Column: {
-      // [<schema>.]<table>.<column> -- the trailing identifier is the column.
       if (!bind.catalog.empty()) {
         out.schema = bind.catalog;
         out.object = bind.schema;
@@ -270,7 +269,6 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
 
   switch (scope) {
     case Scope::Column:
-      // No refresh/compact at column granularity.
       break;
     case Scope::Index: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
@@ -319,9 +317,6 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
   }
 }
 
-// Recompute optimizer column statistics for the store tables backing the
-// serenedb tables in scope, by running DuckDB's `VACUUM ANALYZE` on each store
-// table. The user names serenedb tables; the hidden store is never exposed.
 void DispatchRecomputeStats(duckdb::ClientContext& context,
                             const catalog::Snapshot& snapshot, Scope scope,
                             const ResolvedName& target) {
@@ -398,7 +393,6 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
       analyze(target.database, target.schema, *table, target.column);
     } break;
     case Scope::Index:
-      // No recompute_stats_index verb in ParseOption's table.
       break;
   }
 }

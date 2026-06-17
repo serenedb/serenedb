@@ -65,7 +65,6 @@ namespace {
 bool ReadSegmentMeta(irs::bytes_view payload, Tick& tick,
                      int64_t& iceberg_snapshot_id,
                      WalCursor& wal_cursor) noexcept {
-  // [tick:8][iceberg_snapshot_id:8][wal_generation:8][wal_offset:8].
   constexpr size_t kSize = 4 * sizeof(uint64_t);
   if (payload.size() != kSize) {
     return false;
@@ -96,9 +95,6 @@ WalCursor InvertedIndexStorage::CursorAtOrBelow(Tick tick) noexcept {
   }
   --it;
   const WalCursor cursor = it->second;
-  // Entries strictly below the returned one can never be the highest at/below a
-  // future bound for THIS index, so drop them. Safe because the table is
-  // per-index: no other index relies on these entries.
   _flush_cursors.erase(_flush_cursors.begin(), it);
   return cursor;
 }
@@ -151,8 +147,6 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   SDB_ASSERT(index_id.isSet());
   std::filesystem::path path =
     GetPath(db_id, schema_id, index.GetRelationId(), index_id, GetId());
-  // TODO(mbkkt) maybe we should use create_directories result instead of
-  // exists?
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {
@@ -173,8 +167,6 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
     path_exists ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
                 : irs::OpenMode::kOmCreate;
 
-  // New indexes start at the current tick; existing directories override
-  // both values from the persisted segment meta below.
   _recovery_tick = TickDomain::Instance().Current();
   _last_durable_tick = _recovery_tick;
   irs::ResourceManagementOptions resource_manager;
@@ -186,8 +178,8 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
                                               resource_manager);
 
   irs::IndexWriterOptions writer_options;
-  writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
-  writer_options.lock_repository = false;  // single-process server owns the dir
+  writer_options.segment_memory_max = 256 * (size_t{1} << 20);
+  writer_options.lock_repository = false;
   writer_options.db = &sdb::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
   writer_options.column_options = [&](irs::field_id id) -> irs::ColumnOptions {
@@ -247,17 +239,6 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
       absl::big_endian::FromHost(static_cast<uint64_t>(_iceberg_snapshot_id));
     out.append(reinterpret_cast<const irs::byte_type*>(&iceberg_be),
                sizeof(iceberg_be));
-    // Durable WAL cursor, stamped consistently with the durable tick we just
-    // persisted above. `tick` here is the exact tick this flush made durable
-    // (FlushContext::FlushPending's flushed_tick in the Recovering/Creating
-    // phase, before_refresh in the Active phase -- both are the highest tick
-    // covered by these segments), and _last_durable_tick is its running max.
-    // The matching cursor is the highest per-index commit entry at/below that
-    // tick. A 0/absent lookup means no recorded commit fell at/below it, so
-    // keep the prior durable cursor rather than regressing it to 0. Checkpoint
-    // refreshes set _pending_wal_cursor up front (next generation, offset 0)
-    // and disable this stamping. Recovery replays only operations at or past
-    // the stamped cursor.
     if (_stamp_cursor_from_flush) {
       if (const auto cursor = CursorAtOrBelow(_last_durable_tick);
           cursor.generation != 0 || cursor.offset != 0) {
@@ -281,7 +262,6 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
 
   if (!path_exists) {
-    // Initialize empty index
     _writer->RefreshCommit();
   }
 
@@ -309,39 +289,26 @@ void InvertedIndexStorage::TruncateCommit(TruncateGuard&& guard, Tick tick,
 
   SDB_ASSERT(_writer);
 
-  // If we're inside a user transaction, drop its per-conn iresearch staging
-  // for this storage (the new-arch analog of the old SearchTrxState cookie
-  // cleanup). Throws away pending operations -- Clear will overwrite them
-  // anyway -- and forces release of any active segment context so the
-  // _writer->Clear below doesn't deadlock waiting for it.
   if (user_txn != nullptr) {
     user_txn->EraseSearchTransaction(GetId());
   }
 
-  // Allow callers to pass an empty guard -- self-lock in that case so this
-  // is callable from paths that didn't go through TruncateBegin (e.g. WAL
-  // recovery).
   if (!guard.mutex) {
     guard = TruncateBegin();
   }
   SDB_ASSERT(guard.mutex.get() == &_refresh_mutex);
 
-  // Roll _last_durable_tick back to its prior value if the iresearch Clear
-  // throws partway through. Once Clear returns, we cancel the rollback and
-  // commit to the new tick -- same ordering as the legacy code.
   absl::Cleanup clear_guard = [&, last = _last_durable_tick]() noexcept {
     _last_durable_tick = last;
   };
   try {
     _writer->Clear(tick);
     std::move(clear_guard).Cancel();
-    // payload will not be called if index already empty
     _last_durable_tick = std::max(tick, _last_durable_tick);
 
     auto reader = _writer->GetSnapshot();
     SDB_ASSERT(reader);
 
-    // update reader
     auto data = std::make_shared<InvertedIndexSnapshot>(std::move(reader));
     StoreInvertedIndexSnapshot(data);
 
@@ -358,7 +325,7 @@ void InvertedIndexStorage::TruncateCommit(TruncateGuard&& guard, Tick tick,
 }
 
 void InvertedIndexStorage::ScheduleCompaction(absl::Duration delay) {
-  CompactionTask task{shared_from_this(), [] { return /* TODO */ true; }};
+  CompactionTask task{shared_from_this(), [] { return true; }};
 
   _state->pending_compactions.fetch_add(1, std::memory_order_release);
   std::move(task).Schedule(delay).Detach();
@@ -373,13 +340,12 @@ void InvertedIndexStorage::ScheduleRefresh(absl::Duration delay) {
 
 void InvertedIndexStorage::Refresh() {
   RefreshResult code = RefreshResult::Undefined;
-  std::ignore = RefreshUnsafe(/*wait=*/true, nullptr, code);
+  std::ignore = RefreshUnsafe(true, nullptr, code);
 }
 
 void InvertedIndexStorage::CheckpointRefresh() {
   RefreshResult code = RefreshResult::Undefined;
-  std::ignore = RefreshUnsafe(/*wait=*/true, nullptr, code,
-                              /*for_checkpoint=*/true);
+  std::ignore = RefreshUnsafe(true, nullptr, code, true);
 }
 
 InvertedIndexStorage::Stats InvertedIndexStorage::UpdateStatsUnsafe(
@@ -511,26 +477,6 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
     const auto before_refresh = TickDomain::Instance().Current();
     SDB_ASSERT(_last_durable_tick <= before_refresh);
 
-    // Stamp the EXACT durable WAL cursor consistently with the durable tick
-    // this refresh persists. RefreshCommit (below) flushes every staged batch
-    // with tick <= refresh_tick and, inside the meta payload provider, persists
-    // _last_durable_tick == the highest tick covered by the flushed segments.
-    // The per-index table recorded, per settled CommitSearch BEFORE the batch
-    // became flushable and after the store WAL was durable, the WAL end offset
-    // of that commit; commits serialize, so the cursor that matches the durable
-    // tick is the entry of the highest tick at/below it. The payload provider
-    // performs that CursorAtOrBelow(_last_durable_tick) lookup just before
-    // persisting (it has the exact durable tick in hand), gated by
-    // _stamp_cursor_from_flush.
-    //
-    // A checkpoint-driven refresh runs the moment before the checkpoint
-    // truncates the store WAL and bumps the iteration to
-    // GetCheckpointIteration()
-    // + 1. The post-checkpoint WAL starts fresh, so stamp that next generation
-    // with offset 0: the next boot loads iteration+1 and the cursor generation
-    // matches (the live iteration is still N here, but the persisted header
-    // will be N+1). The payload provider must NOT overwrite that, so disable
-    // the flush-driven stamping.
     _stamp_cursor_from_flush = !for_checkpoint;
     absl::Cleanup stamp_guard = [&]() noexcept {
       _stamp_cursor_from_flush = false;
@@ -562,9 +508,8 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
     const bool were_changes = _writer->RefreshCommit({
       .tick = refresh_tick,
       .progress = progress,
-      .reopen_reader = /* TODO(codeworse) */ false,
+      .reopen_reader = false,
     });
-    // get new reader
     auto reader = _writer->GetSnapshot();
     SDB_ASSERT(reader != nullptr);
     std::move(refresh_guard).Cancel();
@@ -581,7 +526,6 @@ Result InvertedIndexStorage::RefreshUnsafeImpl(
     SDB_ASSERT(_phase != Phase::Active || _last_durable_tick == before_refresh);
     code = RefreshResult::Done;
 
-    // update reader
     SDB_ASSERT(GetInvertedIndexSnapshot());
     SDB_ASSERT(GetInvertedIndexSnapshot()->reader != reader);
     const auto reader_size = reader->size();

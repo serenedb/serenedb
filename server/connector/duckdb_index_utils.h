@@ -39,9 +39,6 @@ namespace sdb::connector {
 
 enum class DuckDBWriteKind { Insert, Delete };
 
-// Writer for ONE inverted index, identified by id -- the store-side
-// BoundIndex feeds exactly its own index. nullptr when the index is not an
-// inverted index of `table_id` (e.g. concurrently dropped).
 template<DuckDBWriteKind Kind>
 std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,

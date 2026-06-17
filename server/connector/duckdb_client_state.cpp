@@ -52,8 +52,6 @@ std::unique_ptr<pg::ProgressReporter> MakeProgressReporter(
   const auto& root = prepared.physical_plan->Root();
 
   if (prepared.statement_type == duckdb::StatementType::COPY_STATEMENT) {
-    // COPY FROM plans as a native insert with the SDB_PROGRESS pass-through
-    // (carrying the facade table) directly underneath.
     const SereneDBPhysicalProgress* progress_op = nullptr;
     if (!root.children.empty()) {
       progress_op =
@@ -177,13 +175,9 @@ void SereneDBClientState::Register(
 
 namespace {
 
-// Published for the duration of the storage commit: BoundIndex appends run
-// on the committing connection's thread inside LocalStorage::Flush, after
-// TransactionPreCommit and before TransactionCommit/Rollback, with no
-// ClientContext parameter of their own.
 thread_local ConnectionContext* tls_committing_ctx = nullptr;
 
-}  // namespace
+}
 
 ConnectionContext* CurrentCommittingContext() noexcept {
   return tls_committing_ctx;
@@ -191,9 +185,6 @@ ConnectionContext* CurrentCommittingContext() noexcept {
 
 void SereneDBClientState::TransactionPreCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
-  // Pre-durability crash point: fires before the engine commit, so the
-  // transaction must be absent after restart. Only write transactions
-  // crash (the fault-arming SET itself must survive). Name historical.
   SDB_IF_FAILURE("crash_before_search_commit") {
     if (transaction.ModifiedDatabase()) {
       SDB_IMMEDIATE_ABORT();
@@ -208,11 +199,6 @@ void SereneDBClientState::TransactionPreCommit(
 
 void SereneDBClientState::TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
                                                    duckdb::ClientContext&) {
-  // Commit the search-index leg synchronously with the store table changes:
-  // this fires after the store database's changes are durable but before the
-  // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
-  // un-committed in-flight batch. Only the store database carries indexed
-  // tables, so settle on its commit.
   if (db.GetName() != catalog::kStoreDatabaseName) {
     return;
   }
@@ -227,9 +213,6 @@ void SereneDBClientState::TransactionPreRollback(
 
 void SereneDBClientState::TransactionCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
-  // Post-durability crash point: the engine commit is durable, search
-  // ticks are not yet -- recovery must rebuild the storage. Only write
-  // transactions crash. Name historical.
   SDB_IF_FAILURE("crash_after_search_commit") {
     if (transaction.ModifiedDatabase()) {
       SDB_IMMEDIATE_ABORT();

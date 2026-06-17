@@ -95,8 +95,6 @@ void AppendScalarValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
     } break;
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB: {
-      // Escape null bytes (\0 -> \0\1) and terminate with \0\0 so a string
-      // orders before any of its extensions.
       static constexpr std::string_view kNullEsc{"\0\1", 2};
       static constexpr std::string_view kStringEnd{"\0\0", 2};
       const auto& str =

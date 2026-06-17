@@ -235,9 +235,6 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 // --- Size functions ---
 // Ported from server/pg/functions/size.cpp
 
-// Store-table row count as the size proxy: the native engine keeps no
-// cheap per-table byte size (one shared file), and PG callers mostly test
-// emptiness. TODO(M2): commit-time byte accounting.
 int64_t StoreTableSizeProxy(duckdb::ClientContext& context,
                             const catalog::Snapshot& snapshot,
                             const catalog::Object& rel) {
@@ -311,8 +308,6 @@ int64_t GetRelationForkSize(duckdb::ClientContext& context,
     case catalog::ObjectType::Table:
       return StoreTableSizeProxy(context, snapshot, *rel);
     case catalog::ObjectType::SecondaryIndex: {
-      // Native ART indexes live inside the store file; report the table
-      // row count as the proxy.
       auto index = snapshot.GetObject<catalog::SecondaryIndex>(rel->GetId());
       if (!index) {
         return 0;

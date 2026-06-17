@@ -57,9 +57,6 @@ void SereneDBTransactionManager::RollbackTransaction(
 
 void SereneDBTransactionManager::Checkpoint(duckdb::ClientContext& context,
                                             bool force) {
-  // serenedb tables are backed by native DuckDB tables in the hidden store
-  // database. Forward the user's CHECKPOINT to the store so its WAL is flushed
-  // and deleted rows are vacuumed/compacted -- the user never names the store.
   auto store = duckdb::DatabaseManager::Get(context).GetDatabase(
     context, std::string{catalog::kStoreDatabaseName});
   if (store) {

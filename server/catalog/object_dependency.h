@@ -124,7 +124,6 @@ class DropEmitter {
   }
 
   // doesn't work well now, it leaves the column data.
-  // TODO: column drop rewrites the store table; emit a real cascade drop
   void EmitCascadeColumnDrop(ObjectId col_id) {
     RewriteOwningTable(col_id, [&](auto& t) { return t->DropColumn(col_id); });
     // PG's column->index cascade: any index that covers col_id goes too.
@@ -149,8 +148,6 @@ class DropEmitter {
     _plan.index_drops.push_back(idx_id);
   }
 
-  // Dropping a referenced table strips the FOREIGN KEYs pointing at it
-  // from every surviving referencing table (PG DROP ... CASCADE semantics).
   void EmitCascadeForeignKeyDrop(ObjectId referencing_table_id,
                                  ObjectId referenced_table_id) {
     if (_auto_drops.contains(referencing_table_id)) {

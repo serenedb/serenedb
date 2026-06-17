@@ -118,9 +118,6 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
                      std::deque<std::string>& pk_index_names,
                      const catalog::Snapshot& catalog,
                      duckdb::ClientContext& context) {
-  // reltuples is read from the store table's row-group metadata
-  // (DataTable::GetTotalRows), never a count(*) query: pg_catalog must not scan
-  // data.
   auto count_store_rows = [&](const catalog::Table& table,
                               std::string_view db_name,
                               std::string_view schema_name) -> float {

@@ -1,8 +1,6 @@
 services:
   serenedb:
     image: ${DOCKER_TEST_IMAGE}
-    # Only the shared __TEST_DIR__ is mounted (0777 via SLT_TEST_DIR_SHARED, so the
-    # image's serenedb user can write it). Logs still go via 'docker compose logs'.
     command: serened
     volumes:
       - "${WORKSPACE}/out/test-tmp:/test-tmp"

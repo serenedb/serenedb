@@ -299,8 +299,6 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       if (!sdb_table) {
         return std::nullopt;
       }
-      // The table's rows live in the hidden store table; views over it ride
-      // the same rowid-keyed machinery as views over attached databases.
       ViewFastPath out;
       out.catalog_ref =
         CatalogTableRef{.catalog = std::string{catalog::kStoreDatabaseName},

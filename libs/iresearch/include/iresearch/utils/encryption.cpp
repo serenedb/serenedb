@@ -151,9 +151,6 @@ void EncryptedOutput::FlushBuffer() {
   const auto len = Length();
   // TODO(mbkkt) we probably can make out_->Position() == offset_,
   // but needs to adjust tests
-  // TODO(mbkkt) the encryption::stream interface allocates a buffer inside
-  // encrypt, encrypts into it, then copies into our own buffer; this is a
-  // mess, we need to change the interface
   if (!_cipher->Encrypt(_out->Position(), _buf, len)) {
     throw IoError{absl::StrCat("Buffer size ", len,
                                " is not multiple of cipher block size ",

@@ -34,20 +34,14 @@ namespace sdb {
 
 class ConnectionContext;
 
-}  // namespace sdb
+}
 namespace sdb::catalog {
 
 class Table;
 
-}  // namespace sdb::catalog
+}
 namespace sdb::connector {
 
-// The inverted index as a first-class index on store tables: postings live
-// in the iresearch storage keyed by AppendSigned(rowid) PK bytes, fed at
-// COMMIT time with final row ids through the committing connection's
-// tokenizer/transaction machinery (see CurrentCommittingContext). The
-// catalog InvertedIndex/storage linkage rides CreateIndexInfo options
-// (sdb_table_id / sdb_index_id).
 class InvertedStoreIndex final : public duckdb::BoundIndex {
  public:
   static constexpr const char* kTypeName = "inverted";
@@ -72,16 +66,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) override;
 
-  // Called by duckdb before each buffered WAL-replay range, with that range's
-  // store-WAL byte offset. Operations strictly below the storage's durable
-  // cursor are already in the segments; we record the offset so
-  // ReplayAppend/ReplayDelete can skip them (the op exactly at the cursor is
-  // the first un-durable one and is streamed).
   void OnReplayRange(duckdb::idx_t commit_offset) override;
 
-  // Called by duckdb after every buffered WAL-replay insert/delete for this
-  // bind has been delivered (via Append/Delete with no committing context).
-  // Commits the accumulated replay transaction into the iresearch storage.
   void FinishReplay() override;
 
   void ResetStorage(duckdb::IndexLock&) override {}
@@ -103,8 +89,6 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                                             duckdb::DataChunk&) override;
 
  public:
-  // Feeds rows with a known connection (initial CREATE INDEX build runs in
-  // normal execution; commit-time appends resolve it thread-locally).
   duckdb::ErrorData AppendRows(
     ConnectionContext& conn, duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
     std::span<const catalog::Column::Id> chunk_column_ids);
@@ -116,37 +100,20 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,
                                duckdb::Vector& row_ids);
 
-  // Replay path: a single iresearch batch held open across one
-  // ApplyBufferedReplays pass. Each buffered WAL op is streamed straight into
-  // the batch in WAL order on its own strictly-ascending sub-tick (insert ->
-  // DuckDBSearchSinkInsertWriter, delete -> a tick-bound Remove), then
-  // committed once in FinishReplay with last_tick placing every op above the
-  // durable recovery tick. Tick-bound removes give last-op-wins for free (incl.
-  // TRUNCATE
-  // + rowid reuse), so no dedup is needed. Built lazily on the first replayed
-  // operation.
   struct ReplaySession;
   ReplaySession& EnsureReplaySession();
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
 
-  // Minimal IndexStorageInfo (catalog ids; postings live in the iresearch
-  // storage's own files). Shared by SerializeToDisk/SerializeToWAL.
   duckdb::IndexStorageInfo MakeStorageInfo() const;
-  // Force the storage durable before a checkpoint truncates the store WAL; veto
-  // (throw) if the storage is out of sync. No-op at CREATE INDEX time.
   void CheckpointBarrier() const;
 
   ObjectId _table_id;
   ObjectId _index_id;
   std::unique_ptr<ReplaySession> _replay;
-  // Store-WAL byte offset of the replay range currently being delivered by
-  // ApplyBufferedReplays (set by OnReplayRange). 0 = unknown (don't skip).
   duckdb::idx_t _replay_commit_offset = 0;
 };
 
-// Attaches create_instance + the build pipeline for store-table CREATE
-// INDEX to the registered "inverted" index type.
 void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type);
 
 }  // namespace sdb::connector

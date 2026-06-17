@@ -44,9 +44,7 @@ concept IndexTaskType =
            std::shared_ptr<InvertedIndexStorage>&& inverted_index_storage) {
     { T::ThreadGroup() } -> std::same_as<ThreadGroup>;
     { T::TaskName() } -> std::same_as<std::string_view>;
-    {
-      task.GetContinuos(std::move(inverted_index_storage))
-    } -> std::same_as<T>;  // span continuous tasks
+    { task.GetContinuos(std::move(inverted_index_storage)) } -> std::same_as<T>;
   };
 
 class Task {

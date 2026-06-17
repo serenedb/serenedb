@@ -37,7 +37,6 @@ struct ZstdDCtxDeleter {
   void operator()(ZSTD_DCtx_s* dctx) const noexcept;  // ZSTD_freeDCtx
 };
 
-
 using ZstdCCtxPtr = std::unique_ptr<ZSTD_CCtx_s, ZstdCCtxDeleter>;
 using ZstdDCtxPtr = std::unique_ptr<ZSTD_DCtx_s, ZstdDCtxDeleter>;
 

@@ -136,10 +136,20 @@ void SearchTableTransaction::Commit() {
   SDB_IF_FAILURE("crash_before_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
   const uint64_t record_tick = AppendCommit();
   SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
+
+  // The fsynced record now durably references EVERY shard's chunk files, so
+  // protect them all from reclamation in one up-front pass -- before the commit
+  // loop below, which can crash (trx.Commit -> SDB_FATAL) or throw (Clear).
+  // Otherwise such a failure would tear down the still-uncommitted
+  // PendingChunks of not-yet-processed shards and delete files the durable
+  // record (and recovery) still need.
   for (auto& [table_id, w] : _writes) {
     for (auto& c : w.chunks) {
       c.MarkCommitted();
     }
+  }
+
+  for (auto& [table_id, w] : _writes) {
     // Assign descending ticks: the last trx commits at the record tick (band
     // top) so the shard's published tick reaches it and recovery never
     // re-replays this record; each earlier trx sits one (GetQueries()+1) step

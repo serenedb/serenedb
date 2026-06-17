@@ -19,9 +19,9 @@ SELECT *
 FROM parquet_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet');
 ----
 file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	column_id	file_offset	num_values	path_in_schema	type	stats_min	stats_max	stats_null_count	stats_distinct_count	stats_min_value	stats_max_value	compression	encodings	index_page_offset	dictionary_page_offset	data_page_offset	total_compressed_size	total_uncompressed_size	key_value_metadata	bloom_filter_offset	bloom_filter_length	min_is_exact	max_is_exact	row_group_compressed_bytes	geo_bbox	geo_types
-/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet	0	2	3	102	0	0	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	4	33	31	{}	NULL	NULL	t	t	108	NULL	NULL
-/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet	0	2	3	102	1	0	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	37	42	40	{}	NULL	NULL	t	t	108	NULL	NULL
-/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet	0	2	3	102	2	0	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	79	33	31	{}	NULL	NULL	t	t	108	NULL	NULL
+/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet	0	2	3	<slt:ignore>	1	<slt:ignore>	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_001_test.parquet	0	2	3	<slt:ignore>	2	<slt:ignore>	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
 
 # DOCS_TEST: example_002
 
@@ -49,12 +49,12 @@ FROM parquet_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metad
 ORDER BY file_name, column_id;
 ----
 file_name	row_group_id	row_group_num_rows	row_group_num_columns	row_group_bytes	column_id	file_offset	num_values	path_in_schema	type	stats_min	stats_max	stats_null_count	stats_distinct_count	stats_min_value	stats_max_value	compression	encodings	index_page_offset	dictionary_page_offset	data_page_offset	total_compressed_size	total_uncompressed_size	key_value_metadata	bloom_filter_offset	bloom_filter_length	min_is_exact	max_is_exact	row_group_compressed_bytes	geo_bbox	geo_types
-/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet	0	2	3	102	0	0	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	4	33	31	{}	NULL	NULL	t	t	108	NULL	NULL
-/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet	0	2	3	102	1	0	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	37	42	40	{}	NULL	NULL	t	t	108	NULL	NULL
-/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet	0	2	3	102	2	0	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	79	33	31	{}	NULL	NULL	t	t	108	NULL	NULL
-/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_2.parquet	0	2	3	102	0	0	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	4	33	31	{}	NULL	NULL	t	t	108	NULL	NULL
-/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_2.parquet	0	2	3	102	1	0	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	37	42	40	{}	NULL	NULL	t	t	108	NULL	NULL
-/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_2.parquet	0	2	3	102	2	0	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	79	33	31	{}	NULL	NULL	t	t	108	NULL	NULL
+/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet	0	2	3	<slt:ignore>	1	<slt:ignore>	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_1.parquet	0	2	3	<slt:ignore>	2	<slt:ignore>	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_2.parquet	0	2	3	<slt:ignore>	0	<slt:ignore>	2	id	INT32	1	2	0	NULL	1	2	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_2.parquet	0	2	3	<slt:ignore>	1	<slt:ignore>	2	name	BYTE_ARRAY	alpha	beta	0	NULL	alpha	beta	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
+/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_002_1_parquet_2.parquet	0	2	3	<slt:ignore>	2	<slt:ignore>	2	value	INT32	10	20	0	NULL	10	20	SNAPPY	PLAIN	NULL	NULL	<slt:ignore>	<slt:ignore>	<slt:ignore>	{}	NULL	NULL	t	t	<slt:ignore>	NULL	NULL
 
 # DOCS_TEST: example_003
 
@@ -120,7 +120,7 @@ SELECT *
 FROM parquet_file_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet');
 ----
 file_name	created_by	num_rows	num_row_groups	format_version	encryption_algorithm	footer_signing_key_metadata	file_size_bytes	footer_size	column_orders
-/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet	DuckDB version v1.6.0-dev7012 (build 5212023fb8)	2	1	1	NULL	NULL	434	314	{ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder())}
+/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_005_1_test_parquet.parquet	<slt:ignore>	2	1	1	NULL	NULL	<slt:ignore>	<slt:ignore>	{ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder())}
 
 # DOCS_TEST: example_006
 
@@ -168,17 +168,23 @@ COPY (SELECT * FROM (VALUES
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
-#| SELECT *
+#| SELECT
+#|     len(parquet_metadata)    AS column_chunks,
+#|     len(parquet_schema)      AS schema_elements,
+#|     len(parquet_kv_metadata) AS kv_pairs
 #| FROM parquet_full_metadata('test.parquet');
 
 # DOCS_TEST_BODY
 
 query
-SELECT *
+SELECT
+    len(parquet_metadata)    AS column_chunks,
+    len(parquet_schema)      AS schema_elements,
+    len(parquet_kv_metadata) AS kv_pairs
 FROM parquet_full_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet');
 ----
-parquet_file_metadata	parquet_metadata	parquet_schema	parquet_kv_metadata
-{"(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,\\"DuckDB version v1.6.0-dev7012 (build 5212023fb8)\\",2,1,1,,,434,314,\\"{ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder()),ColumnOrder(TYPE_ORDER=TypeDefinedOrder())}\\")"}	{"(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,0,2,3,102,0,0,2,id,INT32,1,2,0,,1,2,SNAPPY,PLAIN,,,4,33,31,{},,,t,t,108,,)","(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,0,2,3,102,1,0,2,name,BYTE_ARRAY,alpha,beta,0,,alpha,beta,SNAPPY,PLAIN,,,37,42,40,{},,,t,t,108,,)","(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,0,2,3,102,2,0,2,value,INT32,10,20,0,,10,20,SNAPPY,PLAIN,,,79,33,31,{},,,t,t,108,,)"}	{"(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,duckdb_schema,,,REQUIRED,3,,,,,,,0)","(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,id,INT32,,OPTIONAL,,INT_32,,,,,INTEGER,1)","(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,name,BYTE_ARRAY,,OPTIONAL,,UTF8,,,,,VARCHAR,2)","(/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_007_1_test_parquet.parquet,value,INT32,,OPTIONAL,,INT_32,,,,,INTEGER,3)"}	{}
+column_chunks	schema_elements	kv_pairs
+3	4	0
 
 # DOCS_TEST: example_008
 
@@ -189,9 +195,21 @@ COPY (SELECT * FROM (VALUES
 ) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
-#| FROM parquet_bloom_probe('my_file.parquet', 'my_col', 500);
+#| FROM parquet_bloom_probe('my_file.parquet', 'name', 'gamma');
 
 # DOCS_TEST_BODY
 
-query error db error: ERROR: Column my_col not found in /tmp/.*_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet\.parquet
-FROM parquet_bloom_probe('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet', 'my_col', 500);
+query
+SELECT
+    replace(
+        file_name,
+        '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet',
+        'my_file.parquet'
+    ) AS file_name,
+    row_group_id,
+    bloom_filter_excludes
+FROM parquet_bloom_probe('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_008_1_my_file_parquet.parquet', 'name', 'gamma')
+ORDER BY row_group_id;
+----
+file_name	row_group_id	bloom_filter_excludes
+my_file.parquet	0	f

@@ -182,9 +182,9 @@ class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
       } else {
         proxy.set_cache(cache);
       }
-      tests::PreparedFilter prepared_proxy{
+      ::tests::PreparedFilter prepared_proxy{
         proxy,           _index,  nullptr,
-        prepare_counter, nullptr, tests::PreparedFilter::CollectMode::Single,
+        prepare_counter, nullptr, ::tests::PreparedFilter::CollectMode::Single,
         &execute_counter};
       auto docs = prepared_proxy.Execute(0);
       auto costs = irs::get<irs::CostAttr>(*docs);

@@ -229,8 +229,7 @@ bool Valid(const TermReader* reader) noexcept {
                                 FixedPhraseQuery::kRequiredFeatures;
 }
 
-PhraseQueryKind GetKind(irs::field_id field,
-                        const ByPhraseOptions& options) {
+PhraseQueryKind GetKind(irs::field_id field, const ByPhraseOptions& options) {
   if (!irs::field_limits::valid(field) || options.empty()) {
     return PhraseQueryKind::kEmpty;
   }

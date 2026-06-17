@@ -99,9 +99,9 @@ QueryBuilder::ptr Or::PrepareSegment(const SubReader& segment,
   }
   const size_t excl_start = queries.size();
   if (_min_match_count <= 1) {
-    return memory::make_tracked<OrQuery>(ctx.memory, segment, std::move(queries),
-                                         excl_start, merge_type(),
-                                         composite_boost);
+    return memory::make_tracked<OrQuery>(ctx.memory, segment,
+                                         std::move(queries), excl_start,
+                                         merge_type(), composite_boost);
   }
   if (_min_match_count >= _filters.size()) {
     return memory::make_tracked<AndQuery>(ctx.memory, segment,

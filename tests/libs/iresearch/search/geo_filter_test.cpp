@@ -234,7 +234,7 @@ TEST(GeoFilterTest, boost) {
 }
 
 TEST(GeoFilterTest, query) {
-  auto docs = tests::ParseGeoDocs(R"([
+  auto docs = irs::tests::ParseGeoDocs(R"([
     { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.615895, 55.7039   ] } },
     { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.615315, 55.703915 ] } },
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.61509, 55.703537  ] } },
@@ -406,7 +406,7 @@ TEST(GeoFilterTest, query) {
   {
     const std::set<std::string> expected{"Q"};
 
-    auto json = tests::FromJson(R"({
+    auto json = irs::tests::FromJson(R"({
       "type": "Point",
       "coordinates": [ 37.610235, 55.709754 ]
     })");
@@ -425,7 +425,7 @@ TEST(GeoFilterTest, query) {
   {
     const std::set<std::string> expected{"Q", "R"};
 
-    auto json = tests::FromJson(R"({
+    auto json = irs::tests::FromJson(R"({
       "type": "Polygon",
       "coordinates": [
           [
@@ -459,7 +459,7 @@ TEST(GeoFilterTest, query) {
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
+      irs::tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
       cache, coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::Intersects;
     q.mutable_options()->options.set_index_contains_points_only(true);
@@ -476,7 +476,7 @@ TEST(GeoFilterTest, query) {
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
+      irs::tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
       cache, coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::Contains;
     q.mutable_options()->options.set_index_contains_points_only(true);
@@ -493,7 +493,7 @@ TEST(GeoFilterTest, query) {
     q.mutable_options()->store_field_id = kGeo;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
+      irs::tests::FromJson(origin.geometry).value(), q.mutable_options()->shape,
       cache, coding::Options::Invalid, nullptr));
     q.mutable_options()->type = GeoFilterType::IsContained;
     q.mutable_options()->options.set_index_contains_points_only(true);
@@ -502,7 +502,7 @@ TEST(GeoFilterTest, query) {
   }
 
   {
-    auto shape_json = tests::FromJson(R"({
+    auto shape_json = irs::tests::FromJson(R"({
       "type": "Polygon",
         "coordinates": [
             [
@@ -523,7 +523,7 @@ TEST(GeoFilterTest, query) {
     std::set<std::string> expected;
     for (const auto& doc_entry : docs) {
       ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-        tests::FromJson(doc_entry.geometry).value(), point, cache,
+        irs::tests::FromJson(doc_entry.geometry).value(), point, cache,
         coding::Options::Invalid, nullptr));
       if (!shape.contains(point)) {
         continue;
@@ -544,7 +544,7 @@ TEST(GeoFilterTest, query) {
   }
 
   {
-    auto shape_json = tests::FromJson(R"({
+    auto shape_json = irs::tests::FromJson(R"({
       "type": "Polygon",
         "coordinates": [
             [
@@ -565,7 +565,7 @@ TEST(GeoFilterTest, query) {
     std::set<std::string> expected;
     for (const auto& doc_entry : docs) {
       ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-        tests::FromJson(doc_entry.geometry).value(), point, cache,
+        irs::tests::FromJson(doc_entry.geometry).value(), point, cache,
         coding::Options::Invalid, nullptr));
       if (!shape.contains(point)) {
         continue;
@@ -585,7 +585,7 @@ TEST(GeoFilterTest, query) {
   }
 
   {
-    auto shape_json = tests::FromJson(R"({
+    auto shape_json = irs::tests::FromJson(R"({
       "type": "Polygon",
         "coordinates": [
             [
@@ -616,7 +616,7 @@ TEST(GeoFilterTest, query) {
 }
 
 TEST(GeoFilterTest, checkScorer) {
-  auto docs = tests::ParseGeoDocs(R"([
+  auto docs = irs::tests::ParseGeoDocs(R"([
     { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.615895, 55.7039   ] } },
     { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.615315, 55.703915 ] } },
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.61509, 55.703537  ] } },
@@ -767,7 +767,7 @@ TEST(GeoFilterTest, checkScorer) {
   };
 
   {
-    auto json = tests::FromJson(R"({
+    auto json = irs::tests::FromJson(R"({
       "type": "Polygon",
       "coordinates": [
           [
@@ -828,7 +828,7 @@ TEST(GeoFilterTest, checkScorer) {
   }
 
   {
-    auto json = tests::FromJson(R"({
+    auto json = irs::tests::FromJson(R"({
       "type": "Polygon",
       "coordinates": [
           [

@@ -325,8 +325,7 @@ void SetUpNot(irs::Exclusion& n) {
 }
 
 void RunPrepare(const irs::Filter::ptr& filter,
-                const irs::DirectoryReader& reader,
-                const irs::Scorer* scorer) {
+                const irs::DirectoryReader& reader, const irs::Scorer* scorer) {
   auto collector = filter->MakeCollector(scorer);
   for (const auto& sub : reader) {
     auto q = filter->PrepareSegment(sub, {.collector = collector.get()});

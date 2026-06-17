@@ -99,13 +99,10 @@ uint32_t Utf8TargetSize(bytes_view prefix, bytes_view term) {
                                             utf8_utils::Length(term)));
 }
 
-QueryBuilder::ptr PrepareLevenshteinSegment(const SubReader& segment,
-                                            const PrepareContext& ctx,
-                                            irs::field_id field,
-                                            const automaton& acceptor,
-                                            uint32_t utf8_target_size,
-                                            byte_type no_distance,
-                                            size_t terms_limit) {
+QueryBuilder::ptr PrepareLevenshteinSegment(
+  const SubReader& segment, const PrepareContext& ctx, irs::field_id field,
+  const automaton& acceptor, uint32_t utf8_target_size, byte_type no_distance,
+  size_t terms_limit) {
   if (!Validate(acceptor)) {
     return QueryBuilder::Empty();
   }
@@ -149,8 +146,8 @@ field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions&) {
             "ByEditDistance must be lowered by the optimizer before visitor");
 }
 
-QueryBuilder::ptr ByEditDistance::PrepareSegment(
-  const SubReader&, const PrepareContext&) const {
+QueryBuilder::ptr ByEditDistance::PrepareSegment(const SubReader&,
+                                                 const PrepareContext&) const {
   SDB_THROW(sdb::ERROR_INTERNAL,
             "ByEditDistance must be lowered by the optimizer before prepare");
 }
@@ -159,8 +156,8 @@ QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id id,
   const LevenshteinAutomatonOptions& options) {
   return PrepareLevenshteinSegment(segment, ctx, id, options.acceptor,
-                                   options.utf8_target_size, options.no_distance,
-                                   options.max_terms);
+                                   options.utf8_target_size,
+                                   options.no_distance, options.max_terms);
 }
 
 field_visitor LevenshteinAutomatonFilter::visitor(

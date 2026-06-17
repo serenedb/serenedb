@@ -193,12 +193,14 @@ DocIterator::ptr BooleanQuery::Execute(const ExecutionContext& old) const {
     [&]<typename IncludeAdapter, typename ExcludeAdapter> -> DocIterator::ptr {
     using ExcludeAdapters = std::vector<ExcludeAdapter>;
     if (excl_itrs.size() == 1) {
-      return memory::make_managed<ExclusionIterator<IncludeAdapter, ExcludeAdapter>>(
+      return memory::make_managed<
+        ExclusionIterator<IncludeAdapter, ExcludeAdapter>>(
         IncludeAdapter{std::move(incl)},
         ExcludeAdapter{std::move(excl_itrs[0])});
     }
     if constexpr (std::is_same_v<ExcludeAdapters, ScoreAdapters>) {
-      return memory::make_managed<ExclusionIterator<IncludeAdapter, ExcludeAdapters>>(
+      return memory::make_managed<
+        ExclusionIterator<IncludeAdapter, ExcludeAdapters>>(
         IncludeAdapter{std::move(incl)}, std::move(excl_itrs));
     } else {
       ExcludeAdapters excl;
@@ -206,7 +208,8 @@ DocIterator::ptr BooleanQuery::Execute(const ExecutionContext& old) const {
       for (auto& it : excl_itrs) {
         excl.emplace_back(std::move(it));
       }
-      return memory::make_managed<ExclusionIterator<IncludeAdapter, ExcludeAdapters>>(
+      return memory::make_managed<
+        ExclusionIterator<IncludeAdapter, ExcludeAdapters>>(
         IncludeAdapter{std::move(incl)}, std::move(excl));
     }
   };

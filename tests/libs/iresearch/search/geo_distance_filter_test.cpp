@@ -328,7 +328,7 @@ TEST(GeoDistanceFilterTest, boost) {
 }
 
 TEST(GeoDistanceFilterTest, query) {
-  auto docs = tests::ParseGeoDocs(R"([
+  auto docs = irs::tests::ParseGeoDocs(R"([
     { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.615895, 55.7039   ] } },
     { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.615315, 55.703915 ] } },
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.61509, 55.703537  ] } },
@@ -627,12 +627,12 @@ TEST(GeoDistanceFilterTest, query) {
     sdb::geo::ShapeContainer lhs, rhs;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      tests::FromJson(docs[7].geometry).value(), lhs, cache,
+      irs::tests::FromJson(docs[7].geometry).value(), lhs, cache,
       sdb::geo::coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
     for (const auto& doc_entry : docs) {
       ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-        tests::FromJson(doc_entry.geometry).value(), rhs, cache,
+        irs::tests::FromJson(doc_entry.geometry).value(), rhs, cache,
         sdb::geo::coding::Options::Invalid, nullptr));
       const auto dist = lhs.distanceFromCentroid(rhs.centroid());
       if (dist < 100 || dist > 2000) {
@@ -660,12 +660,12 @@ TEST(GeoDistanceFilterTest, query) {
     sdb::geo::ShapeContainer lhs, rhs;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      tests::FromJson(docs[7].geometry).value(), lhs, cache,
+      irs::tests::FromJson(docs[7].geometry).value(), lhs, cache,
       sdb::geo::coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
     for (const auto& doc_entry : docs) {
       ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-        tests::FromJson(doc_entry.geometry).value(), rhs, cache,
+        irs::tests::FromJson(doc_entry.geometry).value(), rhs, cache,
         sdb::geo::coding::Options::Invalid, nullptr));
       const auto dist = lhs.distanceFromCentroid(rhs.centroid());
       if (dist >= 2000) {
@@ -779,12 +779,12 @@ TEST(GeoDistanceFilterTest, query) {
     sdb::geo::ShapeContainer lhs, rhs;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-      tests::FromJson(docs[7].geometry).value(), lhs, cache,
+      irs::tests::FromJson(docs[7].geometry).value(), lhs, cache,
       sdb::geo::coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
     for (const auto& doc_entry : docs) {
       ASSERT_TRUE(ParseShape<Parsing::OnlyPoint>(
-        tests::FromJson(doc_entry.geometry).value(), rhs, cache,
+        irs::tests::FromJson(doc_entry.geometry).value(), rhs, cache,
         sdb::geo::coding::Options::Invalid, nullptr));
       const auto dist = lhs.distanceFromCentroid(rhs.centroid());
       if (dist <= 2000) {
@@ -842,7 +842,7 @@ TEST(GeoDistanceFilterTest, query) {
 }
 
 TEST(GeoDistanceFilterTest, checkScorer) {
-  auto docs = tests::ParseGeoDocs(R"([
+  auto docs = irs::tests::ParseGeoDocs(R"([
     { "name": "A", "geometry": { "type": "Point", "coordinates": [ 37.615895, 55.7039   ] } },
     { "name": "B", "geometry": { "type": "Point", "coordinates": [ 37.615315, 55.703915 ] } },
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.61509, 55.703537  ] } },

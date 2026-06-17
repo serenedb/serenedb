@@ -42,9 +42,8 @@ size_t MinMatchCount(size_t terms_count, float_t threshold) noexcept {
 }  // namespace
 
 QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
-  const SubReader& segment, const PrepareContext& ctx,
-  irs::field_id field_name, const std::vector<irs::bstring>& ngrams,
-  float_t threshold) {
+  const SubReader& segment, const PrepareContext& ctx, irs::field_id field_name,
+  const std::vector<irs::bstring>& ngrams, float_t threshold) {
   if (ngrams.empty() || !irs::field_limits::valid(field_name)) {
     return QueryBuilder::Empty();
   }

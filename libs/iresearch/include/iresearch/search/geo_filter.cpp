@@ -588,7 +588,8 @@ std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
 }
 
 QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
-                                      const PrepareContext& ctx, irs::field_id id,
+                                      const PrepareContext& ctx,
+                                      irs::field_id id,
                                       const GeoDistanceFilterOptions& options,
                                       bool greater) {
   const auto& range = options.range;

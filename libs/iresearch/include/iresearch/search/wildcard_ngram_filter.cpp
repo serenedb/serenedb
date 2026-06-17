@@ -249,10 +249,9 @@ PrepareCollector::ptr ByWildcardNgram::MakeCollector(
       } else {
         for (const auto& part : opts.parts) {
           for (const auto& info : part) {
-            compound->Add(
-              MakeTermFilter(field_id(),
-                             std::get<ByTermOptions>(info.part).term)
-                .MakeCollector(scorer));
+            compound->Add(MakeTermFilter(
+                            field_id(), std::get<ByTermOptions>(info.part).term)
+                            .MakeCollector(scorer));
           }
         }
       }

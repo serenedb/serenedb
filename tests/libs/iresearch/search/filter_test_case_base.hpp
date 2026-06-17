@@ -54,14 +54,6 @@ irs::Filter::ptr Optimized(F filter, const irs::Scorer* scorer = nullptr) {
   return root;
 }
 
-template<typename F>
-irs::Filter::Query::ptr OptimizedPrepare(F filter,
-                                         const irs::PrepareContext& ctx) {
-  irs::Filter::ptr root = std::make_unique<F>(std::move(filter));
-  irs::Optimize(root, {.scored = ctx.scorer != nullptr});
-  return root->prepare(ctx);
-}
-
 struct DocBlockAttr : public irs::Attribute {
   const irs::doc_id_t* value = nullptr;
 };

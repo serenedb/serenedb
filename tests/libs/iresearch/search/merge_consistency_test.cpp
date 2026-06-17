@@ -48,7 +48,7 @@ irs::bytes_view Bytes(std::string_view v) {
 }
 
 void FillTerm(irs::ByTerm& q, std::string_view field, std::string_view term) {
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = tests::FieldIdFor(field);
   q.mutable_options()->term = Bytes(term);
 }
 
@@ -60,7 +60,7 @@ irs::ByTerm MakeTerm(std::string_view field, std::string_view term) {
 
 void FillPrefix(irs::ByPrefix& q, std::string_view field, std::string_view term,
                 size_t scored_terms_limit) {
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = tests::FieldIdFor(field);
   q.mutable_options()->term = Bytes(term);
   q.mutable_options()->scored_terms_limit = scored_terms_limit;
 }
@@ -70,7 +70,7 @@ irs::ByTerms MakeTerms(
   const std::vector<std::pair<std::string_view, irs::score_t>>& terms,
   size_t min_match) {
   irs::ByTerms q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = tests::FieldIdFor(field);
   q.mutable_options()->min_match = min_match;
   for (const auto& [term, boost] : terms) {
     q.mutable_options()->terms.emplace(Bytes(term), boost);
@@ -81,7 +81,7 @@ irs::ByTerms MakeTerms(
 irs::ByPrefix MakePrefix(std::string_view field, std::string_view term,
                          size_t scored_terms_limit) {
   irs::ByPrefix q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = tests::FieldIdFor(field);
   q.mutable_options()->term = Bytes(term);
   q.mutable_options()->scored_terms_limit = scored_terms_limit;
   return q;
@@ -90,7 +90,7 @@ irs::ByPrefix MakePrefix(std::string_view field, std::string_view term,
 irs::ByRange MakeRange(std::string_view field, std::string_view min,
                        std::string_view max) {
   irs::ByRange q;
-  *q.mutable_field() = field;
+  *q.mutable_field_id() = tests::FieldIdFor(field);
   auto& range = q.mutable_options()->range;
   range.min = Bytes(min);
   range.min_type = irs::BoundType::Inclusive;
@@ -306,7 +306,7 @@ TEST_P(MergeConsistencyTestCase, ngram_similarity) {
 
   // threshold < 1 with a scorer selects NGramCollector
   irs::ByNGramSimilarity filter;
-  *filter.mutable_field() = "field";
+  *filter.mutable_field_id() = tests::FieldIdFor("field");
   filter.mutable_options()->threshold = 0.5f;
   for (auto ngram : {"at", "tl", "as", "ow"}) {
     filter.mutable_options()->ngrams.emplace_back(Bytes(ngram));
@@ -329,7 +329,7 @@ TEST_P(MergeConsistencyTestCase, phrase) {
   // fixed phrase -> TermsCollector
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = tests::FieldIdFor("phrase_anl");
     q.mutable_options()->push_back<irs::ByTermOptions>().term = Bytes("quick");
     q.mutable_options()->push_back<irs::ByTermOptions>().term = Bytes("brown");
     CheckAllScorers(q, rdr);
@@ -338,7 +338,7 @@ TEST_P(MergeConsistencyTestCase, phrase) {
   // variadic phrase -> VariadicTermsCollector
   {
     irs::ByPhrase q;
-    *q.mutable_field() = "phrase_anl";
+    *q.mutable_field_id() = tests::FieldIdFor("phrase_anl");
     q.mutable_options()->push_back<irs::ByTermOptions>().term = Bytes("quick");
     q.mutable_options()->push_back<irs::ByPrefixOptions>().term = Bytes("bro");
     CheckAllScorers(q, rdr);
@@ -357,7 +357,7 @@ TEST_P(MergeConsistencyTestCase, edit_distance) {
 
   for (const size_t max_terms : {size_t{1024}, size_t{2}}) {
     irs::ByEditDistance filter;
-    *filter.mutable_field() = "title";
+    *filter.mutable_field_id() = tests::FieldIdFor("title");
     filter.mutable_options()->term = Bytes("aa");
     filter.mutable_options()->max_distance = 2;
     filter.mutable_options()->max_terms = max_terms;

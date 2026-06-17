@@ -22,6 +22,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filter_visitor.hpp"
+#include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
@@ -47,10 +48,16 @@ field_visitor AutomatonFilter::visitor(const automaton& acceptor) {
   };
 }
 
-Filter::Query::ptr AutomatonFilter::prepare(const PrepareContext& ctx) const {
-  return PrepareAutomatonFilter(ctx.Boost(Boost()), field_id(),
-                                options().acceptor,
-                                options().scored_terms_limit);
+QueryBuilder::ptr AutomatonFilter::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
+  return PrepareAutomatonSegment(segment, ctx.Boost(Boost()), field_id(),
+                                 options().acceptor);
+}
+
+PrepareCollector::ptr AutomatonFilter::MakeCollector(
+  const Scorer* scorer) const {
+  return std::make_unique<LimitedTermsCollector>(scorer,
+                                                 options().scored_terms_limit);
 }
 
 }  // namespace irs

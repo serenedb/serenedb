@@ -212,8 +212,8 @@ void WriteVirtualColumns(CommonScanGlobalState& gstate,
   }
 }
 
-template<typename Lstate, typename View>
-void WriteChunkOffsets(Lstate& lstate, const irs::Filter::Query& query,
+template<typename Lstate, typename Gstate, typename View>
+void WriteChunkOffsets(Lstate& lstate, const Gstate& g,
                        const irs::IndexReader& reader, const View& view,
                        duckdb::DataChunk& output, duckdb::idx_t output_start) {
   for (const auto& entry : lstate.offsets_entries) {
@@ -234,7 +234,9 @@ void WriteChunkOffsets(Lstate& lstate, const irs::Filter::Query& query,
       }
       cached_seg = &reader[seg_idx];
       OffsetsCollector visitor{lstate.offsets_entries};
-      query.visit(*cached_seg, visitor, irs::kNoBoost);
+      const auto& seg_query = g.queries[seg_idx];
+      SDB_ASSERT(seg_query);
+      seg_query->Visit(visitor, irs::kNoBoost);
       lstate.offsets_prepped_seg = seg_idx;
     }
     for (auto& entry : lstate.offsets_entries) {
@@ -326,8 +328,7 @@ duckdb::idx_t MaterializeChunk(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
   }
   if constexpr (requires { l.offsets_entries; }) {
     if (!l.offsets_entries.empty()) {
-      SDB_ASSERT(g.query);
-      WriteChunkOffsets(l, *g.query, *g.reader, view, output, output_start);
+      WriteChunkOffsets(l, g, *g.reader, view, output, output_start);
     }
   }
 

@@ -169,11 +169,16 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       return in_array ? kUuidArray : kUuid;
     case ENUM: {
       auto ext = type.GetExtensionInfo();
-      SDB_ASSERT(ext);
-      auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
-      SDB_ASSERT(it != ext->properties.end());
-      const ObjectId oid{it->second.GetValue<uint64_t>()};
-      return (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id();
+      // null/property-less for anonymous enums (e.g. SELECT 'x'::ENUM('x', 'y'))
+      // that were never registered in the catalog and so carry no pg type oid.
+      if (ext) {
+        auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
+        if (it != ext->properties.end()) {
+          const ObjectId oid{it->second.GetValue<uint64_t>()};
+          return (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id();
+        }
+      }
+      return in_array ? kTextArray : kText;
     }
     case STRUCT: {
       auto ext = type.GetExtensionInfo();

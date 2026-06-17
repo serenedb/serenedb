@@ -168,3 +168,34 @@ INITIAL - 1 - a - 2 - b - 3 - c - 4 - d
 
 query error db error: ERROR: subqueries in lambda expressions are not supported
 SELECT list_apply([1, 2, 3], lambda x: (SELECT 42) + x);
+
+
+# DOCS_TEST: list_filter
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_filter([3, 4, 5], lambda x : x > 4) AS list_filter;
+----
+list_filter
+{5}
+
+# DOCS_TEST: list_reduce
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_reduce([1, 2, 3], lambda x, y : x + y) AS list_reduce;
+----
+list_reduce
+6
+
+# DOCS_TEST: list_transform
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_transform([1, 2, 3], lambda x : x + 1) AS list_transform;
+----
+list_transform
+{2,3,4}

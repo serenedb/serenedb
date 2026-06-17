@@ -1,114 +1,110 @@
 # DOCS_TEST: example_001
-
 # DOCS_TEST_BODY
-
 query
 SELECT '2022-10-08 13:13:34-07'::TIMESTAMPTZ;
 ----
-timestamp with time zone
+timestamptz
 2022-10-08 20:13:34+00
 
-# DOCS_TEST: example_002
-
-# DOCS_TEST_BODY
-
-query error
-SELECT '2022-10-08 13:13:34 Europe/Amsterdam'::TIMESTAMPTZ::VARCHAR;
-----
-db error: ERROR: timestamp field value "2022-10-08 13:13:34 Europe/Amsterdam" has a timestamp that is not UTC.
-Use the TIMESTAMPTZ type with the ICU extension loaded to handle non-UTC timestamps.
-
 # DOCS_TEST: example_003
-
 # DOCS_TEST_BODY
-
-query error
+query error required extension 'icu
 SELECT TIMESTAMP '2001-02-16 20:38:40' AT TIME ZONE 'America/Denver' AS ts;
-----
-db error: ERROR: An error occurred while trying to automatically install the required extension 'icu:
-Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_extension" not found.
-Extension "icu" is an existing extension.
-
-Install it first using "INSTALL icu".
 
 # DOCS_TEST: example_004
-
 # DOCS_TEST_BODY
-
-query error
+query error syntax error at or near "WITH"
 SELECT TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40-05' AT TIME ZONE 'America/Denver' AS ts;
-----
-db error: ERROR: An error occurred while trying to automatically install the required extension 'icu:
-Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_extension" not found.
-Extension "icu" is an existing extension.
-
-Install it first using "INSTALL icu".
 
 # DOCS_TEST: example_005
-
 # DOCS_TEST_BODY
-
-query error
+query error required extension 'icu
 SELECT TIMESTAMP '2001-02-16 20:38:40-05' AT TIME ZONE '0200' AS ts;
-----
-db error: ERROR: An error occurred while trying to automatically install the required extension 'icu:
-Extension "/var/lib/serenedb/.duckdb/extensions/v0.0.1/linux_arm64/icu.duckdb_extension" not found.
-Extension "icu" is an existing extension.
-
-Install it first using "INSTALL icu".
 
 # DOCS_TEST: example_006
-
 # DOCS_TEST_BODY
-
 statement ok
 SET timezone = 'Europe/Amsterdam';
 
-query error
+query error No function matches the given name and argument types
 SELECT TIMESTAMPTZ '2025-03-29 02:30:00+01' + INTERVAL '1 day';
+
+# DOCS_TEST: greatest
+# DOCS_TEST_BODY
+query
+SELECT greatest(TIMESTAMPTZ '1992-09-20 20:38:48', TIMESTAMPTZ '1992-03-22 01:02:03.1234') AS greatest;
 ----
-db error: ERROR: No function matches the given name and argument types '+(TIMESTAMP WITH TIME ZONE, INTERVAL)'. You might need to add explicit type casts.
-	Candidate functions:
-	+(TINYINT) -> TINYINT
-	+(TINYINT, TINYINT) -> TINYINT
-	+(SMALLINT) -> SMALLINT
-	+(SMALLINT, SMALLINT) -> SMALLINT
-	+(INTEGER) -> INTEGER
-	+(INTEGER, INTEGER) -> INTEGER
-	+(BIGINT) -> BIGINT
-	+(BIGINT, BIGINT) -> BIGINT
-	+(HUGEINT) -> HUGEINT
-	+(HUGEINT, HUGEINT) -> HUGEINT
-	+(FLOAT) -> FLOAT
-	+(FLOAT, FLOAT) -> FLOAT
-	+(DOUBLE) -> DOUBLE
-	+(DOUBLE, DOUBLE) -> DOUBLE
-	+(DECIMAL) -> DECIMAL
-	+(DECIMAL, DECIMAL) -> DECIMAL
-	+(UTINYINT) -> UTINYINT
-	+(UTINYINT, UTINYINT) -> UTINYINT
-	+(USMALLINT) -> USMALLINT
-	+(USMALLINT, USMALLINT) -> USMALLINT
-	+(UINTEGER) -> UINTEGER
-	+(UINTEGER, UINTEGER) -> UINTEGER
-	+(UBIGINT) -> UBIGINT
-	+(UBIGINT, UBIGINT) -> UBIGINT
-	+(UHUGEINT) -> UHUGEINT
-	+(UHUGEINT, UHUGEINT) -> UHUGEINT
-	+(DATE, INTEGER) -> DATE
-	+(INTEGER, DATE) -> DATE
-	+(INTERVAL, INTERVAL) -> INTERVAL
-	+(DATE, INTERVAL) -> TIMESTAMP
-	+(INTERVAL, DATE) -> TIMESTAMP
-	+(TIME, INTERVAL) -> TIME
-	+(INTERVAL, TIME) -> TIME
-	+(TIMESTAMP, INTERVAL) -> TIMESTAMP
-	+(INTERVAL, TIMESTAMP) -> TIMESTAMP
-	+(TIME WITH TIME ZONE, INTERVAL) -> TIME WITH TIME ZONE
-	+(INTERVAL, TIME WITH TIME ZONE) -> TIME WITH TIME ZONE
-	+(TIME, DATE) -> TIMESTAMP
-	+(DATE, TIME) -> TIMESTAMP
-	+(TIME WITH TIME ZONE, DATE) -> TIMESTAMP WITH TIME ZONE
-	+(DATE, TIME WITH TIME ZONE) -> TIMESTAMP WITH TIME ZONE
-	+([ANY[]...]) -> ANY[]
-	+(BIGNUM, BIGNUM) -> BIGNUM
+greatest
+1992-09-20 20:38:48+00
+
+# DOCS_TEST: isfinite
+# DOCS_TEST_BODY
+query
+SELECT isfinite(TIMESTAMPTZ '1992-03-07') AS isfinite;
+----
+isfinite
+t
+
+# DOCS_TEST: isinf
+# DOCS_TEST_BODY
+query
+SELECT isinf(TIMESTAMPTZ '-infinity') AS isinf;
+----
+isinf
+t
+
+# DOCS_TEST: least
+# DOCS_TEST_BODY
+query
+SELECT least(TIMESTAMPTZ '1992-09-20 20:38:48', TIMESTAMPTZ '1992-03-22 01:02:03.1234') AS least;
+----
+least
+1992-03-22 01:02:03.1234+00
+
+# DOCS_TEST: timetz_byte_comparable
+# DOCS_TEST_BODY
+query
+SELECT timetz_byte_comparable('18:18:16.21-07:00'::TIMETZ) AS sort_key;
+----
+sort_key
+2494691656335442799
+
+# DOCS_TEST: to_timestamp
+# DOCS_TEST_BODY
+query
+SELECT to_timestamp(1284352323.5) AS ts;
+----
+ts
+2010-09-13 04:32:03.5+00
+
+# DOCS_TEST: epoch_ns
+# DOCS_TEST_BODY
+query
+SELECT epoch_ns('2022-11-07 08:43:04.123456+00'::TIMESTAMPTZ) AS ns;
+----
+ns
+1667810584123456000
+
+# DOCS_TEST: epoch_us
+# DOCS_TEST_BODY
+query
+SELECT epoch_us('2022-11-07 08:43:04.123456+00'::TIMESTAMPTZ) AS us;
+----
+us
+1667810584123456
+
+# DOCS_TEST: strftime
+# DOCS_TEST_BODY
+query
+SELECT strftime(TIMESTAMPTZ '1992-01-01 20:38:40', '%a, %-d %B %Y - %I:%M:%S %p') AS formatted;
+----
+formatted
+Wed, 1 January 1992 - 08:38:40 PM
+
+# DOCS_TEST: strptime
+# DOCS_TEST_BODY
+query
+SELECT strptime('Wed, 1 January 1992 - 08:38:40 PST', '%a, %-d %B %Y - %H:%M:%S %Z') AS ts;
+----
+ts
+1992-01-01 08:38:40

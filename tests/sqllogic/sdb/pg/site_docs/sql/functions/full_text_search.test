@@ -98,6 +98,36 @@ INSERT INTO geo VALUES
 statement ok
 VACUUM (REFRESH_TABLE) geo;
 
+statement ok
+CREATE TABLE scored (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY scored_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+statement ok
+CREATE INDEX scored_idx ON scored USING inverted (id, body scored_en);
+
+statement ok
+INSERT INTO scored VALUES
+    (1, 'the quick brown fox'),
+    (2, 'fox fox fox in the henhouse'),
+    (3, 'a clever fox outwits two hounds in the meadow'),
+    (4, 'quick brown dog runs'),
+    (5, 'the lazy dog sleeps all day');
+
+statement ok
+VACUUM (REFRESH_TABLE) scored;
+
+
 # DOCS_TEST: column--tsquery
 # DOCS_TEST_BODY
 query
@@ -391,110 +421,132 @@ id
 # DOCS_TEST: bm25
 # DOCS_TEST_BODY
 query
-SELECT id, BM25(docs_idx.tableoid) AS score
-FROM docs_idx
+SELECT id, BM25(scored_idx.tableoid) AS score
+FROM scored_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
-1	1.036356
-2	1.036356
+2	0.8407818
+1	0.6173784
+3	0.43974406
+
+# DOCS_TEST: bm25_params
+# DOCS_TEST_BODY
+query
+SELECT id, BM25(scored_idx.tableoid, 1.2, 0.0) AS score
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+2	0.8469945
+1	0.53899646
+3	0.53899646
 
 # DOCS_TEST: tfidf
 # DOCS_TEST_BODY
 query
-SELECT id, TFIDF(docs_idx.tableoid) AS score
-FROM docs_idx
+SELECT id, TFIDF(scored_idx.tableoid) AS score
+FROM scored_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
-1	0.98082924
-2	0.98082924
+2	1.5870621
+1	0.91629076
+3	0.91629076
 
 # DOCS_TEST: lm_jm
 # DOCS_TEST_BODY
 query
-SELECT id, lm_jm(docs_idx.tableoid) AS score
-FROM docs_idx
+SELECT id, lm_jm(scored_idx.tableoid) AS score
+FROM scored_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
-1	0
-2	0
+2	3.1570003
+1	2.5055258
+3	1.7917594
 
 # DOCS_TEST: lm_dirichlet
 # DOCS_TEST_BODY
 query
-SELECT id, lm_dirichlet(docs_idx.tableoid) AS score
-FROM docs_idx
+SELECT id, lm_dirichlet(scored_idx.tableoid) AS score
+FROM scored_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
-1	0
-2	0
+2	0.0044765053
+1	0.0004988774
+3	0
 
 # DOCS_TEST: indri_dirichlet
 # DOCS_TEST_BODY
 query
-SELECT id, indri_dirichlet(docs_idx.tableoid) AS score
-FROM docs_idx
+SELECT id, indri_dirichlet(scored_idx.tableoid) AS score
+FROM scored_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
-1	0
-2	0
+2	-1.6049614
+1	-1.608939
+3	-1.6114309
 
 # DOCS_TEST: dfi
 # DOCS_TEST_BODY
 query
-SELECT id, dfi(docs_idx.tableoid) AS score
-FROM docs_idx
+SELECT id, dfi(scored_idx.tableoid) AS score
+FROM scored_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
-1	0
-2	0
+2	1.4022679
+1	0.29114002
+3	0
 
 # DOCS_TEST: raw_tf
 # DOCS_TEST_BODY
 query
-SELECT id, raw_tf(docs_idx.tableoid) AS score
-FROM docs_idx
+SELECT id, raw_tf(scored_idx.tableoid) AS score
+FROM scored_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
+2	3
 1	1
-2	1
+3	1
 
 # DOCS_TEST: raw_boost
 # DOCS_TEST_BODY
 query
-SELECT id, raw_boost(docs_idx.tableoid) AS score
-FROM docs_idx
+SELECT id, raw_boost(scored_idx.tableoid) AS score
+FROM scored_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
 1	1
 2	1
+3	1
 
 # DOCS_TEST: raw_dl
 # DOCS_TEST_BODY
 query
-SELECT id, raw_dl(docs_idx.tableoid) AS score
-FROM docs_idx
+SELECT id, raw_dl(scored_idx.tableoid) AS score
+FROM scored_idx
 WHERE body @@ ts_phrase('fox')
 ORDER BY score DESC, id;
 ----
 id	score
-1	0
-2	0
+3	9
+2	6
+1	4
 
 # DOCS_TEST: ts_highlight
 # DOCS_TEST_BODY
@@ -524,38 +576,102 @@ id	offsets
 # DOCS_TEST: l2_distance
 # DOCS_TEST_BODY
 query
-SELECT id FROM vecs_l2 ORDER BY l2_distance(emb, [0, 0, 0]::FLOAT[3]) LIMIT 2;
+SELECT l2_distance([3, 4, 0]::FLOAT[3], [0, 0, 0]::FLOAT[3]) AS distance;
 ----
-id
-1
-3
+distance
+5
 
-# DOCS_TEST: cosine_distance
+# DOCS_TEST: l2_sqr_distance
 # DOCS_TEST_BODY
 query
-SELECT id FROM vecs_cos ORDER BY cosine_distance(emb, [1, 0, 0]::FLOAT[3]) LIMIT 2;
+SELECT l2_sqr_distance([3, 4, 0]::FLOAT[3], [0, 0, 0]::FLOAT[3]) AS distance;
 ----
-id
-1
-3
+distance
+25
 
 # DOCS_TEST: l1_distance
 # DOCS_TEST_BODY
 query
-SELECT id FROM vecs_l1 ORDER BY l1_distance(emb, [0, 0, 0]::FLOAT[3]) LIMIT 2;
+SELECT l1_distance([3, 4, 0]::FLOAT[3], [0, 0, 0]::FLOAT[3]) AS distance;
 ----
-id
-1
-3
+distance
+7
+
+# DOCS_TEST: cosine_distance
+# DOCS_TEST_BODY
+query
+SELECT cosine_distance([1, 0, 0]::FLOAT[3], [1, 1, 0]::FLOAT[3]) AS distance;
+----
+distance
+0.29289323
+
+# DOCS_TEST: cosine_similarity
+# DOCS_TEST_BODY
+query
+SELECT cosine_similarity([1, 0, 0]::FLOAT[3], [1, 1, 0]::FLOAT[3]) AS similarity;
+----
+similarity
+0.70710677
+
+# DOCS_TEST: inner_product
+# DOCS_TEST_BODY
+query
+SELECT inner_product([1, 2, 3]::FLOAT[3], [4, 5, 6]::FLOAT[3]) AS dot;
+----
+dot
+32
+
+# DOCS_TEST: negative_inner_product
+# DOCS_TEST_BODY
+query
+SELECT negative_inner_product([1, 2, 3]::FLOAT[3], [4, 5, 6]::FLOAT[3]) AS neg_dot;
+----
+neg_dot
+-32
+
+# DOCS_TEST: l2_norm
+# DOCS_TEST_BODY
+query
+SELECT l2_norm([3, 4, 0]::FLOAT[3]) AS norm;
+----
+norm
+5
+
+# DOCS_TEST: l1_norm
+# DOCS_TEST_BODY
+query
+SELECT l1_norm([3, 4, 0]::FLOAT[3]) AS norm;
+----
+norm
+7
+
+# DOCS_TEST: l2_normalize
+# DOCS_TEST_BODY
+query
+SELECT l2_normalize([3, 4, 0]::FLOAT[3]) AS unit;
+----
+unit
+{0.6,0.8,0}
+
+# DOCS_TEST: l1_normalize
+# DOCS_TEST_BODY
+query
+SELECT l1_normalize([3, 4, 0]::FLOAT[3]) AS unit;
+----
+unit
+{0.42857146,0.5714286,0}
 
 # DOCS_TEST: a---b-distance
 # DOCS_TEST_BODY
 query
-SELECT id FROM vecs_l2 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+SELECT id, emb <-> [0, 0, 0]::FLOAT[3] AS distance
+FROM vecs_l2
+ORDER BY distance, id
+LIMIT 2;
 ----
-id
-1
-3
+id	distance
+1	1
+3	1
 
 # DOCS_TEST: st_intersects
 # DOCS_TEST_BODY
@@ -563,6 +679,17 @@ query
 SELECT id
 FROM geo_idx
 WHERE ST_Intersects(geo, 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84'))
+ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: st_intersects_geojson
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM geo_idx
+WHERE ST_Intersects(geo, '{"type": "Point", "coordinates": [37.6, 55.7]}')
 ORDER BY id;
 ----
 id
@@ -596,6 +723,17 @@ query
 SELECT id
 FROM geo_idx
 WHERE ST_Distance_Centroid(geo, 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84')) < 5000
+ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: st_distance_centroid_op
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM geo_idx
+WHERE (geo <-> 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84')) < 5000
 ORDER BY id;
 ----
 id

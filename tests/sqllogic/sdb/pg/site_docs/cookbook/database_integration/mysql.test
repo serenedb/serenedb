@@ -7,7 +7,7 @@ control substitution on
 statement error
 ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS mysql_db (TYPE mysql, READ_ONLY);
 ----
-db error: ERROR: Extension "/home/abrama/.duckdb/extensions/fa097f1572/linux_amd64/mysql_scanner.duckdb_extension" not found.
+db error: ERROR: Extension "<slt:ignore>" not found.
 Extension "mysql" is an existing extension.
 
 Install it first using "INSTALL mysql".

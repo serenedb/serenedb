@@ -58,6 +58,7 @@ db error: ERROR: Could not parse string "02/50/1992" according to format specifi
    ^
 Error: Month out of range, expected a value between 1 and 12
 
+
 # DOCS_TEST: example_006
 
 statement ok
@@ -73,7 +74,7 @@ COPY (SELECT * FROM (VALUES
 statement error
 COPY dates FROM '/tmp/${__DATABASE__}_sql_functions_dateformat_example_006_1_test_csv.csv' (DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%A, %-d %B %Y - %I:%M:%S %p');
 ----
-db error: ERROR: Error when sniffing file "/tmp/${__DATABASE__}_sql_functions_dateformat_example_006_1_test_csv.csv".
+db error: ERROR: Error when sniffing file "/tmp/<slt:ignore>_sql_functions_dateformat_example_006_1_test_csv.csv".
 It was not possible to automatically detect the CSV parsing dialect
 The search space used was:
 Delimiter Candidates: ',', '|', ';', '	'
@@ -93,6 +94,7 @@ Possible fixes:
 * Enable null padding (null_padding=true) to pad missing columns with NULL values
 * Check you are using the correct file compression, otherwise set it (e.g., compression = 'zstd')
 * Be sure that the maximum line size is set to an appropriate value, otherwise set it (e.g., max_line_size=10000000)
+
 
 # DOCS_TEST: example_007
 

@@ -92,16 +92,18 @@ t
 
 # DOCS_TEST_BODY
 
-query error
+statement error
 SELECT 42 IN (SELECT unnest([32, 42, 52]) AS x, 'a' AS y);
 ----
-db error: ERROR: Subquery returns 2 columns \- expected 1
+db error: ERROR: Subquery returns 2 columns - expected 1
+
 
 # DOCS_TEST: example_011
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT 'Hello' IN 'Hello World';
 ----
-db error: ERROR: syntax error at or near "'Hello World'"
+contains
+t

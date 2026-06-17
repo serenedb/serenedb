@@ -7,7 +7,8 @@ control substitution on
 statement error
 read_duckdb(⟨'path_to_database'⟩, table_name = ⟨'table_to_read'⟩);
 ----
-db error: ERROR: syntax error at or near "read_duckdb"
+db error: ERROR: syntax error at or near "⟩"
+
 
 # DOCS_TEST: example_002
 
@@ -152,5 +153,5 @@ DETACH read_duckdb_single_5;
 query
 FROM '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_005_my_2.duckdb';
 ----
-${__database__}_cookbook_file_formats_read_duckdb_example_005_my_2
+<slt:ignore>
 43

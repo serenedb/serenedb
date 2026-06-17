@@ -6,4 +6,4 @@ statement ok
 CREATE TABLE tbl (id INTEGER, name VARCHAR);
 
 statement ok
-INSERT INTO tbl VALUES (42, 'DuckDB');
+INSERT INTO tbl VALUES (42, 'SereneDB');

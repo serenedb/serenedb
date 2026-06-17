@@ -186,3 +186,78 @@ query error
 SELECT regexp_extract('serened_0_7_1', '^(\w+)_(\d+)_(\d+)', ['tool', 'major', 'minor', 'fix']);
 ----
 db error: ERROR: Not enough capturing groups (3) for provided names (4)
+
+
+# DOCS_TEST: regexp_extract
+# DOCS_TEST_BODY
+query
+SELECT regexp_extract('abc', '([a-z])(b)', 1) AS result;
+----
+result
+a
+
+# DOCS_TEST: regexp_extract_names
+# DOCS_TEST_BODY
+query
+SELECT regexp_extract('2023-04-15', '(\d+)-(\d+)-(\d+)', ['y', 'm', 'd']) AS result;
+----
+result
+(2023,04,15)
+
+# DOCS_TEST: regexp_extract_all
+# DOCS_TEST_BODY
+query
+SELECT regexp_extract_all('Peter: 33, Paul:14', '(\w+):\s*(\d+)', 2) AS result;
+----
+result
+{33,14}
+
+# DOCS_TEST: regexp_extract_all_names
+# DOCS_TEST_BODY
+query
+SELECT regexp_extract_all('Peter: 33, Paul: 14', '(\w+):\s*(\d+)', ['name', 'age']) AS result;
+----
+result
+{"(Peter,33)","(Paul,14)"}
+
+# DOCS_TEST: regexp_full_match
+# DOCS_TEST_BODY
+query
+SELECT regexp_full_match('anabanana', '(an)*') AS result;
+----
+result
+f
+
+# DOCS_TEST: regexp_matches
+# DOCS_TEST_BODY
+query
+SELECT regexp_matches('anabanana', '(an)*') AS result;
+----
+result
+t
+
+# DOCS_TEST: regexp_replace
+# DOCS_TEST_BODY
+query
+SELECT regexp_replace('hello', '[lo]', '-') AS result;
+----
+result
+he-lo
+
+# DOCS_TEST: regexp_split_to_array
+# DOCS_TEST_BODY
+query
+SELECT regexp_split_to_array('hello world; 42', ';? ') AS result;
+----
+result
+{hello,world,42}
+
+# DOCS_TEST: regexp_split_to_table
+# DOCS_TEST_BODY
+query
+SELECT * FROM regexp_split_to_table('hello world; 42', ';? ');
+----
+regexp_split_to_table
+hello
+world
+42

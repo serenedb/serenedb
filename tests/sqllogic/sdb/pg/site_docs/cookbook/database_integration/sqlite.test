@@ -19,7 +19,7 @@ statement error
 -- Attach the SQLite file "test.db"
 ATTACH 'test.db' AS test (TYPE sqlite);
 ----
-db error: ERROR: Extension "/home/abrama/.duckdb/extensions/fa097f1572/linux_amd64/sqlite_scanner.duckdb_extension" not found.
+db error: ERROR: Extension "<slt:ignore>" not found.
 Extension "sqlite" is an existing extension.
 
 Install it first using "INSTALL sqlite".

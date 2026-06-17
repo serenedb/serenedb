@@ -63,6 +63,7 @@
 #include "basics/containers/trivial_map.h"
 #include "basics/errors.h"
 #include "basics/string_utils.h"
+#include "comparison_op.hpp"
 #include "connector/json_extract_names.hpp"
 #include "functions/search.h"
 #include "functions/string.h"
@@ -70,7 +71,6 @@
 #include "geo_filter_builder.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "rocksdb_filter.hpp"
 
 namespace magic_enum {
 

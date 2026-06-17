@@ -1127,8 +1127,4 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
   return kInvalidOid;
 }
 
-std::string ToPgTypeString(const duckdb::LogicalType& type) {
-  return type.ToString();
-}
-
 }  // namespace sdb::pg

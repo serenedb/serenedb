@@ -1,0 +1,172 @@
+# Inverted index over views of external duckdb files (read_duckdb), single
+# file and glob. The PK stored in the index is the duckdb rowid (one number)
+# or (file_index, rowid) for globs; materialization fetches rows by rowid
+# through the read_duckdb lookup. Rows deleted in the source file after
+# CREATE INDEX materialize as NULLs (same contract family as parquet/iceberg
+# view indexes: the index pins what it indexed).
+
+control substitution on
+
+statement ok
+ATTACH '${__TEST_DIR__}/view_duckdb_single.db' AS ext_single;
+
+
+statement ok
+CREATE OR REPLACE TABLE ext_single.main.docs(id INTEGER, body TEXT, score INTEGER);
+
+
+statement ok
+INSERT INTO ext_single.main.docs VALUES
+  (1, 'alpha cat runs', 10),
+  (2, 'beta dog sleeps', 20),
+  (3, 'gamma cat jumps', 30),
+  (4, 'delta horse eats', 40);
+
+
+statement ok
+DETACH ext_single;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/view_duckdb_glob_a.db' AS ext_a;
+
+
+statement ok
+CREATE OR REPLACE TABLE ext_a.main.docs(id INTEGER, body TEXT, score INTEGER);
+
+
+statement ok
+INSERT INTO ext_a.main.docs VALUES
+  (1, 'alpha cat runs', 10),
+  (2, 'beta dog sleeps', 20),
+  (3, 'gamma cat jumps', 30);
+
+
+statement ok
+DETACH ext_a;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/view_duckdb_glob_b.db' AS ext_b;
+
+
+statement ok
+CREATE OR REPLACE TABLE ext_b.main.docs(id INTEGER, body TEXT, score INTEGER);
+
+
+statement ok
+INSERT INTO ext_b.main.docs VALUES
+  (10, 'epsilon cat purrs', 100),
+  (11, 'zeta dog barks', 110);
+
+
+statement ok
+DETACH ext_b;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_duckdb_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE VIEW v_single AS
+SELECT * FROM read_duckdb('${__TEST_DIR__}/view_duckdb_single.db', table_name='docs');
+
+
+statement ok
+CREATE VIEW v_glob AS
+SELECT * FROM read_duckdb('${__TEST_DIR__}/view_duckdb_glob_*.db', table_name='docs');
+
+
+query
+SELECT count(*) FROM v_single;
+----
+count
+4
+
+
+query
+SELECT count(*) FROM v_glob;
+----
+count
+5
+
+
+statement ok
+CREATE INDEX v_single_idx ON v_single USING inverted(body view_duckdb_en);
+
+
+statement ok
+CREATE INDEX v_glob_idx ON v_glob USING inverted(body view_duckdb_en);
+
+
+# Materialization through the rowid lookup: every projected column comes
+# from the source file.
+query
+SELECT id, body, score FROM v_single_idx WHERE body @@ ts_phrase('cat')
+ORDER BY id;
+----
+id	body	score
+1	alpha cat runs	10
+3	gamma cat jumps	30
+
+
+query
+SELECT id, body, score FROM v_glob_idx WHERE body @@ ts_phrase('cat')
+ORDER BY id;
+----
+id	body	score
+1	alpha cat runs	10
+3	gamma cat jumps	30
+10	epsilon cat purrs	100
+
+
+query
+SELECT id FROM v_glob_idx WHERE body @@ ts_phrase('dog') ORDER BY id;
+----
+id
+2
+11
+
+
+# Source mutation after CREATE INDEX: the stale posting materializes as
+# NULLs instead of garbage.
+statement ok
+ATTACH '${__TEST_DIR__}/view_duckdb_single.db' AS ext_mut;
+
+
+statement ok
+DELETE FROM ext_mut.main.docs WHERE id = 3;
+
+
+statement ok
+DETACH ext_mut;
+
+
+query
+SELECT id, body, score FROM v_single_idx WHERE body @@ ts_phrase('cat')
+ORDER BY id NULLS LAST;
+----
+id	body	score
+1	alpha cat runs	10
+NULL	NULL	NULL
+
+
+statement ok
+DROP VIEW v_single CASCADE;
+
+
+statement ok
+DROP VIEW v_glob CASCADE;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY view_duckdb_en;

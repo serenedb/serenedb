@@ -42,8 +42,7 @@
 #include "catalog/search_analyzer_impl.h"
 #include "connector/index_expression.hpp"
 #include "primary_key.hpp"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 #include "search_remove_filter.hpp"
 #include "sink_writer_base.hpp"
 

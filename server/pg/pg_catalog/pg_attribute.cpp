@@ -24,7 +24,6 @@
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/local_catalog.h"
 #include "catalog/object.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"

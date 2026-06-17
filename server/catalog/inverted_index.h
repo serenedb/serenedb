@@ -36,7 +36,6 @@
 #include "catalog/scorer_options.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
-#include "storage_engine/index_shard.h"
 
 namespace duckdb {
 
@@ -44,6 +43,11 @@ class Serializer;
 class Deserializer;
 
 }  // namespace duckdb
+namespace sdb::search {
+
+class InvertedIndexStorage;
+
+}  // namespace sdb::search
 namespace sdb::catalog {
 namespace term_dict {
 
@@ -195,8 +199,6 @@ class InvertedIndex final : public Index {
                                                     ReadContext ctx);
   void Serialize(duckdb::Serializer& sink) const final;
   std::shared_ptr<Object> Clone() const final;
-  ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, ObjectId id) const final;
 
   const InvertedIndexEntryInfo* FindEntry(irs::field_id id) const noexcept;
   // Convenience: returns the entry only if it is a plain column (not an
@@ -234,6 +236,20 @@ class InvertedIndex final : public Index {
 
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
+  // Mutable iresearch runtime storage (writer/reader/refresh) for this index,
+  // held behind a shared_ptr on the otherwise-immutable metadata object: a COW
+  // snapshot clone shares the same storage, a row feed never clones the
+  // catalog, and a metadata mutation (Clone) carries it forward. nullptr until
+  // the index is bound to its storage (CREATE INDEX / boot recovery).
+  const std::shared_ptr<search::InvertedIndexStorage>& GetData()
+    const noexcept {
+    return _data;
+  }
+  void SetData(
+    std::shared_ptr<search::InvertedIndexStorage> data) const noexcept {
+    _data = std::move(data);
+  }
+
  private:
   void BuildSerializedExprIndex();
   void BuildSyntheticFeaturesIndex();
@@ -249,6 +265,7 @@ class InvertedIndex final : public Index {
     _synthetic_to_features;
   containers::FlatHashMap<irs::field_id, FieldLookup> _field_lookup;
   InvertedIndexOptions _options;
+  mutable std::shared_ptr<search::InvertedIndexStorage> _data;
 };
 
 }  // namespace sdb::catalog

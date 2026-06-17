@@ -1,0 +1,114 @@
+control substitution on
+
+# Recovery at the durable-cursor boundary: a single post-refresh commit whose
+# WAL entry starts EXACTLY at the stamped durable_offset must still be indexed.
+#
+# At REFRESH the durable WAL cursor is stamped to GetWALSize() -- the START
+# offset of the next WAL entry. The one transaction committed right after the
+# refresh therefore has its WAL entry start EXACTLY at that durable_offset
+# (verified out of band: WAL = 3011 bytes at refresh; the next INSERT's entry
+# spans [3011, 3175)). It is never flushed to the iresearch segments (background
+# sync is off by default; only an explicit VACUUM (REFRESH_TABLE) flushes, and
+# there is none after this row), so recovery must replay it.
+#
+# This pins the boundary against InvertedStoreIndex::ReplayAppend/ReplayDelete,
+# whose skip uses `_replay_commit_offset <= session.durable_offset` -- a `<=`
+# that would drop the entry sitting exactly AT durable_offset. The skip is
+# currently latent: it only fires when the persisted cursor's WAL generation
+# equals the store DB's checkpoint iteration at replay, and store-DB WAL
+# recovery checkpoints once at load, bumping the iteration so the stale cursor's
+# generation no longer matches -- durable_offset is forced to 0 and nothing is
+# skipped. If a future change preserves the generation across a crash (e.g. the
+# planned data/catalog DB split, or dropping the load-time checkpoint), the
+# `<=` would skip this row and this test would catch it. Tighten the boundary
+# to `<` if you change that skip.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bo_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE bo_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX bo_idx ON bo_t USING inverted(id, body bo_dict);
+
+# Batch 1: one seed row, then force a durable refresh -> stamps the durable WAL
+# cursor at the current WAL size (the start offset of the next entry).
+statement ok
+INSERT INTO bo_t VALUES (1, 'alpha bravo charlie');
+
+statement ok
+VACUUM (REFRESH_TABLE) bo_t;
+
+query
+SELECT COUNT(*) FROM bo_idx;
+----
+count
+1
+
+# Seed row is searchable and durable in the segments.
+query
+SELECT id FROM bo_idx WHERE body @@ ts_phrase('alpha');
+----
+id
+1
+
+# Exactly ONE more transaction. Its WAL entry starts at the captured
+# durable_offset, and no refresh follows, so it lands only in the store WAL
+# (never durable in the segments). Recovery must replay it even though its
+# offset sits exactly at the boundary.
+statement ok
+INSERT INTO bo_t VALUES (2, 'delta echo foxtrot');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection bo_after
+statement ok retry 60 backoff 1s
+VACUUM (REFRESH_TABLE) bo_t;
+
+# Store table has both rows.
+connection bo_after
+query
+SELECT COUNT(*) FROM bo_t;
+----
+count
+2
+
+# The index must match the store table: the boundary row must be replayed.
+connection bo_after
+query
+SELECT COUNT(*) FROM bo_idx;
+----
+count
+2
+
+# Seed row still searchable (durable in the segments).
+connection bo_after
+query
+SELECT id FROM bo_idx WHERE body @@ ts_phrase('alpha');
+----
+id
+1
+
+# The boundary row must be searchable: the entry sitting exactly at
+# durable_offset must NOT be dropped by the replay skip.
+connection bo_after
+query
+SELECT id FROM bo_idx WHERE body @@ ts_phrase('delta echo');
+----
+id
+2

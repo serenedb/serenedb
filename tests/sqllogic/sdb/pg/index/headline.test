@@ -674,7 +674,7 @@ QUERY PLAN
 │           IRESEARCH_SCAN          │
 │    ────────────────────────────   │
 │         Index: hl_docs_idx        │
-│          Lookup: rocksdb          │
+│           Lookup: table           │
 │                                   │
 │              Filter:              │
 │      ┌─────────────────────┐      │
@@ -724,7 +724,7 @@ QUERY PLAN
 │           IRESEARCH_SCAN          │
 │    ────────────────────────────   │
 │         Index: hl_docs_idx        │
-│          Lookup: rocksdb          │
+│           Lookup: table           │
 │                                   │
 │              Filter:              │
 │      ┌─────────────────────┐      │
@@ -831,7 +831,7 @@ QUERY PLAN
 │                IRESEARCH_SCAN               │
 │    ──────────────────────────────────────   │
 │             Index: hl_multi_idx             │
-│               Lookup: rocksdb               │
+│                Lookup: table                │
 │                                             │
 │                   Filter:                   │
 │ ┌──────────────────────────────────────────┐│
@@ -1191,9 +1191,10 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: hl_dyn       │
+│   Type: Sequential Scan   │
 │      Projections: doc     │
 │                           │
 │          ~2 rows          │
@@ -1220,9 +1221,10 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│          SEQ_SCAN         │
 │    ────────────────────   │
 │       Table: hl_dyn       │
+│   Type: Sequential Scan   │
 │      Projections: doc     │
 │                           │
 │          ~2 rows          │

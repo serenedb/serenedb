@@ -44,6 +44,7 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include <iresearch/search/filter_optimizer.hpp>
 
 #include "app/app_server.h"
+#include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/exceptions.h"
 #include "basics/lifecycle.h"
@@ -51,11 +52,10 @@ ABSL_FLAG(uint32_t, server_compaction_threads, 0,
 #include "basics/number_of_cores.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
-#include "catalog/search_common.h"
+#include "catalog/inverted_index.h"
 #include "catalog/view.h"
 #include "rest_server/database_path_feature.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 #include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
 
@@ -63,6 +63,8 @@ using namespace std::chrono_literals;
 
 namespace sdb::search {
 namespace {
+
+constexpr std::string_view kEngineDirRoot = "engine_search";
 
 uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
                              uint32_t div) noexcept {
@@ -123,7 +125,7 @@ SearchEngine::SearchEngine()
 
 SearchEngine::~SearchEngine() { gInstance = nullptr; }
 
-SearchEngine& GetSearchEngine() { return SearchEngine::instance(); }
+SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
 
 void SearchEngine::start() {
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
@@ -180,15 +182,10 @@ std::tuple<size_t, size_t, size_t> SearchEngine::stats(ThreadGroup id) const {
   return _thread_pools->Get(id).stats();
 }
 
-std::pair<size_t, size_t> SearchEngine::limits(ThreadGroup id) const {
-  auto threads = _thread_pools->Get(id).threads();
-  return {threads, threads};
-}
-
 std::filesystem::path SearchEngine::GetPersistedPath(
   ObjectId database_id) const {
   std::filesystem::path path = _dir_feature.directory();
-  path /= StaticStrings::kEngineDirRoot;
+  path /= kEngineDirRoot;
   path /= absl::StrCat(database_id);
   return path;
 }

@@ -15,7 +15,7 @@ INSERT INTO variant_src VALUES
 
 
 statement count 4
-COPY variant_src TO '/tmp/${__DATABASE__}_variant.parquet' (FORMAT PARQUET);
+COPY variant_src TO '${__TEST_DIR__}/variant.parquet' (FORMAT PARQUET);
 
 
 statement ok
@@ -23,7 +23,7 @@ CREATE TABLE variant_pq(id INTEGER, x VARIANT);
 
 
 statement count 4
-COPY variant_pq FROM '/tmp/${__DATABASE__}_variant.parquet' (FORMAT PARQUET);
+COPY variant_pq FROM '${__TEST_DIR__}/variant.parquet' (FORMAT PARQUET);
 
 
 query
@@ -37,7 +37,7 @@ id	x
 
 
 statement count 4
-COPY variant_src TO '/tmp/${__DATABASE__}_variant.csv' (FORMAT CSV, HEADER TRUE);
+COPY variant_src TO '${__TEST_DIR__}/variant.csv' (FORMAT CSV, HEADER TRUE);
 
 
 # Read the CSV back into a TEXT column to verify the on-disk content.
@@ -49,7 +49,7 @@ CREATE TABLE variant_csv_text(id INTEGER, x TEXT);
 
 
 statement count 4
-COPY variant_csv_text FROM '/tmp/${__DATABASE__}_variant.csv'
+COPY variant_csv_text FROM '${__TEST_DIR__}/variant.csv'
   (FORMAT CSV, HEADER TRUE);
 
 
@@ -64,7 +64,7 @@ id	x
 
 
 statement count 4
-COPY (SELECT * FROM variant_src ORDER BY id) TO '/tmp/${__DATABASE__}_variant_subq.parquet' (FORMAT PARQUET);
+COPY (SELECT * FROM variant_src ORDER BY id) TO '${__TEST_DIR__}/variant_subq.parquet' (FORMAT PARQUET);
 
 
 statement ok
@@ -72,7 +72,7 @@ CREATE TABLE variant_pq2(id INTEGER, x VARIANT);
 
 
 statement count 4
-COPY variant_pq2 FROM '/tmp/${__DATABASE__}_variant_subq.parquet' (FORMAT PARQUET);
+COPY variant_pq2 FROM '${__TEST_DIR__}/variant_subq.parquet' (FORMAT PARQUET);
 
 
 query

@@ -51,6 +51,4 @@ void UpdateTickServer(Tick tick) {
   }
 }
 
-Tick GetCurrentTickServer() { return gCurrentTick; }
-
 }  // namespace sdb

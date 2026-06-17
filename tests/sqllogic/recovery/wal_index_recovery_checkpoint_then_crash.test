@@ -1,0 +1,117 @@
+control substitution on
+
+# Checkpoint, then a post-checkpoint delta with no further refresh, then crash.
+# The checkpoint truncates the store WAL and starts a fresh generation; the
+# index is durable up to the checkpoint baseline. Everything written after the
+# checkpoint lives only in the new-generation WAL (never refreshed into the
+# segments). Recovery replays the whole post-checkpoint delta exactly once.
+#
+# This exercises the generation-stamping fix: the durable cursor stamped at the
+# checkpoint barrier must carry the NEW (post-checkpoint) generation and a zero
+# offset, so on recovery the cursor generation matches the loaded iteration and
+# the post-checkpoint delta replays from offset 0 -- exactly once, no duplicates.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ck_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE ck_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX ck_idx ON ck_t USING inverted(id, body ck_dict);
+
+statement ok
+INSERT INTO ck_t SELECT i, 'base_' || i FROM range(0, 2000) AS t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ck_t;
+
+# Checkpoint: store WAL truncated, iteration bumped, index durable to baseline.
+statement ok
+CHECKPOINT;
+
+query
+SELECT COUNT(*) FROM ck_idx;
+----
+count
+2000
+
+# Post-checkpoint delta, never refreshed -> only in the new-generation WAL.
+statement ok
+INSERT INTO ck_t SELECT i, 'delta_' || i FROM range(2000, 4000) AS t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection ck_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) ck_t;
+
+connection ck_after
+query
+SELECT COUNT(*) FROM ck_t;
+----
+count
+4000
+
+connection ck_after
+query
+SELECT COUNT(*) FROM ck_idx;
+----
+count
+4000
+
+# Baseline (durable through the checkpoint) still searchable, exactly once.
+connection ck_after
+query
+SELECT COUNT(*) FROM ck_idx WHERE body @@ ts_phrase('base_0');
+----
+count
+1
+
+# Whole post-checkpoint delta replayed once.
+connection ck_after
+query
+SELECT id FROM ck_idx WHERE body @@ ts_phrase('delta_2000');
+----
+id
+2000
+
+connection ck_after
+query
+SELECT id FROM ck_idx WHERE body @@ ts_phrase('delta_3999');
+----
+id
+3999
+
+connection ck_after
+query
+SELECT COUNT(*) FROM ck_idx WHERE body @@ ts_phrase('delta_3000');
+----
+count
+1
+
+connection ck_after
+statement ok
+DROP INDEX ck_idx;
+
+connection ck_after
+statement ok
+DROP TABLE ck_t;
+
+connection ck_after
+statement ok
+DROP TEXT SEARCH DICTIONARY ck_dict;

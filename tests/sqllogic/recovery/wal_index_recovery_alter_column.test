@@ -1,0 +1,74 @@
+control substitution on
+
+# ALTER TABLE ADD/DROP COLUMN on an indexed table is durable -- the catalog
+# change and the store-table schema change commit in one __sdb_store
+# transaction -- and the inverted index stays consistent across a crash: the
+# schema change persists and a post-ALTER write replays from the WAL.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ac_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE ac_t(id INTEGER PRIMARY KEY, body TEXT, tag TEXT);
+
+statement ok
+CREATE INDEX ac_idx ON ac_t USING inverted(body ac_dict);
+
+statement count 1
+INSERT INTO ac_t VALUES (1, 'alpha bravo', 'keep');
+
+statement ok
+VACUUM (REFRESH_TABLE) ac_t;
+
+# Durable schema changes: add a backfilled column, drop a non-indexed column.
+statement ok
+ALTER TABLE ac_t ADD COLUMN score INTEGER DEFAULT 7;
+
+statement ok
+ALTER TABLE ac_t DROP COLUMN tag;
+
+# Post-ALTER write with the index commit faulted -> store WAL only.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement count 1
+INSERT INTO ac_t VALUES (2, 'charlie delta', 9);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection ac_after
+statement ok retry 60 backoff 1s
+VACUUM (REFRESH_TABLE) ac_t;
+
+# The schema change persisted: `score` exists (backfilled row 1, inserted
+# row 2); `tag` is gone.
+connection ac_after
+query
+SELECT id, body, score FROM ac_t ORDER BY id;
+----
+id	body	score
+1	alpha bravo	7
+2	charlie delta	9
+
+# The index recovered the post-ALTER row from the WAL.
+connection ac_after
+query
+SELECT id FROM ac_idx WHERE body @@ ts_phrase('charlie delta');
+----
+id
+2
+
+connection ac_after
+query
+SELECT id FROM ac_idx WHERE body @@ ts_phrase('alpha');
+----
+id
+1

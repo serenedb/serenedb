@@ -39,15 +39,4 @@ class BytesOutput : public DataOutput {
   bstring* _buf;
 };
 
-class StrOutput : public DataOutput {
- public:
-  void WriteByte(byte_type b) final { WriteData(&b, 1); }
-
-  void WriteData(const byte_type* b, uint64_t size) final {
-    out.append(b, size);
-  }
-
-  bstring out;
-};
-
 }  // namespace irs

@@ -19,9 +19,6 @@ VACUUM (REFRESH_TABLE) t;
 # concurrent DROP TABLE publishes a snapshot missing the relation and
 # GetIndexesByRelation asserts on the dependency map.
 connection reader
-statement ok
-SET sdb_read_your_own_writes = 0;
-
 
 connection reader
 statement ok

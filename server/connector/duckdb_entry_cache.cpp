@@ -38,6 +38,7 @@
 
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
+#include "catalog/catalog.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
@@ -324,17 +325,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
         catalog, schema, *info, std::move(view), std::move(indexed_col_indices),
         std::move(inverted_index_ptr));
     }
-    if (index.GetType() == catalog::ObjectType::SecondaryIndex) {
-      const auto& sec_index =
-        basics::downCast<const catalog::SecondaryIndex>(index);
-      auto sk_shard = snapshot.GetIndexShard(index.GetId());
-      if (!sk_shard) {
-        return nullptr;
-      }
-      return duckdb::make_uniq<ViewSecondaryIndexScanEntry>(
-        catalog, schema, *info, std::move(view), std::move(indexed_col_indices),
-        sk_shard->GetId(), sec_index.IsUnique());
-    }
+    // Plain (secondary) indexes on views no longer exist; CREATE INDEX
+    // rejects them at bind time.
     return nullptr;
   }
 
@@ -355,17 +347,14 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
       std::move(built.indexed_col_indices), std::move(inverted_index_ptr));
   }
 
-  // Secondary (rocksdb-backed) index: find the shard for scanning.
+  // Secondary index: native ART on the store table; identity is the index id.
   const auto& sec_index =
     basics::downCast<const catalog::SecondaryIndex>(index);
-  auto shard = snapshot.GetIndexShard(index.GetId());
-  if (!shard) {
-    return nullptr;
-  }
-  auto sk_shard_id = shard->GetId();
+  auto secondary_index_id = index.GetId();
   return duckdb::make_uniq<TableSecondaryIndexScanEntry>(
     catalog, schema, *built.info, std::move(table),
-    std::move(built.indexed_col_indices), sk_shard_id, sec_index.IsUnique());
+    std::move(built.indexed_col_indices), secondary_index_id,
+    sec_index.IsUnique());
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::EnsureEntry(

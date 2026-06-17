@@ -1,0 +1,79 @@
+# Transaction-control wiring.
+#
+# SAVEPOINT / RELEASE / ROLLBACK TO are not wired: there is no PEG grammar
+# production for them (and DuckDB has no savepoint executor), so they fail with
+# a clean syntax error rather than crashing.
+#
+# BEGIN ... READ ONLY is enforced through the store: writes are rejected, reads
+# are allowed.
+
+
+# --- SAVEPOINT family is unsupported (clean syntax error) ---
+
+statement error
+SAVEPOINT sp1;
+----
+db error: ERROR: syntax error at or near "sp1"
+
+
+statement error
+RELEASE SAVEPOINT sp1;
+----
+db error: ERROR: syntax error at or near "SAVEPOINT"
+
+
+statement error
+ROLLBACK TO SAVEPOINT sp1;
+----
+db error: ERROR: syntax error at or near "TO"
+
+
+# --- BEGIN READ ONLY rejects writes, allows reads ---
+
+statement ok
+CREATE TABLE txro(id INTEGER PRIMARY KEY, v INTEGER);
+
+
+statement ok
+INSERT INTO txro VALUES (1, 10);
+
+
+statement ok
+BEGIN READ ONLY;
+
+
+statement error
+INSERT INTO txro VALUES (2, 20);
+----
+db error: ERROR: Cannot write to database "__sdb_store" - transaction is launched in read-only mode
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN READ ONLY;
+
+
+query
+SELECT id, v FROM txro ORDER BY id;
+----
+id v
+1 10
+
+
+statement ok
+COMMIT;
+
+
+# the rejected write left no row behind
+query
+SELECT count(*) AS n FROM txro;
+----
+n
+1
+
+
+statement ok
+DROP TABLE txro;

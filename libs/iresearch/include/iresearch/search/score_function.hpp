@@ -90,21 +90,6 @@ struct DefaultScore final : public ScoreOperator {
   void ScorePostingBlock(score_t* res) const noexcept final;
 };
 
-// For disjunction/conjunction it's just sum of sub-iterators max score
-// For iterator without score it depends on count of documents in iterator
-// For wanderator it's max score for whole skip-list
-// TODO(mbkkt) tail better here and not affect correctness
-//  but to support it we need to know max value in the tail blocks.
-//  Open question: how do it without read next blocks?
-// TODO(mbkkt) At least when iterator exhausted, we could set it to zero.
-struct UpperBounds {
-  score_t tail = std::numeric_limits<score_t>::max();
-  score_t leaf = std::numeric_limits<score_t>::max();
-#ifdef SDB_GTEST
-  std::span<const score_t> levels;  // levels.back() == leaf
-#endif
-};
-
 class ScoreFunction {
   inline static constinit DefaultScore gDefaultScore;
 

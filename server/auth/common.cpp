@@ -30,17 +30,6 @@ static_assert(auth::Level::Undefined < auth::Level::None, "undefined < none");
 static_assert(auth::Level::None < auth::Level::RO, "none < ro");
 static_assert(auth::Level::RO < auth::Level::RW, "none < ro");
 
-auth::Level sdb::auth::ConvertToAuthLevel(std::string_view grants) {
-  if (grants == "rw") {
-    return auth::Level::RW;
-  } else if (grants == "ro") {
-    return auth::Level::RO;
-  } else if (grants == "none" || grants.empty()) {
-    return auth::Level::None;
-  }
-  SDB_THROW(ERROR_BAD_PARAMETER, "expecting access type 'rw', 'ro' or 'none'");
-}
-
 std::string_view sdb::auth::ConvertFromAuthLevel(auth::Level lvl) {
   if (lvl == auth::Level::RW) {
     return "rw";

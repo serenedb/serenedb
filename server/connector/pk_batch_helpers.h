@@ -54,37 +54,11 @@ inline void AppendPrimaryKey(T& pk, std::string_view pk_bytes) {
 }
 
 template<typename T>
-inline void SetPrimaryKey(T& pk, size_t pos, std::string_view pk_bytes) {
-  if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
-    pk.Set(pos, pk_bytes);
-  } else if constexpr (std::is_same_v<T, PrimaryKeyI64>) {
-    pk.Set(pos, primary_key::ReadSigned<int64_t>(pk_bytes));
-  } else {
-    static_assert(std::is_same_v<T, PrimaryKeyI64I64>);
-    auto [fi, rn] = DecodeI64I64(pk_bytes);
-    pk.Set(pos, fi, rn);
-  }
-}
-
-template<typename T>
 inline size_t PrimaryKeysSize(const T& pk) {
   if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
     return pk.views.size();
   } else {
     return pk.rows.size();
-  }
-}
-
-template<typename T>
-inline void PkResize(T& pk, size_t n) {
-  if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
-    pk.views.resize(n);
-  } else if constexpr (std::is_same_v<T, PrimaryKeyI64>) {
-    pk.rows.resize(n);
-  } else {
-    static_assert(std::is_same_v<T, PrimaryKeyI64I64>);
-    pk.files.resize(n);
-    pk.rows.resize(n);
   }
 }
 

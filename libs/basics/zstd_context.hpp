@@ -37,9 +37,7 @@ struct ZstdDCtxDeleter {
   void operator()(ZSTD_DCtx_s* dctx) const noexcept;  // ZSTD_freeDCtx
 };
 
-// Owning, reusable zstd contexts: create once, reset per call via
-// ZSTD_compressCCtx / ZSTD_decompressDCtx, so a caller compressing/decompressing
-// many buffers doesn't allocate and free a context each time.
+
 using ZstdCCtxPtr = std::unique_ptr<ZSTD_CCtx_s, ZstdCCtxDeleter>;
 using ZstdDCtxPtr = std::unique_ptr<ZSTD_DCtx_s, ZstdDCtxDeleter>;
 

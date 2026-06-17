@@ -28,6 +28,7 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
+#include "basics/log.h"
 #include "basics/system-compiler.h"
 #include "search/search_db_wal.h"
 #include "search/search_table_shard.h"
@@ -148,7 +149,14 @@ void SearchTableTransaction::Commit() {
     uint64_t tick = record_tick;
     for (size_t i = w.transactions.size(); i-- > 0;) {
       auto& trx = *w.transactions[i];
-      trx.Commit(tick);
+      // The WAL record is already fsynced, so a failed iresearch commit here
+      // leaves the durable log inconsistent with the live index -- crash so
+      // recovery re-applies the record cleanly.
+      const bool committed = trx.Commit(tick);
+      SDB_FATAL_IF(
+        SEARCH, !committed,
+        "search-table commit: iresearch trx Commit failed for table ",
+        table_id.id(), " tick=", tick);
       tick -= trx.GetQueries() + 1;
     }
     // TRUNCATE: wipe the shard after the WAL fsync (the cleared state publishes

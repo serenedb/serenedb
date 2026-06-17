@@ -187,7 +187,13 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       // Release the insert Document (and the delete filter) before committing.
       ctx.insert_sink.reset();
       ctx.delete_sink.reset();
-      ctx.trx.Commit(ctx.max_tick);
+      // A failed commit during replay leaves the index inconsistent with the
+      // durable WAL it was rebuilt from -- unrecoverable, so crash.
+      const bool committed = ctx.trx.Commit(ctx.max_tick);
+      SDB_FATAL_IF(SEARCH, !committed,
+                   "search-table WAL recovery: iresearch trx Commit failed for "
+                   "table ",
+                   table_id.id(), " tick=", ctx.max_tick);
       auto& info = shards.at(table_id);
       info.search->Commit();
       info.search->SyncNumRowsFromIndex();

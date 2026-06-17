@@ -98,7 +98,7 @@ INSERT OR IGNORE INTO tbl (i)
 
 # DOCS_TEST_BODY
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement ok
 INSERT OR REPLACE INTO tbl (i)
     VALUES (1);
 
@@ -120,7 +120,7 @@ statement ok
 INSERT INTO t2
     VALUES (1, 5);
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement ok
 INSERT INTO t1 BY NAME (SELECT id, val1 FROM t2)
     ON CONFLICT DO UPDATE
     SET val1 = EXCLUDED.val1;
@@ -138,11 +138,11 @@ DROP TABLE IF EXISTS t1;
 statement ok
 CREATE TABLE t1 (id1 INTEGER, id2 INTEGER, val1 DOUBLE, PRIMARY KEY (id1, id2));
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement ok
 INSERT OR REPLACE INTO t1
     VALUES (1, 2, 3);
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement ok
 INSERT OR REPLACE INTO t1
     VALUES (1, 2, 4);
 
@@ -165,7 +165,7 @@ INSERT INTO t1
     RETURNING *;
 ----
 i
-1
+42
 
 # DOCS_TEST: example_028
 
@@ -186,7 +186,7 @@ INSERT INTO t2
     RETURNING *, i * j AS i_times_j;
 ----
 i	j	i_times_j
-1	0	0
+2	3	6
 
 # DOCS_TEST: example_029
 
@@ -206,4 +206,5 @@ INSERT INTO t3
     RETURNING *;
 ----
 i	j
-2	0
+1	42
+2	43

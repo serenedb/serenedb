@@ -9,7 +9,7 @@ statement ok
 INSERT INTO tbl
     VALUES (1, 42);
 
-statement error db error: ERROR: Unsupported MERGE INTO action type for SereneDB
+statement ok
 INSERT INTO tbl
     VALUES (1, 84)
     ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
@@ -18,4 +18,4 @@ query
 SELECT * FROM tbl;
 ----
 i	j
-1	42
+1	84

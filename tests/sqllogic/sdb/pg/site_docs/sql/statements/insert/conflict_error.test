@@ -13,5 +13,4 @@ statement error
 INSERT INTO tbl
     VALUES (1, 84);
 ----
-db error: ERROR: duplicate key value violates unique constraint "tbl_pkey"
-DETAIL: Key (i)=(1) already exists.
+db error: ERROR: Duplicate key "i: 1" violates primary key constraint.

@@ -320,6 +320,7 @@ WHERE temp_lo = max(temp_lo);
 ----
 db error: ERROR: WHERE clause cannot contain aggregates!
 
+
 # DOCS_TEST: example_024
 
 # DOCS_TEST_BODY

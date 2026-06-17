@@ -66,7 +66,7 @@ struct ExclusionDoubleNegationRule {
 
 bool NotSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   size_t negations = 0;
-  Filter::ptr* inner = &slot;
+  auto* inner = &slot;
   while ((*inner)->type() == Type<Not>::id()) {
     auto& node = sdb::basics::downCast<Not>(**inner);
     SDB_ASSERT(node.Boost() == kNoBoost);

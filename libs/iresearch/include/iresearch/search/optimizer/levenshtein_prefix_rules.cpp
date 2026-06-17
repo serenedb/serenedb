@@ -42,19 +42,10 @@ struct LevenshteinPrefixFusionRule {
 };
 
 struct PrefixEntry {
-  size_t index;
+  const Filter* node;
   field_id field;
   bytes_view term;
 };
-
-bool ImpliesPrefix(const Filter& child, field_id field, bytes_view prefix) {
-  if (child.type() != Type<ByEditDistance>::id()) {
-    return false;
-  }
-  const auto& filter = sdb::basics::downCast<ByEditDistance>(child);
-  return filter.field_id() == field &&
-         bytes_view{filter.options().prefix}.starts_with(prefix);
-}
 
 bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
                                         const OptimizeContext& /*ctx*/) {
@@ -65,7 +56,8 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
   for (size_t i = 0; i < children.size(); ++i) {
     if (children[i]->type() == Type<ByPrefix>::id()) {
       auto& prefix = sdb::basics::downCast<ByPrefix>(*children[i]);
-      prefixes.emplace_back(i, prefix.field_id(), prefix.options().term);
+      prefixes.emplace_back(children[i].get(), prefix.field_id(),
+                            prefix.options().term);
     }
   }
   if (prefixes.empty()) {
@@ -73,6 +65,7 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
   }
 
   bool changed = false;
+  sdb::containers::FlatHashSet<const Filter*> remove_prefixes;
   for (auto& child : children) {
     if (child->type() != Type<ByEditDistance>::id()) {
       continue;
@@ -86,8 +79,12 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
     const PrefixEntry* best = nullptr;
     for (const auto& entry : prefixes) {
       if (entry.field != filter.field_id() ||
-          entry.term.size() <= opts.prefix.size() ||
           !bytes_view{target}.starts_with(entry.term)) {
+        continue;
+      }
+      changed = true;
+      remove_prefixes.insert(entry.node);
+      if (entry.term.size() <= opts.prefix.size()) {
         continue;
       }
       if (best == nullptr || entry.term.size() > best->term.size()) {
@@ -100,33 +97,12 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
 
     opts.prefix.assign(target, 0, best->term.size());
     opts.term.assign(target, best->term.size());
-    changed = true;
   }
+  auto it = std::remove_if(
+    children.begin(), children.end(),
+    [&](const auto& child) { return remove_prefixes.erase(child.get()) == 1; });
+  children.erase(it, children.end());
 
-  std::vector<bool> remove(children.size(), false);
-  for (const auto& entry : prefixes) {
-    for (size_t j = 0; j < children.size(); ++j) {
-      if (j != entry.index &&
-          ImpliesPrefix(*children[j], entry.field, entry.term)) {
-        remove[entry.index] = true;
-        break;
-      }
-    }
-  }
-
-  size_t removed = 0;
-  auto out = children.begin();
-  for (size_t i = 0; i < children.size(); ++i) {
-    if (remove[i]) {
-      ++removed;
-      continue;
-    }
-    *out++ = std::move(children[i]);
-  }
-  if (removed != 0) {
-    children.erase(out, children.end());
-    changed = true;
-  }
   return changed;
 }
 

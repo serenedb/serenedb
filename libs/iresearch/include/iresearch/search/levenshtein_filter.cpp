@@ -22,6 +22,7 @@
 
 #include "levenshtein_filter.hpp"
 
+#include "basics/exceptions.h"
 #include "basics/noncopyable.hpp"
 #include "basics/shared.hpp"
 #include "basics/std.hpp"
@@ -209,13 +210,13 @@ Filter::Query::ptr PrepareLevenshteinFilter(
 }  // namespace
 
 field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions& opts) {
-  SDB_VERIFY(false,
-             "ByEditDistance must be lowered by the optimizer before visitor");
+  SDB_THROW(sdb::ERROR_INTERNAL,
+            "ByEditDistance must be lowered by the optimizer before visitor");
 }
 
 Filter::Query::ptr ByEditDistance::prepare(const PrepareContext&) const {
-  SDB_VERIFY(false,
-             "ByEditDistance must be lowered by the optimizer before prepare");
+  SDB_THROW(sdb::ERROR_INTERNAL,
+            "ByEditDistance must be lowered by the optimizer before prepare");
 }
 
 Filter::Query::ptr LevenshteinAutomatonFilter::prepare(

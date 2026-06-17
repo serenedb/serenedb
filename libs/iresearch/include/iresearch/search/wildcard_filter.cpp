@@ -22,6 +22,7 @@
 
 #include "wildcard_filter.hpp"
 
+#include "basics/exceptions.h"
 #include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -30,8 +31,8 @@
 namespace irs {
 
 Filter::Query::ptr ByWildcard::prepare(const PrepareContext&) const {
-  SDB_VERIFY(false,
-             "ByWildcard must be lowered by the optimizer before prepare");
+  SDB_THROW(sdb::ERROR_INTERNAL,
+            "ByWildcard must be lowered by the optimizer before prepare");
 }
 
 Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,

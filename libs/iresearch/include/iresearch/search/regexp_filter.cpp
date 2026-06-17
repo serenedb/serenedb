@@ -20,6 +20,7 @@
 
 #include "regexp_filter.hpp"
 
+#include "basics/exceptions.h"
 #include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -28,7 +29,8 @@
 namespace irs {
 
 Filter::Query::ptr ByRegexp::prepare(const PrepareContext&) const {
-  SDB_VERIFY(false, "ByRegexp must be lowered by the optimizer before prepare");
+  SDB_THROW(sdb::ERROR_INTERNAL,
+            "ByRegexp must be lowered by the optimizer before prepare");
 }
 
 Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,

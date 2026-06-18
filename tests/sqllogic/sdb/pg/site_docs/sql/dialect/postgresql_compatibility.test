@@ -203,3 +203,15 @@ SELECT to_date('2024-01-01', 'YYYY-MM-DD');
 ----
 db error: ERROR: Scalar Function with name to_date does not exist!
 Did you mean "to_days"?
+
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+SELECT date_part('year', TIMESTAMP '2021-08-03 11:59:44.123456') AS finite,
+       date_part('year', 'infinity'::TIMESTAMP) AS infinite;
+----
+finite	infinite
+2021	NULL

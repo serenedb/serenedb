@@ -58,6 +58,12 @@ success
 
 # DOCS_TEST: example_007
 
+statement ok
+CALL truncate_duckdb_logs();
+
+statement ok
+CALL enable_logging('HTTP');
+
 # DOCS_TEST_BODY
 
 statement ok
@@ -83,21 +89,19 @@ success
 
 # DOCS_TEST_BODY
 
-skipif serenedb
-
 query
 CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
 ----
+success
 
 # DOCS_TEST: example_011
 
 # DOCS_TEST_BODY
 
-skipif serenedb
-
 query
 CALL enable_logging(storage_path = 'path/to/store/logs');
 ----
+success
 
 # DOCS_TEST: example_012
 
@@ -153,23 +157,20 @@ success
 
 # DOCS_TEST_BODY
 
-skipif serenedb
-
 query
 -- regular invocation
 CALL enable_logging(storage = 'file', storage_config = {'path': 'path/to/store/logs'});
 ----
-
-skipif serenedb
+success
 
 query
 -- using shorthand for common path storage config param
 CALL enable_logging(storage = 'file', storage_path = 'path/to/store/logs');
 ----
-
-skipif serenedb
+success
 
 query
 -- omitting `storage = 'file'` -> is implied from presence of `storage_config`
 CALL enable_logging(storage_config = {'path': 'path/to/store/logs'});
 ----
+success

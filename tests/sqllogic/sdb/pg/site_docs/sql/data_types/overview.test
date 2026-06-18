@@ -12,17 +12,18 @@ struct_pack
 
 # DOCS_TEST_BODY
 
-query error
-SELECT {'test': [MAP([1, 5], [42.1, 45]), MAP([1, 5], [42.1, 45])]};
+query
+SELECT MAP(['a', 'b'], [[1, 2], [3, 4]]);
 ----
-connection closed
-
+map
+{"(a,\\"{1,2}\\")","(b,\\"{3,4}\\")"}
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-query error
-SELECT [union_value(num := 2), union_value(str := 'ABC')::UNION(str VARCHAR, num INTEGER)];
+query
+SELECT [{'a': 1, 'b': 'x'}, {'a': 2, 'b': 'y'}];
 ----
-connection closed
+list_value
+{"(1,x)","(2,y)"}

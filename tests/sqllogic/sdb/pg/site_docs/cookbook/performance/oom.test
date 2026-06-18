@@ -2,16 +2,12 @@
 
 # DOCS_TEST_BODY
 
-statement error
-SET threads = ⟨lower_than_the_number_of_available_threads⟩;
-----
-db error: ERROR: Failed to cast value: Could not convert string '⟨lower_than_the_number_of_available_threads⟩' to INT64
+statement ok
+SET threads = 4;
 
 
-statement error
-SET memory_limit = ⟨lower_than_80%_of_system_memory⟩;
-----
-db error: ERROR: SET value cannot contain column names
+statement ok
+SET memory_limit = '4GB';
 
 
 statement ok

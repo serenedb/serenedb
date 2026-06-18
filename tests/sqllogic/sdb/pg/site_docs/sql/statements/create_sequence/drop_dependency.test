@@ -14,8 +14,11 @@ CREATE TABLE tbl (
 statement ok
 INSERT INTO tbl(s) VALUES ('default is the next value from id_sequence');
 
-statement error db error: ERROR: ALTER TABLE through DuckDB
+statement error
 ALTER TABLE tbl ALTER COLUMN id SET DEFAULT NULL;
+----
+db error: ERROR: this ALTER TABLE operation is not supported
+
 
 statement ok
 INSERT INTO tbl(s) VALUES ('default is NULL');

@@ -5,5 +5,9 @@ CREATE TABLE tbl (i INTEGER PRIMARY KEY, j VARCHAR);
 
 # DOCS_TEST_BODY
 
-statement ok
+query
 DESCRIBE SELECT * FROM tbl;
+----
+column_name	column_type	null	key	default	extra
+i	INTEGER	NO	PRI	NULL	NULL
+j	VARCHAR	YES	NULL	NULL	NULL

@@ -72,7 +72,7 @@ statement ok
 DETACH stations_fixture;
 
 # DOCS_TEST_RAW
-#| ATTACH 'https://blobs.duckdb.org/databases/stations.duckdb' AS stations_db;
+#| ATTACH 's3://my-bucket/stations.duckdb' AS stations_db;
 
 # DOCS_TEST_BODY
 

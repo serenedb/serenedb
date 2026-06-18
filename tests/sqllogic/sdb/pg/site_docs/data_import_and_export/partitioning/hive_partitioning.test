@@ -104,15 +104,11 @@ TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_e
 
 statement ok
 COPY (SELECT * FROM (VALUES
-    (1, 'alpha', 10),
-    (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_1_parquet_1.parquet' (FORMAT parquet);
-
-statement ok
-COPY (SELECT * FROM (VALUES
-    (1, 'alpha', 10),
-    (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_1_parquet_2.parquet' (FORMAT parquet);
+    (1, 'alpha', 10, 2024, 1),
+    (2, 'beta', 20, 2024, 2)
+) AS t("id", "name", "value", "year", "month"))
+TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_test'
+(FORMAT parquet, PARTITION_BY (year, month), OVERWRITE_OR_IGNORE);
 
 # DOCS_TEST_RAW
 #| FROM read_parquet('test/*/*/*.parquet', hive_partitioning = false);
@@ -122,23 +118,21 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_1_parquet_*.parquet', hive_partitioning = false);
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_test/*/*/*.parquet', hive_partitioning = false)
+ORDER BY id;
 ----
 id	name	value
-1	alpha	10
-2	beta	20
 1	alpha	10
 2	beta	20
 
 
 query
-FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_1_parquet_*.parquet', hive_partitioning = true);
+FROM read_parquet('/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_004_test/*/*/*.parquet', hive_partitioning = true)
+ORDER BY id;
 ----
-id	name	value
-1	alpha	10
-2	beta	20
-1	alpha	10
-2	beta	20
+id	name	value	month	year
+1	alpha	10	1	2024
+2	beta	20	2	2024
 
 # DOCS_TEST: example_005
 
@@ -214,15 +208,11 @@ Did you mean: "partitioned_write_flush_threshold"
 
 statement ok
 COPY (SELECT * FROM (VALUES
-    (1, 'alpha', 10),
-    (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_008_1_parquet_1.parquet' (FORMAT parquet);
-
-statement ok
-COPY (SELECT * FROM (VALUES
-    (1, 'alpha', 10),
-    (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_008_1_parquet_2.parquet' (FORMAT parquet);
+    (1, 'alpha', 10, DATE '2024-01-01', 5),
+    (2, 'beta', 20, DATE '2024-02-01', 6)
+) AS t("id", "name", "value", "release", "orders"))
+TO '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_008_dir'
+(FORMAT parquet, PARTITION_BY (release, orders), OVERWRITE_OR_IGNORE);
 
 # DOCS_TEST_RAW
 #| SELECT *
@@ -234,10 +224,15 @@ COPY (SELECT * FROM (VALUES
 
 # DOCS_TEST_BODY
 
-query error db error: ERROR: Unknown hive_type: "release" does not appear to be a partition
+query
 SELECT *
 FROM read_parquet(
-    '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_008_1_parquet_*.parquet',
+    '/tmp/${__DATABASE__}_data_import_and_export_partitioning_hive_partitioning_example_008_dir/**/*.parquet',
     hive_partitioning = true,
     hive_types = {'release': DATE, 'orders': BIGINT}
-);
+)
+ORDER BY id;
+----
+id	name	value	orders	release
+1	alpha	10	5	2024-01-01
+2	beta	20	6	2024-02-01

@@ -2,13 +2,27 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha'),
+    (2, 'beta')
+) AS t("hello", "world")) TO '/tmp/${__DATABASE__}_cookbook_performance_file_formats_example_001_part_0001.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| SELECT Prompt FROM sniff_csv('part-0001.csv');
+
 # DOCS_TEST_BODY
 
-statement error
-.mode line
-SELECT Prompt FROM sniff_csv('part-0001.csv');
+query
+SELECT replace(
+    Prompt,
+    '/tmp/${__DATABASE__}_cookbook_performance_file_formats_example_001_part_0001.csv',
+    'file_path.csv'
+) AS Prompt
+FROM sniff_csv('/tmp/${__DATABASE__}_cookbook_performance_file_formats_example_001_part_0001.csv');
 ----
-db error: ERROR: syntax error at or near "."
+prompt
+FROM read_csv('file_path.csv', auto_detect=false, delim=',', quote='', escape='', new_line='\\n', skip=0, comment='', header=true, columns={'hello': 'BIGINT', 'world': 'VARCHAR'});
 
 
 # DOCS_TEST: example_002

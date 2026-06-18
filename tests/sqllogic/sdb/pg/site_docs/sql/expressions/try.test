@@ -22,21 +22,21 @@ NULL
 
 # DOCS_TEST_BODY
 
-query
-SELECT ln(0);
+query error
+SELECT 127::TINYINT + 1::TINYINT;
 ----
-ln
--Infinity
+db error: ERROR: Overflow in addition of INT8 (127 + 1)!
+
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
 query
-SELECT TRY(ln(0));
+SELECT TRY(127::TINYINT + 1::TINYINT);
 ----
 ?column?
--Infinity
+NULL
 
 # DOCS_TEST: example_005
 

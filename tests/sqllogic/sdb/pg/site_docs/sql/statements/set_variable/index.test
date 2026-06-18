@@ -90,11 +90,14 @@ SET VARIABLE list_of_files = (SELECT list(file) FROM csv_files);
 
 query ??
 -- read the CSV files
-SELECT * FROM read_csv(getvariable('list_of_files'), filename := True);
+SELECT
+    a,
+    replace(replace(filename, '/tmp/${__DATABASE__}_sql_statements_set_variable_index_example_004_1_', ''), '_csv.csv', '.csv') AS filename
+FROM read_csv(getvariable('list_of_files'), filename := True);
 ----
 a	filename
-42	/tmp/tests_sqllogic_sdb_pg_site_docs_sql_statements_set_var_wkyltzav_sql_statements_set_variable_index_example_004_1_test1_csv.csv
-84	/tmp/tests_sqllogic_sdb_pg_site_docs_sql_statements_set_var_wkyltzav_sql_statements_set_variable_index_example_004_1_test2_csv.csv
+42	test1.csv
+84	test2.csv
 
 # DOCS_TEST: example_005
 

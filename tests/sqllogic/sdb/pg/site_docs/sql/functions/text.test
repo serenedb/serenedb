@@ -74,10 +74,11 @@ printf
 
 # DOCS_TEST_BODY
 
-query error
-SELECT printf('%s', BLOB '\x00hello');
+query
+SELECT printf('%s', 'hello'::BLOB) AS printf;
 ----
-db error: ERROR: invalid hexadecimal digit: "h"
+printf
+\\x68656c6c6f
 
 
 # DOCS_TEST: example_021

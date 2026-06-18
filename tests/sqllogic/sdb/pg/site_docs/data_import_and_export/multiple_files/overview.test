@@ -133,12 +133,26 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT *
+SELECT
+    flightdate,
+    uniquecarrier,
+    origincityname,
+    destcityname,
+    distance,
+    replace(
+        replace(
+            filename,
+            '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv',
+            'flights1.csv'
+        ),
+        '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv',
+        'flights2.csv'
+    ) AS filename
 FROM read_csv(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv'], union_by_name = true, filename = true);
 ----
 flightdate	uniquecarrier	origincityname	destcityname	distance	filename
-2024-02-01	DL	Boston, MA	Chicago, IL	867	/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_1_flights1_csv.csv
-2024-02-01	DL	Boston, MA	Chicago, IL	867	/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_005_2_flights2_csv.csv
+2024-02-01	DL	Boston, MA	Chicago, IL	867	flights1.csv
+2024-02-01	DL	Boston, MA	Chicago, IL	867	flights2.csv
 
 # DOCS_TEST: example_006
 
@@ -417,12 +431,26 @@ COPY (SELECT * FROM (VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT *
+SELECT
+    flightdate,
+    uniquecarrier,
+    origincityname,
+    destcityname,
+    distance,
+    replace(
+        replace(
+            filename,
+            '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv',
+            'flights1.csv'
+        ),
+        '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv',
+        'flights2.csv'
+    ) AS filename
 FROM read_csv(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv'], union_by_name = true, filename = true);
 ----
 flightdate	uniquecarrier	origincityname	destcityname	distance	filename
-2024-02-01	DL	Boston, MA	Chicago, IL	867	/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_1_flights1_csv.csv
-2024-02-01	DL	Boston, MA	Chicago, IL	867	/tmp/${__DATABASE__}_data_import_and_export_multiple_files_overview_example_013_2_flights2_csv.csv
+2024-02-01	DL	Boston, MA	Chicago, IL	867	flights1.csv
+2024-02-01	DL	Boston, MA	Chicago, IL	867	flights2.csv
 
 # DOCS_TEST: example_014
 

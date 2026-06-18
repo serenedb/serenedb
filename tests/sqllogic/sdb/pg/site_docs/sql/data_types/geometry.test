@@ -20,10 +20,17 @@ INSERT INTO geometries VALUES
   (6, 'MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10,15 5)))'),
   (7, 'GEOMETRYCOLLECTION (POINT(40 10), LINESTRING(10 10,20 20,10 40), POLYGON((40 40,20 45,45 30,40 40)))');
 
-query error
-SELECT * FROM geometries;
+query
+SELECT id, geom::TEXT AS geom FROM geometries ORDER BY id;
 ----
-db error: ERROR: Such type is not supported
+id	geom
+1	POINT (30 10)
+2	LINESTRING (30 10, 10 30, 40 40)
+3	POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
+4	MULTIPOINT (10 40, 40 30, 20 20, 30 10)
+5	MULTILINESTRING ((10 10, 20 20, 10 40), (40 40, 30 30, 40 20))
+6	MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10, 15 5)))
+7	GEOMETRYCOLLECTION (POINT (40 10), LINESTRING (10 10, 20 20, 10 40), POLYGON ((40 40, 20 45, 45 30, 40 40)))
 
 
 # DOCS_TEST: example_002
@@ -43,10 +50,14 @@ INSERT INTO points VALUES
   (3, 'POINT M (30 10 1)'),
   (4, 'POINT ZM (30 10 5 1)');
 
-query error
-SELECT * FROM points;
+query
+SELECT id, geom::TEXT AS geom FROM points ORDER BY id;
 ----
-db error: ERROR: Such type is not supported
+id	geom
+1	POINT (30 10)
+2	POINT Z (30 10 5)
+3	POINT M (30 10 1)
+4	POINT ZM (30 10 5 1)
 
 
 statement error
@@ -209,17 +220,23 @@ geom_stats
 
 # DOCS_TEST_BODY
 
-statement ok
-SELECT * FROM duckdb_coordinate_systems();
+query
+SELECT crs_name, auth_name, auth_code
+FROM duckdb_coordinate_systems()
+ORDER BY crs_name;
+----
+crs_name	auth_name	auth_code
+OGC:CRS83	OGC	CRS83
+OGC:CRS84	OGC	CRS84
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
 query error
-SELECT 'POINT(1 2)'::GEOMETRY('DUCK:1337') AS my_point;
+SELECT 'POINT(1 2)'::GEOMETRY('FOO:1337') AS my_point;
 ----
-db error: ERROR: Encountered unrecognized coordinate system 'DUCK:1337' when trying to create GEOMETRY type
+db error: ERROR: Encountered unrecognized coordinate system 'FOO:1337' when trying to create GEOMETRY type
 The coordinate system definition may be incomplete or invalid. Your options are as follows:
 * Load an extension that can identify this coordinate system
 * Provide a full coordinate system definition in e.g. "PROJJSON" or "WKT2" format
@@ -234,36 +251,40 @@ statement ok
 -- Ignore any unknown CRS identifiers
 SET ignore_unknown_crs = true;
 
-query error
-select 'POINT(1 2)'::GEOMETRY('DUCK:1337') AS my_point;
+query
+SELECT 'POINT(1 2)'::GEOMETRY('FOO:1337')::TEXT AS my_point;
 ----
-db error: ERROR: Such type is not supported
+my_point
+POINT (1 2)
 
 
 # DOCS_TEST: example_010
 
 # DOCS_TEST_BODY
 
-query error
-SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY, 'OGC:CRS84') AS with_crs;
+query
+SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY, 'OGC:CRS84')::TEXT AS with_crs;
 ----
-db error: ERROR: Such type is not supported
+with_crs
+POINT (4.89707 52.377956)
 
 
 # DOCS_TEST: example_011
 
 # DOCS_TEST_BODY
 
-query error
-SELECT 'POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84')::GEOMETRY AS no_crs;
+query
+SELECT 'POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84')::GEOMETRY::TEXT AS no_crs;
 ----
-db error: ERROR: Such type is not supported
+no_crs
+POINT (4.89707 52.377956)
 
 
-query error
-SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84'), '') AS no_crs;
+query
+SELECT ST_SetCRS('POINT(4.897070 52.377956)'::GEOMETRY('OGC:CRS84'), '')::TEXT AS no_crs;
 ----
-db error: ERROR: Such type is not supported
+no_crs
+POINT (4.89707 52.377956)
 
 
 # DOCS_TEST: example_012

@@ -339,6 +339,14 @@ SELECT id FROM docs_idx WHERE body @@ to_tsquery('quick AND brown') ORDER BY id;
 id
 1
 
+# DOCS_TEST: to_tsquery_lucene
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ to_tsquery('+fox -red') ORDER BY id;
+----
+id
+1
+
 # DOCS_TEST: plainto_tsquery
 # DOCS_TEST_BODY
 query

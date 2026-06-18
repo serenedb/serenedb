@@ -47,13 +47,8 @@ SET SESSION default_collation = 'nocase';
 
 # DOCS_TEST_BODY
 
-statement error
-SET GLOBAL sort_order = 'desc';
-----
-db error: ERROR: unrecognized configuration parameter "sort_order"
-
-Did you mean: "null_order"
-
+statement ok
+SET GLOBAL default_order = 'desc';
 
 # DOCS_TEST: example_008
 

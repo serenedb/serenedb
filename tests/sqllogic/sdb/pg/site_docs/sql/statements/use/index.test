@@ -58,6 +58,12 @@ SELECT current_database();
 current_database
 shop
 
+query
+SELECT current_schema();
+----
+current_schema
+analytics
+
 # DOCS_TEST: example_004
 
 statement ok

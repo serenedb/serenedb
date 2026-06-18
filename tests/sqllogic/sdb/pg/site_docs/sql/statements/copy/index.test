@@ -630,12 +630,12 @@ COPY
 # DOCS_TEST: example_045
 
 # DOCS_TEST_RAW
-#| COPY (SELECT 'QUACK!' AS hello) TO 'quack.json';
+#| COPY (SELECT 'HELLO!' AS hello) TO 'hello.json';
 
 # DOCS_TEST_BODY
 
 statement ok
-COPY (SELECT 'QUACK!' AS hello) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_045_1_quack_json.json';
+COPY (SELECT 'HELLO!' AS hello) TO '/tmp/${__DATABASE__}_sql_statements_copy_index_example_045_1_hello_json.json';
 
 # DOCS_TEST: example_046
 

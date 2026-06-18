@@ -58,13 +58,14 @@ flightdate	uniquecarrier	origincityname	destcityname
 
 statement ok
 COPY (SELECT * FROM (VALUES
-    (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_003_1_flights3_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+    (DATE '1988-01-01', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '1988-01-02', 'New York, NY', 'Los Angeles, CA')
+) AS t("FlightDate", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_003_1_flights3_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 statement ok
 COPY (SELECT * FROM (VALUES
-    (DATE '2024-02-01', 'DL', 'Boston, MA', 'Chicago, IL', 867)
-) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName", "Distance")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_003_2_flights4_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+    (DATE '1988-01-03', 'AA', 'New York, NY', 'Los Angeles, CA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_003_2_flights4_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| SELECT * FROM read_csv(['flights3.csv', 'flights4.csv'], union_by_name = true);
@@ -74,6 +75,7 @@ COPY (SELECT * FROM (VALUES
 query
 SELECT * FROM read_csv(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_003_1_flights3_csv.csv', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_003_2_flights4_csv.csv'], union_by_name = true);
 ----
-flightdate	uniquecarrier	origincityname	destcityname	distance
-2024-02-01	DL	Boston, MA	Chicago, IL	867
-2024-02-01	DL	Boston, MA	Chicago, IL	867
+flightdate	origincityname	destcityname	uniquecarrier
+1988-01-01	New York, NY	Los Angeles, CA	NULL
+1988-01-02	New York, NY	Los Angeles, CA	NULL
+1988-01-03	New York, NY	Los Angeles, CA	AA

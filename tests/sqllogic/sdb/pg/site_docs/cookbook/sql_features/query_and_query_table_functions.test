@@ -19,6 +19,19 @@ i
 
 # DOCS_TEST: example_002
 
+statement ok
+CREATE TABLE ontime (
+    dep_delay INTEGER,
+    arr_delay INTEGER,
+    carrier VARCHAR
+);
+
+statement ok
+INSERT INTO ontime VALUES
+    (5, -3, 'AA'),
+    (-2, 10, 'UA'),
+    (0, 0, 'DL');
+
 # DOCS_TEST_BODY
 
 statement ok
@@ -35,12 +48,15 @@ FROM (
     FROM query_table(table_name::VARCHAR)
 );
 
-query error
+query ???
 SELECT *
-FROM my_summarize('https://blobs.duckdb.org/data/ontime.parquet')
+FROM my_summarize('ontime')
 LIMIT 3;
 ----
-db error: ERROR: Expected catalog.entry, schema.entry or entry: too many entries found (input: https://blobs.duckdb.org/data/ontime.parquet)
+column_name	min_value	max_value
+dep_delay	-2	5
+arr_delay	-3	10
+carrier	AA	UA
 
 
 # DOCS_TEST: example_003

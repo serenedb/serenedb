@@ -9,20 +9,16 @@ CREATE TABLE tbl (
     s VARCHAR
 );
 
-# DOCS_TEST_RAW
-#| DROP SEQUENCE id_sequence CASCADE;
-#|
-#| SELECT * FROM tbl;
+statement ok
+INSERT INTO tbl(s) VALUES ('default is the next value from id_sequence');
 
 # DOCS_TEST_BODY
 
 statement ok
 DROP SEQUENCE id_sequence CASCADE;
 
-statement ok
-DROP TABLE IF EXISTS tbl;
-
-query error
+query ??
 SELECT * FROM tbl;
 ----
-db error: ERROR: Table with name tbl does not exist!
+id	s
+1	default is the next value from id_sequence

@@ -75,7 +75,7 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, '[2,3]', 4.5::DOUBLE),
     (2, '[5,8]', 9.5::DOUBLE)
-) AS t("duck", "goose", "swan")) TO '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_006_1_stations_parquet.parquet' (FORMAT parquet);
+) AS t("a", "b", "c")) TO '/tmp/${__DATABASE__}_cookbook_snippets_sharing_macros_example_006_1_stations_parquet.parquet' (FORMAT parquet);
 
 statement ok
 DETACH IF EXISTS checksum_macro_fixture;
@@ -122,5 +122,5 @@ skipif pg-wire-extended
 query
 FROM compute_table_checksum_db.checksum('stations');
 ----
-duck	goose	swan
+a	b	c
 243261088136216708875926412427487400972	138465933354732981678276855003030579445	165028020406096909720161240673293274409

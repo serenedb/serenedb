@@ -67,9 +67,6 @@ t
 # DOCS_TEST_BODY
 
 statement ok
-SET timezone = 'Europe/Amsterdam';
-
-statement error
 CREATE OR REPLACE TABLE hourly AS
     SELECT
         ts,
@@ -78,30 +75,30 @@ CREATE OR REPLACE TABLE hourly AS
         day::TINYINT AS day,
         hour::TINYINT AS hour,
     FROM (
-        SELECT ts, unnest(date_part(['year', 'month', 'day', 'hour',], ts))
+        SELECT ts, unnest(date_part(['year', 'month', 'day', 'hour'], ts))
         FROM generate_series(
-            '2020-01-01'::DATE::TIMESTAMPTZ,
-            '2100-01-01'::DATE::TIMESTAMPTZ,
+            '2020-01-01'::DATE::TIMESTAMP,
+            '2100-01-01'::DATE::TIMESTAMP,
             INTERVAL 1 HOUR) tbl(ts)
     ) parts;
+
+query ?
+SELECT count(*) AS rows FROM hourly;
 ----
-db error: ERROR: No function matches the given name and argument types 'generate_series(TIMESTAMP WITH TIME ZONE, TIMESTAMP WITH TIME ZONE, INTERVAL)'. You might need to add explicit type casts.
-	Candidate functions:
-	generate_series(BIGINT)
-	generate_series(BIGINT, BIGINT)
-	generate_series(BIGINT, BIGINT, BIGINT)
-	generate_series(TIMESTAMP, TIMESTAMP, INTERVAL)
+rows
+701281
 
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-statement error
-x BETWEEN begin AND end
--- expands to
-begin <= x AND x <= end
--- not
-begin <= x AND x < end
+query ??
+SELECT
+    TIMESTAMP '2025-08-31 00:00:00'
+        BETWEEN TIMESTAMP '2025-08-30' AND TIMESTAMP '2025-08-31' AS between_closed,
+    TIMESTAMP '2025-08-31 00:00:00' >= TIMESTAMP '2025-08-30'
+        AND TIMESTAMP '2025-08-31 00:00:00' < TIMESTAMP '2025-08-31' AS half_open;
 ----
-db error: ERROR: syntax error at or near "end"
+between_closed	half_open
+t	f

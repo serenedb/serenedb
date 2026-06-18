@@ -2,17 +2,19 @@
 
 # DOCS_TEST_BODY
 
-query error
-EXPLAIN ⟨query⟩;
-----
-db error: ERROR: syntax error at or near "⟨query⟩"
+statement ok
+EXPLAIN
+    SELECT count(*)
+    FROM generate_series(1, 100) AS t(i)
+    WHERE i % 2 = 0;
 
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
-query error
-EXPLAIN ANALYZE ⟨query⟩;
-----
-db error: ERROR: syntax error at or near "⟨query⟩"
+statement ok
+EXPLAIN ANALYZE
+    SELECT count(*)
+    FROM generate_series(1, 100) AS t(i)
+    WHERE i % 2 = 0;

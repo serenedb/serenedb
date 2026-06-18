@@ -27,7 +27,7 @@ DETACH IF EXISTS temp2;
 # DOCS_TEST_BODY
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_dialect_keywords_and_identifiers_example_002_1_temp_db.csv' AS temp2;
+ATTACH '/tmp/${__DATABASE__}_sql_dialect_keywords_and_identifiers_example_002_1_temp.db' AS temp2;
 
 statement ok
 USE temp2;

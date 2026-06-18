@@ -2,12 +2,41 @@ control substitution on
 
 # DOCS_TEST: example_001
 
+statement ok
+DETACH IF EXISTS read_duckdb_intro;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_001_database.duckdb' AS read_duckdb_intro;
+
+statement ok
+DROP TABLE IF EXISTS read_duckdb_intro.region;
+
+statement ok
+CREATE TABLE read_duckdb_intro.region AS SELECT * FROM (VALUES
+    (0, 'AFRICA'),
+    (1, 'AMERICA'),
+    (2, 'ASIA'),
+    (3, 'EUROPE'),
+    (4, 'MIDDLE EAST')
+) AS t(r_regionkey, r_name);
+
+statement ok
+DETACH read_duckdb_intro;
+
+# DOCS_TEST_RAW
+#| FROM read_duckdb('path_to_database', table_name = 'table_to_read');
+
 # DOCS_TEST_BODY
 
-statement error
-read_duckdb(⟨'path_to_database'⟩, table_name = ⟨'table_to_read'⟩);
+query
+FROM read_duckdb('/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_001_database.duckdb', table_name = 'region');
 ----
-db error: ERROR: syntax error at or near "⟩"
+r_regionkey	r_name
+0	AFRICA
+1	AMERICA
+2	ASIA
+3	EUROPE
+4	MIDDLE EAST
 
 
 # DOCS_TEST: example_002
@@ -151,7 +180,7 @@ DETACH read_duckdb_single_5;
 # DOCS_TEST_BODY
 
 query
-FROM '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_005_my_2.duckdb';
+SELECT #1 AS "my-2" FROM '/tmp/${__DATABASE__}_cookbook_file_formats_read_duckdb_example_005_my_2.duckdb';
 ----
-<slt:ignore>
+my-2
 43

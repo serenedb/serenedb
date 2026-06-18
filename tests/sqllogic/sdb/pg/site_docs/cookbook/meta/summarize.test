@@ -61,27 +61,16 @@ SUMMARIZE SELECT * FROM tbl;
 
 # DOCS_TEST: example_003
 
-statement ok
-CREATE TABLE partsupp (
-    ps_partkey INTEGER,
-    ps_suppkey INTEGER,
-    ps_availqty INTEGER,
-    ps_supplycost DOUBLE,
-    ps_comment VARCHAR
-);
-
-statement ok
-INSERT INTO partsupp VALUES
-    (1, 1, 100, 10.5, 'sample partsupp');
-
 # DOCS_TEST_BODY
 
-query error
-CALL dbgen(sf = 1);
-----
-db error: ERROR: Table with name supplier does not exist!
-Did you mean "<slt:ignore>"?
-
+statement ok
+CREATE TABLE lineitem AS SELECT * FROM (VALUES
+    (1, 155, 4, 1, 17.0, 21168.23, 0.04, 0.02, 'N', 'O', DATE '1996-03-13', DATE '1996-02-12', DATE '1996-03-22', 'DELIVER IN PERSON', 'TRUCK', 'to beans x-ray carefully'),
+    (1, 67, 9, 2, 36.0, 45983.16, 0.09, 0.06, 'N', 'O', DATE '1996-04-12', DATE '1996-02-28', DATE '1996-04-20', 'TAKE BACK RETURN', 'MAIL', 'slyly bold pinto beans'),
+    (2, 106, 5, 1, 38.0, 44694.46, 0.00, 0.05, 'N', 'O', DATE '1997-01-28', DATE '1997-01-14', DATE '1997-02-02', 'TAKE BACK RETURN', 'RAIL', 'requests against the'),
+    (3, 4, 2, 1, 45.0, 54058.05, 0.06, 0.00, 'R', 'F', DATE '1994-02-02', DATE '1994-01-04', DATE '1994-02-23', 'NONE', 'AIR', 'pending foxes wake'),
+    (3, 19, 8, 2, 49.0, 46796.47, 0.10, 0.00, 'R', 'F', DATE '1993-11-09', DATE '1993-12-20', DATE '1993-11-24', 'TAKE BACK RETURN', 'RAIL', 'sleep quickly bold pinto beans')
+) AS t(l_orderkey, l_partkey, l_suppkey, l_linenumber, l_quantity, l_extendedprice, l_discount, l_tax, l_returnflag, l_linestatus, l_shipdate, l_commitdate, l_receiptdate, l_shipinstruct, l_shipmode, l_comment);
 
 # DOCS_TEST: example_004
 
@@ -91,22 +80,22 @@ query
 SUMMARIZE lineitem;
 ----
 column_name	column_type	min	max	approx_unique	avg	std	q25	q50	q75	count	null_percentage
-l_orderkey	BIGINT	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_partkey	BIGINT	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_suppkey	BIGINT	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_linenumber	BIGINT	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_quantity	DECIMAL(15,2)	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_extendedprice	DECIMAL(15,2)	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_discount	DECIMAL(15,2)	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_tax	DECIMAL(15,2)	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_returnflag	VARCHAR	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_linestatus	VARCHAR	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_shipdate	DATE	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_commitdate	DATE	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_receiptdate	DATE	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_shipinstruct	VARCHAR	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_shipmode	VARCHAR	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
-l_comment	VARCHAR	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	0	NULL
+l_orderkey	INTEGER	1	3	3	2	1	1	2	3	5	0.00
+l_partkey	INTEGER	4	155	5	70.2	62.22298610642212	15	67	118	5	0.00
+l_suppkey	INTEGER	2	9	5	5.6	2.8809720581775866	4	5	8	5	0.00
+l_linenumber	INTEGER	1	2	2	1.4	0.5477225575051662	1	1	2	5	0.00
+l_quantity	DECIMAL(3,1)	17.0	49.0	5	37	12.349089035228468	31	38	46	5	0.00
+l_extendedprice	DECIMAL(7,2)	21168.23	54058.05	5	42540.074	12490.322396220607	38812	45983	48612	5	0.00
+l_discount	DECIMAL(3,2)	0.00	0.10	5	0.057999999999999996	0.04024922359499621	0	0	0	5	0.00
+l_tax	DECIMAL(3,2)	0.00	0.06	4	0.026000000000000002	0.027928480087537882	0	0	0	5	0.00
+l_returnflag	VARCHAR	N	R	2	NULL	NULL	NULL	NULL	NULL	5	0.00
+l_linestatus	VARCHAR	F	O	2	NULL	NULL	NULL	NULL	NULL	5	0.00
+l_shipdate	DATE	1993-11-09	1997-01-28	5	1995-07-02 04:48:00	NULL	1994-01-12	1996-03-13	1996-06-24	5	0.00
+l_commitdate	DATE	1993-12-20	1997-01-14	5	1995-06-17 00:00:00	NULL	1993-12-31	1996-02-12	1996-05-18	5	0.00
+l_receiptdate	DATE	1993-11-24	1997-02-02	5	1995-07-13 19:12:00	NULL	1994-01-31	1996-03-22	1996-07-01	5	0.00
+l_shipinstruct	VARCHAR	DELIVER IN PERSON	TAKE BACK RETURN	3	NULL	NULL	NULL	NULL	NULL	5	0.00
+l_shipmode	VARCHAR	AIR	TRUCK	4	NULL	NULL	NULL	NULL	NULL	5	0.00
+l_comment	VARCHAR	pending foxes wake	to beans x-ray carefully	5	NULL	NULL	NULL	NULL	NULL	5	0.00
 
 # DOCS_TEST: example_005
 
@@ -121,17 +110,17 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, '[2,3]', 4.5),
     (2, '[5,8]', 9.5)
-) AS t("duck", "goose", "swan")) TO '/tmp/${__DATABASE__}_cookbook_meta_summarize_example_006_1_star_trek_season_1_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+) AS t("a", "b", "c")) TO '/tmp/${__DATABASE__}_cookbook_meta_summarize_example_006_1_data_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
-#| SUMMARIZE TABLE 'https://blobs.duckdb.org/data/Star_Trek-Season_1.csv';
+#| SUMMARIZE TABLE 'https://example.com/data/data.csv';
 
 # DOCS_TEST_BODY
 
 query
-SUMMARIZE TABLE '/tmp/${__DATABASE__}_cookbook_meta_summarize_example_006_1_star_trek_season_1_csv.csv';
+SUMMARIZE TABLE '/tmp/${__DATABASE__}_cookbook_meta_summarize_example_006_1_data_csv.csv';
 ----
 column_name	column_type	min	max	approx_unique	avg	std	q25	q50	q75	count	null_percentage
-duck	BIGINT	1	2	2	1.5	0.7071067811865476	1	2	2	2	0.00
-goose	VARCHAR	[2,3]	[5,8]	2	NULL	NULL	NULL	NULL	NULL	2	0.00
-swan	DOUBLE	4.5	9.5	2	7	3.5355339059327378	4.5	7	9.5	2	0.00
+a	BIGINT	1	2	2	1.5	0.7071067811865476	1	2	2	2	0.00
+b	VARCHAR	[2,3]	[5,8]	2	NULL	NULL	NULL	NULL	NULL	2	0.00
+c	DOUBLE	4.5	9.5	2	7	3.5355339059327378	4.5	7	9.5	2	0.00

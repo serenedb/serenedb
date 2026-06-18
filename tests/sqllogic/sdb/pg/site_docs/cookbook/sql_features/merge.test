@@ -13,16 +13,12 @@ CREATE TABLE IF NOT EXISTS incoming_ducks (
     is_current  BOOLEAN
 );
 
-statement error
+statement ok
 INSERT INTO incoming_ducks VALUES
-    (101, 'Quackers',   'Mallard',       'Pond B',      CURRENT_DATE - INTERVAL '1 day', NULL, true),
-    (102, 'Waddles',    'Pekin',         'Pond A',      CURRENT_DATE - INTERVAL '1 day', NULL, true),
-    (104, 'Splash',     'Muscovy',       'Pond C',      CURRENT_DATE - INTERVAL '1 day', NULL, true),
-    (105, 'Puddles',    'Indian Runner', 'Relocated',   CURRENT_DATE - INTERVAL '1 day', NULL, true);
-----
-db error: ERROR: Scalar Function with name "current_date" is not in the catalog, but it exists in the icu extension.
-
-This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+    (101, 'Quackers',   'Mallard',       'Pond B',      DATE '2025-11-25', NULL, true),
+    (102, 'Waddles',    'Pekin',         'Pond A',      DATE '2025-11-25', NULL, true),
+    (104, 'Splash',     'Muscovy',       'Pond C',      DATE '2025-11-25', NULL, true),
+    (105, 'Puddles',    'Indian Runner', 'Relocated',   DATE '2025-11-25', NULL, true);
 
 
 # DOCS_TEST: example_002
@@ -44,23 +40,19 @@ CREATE TABLE IF NOT EXISTS master_ducks (
 statement ok
 CREATE SEQUENCE IF NOT EXISTS duck_record_seq START 1;
 
-statement error
+statement ok
 INSERT INTO master_ducks VALUES
-    (nextval('duck_record_seq'), 101, 'Quackers', 'Mallard',       'Pond A', CURRENT_DATE - INTERVAL '2 days', NULL, true),
-    (nextval('duck_record_seq'), 102, 'Waddles',  'Pekin',         'Pond A', CURRENT_DATE - INTERVAL '2 days', NULL, true),
-    (nextval('duck_record_seq'), 103, 'Feathers', 'Rouen',         'Pond B', CURRENT_DATE - INTERVAL '2 days', NULL, true),
-    (nextval('duck_record_seq'), 105, 'Puddles',  'Indian Runner', 'Pond A', CURRENT_DATE - INTERVAL '2 days', NULL, true);
-----
-db error: ERROR: Scalar Function with name "current_date" is not in the catalog, but it exists in the icu extension.
-
-This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+    (nextval('duck_record_seq'), 101, 'Quackers', 'Mallard',       'Pond A', DATE '2025-11-24', NULL, true),
+    (nextval('duck_record_seq'), 102, 'Waddles',  'Pekin',         'Pond A', DATE '2025-11-24', NULL, true),
+    (nextval('duck_record_seq'), 103, 'Feathers', 'Rouen',         'Pond B', DATE '2025-11-24', NULL, true),
+    (nextval('duck_record_seq'), 105, 'Puddles',  'Indian Runner', 'Pond A', DATE '2025-11-24', NULL, true);
 
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 MERGE INTO master_ducks AS target
 USING incoming_ducks AS source
 ON target.duck_id = source.duck_id AND target.is_current = true
@@ -69,10 +61,10 @@ WHEN MATCHED AND (
        target.breed     <> source.breed     OR
        target.location  <> source.location
 ) THEN UPDATE SET
-    end_date    = CURRENT_DATE - INTERVAL '1 day',
+    end_date    = DATE '2025-11-24',
     is_current  = false
 WHEN NOT MATCHED BY SOURCE AND target.is_current = true THEN UPDATE SET
-    end_date    = CURRENT_DATE - INTERVAL '1 day',
+    end_date    = DATE '2025-11-24',
     is_current  = false
 WHEN NOT MATCHED BY TARGET THEN INSERT (
     record_id, duck_id, duck_name, breed, location,
@@ -83,17 +75,13 @@ WHEN NOT MATCHED BY TARGET THEN INSERT (
     source.begin_date, source.end_date, source.is_current
 )
 RETURNING merge_action, *;
-----
-db error: ERROR: Scalar Function with name "current_date" is not in the catalog, but it exists in the icu extension.
-
-This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
 
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 INSERT INTO master_ducks (
     record_id, duck_id, duck_name, breed, location,
     begin_date, end_date, is_current
@@ -104,18 +92,14 @@ SELECT
     source.duck_name,
     source.breed,
     source.location,
-    CURRENT_DATE AS begin_date,
+    DATE '2025-11-25' AS begin_date,
     NULL AS end_date,
     true AS is_current
 FROM incoming_ducks AS source
 INNER JOIN master_ducks AS target
     ON source.duck_id = target.duck_id
 WHERE target.is_current = false
-  AND target.end_date = CURRENT_DATE - INTERVAL '1 day';
-----
-db error: ERROR: Scalar Function with name "current_date" is not in the catalog, but it exists in the icu extension.
-
-This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+  AND target.end_date = DATE '2025-11-24';
 
 
 # DOCS_TEST: example_005
@@ -123,22 +107,65 @@ This feature relies on the "icu" extension which is not built into this SereneDB
 # DOCS_TEST_BODY
 
 query
--- All history
-SELECT * FROM master_ducks ORDER BY duck_id, begin_date DESC;
+SELECT
+    record_id,
+    duck_id,
+    duck_name,
+    breed,
+    location,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_ducks
+ORDER BY duck_id, begin_date DESC;
 ----
 record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
+10	101	Quackers	Mallard	Pond B	2025-11-25	NULL	true
+1	101	Quackers	Mallard	Pond A	2025-11-24	2025-11-24	false
+2	102	Waddles	Pekin	Pond A	2025-11-24	NULL	true
+3	103	Feathers	Rouen	Pond B	2025-11-24	2025-11-24	false
+9	104	Splash	Muscovy	Pond C	2025-11-25	NULL	true
+11	105	Puddles	Indian Runner	Relocated	2025-11-25	NULL	true
+4	105	Puddles	Indian Runner	Pond A	2025-11-24	2025-11-24	false
 
 query
--- Only current records
-SELECT * FROM master_ducks WHERE is_current = true;
+SELECT
+    record_id,
+    duck_id,
+    duck_name,
+    breed,
+    location,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_ducks
+WHERE is_current = true
+ORDER BY duck_id;
 ----
 record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
+10	101	Quackers	Mallard	Pond B	2025-11-25	NULL	true
+2	102	Waddles	Pekin	Pond A	2025-11-24	NULL	true
+9	104	Splash	Muscovy	Pond C	2025-11-25	NULL	true
+11	105	Puddles	Indian Runner	Relocated	2025-11-25	NULL	true
 
 query
--- Only expired historical records
-SELECT * FROM master_ducks WHERE is_current = false ORDER BY duck_id, begin_date DESC;
+SELECT
+    record_id,
+    duck_id,
+    duck_name,
+    breed,
+    location,
+    CAST(begin_date AS VARCHAR) AS begin_date,
+    COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
+    CAST(is_current AS VARCHAR) AS is_current
+FROM master_ducks
+WHERE is_current = false
+ORDER BY duck_id, begin_date DESC;
 ----
 record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
+1	101	Quackers	Mallard	Pond A	2025-11-24	2025-11-24	false
+3	103	Feathers	Rouen	Pond B	2025-11-24	2025-11-24	false
+4	105	Puddles	Indian Runner	Pond A	2025-11-24	2025-11-24	false
 
 # DOCS_TEST: example_006
 
@@ -163,7 +190,7 @@ INSERT INTO master_ducks VALUES
     (10, 101, 'Quackers', 'Mallard', 'Pond B', DATE '2025-11-26', NULL, true);
 
 # DOCS_TEST_RAW
-#| SELECT * FROM master_ducks where duck_name = 'Quackers' and is_current = false;
+#| SELECT * FROM master_ducks WHERE duck_name = 'Quackers' AND is_current = false;
 
 # DOCS_TEST_BODY
 
@@ -207,7 +234,7 @@ INSERT INTO master_ducks VALUES
     (10, 101, 'Quackers', 'Mallard', 'Pond B', DATE '2025-11-26', NULL, true);
 
 # DOCS_TEST_RAW
-#| SELECT * FROM master_ducks where duck_name = 'Quackers' and is_current = true;
+#| SELECT * FROM master_ducks WHERE duck_name = 'Quackers' AND is_current = true;
 
 # DOCS_TEST_BODY
 
@@ -251,7 +278,7 @@ INSERT INTO master_ducks VALUES
     (10, 101, 'Quackers', 'Mallard', 'Pond B', DATE '2025-11-26', NULL, true);
 
 # DOCS_TEST_RAW
-#| SELECT * FROM master_ducks where duck_name = 'Quackers';
+#| SELECT * FROM master_ducks WHERE duck_name = 'Quackers';
 
 # DOCS_TEST_BODY
 

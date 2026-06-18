@@ -4,9 +4,13 @@ control substitution on
 
 statement ok
 COPY (SELECT * FROM (VALUES
-    (1, 'alpha', 10),
-    (2, 'beta', 20)
-) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_cookbook_snippets_analyze_git_repository_example_001_1_git_log_csv.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+    ('2024-03-12T09:15:00' || chr(127845) || 'a1b2c3' || chr(127845) || 'Ada'   || chr(127845) || 'ci fix flaky test on windows'),
+    ('2024-07-22T14:40:00' || chr(127845) || 'd4e5f6' || chr(127845) || 'Bob'   || chr(127845) || 'ci speed up build matrix'),
+    ('2025-01-01T10:00:00' || chr(127845) || 'a7b8c9' || chr(127845) || 'Carol' || chr(127845) || 'ci update python tests'),
+    ('2025-02-01T11:00:00' || chr(127845) || 'd0e1f2' || chr(127845) || 'Dan'   || chr(127845) || 'cli parser fix for merge'),
+    ('2025-03-15T16:20:00' || chr(127845) || 'aa11bb' || chr(127845) || 'Ada'   || chr(127845) || 'python binding issue fix'),
+    ('2025-04-09T08:05:00' || chr(127845) || 'cc22dd' || chr(127845) || 'Bob'   || chr(127845) || 'merge pull request branch tests')
+) AS t("line")) TO '/tmp/${__DATABASE__}_cookbook_snippets_analyze_git_repository_example_001_1_git_log_csv.csv' (FORMAT CSV, HEADER false, QUOTE '', DELIMITER ',');
 
 # DOCS_TEST_RAW
 #| CREATE TABLE commits AS
@@ -19,7 +23,7 @@ COPY (SELECT * FROM (VALUES
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CREATE TABLE commits AS
     FROM read_csv(
             '/tmp/${__DATABASE__}_cookbook_snippets_analyze_git_repository_example_001_1_git_log_csv.csv',
@@ -27,31 +31,9 @@ CREATE TABLE commits AS
             header = false,
             column_names = ['timestamp', 'hash', 'author', 'message']
         );
-----
-db error: ERROR: Error when sniffing file "/tmp/tests_sqllogic_sdb_pg_site_docs_cookbook_snippets_anal_pvhnqzah_cookbook_snippets_analyze_git_repository_example_001_1_git_log_csv.csv".
-It was not possible to detect the CSV Header, due to the header having less columns than expected
-Number of expected columns: 4. Actual number of columns 1
-Detected row as Header:
-1,alpha,10
-Possible fixes:
-* Disable the parser's strict mode (strict_mode=false) to allow reading rows that do not comply with the CSV standard.
-* Header is set to '0'. Consider unsetting it.
-* Set skip (skip=${n}) to skip ${n} lines at the top of the file
-* Enable ignore errors (ignore_errors=true) to ignore potential errors
-* Enable null padding (null_padding=true) to pad missing columns with NULL values
+
 
 # DOCS_TEST: example_002
-
-statement ok
-DROP TABLE IF EXISTS commits;
-
-statement ok
-CREATE TABLE commits (timestamp TIMESTAMP, hash VARCHAR, author VARCHAR, message VARCHAR);
-
-statement ok
-INSERT INTO commits VALUES
-    (TIMESTAMP '2025-01-01 10:00:00', 'abc123', 'Ada', 'ci update python tests'),
-    (TIMESTAMP '2025-02-01 11:00:00', 'def456', 'Bob', 'cli parser fix');
 
 # DOCS_TEST_BODY
 
@@ -60,14 +42,19 @@ FROM commits
 LIMIT 5;
 ----
 timestamp	hash	author	message
-2025-01-01 10:00:00	abc123	Ada	ci update python tests
-2025-02-01 11:00:00	def456	Bob	cli parser fix
+2024-03-12 09:15:00	a1b2c3	Ada	ci fix flaky test on windows
+2024-07-22 14:40:00	d4e5f6	Bob	ci speed up build matrix
+2025-01-01 10:00:00	a7b8c9	Carol	ci update python tests
+2025-02-01 11:00:00	d0e1f2	Dan	cli parser fix for merge
+2025-03-15 16:20:00	aa11bb	Ada	python binding issue fix
 
 # DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
-query error
+control substitution off
+
+query ?? rowsort
 SELECT
     message.lower().regexp_extract('\b(ci|cli|python)\b') AS topic,
     count(*) AS num_commits
@@ -76,13 +63,21 @@ WHERE topic <> ''
 GROUP BY ALL
 ORDER BY num_commits DESC;
 ----
-substitution failed: Invalid escape sequence: \\b
+topic	num_commits
+ci	3
+cli	1
+python	1
+
+control substitution on
+
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-statement error
+control substitution off
+
+statement ok
 CREATE TABLE words AS
     SELECT unnest(
         message
@@ -92,33 +87,15 @@ CREATE TABLE words AS
             .string_split_regex('\W')
         ) AS word
 FROM commits;
-----
-substitution failed: Invalid escape sequence: \\W
+
+control substitution on
+
 
 # DOCS_TEST: example_005
 
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS words;
-
-statement ok
-DROP TABLE IF EXISTS words;
-
-statement ok
-CREATE TABLE words (word VARCHAR);
-
-statement ok
-INSERT INTO words VALUES
-    ('ci'),
-    ('python'),
-    ('tests'),
-    ('cli');
-
 # DOCS_TEST_RAW
 #| CREATE TABLE stopwords AS
-#|     SELECT unnest(['a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by', 'can', 'did', 'do', 'does', 'doing', 'don', 'down', 'during', 'each', 'few', 'for', 'from', 'further', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'herself', 'him', 'himself', 'his', 'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'itself', 'just', 'me', 'more', 'most', 'my', 'myself', 'no', 'nor', 'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our', 'ourselves', 'out', 'over', 'own', 's', 'same', 'she', 'should', 'so', 'some', 'such', 't', 'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', 'these', 'they', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up', 'very', 'was', 'we', 'were', 'what', 'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with', 'you', 'your', 'yours', 'yourself', 'yourselves']) AS word;
+#|     SELECT unnest(['a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by', 'can', 'did', 'do', 'does', 'doing', 'don', 'down', 'during', 'each', 'few', 'for', 'from', 'further', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'herself', 'him', 'himself', 'his', 'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'itself', 'just', 'me', 'more', 'most', 'my', 'myself', 'no', 'nor', 'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our', 'ours', 'ourselves', 'out', 'over', 'own', 's', 'same', 'she', 'should', 'so', 'some', 'such', 't', 'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', 'these', 'they', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up', 'very', 'was', 'we', 'were', 'what', 'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with', 'you', 'your', 'yours', 'yourself', 'yourselves']) AS word;
 #|
 #| CREATE OR REPLACE TABLE words AS
 #|     FROM words
@@ -154,10 +131,25 @@ ORDER BY count DESC
 LIMIT 20;
 ----
 word	count
-ci	1
+binding	1
+branch	1
+build	1
+ci	3
 cli	1
-python	1
-tests	1
+fix	3
+flaky	1
+issue	1
+matrix	1
+merge	2
+parser	1
+pull	1
+python	2
+request	1
+speed	1
+test	1
+tests	2
+update	1
+windows	1
 
 # DOCS_TEST: example_007
 
@@ -173,4 +165,5 @@ GROUP BY ALL
 ORDER BY ALL;
 ----
 year	num_commits	num_commits_viz
-2025	2	<slt:ignore>
+2024	2	<slt:ignore>
+2025	4	<slt:ignore>

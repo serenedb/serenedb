@@ -55,7 +55,7 @@ SELECT (m[1]).map_entries()
 FROM (VALUES ([MAP {'hello': 42}, MAP {'world': 42}])) t(m);
 ----
 map_entries
-<slt:ignore>
+{"(hello,42)"}
 
 # DOCS_TEST: example_006
 
@@ -89,15 +89,23 @@ Did you mean "fill"?
 
 # DOCS_TEST_BODY
 
-statement ok
+query
 SELECT DISTINCT ON(function_name)
     function_name,
     function_type,
     return_type,
-    parameters,
-    parameter_types,
-    description
+    parameter_types
 FROM duckdb_functions()
 WHERE function_type = 'scalar'
   AND function_name LIKE 'b%'
 ORDER BY function_name;
+----
+function_name	function_type	return_type	parameter_types
+bar	scalar	VARCHAR	{DOUBLE,DOUBLE,DOUBLE,DOUBLE}
+base64	scalar	VARCHAR	{BLOB}
+bin	scalar	VARCHAR	{VARCHAR}
+bit_count	scalar	TINYINT	{TINYINT}
+bit_length	scalar	BIGINT	{VARCHAR}
+bit_position	scalar	INTEGER	{BIT,BIT}
+bitstring	scalar	BIT	{VARCHAR,INTEGER}
+bm25	scalar	FLOAT	{BIGINT}

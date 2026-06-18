@@ -29,9 +29,9 @@ COPY (SELECT * FROM (VALUES
 ) AS t("ticker", "when", "shares")) TO '/tmp/${__DATABASE__}_cookbook_sql_features_asof_join_example_001_holdings.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
 
 # DOCS_TEST_RAW
-#| CREATE TABLE prices AS FROM 'https://duckdb.org/data/prices.csv';
+#| CREATE TABLE prices AS FROM 'prices.csv';
 #|
-#| CREATE TABLE holdings AS FROM 'https://duckdb.org/data/holdings.csv';
+#| CREATE TABLE holdings AS FROM 'holdings.csv';
 
 # DOCS_TEST_BODY
 

@@ -14,6 +14,12 @@ SET default_order = 'DESC';
 
 # DOCS_TEST: example_003
 
+statement ok
+RESET default_null_order;
+
+statement ok
+RESET default_order;
+
 # DOCS_TEST_BODY
 
 statement ok
@@ -36,10 +42,10 @@ FROM planets
 ORDER BY kind;
 ----
 planet	kind	moons
+Jupiter	gas giant	95
+Neptune	ice giant	14
 Mars	terrestrial	2
 Mercury	terrestrial	0
-Neptune	ice giant	14
-Jupiter	gas giant	95
 
 # DOCS_TEST: example_005
 
@@ -66,16 +72,51 @@ FROM planets
 ORDER BY kind, planet;
 ----
 planet	kind	moons
-Mercury	terrestrial	0
-Mars	terrestrial	2
-Neptune	ice giant	14
 Jupiter	gas giant	95
+Neptune	ice giant	14
+Mars	terrestrial	2
+Mercury	terrestrial	0
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
-query error Collation with name "de" is not in the catalog
+query error
 SELECT *
 FROM planets
 ORDER BY kind COLLATE DE;
+----
+db error: ERROR: Collation with name "de" is not in the catalog, but it exists in the icu extension.
+
+This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM planets
+ORDER BY ALL;
+----
+planet	kind	moons
+Jupiter	gas giant	95
+Mars	terrestrial	2
+Mercury	terrestrial	0
+Neptune	ice giant	14
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM planets
+ORDER BY ALL DESC;
+----
+planet	kind	moons
+Neptune	ice giant	14
+Mercury	terrestrial	0
+Mars	terrestrial	2
+Jupiter	gas giant	95

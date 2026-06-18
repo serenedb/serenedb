@@ -142,12 +142,23 @@ grade	course
 
 # DOCS_TEST_BODY
 
-query error
+skipif pg-wire-extended
+statement error
 SELECT min(grade)
 FROM grades
 WHERE course = ?;
 ----
-(?i)(Values were not provided .*prepared statement parameters: 1|expected 1 parameters but got 0)
+db error: ERROR: Values were not provided for the following prepared statement parameters: 1
+
+
+skipif pg-wire-simple
+statement error
+SELECT min(grade)
+FROM grades
+WHERE course = ?;
+----
+expected 1 parameters but got 0
+
 
 # DOCS_TEST: example_014
 

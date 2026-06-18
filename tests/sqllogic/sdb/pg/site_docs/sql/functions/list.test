@@ -306,7 +306,7 @@ query
 SELECT list_sort([1, 3, NULL, 5, NULL, -5]);
 ----
 list_sort
-<slt:ignore>
+{-5,1,3,5,NULL,NULL}
 
 # DOCS_TEST: example_030
 
@@ -326,7 +326,7 @@ query
 SELECT list_sort([1, 3, NULL, 2], 'ASC');
 ----
 list_sort
-<slt:ignore>
+{1,2,3,NULL}
 
 # DOCS_TEST: example_032
 
@@ -346,7 +346,7 @@ query
 SELECT list_sort([1, 3, NULL, 2], 'DESC', 'NULLS FIRST');
 ----
 list_sort
-<slt:ignore>
+{NULL,3,2,1}
 
 # DOCS_TEST: example_034
 
@@ -366,7 +366,7 @@ query
 SELECT list_sort([1, 3, NULL, 5, NULL, -5]);
 ----
 list_sort
-<slt:ignore>
+{-5,1,3,5,NULL,NULL}
 
 # DOCS_TEST: example_036
 
@@ -763,6 +763,14 @@ SELECT list_sort(list_distinct([1, 1, NULL, -3, 1, 5])) AS list_distinct;
 ----
 list_distinct
 {-3,1,5}
+
+# DOCS_TEST: list_entropy
+# DOCS_TEST_BODY
+query
+SELECT list_entropy([3, 3, 9]) AS list_entropy;
+----
+list_entropy
+0.9182958340544893
 
 # DOCS_TEST: list_extract
 # DOCS_TEST_BODY

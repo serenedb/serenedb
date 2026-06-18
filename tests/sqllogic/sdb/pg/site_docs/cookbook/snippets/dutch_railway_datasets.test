@@ -10,7 +10,7 @@ COPY (SELECT * FROM (VALUES
 
 # DOCS_TEST_RAW
 #| CREATE TABLE services AS
-#|     FROM 'https://blobs.duckdb.org/nl-railway/services-2025-03.csv.gz';
+#|     FROM 'https://example.com/nl-railway/services-2025-03.csv.gz';
 
 # DOCS_TEST_BODY
 
@@ -31,9 +31,11 @@ CREATE TABLE services AS SELECT * FROM (VALUES
 
 # DOCS_TEST_BODY
 
-query error
+query
 DESCRIBE services;
 ----
-db error: ERROR: unrecognized configuration parameter "services"
-
-Did you mean: "preserve_identifier_case"
+column_name	column_type	null	key	default	extra
+service_id	INTEGER	YES	NULL	NULL	NULL
+service_name	VARCHAR	YES	NULL	NULL	NULL
+origin	VARCHAR	YES	NULL	NULL	NULL
+destination	VARCHAR	YES	NULL	NULL	NULL

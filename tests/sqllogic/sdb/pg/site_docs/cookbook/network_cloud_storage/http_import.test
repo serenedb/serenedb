@@ -26,17 +26,17 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, '[2,3]', 4.5),
     (2, '[5,8]', 9.5)
-) AS t("duck", "goose", "swan")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_004_1_prices_parquet.parquet' (FORMAT parquet);
+) AS t("a", "b", "c")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_004_1_prices_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
-#| SELECT * FROM read_parquet('https://duckdb.org/data/prices.parquet');
+#| SELECT * FROM read_parquet('https://⟨domain⟩/data/prices.parquet');
 
 # DOCS_TEST_BODY
 
 query
 SELECT * FROM read_parquet('/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_004_1_prices_parquet.parquet');
 ----
-duck	goose	swan
+a	b	c
 1	[2,3]	4.5
 2	[5,8]	9.5
 
@@ -46,16 +46,16 @@ statement ok
 COPY (SELECT * FROM (VALUES
     (1, '[2,3]', 4.5),
     (2, '[5,8]', 9.5)
-) AS t("duck", "goose", "swan")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_005_1_holdings_parquet.parquet' (FORMAT parquet);
+) AS t("a", "b", "c")) TO '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_005_1_holdings_parquet.parquet' (FORMAT parquet);
 
 # DOCS_TEST_RAW
-#| SELECT * FROM 'https://duckdb.org/data/holdings.parquet';
+#| SELECT * FROM 'https://⟨domain⟩/data/holdings.parquet';
 
 # DOCS_TEST_BODY
 
 query
 SELECT * FROM '/tmp/${__DATABASE__}_cookbook_network_cloud_storage_http_import_example_005_1_holdings_parquet.parquet';
 ----
-duck	goose	swan
+a	b	c
 1	[2,3]	4.5
 2	[5,8]	9.5

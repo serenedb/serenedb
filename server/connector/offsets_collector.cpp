@@ -117,6 +117,9 @@ namespace {
 
 void RecordCookie(FieldState& field, const irs::TermReader* reader,
                   const irs::SeekCookie* cookie) {
+  if (!cookie) {
+    return;
+  }
   if (field.seen_cookies.insert(cookie).second) {
     field.reader = reader;
     field.entries.emplace_back(cookie);

@@ -27,7 +27,6 @@
 namespace sdb::catalog {
 
 Result CreateDatabase(const ExecContext& exec, std::string_view name) {
-
   auto database = std::make_shared<catalog::Database>(
     ObjectId{}, catalog::DatabaseOptions{std::string{name}});
 

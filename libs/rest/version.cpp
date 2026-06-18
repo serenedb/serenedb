@@ -23,6 +23,7 @@
 
 #include <absl/strings/internal/ostringstream.h>
 #include <openssl/ssl.h>
+#include <unicode/uversion.h>
 
 #include <charconv>
 #include <cstdint>
@@ -34,8 +35,6 @@
 #include "basics/build-repository.h"
 #include "basics/debugging.h"
 #include "basics/number_utils.h"
-#include <unicode/uversion.h>
-
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "build_id/build_id.h"

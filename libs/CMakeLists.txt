@@ -150,10 +150,7 @@ add_library(
     rest/version.cpp
 )
 
-target_link_libraries(
-    serene
-    PUBLIC s2 boost_boost serene_base simdjson
-)
+target_link_libraries(serene PUBLIC s2 boost_boost serene_base simdjson)
 
 # this is "."
 target_include_directories(serene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

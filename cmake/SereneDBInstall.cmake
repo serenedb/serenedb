@@ -93,4 +93,3 @@ install(
     FILES "${CMAKE_SOURCE_DIR}/libs/basics/exitcodes.dat"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}"
 )
-

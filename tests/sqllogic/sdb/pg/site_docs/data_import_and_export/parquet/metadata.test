@@ -237,3 +237,141 @@ ORDER BY row_group_id;
 ----
 file_name	row_group_id	bloom_filter_excludes
 my_file.parquet	0	f
+
+# DOCS_TEST: example_009
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_009_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT column_name, column_type
+#| FROM (DESCRIBE SELECT * FROM parquet_metadata('test.parquet'));
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM parquet_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_009_1_test_parquet.parquet'));
+----
+column_name	column_type
+file_name	VARCHAR
+row_group_id	BIGINT
+row_group_num_rows	BIGINT
+row_group_num_columns	BIGINT
+row_group_bytes	BIGINT
+column_id	BIGINT
+file_offset	BIGINT
+num_values	BIGINT
+path_in_schema	VARCHAR
+type	VARCHAR
+stats_min	VARCHAR
+stats_max	VARCHAR
+stats_null_count	BIGINT
+stats_distinct_count	BIGINT
+stats_min_value	VARCHAR
+stats_max_value	VARCHAR
+compression	VARCHAR
+encodings	VARCHAR
+index_page_offset	BIGINT
+dictionary_page_offset	BIGINT
+data_page_offset	BIGINT
+total_compressed_size	BIGINT
+total_uncompressed_size	BIGINT
+key_value_metadata	MAP(BLOB, BLOB)
+bloom_filter_offset	BIGINT
+bloom_filter_length	BIGINT
+min_is_exact	BOOLEAN
+max_is_exact	BOOLEAN
+row_group_compressed_bytes	BIGINT
+geo_bbox	STRUCT(xmin DOUBLE, xmax DOUBLE, ymin DOUBLE, ymax DOUBLE, zmin DOUBLE, zmax DOUBLE, mmin DOUBLE, mmax DOUBLE)
+geo_types	VARCHAR[]
+
+# DOCS_TEST: example_010
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_010_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT column_name, column_type
+#| FROM (DESCRIBE SELECT * FROM parquet_schema('test.parquet'));
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM parquet_schema('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_010_1_test_parquet.parquet'));
+----
+column_name	column_type
+file_name	VARCHAR
+name	VARCHAR
+type	VARCHAR
+type_length	VARCHAR
+repetition_type	VARCHAR
+num_children	BIGINT
+converted_type	VARCHAR
+scale	BIGINT
+precision	BIGINT
+field_id	BIGINT
+logical_type	VARCHAR
+duckdb_type	VARCHAR
+column_id	BIGINT
+
+# DOCS_TEST: example_011
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_011_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT column_name, column_type
+#| FROM (DESCRIBE SELECT * FROM parquet_file_metadata('test.parquet'));
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM parquet_file_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_011_1_test_parquet.parquet'));
+----
+column_name	column_type
+file_name	VARCHAR
+created_by	VARCHAR
+num_rows	BIGINT
+num_row_groups	BIGINT
+format_version	BIGINT
+encryption_algorithm	VARCHAR
+footer_signing_key_metadata	VARCHAR
+file_size_bytes	UBIGINT
+footer_size	UBIGINT
+column_orders	VARCHAR[]
+
+# DOCS_TEST: example_012
+
+statement ok
+COPY (
+    SELECT
+        42 AS number,
+        true AS is_even
+) TO '/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_012_1_test_parquet.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| SELECT column_name, column_type
+#| FROM (DESCRIBE SELECT * FROM parquet_kv_metadata('test.parquet'));
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM parquet_kv_metadata('/tmp/${__DATABASE__}_data_import_and_export_parquet_metadata_example_012_1_test_parquet.parquet'));
+----
+column_name	column_type
+file_name	VARCHAR
+key	BLOB
+value	BLOB

@@ -2,13 +2,24 @@ control substitution on
 
 # DOCS_TEST: example_001
 
-# DOCS_TEST_BODY
+statement ok
+USE $__DATABASE__;
 
 statement ok
 CREATE TABLE tbl (i INTEGER);
 
-statement ok
+# DOCS_TEST_RAW
+#| CREATE TABLE tbl (i INTEGER);
+#|
+#| SHOW TABLES;
+
+# DOCS_TEST_BODY
+
+query
 SHOW TABLES;
+----
+name
+tbl
 
 # DOCS_TEST: example_002
 
@@ -17,6 +28,19 @@ USE $__DATABASE__;
 
 statement ok
 DROP TABLE IF EXISTS tbl;
+
+# DOCS_TEST_RAW
+#| CREATE TABLE tbl (i INTEGER);
+#|
+#| CREATE SCHEMA s1;
+#|
+#| CREATE TABLE s1.tbl (v VARCHAR);
+#|
+#| SHOW ALL TABLES;
+#| ----
+#| database	schema	name	column_names	column_types	temporary
+#| postgres	public	tbl	{i}	{INTEGER}	f
+#| postgres	s1	tbl	{v}	{VARCHAR}	f
 
 # DOCS_TEST_BODY
 
@@ -34,6 +58,21 @@ SHOW ALL TABLES;
 
 # DOCS_TEST: example_003
 
+statement ok
+DETACH IF EXISTS db;
+
+statement ok
+ATTACH ':memory:' AS db;
+
+statement ok
+CREATE TABLE db.main.main_tbl (u VARCHAR);
+
+statement ok
+CREATE SCHEMA db.s1;
+
+statement ok
+CREATE TABLE db.s1.schema_tbl (v VARCHAR);
+
 # DOCS_TEST_RAW
 #| ATTACH 'db.duckdb';
 #|
@@ -47,15 +86,19 @@ SHOW ALL TABLES;
 
 # DOCS_TEST_BODY
 
-statement ok
-CREATE TEMP TABLE IF NOT EXISTS __docs_list_tables_noop (i INTEGER);
+query rowsort
+SHOW TABLES FROM db;
+----
+name
+main_tbl
+schema_tbl
 
 # DOCS_TEST: example_004
 
-# DOCS_TEST_RAW
-#| SHOW TABLES FROM db.s1;
-
 # DOCS_TEST_BODY
 
-statement ok
-CREATE TEMP TABLE IF NOT EXISTS __docs_list_tables_noop (i INTEGER);
+query
+SHOW TABLES FROM db.s1;
+----
+name
+schema_tbl

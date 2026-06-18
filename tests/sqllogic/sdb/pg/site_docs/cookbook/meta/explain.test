@@ -29,12 +29,34 @@ INSERT INTO tbl VALUES
 
 # DOCS_TEST_BODY
 
-statement ok
+query
 EXPLAIN SELECT * FROM tbl;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│         Table: tbl        │
+│   Type: Sequential Scan   │
+│                           │
+│        Projections:       │
+│             id            │
+│            name           │
+│            col1           │
+│            col2           │
+│      Some Column Name     │
+│             i             │
+│             a             │
+│             b             │
+│             c             │
+│           number          │
+│          number1          │
+│          number2          │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 # DOCS_TEST: example_002
-
-# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE students (name VARCHAR, sid INTEGER);
@@ -48,33 +70,231 @@ INSERT INTO students VALUES ('Mark', 1), ('Joe', 2), ('Matthew', 3);
 statement ok
 INSERT INTO exams VALUES (10, 'Physics', 1), (20, 'Chemistry', 2), (30, 'Literature', 3);
 
-statement ok
+# DOCS_TEST_BODY
+
+query
 EXPLAIN
     SELECT name
     FROM students
     JOIN exams USING (sid)
     WHERE name LIKE 'Ma%';
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            name           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│    CAST(#0 AS INTEGER)    │
+│__internal_decompress_strin│
+│           g(#1)           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         HASH_JOIN         │
+│    ────────────────────   │
+│      Join Type: INNER     │
+│   Conditions: sid = sid   ├──────────────┐
+│                           │              │
+│           ~1 row          │              │
+└─────────────┬─────────────┘              │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│         PROJECTION        ││         PROJECTION        │
+│    ────────────────────   ││    ────────────────────   │
+│    CAST(#0 AS TINYINT)    ││    CAST(#0 AS TINYINT)    │
+│                           ││__internal_compress_string_│
+│                           ││        ubigint(#1)        │
+│                           ││                           │
+│          ~3 rows          ││           ~1 row          │
+└─────────────┬─────────────┘└─────────────┬─────────────┘
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│          SEQ_SCAN         ││          SEQ_SCAN         │
+│    ────────────────────   ││    ────────────────────   │
+│        Table: exams       ││      Table: students      │
+│   Type: Sequential Scan   ││   Type: Sequential Scan   │
+│      Projections: sid     ││                           │
+│                           ││        Projections:       │
+│                           ││            sid            │
+│                           ││            name           │
+│                           ││                           │
+│                           ││          Filters:         │
+│                           ││ ((name >= 'Ma') AND (name │
+│                           ││          < 'Mb'))         │
+│                           ││                           │
+│          ~3 rows          ││           ~1 row          │
+└───────────────────────────┘└───────────────────────────┘
 
 # DOCS_TEST: example_003
 
+statement ok
+PRAGMA explain_output = 'physical_only';
+
+# DOCS_TEST_RAW
+#| PRAGMA explain_output = 'physical_only';
+#| EXPLAIN SELECT * FROM tbl;
+
 # DOCS_TEST_BODY
 
 query
-PRAGMA explain_output = 'physical_only';
+EXPLAIN SELECT * FROM tbl;
 ----
+QUERY PLAN
+┌───────────────────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│         Table: tbl        │
+│   Type: Sequential Scan   │
+│                           │
+│        Projections:       │
+│             id            │
+│            name           │
+│            col1           │
+│            col2           │
+│      Some Column Name     │
+│             i             │
+│             a             │
+│             b             │
+│             c             │
+│           number          │
+│          number1          │
+│          number2          │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 # DOCS_TEST: example_004
 
+statement ok
+PRAGMA explain_output = 'optimized_only';
+
+# DOCS_TEST_RAW
+#| PRAGMA explain_output = 'optimized_only';
+#| EXPLAIN SELECT * FROM tbl;
+
 # DOCS_TEST_BODY
 
 query
-PRAGMA explain_output = 'optimized_only';
+EXPLAIN SELECT * FROM tbl;
 ----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│        Expressions:       │
+│             id            │
+│            name           │
+│            col1           │
+│            col2           │
+│      Some Column Name     │
+│             i             │
+│             a             │
+│             b             │
+│             c             │
+│           number          │
+│          number1          │
+│          number2          │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│         Table: tbl        │
+│   Type: Sequential Scan   │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 # DOCS_TEST: example_005
 
+statement ok
+PRAGMA explain_output = 'all';
+
+# DOCS_TEST_RAW
+#| PRAGMA explain_output = 'all';
+#| EXPLAIN SELECT * FROM tbl;
+
 # DOCS_TEST_BODY
 
 query
-PRAGMA explain_output = 'all';
+EXPLAIN SELECT * FROM tbl;
 ----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│        Expressions:       │
+│             id            │
+│            name           │
+│            col1           │
+│            col2           │
+│      Some Column Name     │
+│             i             │
+│             a             │
+│             b             │
+│             c             │
+│           number          │
+│          number1          │
+│          number2          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│         Table: tbl        │
+│   Type: Sequential Scan   │
+└───────────────────────────┘
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│        Expressions:       │
+│             id            │
+│            name           │
+│            col1           │
+│            col2           │
+│      Some Column Name     │
+│             i             │
+│             a             │
+│             b             │
+│             c             │
+│           number          │
+│          number1          │
+│          number2          │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│         Table: tbl        │
+│   Type: Sequential Scan   │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+┌───────────────────────────┐
+│          SEQ_SCAN         │
+│    ────────────────────   │
+│         Table: tbl        │
+│   Type: Sequential Scan   │
+│                           │
+│        Projections:       │
+│             id            │
+│            name           │
+│            col1           │
+│            col2           │
+│      Some Column Name     │
+│             i             │
+│             a             │
+│             b             │
+│             c             │
+│           number          │
+│          number1          │
+│          number2          │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘

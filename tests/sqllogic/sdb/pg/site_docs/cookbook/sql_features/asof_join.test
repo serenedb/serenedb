@@ -104,13 +104,6 @@ GOOG	2001-01-01 00:01:30	21.16
 
 # DOCS_TEST: example_003
 
-# DOCS_TEST_RAW
-#| SELECT h.ticker, h.when, price * shares AS value
-#| FROM holdings h
-#| ASOF LEFT JOIN prices p
-#|             ON h.ticker = p.ticker
-#|            AND h.when >= p.when;
-
 # DOCS_TEST_BODY
 
 query ???
@@ -119,20 +112,18 @@ FROM holdings h
 ASOF LEFT JOIN prices p
             ON h.ticker = p.ticker
            AND h.when >= p.when
-ORDER BY
-    CASE h.ticker WHEN 'APPL' THEN 1 WHEN 'GOOG' THEN 2 WHEN 'DATA' THEN 3 ELSE 4 END,
-    h.when;
+ORDER BY h.ticker, h.when;
 ----
 ticker	when	value
 APPL	2000-12-31 23:59:30	NULL
 APPL	2001-01-01 00:00:30	2.94
 APPL	2001-01-01 00:01:30	48.26
-GOOG	2000-12-31 23:59:30	NULL
-GOOG	2001-01-01 00:00:30	23.45
-GOOG	2001-01-01 00:01:30	21.16
 DATA	2000-12-31 23:59:30	NULL
 DATA	2001-01-01 00:00:30	NULL
 DATA	2001-01-01 00:01:30	NULL
+GOOG	2000-12-31 23:59:30	NULL
+GOOG	2001-01-01 00:00:30	23.45
+GOOG	2001-01-01 00:01:30	21.16
 
 # DOCS_TEST: example_004
 

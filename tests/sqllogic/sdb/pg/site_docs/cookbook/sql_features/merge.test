@@ -3,22 +3,22 @@
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE IF NOT EXISTS incoming_ducks (
-    duck_id     INTEGER,
-    duck_name   VARCHAR,
-    breed       VARCHAR,
-    location    VARCHAR,
+CREATE TABLE IF NOT EXISTS incoming_employees (
+    employee_id     INTEGER,
+    employee_name   VARCHAR,
+    department       VARCHAR,
+    office    VARCHAR,
     begin_date  DATE,
     end_date    DATE,
     is_current  BOOLEAN
 );
 
 statement ok
-INSERT INTO incoming_ducks VALUES
-    (101, 'Quackers',   'Mallard',       'Pond B',      DATE '2025-11-25', NULL, true),
-    (102, 'Waddles',    'Pekin',         'Pond A',      DATE '2025-11-25', NULL, true),
-    (104, 'Splash',     'Muscovy',       'Pond C',      DATE '2025-11-25', NULL, true),
-    (105, 'Puddles',    'Indian Runner', 'Relocated',   DATE '2025-11-25', NULL, true);
+INSERT INTO incoming_employees VALUES
+    (101, 'Alice',   'Sales',       'Office B',      DATE '2025-11-25', NULL, true),
+    (102, 'Bob',    'Engineering',         'Office A',      DATE '2025-11-25', NULL, true),
+    (104, 'Dave',     'Support',       'Office C',      DATE '2025-11-25', NULL, true),
+    (105, 'Erin',    'Marketing', 'Remote',   DATE '2025-11-25', NULL, true);
 
 
 # DOCS_TEST: example_002
@@ -26,26 +26,26 @@ INSERT INTO incoming_ducks VALUES
 # DOCS_TEST_BODY
 
 statement ok
-CREATE TABLE IF NOT EXISTS master_ducks (
+CREATE TABLE IF NOT EXISTS master_employees (
     record_id   INTEGER PRIMARY KEY,
-    duck_id     INTEGER NOT NULL,
-    duck_name   VARCHAR,
-    breed       VARCHAR,
-    location    VARCHAR,
+    employee_id     INTEGER NOT NULL,
+    employee_name   VARCHAR,
+    department       VARCHAR,
+    office    VARCHAR,
     begin_date  DATE NOT NULL,
     end_date    DATE,
     is_current  BOOLEAN NOT NULL DEFAULT true
 );
 
 statement ok
-CREATE SEQUENCE IF NOT EXISTS duck_record_seq START 1;
+CREATE SEQUENCE IF NOT EXISTS employee_record_seq START 1;
 
 statement ok
-INSERT INTO master_ducks VALUES
-    (nextval('duck_record_seq'), 101, 'Quackers', 'Mallard',       'Pond A', DATE '2025-11-24', NULL, true),
-    (nextval('duck_record_seq'), 102, 'Waddles',  'Pekin',         'Pond A', DATE '2025-11-24', NULL, true),
-    (nextval('duck_record_seq'), 103, 'Feathers', 'Rouen',         'Pond B', DATE '2025-11-24', NULL, true),
-    (nextval('duck_record_seq'), 105, 'Puddles',  'Indian Runner', 'Pond A', DATE '2025-11-24', NULL, true);
+INSERT INTO master_employees VALUES
+    (nextval('employee_record_seq'), 101, 'Alice', 'Sales',       'Office A', DATE '2025-11-24', NULL, true),
+    (nextval('employee_record_seq'), 102, 'Bob',  'Engineering',         'Office A', DATE '2025-11-24', NULL, true),
+    (nextval('employee_record_seq'), 103, 'Carol', 'Finance',         'Office B', DATE '2025-11-24', NULL, true),
+    (nextval('employee_record_seq'), 105, 'Erin',  'Marketing', 'Office A', DATE '2025-11-24', NULL, true);
 
 
 # DOCS_TEST: example_003
@@ -53,13 +53,13 @@ INSERT INTO master_ducks VALUES
 # DOCS_TEST_BODY
 
 statement ok
-MERGE INTO master_ducks AS target
-USING incoming_ducks AS source
-ON target.duck_id = source.duck_id AND target.is_current = true
+MERGE INTO master_employees AS target
+USING incoming_employees AS source
+ON target.employee_id = source.employee_id AND target.is_current = true
 WHEN MATCHED AND (
-       target.duck_name <> source.duck_name OR
-       target.breed     <> source.breed     OR
-       target.location  <> source.location
+       target.employee_name <> source.employee_name OR
+       target.department     <> source.department     OR
+       target.office  <> source.office
 ) THEN UPDATE SET
     end_date    = DATE '2025-11-24',
     is_current  = false
@@ -67,11 +67,11 @@ WHEN NOT MATCHED BY SOURCE AND target.is_current = true THEN UPDATE SET
     end_date    = DATE '2025-11-24',
     is_current  = false
 WHEN NOT MATCHED BY TARGET THEN INSERT (
-    record_id, duck_id, duck_name, breed, location,
+    record_id, employee_id, employee_name, department, office,
     begin_date, end_date, is_current
 ) VALUES (
-    nextval('duck_record_seq'),
-    source.duck_id, source.duck_name, source.breed, source.location,
+    nextval('employee_record_seq'),
+    source.employee_id, source.employee_name, source.department, source.office,
     source.begin_date, source.end_date, source.is_current
 )
 RETURNING merge_action, *;
@@ -82,22 +82,22 @@ RETURNING merge_action, *;
 # DOCS_TEST_BODY
 
 statement ok
-INSERT INTO master_ducks (
-    record_id, duck_id, duck_name, breed, location,
+INSERT INTO master_employees (
+    record_id, employee_id, employee_name, department, office,
     begin_date, end_date, is_current
 )
 SELECT
-    nextval('duck_record_seq'),
-    source.duck_id,
-    source.duck_name,
-    source.breed,
-    source.location,
+    nextval('employee_record_seq'),
+    source.employee_id,
+    source.employee_name,
+    source.department,
+    source.office,
     DATE '2025-11-25' AS begin_date,
     NULL AS end_date,
     true AS is_current
-FROM incoming_ducks AS source
-INNER JOIN master_ducks AS target
-    ON source.duck_id = target.duck_id
+FROM incoming_employees AS source
+INNER JOIN master_employees AS target
+    ON source.employee_id = target.employee_id
 WHERE target.is_current = false
   AND target.end_date = DATE '2025-11-24';
 
@@ -109,193 +109,193 @@ WHERE target.is_current = false
 query
 SELECT
     record_id,
-    duck_id,
-    duck_name,
-    breed,
-    location,
+    employee_id,
+    employee_name,
+    department,
+    office,
     CAST(begin_date AS VARCHAR) AS begin_date,
     COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
     CAST(is_current AS VARCHAR) AS is_current
-FROM master_ducks
-ORDER BY duck_id, begin_date DESC;
+FROM master_employees
+ORDER BY employee_id, begin_date DESC;
 ----
-record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
-10	101	Quackers	Mallard	Pond B	2025-11-25	NULL	true
-1	101	Quackers	Mallard	Pond A	2025-11-24	2025-11-24	false
-2	102	Waddles	Pekin	Pond A	2025-11-24	NULL	true
-3	103	Feathers	Rouen	Pond B	2025-11-24	2025-11-24	false
-9	104	Splash	Muscovy	Pond C	2025-11-25	NULL	true
-11	105	Puddles	Indian Runner	Relocated	2025-11-25	NULL	true
-4	105	Puddles	Indian Runner	Pond A	2025-11-24	2025-11-24	false
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+10	101	Alice	Sales	Office B	2025-11-25	NULL	true
+1	101	Alice	Sales	Office A	2025-11-24	2025-11-24	false
+2	102	Bob	Engineering	Office A	2025-11-24	NULL	true
+3	103	Carol	Finance	Office B	2025-11-24	2025-11-24	false
+9	104	Dave	Support	Office C	2025-11-25	NULL	true
+11	105	Erin	Marketing	Remote	2025-11-25	NULL	true
+4	105	Erin	Marketing	Office A	2025-11-24	2025-11-24	false
 
 query
 SELECT
     record_id,
-    duck_id,
-    duck_name,
-    breed,
-    location,
+    employee_id,
+    employee_name,
+    department,
+    office,
     CAST(begin_date AS VARCHAR) AS begin_date,
     COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
     CAST(is_current AS VARCHAR) AS is_current
-FROM master_ducks
+FROM master_employees
 WHERE is_current = true
-ORDER BY duck_id;
+ORDER BY employee_id;
 ----
-record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
-10	101	Quackers	Mallard	Pond B	2025-11-25	NULL	true
-2	102	Waddles	Pekin	Pond A	2025-11-24	NULL	true
-9	104	Splash	Muscovy	Pond C	2025-11-25	NULL	true
-11	105	Puddles	Indian Runner	Relocated	2025-11-25	NULL	true
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+10	101	Alice	Sales	Office B	2025-11-25	NULL	true
+2	102	Bob	Engineering	Office A	2025-11-24	NULL	true
+9	104	Dave	Support	Office C	2025-11-25	NULL	true
+11	105	Erin	Marketing	Remote	2025-11-25	NULL	true
 
 query
 SELECT
     record_id,
-    duck_id,
-    duck_name,
-    breed,
-    location,
+    employee_id,
+    employee_name,
+    department,
+    office,
     CAST(begin_date AS VARCHAR) AS begin_date,
     COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
     CAST(is_current AS VARCHAR) AS is_current
-FROM master_ducks
+FROM master_employees
 WHERE is_current = false
-ORDER BY duck_id, begin_date DESC;
+ORDER BY employee_id, begin_date DESC;
 ----
-record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
-1	101	Quackers	Mallard	Pond A	2025-11-24	2025-11-24	false
-3	103	Feathers	Rouen	Pond B	2025-11-24	2025-11-24	false
-4	105	Puddles	Indian Runner	Pond A	2025-11-24	2025-11-24	false
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+1	101	Alice	Sales	Office A	2025-11-24	2025-11-24	false
+3	103	Carol	Finance	Office B	2025-11-24	2025-11-24	false
+4	105	Erin	Marketing	Office A	2025-11-24	2025-11-24	false
 
 # DOCS_TEST: example_006
 
 statement ok
-DROP TABLE IF EXISTS master_ducks;
+DROP TABLE IF EXISTS master_employees;
 
 statement ok
-CREATE TABLE master_ducks (
+CREATE TABLE master_employees (
     record_id   INTEGER PRIMARY KEY,
-    duck_id     INTEGER NOT NULL,
-    duck_name   VARCHAR,
-    breed       VARCHAR,
-    location    VARCHAR,
+    employee_id     INTEGER NOT NULL,
+    employee_name   VARCHAR,
+    department       VARCHAR,
+    office    VARCHAR,
     begin_date  DATE NOT NULL,
     end_date    DATE,
     is_current  BOOLEAN NOT NULL DEFAULT true
 );
 
 statement ok
-INSERT INTO master_ducks VALUES
-    (1, 101, 'Quackers', 'Mallard', 'Pond A', DATE '2025-11-24', DATE '2025-11-25', false),
-    (10, 101, 'Quackers', 'Mallard', 'Pond B', DATE '2025-11-26', NULL, true);
+INSERT INTO master_employees VALUES
+    (1, 101, 'Alice', 'Sales', 'Office A', DATE '2025-11-24', DATE '2025-11-25', false),
+    (10, 101, 'Alice', 'Sales', 'Office B', DATE '2025-11-26', NULL, true);
 
 # DOCS_TEST_RAW
-#| SELECT * FROM master_ducks WHERE duck_name = 'Quackers' AND is_current = false;
+#| SELECT * FROM master_employees WHERE employee_name = 'Alice' AND is_current = false;
 
 # DOCS_TEST_BODY
 
 query
 SELECT
     record_id,
-    duck_id,
-    duck_name,
-    breed,
-    location,
+    employee_id,
+    employee_name,
+    department,
+    office,
     CAST(begin_date AS VARCHAR) AS begin_date,
     COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
     CAST(is_current AS VARCHAR) AS is_current
-FROM master_ducks
-WHERE duck_name = 'Quackers'
+FROM master_employees
+WHERE employee_name = 'Alice'
   AND is_current = false;
 ----
-record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
-1	101	Quackers	Mallard	Pond A	2025-11-24	2025-11-25	false
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+1	101	Alice	Sales	Office A	2025-11-24	2025-11-25	false
 
 # DOCS_TEST: example_007
 
 statement ok
-DROP TABLE IF EXISTS master_ducks;
+DROP TABLE IF EXISTS master_employees;
 
 statement ok
-CREATE TABLE master_ducks (
+CREATE TABLE master_employees (
     record_id   INTEGER PRIMARY KEY,
-    duck_id     INTEGER NOT NULL,
-    duck_name   VARCHAR,
-    breed       VARCHAR,
-    location    VARCHAR,
+    employee_id     INTEGER NOT NULL,
+    employee_name   VARCHAR,
+    department       VARCHAR,
+    office    VARCHAR,
     begin_date  DATE NOT NULL,
     end_date    DATE,
     is_current  BOOLEAN NOT NULL DEFAULT true
 );
 
 statement ok
-INSERT INTO master_ducks VALUES
-    (1, 101, 'Quackers', 'Mallard', 'Pond A', DATE '2025-11-24', DATE '2025-11-25', false),
-    (10, 101, 'Quackers', 'Mallard', 'Pond B', DATE '2025-11-26', NULL, true);
+INSERT INTO master_employees VALUES
+    (1, 101, 'Alice', 'Sales', 'Office A', DATE '2025-11-24', DATE '2025-11-25', false),
+    (10, 101, 'Alice', 'Sales', 'Office B', DATE '2025-11-26', NULL, true);
 
 # DOCS_TEST_RAW
-#| SELECT * FROM master_ducks WHERE duck_name = 'Quackers' AND is_current = true;
+#| SELECT * FROM master_employees WHERE employee_name = 'Alice' AND is_current = true;
 
 # DOCS_TEST_BODY
 
 query
 SELECT
     record_id,
-    duck_id,
-    duck_name,
-    breed,
-    location,
+    employee_id,
+    employee_name,
+    department,
+    office,
     CAST(begin_date AS VARCHAR) AS begin_date,
     COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
     CAST(is_current AS VARCHAR) AS is_current
-FROM master_ducks
-WHERE duck_name = 'Quackers'
+FROM master_employees
+WHERE employee_name = 'Alice'
   AND is_current = true;
 ----
-record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
-10	101	Quackers	Mallard	Pond B	2025-11-26	NULL	true
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+10	101	Alice	Sales	Office B	2025-11-26	NULL	true
 
 # DOCS_TEST: example_008
 
 statement ok
-DROP TABLE IF EXISTS master_ducks;
+DROP TABLE IF EXISTS master_employees;
 
 statement ok
-CREATE TABLE master_ducks (
+CREATE TABLE master_employees (
     record_id   INTEGER PRIMARY KEY,
-    duck_id     INTEGER NOT NULL,
-    duck_name   VARCHAR,
-    breed       VARCHAR,
-    location    VARCHAR,
+    employee_id     INTEGER NOT NULL,
+    employee_name   VARCHAR,
+    department       VARCHAR,
+    office    VARCHAR,
     begin_date  DATE NOT NULL,
     end_date    DATE,
     is_current  BOOLEAN NOT NULL DEFAULT true
 );
 
 statement ok
-INSERT INTO master_ducks VALUES
-    (1, 101, 'Quackers', 'Mallard', 'Pond A', DATE '2025-11-24', DATE '2025-11-25', false),
-    (10, 101, 'Quackers', 'Mallard', 'Pond B', DATE '2025-11-26', NULL, true);
+INSERT INTO master_employees VALUES
+    (1, 101, 'Alice', 'Sales', 'Office A', DATE '2025-11-24', DATE '2025-11-25', false),
+    (10, 101, 'Alice', 'Sales', 'Office B', DATE '2025-11-26', NULL, true);
 
 # DOCS_TEST_RAW
-#| SELECT * FROM master_ducks WHERE duck_name = 'Quackers';
+#| SELECT * FROM master_employees WHERE employee_name = 'Alice';
 
 # DOCS_TEST_BODY
 
 query
 SELECT
     record_id,
-    duck_id,
-    duck_name,
-    breed,
-    location,
+    employee_id,
+    employee_name,
+    department,
+    office,
     CAST(begin_date AS VARCHAR) AS begin_date,
     COALESCE(CAST(end_date AS VARCHAR), 'NULL') AS end_date,
     CAST(is_current AS VARCHAR) AS is_current
-FROM master_ducks
-WHERE duck_name = 'Quackers'
+FROM master_employees
+WHERE employee_name = 'Alice'
 ORDER BY record_id;
 ----
-record_id	duck_id	duck_name	breed	location	begin_date	end_date	is_current
-1	101	Quackers	Mallard	Pond A	2025-11-24	2025-11-25	false
-10	101	Quackers	Mallard	Pond B	2025-11-26	NULL	true
+record_id	employee_id	employee_name	department	office	begin_date	end_date	is_current
+1	101	Alice	Sales	Office A	2025-11-24	2025-11-25	false
+10	101	Alice	Sales	Office B	2025-11-26	NULL	true

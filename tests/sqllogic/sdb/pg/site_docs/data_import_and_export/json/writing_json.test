@@ -16,3 +16,23 @@ CREATE TABLE cities AS
 
 statement ok
 COPY cities TO '/tmp/${__DATABASE__}_data_import_and_export_json_writing_json_example_001_cities.json';
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
+#| FROM read_text('cities.json');
+#| ----
+#| line
+#| {"name":"Amsterdam","id":1}
+#| {"name":"London","id":2}
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(string_split(rtrim(content, chr(10)), chr(10))) AS line
+FROM read_text('/tmp/${__DATABASE__}_data_import_and_export_json_writing_json_example_001_cities.json');
+----
+line
+{"name":"Amsterdam","id":1}
+{"name":"London","id":2}

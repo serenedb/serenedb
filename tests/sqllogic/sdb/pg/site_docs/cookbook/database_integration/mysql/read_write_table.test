@@ -2,8 +2,13 @@
 
 # DOCS_TEST_BODY
 
-statement ok
-CREATE TABLE tbl (id INTEGER, name VARCHAR);
+statement error
+INSERT INTO mysql_db.tbl VALUES (42, 'SereneDB');
+----
+db error: ERROR: Table with name "mysql_db.tbl" does not exist because schema "mysql_db" does not exist.
 
-statement ok
-INSERT INTO tbl VALUES (42, 'SereneDB');
+
+query error
+SELECT * FROM mysql_db.tbl;
+----
+db error: ERROR: Table with name "mysql_db.tbl" does not exist because schema "mysql_db" does not exist.

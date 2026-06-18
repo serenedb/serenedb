@@ -80,8 +80,6 @@ Pedro	31
 
 # DOCS_TEST: example_006
 
-# DOCS_TEST_RAW
-#| SELECT delimiter, has_header, skip_rows FROM reject_scans;
 
 # DOCS_TEST_BODY
 
@@ -93,8 +91,6 @@ delimiter	has_header	skip_rows
 
 # DOCS_TEST: example_007
 
-# DOCS_TEST_RAW
-#| SELECT line, column_name FROM reject_errors;
 
 # DOCS_TEST_BODY
 

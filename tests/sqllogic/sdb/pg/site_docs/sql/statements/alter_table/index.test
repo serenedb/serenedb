@@ -438,3 +438,34 @@ ALTER TABLE my_table
 RESET ('option1', 'option2');
 ----
 db error: ERROR: this ALTER TABLE operation is not supported
+
+
+# DOCS_TEST: example_034
+
+statement ok
+DROP TABLE IF EXISTS items;
+
+statement ok
+CREATE TABLE items (id INTEGER, CONSTRAINT positive_id CHECK (id > 0));
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE items
+DROP CONSTRAINT positive_id;
+
+# DOCS_TEST: example_035
+
+statement ok
+DROP TABLE IF EXISTS items;
+
+statement ok
+CREATE TABLE items (id INTEGER);
+
+# DOCS_TEST_BODY
+
+statement error
+ALTER TABLE items
+ADD CONSTRAINT positive_id CHECK (id > 0);
+----
+db error: ERROR: this ALTER TABLE operation is not supported

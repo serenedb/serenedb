@@ -11,8 +11,17 @@ INSERT INTO tbl VALUES ('hello'), ('world');
 statement ok
 CREATE SEQUENCE id_sequence START 1;
 
-statement error db error: ERROR: ALTER TABLE through DuckDB
+skipif pg-wire-extended
+statement error
 ALTER TABLE tbl ADD COLUMN id INTEGER DEFAULT nextval('id_sequence');
+----
+db error: ERROR: Referenced update column id not found in table!
 
-query error db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
-SELECT * FROM tbl;
+Did you mean: "s"
+
+
+onlyif pg-wire-extended
+statement error
+ALTER TABLE tbl ADD COLUMN id INTEGER DEFAULT nextval('id_sequence');
+----
+db error: ERROR: Cannot prepare multiple statements at once!

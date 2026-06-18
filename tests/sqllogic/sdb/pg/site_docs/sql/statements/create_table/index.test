@@ -219,7 +219,7 @@ COPY (SELECT * FROM (VALUES
 
 # DOCS_TEST_RAW
 #| CREATE TABLE flights AS
-#|     FROM 'https://duckdb.org/data/flights.csv';
+#|     FROM 'https://example.com/data/flights.csv';
 
 # DOCS_TEST_BODY
 
@@ -243,7 +243,7 @@ COPY (SELECT * FROM (VALUES
 
 # DOCS_TEST_RAW
 #| CREATE OR REPLACE TABLE flights AS
-#|     FROM 'https://duckdb.org/data/flights.csv';
+#|     FROM 'https://example.com/data/flights.csv';
 
 # DOCS_TEST_BODY
 
@@ -303,8 +303,8 @@ INSERT INTO t1 VALUES (1, 5);
 statement error
 INSERT INTO t1 VALUES (2, -1);
 ----
-db error: ERROR: new row for relation "t1" violates check constraint "t1_percentage_check"
-DETAIL: Failing row contains (2, -1).
+db error: ERROR: CHECK constraint failed on table <slt:ignore>.public.t1 with expression CHECK(((0 <= percentage) AND (percentage <= 100)))
+
 
 # DOCS_TEST: example_019
 
@@ -313,8 +313,8 @@ DETAIL: Failing row contains (2, -1).
 statement error
 INSERT INTO t1 VALUES (3, 101);
 ----
-db error: ERROR: new row for relation "t1" violates check constraint "t1_percentage_check"
-DETAIL: Failing row contains (3, 101).
+db error: ERROR: CHECK constraint failed on table <slt:ignore>.public.t1 with expression CHECK(((0 <= percentage) AND (percentage <= 100)))
+
 
 # DOCS_TEST: example_020
 
@@ -332,8 +332,8 @@ INSERT INTO t2 VALUES (1, 5, 10);
 statement error
 INSERT INTO t2 VALUES (2, 5, 3);
 ----
-db error: ERROR: new row for relation "t2" violates check constraint "t2_check"
-DETAIL: Failing row contains (2, 5, 3).
+db error: ERROR: CHECK constraint failed on table <slt:ignore>.public.t2 with expression CHECK((x < y))
+
 
 # DOCS_TEST: example_021
 
@@ -353,8 +353,8 @@ INSERT INTO t3 VALUES (1, 5, 10);
 statement error
 INSERT INTO t3 VALUES (2, 5, 3);
 ----
-db error: ERROR: new row for relation "t3" violates check constraint "x_smaller_than_y"
-DETAIL: Failing row contains (2, 5, 3).
+db error: ERROR: CHECK constraint failed on table <slt:ignore>.public.t3 with expression CHECK((x < y))
+
 
 # DOCS_TEST: example_022
 
@@ -389,8 +389,11 @@ INSERT INTO t1 VALUES (1, 'a');
 statement ok
 INSERT INTO t2 VALUES (1, 1);
 
-statement ok
+statement error
 INSERT INTO t2 VALUES (2, 2);
+----
+db error: ERROR: Violates foreign key constraint because key "id: 2" does not exist in the referenced table
+
 
 # DOCS_TEST: example_024
 
@@ -421,8 +424,11 @@ INSERT INTO t3 VALUES (1, 'a');
 statement ok
 INSERT INTO t4 VALUES (1, 1, 'a');
 
-statement ok
+statement error
 INSERT INTO t4 VALUES (2, 1, 'b');
+----
+db error: ERROR: Violates foreign key constraint because key "id: 1, j: b" does not exist in the referenced table
+
 
 # DOCS_TEST: example_026
 
@@ -440,10 +446,14 @@ CREATE TABLE t6 (
 ----
 db error: ERROR: Failed to create foreign key: there is no primary key or unique constraint for referenced table "t5"
 
+
 # DOCS_TEST: example_027
 
 statement ok
 USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t2;
 
 statement ok
 DROP TABLE IF EXISTS t1;

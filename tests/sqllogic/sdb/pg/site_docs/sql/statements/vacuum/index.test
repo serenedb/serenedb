@@ -92,3 +92,21 @@ CREATE INDEX articles_idx ON articles USING inverted(id, body en);
 # DOCS_TEST_BODY
 statement ok
 VACUUM (COMPACT_TABLE) articles;
+
+# DOCS_TEST: example_009
+# DOCS_TEST_BODY
+statement ok
+VACUUM (RECOMPUTE_STATS_TABLE) articles;
+
+# DOCS_TEST: example_010
+statement ok
+DROP TABLE IF EXISTS my_table;
+
+statement ok
+CREATE TABLE my_table (id INTEGER, name VARCHAR);
+
+# DOCS_TEST_BODY
+statement error
+VACUUM (REFRESH_TABLE, ANALYZE) my_table;
+----
+db error: ERROR: VACUUM SereneDB option 'refresh_table' cannot be combined with standard VACUUM options

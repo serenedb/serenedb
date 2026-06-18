@@ -39,6 +39,11 @@ namespace irs {
 class WriteContext;
 struct FooterColumnEntry;
 
+struct Chunk {
+  duckdb::Vector data;
+  size_t count;
+};
+
 class ColumnWriter final {
  public:
   ColumnWriter(field_id id, duckdb::LogicalType type, uint32_t row_group_size,
@@ -58,8 +63,8 @@ class ColumnWriter final {
   void PushInStaging(uint64_t row, Fill&& fill) {
     PadNullsTo(row);
     auto& back = OpenChunk();
-    fill(back.first, back.second);
-    ++back.second;
+    fill(back.data, back.count);
+    ++back.count;
     ++_data_ctx.filled;
     MaybeFlushRowGroup();
   }
@@ -78,13 +83,12 @@ class ColumnWriter final {
 
   void Finalize();
 
-  // Null-pad up to excluding `target_row`.
   void PadNullsTo(uint64_t target_row);
 
   struct DataContext {
     static constexpr size_t kInitialSize = 256;
 
-    std::vector<std::pair<duckdb::Vector, size_t>> chunks;
+    std::vector<Chunk> chunks;
     std::vector<duckdb::VectorCache> chunk_caches;
     size_t used_chunks = 0;
     size_t filled = 0;
@@ -93,8 +97,8 @@ class ColumnWriter final {
   };
 
  private:
-  std::pair<duckdb::Vector, size_t>& OpenChunk();
-  std::pair<duckdb::Vector, size_t>& OpenNullChunk(size_t take);
+  Chunk& OpenChunk();
+  Chunk& OpenNullChunk(size_t take);
   void MaybeFlushRowGroup();
   void FlushChunks(uint64_t count);
 

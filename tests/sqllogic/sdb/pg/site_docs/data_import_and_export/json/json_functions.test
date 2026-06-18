@@ -113,8 +113,6 @@ terrestrial
 
 # DOCS_TEST: example_011
 
-# DOCS_TEST_RAW
-#| SELECT json_value(j, '$.family') FROM example;
 
 # DOCS_TEST_BODY
 
@@ -130,8 +128,6 @@ control substitution on
 
 # DOCS_TEST: example_012
 
-# DOCS_TEST_RAW
-#| SELECT json_value(j, '$.species[0]') FROM example;
 
 # DOCS_TEST_BODY
 
@@ -157,8 +153,6 @@ json_value
 
 # DOCS_TEST: example_014
 
-# DOCS_TEST_RAW
-#| SELECT json_extract('{"a": [10, 20]}', '$.a[1]');
 
 # DOCS_TEST_BODY
 
@@ -491,6 +485,12 @@ json_group_array
 [42,7]
 
 # DOCS_TEST: example_041
+
+# DOCS_TEST_RAW
+#| SELECT json_group_object(k, v) FROM example1;
+#| ----
+#| json_group_object
+#| {"mercury":42,"venus":7}
 
 # DOCS_TEST_BODY
 

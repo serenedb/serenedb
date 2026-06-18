@@ -234,3 +234,302 @@ column0	column1	column2
 1	2	foo
 1	2	foo
 1	2	foo
+
+# DOCS_TEST: checkpoint
+# DOCS_TEST_BODY
+statement ok
+SELECT checkpoint();
+
+# DOCS_TEST: count_if
+# DOCS_TEST_BODY
+query
+SELECT count_if(x > 1) AS count_if FROM (VALUES (1), (2), (3)) t(x);
+----
+count_if
+2
+
+# DOCS_TEST: current_catalog
+
+# The catalog name depends on the active database, so the body just confirms the
+# call runs while the RAW block shows a representative value.
+
+# DOCS_TEST_RAW
+#| SELECT current_catalog();
+#| ----
+#| current_catalog
+#| postgres
+
+# DOCS_TEST_BODY
+query
+SELECT current_catalog() AS current_catalog;
+----
+current_catalog
+<slt:ignore>
+
+# DOCS_TEST: current_database
+
+# DOCS_TEST_RAW
+#| SELECT current_database();
+#| ----
+#| current_database
+#| postgres
+
+# DOCS_TEST_BODY
+query
+SELECT current_database() AS current_database;
+----
+current_database
+<slt:ignore>
+
+# DOCS_TEST: current_query
+# DOCS_TEST_BODY
+query
+SELECT current_query() AS current_query;
+----
+current_query
+SELECT current_query() AS current_query;
+
+# DOCS_TEST: currval
+
+statement ok
+CREATE SEQUENCE seq_currval;
+
+statement ok
+SELECT nextval('seq_currval');
+
+# DOCS_TEST_BODY
+query
+SELECT currval('seq_currval') AS currval;
+----
+currval
+1
+
+# DOCS_TEST: error
+# DOCS_TEST_BODY
+query error
+SELECT error('access_mode');
+----
+db error: ERROR: access_mode
+
+
+# DOCS_TEST: force_checkpoint
+# DOCS_TEST_BODY
+statement ok
+SELECT force_checkpoint();
+
+# DOCS_TEST: gen_random_uuid
+
+# The value is random; the body confirms the call runs while the RAW block shows
+# a representative UUID.
+
+# DOCS_TEST_RAW
+#| SELECT gen_random_uuid();
+#| ----
+#| gen_random_uuid
+#| 6b8b6e47-bbf9-4808-a8ef-725a1469564d
+
+# DOCS_TEST_BODY
+statement ok
+SELECT gen_random_uuid();
+
+# DOCS_TEST: getenv
+
+# getenv is only available in the command line client (serened shell), not over
+# the server protocol, so this example is illustrative.
+
+# DOCS_TEST_RAW
+#| SELECT getenv('HOME');
+#| ----
+#| getenv
+#| /path/to/user/home
+
+# DOCS_TEST_BODY
+statement ok
+CREATE TEMP TABLE IF NOT EXISTS __docs_utility_getenv (i INTEGER);
+
+# DOCS_TEST: icu_sort_key
+# DOCS_TEST_BODY
+query error
+SELECT icu_sort_key('ö', 'DE');
+----
+db error: ERROR: Scalar Function with name "icu_sort_key" is not in the catalog, but it exists in the icu extension.
+
+This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+
+
+# DOCS_TEST: md5_number
+
+# The result is a UHUGEINT, which the pg-wire extended protocol cannot transmit;
+# cast it to VARCHAR for the runnable body while the RAW block shows the natural
+# call and its decimal value.
+
+# DOCS_TEST_RAW
+#| SELECT md5_number('abc');
+#| ----
+#| md5_number
+#| 152195979970564155685860391459828531600
+
+# DOCS_TEST_BODY
+query
+SELECT md5_number('abc')::VARCHAR AS md5_number;
+----
+md5_number
+152195979970564155685860391459828531600
+
+# DOCS_TEST: nextval
+
+statement ok
+CREATE SEQUENCE seq_nextval;
+
+statement ok
+SELECT nextval('seq_nextval');
+
+# DOCS_TEST_BODY
+query
+SELECT nextval('seq_nextval') AS nextval;
+----
+nextval
+2
+
+# DOCS_TEST: read_blob
+
+statement ok
+COPY (SELECT 'hello') TO '/tmp/sdb_docs_utility_read_blob.bin' (FORMAT csv, HEADER false);
+
+# DOCS_TEST_RAW
+#| SELECT content FROM read_blob('hello.bin');
+#| ----
+#| content
+#| \x68656c6c6f0a
+
+# DOCS_TEST_BODY
+query
+SELECT content FROM read_blob('/tmp/sdb_docs_utility_read_blob.bin');
+----
+content
+\\x68656c6c6f0a
+
+# DOCS_TEST: read_text
+
+statement ok
+COPY (SELECT 'hello') TO '/tmp/sdb_docs_utility_read_text.txt' (FORMAT csv, HEADER false);
+
+# DOCS_TEST_RAW
+#| SELECT content FROM read_text('hello.txt');
+#| ----
+#| content
+#| hello
+
+# DOCS_TEST_BODY
+query
+SELECT content FROM read_text('/tmp/sdb_docs_utility_read_text.txt');
+----
+content
+<slt:ignore>
+
+# DOCS_TEST: sleep_ms
+# DOCS_TEST_BODY
+query
+SELECT sleep_ms(1) AS sleep_ms;
+----
+sleep_ms
+NULL
+
+# DOCS_TEST: txid_current
+
+# txid_current is documented for PostgreSQL compatibility; its value varies per
+# transaction.
+
+# DOCS_TEST_RAW
+#| SELECT txid_current();
+#| ----
+#| txid_current
+#| 1234
+
+# DOCS_TEST_BODY
+statement ok
+CREATE TEMP TABLE IF NOT EXISTS __docs_utility_txid (i INTEGER);
+
+# DOCS_TEST: uuid
+
+# DOCS_TEST_RAW
+#| SELECT uuid();
+#| ----
+#| uuid
+#| eeccb8c5-9943-b2bb-bb5e-222f4e14b687
+
+# DOCS_TEST_BODY
+statement ok
+SELECT uuid();
+
+# DOCS_TEST: uuidv4
+
+# DOCS_TEST_RAW
+#| SELECT uuidv4();
+#| ----
+#| uuidv4
+#| eeccb8c5-9943-b2bb-bb5e-222f4e14b687
+
+# DOCS_TEST_BODY
+statement ok
+SELECT uuidv4();
+
+# DOCS_TEST: uuidv7
+
+# DOCS_TEST_RAW
+#| SELECT uuidv7();
+#| ----
+#| uuidv7
+#| 81964ebe-00b1-7e1d-b0f9-43c29b6fb8f5
+
+# DOCS_TEST_BODY
+statement ok
+SELECT uuidv7();
+
+# DOCS_TEST: uuid_extract_timestamp
+
+# DOCS_TEST_RAW
+#| SELECT uuid_extract_timestamp(uuidv7());
+#| ----
+#| uuid_extract_timestamp
+#| 2025-04-19 15:51:20.07+00
+
+# DOCS_TEST_BODY
+statement ok
+SELECT uuid_extract_timestamp(uuidv7());
+
+# DOCS_TEST: uuid_extract_version
+# DOCS_TEST_BODY
+query
+SELECT uuid_extract_version(uuidv7()) AS uuid_extract_version;
+----
+uuid_extract_version
+7
+
+# DOCS_TEST: version
+
+# DOCS_TEST_RAW
+#| SELECT version();
+#| ----
+#| version
+#| PostgreSQL 18.3 (SereneDB 26.06.0)
+
+# DOCS_TEST_BODY
+statement ok
+SELECT version();
+
+# DOCS_TEST: glob
+
+# glob returns the files found in the server's working directory, so the listing
+# is illustrative.
+
+# DOCS_TEST_RAW
+#| SELECT * FROM glob('*');
+#| ----
+#| file
+#| data.csv
+#| data.parquet
+
+# DOCS_TEST_BODY
+statement ok
+SELECT * FROM glob('*');

@@ -277,15 +277,15 @@ void ReplayChunkFile(
   std::vector<uint8_t> comp_buf;
   std::vector<uint8_t> raw_buf;
   constexpr uint64_t kChunkHdr =
-    sizeof(uint8_t) + 2 * sizeof(uint32_t) + sizeof(uint64_t);
+    sizeof(uint8_t) + 2 * sizeof(uint64_t) + sizeof(uint64_t);
   while (reader.CurrentOffset() < reader.FileSize()) {
     uint64_t remaining = reader.FileSize() - reader.CurrentOffset();
     SDB_ENSURE(remaining >= kChunkHdr, ERROR_INTERNAL,
                "corrupt search chunk file '", chunk_path, "': trailing ",
                remaining, " bytes < frame header");
     auto codec = reader.Read<uint8_t>();
-    auto raw_len = reader.Read<uint32_t>();
-    auto comp_len = reader.Read<uint32_t>();
+    auto raw_len = reader.Read<uint64_t>();
+    auto comp_len = reader.Read<uint64_t>();
     auto pk_base = reader.Read<uint64_t>();
     SDB_ENSURE(reader.FileSize() - reader.CurrentOffset() >= comp_len,
                ERROR_INTERNAL, "corrupt search chunk file '", chunk_path,
@@ -294,7 +294,7 @@ void ReplayChunkFile(
     reader.ReadData(comp_buf.data(), comp_len);
 
     uint8_t* src = nullptr;
-    uint32_t src_len = 0;
+    uint64_t src_len = 0;
     if (codec == kChunkCodecZstd) {
       raw_buf.resize(raw_len);
       const size_t got = ZSTD_decompressDCtx(dctx, raw_buf.data(), raw_len,
@@ -377,7 +377,7 @@ void SearchDbWal::ChunkWriter::Append(duckdb::DataChunk& chunk,
   serializer.Begin();
   chunk.Serialize(serializer);
   serializer.End();
-  const auto raw_len = static_cast<uint32_t>(_stream->GetPosition());
+  const uint64_t raw_len = _stream->GetPosition();
 
   const auto bound = ZSTD_compressBound(raw_len);
   if (_comp.size() < bound) {
@@ -391,15 +391,15 @@ void SearchDbWal::ChunkWriter::Append(duckdb::DataChunk& chunk,
                       _stream->GetData(), raw_len, kZstdLevel);
   uint8_t codec = kChunkCodecZstd;
   const uint8_t* payload = _comp.data();
-  auto payload_len = static_cast<uint32_t>(comp);
+  uint64_t payload_len = comp;
   if (ZSTD_isError(comp) || comp >= raw_len) {
     codec = kChunkCodecNone;
     payload = _stream->GetData();
     payload_len = raw_len;
   }
   _writer->Write<uint8_t>(codec);
-  _writer->Write<uint32_t>(raw_len);
-  _writer->Write<uint32_t>(payload_len);
+  _writer->Write<uint64_t>(raw_len);
+  _writer->Write<uint64_t>(payload_len);
   _writer->Write<uint64_t>(pk_base);
   _writer->WriteData(payload, payload_len);
 }

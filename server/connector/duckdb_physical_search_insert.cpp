@@ -116,6 +116,7 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<SearchSinkInsertBaseImpl> sink;
   bool bulk = false;
+  bool no_op = false;
   std::optional<search::SearchDbWal::ChunkWriter> chunk_writer;
   duckdb::idx_t insert_count = 0;
 };
@@ -281,13 +282,13 @@ SereneDBSearchInsert::GetLocalSinkState(
   duckdb::ExecutionContext& context) const {
   auto* gstate =
     sink_state ? &sink_state->Cast<SearchInsertGlobalState>() : nullptr;
-  // Guards the CTAS IF-NOT-EXISTS path where GetGlobalSinkState returned
-  // nullptr: hand back a plain LocalSinkState; Sink/Combine no-op on it.
+  auto lstate = duckdb::make_uniq<SearchInsertLocalState>();
+
   if (gstate == nullptr || gstate->search_shard == nullptr) {
-    return duckdb::make_uniq<duckdb::LocalSinkState>();
+    lstate->no_op = true;
+    return lstate;
   }
 
-  auto lstate = duckdb::make_uniq<SearchInsertLocalState>();
   lstate->bulk = context.pipeline && context.pipeline->GetMaxThreads() > 1;
 
   if (lstate->bulk) {
@@ -296,9 +297,6 @@ SereneDBSearchInsert::GetLocalSinkState(
     lstate->sink =
       MakeSearchTableInsertSink(*lstate->search_trx, gstate->column_ids);
   }
-  // Inline (single-threaded): the serial trx + sink are created lazily in Sink,
-  // and each chunk is coalesced into the ordered manifest's current insert run
-  // there -- no per-statement collection is pre-created.
   return lstate;
 }
 
@@ -306,10 +304,10 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  auto* lstate = dynamic_cast<SearchInsertLocalState*>(&input.local_state);
+  auto* lstate = basics::downCast<SearchInsertLocalState>(&input.local_state);
 
   const auto num_rows = chunk.size();
-  if (num_rows == 0 || lstate == nullptr) {
+  if (num_rows == 0 || lstate->no_op) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   if (!lstate->sink) {
@@ -347,8 +345,8 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   duckdb::ExecutionContext& /*context*/,
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  auto* lstate = dynamic_cast<SearchInsertLocalState*>(&input.local_state);
-  if (lstate == nullptr) {
+  auto* lstate = basics::downCast<SearchInsertLocalState>(&input.local_state);
+  if (lstate->no_op) {
     return duckdb::SinkCombineResultType::FINISHED;  // CTAS IF-NOT-EXISTS no-op
   }
   lstate->sink.reset();

@@ -389,3 +389,34 @@ id
 
 statement ok
 DROP TABLE search_multi;
+
+
+# CREATE TABLE IF NOT EXISTS hitting an existing search table is a no-op: the
+# plan still runs SereneDBSearchInsert, but GetGlobalSinkState returns null, so
+# every sink thread gets a no-op local state and the SELECT's rows are never
+# inserted. The existing rows must survive untouched.
+statement ok
+CREATE TABLE search_ine (a INTEGER PRIMARY KEY, b TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO search_ine VALUES (1, 'keep'), (2, 'keep');
+
+statement ok
+VACUUM (REFRESH_TABLE) search_ine;
+
+statement ok
+CREATE TABLE IF NOT EXISTS search_ine WITH (storage = 'search') AS
+  SELECT * FROM (VALUES (99, 'nope')) AS t(a, b);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_ine;
+
+query
+SELECT a, b FROM search_ine ORDER BY a;
+----
+a	b
+1	keep
+2	keep
+
+statement ok
+DROP TABLE search_ine;

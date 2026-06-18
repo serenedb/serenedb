@@ -79,3 +79,29 @@ flightdate	origincityname	destcityname	uniquecarrier
 1988-01-01	New York, NY	Los Angeles, CA	NULL
 1988-01-02	New York, NY	Los Angeles, CA	NULL
 1988-01-03	New York, NY	Los Angeles, CA	AA
+
+# DOCS_TEST: example_004
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '1988-01-01', 'AA', 'New York, NY', 'Los Angeles, CA'),
+    (DATE '1988-01-02', 'AA', 'New York, NY', 'Los Angeles, CA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_004_1_flights1_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (DATE '1988-01-03', 'AA', 'New York, NY', 'Los Angeles, CA')
+) AS t("FlightDate", "UniqueCarrier", "OriginCityName", "DestCityName")) TO '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_004_2_flights2_csv.csv' (FORMAT CSV, HEADER true, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| SELECT * FROM read_csv(['flights1.csv', 'flights2.csv']);
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM read_csv(['/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_004_1_flights1_csv.csv', '/tmp/${__DATABASE__}_data_import_and_export_multiple_files_combining_schemas_example_004_2_flights2_csv.csv']);
+----
+flightdate	uniquecarrier	origincityname	destcityname
+1988-01-01	AA	New York, NY	Los Angeles, CA
+1988-01-02	AA	New York, NY	Los Angeles, CA
+1988-01-03	AA	New York, NY	Los Angeles, CA

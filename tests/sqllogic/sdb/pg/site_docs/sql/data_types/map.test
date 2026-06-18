@@ -69,6 +69,19 @@ map
 
 # DOCS_TEST_BODY
 
+query error
+SELECT MAP {'key1': 5, 'key2': 43}[123];
+----
+db error: ERROR: Cannot deduce template type 'K' in function: 'map_extract_value(MAP(K, V), K) -> V'
+Type 'K' was inferred to be:
+ - 'VARCHAR', from first occurrence
+ - 'INTEGER_LITERAL', which is incompatible with previously inferred type!
+
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
 query
 SELECT MAP {'key1': 5, 'key2': 43}['key3'];
 ----
@@ -90,7 +103,7 @@ map_extract
 # DOCS_TEST_BODY
 
 query
-SELECT MAP {'key1': 5, 'key2': 43}['key3'];
+SELECT map_extract(MAP {'key1': 5, 'key2': 43}, 'key3');
 ----
-map
-NULL
+map_extract
+{}

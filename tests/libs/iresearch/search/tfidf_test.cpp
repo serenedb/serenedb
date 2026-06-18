@@ -28,6 +28,7 @@
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_existence_filter.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
@@ -42,6 +43,13 @@
 namespace {
 
 using namespace tests;
+
+template<typename F>
+auto PrepareOptimized(const F& filter, const irs::PrepareContext& ctx) {
+  irs::Filter::ptr f = std::make_unique<F>(filter);
+  irs::Optimize(f);
+  return f->prepare(ctx);
+}
 
 // Stable per-name field ids, sourced from `tests::FieldIdFor` so the
 // canonical JSON factories and these tests agree on the id-per-name.
@@ -461,11 +469,11 @@ TEST_P(TfidfTestCase, test_phrase) {
       "SPWLC3"   // cookies cake pie biscuet marshmallows cake meringue
     };
 
-    auto prepared_filter = filter.prepare({
-      .index = *index,
-      .memory = counter,
-      .scorer = &scorer,
-    });
+    auto prepared_filter = PrepareOptimized(filter, {
+                                                      .index = *index,
+                                                      .memory = counter,
+                                                      .scorer = &scorer,
+                                                    });
 
     fetcher.Clear();
     auto docs = prepared_filter->execute({

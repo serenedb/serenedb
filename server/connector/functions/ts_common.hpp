@@ -97,12 +97,10 @@ auto& AddFilter(Source& parent) {
   if constexpr (std::is_same_v<Filter, irs::All>) {
     static_assert(std::is_base_of_v<irs::BooleanFilter, Source>);
     return parent.add(std::make_unique<irs::All>());
+  } else if constexpr (std::is_same_v<irs::Not, Source>) {
+    return parent.template filter<Filter>();
   } else {
-    if constexpr (std::is_same_v<irs::Not, Source>) {
-      return parent.template filter<Filter>();
-    } else {
-      return parent.template add<Filter>();
-    }
+    return parent.template add<Filter>();
   }
 }
 

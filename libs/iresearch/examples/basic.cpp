@@ -36,6 +36,7 @@
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/doc_collector.hpp>
+#include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/search/mixed_boolean_filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -143,15 +144,12 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
     std::cerr << "Query parse error: " << context.error_message << "\n";
     return {};
   }
-  auto& opt = root->GetOptional();
-  auto& req = root->GetRequired();
-  if (opt.size() == 1 && req.empty()) {
-    return opt.PopBack();
+  if (root->empty()) {
+    return {};
   }
-  if (req.size() == 1 && opt.empty()) {
-    return req.PopBack();
-  }
-  return root;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+  return filter;
 }
 
 // Helper: count documents matching a filter across all segments.
@@ -401,6 +399,7 @@ int main() {
 
   // Initialize subsystems (required once per process).
   irs::formats::Init();
+  irs::InitOptimizeRules();
 
   auto format = irs::formats::Get("1_5simd");
   auto scorer = irs::BM25::Make(irs::BM25::Options{});

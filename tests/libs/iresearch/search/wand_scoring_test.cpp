@@ -38,6 +38,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/types.hpp"
@@ -218,7 +219,8 @@ class WandScoringTestCase : public IndexTestBase {
         *by_term.mutable_field_id() = field_id;
         by_term.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
       } else if (negated) {
-        auto& neg = root->GetRequired().add<irs::Not>().filter<irs::ByTerm>();
+        auto& neg =
+          root->GetRequired().add<irs::Exclusion>().exclude<irs::ByTerm>();
         *neg.mutable_field_id() = field_id;
         neg.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
       } else {
@@ -228,7 +230,9 @@ class WandScoringTestCase : public IndexTestBase {
       }
     }
 
-    return root;
+    irs::Filter::ptr f = std::move(root);
+    irs::Optimize(f);
+    return f;
   }
 
   // Compare WAND vs non-WAND results for a single-term query.

@@ -1,0 +1,98 @@
+hash-threshold 100
+
+# SUMMARIZE is a binder rewrite into per-column aggregates (min, max,
+# approx_unique, avg, std, quantiles, count, null_percentage). It must
+# work against an inverted-index entry the same as against a table:
+# the aggregates run over the cs INCLUDE-column scan.
+
+statement ok
+CREATE TABLE smz (
+    id INT PRIMARY KEY,
+    v BIGINT,
+    s VARCHAR
+)
+
+statement count 1
+INSERT INTO smz VALUES (1, 10, 'aa')
+
+statement count 1
+INSERT INTO smz VALUES (2, NULL, 'bb')
+
+statement count 1
+INSERT INTO smz VALUES (3, -7, 'zz')
+
+
+statement ok
+CREATE INDEX smz_idx ON smz
+    USING inverted(id)
+    INCLUDE (v, s)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) smz
+
+
+query
+SUMMARIZE smz_idx;
+----
+column_name	column_type	min	max	approx_unique	avg	std	q25	q50	q75	count	null_percentage
+id	INTEGER	1	3	3	2	1	1	2	3	3	0.00
+v	BIGINT	-7	10	2	1.5	12.020815280171307	-7	2	10	3	33.33
+s	VARCHAR	aa	zz	3	NULL	NULL	NULL	NULL	NULL	3	0.00
+
+
+query
+SUMMARIZE SELECT v, s FROM smz_idx WHERE id > 1;
+----
+column_name	column_type	min	max	approx_unique	avg	std	q25	q50	q75	count	null_percentage
+v	BIGINT	-7	-7	1	-7	NULL	-7	-7	-7	2	50.00
+s	VARCHAR	bb	zz	2	NULL	NULL	NULL	NULL	NULL	2	0.00
+
+
+# Nested INCLUDE columns: min/max/approx_unique only (no avg/std).
+statement ok
+CREATE TABLE smz_nested (
+    id INT PRIMARY KEY,
+    vr VARIANT,
+    st STRUCT(a INT, b VARCHAR),
+    ls INT[]
+)
+
+statement count 2
+INSERT INTO smz_nested VALUES
+    (1, {'a': 1}::VARIANT, ROW(1, 'x'), [1, 2]),
+    (2, {'a': 2.5}::VARIANT, ROW(2, 'y'), [3])
+
+
+statement ok
+CREATE INDEX smz_nested_idx ON smz_nested
+    USING inverted(id)
+    INCLUDE (vr, st, ls)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) smz_nested
+
+
+query
+SUMMARIZE smz_nested_idx;
+----
+column_name	column_type	min	max	approx_unique	avg	std	q25	q50	q75	count	null_percentage
+id	INTEGER	1	2	2	1.5	0.7071067811865476	1	2	2	2	0.00
+vr	VARIANT	{'a': 1}	{'a': 2.5}	2	NULL	NULL	NULL	NULL	NULL	2	0.00
+st	STRUCT(a INTEGER, b VARCHAR)	{'a': 1, 'b': x}	{'a': 2, 'b': y}	2	NULL	NULL	NULL	NULL	NULL	2	0.00
+ls	INTEGER[]	[1, 2]	[3]	2	NULL	NULL	NULL	NULL	NULL	2	0.00
+
+
+# Cleanup
+statement ok
+DROP INDEX smz_idx
+
+statement ok
+DROP TABLE smz
+
+statement ok
+DROP INDEX smz_nested_idx
+
+statement ok
+DROP TABLE smz_nested

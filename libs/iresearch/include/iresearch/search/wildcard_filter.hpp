@@ -26,14 +26,12 @@
 
 #include "basics/shared.hpp"
 #include "iresearch/search/filter.hpp"
-#include "iresearch/utils/automaton_decl.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 
 namespace irs {
 
 class ByWildcard;
-struct FilterVisitor;
 
 inline bytes_view Unescape(bytes_view in, bstring& out) {
   out.reserve(in.size());
@@ -75,11 +73,9 @@ auto ExecuteWildcard(bstring& buf, bytes_view term, Term&& t, Prefix&& p,
 
 struct ByWildcardFilterOptions {
   bstring term;
-  automaton acceptor;
 
   ByWildcardFilterOptions() = default;
-  // Stores the pattern and compiles its automaton, keeping the two in sync.
-  explicit ByWildcardFilterOptions(bytes_view pattern);
+  explicit ByWildcardFilterOptions(bytes_view pattern) : term{pattern} {}
 
   bool operator==(const ByWildcardFilterOptions& rhs) const noexcept {
     return term == rhs.term;
@@ -98,19 +94,15 @@ struct ByWildcardOptions : ByWildcardFilterOptions {
   bool operator==(const ByWildcardOptions& rhs) const noexcept = default;
 };
 
-// Resolves a wildcard pattern into a concrete filter at construction time:
-// a ByTerm (exact term), a ByPrefix (prefix scan), or a ByWildcard (genuine
-// wildcard, with its automaton compiled eagerly).
 Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term,
                              size_t scored_terms_limit = 1024,
                              score_t boost = kNoBoost);
 
-// User-side wildcard filter. Handles only genuine wildcard patterns; the
-// automaton is compiled at construction and stored in the options.
+Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,
+                          size_t scored_terms_limit, score_t boost);
+
 class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:
-  static field_visitor visitor(const automaton& acceptor);
-
   Query::ptr prepare(const PrepareContext& ctx) const final;
 };
 

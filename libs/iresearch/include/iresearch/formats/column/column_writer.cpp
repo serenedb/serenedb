@@ -26,6 +26,7 @@
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -61,14 +62,25 @@ namespace irs {
 
 ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
                            uint32_t row_group_size, WriteContext& write_ctx,
-                           FooterColumnEntry& entry, bool skip_validity)
+                           FooterColumnEntry& entry, bool skip_validity,
+                           bool hyperloglog)
   : _id{id},
     _type{std::move(type)},
     _row_group_size{row_group_size},
     _write_ctx{&write_ctx},
     _entry{&entry},
-    _skip_validity{skip_validity} {
+    _skip_validity{skip_validity},
+    _hyperloglog{hyperloglog} {
   SDB_ASSERT(_row_group_size != 0);
+  if (hyperloglog) {
+    _entry->root.hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
+  }
+}
+
+bool ColumnWriter::HasHyperLogLog() const noexcept { return _hyperloglog; }
+
+void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
+  _entry->root.hyperloglog = std::move(hll);
 }
 
 void ColumnWriter::PadNullsTo(uint64_t target_row) {
@@ -695,6 +707,15 @@ void ColumnWriter::FlushChunks(uint64_t count) {
   for (size_t k = 0; k < _data_ctx.used_chunks; ++k) {
     auto& chunk = _data_ctx.chunks[k];
     group.push_back(Chunk{duckdb::Vector::Ref(chunk.data), chunk.count});
+  }
+
+  if (_hyperloglog) {
+    for (auto& chunk : group) {
+      duckdb::FlatVector::SetSize(chunk.data, chunk.count);
+      duckdb::Vector hashes{duckdb::LogicalType::HASH, chunk.count};
+      duckdb::VectorOperations::Hash(chunk.data, hashes, chunk.count);
+      _entry->root.hyperloglog->Update(chunk.data, hashes);
+    }
   }
 
   FlushNode(*_write_ctx, _type, group, count, _data_ctx.first_rg_doc_id,

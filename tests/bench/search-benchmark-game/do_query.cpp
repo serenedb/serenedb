@@ -21,6 +21,7 @@
 #include <absl/strings/str_split.h>
 
 #include <iostream>
+#include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
@@ -120,6 +121,8 @@ int main(int argc, const char* argv[]) {
   sdb::DuckDBEngine::Instance().Initialize();
   int exit_code = 0;
   try {
+    irs::formats::Init();
+    irs::InitOptimizeRules();
     irs::DefaultPDP(1, false);
     irs::DefaultPDP(1, true);
     irs::DefaultPDP(2, false);

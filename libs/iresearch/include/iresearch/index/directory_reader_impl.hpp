@@ -24,7 +24,9 @@
 
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "iresearch/index/composite_reader_impl.hpp"
+#include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 
@@ -52,6 +54,11 @@ class DirectoryReaderImpl final
 
   const Format::ptr& Codec() const noexcept { return _codec; }
 
+  const duckdb::BaseStatistics* GetColumnStats(field_id field) const noexcept {
+    const auto it = _column_stats.find(field);
+    return it == _column_stats.end() ? nullptr : it->second.get();
+  }
+
  private:
   struct Init;
 
@@ -64,6 +71,9 @@ class DirectoryReaderImpl final
   FileRefs _file_refs;
   DirectoryMeta _meta;
   IndexReaderOptions _opts;
+  sdb::containers::FlatHashMap<field_id,
+                               duckdb::unique_ptr<duckdb::BaseStatistics>>
+    _column_stats;
 };
 
 }  // namespace irs

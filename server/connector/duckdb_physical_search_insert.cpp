@@ -76,10 +76,8 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
 
   std::mutex combine_mu;
   duckdb::idx_t insert_count = 0;
-  // Bulk path only: each combining sink thread appends its sealed chunk's
-  // seg_id here (under combine_mu); Finalize hands the whole statement's
-  // segments to the manifest in one batched AddReferences call.
-  std::vector<uint64_t> bulk_seg_ids;
+
+  std::vector<search::SearchDbWal::PendingChunk> bulk_chunks;
 
   // CTAS bookkeeping.
   bool ctas_mode = false;
@@ -114,10 +112,6 @@ struct SearchInsertSourceState : duckdb::GlobalSourceState {
   bool finished = false;
 };
 
-// Per-sink-thread state. A bulk thread owns a fresh trx (one segment per
-// thread); an inline (single-threaded) statement reuses the shard's serial trx
-// so consecutive statements coalesce into one segment. Either way the trx
-// commits on the shared tick at txn commit, not here.
 struct SearchInsertLocalState : duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<SearchSinkInsertBaseImpl> sink;
@@ -375,9 +369,9 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   std::lock_guard<std::mutex> lock(gstate.combine_mu);
   gstate.insert_count += lstate->insert_count;
   if (lstate->bulk) {
-    gstate.bulk_seg_ids.push_back(pending.SegId());
+    gstate.bulk_chunks.push_back(std::move(pending));
     gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
-      gstate.table_shard, std::move(lstate->search_trx), std::move(pending));
+      gstate.table_shard, std::move(lstate->search_trx));
   }
   return duckdb::SinkCombineResultType::FINISHED;
 }
@@ -393,11 +387,9 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
     return duckdb::SinkFinalizeType::READY;
   }
 
-  // All parallel sinks have combined: hand the bulk statement's chunk-file refs
-  // to the manifest in one batched call (resolves the insert run once).
-  if (!gstate.bulk_seg_ids.empty()) {
+  if (!gstate.bulk_chunks.empty()) {
     gstate.sdb_txn->SearchTxn().AddReferences(gstate.table_shard,
-                                              gstate.bulk_seg_ids);
+                                              std::move(gstate.bulk_chunks));
   }
 
   auto& conn_ctx = GetSereneDBContext(context);

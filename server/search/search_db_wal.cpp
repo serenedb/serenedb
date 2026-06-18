@@ -495,9 +495,7 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
   SDB_ASSERT(!sections.empty(), "AppendCommit with no shard sections");
   SDB_ASSERT(tick_span >= 1, "every commit advances the tick by at least 1");
   std::lock_guard<std::mutex> lock(_append_mu);
-  // Reserve `tick_span` ticks atomically with the append; the record's tick is
-  // the top of the band so file-order == tick-order is preserved. The per-shard
-  // iresearch bands live within (base, tick] and are assigned by the caller.
+
   uint64_t base = _tick.fetch_add(tick_span, std::memory_order_relaxed);
   uint64_t tick = base + tick_span;
   EnsureActiveSegmentLocked(tick);
@@ -512,15 +510,15 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
     SDB_ASSERT(!s.ops.empty(), "shard section with no ops");
     payload.Write<uint32_t>(static_cast<uint32_t>(s.ops.size()));
     for (const auto& op : s.ops) {
-      SDB_ASSERT((op.inline_data != nullptr) + (!op.seg_ids.empty()) +
+      SDB_ASSERT((op.inline_data != nullptr) + (!op.reference_chunks.empty()) +
                      (!op.delete_pks.empty()) + op.truncate ==
                    1,
                  "op must be exactly one of INLINE / REFERENCE / DELETE / "
                  "TRUNCATE");
-      const uint8_t kind = op.truncate           ? kKindTruncate
-                           : op.inline_data      ? kKindInline
-                           : !op.seg_ids.empty() ? kKindReference
-                                                 : kKindDelete;
+      const uint8_t kind = op.truncate                    ? kKindTruncate
+                           : op.inline_data               ? kKindInline
+                           : !op.reference_chunks.empty() ? kKindReference
+                                                          : kKindDelete;
       payload.Write<uint8_t>(kind);
       if (kind == kKindInline) {
         payload.Write<uint32_t>(static_cast<uint32_t>(op.inline_pks.size()));
@@ -537,8 +535,10 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
         payload.Write<uint64_t>(len);
         payload.WriteData(tmp.GetData(), len);
       } else if (kind == kKindReference) {
-        payload.Write<uint32_t>(static_cast<uint32_t>(op.seg_ids.size()));
-        for (uint64_t sid : op.seg_ids) {
+        payload.Write<uint32_t>(
+          static_cast<uint32_t>(op.reference_chunks.size()));
+        for (const auto& c : op.reference_chunks) {
+          const uint64_t sid = c.SegId();
           payload.Write<uint64_t>(sid);
           auto chunk_path = ChunkDir(s.table_id.id()) / ChunkName(sid);
           std::error_code se;
@@ -562,6 +562,13 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
     }
   }
   WriteFrameLocked(payload.GetData(), payload.GetPosition());
+  for (const auto& s : sections) {
+    for (const auto& op : s.ops) {
+      for (auto& c : op.reference_chunks) {
+        c.MarkCommitted();
+      }
+    }
+  }
   return tick;
 }
 

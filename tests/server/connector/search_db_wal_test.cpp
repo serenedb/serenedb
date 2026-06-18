@@ -167,12 +167,12 @@ class SearchDbWalTest : public ::testing::Test {
     return SearchDbWal::ShardSection{ObjectId{table_id},
                                      std::span<const SearchDbWal::Op>{ops}};
   }
-  // One section with a single REFERENCE op over chunk-file `segs`.
+  // One section with a single REFERENCE op over bulk chunk files `chunks`.
+  // AppendCommit derives the seg_ids from the chunks and marks them committed.
   SearchDbWal::ShardSection ReferenceSection(
-    uint64_t table_id, const std::vector<uint64_t>& segs) {
+    uint64_t table_id, std::span<SearchDbWal::PendingChunk> chunks) {
     auto& ops = _op_pools.emplace_back();
-    ops.push_back(
-      SearchDbWal::Op{nullptr, {}, std::span<const uint64_t>{segs}, {}});
+    ops.push_back(SearchDbWal::Op{nullptr, {}, chunks, {}});
     return SearchDbWal::ShardSection{ObjectId{table_id},
                                      std::span<const SearchDbWal::Op>{ops}};
   }
@@ -279,14 +279,14 @@ TEST_F(SearchDbWalTest, ReferenceRoundTrip) {
     duckdb::DataChunk c1;
     FetchMaterialized(c1, Alloc(), *cdc1);
     cw1.Append(c1, 0);
-    cw1.Finish().MarkCommitted();
     auto cdc2 = MakeIntCdc(Alloc(), {3, 4, 5});
     duckdb::DataChunk c2;
     FetchMaterialized(c2, Alloc(), *cdc2);
     cw2.Append(c2, 0);
-    cw2.Finish().MarkCommitted();
-    std::vector<uint64_t> segs{cw1.SegId(), cw2.SegId()};
-    auto sec = ReferenceSection(2, segs);
+    std::vector<SearchDbWal::PendingChunk> chunks;
+    chunks.push_back(cw1.Finish());
+    chunks.push_back(cw2.Finish());
+    auto sec = ReferenceSection(2, chunks);
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1), 1u);
   }
   Collected got;
@@ -309,10 +309,10 @@ TEST_F(SearchDbWalTest, ReferenceRoundTripCompressed) {
     duckdb::DataChunk c;
     FetchMaterialized(c, Alloc(), *cdc);
     cw.Append(c, 0);
-    cw.Finish().MarkCommitted();
+    std::vector<SearchDbWal::PendingChunk> chunks;
+    chunks.push_back(cw.Finish());
     EXPECT_LT(std::filesystem::file_size(ChunkPath(2, 1)), 1024u);
-    std::vector<uint64_t> segs{cw.SegId()};
-    auto sec = ReferenceSection(2, segs);
+    auto sec = ReferenceSection(2, chunks);
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1), 1u);
   }
   Collected got;
@@ -426,9 +426,9 @@ TEST_F(SearchDbWalTest, TickAndSegIdContinueOnReopen) {
     duckdb::DataChunk c;
     FetchMaterialized(c, Alloc(), *cdc);
     cw.Append(c, 0);
-    cw.Finish().MarkCommitted();
-    std::vector<uint64_t> segs{cw.SegId()};
-    auto sec = ReferenceSection(2, segs);
+    std::vector<SearchDbWal::PendingChunk> chunks;
+    chunks.push_back(cw.Finish());
+    auto sec = ReferenceSection(2, chunks);
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1), 1u);
   }
   Collected got;
@@ -563,9 +563,9 @@ TEST_F(SearchDbWalTest, MinTickGcReferenceChunksReclaimed) {
   duckdb::DataChunk c;
   FillIntChunk(c, Alloc(), {1});
   cw.Append(c, 0);
-  cw.Finish().MarkCommitted();
-  std::vector<uint64_t> segs{cw.SegId()};
-  auto sec = ReferenceSection(7, segs);
+  std::vector<SearchDbWal::PendingChunk> chunks;
+  chunks.push_back(cw.Finish());
+  auto sec = ReferenceSection(7, chunks);
   EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1),
             1u);  // sealed seg 1
   auto inl = MakeIntCdc(Alloc(), {2});
@@ -611,9 +611,9 @@ TEST_F(SearchDbWalTest, MinTickGcReclaimsLoneSealedSegment) {
   duckdb::DataChunk c;
   FillIntChunk(c, Alloc(), {1});
   cw.Append(c, 0);
-  cw.Finish().MarkCommitted();
-  std::vector<uint64_t> segs{cw.SegId()};
-  auto sec = ReferenceSection(7, segs);
+  std::vector<SearchDbWal::PendingChunk> chunks;
+  chunks.push_back(cw.Finish());
+  auto sec = ReferenceSection(7, chunks);
   EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1),
             1u);  // sealed seg 1, no successor
   EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
@@ -676,9 +676,9 @@ TEST_F(SearchDbWalTest, SealedSegmentChunksDoNotForceActiveRoll) {
     duckdb::DataChunk c;
     FetchMaterialized(c, Alloc(), *cdc);
     cw.Append(c, 0);
-    cw.Finish().MarkCommitted();
-    std::vector<uint64_t> segs{cw.SegId()};
-    auto sec = ReferenceSection(7, segs);
+    std::vector<SearchDbWal::PendingChunk> chunks;
+    chunks.push_back(cw.Finish());
+    auto sec = ReferenceSection(7, chunks);
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1),
               1u);  // seals seg 1
   }
@@ -729,9 +729,9 @@ TEST_F(SearchDbWalTest, GeneratedPkBaseRoundTrip) {
     duckdb::DataChunk c;
     FetchMaterialized(c, Alloc(), *cdc);
     cw.Append(c, 2000);
-    cw.Finish().MarkCommitted();
-    std::vector<uint64_t> segs{cw.SegId()};
-    auto sec = ReferenceSection(5, segs);
+    std::vector<SearchDbWal::PendingChunk> chunks;
+    chunks.push_back(cw.Finish());
+    auto sec = ReferenceSection(5, chunks);
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1), 1u);
   }
   {
@@ -835,15 +835,16 @@ TEST_F(SearchDbWalTest, MixedInlineAndReferenceOps) {
     duckdb::DataChunk bc;
     FetchMaterialized(bc, Alloc(), *bulk);
     cw.Append(bc, 3000);
-    cw.Finish().MarkCommitted();
-    std::vector<uint64_t> segids{cw.SegId()};
+    std::vector<SearchDbWal::PendingChunk> chunks;
+    chunks.push_back(cw.Finish());
     // Inline rows (the INLINE op).
     auto inl = MakeIntCdc(Alloc(), {10, 11});
     std::vector<SearchDbWal::InlinePk> segA{{1000, 2}};
     std::vector<SearchDbWal::Op> ops{
       SearchDbWal::Op{
         inl.get(), std::span<const SearchDbWal::InlinePk>{segA}, {}},
-      SearchDbWal::Op{nullptr, {}, std::span<const uint64_t>{segids}}};
+      SearchDbWal::Op{
+        nullptr, {}, std::span<SearchDbWal::PendingChunk>{chunks}}};
     SearchDbWal::ShardSection sec{ObjectId{5},
                                   std::span<const SearchDbWal::Op>{ops}};
     EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1), 1u);

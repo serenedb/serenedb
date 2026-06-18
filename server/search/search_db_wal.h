@@ -115,8 +115,8 @@ class SearchDbWal {
     // INLINE only: one entry per inserted Sink chunk, in append order.
     const duckdb::ColumnDataCollection* inline_data = nullptr;
     std::span<const InlinePk> inline_pks;
-    // REFERENCE
-    std::span<const uint64_t> seg_ids;
+    // REFERENCE: the bulk chunk files this op points at.
+    std::span<PendingChunk> reference_chunks;
     // DELETE: the encoded PK byte strings to remove (iresearch PK terms).
     std::span<const std::string> delete_pks;
 
@@ -168,7 +168,8 @@ class SearchDbWal {
   ChunkWriter NewChunkWriter(ObjectId table_id);
   // Reserves `tick_span` consecutive ticks under the append lock and writes one
   // record at the top of that band; returns the record tick (== base +
-  // tick_span).
+  // tick_span). Once the record is fsynced, marks every REFERENCE op's chunks
+  // committed -- they are now durably referenced and must outlive the txn.
   uint64_t AppendCommit(std::span<const ShardSection> sections,
                         uint64_t tick_span);
   uint64_t Recover(const ShardExistsFn& exists_of,

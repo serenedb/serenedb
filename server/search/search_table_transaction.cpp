@@ -52,22 +52,18 @@ uint64_t ShardTickSpan(const SearchShardWrites& w) {
 
 void SearchTableTransaction::AddParallelSearchTransaction(
   const std::shared_ptr<TableShard>& shard,
-  std::unique_ptr<irs::IndexWriter::Transaction> trx,
-  SearchDbWal::PendingChunk chunk) {
+  std::unique_ptr<irs::IndexWriter::Transaction> trx) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
     w.shard = shard;
   }
   w.transactions.push_back(std::move(trx));
-  w.chunks.push_back(std::move(chunk));
 }
 
 void SearchTableTransaction::AddReferences(
-  const std::shared_ptr<TableShard>& shard, std::span<const uint64_t> seg_ids) {
-  // One batched call per bulk statement (after its parallel sinks combine), so
-  // the manifest's current insert run is resolved once -- and the manifest is
-  // never touched from the multi-threaded Combine path.
-  _changes[shard->GetTableId()].AppendReference(seg_ids);
+  const std::shared_ptr<TableShard>& shard,
+  std::vector<SearchDbWal::PendingChunk>&& chunks) {
+  _changes[shard->GetTableId()].AppendReference(std::move(chunks));
 }
 
 void SearchTableTransaction::AddInlineInsertChunk(
@@ -75,9 +71,6 @@ void SearchTableTransaction::AddInlineInsertChunk(
   duckdb::BufferManager& buffer_manager,
   const duckdb::vector<duckdb::LogicalType>& types, duckdb::DataChunk& chunk,
   bool uses_generated_pk, uint64_t pk_base) {
-  // The destination shard + serial trx are recorded by
-  // EnsureSerialSearchTransaction (the inline Sink runs it first); here we only
-  // grow the ordered op manifest.
   _changes[shard->GetTableId()].AppendInsertChunk(buffer_manager, types, chunk,
                                                   uses_generated_pk, pk_base);
 }
@@ -129,39 +122,22 @@ void SearchTableTransaction::Abort() noexcept {
     }
   }
   _writes.clear();
+  _changes.clear();
+  _readers.clear();
 }
 
 void SearchTableTransaction::Commit() {
   SDB_ASSERT(!_writes.empty());
   SDB_IF_FAILURE("crash_before_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
+
   const uint64_t record_tick = AppendCommit();
   SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
 
-  // The fsynced record now durably references EVERY shard's chunk files, so
-  // protect them all from reclamation in one up-front pass -- before the commit
-  // loop below, which can crash (trx.Commit -> SDB_FATAL) or throw (Clear).
-  // Otherwise such a failure would tear down the still-uncommitted
-  // PendingChunks of not-yet-processed shards and delete files the durable
-  // record (and recovery) still need.
   for (auto& [table_id, w] : _writes) {
-    for (auto& c : w.chunks) {
-      c.MarkCommitted();
-    }
-  }
-
-  for (auto& [table_id, w] : _writes) {
-    // Assign descending ticks: the last trx commits at the record tick (band
-    // top) so the shard's published tick reaches it and recovery never
-    // re-replays this record; each earlier trx sits one (GetQueries()+1) step
-    // below the next, so a removal's tick exceeds the inserts it masks
-    // (iresearch's <= rule). Shards are independent ordering domains, so
-    // sharing the top tick across them is fine.
     uint64_t tick = record_tick;
     for (size_t i = w.transactions.size(); i-- > 0;) {
       auto& trx = *w.transactions[i];
-      // The WAL record is already fsynced, so a failed iresearch commit here
-      // leaves the durable log inconsistent with the live index -- crash so
-      // recovery re-applies the record cleanly.
+
       const bool committed = trx.Commit(tick);
       SDB_FATAL_IF(
         SEARCH, !committed,
@@ -169,9 +145,7 @@ void SearchTableTransaction::Commit() {
         table_id.id(), " tick=", tick);
       tick -= trx.GetQueries() + 1;
     }
-    // TRUNCATE: wipe the shard after the WAL fsync (the cleared state publishes
-    // at the next RefreshCommit, like inserts). Solitary, so no trx above it;
-    // Clear at the record tick (band top) so the published tick reaches it.
+
     auto cit = _changes.find(table_id);
     if (cit != _changes.end() && cit->second.HasTruncate()) {
       basics::downCast<SearchTableShard>(*w.shard).Clear(record_tick);
@@ -196,18 +170,13 @@ uint64_t SearchTableTransaction::AppendCommit() {
     SDB_ASSERT(cit != _changes.end(),
                "search shard with a trx but no manifest ops");
     // A TRUNCATE adds no trx but needs one tick for its Clear at the band top.
-    // HasTruncate() also asserts it is the manifest's sole op.
+
     uint64_t shard_span =
       ShardTickSpan(w) + (cit->second.HasTruncate() ? 1 : 0);
     tick_span = std::max(tick_span, shard_span);
     auto& ops = op_lists.emplace_back();
-    // Walk the table's ordered manifest in statement order. An insert run emits
-    // an INLINE op (if it buffered rows) and/or a REFERENCE op (its bulk chunk
-    // files); a delete run emits a DELETE op; a TRUNCATE emits a bodyless
-    // TRUNCATE op (and, being solitary, ends the walk). Recovery replays this
-    // exact order into one trx, reproducing the live single-trx `_queries`
-    // ordering.
-    for (const auto& op : cit->second.ops) {
+
+    for (auto& op : cit->second.ops) {
       if (op.IsTruncate()) {
         ops.push_back(SearchDbWal::Op{nullptr, {}, {}, {}, /*truncate=*/true});
         break;
@@ -226,9 +195,9 @@ uint64_t SearchTableTransaction::AppendCommit() {
           {},
           {}});
       }
-      if (!op.seg_ids.empty()) {
+      if (!op.chunks.empty()) {
         ops.push_back(SearchDbWal::Op{
-          nullptr, {}, std::span<const uint64_t>{op.seg_ids}, {}});
+          nullptr, {}, std::span<SearchDbWal::PendingChunk>{op.chunks}, {}});
       }
     }
     SDB_ASSERT(!ops.empty(),

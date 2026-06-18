@@ -4,11 +4,11 @@
 
 query
 SELECT
-    a != b,       /* space is part of the physical JSON text, so equal logical content is still treated as not equal */
-    c != d,       /* same */
-    c[0] = d[0],  /* the [] subscript on a JSON value currently returns NULL, so this comparison is NULL */
-    a = c[0],     /* NULL for the same reason */
-    b != c[0],    /* NULL for the same reason */
+    a != b,       -- space is part of the physical JSON text, so equal logical content is still treated as not equal
+    c != d,       -- same
+    c[0] = d[0],  -- the [] subscript on a JSON value currently returns NULL, so this comparison is NULL
+    a = c[0],     -- NULL for the same reason
+    b != c[0],    -- NULL for the same reason
 FROM (
     SELECT
         '[]'::JSON AS a,

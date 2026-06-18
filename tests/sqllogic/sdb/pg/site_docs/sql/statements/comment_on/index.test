@@ -29,7 +29,8 @@ CREATE MACRO test_table_macro() AS TABLE SELECT 1 AS value;
 statement error
 COMMENT ON TABLE test_table IS 'very nice table';
 ----
-db error: ERROR: ALTER through DuckDB
+db error: ERROR: this ALTER operation is not supported
+
 
 # DOCS_TEST: example_002
 
@@ -38,7 +39,8 @@ db error: ERROR: ALTER through DuckDB
 statement error
 COMMENT ON COLUMN test_table.test_table_column IS 'very nice column';
 ----
-db error: ERROR: ALTER through DuckDB
+db error: ERROR: this ALTER operation is not supported
+
 
 # DOCS_TEST: example_003
 
@@ -47,7 +49,8 @@ db error: ERROR: ALTER through DuckDB
 statement error
 COMMENT ON VIEW test_view IS 'very nice view';
 ----
-db error: ERROR: ALTER through DuckDB
+db error: ERROR: this ALTER operation is not supported
+
 
 # DOCS_TEST: example_004
 
@@ -56,7 +59,8 @@ db error: ERROR: ALTER through DuckDB
 statement error
 COMMENT ON INDEX test_index IS 'very nice index';
 ----
-db error: ERROR: ALTER through DuckDB
+db error: ERROR: this ALTER operation is not supported
+
 
 # DOCS_TEST: example_005
 
@@ -65,7 +69,8 @@ db error: ERROR: ALTER through DuckDB
 statement error
 COMMENT ON SEQUENCE test_sequence IS 'very nice sequence';
 ----
-db error: ERROR: ALTER through DuckDB
+db error: ERROR: this ALTER operation is not supported
+
 
 # DOCS_TEST: example_006
 
@@ -74,7 +79,8 @@ db error: ERROR: ALTER through DuckDB
 statement error
 COMMENT ON TYPE test_type IS 'very nice type';
 ----
-db error: ERROR: ALTER through DuckDB
+db error: ERROR: this ALTER operation is not supported
+
 
 # DOCS_TEST: example_007
 
@@ -83,7 +89,8 @@ db error: ERROR: ALTER through DuckDB
 statement error
 COMMENT ON MACRO test_macro IS 'very nice macro';
 ----
-db error: ERROR: ALTER through DuckDB
+db error: ERROR: this ALTER operation is not supported
+
 
 # DOCS_TEST: example_008
 
@@ -92,7 +99,8 @@ db error: ERROR: ALTER through DuckDB
 statement error
 COMMENT ON MACRO TABLE test_table_macro IS 'very nice table macro';
 ----
-db error: ERROR: ALTER through DuckDB
+db error: ERROR: this ALTER operation is not supported
+
 
 # DOCS_TEST: example_009
 
@@ -101,7 +109,8 @@ db error: ERROR: ALTER through DuckDB
 statement error
 COMMENT ON TABLE test_table IS NULL;
 ----
-db error: ERROR: ALTER through DuckDB
+db error: ERROR: this ALTER operation is not supported
+
 
 # DOCS_TEST: example_010
 
@@ -128,8 +137,11 @@ SELECT comment FROM duckdb_views();
 
 # DOCS_TEST_BODY
 
-statement ok
+statement error
 SELECT comment FROM duckdb_indexes();
+----
+db error: ERROR: Table with name  does not exist!
+
 
 # DOCS_TEST: example_014
 

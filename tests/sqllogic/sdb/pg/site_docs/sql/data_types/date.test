@@ -14,9 +14,9 @@ date
 
 query
 SELECT
-    '-infinity'::DATE AS negative,
-    'epoch'::DATE AS epoch,
-    'infinity'::DATE AS positive;
+    '-infinity'::DATE::TEXT AS negative,
+    'epoch'::DATE::TEXT AS epoch,
+    'infinity'::DATE::TEXT AS positive;
 ----
 negative	epoch	positive
--5877641-06-24	1970-01-01	5881580-07-11
+-infinity	1970-01-01	infinity

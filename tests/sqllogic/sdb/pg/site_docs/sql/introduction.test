@@ -48,7 +48,7 @@ VALUES ('San Francisco', 46, 50, 0.25, '1994-11-27');
 
 statement ok
 INSERT INTO cities
-VALUES ('San Francisco', -194.0, 53.0);
+VALUES ('San Francisco', 37.8, 53.0);
 
 # DOCS_TEST: example_006
 
@@ -202,7 +202,7 @@ DELETE FROM cities;
 
 statement ok
 INSERT INTO cities
-VALUES ('San Francisco', -194.0, 53.0);
+VALUES ('San Francisco', 37.8, 53.0);
 
 # DOCS_TEST_BODY
 
@@ -212,8 +212,8 @@ FROM weather, cities
 WHERE city = name;
 ----
 city	temp_lo	temp_hi	prcp	date	name	lat	lon
-San Francisco	43	57	0	1994-11-29	San Francisco	-194	53
-San Francisco	46	50	0.25	1994-11-27	San Francisco	-194	53
+San Francisco	43	57	0	1994-11-29	San Francisco	37.8	53
+San Francisco	46	50	0.25	1994-11-27	San Francisco	37.8	53
 
 # DOCS_TEST: example_018
 
@@ -222,7 +222,7 @@ DELETE FROM cities;
 
 statement ok
 INSERT INTO cities
-VALUES ('San Francisco', -194.0, 53.0);
+VALUES ('San Francisco', 37.8, 53.0);
 
 # DOCS_TEST_BODY
 
@@ -232,8 +232,8 @@ FROM weather, cities
 WHERE city = name;
 ----
 city	temp_lo	temp_hi	prcp	date	lon	lat
-San Francisco	43	57	0	1994-11-29	53	-194
-San Francisco	46	50	0.25	1994-11-27	53	-194
+San Francisco	43	57	0	1994-11-29	53	37.8
+San Francisco	46	50	0.25	1994-11-27	53	37.8
 
 # DOCS_TEST: example_019
 
@@ -242,7 +242,7 @@ DELETE FROM cities;
 
 statement ok
 INSERT INTO cities
-VALUES ('San Francisco', -194.0, 53.0);
+VALUES ('San Francisco', 37.8, 53.0);
 
 # DOCS_TEST_BODY
 
@@ -253,8 +253,8 @@ FROM weather, cities
 WHERE cities.name = weather.city;
 ----
 city	temp_lo	temp_hi	prcp	date	lon	lat
-San Francisco	43	57	0	1994-11-29	53	-194
-San Francisco	46	50	0.25	1994-11-27	53	-194
+San Francisco	43	57	0	1994-11-29	53	37.8
+San Francisco	46	50	0.25	1994-11-27	53	37.8
 
 # DOCS_TEST: example_020
 
@@ -263,7 +263,7 @@ DELETE FROM cities;
 
 statement ok
 INSERT INTO cities
-VALUES ('San Francisco', -194.0, 53.0);
+VALUES ('San Francisco', 37.8, 53.0);
 
 # DOCS_TEST_BODY
 
@@ -273,8 +273,8 @@ FROM weather
 INNER JOIN cities ON weather.city = cities.name;
 ----
 city	temp_lo	temp_hi	prcp	date	name	lat	lon
-San Francisco	43	57	0	1994-11-29	San Francisco	-194	53
-San Francisco	46	50	0.25	1994-11-27	San Francisco	-194	53
+San Francisco	43	57	0	1994-11-29	San Francisco	37.8	53
+San Francisco	46	50	0.25	1994-11-27	San Francisco	37.8	53
 
 # DOCS_TEST: example_021
 
@@ -283,7 +283,7 @@ DELETE FROM cities;
 
 statement ok
 INSERT INTO cities
-VALUES ('San Francisco', -194.0, 53.0);
+VALUES ('San Francisco', 37.8, 53.0);
 
 # DOCS_TEST_BODY
 
@@ -295,8 +295,8 @@ LEFT OUTER JOIN cities ON weather.city = cities.name;
 city	temp_lo	temp_hi	prcp	date	name	lat	lon
 Hayward	37	54	NULL	1994-11-29	NULL	NULL	NULL
 Oakland	45	58	0.1	1994-11-30	NULL	NULL	NULL
-San Francisco	43	57	0	1994-11-29	San Francisco	-194	53
-San Francisco	46	50	0.25	1994-11-27	San Francisco	-194	53
+San Francisco	43	57	0	1994-11-29	San Francisco	37.8	53
+San Francisco	46	50	0.25	1994-11-27	San Francisco	37.8	53
 
 # DOCS_TEST: example_022
 

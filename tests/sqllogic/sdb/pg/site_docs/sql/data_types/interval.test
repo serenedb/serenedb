@@ -13,7 +13,7 @@ SELECT
 ;
 ----
 to_years	to_years	interval	interval	interval
-<slt:ignore>	<slt:ignore>	<slt:ignore>	<slt:ignore>	<slt:ignore>
+1 year	<slt:ignore>	1 mon 1 day	1 year 4 mons	48:00:00
 
 # DOCS_TEST: example_002
 
@@ -103,11 +103,11 @@ SELECT
 
 # DOCS_TEST_BODY
 
-query error
-SELECT
-;
+query
+SELECT TIMESTAMP '2000-02-01 12:00:00' - TIMESTAMP '2000-01-01 00:00:00';
 ----
-db error: ERROR: SELECT clause without selection list
+?column?
+31 days 12:00:00
 
 
 # DOCS_TEST: example_008

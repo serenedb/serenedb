@@ -56,13 +56,6 @@ CREATE TEXT SEARCH DICTIONARY pipe_variant (
 
 # DOCS_TEST: example_003
 
-# DOCS_TEST_RAW
-#| CREATE TEXT SEARCH DICTIONARY pipe_extended (
-#|     template = 'copy_from',
-#|     from = 'pipe_dict',
-#|     STEP3_TEMPLATE = 'stopwords',
-#|     STEP3_STOPWORDS = '"bar","foo"'
-#| );
 
 # DOCS_TEST_BODY
 

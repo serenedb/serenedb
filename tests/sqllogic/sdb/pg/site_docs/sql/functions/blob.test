@@ -101,3 +101,40 @@ SELECT unhex('2A') AS unhex;
 ----
 unhex
 \\x2a
+
+# DOCS_TEST: md5_number
+
+# The result is a HUGEINT, which the pg-wire extended protocol cannot transmit;
+# cast it to VARCHAR for the runnable body while the RAW block shows the natural
+# call and its decimal value.
+
+# DOCS_TEST_RAW
+#| SELECT md5_number('\xAABB'::BLOB) AS md5_number;
+#| ----
+#| md5_number
+#| 94525045605907259200829535064523132504
+
+# DOCS_TEST_BODY
+query
+SELECT md5_number('\xAABB'::BLOB)::VARCHAR AS md5_number;
+----
+md5_number
+94525045605907259200829535064523132504
+
+# DOCS_TEST: read_blob
+
+statement ok
+COPY (SELECT 'hello') TO '/tmp/sdb_docs_read_blob_fixture.bin' (FORMAT csv, HEADER false);
+
+# DOCS_TEST_RAW
+#| SELECT content FROM read_blob('hello.bin');
+#| ----
+#| content
+#| \x68656c6c6f0a
+
+# DOCS_TEST_BODY
+query
+SELECT content FROM read_blob('/tmp/sdb_docs_read_blob_fixture.bin');
+----
+content
+\\x68656c6c6f0a

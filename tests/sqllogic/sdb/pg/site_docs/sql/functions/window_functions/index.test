@@ -17,9 +17,6 @@ CREATE TABLE results AS SELECT * FROM (VALUES
     ('200m', DATE '2025-01-01', 'Cy', 24.3e0, 9, TIMESTAMP '2025-01-01 11:00:00')
 ) AS t(event, date, athlete, time, points, datetime);
 
-# DOCS_TEST_RAW
-#| SELECT row_number() OVER ()
-#| FROM sales;
 
 # DOCS_TEST_BODY
 
@@ -153,12 +150,6 @@ mode
 
 # DOCS_TEST: example_008
 
-# DOCS_TEST_RAW
-#| SELECT event, athlete,
-#|     first_value(athlete ORDER BY time) OVER w AS fastest
-#| FROM results
-#| WINDOW w AS (PARTITION BY event ORDER BY date)
-#| ORDER BY event, athlete;
 
 # DOCS_TEST_BODY
 
@@ -253,12 +244,6 @@ Worcester	2019-01-13	12
 
 # DOCS_TEST: example_011
 
-# DOCS_TEST_RAW
-#| SELECT points,
-#|     sum(points) OVER (
-#|         ROWS BETWEEN 1 PRECEDING
-#|                  AND 1 FOLLOWING) AS "Moving Sum"
-#| FROM results;
 
 # DOCS_TEST_BODY
 
@@ -595,9 +580,6 @@ Worcester	2019-01-13	93806	{95934.5,97803.5,101014.75}	107170
 
 # DOCS_TEST: example_018
 
-# DOCS_TEST_RAW
-#| SELECT "Plant", "Date", "MWh"
-#| FROM "Generation History";
 
 # DOCS_TEST_BODY
 

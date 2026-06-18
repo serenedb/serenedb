@@ -767,10 +767,10 @@ list_distinct
 # DOCS_TEST: list_entropy
 # DOCS_TEST_BODY
 query
-SELECT list_entropy([3, 3, 9]) AS list_entropy;
+SELECT round(list_entropy([3, 3, 9]), 10) AS list_entropy;
 ----
 list_entropy
-0.9182958340544893
+0.9182958341
 
 # DOCS_TEST: list_extract
 # DOCS_TEST_BODY

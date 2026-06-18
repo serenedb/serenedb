@@ -21,10 +21,11 @@ CREATE TYPE my_schema.mood AS ENUM ('sad', 'ok', 'happy');
 
 # DOCS_TEST_BODY
 
-skipif serenedb
 query
-SELECT 'clubs'::ENUM ('spades', 'hearts', 'diamonds', 'clubs');
+SELECT 'clubs'::ENUM ('spades', 'hearts', 'diamonds', 'clubs') AS suit;
 ----
+suit
+clubs
 
 # DOCS_TEST: example_004
 
@@ -127,7 +128,7 @@ INSERT INTO person VALUES
 
 # DOCS_TEST_BODY
 
-statement error db error: ERROR: Could not convert string 'quackity\-quack' to UINT8
+statement error db error: ERROR: Could not convert string 'quackity-quack' to UINT8
 INSERT INTO person VALUES ('Hannes', 'quackity-quack');
 
 # DOCS_TEST: example_009
@@ -288,10 +289,16 @@ my_enum_range
 
 # DOCS_TEST: example_020
 
+statement ok
+DROP TYPE IF EXISTS removable_mood CASCADE;
+
+statement ok
+CREATE TYPE removable_mood AS ENUM ('sad', 'ok', 'happy');
+
+# DOCS_TEST_RAW
+#| DROP TYPE ⟨enum_name⟩;
+
 # DOCS_TEST_BODY
 
-statement error
-DROP TYPE ⟨enum_name⟩;
-----
-db error: ERROR: Type with name ⟨enum_name⟩ does not exist!
-Did you mean "<slt:ignore>"?
+statement ok
+DROP TYPE removable_mood;

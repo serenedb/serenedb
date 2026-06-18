@@ -114,8 +114,6 @@ CREATE MACRO get_users(i) AS TABLE
 
 # DOCS_TEST: example_014
 
-# DOCS_TEST_RAW
-#| SELECT * FROM get_users([1, 5]);
 
 # DOCS_TEST_BODY
 
@@ -341,12 +339,9 @@ SELECT low('AA');
 low
 aa
 
+
 # DOCS_TEST: example_034
 
-# DOCS_TEST_RAW
-#| SELECT schema_name, function_name, function_type, parameters
-#| FROM duckdb_functions()
-#| WHERE function_type IN ('macro', 'table_macro');
 
 # DOCS_TEST_BODY
 

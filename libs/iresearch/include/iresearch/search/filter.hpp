@@ -48,27 +48,15 @@ struct PrepareContext {
   const AttributeProvider* ctx = nullptr;
   score_t boost = kNoBoost;
 
-  PrepareContext Boost(score_t boost) const noexcept {
-    auto ctx = *this;
-    ctx.boost *= boost;
-    return ctx;
-  }
+  void Boost(score_t b) noexcept { boost *= b; }
 };
 
 struct ExecutionContext {
   IResourceManager& memory = IResourceManager::gNoop;
-  // Borrowed, must outlive the produced iterators. May be null.
-  const StatsBuffer* stats = nullptr;
-
   const AttributeProvider* ctx = nullptr;
   const DocumentMask* pending_docs_mask = nullptr;
   // If enabled, wand would use first scorer from scorers
   WandContext wand{};
-
-  const StatsBuffer& Stats() const noexcept {
-    static const StatsBuffer kEmpty;
-    return stats ? *stats : kEmpty;
-  }
 };
 
 inline IndexFeatures GetFeatures(const Scorer* scorer) noexcept {
@@ -85,7 +73,8 @@ class QueryBuilder : public memory::Managed {
   virtual ~QueryBuilder() = default;
 
   static QueryBuilder::ptr Empty();
-  virtual DocIterator::ptr Execute(const ExecutionContext& ctx) const = 0;
+  virtual DocIterator::ptr Execute(const ExecutionContext& ctx,
+                                   const StatsBuffer& stats) const = 0;
 
   virtual void Visit(PreparedStateVisitor&, score_t boost) const = 0;
 

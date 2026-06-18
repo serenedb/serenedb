@@ -203,7 +203,8 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
     return;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->Execute({.pending_docs_mask = &deleted_docs});
+  auto itr = prepared->Execute({.pending_docs_mask = &deleted_docs},
+                               StatsBuffer::Empty());
 
   if (!itr) [[unlikely]] {
     return;  // skip invalid iterators
@@ -237,7 +238,8 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
     return false;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->Execute({.pending_docs_mask = &deleted_docs});
+  auto itr = prepared->Execute({.pending_docs_mask = &deleted_docs},
+                               StatsBuffer::Empty());
   if (!itr) [[unlikely]] {
     return false;  // skip invalid iterators
   }
@@ -278,7 +280,8 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
     return;  // Skip invalid prepared filters
   }
 
-  auto itr = prepared->Execute({.pending_docs_mask = &document_mask});
+  auto itr = prepared->Execute({.pending_docs_mask = &document_mask},
+                               StatsBuffer::Empty());
 
   if (!itr) [[unlikely]] {
     return;  // Skip invalid iterators

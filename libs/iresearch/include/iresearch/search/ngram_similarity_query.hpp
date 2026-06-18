@@ -43,7 +43,8 @@ class NGramSimilarityQuery : public QueryBuilder {
       _state{std::move(state)},
       _boost{boost} {}
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final;
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
     visitor.Visit(*this, _state, boost * _boost);

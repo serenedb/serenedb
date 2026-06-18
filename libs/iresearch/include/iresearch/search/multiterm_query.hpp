@@ -44,7 +44,8 @@ class MultiTermQuery : public QueryBuilder {
 
   MultiTermState& State() noexcept { return _state; }
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final;
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final;
 

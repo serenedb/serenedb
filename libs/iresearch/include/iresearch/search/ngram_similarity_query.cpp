@@ -616,9 +616,9 @@ CostAdapters Execute(const NGramState& query_state,
 
 }  // namespace
 
-DocIterator::ptr NGramSimilarityQuery::Execute(
-  const ExecutionContext& ctx) const {
-  const auto* scorer = ctx.Stats().GetScorer();
+DocIterator::ptr NGramSimilarityQuery::Execute(const ExecutionContext& ctx,
+                                               const StatsBuffer& stats) const {
+  const auto* scorer = stats.GetScorer();
   SDB_ASSERT(1 != _min_match_count || scorer);
 
   const auto& segment = _segment;
@@ -630,7 +630,7 @@ DocIterator::ptr NGramSimilarityQuery::Execute(
     return DocIterator::empty();
   }
 
-  const auto stats = ctx.Stats().GetStats();
+  const auto stat = stats.GetStats();
   // TODO(mbkkt) itrs.size() == 1: return itrs_[0], but needs to add score
   // optimization for single ngram case
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
@@ -638,14 +638,14 @@ DocIterator::ptr NGramSimilarityQuery::Execute(
     return memory::make_managed<NGramSimilarityDocIterator<
       NGramApprox<true>, SerialPositionsChecker<Dummy>>>(
       docs_count, std::move(itrs), _state.terms.size(), _min_match_count,
-      _state.reader->meta(), scorer ? stats.data() : nullptr, _boost);
+      _state.reader->meta(), scorer ? stat.data() : nullptr, _boost);
   }
   // TODO(mbkkt) min_match_count_ == 1: disjunction for approx,
   // optimization for low threshold case
   return memory::make_managed<NGramSimilarityDocIterator<
     NGramApprox<false>, SerialPositionsChecker<Dummy>>>(
     docs_count, std::move(itrs), _state.terms.size(), _min_match_count,
-    _state.reader->meta(), scorer ? stats.data() : nullptr, _boost);
+    _state.reader->meta(), scorer ? stat.data() : nullptr, _boost);
 }
 
 DocIterator::ptr NGramSimilarityQuery::ExecuteWithOffsets() const {

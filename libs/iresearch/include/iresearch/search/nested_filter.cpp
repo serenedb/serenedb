@@ -567,7 +567,8 @@ class ByNestedQuery : public QueryBuilder {
     SDB_ASSERT(IsValid(_match));
   }
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final;
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
     // TODO(mbkkt) maybe use none_boost for NoneMatcher?
@@ -591,7 +592,8 @@ class ByNestedQuery : public QueryBuilder {
   score_t _none_boost;
 };
 
-DocIterator::ptr ByNestedQuery::Execute(const ExecutionContext& ctx) const {
+DocIterator::ptr ByNestedQuery::Execute(const ExecutionContext& ctx,
+                                        const StatsBuffer& stats) const {
   auto& rdr = _segment;
 
   auto parent = _parent(rdr);
@@ -606,15 +608,14 @@ DocIterator::ptr ByNestedQuery::Execute(const ExecutionContext& ctx) const {
     return DocIterator::empty();
   }
 
-  const auto* scorer = ctx.Stats().GetScorer();
+  const auto* scorer = stats.GetScorer();
 
   ExecutionContext child_ctx{ctx};
-  child_ctx.stats =
-    ctx.Stats().ChildCount() != 0 ? &ctx.Stats().Child(0) : nullptr;
   // TODO(mbkkt) wand for nested?
   child_ctx.wand = {};
 
-  auto child = _child->Execute(child_ctx);
+  auto child = _child->Execute(
+    child_ctx, stats.ChildCount() != 0 ? stats.Child(0) : StatsBuffer::Empty());
 
   if (!child) [[unlikely]] {
     return DocIterator::empty();

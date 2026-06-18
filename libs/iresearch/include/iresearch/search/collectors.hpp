@@ -39,133 +39,23 @@ inline size_t GetStatsSize(const Scorer* scorer) noexcept {
 struct FieldCollector {
   void Collect(const TermReader& field) noexcept;
 
+  static void Merge(FieldCollector& dst, const FieldCollector& src);
+
   uint64_t docs_with_field = 0;
   uint64_t total_term_freq = 0;
 };
 
 struct TermCollector {
+  void Collect(const AttributeProvider& term_attrs) noexcept;
+
+  static void Merge(TermCollector& dst, const TermCollector& src);
+
   uint64_t docs_with_term = 0;
   uint64_t total_term_freq = 0;
-
-  void Collect(const AttributeProvider& term_attrs) noexcept;
 };
 
-class CollectorBase {
- public:
-  CollectorBase(const Scorer* scorer) noexcept : _scorer{scorer} {}
-  const Scorer* GetScorer() const noexcept { return _scorer; }
-
- protected:
-  void Finish(bstring& stats_buf, const TermCollector* collector,
-              const FieldCollector* field_data) const {
-    SDB_ASSERT(_scorer);
-    SDB_ASSERT(field_data);
-    SDB_ASSERT(collector);
-    stats_buf.resize(GetStatsSize(_scorer));
-    _scorer->collect(stats_buf.data(), field_data, collector);
-  }
-
-  bool HasScorer() const noexcept { return _scorer != nullptr; }
-
- private:
-  const Scorer* _scorer = nullptr;
-};
-
-class FlatTermBuffer {
- public:
-  FlatTermBuffer(size_t size) : _collectors{size} {}
-
-  size_t Size() const noexcept { return _collectors.size(); }
-  bool Empty() const noexcept { return _collectors.empty(); }
-
-  size_t PushBack() {
-    _collectors.emplace_back();
-    return _collectors.size() - 1;
-  }
-
-  void Collect(size_t term_idx, const AttributeProvider& attrs) {
-    SDB_ASSERT(term_idx < _collectors.size());
-    _collectors[term_idx].Collect(attrs);
-  }
-
-  const TermCollector& Get(size_t term_idx) const {
-    SDB_ASSERT(term_idx < _collectors.size());
-    return _collectors[term_idx];
-  }
-
-  TermCollector& Get(size_t term_idx) {
-    SDB_ASSERT(term_idx < _collectors.size());
-    return _collectors[term_idx];
-  }
-
- private:
-  std::vector<TermCollector> _collectors;
-};
-
-class TermCollectorsFlat : public CollectorBase, public FlatTermBuffer {
- public:
-  TermCollectorsFlat(const Scorer* scorer, size_t size)
-    : CollectorBase{scorer}, FlatTermBuffer{scorer ? size : 0} {}
-
-  size_t PushBack() {
-    if (!HasScorer()) {
-      return 0;
-    }
-    FlatTermBuffer::PushBack();
-    return Size() - 1;
-  }
-
-  void Collect(size_t term_idx, const AttributeProvider& attrs) {
-    if (HasScorer()) {
-      SDB_ASSERT(term_idx < Size());
-      Get(term_idx).Collect(attrs);
-    }
-  }
-
-  void Finish(bstring& stats_buf, size_t term_idx,
-              const FieldCollector* field_data) const {
-    if (HasScorer()) {
-      SDB_ASSERT(term_idx < Size());
-      CollectorBase::Finish(stats_buf, &Get(term_idx), field_data);
-    }
-  }
-};
-
-class TermCollectorsVariadic : public CollectorBase {
- public:
-  TermCollectorsVariadic(const Scorer* scorer, size_t phrase_size)
-    : CollectorBase{scorer}, _collectors(phrase_size, FlatTermBuffer{0}) {}
-
-  size_t Size() const noexcept { return _collectors.size(); }
-
-  FlatTermBuffer* GetCollector(size_t idx) {
-    if (!HasScorer()) {
-      return nullptr;
-    }
-    SDB_ASSERT(idx < _collectors.size());
-    return &_collectors[idx];
-  }
-
-  void Finish(bstring& stats_buf, size_t part_idx,
-              const FieldCollector* field_data) const {
-    if (!HasScorer()) {
-      return;
-    }
-    SDB_ASSERT(part_idx < _collectors.size());
-    const auto& part = _collectors[part_idx];
-    for (size_t i = 0, size = part.Size(); i < size; ++i) {
-      CollectorBase::Finish(stats_buf, &part.Get(i), field_data);
-    }
-  }
-
- private:
-  std::vector<FlatTermBuffer> _collectors;
-};
-
-static_assert(std::is_nothrow_move_constructible_v<TermCollectorsFlat>);
-static_assert(std::is_nothrow_move_assignable_v<TermCollectorsFlat>);
-static_assert(std::is_nothrow_move_constructible_v<TermCollectorsVariadic>);
-static_assert(std::is_nothrow_move_assignable_v<TermCollectorsVariadic>);
+void FillStats(bstring& stats_buf, const Scorer* scorer,
+               const FieldCollector* field, const TermCollector* term);
 
 class StatsBuffer {
  public:
@@ -174,6 +64,11 @@ class StatsBuffer {
   StatsBuffer() noexcept : _stats{{IResourceManager::gNoop}} {}
   StatsBuffer(Storage&& stats, const Scorer* scorer)
     : _stats{std::move(stats)}, _scorer{scorer} {}
+
+  static const StatsBuffer& Empty() noexcept {
+    static const StatsBuffer kEmpty;
+    return kEmpty;
+  }
 
   bool HasScorer() const noexcept { return _scorer != nullptr; }
   bytes_view GetStats() const noexcept {
@@ -200,9 +95,6 @@ FieldCollector MergeFieldCollectors(
 TermCollector MergeTermCollectors(
   std::span<const TermCollector> collectors) noexcept;
 
-void MergeFlatTermBuffers(std::span<const FlatTermBuffer> buffers,
-                          FlatTermBuffer& out);
-
 class PrepareCollector {
  public:
   using ptr = std::unique_ptr<PrepareCollector>;
@@ -216,113 +108,53 @@ class PrepareCollector {
   virtual const Scorer* GetScorer() const noexcept { return nullptr; }
 };
 
-class TermsCollector final : public PrepareCollector {
+class FieldPrepareCollector : public PrepareCollector {
  public:
-  TermsCollector(const Scorer* scorer, size_t size) : _terms{scorer, size} {}
+  explicit FieldPrepareCollector(const Scorer* scorer) noexcept
+    : _scorer{scorer} {}
 
-  FieldCollector& Field() noexcept { return _field; }
-  TermCollectorsFlat& Terms() noexcept { return _terms; }
+  auto& Field() noexcept { return _field; }
 
-  const Scorer* GetScorer() const noexcept final { return _terms.GetScorer(); }
+  void Merge(PrepareCollector&& other) override;
 
-  void Merge(PrepareCollector&& other) final {
-    auto& rhs = sdb::basics::downCast<TermsCollector>(other);
-    const FieldCollector fields[]{_field, rhs._field};
-    _field = MergeFieldCollectors(fields);
-    const FlatTermBuffer buffers[]{rhs._terms};
-    MergeFlatTermBuffers(buffers, _terms);
-  }
-
-  StatsBuffer Finish(IResourceManager& memory) final {
-    StatsBuffer::Storage stats{{memory}};
-    stats.reserve(_terms.Size());
-    for (size_t i = 0, size = _terms.Size(); i < size; ++i) {
-      bstring stat;
-      _terms.Finish(stat, i, &_field);
-      stats.emplace_back(std::move(stat));
-    }
-    return StatsBuffer{std::move(stats), _terms.GetScorer()};
-  }
-
- private:
-  FieldCollector _field;
-  TermCollectorsFlat _terms;
-};
-
-class NGramCollector final : public PrepareCollector {
- public:
-  NGramCollector(const Scorer* scorer, size_t size) : _terms{scorer, size} {}
-
-  FieldCollector& Field() noexcept { return _field; }
-  TermCollectorsFlat& Terms() noexcept { return _terms; }
-
-  const Scorer* GetScorer() const noexcept final { return _terms.GetScorer(); }
-
-  void Merge(PrepareCollector&& other) final {
-    auto& rhs = sdb::basics::downCast<NGramCollector>(other);
-    const FieldCollector fields[]{_field, rhs._field};
-    _field = MergeFieldCollectors(fields);
-    const FlatTermBuffer buffers[]{rhs._terms};
-    MergeFlatTermBuffers(buffers, _terms);
-  }
-
-  StatsBuffer Finish(IResourceManager& memory) final {
-    StatsBuffer::Storage stats{{memory}};
-    if (_terms.GetScorer()) {
-      bstring stat(GetStatsSize(_terms.GetScorer()), 0);
-      for (size_t i = 0, size = _terms.Size(); i < size; ++i) {
-        _terms.Finish(stat, i, &_field);
-      }
-      stats.emplace_back(std::move(stat));
-    }
-    return StatsBuffer{std::move(stats), _terms.GetScorer()};
-  }
-
- private:
-  FieldCollector _field;
-  TermCollectorsFlat _terms;
-};
-
-class VariadicTermsCollector final : public PrepareCollector {
- public:
-  VariadicTermsCollector(const Scorer* scorer, size_t phrase_size)
-    : _scorer{scorer}, _terms{scorer, phrase_size} {}
-
-  FieldCollector& Field() noexcept { return _field; }
-  TermCollectorsVariadic& Terms() noexcept { return _terms; }
+  StatsBuffer Finish(IResourceManager& memory) override;
 
   const Scorer* GetScorer() const noexcept final { return _scorer; }
 
-  void Merge(PrepareCollector&& other) final {
-    auto& rhs = sdb::basics::downCast<VariadicTermsCollector>(other);
-    const FieldCollector fields[]{_field, rhs._field};
-    _field = MergeFieldCollectors(fields);
-    for (size_t i = 0, size = _terms.Size(); i < size; ++i) {
-      auto* dst = _terms.GetCollector(i);
-      auto* src = rhs._terms.GetCollector(i);
-      if (dst && src && dst->Size() == src->Size()) {
-        const FlatTermBuffer buffers[]{*src};
-        MergeFlatTermBuffers(buffers, *dst);
-      }
-    }
-  }
+ protected:
+  FieldCollector _field;
+  const Scorer* _scorer;
+};
 
-  StatsBuffer Finish(IResourceManager& memory) final {
-    StatsBuffer::Storage stats{{memory}};
-    if (_scorer) {
-      bstring stat(GetStatsSize(_scorer), 0);
-      for (size_t i = 0, size = _terms.Size(); i < size; ++i) {
-        _terms.Finish(stat, i, &_field);
-      }
-      stats.emplace_back(std::move(stat));
-    }
-    return StatsBuffer{std::move(stats), _scorer};
-  }
+class ByTermsCollector final : public FieldPrepareCollector {
+ public:
+  ByTermsCollector(const Scorer* scorer, size_t size)
+    : FieldPrepareCollector{scorer}, _terms(size) {}
+
+  auto& Terms() noexcept { return _terms; }
+
+  void Merge(PrepareCollector&& other) final;
+
+  StatsBuffer Finish(IResourceManager& memory) final;
 
  private:
-  const Scorer* _scorer;
-  FieldCollector _field;
-  TermCollectorsVariadic _terms;
+  std::vector<TermCollector> _terms;
+};
+
+class PhraseCollector final : public FieldPrepareCollector {
+ public:
+  PhraseCollector(const Scorer* scorer, size_t size)
+    : FieldPrepareCollector{scorer}, _parts(size) {}
+
+  auto& Part(size_t i) noexcept { return _parts[i]; }
+  auto Size() const noexcept { return _parts.size(); }
+
+  void Merge(PrepareCollector&& other) final;
+
+  StatsBuffer Finish(IResourceManager& memory) final;
+
+ private:
+  std::vector<std::vector<TermCollector>> _parts;
 };
 
 class AllCollector final : public PrepareCollector {
@@ -331,17 +163,9 @@ class AllCollector final : public PrepareCollector {
 
   const Scorer* GetScorer() const noexcept final { return _scorer; }
 
-  void Merge(PrepareCollector&& /*other*/) final {}
+  void Merge(PrepareCollector&&) final {}
 
-  StatsBuffer Finish(IResourceManager& memory) final {
-    StatsBuffer::Storage stats{{memory}};
-    if (_scorer) {
-      bstring stat(GetStatsSize(_scorer), 0);
-      _scorer->collect(stat.data(), nullptr, nullptr);
-      stats.emplace_back(std::move(stat));
-    }
-    return StatsBuffer{std::move(stats), _scorer};
-  }
+  StatsBuffer Finish(IResourceManager& memory) final;
 
  private:
   const Scorer* _scorer;
@@ -349,41 +173,9 @@ class AllCollector final : public PrepareCollector {
 
 class NoopCollector final : public PrepareCollector {
  public:
-  void Merge(PrepareCollector&& /*other*/) final {}
+  void Merge(PrepareCollector&&) final {}
 
-  StatsBuffer Finish(IResourceManager& memory) final {
-    return StatsBuffer{StatsBuffer::Storage{{memory}}, nullptr};
-  }
-};
-
-class FieldOnlyCollector final : public PrepareCollector {
- public:
-  explicit FieldOnlyCollector(const Scorer* scorer) noexcept
-    : _scorer{scorer} {}
-
-  FieldCollector& Field() noexcept { return _field; }
-
-  const Scorer* GetScorer() const noexcept final { return _scorer; }
-
-  void Merge(PrepareCollector&& other) final {
-    auto& rhs = sdb::basics::downCast<FieldOnlyCollector>(other);
-    const FieldCollector fields[]{_field, rhs._field};
-    _field = MergeFieldCollectors(fields);
-  }
-
-  StatsBuffer Finish(IResourceManager& memory) final {
-    StatsBuffer::Storage stats{{memory}};
-    if (_scorer) {
-      bstring stat(GetStatsSize(_scorer), 0);
-      _scorer->collect(stat.data(), &_field, nullptr);
-      stats.emplace_back(std::move(stat));
-    }
-    return StatsBuffer{std::move(stats), _scorer};
-  }
-
- private:
-  const Scorer* _scorer;
-  FieldCollector _field;
+  StatsBuffer Finish(IResourceManager& memory) final;
 };
 
 class CompoundCollector final : public PrepareCollector {
@@ -397,24 +189,12 @@ class CompoundCollector final : public PrepareCollector {
 
   const Scorer* GetScorer() const noexcept { return _scorer; }
 
-  PrepareCollector& Child(size_t i) noexcept { return *_children[i]; }
-  size_t Size() const noexcept { return _children.size(); }
+  auto& Child(size_t i) noexcept { return *_children[i]; }
+  auto Size() const noexcept { return _children.size(); }
 
-  void Merge(PrepareCollector&& other) final {
-    auto& rhs = sdb::basics::downCast<CompoundCollector>(other);
-    SDB_ASSERT(_children.size() == rhs._children.size());
-    for (size_t i = 0, size = _children.size(); i < size; ++i) {
-      _children[i]->Merge(std::move(*rhs._children[i]));
-    }
-  }
+  void Merge(PrepareCollector&& other) final;
 
-  StatsBuffer Finish(IResourceManager& memory) final {
-    StatsBuffer stats{StatsBuffer::Storage{{memory}}, _scorer};
-    for (auto& child : _children) {
-      stats.AddChild(child->Finish(memory));
-    }
-    return stats;
-  }
+  StatsBuffer Finish(IResourceManager& memory) final;
 
  private:
   const Scorer* _scorer = nullptr;

@@ -243,7 +243,8 @@ class GeoQuery : public QueryBuilder {
       _acceptor{std::move(acceptor)},
       _boost{boost} {}
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final {
+  DocIterator::ptr Execute(const ExecutionContext&,
+                           const StatsBuffer& stats) const final {
     const auto& segment = _segment;
 
     if (!_state.reader) {
@@ -270,7 +271,7 @@ class GeoQuery : public QueryBuilder {
     }
 
     return MakeIterator(std::move(itrs), *_state.stored_field, *col_reader,
-                        segment, *_state.reader, ctx.Stats().GetStats().data(),
+                        segment, *_state.reader, stats.GetStats().data(),
                         Boost(), _parser, _acceptor);
   }
 

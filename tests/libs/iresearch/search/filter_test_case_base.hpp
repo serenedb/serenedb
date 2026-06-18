@@ -101,8 +101,10 @@ class QueryWrapper : public irs::QueryBuilder {
   QueryWrapper(const irs::SubReader& segment, irs::QueryBuilder::ptr query)
     : irs::QueryBuilder{segment}, _query(std::move(query)) {}
 
-  irs::DocIterator::ptr Execute(const irs::ExecutionContext& ctx) const final {
-    return irs::memory::make_managed<DocIteratorWrapper>(_query->Execute(ctx));
+  irs::DocIterator::ptr Execute(const irs::ExecutionContext& ctx,
+                                const irs::StatsBuffer& stats) const final {
+    return irs::memory::make_managed<DocIteratorWrapper>(
+      _query->Execute(ctx, stats));
   }
 
   void Visit(irs::PreparedStateVisitor& visitor,
@@ -361,7 +363,7 @@ class PreparedFilter {
 
   irs::DocIterator::ptr Execute(size_t i) const {
     const auto& query = _queries[i];
-    return query ? query->Execute(*_exec) : irs::DocIterator::empty();
+    return query ? query->Execute(*_exec, *_stats) : irs::DocIterator::empty();
   }
 
   irs::DocIterator::ptr Execute(size_t i, irs::WandContext wand) const {
@@ -369,12 +371,13 @@ class PreparedFilter {
     if (!query) {
       return irs::DocIterator::empty();
     }
-    return query->Execute({
-      .memory = _exec->memory,
-      .stats = &*_stats,
-      .ctx = _exec->ctx,
-      .wand = wand,
-    });
+    return query->Execute(
+      {
+        .memory = _exec->memory,
+        .ctx = _exec->ctx,
+        .wand = wand,
+      },
+      *_stats);
   }
 
  private:

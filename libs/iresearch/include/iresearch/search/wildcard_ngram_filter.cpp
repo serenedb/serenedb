@@ -164,8 +164,9 @@ class WildcardQuery : public QueryBuilder {
     SDB_ASSERT(_approx);
   }
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final {
-    auto approx = _approx->Execute(ctx);
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final {
+    auto approx = _approx->Execute(ctx, stats);
     if (!_matcher || approx == DocIterator::empty()) {
       return approx;
     }
@@ -315,10 +316,9 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
           }
         }
       }
-      const auto size = queries.size();
-      auto conjunction = memory::make_tracked<AndQuery>(
-        ctx.memory, segment, std::move(queries), size, ScoreMergeType::Sum,
-        sub_ctx.boost);
+      auto conjunction =
+        memory::make_tracked<AndQuery>(ctx.memory, segment, std::move(queries),
+                                       ScoreMergeType::Sum, sub_ctx.boost);
       return wrap(std::move(conjunction));
     }
   }

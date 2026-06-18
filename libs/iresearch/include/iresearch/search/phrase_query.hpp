@@ -70,7 +70,8 @@ class FixedPhraseQuery : public PhraseQuery<FixedPhraseState> {
                    positions_t&& positions, score_t boost) noexcept
     : PhraseQuery{segment, std::move(state), std::move(positions), boost} {}
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final;
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
     visitor.Visit(*this, state, boost * this->boost);
@@ -85,7 +86,8 @@ class VariadicPhraseQuery : public PhraseQuery<VariadicPhraseState> {
                       positions_t&& positions, score_t boost) noexcept
     : PhraseQuery{segment, std::move(state), std::move(positions), boost} {}
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final;
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
     visitor.Visit(*this, state, boost * this->boost);

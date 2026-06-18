@@ -62,13 +62,13 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   const TermReader* field = segment.field(field_name);
 
   if (!field) {
-    return nullptr;
+    return QueryBuilder::Empty();
   }
 
   if (NGramSimilarityQuery::kRequiredFeatures !=
       (field->meta().index_features &
        NGramSimilarityQuery::kRequiredFeatures)) {
-    return nullptr;
+    return QueryBuilder::Empty();
   }
 
   ngram_collector->Field().Collect(*field);
@@ -92,7 +92,7 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   }
 
   if (count_terms < min_match_count) {
-    return nullptr;
+    return QueryBuilder::Empty();
   }
 
   state.reader = field;

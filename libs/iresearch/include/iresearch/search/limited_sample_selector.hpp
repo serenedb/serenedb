@@ -84,13 +84,14 @@ class LimitedSampleSelector : private util::Noncopyable {
   // evaluate their shared stats. Term/field statistics are accumulated into the
   // caller-owned collectors.
   void score(const Scorer* scorer, const FieldCollector& field,
-             TermCollectorsFlat& terms, ManagedVector<bstring>& stats) {
+             std::vector<TermCollector>& terms, ManagedVector<bstring>& stats) {
     if (!_heap.Capacity() || _heap.Empty()) {
       return;
     }
     SDB_ASSERT(scorer);
     // distinct term value -> stat offset shared across segments
-    absl::flat_hash_map<hashed_bytes_view, uint32_t, HashedStrHash> offsets;
+    sdb::containers::FlatHashMap<hashed_bytes_view, uint32_t, HashedStrHash>
+      offsets;
 
     for (auto& candidate : _heap.Finalize()) {
       auto& terms_states = candidate.state->Terms();
@@ -98,16 +99,17 @@ class LimitedSampleSelector : private util::Noncopyable {
       auto [it, inserted] =
         offsets.try_emplace(hashed_bytes_view{candidate.term}, uint32_t{0});
       if (inserted) {
-        it->second = static_cast<uint32_t>(terms.PushBack());
+        it->second = static_cast<uint32_t>(terms.size());
+        terms.emplace_back();
       }
       const uint32_t idx = it->second;
-      terms.Collect(idx, *entry.cookie);
+      terms[idx].Collect(*entry.cookie);
       entry.stat_offset = idx;
     }
 
-    stats.resize(terms.Size());
+    stats.resize(terms.size());
     for (const auto& [term, idx] : offsets) {
-      terms.Finish(stats[idx], idx, &field);
+      FillStats(stats[idx], scorer, &field, &terms[idx]);
     }
   }
 
@@ -195,33 +197,29 @@ class SampledMultiTermVisitor {
 // collector and the limited sample collector; the per-term collector is built
 // in place at Finish, since the number of distinct winners is only known after
 // all segments are merged.
-class LimitedTermsCollector final : public PrepareCollector {
+class LimitedTermsCollector final : public FieldPrepareCollector {
  public:
   LimitedTermsCollector(const Scorer* scorer, size_t scored_terms_limit)
-    : _scorer{scorer}, _limited{scorer ? scored_terms_limit : 0} {}
+    : FieldPrepareCollector{scorer},
+      _limited{scorer ? scored_terms_limit : 0} {}
 
   FieldCollector& Field() noexcept { return _field; }
   LimitedSampleSelector<TermFrequency>& Limited() noexcept { return _limited; }
 
-  const Scorer* GetScorer() const noexcept final { return _scorer; }
-
   void Merge(PrepareCollector&& other) final {
     auto& rhs = sdb::basics::downCast<LimitedTermsCollector>(other);
-    const FieldCollector fields[]{_field, rhs._field};
-    _field = MergeFieldCollectors(fields);
     _limited.Merge(std::move(rhs._limited));
+    FieldPrepareCollector::Merge(std::move(rhs));
   }
 
   StatsBuffer Finish(IResourceManager& memory) final {
     StatsBuffer::Storage stats{{memory}};
-    TermCollectorsFlat terms{_scorer, 0};
+    std::vector<TermCollector> terms;
     _limited.score(_scorer, _field, terms, stats);
     return StatsBuffer{std::move(stats), _scorer};
   }
 
  private:
-  const Scorer* _scorer;
-  FieldCollector _field;
   LimitedSampleSelector<TermFrequency> _limited;
 };
 

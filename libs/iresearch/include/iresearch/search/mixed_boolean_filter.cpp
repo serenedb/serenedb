@@ -23,52 +23,86 @@
 #include "iresearch/search/boolean_query.hpp"
 
 namespace irs {
+namespace {
+
+// After optimization the required/optional slots are no longer guaranteed to be
+// And/Or: SingleChildRule collapses a single-clause boolean into its child and
+// ByTermsRule merges an Or of terms into ByTerms. Treat each slot as an opaque
+// filter and only special-case an Or to keep its clauses as separate optional
+// scoring contributions.
+bool SideEmpty(const Filter& side) noexcept {
+  const auto tid = side.type();
+  if (tid == irs::Type<Empty>::id()) {
+    return true;
+  }
+  if (tid == irs::Type<And>::id() || tid == irs::Type<Or>::id()) {
+    return sdb::basics::downCast<BooleanFilter>(side).empty();
+  }
+  return false;
+}
+
+const Or* AsOr(const Filter& side) noexcept {
+  return side.type() == irs::Type<Or>::id() ? &sdb::basics::downCast<Or>(side)
+                                            : nullptr;
+}
+
+}  // namespace
 
 PrepareCollector::ptr MixedBooleanFilter::MakeCollector(
   const Scorer* scorer) const {
-  const auto& req = GetRequired();
-  const auto& opt = GetOptional();
-  if (req.empty()) {
-    return opt.MakeCollector(scorer);
+  const auto& req = RequiredSlot();
+  const auto& opt = OptionalSlot();
+  if (SideEmpty(*req)) {
+    return opt->MakeCollector(scorer);
   }
-  if (opt.empty()) {
-    return req.MakeCollector(scorer);
+  if (SideEmpty(*opt)) {
+    return req->MakeCollector(scorer);
   }
   auto compound = std::make_unique<CompoundCollector>(scorer);
-  compound->Add(req.MakeCollector(scorer));
-  for (const auto& opt_filter : opt) {
-    compound->Add(opt_filter->MakeCollector(scorer));
+  compound->Add(req->MakeCollector(scorer));
+  if (const auto* opt_or = AsOr(*opt)) {
+    for (const auto& clause : *opt_or) {
+      compound->Add(clause->MakeCollector(scorer));
+    }
+  } else {
+    compound->Add(opt->MakeCollector(scorer));
   }
   return compound;
 }
 
 QueryBuilder::ptr MixedBooleanFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
-  const auto& req = GetRequired();
-  const auto& opt = GetOptional();
-  if (req.empty()) {
-    return opt.PrepareSegment(segment, ctx);
+  const auto& req = RequiredSlot();
+  const auto& opt = OptionalSlot();
+  if (SideEmpty(*req)) {
+    return opt->PrepareSegment(segment, ctx);
   }
-  if (opt.empty()) {
-    return req.PrepareSegment(segment, ctx);
+  if (SideEmpty(*opt)) {
+    return req->PrepareSegment(segment, ctx);
   }
 
   auto* compound = dynamic_cast<CompoundCollector*>(ctx.collector);
   SDB_ASSERT(compound != nullptr);
 
+  size_t idx = 0;
   PrepareContext req_ctx = ctx;
-  req_ctx.collector = &compound->Child(0);
-  auto req_query = req.PrepareSegment(segment, req_ctx);
+  req_ctx.collector = &compound->Child(idx++);
+  auto req_query = req->PrepareSegment(segment, req_ctx);
 
   std::vector<QueryBuilder::ptr> opt_queries;
-  opt_queries.reserve(opt.size());
-  const auto opt_ctx = ctx.Boost(opt.Boost());
-  size_t idx = 1;
-  for (const auto& opt_filter : opt) {
-    PrepareContext child = opt_ctx;
-    child.collector = &compound->Child(idx);
-    opt_queries.emplace_back(opt_filter->PrepareSegment(segment, child));
-    ++idx;
+  const auto add_clause = [&](const Filter& clause, score_t boost) {
+    PrepareContext child = ctx;
+    child.boost = ctx.boost * boost;
+    child.collector = &compound->Child(idx++);
+    opt_queries.emplace_back(clause.PrepareSegment(segment, child));
+  };
+  if (const auto* opt_or = AsOr(*opt)) {
+    opt_queries.reserve(opt_or->size());
+    for (const auto& clause : *opt_or) {
+      add_clause(*clause, opt_or->Boost());
+    }
+  } else {
+    add_clause(*opt, kNoBoost);
   }
 
   return memory::make_tracked<BoostQuery>(

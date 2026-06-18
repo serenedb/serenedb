@@ -256,7 +256,8 @@ class ColumnExistenceQuery : public QueryBuilder {
                        score_t boost) noexcept
     : QueryBuilder{segment}, _id{id}, _boost{boost} {}
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final {
+  DocIterator::ptr Execute(const ExecutionContext&,
+                           const StatsBuffer&) const final {
     const auto* column = _segment.Column(_id);
     if (column == nullptr) {
       return DocIterator::empty();

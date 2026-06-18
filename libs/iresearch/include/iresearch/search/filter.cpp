@@ -32,7 +32,8 @@ struct EmptyQueryBuilder : public QueryBuilder {
  public:
   EmptyQueryBuilder() noexcept : QueryBuilder{SubReader::empty()} {}
 
-  DocIterator::ptr Execute(const ExecutionContext&) const final {
+  DocIterator::ptr Execute(const ExecutionContext&,
+                           const StatsBuffer&) const final {
     return DocIterator::empty();
   }
 
@@ -57,7 +58,7 @@ Filter::ptr Filter::empty() { return std::make_unique<Empty>(); }
 
 QueryBuilder::ptr Empty::PrepareSegment(const SubReader&,
                                         const PrepareContext&) const {
-  return memory::to_managed<EmptyQueryBuilder>(gEmptyQuery);
+  return QueryBuilder::Empty();
 }
 
 }  // namespace irs

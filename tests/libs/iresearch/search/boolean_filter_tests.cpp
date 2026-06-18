@@ -230,8 +230,8 @@ struct Boosted : public irs::FilterWithBoost {
                       const BasicDocIterator::DocidsT& docs, irs::score_t boost)
       : QueryBuilder{segment}, docs{docs}, _boost{boost} {}
 
-    irs::DocIterator::ptr Execute(
-      const irs::ExecutionContext& ctx) const final {
+    irs::DocIterator::ptr Execute(const irs::ExecutionContext&,
+                                  const irs::StatsBuffer&) const final {
       Boosted::gExecuteCount++;
       return irs::memory::make_managed<BasicDocIterator>(
         docs.begin(), docs.end(), stats.c_str(), Boost());
@@ -533,28 +533,7 @@ TEST(boolean_query_boost, hierarchy) {
 }
 
 TEST(boolean_query_boost, and_filter) {
-  // empty boolean unboosted query
-  {
-    irs::And root;
-
-    tests::PreparedFilter prep{root, irs::SubReader::empty()};
-
-    ASSERT_EQ(irs::kNoBoost, prep.Query(0)->Boost());
-  }
-
-  // boosted empty boolean query
-  {
-    const irs::score_t value = 5;
-
-    irs::And root;
-    root.boost(value);
-
-    tests::PreparedFilter prep{root, irs::SubReader::empty()};
-
-    ASSERT_EQ(irs::kNoBoost, prep.Query(0)->Boost());
-  }
-
-  // single boosted subquery
+  // single boosted subquery (And collapses to its child after optimization)
   {
     const irs::score_t value = 5;
 
@@ -567,7 +546,8 @@ TEST(boolean_query_boost, and_filter) {
       node.boost(value);
     }
 
-    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto opt = tests::Optimized(std::move(root), &sort);
+    tests::PreparedFilter prep{*opt, irs::SubReader::empty(), &sort};
 
     auto docs = prep.Execute(0);
 
@@ -583,7 +563,7 @@ TEST(boolean_query_boost, and_filter) {
     ASSERT_FALSE(docs->next());
   }
 
-  // boosted root & single boosted subquery
+  // boosted root & single boosted subquery (root boost folds into the child)
   {
     const irs::score_t value = 5;
 
@@ -597,7 +577,8 @@ TEST(boolean_query_boost, and_filter) {
     }
     root.boost(value);
 
-    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto opt = tests::Optimized(std::move(root), &sort);
+    tests::PreparedFilter prep{*opt, irs::SubReader::empty(), &sort};
 
     auto docs = prep.Execute(0);
 
@@ -783,28 +764,7 @@ TEST(boolean_query_boost, and_filter) {
 }
 
 TEST(boolean_query_boost, or_filter) {
-  // single unboosted query
-  {
-    irs::Or root;
-
-    tests::PreparedFilter prep{root, irs::SubReader::empty()};
-
-    ASSERT_EQ(irs::kNoBoost, prep.Query(0)->Boost());
-  }
-
-  // empty single boosted query
-  {
-    const irs::score_t value = 5;
-
-    irs::Or root;
-    root.boost(value);
-
-    tests::PreparedFilter prep{root, irs::SubReader::empty()};
-
-    ASSERT_EQ(irs::kNoBoost, prep.Query(0)->Boost());
-  }
-
-  // boosted empty single query
+  // single boosted subquery (Or collapses to its child after optimization)
   {
     const irs::score_t value = 5;
 
@@ -817,7 +777,8 @@ TEST(boolean_query_boost, or_filter) {
     }
     root.boost(value);
 
-    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto opt = tests::Optimized(std::move(root), &sort);
+    tests::PreparedFilter prep{*opt, irs::SubReader::empty(), &sort};
     auto docs = prep.Execute(0);
 
     const auto& scr = docs->PrepareScore({
@@ -832,7 +793,7 @@ TEST(boolean_query_boost, or_filter) {
     ASSERT_FALSE(docs->next());
   }
 
-  // boosted single query & subquery
+  // boosted root & single boosted subquery (root boost folds into the child)
   {
     const irs::score_t value = 5;
 
@@ -846,7 +807,8 @@ TEST(boolean_query_boost, or_filter) {
     }
     root.boost(value);
 
-    tests::PreparedFilter prep{root, irs::SubReader::empty(), &sort};
+    auto opt = tests::Optimized(std::move(root), &sort);
+    tests::PreparedFilter prep{*opt, irs::SubReader::empty(), &sort};
 
     auto docs = prep.Execute(0);
 
@@ -1114,7 +1076,8 @@ struct Unestimated : public irs::FilterWithBoost {
   struct Prepared : public irs::QueryBuilder {
     explicit Prepared(const irs::SubReader& segment) : QueryBuilder{segment} {}
 
-    irs::DocIterator::ptr Execute(const irs::ExecutionContext&) const final {
+    irs::DocIterator::ptr Execute(const irs::ExecutionContext&,
+                                  const irs::StatsBuffer&) const final {
       return irs::memory::make_managed<Unestimated::DocIteratorImpl>();
     }
     void Visit(irs::PreparedStateVisitor&, irs::score_t) const final {
@@ -1163,7 +1126,8 @@ struct Estimated : public irs::FilterWithBoost {
                       bool* evaluated)
       : QueryBuilder{segment}, evaluated(evaluated), est(est) {}
 
-    irs::DocIterator::ptr Execute(const irs::ExecutionContext&) const final {
+    irs::DocIterator::ptr Execute(const irs::ExecutionContext&,
+                                  const irs::StatsBuffer&) const final {
       return irs::memory::make_managed<Estimated::DocIteratorImpl>(est,
                                                                    evaluated);
     }

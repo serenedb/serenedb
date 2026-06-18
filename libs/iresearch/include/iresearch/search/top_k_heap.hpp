@@ -31,13 +31,6 @@
 
 namespace irs {
 
-// Retains the top-K elements of a stream ordered by `Less`; the K greatest
-// survive. Elements accumulate in a buffer reserved for 2*K and are trimmed
-// back to K with std::nth_element whenever the buffer fills, giving amortized
-// O(1) insertion and O(K) memory without a maintained heap. The buffer is also
-// partitioned the first time it reaches K, so once Full() reports true Min()
-// (the smallest retained element, at index K-1) is a valid rejection threshold:
-// callers peek it to skip materializing an element that cannot make the cut.
 template<typename T, typename Less = std::less<T>>
 class TopKHeap : private util::Noncopyable {
  public:
@@ -52,9 +45,9 @@ class TopKHeap : private util::Noncopyable {
   bool Full() const noexcept { return _items.size() >= _capacity; }
 
   // Smallest retained element; valid only when Full().
-  const T& Min() const noexcept {
-    SDB_ASSERT(Full() && _capacity != 0);
-    return _items[_capacity - 1];
+  const auto& Min() const noexcept {
+    SDB_ASSERT(_min_offset < _items.size());
+    return _items[_min_offset];
   }
 
   template<typename U>
@@ -62,11 +55,16 @@ class TopKHeap : private util::Noncopyable {
     if (_capacity == 0) {
       return;
     }
-    _items.push_back(std::forward<U>(item));
-    // Partition on first reaching K (so Min() becomes a valid cutoff) and again
-    // whenever the buffer fills to 2*K (to bound memory back to K).
-    if (const auto size = _items.size();
-        size == _capacity || size == 2 * _capacity) {
+    _items.emplace_back(std::forward<U>(item));
+    if (_min_offset == std::numeric_limits<size_t>::max()) {
+      _min_offset = _items.size() - 1;
+    } else {
+      SDB_ASSERT(_min_offset < _items.size());
+      _min_offset = _less(_items.back(), _items[_min_offset])
+                      ? _items.size() - 1
+                      : _min_offset;
+    }
+    if (_items.size() == 2 * _capacity) {
       Trim();
     }
   }
@@ -85,7 +83,10 @@ class TopKHeap : private util::Noncopyable {
     return _items;
   }
 
-  void Clear() noexcept { _items.clear(); }
+  void Clear() noexcept {
+    _items.clear();
+    _min_offset = std::numeric_limits<size_t>::max();
+  }
 
  private:
   void Trim() {
@@ -96,10 +97,12 @@ class TopKHeap : private util::Noncopyable {
       _items.begin(), _items.begin() + (_capacity - 1), _items.end(),
       [this](const T& lhs, const T& rhs) { return _less(rhs, lhs); });
     _items.erase(_items.begin() + _capacity, _items.end());
+    _min_offset = _capacity - 1;
   }
 
   [[no_unique_address]] Less _less;
   std::vector<T> _items;
+  size_t _min_offset = std::numeric_limits<size_t>::max();
   size_t _capacity;
 };
 

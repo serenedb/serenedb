@@ -103,7 +103,8 @@ void MultiTermQuery::Visit(PreparedStateVisitor& visitor, score_t boost) const {
   visitor.Visit(*this, _state, boost * _boost);
 }
 
-DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx) const {
+DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
+                                         const StatsBuffer& stats) const {
   if (_state.Empty()) {
     // invalid state
     return DocIterator::empty();
@@ -113,9 +114,9 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx) const {
   SDB_ASSERT(reader);
 
   // Get required features
-  const IndexFeatures features = GetFeatures(ctx.Stats().GetScorer());
-  const std::span stats{ctx.Stats().GetAllStats()};
-  const auto* scorer = ctx.Stats().GetScorer();
+  const auto* scorer = stats.GetScorer();
+  const IndexFeatures features = GetFeatures(scorer);
+  const std::span all_stats{stats.GetAllStats()};
 
   const auto& terms = _state.Terms();
   if (terms.size() < _min_match) {
@@ -146,9 +147,10 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx) const {
     cookies.reserve(scored_count);
     for (const auto& entry : terms) {
       SDB_ASSERT(entry.cookie);
-      cookies.emplace_back(entry.cookie.get(),
-                           scorer ? stats[entry.stat_offset].c_str() : nullptr,
-                           entry.boost, reader->meta());
+      cookies.emplace_back(
+        entry.cookie.get(),
+        scorer ? all_stats[entry.stat_offset].c_str() : nullptr, entry.boost,
+        reader->meta());
     }
 
     auto docs = reader->Iterator(features, cookies, ctx.wand, _min_match,
@@ -168,7 +170,7 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx) const {
       features,
       {
         .cookie = entry.cookie.get(),
-        .stats = scorer ? stats[entry.stat_offset].c_str() : nullptr,
+        .stats = scorer ? all_stats[entry.stat_offset].c_str() : nullptr,
         .boost = entry.boost,
         .field = reader->meta(),
       },

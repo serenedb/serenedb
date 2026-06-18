@@ -40,7 +40,7 @@ class LazyFilterBitset : private util::Noncopyable {
   using WordT = size_t;
 
   LazyFilterBitset(const SubReader& segment, const ExecutionContext& ctx,
-                   const QueryBuilder& inner_query)
+                   const StatsBuffer& stats, const QueryBuilder& inner_query)
     : _manager{ctx.memory} {
     const size_t bits = segment.docs_count() + doc_limits::min();
     _words = bitset::bits_to_words(bits);
@@ -50,7 +50,7 @@ class LazyFilterBitset : private util::Noncopyable {
     Finally decrease = [&]() noexcept { ctx.memory.DecreaseChecked(bytes); };
 
     // TODO(mbkkt) use mask from segment manually to avoid virtual call
-    _real_doc_itr = segment.mask(inner_query.Execute(ctx));
+    _real_doc_itr = segment.mask(inner_query.Execute(ctx, stats));
 
     _cost = CostAttr::extract(*_real_doc_itr);
 
@@ -229,7 +229,8 @@ class ProxyQuery : public QueryBuilder {
     SDB_ASSERT(_inner_query);
   }
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final {
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final {
     const auto& segment = _segment;
     auto* cache_bitset = [&] -> LazyFilterBitset* {
       absl::ReaderMutexLock lock{&_cache->readers_lock};
@@ -241,7 +242,7 @@ class ProxyQuery : public QueryBuilder {
     }();
     if (!cache_bitset) {
       auto bitset =
-        std::make_unique<LazyFilterBitset>(segment, ctx, *_inner_query);
+        std::make_unique<LazyFilterBitset>(segment, ctx, stats, *_inner_query);
       cache_bitset = bitset.get();
       absl::WriterMutexLock lock{&_cache->readers_lock};
       SDB_ASSERT(!_cache->readers.contains(&segment));

@@ -73,7 +73,6 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
 
   _exec.emplace(irs::ExecutionContext{
     .memory = exec_memory ? *exec_memory : memory,
-    .stats = &*_stats,
     .ctx = ctx,
   });
 }

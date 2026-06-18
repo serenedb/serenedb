@@ -31,9 +31,10 @@ class AllQuery : public QueryBuilder {
   explicit AllQuery(const SubReader& segment, score_t boost)
     : QueryBuilder{segment}, _boost{boost} {}
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final {
-    return memory::make_managed<AllIterator>(
-      _segment.docs_count(), ctx.Stats().GetStats().data(), _boost);
+  DocIterator::ptr Execute(const ExecutionContext&,
+                           const StatsBuffer& stats) const final {
+    return memory::make_managed<AllIterator>(_segment.docs_count(),
+                                             stats.GetStats().data(), _boost);
   }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}

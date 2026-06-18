@@ -52,20 +52,17 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
     return;
   }
 
-  if (term->value.starts_with(prefix)) {
+  if (!term->value.starts_with(prefix)) {
+    return;
+  }
+
+  terms->read();
+  visitor.Prepare(segment, reader, *terms);
+  visitor.Visit(kNoBoost);
+
+  while (terms->next() && term->value.starts_with(prefix)) {
     terms->read();
-
-    visitor.Prepare(segment, reader, *terms);
-
-    do {
-      visitor.Visit(kNoBoost);
-
-      if (!terms->next()) {
-        break;
-      }
-
-      terms->read();
-    } while (term->value.starts_with(prefix));
+    visitor.Visit(kNoBoost);
   }
 }
 

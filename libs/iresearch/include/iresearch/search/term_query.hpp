@@ -33,7 +33,8 @@ class TermQuery : public QueryBuilder {
   explicit TermQuery(const SubReader& segment, TermState&& state,
                      score_t boost);
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final;
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
+                           const StatsBuffer& stats) const final;
 
   void Visit(PreparedStateVisitor&, score_t boost) const final;
 

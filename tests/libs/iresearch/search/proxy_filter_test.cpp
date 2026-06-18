@@ -91,7 +91,8 @@ class DoclistTestQuery : public QueryBuilder {
                    const std::vector<doc_id_t>& documents, score_t)
     : QueryBuilder{segment}, _documents(documents) {}
 
-  DocIterator::ptr Execute(const ExecutionContext&) const final {
+  DocIterator::ptr Execute(const ExecutionContext&,
+                           const StatsBuffer&) const final {
     ++gExecutes;
     return memory::make_managed<DoclistTestIterator>(_documents);
   }

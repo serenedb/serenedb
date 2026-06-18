@@ -136,13 +136,14 @@ class SamePositionQuery : public QueryBuilder {
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
-  DocIterator::ptr Execute(const ExecutionContext& ctx) const final {
+  DocIterator::ptr Execute(const ExecutionContext&,
+                           const StatsBuffer& stats) const final {
     if (_states.empty()) {
       return DocIterator::empty();
     }
 
     const IndexFeatures features =
-      GetFeatures(ctx.Stats().GetScorer()) | BySamePosition::kRequiredFeatures;
+      GetFeatures(stats.GetScorer()) | BySamePosition::kRequiredFeatures;
     ScoreAdapters itrs;
     itrs.reserve(_states.size());
 

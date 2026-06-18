@@ -34,14 +34,15 @@ namespace irs {
 TermQuery::TermQuery(const SubReader& segment, TermState&& state, score_t boost)
   : QueryBuilder{segment}, _state{std::move(state)}, _boost{boost} {}
 
-DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx) const {
+DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx,
+                                    const StatsBuffer& stats) const {
   const auto& segment = _segment;
 
   if (!_state.cookie) [[unlikely]] {  // Invalid state
     return DocIterator::empty();
   }
 
-  if (!ctx.Stats().HasScorer() &&
+  if (!stats.HasScorer() &&
       segment.docs_count() ==
         sdb::basics::downCast<CookieImpl>(*_state.cookie).meta.docs_count)
     [[unlikely]] {
@@ -53,11 +54,11 @@ DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx) const {
   SDB_ASSERT(reader);
   DocIterator::ptr docs;
 
-  const auto features = GetFeatures(ctx.Stats().GetScorer());
+  const auto features = GetFeatures(stats.GetScorer());
   auto it = reader->Iterator(features,
                              {
                                .cookie = _state.cookie.get(),
-                               .stats = ctx.Stats().GetStats().data(),
+                               .stats = stats.GetStats().data(),
                                .boost = _boost,
                                .field = reader->meta(),
                              },

@@ -1,0 +1,73 @@
+# CREATE DATABASE requires the CREATEDB role attribute (or superuser), like
+# PostgreSQL: a plain LOGIN role is refused with "permission denied to create
+# database"; a role with CREATEDB succeeds. (Regression guard for a privilege
+# gap: any LOGIN role could create databases.)
+#
+# Lore: vedernikoff lacks CREATEDB and is refused; babsky has CREATEDB and
+# creates the clickclack database.
+
+statement ok
+DROP DATABASE IF EXISTS cdb_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS cdb_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS cdb_babsky;
+
+
+statement ok
+CREATE ROLE cdb_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE cdb_babsky LOGIN PASSWORD 'pw';
+
+
+statement ok
+ALTER ROLE cdb_babsky CREATEDB;
+
+
+# A plain role (no CREATEDB) is refused.
+connection c_ved user=cdb_vedernikoff
+statement error
+CREATE DATABASE cdb_clickclack;
+----
+db error: ERROR: permission denied to create database<slt:ignore>
+
+
+# Nothing was created.
+connection default
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'cdb_clickclack';
+----
+n
+0
+
+
+# A role with CREATEDB succeeds.
+connection c_bab user=cdb_babsky
+statement ok
+CREATE DATABASE cdb_clickclack;
+
+
+connection default
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'cdb_clickclack';
+----
+n
+1
+
+
+statement ok
+DROP DATABASE cdb_clickclack;
+
+
+statement ok
+DROP ROLE cdb_vedernikoff;
+
+
+statement ok
+DROP ROLE cdb_babsky;

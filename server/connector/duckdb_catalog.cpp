@@ -32,8 +32,8 @@
 #include <duckdb/execution/operator/persistent/physical_update.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
 #include <duckdb/execution/operator/scan/physical_table_scan.hpp>
-#include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -453,11 +453,18 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
     }
   }
   auto& catalog_impl = catalog::GetCatalog();
-  // Creator owns the schema (PG current_user); no session (recovery/replay)
-  // -> kRootUser.
-  ObjectId owner = transaction.HasContext()
-                     ? GetSereneDBContext(*transaction.context).GetRoleId()
-                     : id::kRootUser;
+  // PG: CREATE SCHEMA requires CREATE on the current database. Checked only for
+  // a real session; recovery/replay has no context and is not gated.
+  // Creator owns the schema (PG current_user); no session -> kRootUser.
+  ObjectId owner = id::kRootUser;
+  if (transaction.HasContext()) {
+    auto& sdb_ctx = GetSereneDBContext(*transaction.context);
+    owner = sdb_ctx.GetRoleId();
+    if (auto db =
+          catalog_impl.GetCatalogSnapshot()->GetDatabase(GetDatabaseId())) {
+      pg::RequirePrivilege(sdb_ctx, *db, catalog::AclMode::Create);
+    }
+  }
   auto schema = std::make_shared<catalog::Schema>(owner, GetDatabaseId(),
                                                   ObjectId{}, info.schema);
   auto r = catalog_impl.CreateSchema(GetDatabaseId(), std::move(schema));

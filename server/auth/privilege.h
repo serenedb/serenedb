@@ -28,9 +28,9 @@
 
 namespace sdb::auth {
 
-// Inherit-closure of `role` (PG has_privs_of_role): {role} + roles reachable via
-// edges whose inherit_option is set. This is the privilege closure -- PUBLIC is
-// matched in AclCheck, not inserted here.
+// Inherit-closure of `role` (PG has_privs_of_role): {role} + roles reachable
+// via edges whose inherit_option is set. This is the privilege closure --
+// PUBLIC is matched in AclCheck, not inserted here.
 RoleIdSet ComputeEffectiveRoles(const catalog::Snapshot& snapshot,
                                 ObjectId role);
 

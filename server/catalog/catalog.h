@@ -30,13 +30,13 @@
 #include <shared_mutex>
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/result_or.h"
-#include "auth/role_closure.h"
 #include "catalog/access_check.h"
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
@@ -155,25 +155,11 @@ struct Snapshot {
   std::shared_ptr<Database> GetDatabase(ObjectId database) const;
   std::shared_ptr<Schema> GetSchema(ObjectId database,
                                     std::string_view schema) const;
-  std::shared_ptr<Object> GetRelation(ObjectId database,
-                                      std::string_view schema,
-                                      std::string_view name) const;
-  std::shared_ptr<PgSqlFunction> GetFunction(ObjectId database,
-                                             std::string_view schema,
-                                             std::string_view name) const;
-  std::shared_ptr<Tokenizer> GetTokenizer(ObjectId database,
-                                          std::string_view schema,
-                                          std::string_view name) const;
-  std::shared_ptr<PgSqlType> GetType(ObjectId database, std::string_view schema,
-                                     std::string_view name) const;
-  std::shared_ptr<Table> GetTable(ObjectId database_id, std::string_view schema,
-                                  std::string_view name) const;
-  std::shared_ptr<Sequence> GetSequence(ObjectId database, ObjectId schema_id,
-                                        std::string_view name) const;
 
-  // RBAC read-enforcement overloads: resolve as above, then throw 42501 when
-  // `ax.need != NoRights` and the role lacks the privilege. `NoAccessCheck()`
-  // (root) bypasses the check, matching the non-ax overloads.
+  // Resolve a relation/function/tokenizer/type/table/sequence, then enforce
+  // RBAC read access: throw 42501 when `ax.need != NoRights` and the role lacks
+  // the privilege. `NoAccessCheck()` (root) bypasses the check for internal
+  // callers.
   std::shared_ptr<Object> GetRelation(const AccessContext& ax,
                                       ObjectId database,
                                       std::string_view schema,
@@ -246,7 +232,8 @@ struct Snapshot {
 
   // Throws 42501 when `ax.need` is a real privilege and `ax.role` lacks any of
   // it on `obj`; root (NoAccessCheck) and NoRights bypass. Returns `obj` so it
-  // can wrap a resolution inline. Defined in catalog.cpp (uses pg error macros).
+  // can wrap a resolution inline. Defined in catalog.cpp (uses pg error
+  // macros).
   template<typename T>
   std::shared_ptr<T> EnforceRead(const AccessContext& ax,
                                  std::shared_ptr<T> obj) const;
@@ -440,10 +427,11 @@ class Catalog final {
                              std::vector<CreateIndexColumn>&& columns,
                              InvertedIndexOptions options,
                              CreateIndexOperationOptions operation_options);
-  Result CreateTokenizer(ObjectId database_id, std::string_view schema,
+  Result CreateTokenizer(const AccessContext& ax, ObjectId database_id,
+                         std::string_view schema,
                          std::shared_ptr<Tokenizer> dict);
-  Result CreateType(ObjectId database_id, std::string_view schema,
-                    std::shared_ptr<PgSqlType> type);
+  Result CreateType(const AccessContext& ax, ObjectId database_id,
+                    std::string_view schema, std::shared_ptr<PgSqlType> type);
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name);

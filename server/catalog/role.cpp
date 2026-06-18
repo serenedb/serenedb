@@ -231,21 +231,6 @@ void catalog::Role::GrantDatabase(std::string_view database,
   }
 }
 
-/// Removes the entry, returns true if entry existed
-bool catalog::Role::RemoveDatabase(std::string_view database) {
-  if (database.empty()) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "Cannot remove rights for empty db name");
-  }
-  if (_name == StaticStrings::kDefaultUser &&
-      database == StaticStrings::kDefaultDatabase) {
-    SDB_THROW(ERROR_FORBIDDEN, "Cannot remove access level of '",
-              StaticStrings::kDefaultUser, "' to ",
-              StaticStrings::kDefaultDatabase);
-  }
-  SDB_DEBUG(GENERAL, _name, ": Removing grant on ", database);
-  return _db_access.erase(database) > 0;
-}
-
 void catalog::Role::AddMembership(const Membership& edge) {
   if (edge.role == GetId()) {
     return;
@@ -330,35 +315,6 @@ catalog::Acl& catalog::Role::MutableBuiltinTypeAcl(uint64_t type_oid) {
 void catalog::Role::RemoveBuiltinTypeAcl(uint64_t type_oid) {
   std::erase_if(_builtin_type_acls,
                 [&](const TypeAclData& t) { return t.type_oid == type_oid; });
-}
-
-// Resolve the access level for this database.
-auth::Level catalog::Role::ConfiguredDBAuthLevel(
-  std::string_view database) const {
-  auto it = _db_access.find(database);
-  if (it != _db_access.end()) {  // found specific grant
-    return it->second.database_auth_level;
-  }
-  return auth::Level::Undefined;
-}
-
-auth::Level catalog::Role::DatabaseAuthLevel(std::string_view database) const {
-  auto lvl = ConfiguredDBAuthLevel(database);
-  if (lvl == auth::Level::Undefined && database != "*") {
-    // take best from wildcard or _system
-    auto it = _db_access.find("*");
-    if (it != _db_access.end()) {
-      lvl = std::max(it->second.database_auth_level, lvl);
-    }
-    if (database != StaticStrings::kDefaultDatabase) {
-      it = _db_access.find(StaticStrings::kDefaultDatabase);
-      if (it != _db_access.end()) {
-        lvl = std::max(it->second.database_auth_level, lvl);
-      }
-    }
-  }
-
-  return std::max(lvl, auth::Level::None);
 }
 
 std::shared_ptr<Object> Role::Clone() const {

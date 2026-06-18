@@ -32,7 +32,6 @@ namespace sdb::catalog {
 struct Snapshot;
 
 }  // namespace sdb::catalog
-
 namespace sdb::auth {
 
 struct RoleClosure {
@@ -42,7 +41,8 @@ struct RoleClosure {
 
 class RoleClosureCache {
  public:
-  const RoleClosure& Get(const catalog::Snapshot& snapshot, ObjectId role) const;
+  const RoleClosure& Get(const catalog::Snapshot& snapshot,
+                         ObjectId role) const;
 
  private:
   mutable absl::Mutex _mu;

@@ -1,0 +1,49 @@
+# CREATE TEXT SEARCH DICTIONARY (a tokenizer) requires CREATE on the containing
+# schema, like any schema-scoped object: a role without CREATE on public is
+# refused ("permission denied for schema public"); once granted CREATE, it
+# succeeds. (Regression guard: CreateTokenizer was ungated.)
+#
+# Lore: vedernikoff is refused until granted CREATE on public.
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS enf_tk_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS enf_tk_vedernikoff;
+
+
+statement ok
+CREATE ROLE enf_tk_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# Without CREATE on the schema, creating the dictionary is refused.
+connection c_ved user=enf_tk_vedernikoff
+statement error
+CREATE TEXT SEARCH DICTIONARY enf_tk_clickclack(template = 'keyword');
+----
+db error: ERROR: permission denied for schema public<slt:ignore>
+
+
+# Grant CREATE on public; now it succeeds.
+connection default
+statement ok
+GRANT CREATE ON SCHEMA public TO enf_tk_vedernikoff;
+
+
+connection c_ved2 user=enf_tk_vedernikoff
+statement ok
+CREATE TEXT SEARCH DICTIONARY enf_tk_clickclack(template = 'keyword');
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY enf_tk_clickclack;
+
+
+connection default
+statement ok
+REVOKE CREATE ON SCHEMA public FROM enf_tk_vedernikoff;
+
+
+statement ok
+DROP ROLE enf_tk_vedernikoff;

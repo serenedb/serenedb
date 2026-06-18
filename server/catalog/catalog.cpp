@@ -72,6 +72,7 @@
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
+#include "catalog/access_check.h"
 #include "catalog/catalog.h"
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
@@ -95,7 +96,6 @@
 #include "catalog/view.h"
 #include "connector/duckdb_entry_cache.h"
 #include "folly/Function.h"
-#include "catalog/access_check.h"
 #include "general_server/scheduler.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
@@ -947,18 +947,6 @@ std::vector<std::shared_ptr<PgSqlType>> Snapshot::GetTypes(
     .value_or(std::vector<std::shared_ptr<PgSqlType>>{});
 }
 
-std::shared_ptr<PgSqlType> Snapshot::GetType(ObjectId db_id,
-                                             std::string_view schema,
-                                             std::string_view name) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .and_then([&](ObjectId schema_id) {
-      return _resolution_table.ResolveObject<ResolveType::Type>(schema_id,
-                                                                name);
-    })
-    .transform([&](ObjectId type_id) { return GetObject<PgSqlType>(type_id); })
-    .value_or(nullptr);
-}
-
 std::shared_ptr<Database> Snapshot::GetDatabase(
   std::string_view database) const {
   return _resolution_table
@@ -986,76 +974,6 @@ bool Snapshot::CheckSchemaEmptyDependency(ObjectId schema_id) const {
   return GetDependency<SchemaDependency>(schema_id)->Empty();
 }
 
-std::shared_ptr<Object> Snapshot::GetRelation(ObjectId db_id,
-                                              std::string_view schema,
-                                              std::string_view relation) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .and_then([&](ObjectId schema_id) {
-      return _resolution_table.ResolveObject<ResolveType::Relation>(schema_id,
-                                                                    relation);
-    })
-    .transform([&](ObjectId relation_id) {
-      auto it = _objects.find(relation_id);
-      SDB_ASSERT(it != _objects.end());
-      return basics::downCast<Object>(*it);
-    })
-    .value_or(nullptr);
-}
-
-std::shared_ptr<PgSqlFunction> Snapshot::GetFunction(
-  ObjectId db_id, std::string_view schema, std::string_view function) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .and_then([&](ObjectId schema_id) {
-      return _resolution_table.ResolveObject<ResolveType::Function>(schema_id,
-                                                                    function);
-    })
-    .transform([&](ObjectId function_id) {
-      return GetObject<PgSqlFunction>(function_id);
-    })
-    .value_or(nullptr);
-}
-
-std::shared_ptr<Tokenizer> Snapshot::GetTokenizer(ObjectId db_id,
-                                                  std::string_view schema,
-                                                  std::string_view name) const {
-  auto schema_id =
-    _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
-  if (!schema_id) {
-    return nullptr;
-  }
-  auto id =
-    _resolution_table.ResolveObject<ResolveType::Tokenizer>(*schema_id, name);
-  if (!id) {
-    return nullptr;
-  }
-  return GetObject<Tokenizer>(*id);
-}
-
-std::shared_ptr<Table> Snapshot::GetTable(ObjectId db_id,
-                                          std::string_view schema,
-                                          std::string_view table) const {
-  auto rel = GetRelation(db_id, schema, table);
-  if (!rel || rel->GetType() != ObjectType::Table) {
-    return nullptr;
-  }
-  return basics::downCast<Table>(rel);
-}
-
-std::shared_ptr<Sequence> Snapshot::GetSequence(ObjectId db_id,
-                                                ObjectId schema_id,
-                                                std::string_view name) const {
-  auto id =
-    _resolution_table.ResolveObject<ResolveType::Relation>(schema_id, name);
-  if (!id) {
-    return nullptr;
-  }
-  auto obj = GetObject(*id);
-  if (!obj || obj->GetType() != ObjectType::Sequence) {
-    return nullptr;
-  }
-  return basics::downCast<Sequence>(std::move(obj));
-}
-
 const auth::RoleClosure& Snapshot::EffectiveRoleClosure(ObjectId role) const {
   return _role_closure_cache.Get(*this, role);
 }
@@ -1065,10 +983,10 @@ std::shared_ptr<T> Snapshot::EnforceRead(const AccessContext& ax,
                                          std::shared_ptr<T> obj) const {
   if (obj && ax.need != AclMode::NoRights &&
       CheckAnyAccess(*this, ax.role, *obj, ax.need).fail()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for ",
-                            pg::ToPgObjectTypeName(obj->GetType()), " ",
-                            obj->GetName()));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(obj->GetType()),
+              " ", obj->GetName()));
   }
   return obj;
 }
@@ -1077,41 +995,90 @@ std::shared_ptr<PgSqlType> Snapshot::GetType(const AccessContext& ax,
                                              ObjectId db_id,
                                              std::string_view schema,
                                              std::string_view name) const {
-  return EnforceRead(ax, GetType(db_id, schema, name));
+  auto type =
+    _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .and_then([&](ObjectId schema_id) {
+        return _resolution_table.ResolveObject<ResolveType::Type>(schema_id,
+                                                                  name);
+      })
+      .transform(
+        [&](ObjectId type_id) { return GetObject<PgSqlType>(type_id); })
+      .value_or(nullptr);
+  return EnforceRead(ax, std::move(type));
 }
 
 std::shared_ptr<Object> Snapshot::GetRelation(const AccessContext& ax,
                                               ObjectId db_id,
                                               std::string_view schema,
                                               std::string_view relation) const {
-  return EnforceRead(ax, GetRelation(db_id, schema, relation));
+  auto rel = _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+               .and_then([&](ObjectId schema_id) {
+                 return _resolution_table.ResolveObject<ResolveType::Relation>(
+                   schema_id, relation);
+               })
+               .transform([&](ObjectId relation_id) {
+                 auto it = _objects.find(relation_id);
+                 SDB_ASSERT(it != _objects.end());
+                 return basics::downCast<Object>(*it);
+               })
+               .value_or(nullptr);
+  return EnforceRead(ax, std::move(rel));
 }
 
 std::shared_ptr<PgSqlFunction> Snapshot::GetFunction(
   const AccessContext& ax, ObjectId db_id, std::string_view schema,
   std::string_view function) const {
-  return EnforceRead(ax, GetFunction(db_id, schema, function));
+  auto fn = _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+              .and_then([&](ObjectId schema_id) {
+                return _resolution_table.ResolveObject<ResolveType::Function>(
+                  schema_id, function);
+              })
+              .transform([&](ObjectId function_id) {
+                return GetObject<PgSqlFunction>(function_id);
+              })
+              .value_or(nullptr);
+  return EnforceRead(ax, std::move(fn));
 }
 
 std::shared_ptr<Tokenizer> Snapshot::GetTokenizer(const AccessContext& ax,
                                                   ObjectId db_id,
                                                   std::string_view schema,
                                                   std::string_view name) const {
-  return EnforceRead(ax, GetTokenizer(db_id, schema, name));
+  std::shared_ptr<Tokenizer> tok;
+  if (auto schema_id =
+        _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)) {
+    if (auto id = _resolution_table.ResolveObject<ResolveType::Tokenizer>(
+          *schema_id, name)) {
+      tok = GetObject<Tokenizer>(*id);
+    }
+  }
+  return EnforceRead(ax, std::move(tok));
 }
 
 std::shared_ptr<Table> Snapshot::GetTable(const AccessContext& ax,
                                           ObjectId db_id,
                                           std::string_view schema,
                                           std::string_view table) const {
-  return EnforceRead(ax, GetTable(db_id, schema, table));
+  auto rel = GetRelation(NoAccessCheck(), db_id, schema, table);
+  if (!rel || rel->GetType() != ObjectType::Table) {
+    return nullptr;
+  }
+  return EnforceRead(ax, basics::downCast<Table>(std::move(rel)));
 }
 
 std::shared_ptr<Sequence> Snapshot::GetSequence(const AccessContext& ax,
                                                 ObjectId db_id,
                                                 ObjectId schema_id,
                                                 std::string_view name) const {
-  return EnforceRead(ax, GetSequence(db_id, schema_id, name));
+  std::shared_ptr<Sequence> seq;
+  if (auto id = _resolution_table.ResolveObject<ResolveType::Relation>(
+        schema_id, name)) {
+    auto obj = GetObject(*id);
+    if (obj && obj->GetType() == ObjectType::Sequence) {
+      seq = basics::downCast<Sequence>(std::move(obj));
+    }
+  }
+  return EnforceRead(ax, std::move(seq));
 }
 
 bool Snapshot::HasIndexes(ObjectId relation_id) const {
@@ -1938,7 +1905,8 @@ Result Catalog::CreateSecondaryIndex(
     return {ERROR_SERVER_ILLEGAL_NAME, "Cannot resolve schema \"", schema,
             "\""};
   }
-  auto rel = _snapshot->GetRelation(database_id, schema, relation);
+  auto rel =
+    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
   if (!rel) {
     return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation,
             "\" does not exist"};
@@ -1981,7 +1949,8 @@ Result Catalog::CreateInvertedIndex(
     return {ERROR_SERVER_ILLEGAL_NAME, "Cannot resolve schema \"", schema,
             "\""};
   }
-  auto rel = _snapshot->GetRelation(database_id, schema, relation);
+  auto rel =
+    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
   if (!rel) {
     return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation,
             "\" does not exist"};
@@ -2400,13 +2369,17 @@ Result Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
     [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
 }
 
-Result Catalog::CreateTokenizer(ObjectId database_id, std::string_view schema,
+Result Catalog::CreateTokenizer(const AccessContext& ax, ObjectId database_id,
+                                std::string_view schema,
                                 std::shared_ptr<Tokenizer> dict) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  if (auto r = RequireSchemaCreate(*_snapshot, ax.role, *schema_id); r.fail()) {
+    return r;
   }
   dict->SetParentId(*schema_id);
 
@@ -2427,13 +2400,17 @@ Result Catalog::CreateTokenizer(ObjectId database_id, std::string_view schema,
     });
 }
 
-Result Catalog::CreateType(ObjectId database_id, std::string_view schema,
+Result Catalog::CreateType(const AccessContext& ax, ObjectId database_id,
+                           std::string_view schema,
                            std::shared_ptr<PgSqlType> type) {
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  if (auto r = RequireSchemaCreate(*_snapshot, ax.role, *schema_id); r.fail()) {
+    return r;
   }
   type->SetParentId(*schema_id);
 
@@ -2664,6 +2641,29 @@ Result Catalog::ChangeRole(std::string_view name,
   return {};
 }
 
+namespace {
+
+// PG ownership transfer: drop the old owner's implicit self-grant and rewrite
+// grantor old->new on the rows it had granted, then install the new owner.
+// Operates on an already-cloned object (the COW analogue of writing a new
+// catalog tuple).
+void TransferOwner(Object& cloned, ObjectId new_owner) {
+  auto perm = cloned.GetPermissions();
+  const ObjectId old_owner = perm.owner;
+  std::erase_if(perm.acl, [&](const AclItem& item) {
+    return item.grantee == old_owner && item.grantor == old_owner;
+  });
+  for (auto& item : perm.acl) {
+    if (item.grantor == old_owner) {
+      item.grantor = new_owner;
+    }
+  }
+  perm.owner = new_owner;
+  cloned.SetPermissions(std::move(perm));
+}
+
+}  // namespace
+
 Result Catalog::ChangeOwner(ObjectId database_id, std::string_view schema,
                             std::string_view name, ObjectType type,
                             ObjectId new_owner) {
@@ -2685,18 +2685,7 @@ Result Catalog::ChangeOwner(ObjectId database_id, std::string_view schema,
                       ERR_MSG("schema \"", name, "\" does not exist"));
     }
     auto cloned = obj->Clone();
-    auto perm = cloned->GetPermissions();
-    const ObjectId old_owner = perm.owner;
-    std::erase_if(perm.acl, [&](const catalog::AclItem& item) {
-      return item.grantee == old_owner && item.grantor == old_owner;
-    });
-    for (auto& item : perm.acl) {
-      if (item.grantor == old_owner) {
-        item.grantor = new_owner;
-      }
-    }
-    perm.owner = new_owner;
-    cloned->SetPermissions(std::move(perm));
+    TransferOwner(*cloned, new_owner);
     return Apply(_snapshot, _snapshot_mutex,
                  [&](std::shared_ptr<Snapshot>& clone) -> Result {
                    duckdb::MemoryStream stream;
@@ -2717,24 +2706,24 @@ Result Catalog::ChangeOwner(ObjectId database_id, std::string_view schema,
   auto object_id =
     _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
   if (!object_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name,
-                            "\" does not exist"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name, "\" does not exist"));
   }
   auto obj = _snapshot->GetObject(*object_id);
   if (!obj) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name,
-                            "\" does not exist"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name, "\" does not exist"));
   }
 
   std::vector<std::shared_ptr<Object>> cascade;
   if (obj->GetType() == ObjectType::Table) {
-    for (const auto& seq : _snapshot->GetSequences(database_id, schema)) {
-      if (seq->GetOwnerTableId() == *object_id) {
-        cascade.push_back(seq);
-      }
-    }
+    cascade = _snapshot->GetSequences(database_id, schema) |
+              std::views::filter([&](const auto& seq) {
+                return seq->GetOwnerTableId() == *object_id;
+              }) |
+              std::ranges::to<std::vector<std::shared_ptr<Object>>>();
   }
 
   return Apply(
@@ -2742,20 +2731,7 @@ Result Catalog::ChangeOwner(ObjectId database_id, std::string_view schema,
     [&](std::shared_ptr<Snapshot>& clone) -> Result {
       auto restamp = [&](const std::shared_ptr<Object>& original) -> Result {
         auto cloned = original->Clone();
-        auto perm = cloned->GetPermissions();
-        const ObjectId old_owner = perm.owner;
-        // PG: ownership transfer drops the old owner's implicit self-grant and
-        // rewrites grantor old->new on the rows it had granted.
-        std::erase_if(perm.acl, [&](const catalog::AclItem& item) {
-          return item.grantee == old_owner && item.grantor == old_owner;
-        });
-        for (auto& item : perm.acl) {
-          if (item.grantor == old_owner) {
-            item.grantor = new_owner;
-          }
-        }
-        perm.owner = new_owner;
-        cloned->SetPermissions(std::move(perm));
+        TransferOwner(*cloned, new_owner);
         duckdb::MemoryStream stream;
         auto bytes = catalog::SerializeObject(*cloned, stream);
         if (auto r = clone->ReplaceObject<ResolveType::Relation>(
@@ -2763,9 +2739,8 @@ Result Catalog::ChangeOwner(ObjectId database_id, std::string_view schema,
             !r.ok()) {
           return r;
         }
-        return _engine->CreateDefinition(cloned->GetParentId(),
-                                         cloned->GetType(), cloned->GetId(),
-                                         bytes);
+        return _engine->CreateDefinition(
+          cloned->GetParentId(), cloned->GetType(), cloned->GetId(), bytes);
       };
 
       if (auto r = restamp(obj); !r.ok()) {
@@ -2829,9 +2804,9 @@ Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
     parent = *schema_id;
   }
   if (!obj) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name,
-                            "\" does not exist"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name, "\" does not exist"));
   }
 
   // Mutate the effective ACL (NULL/empty -> acldefault) under the lock.
@@ -3455,7 +3430,8 @@ Result Catalog::DropIndex(const AccessContext& ax, std::string_view database,
   // table). Drop authority therefore belongs to the underlying table's owner,
   // so check that, not the index's own (unset) owner.
   if (auto index = _snapshot->GetObject<Index>(*index_id)) {
-    if (auto r = RequireObjectOwner(*_snapshot, ax.role, index->GetRelationId());
+    if (auto r =
+          RequireObjectOwner(*_snapshot, ax.role, index->GetRelationId());
         r.fail()) {
       return r;
     }

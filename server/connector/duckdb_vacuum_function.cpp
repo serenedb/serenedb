@@ -392,7 +392,8 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
       break;
     case Scope::Column: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
-      auto table = snapshot.GetTable(db_id, target.schema, target.object);
+      auto table = snapshot.GetTable(catalog::NoAccessCheck(), db_id,
+                                     target.schema, target.object);
       if (!table) {
         throw duckdb::CatalogException("relation '%s' not found.",
                                        target.object);

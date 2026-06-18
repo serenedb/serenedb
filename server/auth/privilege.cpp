@@ -27,7 +27,6 @@
 #include "catalog/role.h"
 
 namespace sdb::auth {
-
 namespace {
 
 // Which per-edge option gates traversal: All = every edge (is_member_of),

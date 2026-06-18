@@ -1,0 +1,148 @@
+# DROP / ALTER / RENAME ROLE follow PostgreSQL's role-admin rules: a superuser
+# may always proceed; otherwise the actor needs the CREATEROLE attribute AND the
+# ADMIN option on the target role. A non-superuser may never touch a SUPERUSER
+# target (checked before the admin option). A non-privileged role may still
+# change its OWN password and its OWN per-role GUCs, but not its own attributes.
+#
+# PG also grants a non-superuser CREATEROLE holder ADMIN on every role it
+# creates, so it can administer what it created (but not roles created by
+# others). (Regression guard: DROP/ALTER/RENAME ROLE used to be superuser-only.)
+#
+# Lore: babsky holds CREATEROLE; vedernikoff is a plain role; mop is a superuser;
+# clickclack is the role babsky creates.
+
+statement ok
+DROP ROLE IF EXISTS dar_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dar_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS dar_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dar_mop;
+
+
+statement ok
+CREATE ROLE dar_babsky LOGIN PASSWORD 'pw';
+
+
+statement ok
+ALTER ROLE dar_babsky CREATEROLE;
+
+
+statement ok
+CREATE ROLE dar_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE dar_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+ALTER ROLE dar_mop SUPERUSER;
+
+
+# A plain role (no CREATEROLE) is refused outright with the generic DETAIL: the
+# target name is not even resolved.
+connection c_ved user=dar_vedernikoff
+statement error
+DROP ROLE dar_mop;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.
+
+
+# A CREATEROLE holder without ADMIN on the target is refused with the specific
+# DETAIL naming the target.
+connection c_bab user=dar_babsky
+statement error
+DROP ROLE dar_vedernikoff;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "dar_vedernikoff" may drop this role.
+
+
+connection c_bab user=dar_babsky
+statement error
+ALTER ROLE dar_vedernikoff CONNECTION LIMIT 5;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "dar_vedernikoff" may alter this role.
+
+
+connection c_bab user=dar_babsky
+statement error
+ALTER ROLE dar_vedernikoff RENAME TO dar_renamed;
+----
+db error: ERROR: permission denied to rename role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "dar_vedernikoff" may rename this role.
+
+
+# A non-superuser may not touch a SUPERUSER target -- this fires before the
+# admin-option check.
+connection c_bab user=dar_babsky
+statement error
+ALTER ROLE dar_mop CONNECTION LIMIT 3;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute.
+
+
+# A CREATEROLE holder gets ADMIN on the roles it creates, so it can administer
+# them freely.
+connection c_bab2 user=dar_babsky
+statement ok
+CREATE ROLE dar_clickclack LOGIN PASSWORD 'pw';
+
+
+connection c_bab3 user=dar_babsky
+statement ok
+ALTER ROLE dar_clickclack CONNECTION LIMIT 7;
+
+
+connection c_bab4 user=dar_babsky
+statement ok
+ALTER ROLE dar_clickclack RENAME TO dar_clickclack2;
+
+
+connection c_bab5 user=dar_babsky
+statement ok
+DROP ROLE dar_clickclack2;
+
+
+# Self-exceptions: a plain role may change its own password and its own GUCs,
+# but not its own attributes.
+connection c_ved2 user=dar_vedernikoff
+statement ok
+ALTER ROLE dar_vedernikoff PASSWORD 'pw2';
+
+
+connection c_ved3 user=dar_vedernikoff
+statement ok
+ALTER ROLE dar_vedernikoff SET search_path TO public;
+
+
+connection c_ved4 user=dar_vedernikoff
+statement error
+ALTER ROLE dar_vedernikoff CONNECTION LIMIT 1;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "dar_vedernikoff" may alter this role.
+
+
+connection default
+statement ok
+DROP ROLE dar_babsky;
+
+
+statement ok
+DROP ROLE dar_vedernikoff;
+
+
+statement ok
+DROP ROLE dar_mop;

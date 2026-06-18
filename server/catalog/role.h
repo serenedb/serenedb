@@ -37,7 +37,6 @@
 
 namespace sdb::catalog {
 
-using persistence::MembershipData;
 using persistence::RoleData;
 
 // One membership edge with its PG16 per-edge options.
@@ -97,7 +96,6 @@ class Role final : public catalog::Object {
   bool IsSuperuser() const noexcept { return Has(RoleOption::Superuser); }
   bool CanLogin() const noexcept { return Has(RoleOption::Login) && _active; }
   void SetOptions(RoleOption o) noexcept { _options = o; }
-  void AddOption(RoleOption o) noexcept { _options |= o; }
 
   // pg_authid attributes (stored & surfaced, not enforced at runtime).
   int32_t ConnLimit() const noexcept { return _conn_limit; }
@@ -131,9 +129,6 @@ class Role final : public catalog::Object {
   // built-in type OID, or an empty span if it carries no stored grant.
   using TypeAclData = persistence::TypeAclData;
   AclView BuiltinTypeAcl(uint64_t type_oid) const noexcept;
-  std::span<const TypeAclData> BuiltinTypeAcls() const noexcept {
-    return _builtin_type_acls;
-  }
   // Locate (or create) the built-in type ACL entry, returning a mutable ref.
   Acl& MutableBuiltinTypeAcl(uint64_t type_oid);
   // Drop the built-in type ACL entry once its Acl is empty.
@@ -142,25 +137,16 @@ class Role final : public catalog::Object {
   std::span<const Membership> MemberOf() const noexcept { return _member_of; }
 
   void AddMembership(const Membership& edge);
-  void AddMembership(ObjectId role) { AddMembership(Membership{.role = role}); }
   bool RemoveMembership(ObjectId role);
 
   bool CheckPassword(std::string_view password) const;
 
-  // Resolve the access level for this database.
-  auth::Level ConfiguredDBAuthLevel(std::string_view database) const;
-
-  auth::Level DatabaseAuthLevel(std::string_view database) const;
-
-  void UpdateId(Identifier id) { _id = id; }
   void UpdateName(std::string_view name) { _name = name; }
   void UpdatePassword(std::string_view password);
   void ClearPassword() { _password_hash.clear(); }
   void UpdateActive(bool active) { _active = active; }
 
   void GrantDatabase(std::string_view database, auth::Level level);
-
-  bool RemoveDatabase(std::string_view database);
 
  private:
   Role(ObjectId id, std::string_view name);

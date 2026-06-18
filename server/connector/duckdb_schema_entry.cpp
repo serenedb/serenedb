@@ -377,8 +377,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
           auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
           auto snapshot = conn_ctx.EnsureCatalogSnapshot();
           auto referenced = snapshot->GetRelation(
-            GetDatabaseId(), fk.info.schema.empty() ? name : fk.info.schema,
-            fk.info.table);
+            catalog::NoAccessCheck(), GetDatabaseId(),
+            fk.info.schema.empty() ? name : fk.info.schema, fk.info.table);
           if (!referenced ||
               referenced->GetType() != catalog::ObjectType::Table) {
             throw duckdb::CatalogException(
@@ -732,9 +732,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
                                                       std::move(options));
 
   auto& catalog_impl = catalog::GetCatalog();
-  auto r = catalog_impl.CreateSequence(catalog::AccessContext{role},
-                                       database_id, name, sequence,
-                                       if_not_exists);
+  auto r = catalog_impl.CreateSequence(
+    catalog::AccessContext{role}, database_id, name, sequence, if_not_exists);
   if (r.is(ERROR_FORBIDDEN)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied for schema ", name));
@@ -786,11 +785,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   auto type_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
       info.Copy());
+  const ObjectId role =
+    GetSereneDBContext(transaction.GetContext()).GetRoleId();
   auto type = std::make_shared<catalog::PgSqlType>(
-    GetSereneDBContext(transaction.GetContext()).GetRoleId(), ObjectId{},
-    ObjectId{}, info.name, std::move(type_info));
-  auto r = catalog_impl.CreateType(database_id, name, type);
+    role, ObjectId{}, ObjectId{}, info.name, std::move(type_info));
+  auto r = catalog_impl.CreateType(catalog::AccessContext{role}, database_id,
+                                   name, type);
 
+  if (r.is(ERROR_FORBIDDEN)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for schema ", name));
+  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;

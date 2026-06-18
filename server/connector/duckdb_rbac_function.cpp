@@ -20,7 +20,6 @@
 
 #include "connector/duckdb_rbac_function.h"
 
-#include <duckdb/common/exception.hpp>
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <optional>
@@ -40,9 +39,9 @@ using duckdb::LogicalType;
 template<typename T>
 T Arg(const duckdb::FunctionParameters& params, size_t i, const char* name) {
   if (params.values[i].IsNull()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-                    ERR_MSG("serenedb RBAC pragma: argument '", name,
-                            "' must not be NULL"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+      ERR_MSG("serenedb RBAC pragma: argument '", name, "' must not be NULL"));
   }
   return params.values[i].GetValue<T>();
 }

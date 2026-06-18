@@ -35,15 +35,10 @@ using RoleIdSet = containers::FlatHashSet<ObjectId>;
 // Sorted ascending; membership tested with binary_search.
 using RoleIdSpan = std::span<const ObjectId>;
 
-catalog::AclMode OwnerPrivs(catalog::ObjectType type) noexcept;
-
 catalog::Acl AclDefault(catalog::ObjectType type, ObjectId owner);
 
 catalog::Acl AclEffective(catalog::AclView stored, catalog::ObjectType type,
                           ObjectId owner);
-
-bool AclCheck(catalog::AclView acl, const RoleIdSet& roles,
-              catalog::AclMode need);
 
 bool AclCheckSorted(catalog::AclView stored, catalog::ObjectType type,
                     ObjectId owner, RoleIdSpan roles, catalog::AclMode need,
@@ -88,19 +83,10 @@ void AclRevokeCascade(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
 catalog::AclMode ParseAclMode(std::string_view privileges,
                               catalog::ObjectType type);
 
-// Mask -> uppercase privilege name(s) in canonical PG order, '/'-joined for
-// multi-bit masks (e.g. Insert|Update|Delete -> "INSERT/UPDATE/DELETE").
-std::string AclModeToString(catalog::AclMode mode);
-
 // PG aclitemout: "grantee=privs/grantor", PUBLIC grantee empty, '*' = grant
 // option.
 std::string AclItemToText(
   const catalog::AclItem& item,
-  absl::FunctionRef<std::string_view(ObjectId)> name_of);
-
-// Empty `acl` yields an empty vector (caller emits SQL NULL).
-std::vector<std::string> AclToText(
-  catalog::AclView acl,
   absl::FunctionRef<std::string_view(ObjectId)> name_of);
 
 }  // namespace sdb::auth

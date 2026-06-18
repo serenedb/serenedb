@@ -28,7 +28,6 @@
 #include "catalog/role.h"
 
 namespace sdb::auth {
-
 namespace {
 
 RoleClosure Compute(const catalog::Snapshot& snapshot, ObjectId role) {

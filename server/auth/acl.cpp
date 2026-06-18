@@ -33,6 +33,7 @@
 
 #include "basics/containers/trivial_map.h"
 #include "basics/exceptions.h"
+#include "basics/system-compiler.h"
 
 namespace sdb::auth {
 namespace {
@@ -75,13 +76,33 @@ AclMode ClassPrivs(ObjectType type) noexcept {
       return AclMode::Execute;
     case ObjectType::PgSqlType:
       return AclMode::Usage;
-    default:
+    // Object classes with no SQL privileges of their own. Views are granted as
+    // Table (they share the relation namespace), so PgSqlView never reaches
+    // here; indexes derive access from their table; the rest are not ACL
+    // objects.
+    case ObjectType::Invalid:
+    case ObjectType::Tombstone:
+    case ObjectType::Role:
+    case ObjectType::Tokenizer:
+    case ObjectType::PgSqlView:
+    case ObjectType::SecondaryIndex:
+    case ObjectType::InvertedIndex:
+    case ObjectType::Column:
+    case ObjectType::CheckConstraint:
+    case ObjectType::Virtual:
       return AclMode::NoRights;
   }
+  SDB_UNREACHABLE();
 }
 
 bool Has(AclMode have, AclMode need) noexcept {
   return (have & need) == need && need != AclMode::NoRights;
+}
+
+auto FindAclItem(catalog::Acl& acl, ObjectId grantee, ObjectId grantor) {
+  return std::ranges::find_if(acl, [&](const AclItem& item) {
+    return item.grantee == grantee && item.grantor == grantor;
+  });
 }
 
 AclMode PublicDefaultPrivs(ObjectType type) noexcept {
@@ -92,9 +113,25 @@ AclMode PublicDefaultPrivs(ObjectType type) noexcept {
       return AclMode::Execute;
     case ObjectType::PgSqlType:
       return AclMode::Usage;
-    default:
+    // PUBLIC gets no implicit privileges on these; either there is no default
+    // grant to PUBLIC (Table/Sequence/Schema) or the class is not an ACL
+    // object.
+    case ObjectType::Table:
+    case ObjectType::Sequence:
+    case ObjectType::Schema:
+    case ObjectType::Invalid:
+    case ObjectType::Tombstone:
+    case ObjectType::Role:
+    case ObjectType::Tokenizer:
+    case ObjectType::PgSqlView:
+    case ObjectType::SecondaryIndex:
+    case ObjectType::InvertedIndex:
+    case ObjectType::Column:
+    case ObjectType::CheckConstraint:
+    case ObjectType::Virtual:
       return AclMode::NoRights;
   }
+  SDB_UNREACHABLE();
 }
 
 bool RolesContain(RoleIdSpan roles, ObjectId id) noexcept {
@@ -103,14 +140,13 @@ bool RolesContain(RoleIdSpan roles, ObjectId id) noexcept {
 
 }  // namespace
 
-AclMode OwnerPrivs(ObjectType type) noexcept { return ClassPrivs(type); }
-
 catalog::Acl AclDefault(ObjectType type, ObjectId owner) {
   catalog::Acl acl;
   // Owner self-grant with NO stored grant options: PG's acldefault stores
   // goptions = ACL_NO_RIGHTS (owner grantability is implicit by ownership),
-  // so owner rows print without '*'.
-  const AclMode owner_privs = OwnerPrivs(type);
+  // so owner rows print without '*'. The owner holds the object class's full
+  // privilege set.
+  const AclMode owner_privs = ClassPrivs(type);
   if (owner_privs == AclMode::NoRights) {
     return acl;
   }
@@ -139,21 +175,6 @@ catalog::Acl AclEffective(catalog::AclView stored, ObjectType type,
   return catalog::Acl{stored.begin(), stored.end()};
 }
 
-bool AclCheck(catalog::AclView acl, const RoleIdSet& roles, AclMode need) {
-  AclMode have = AclMode::NoRights;
-  for (const auto& item : acl) {
-    if (item.grantee != catalog::kPublicGrantee &&
-        !roles.contains(item.grantee)) {
-      continue;
-    }
-    have |= item.privs;
-    if (Has(have, need)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 bool AclCheckSorted(catalog::AclView stored, ObjectType type, ObjectId owner,
                     RoleIdSpan roles, AclMode need, bool any_of) {
   if (need == AclMode::NoRights) {
@@ -167,7 +188,7 @@ bool AclCheckSorted(catalog::AclView stored, ObjectType type, ObjectId owner,
     // NULL acl -> acldefault, evaluated inline.
     AclMode have = AclMode::NoRights;
     if (RolesContain(roles, owner)) {
-      have |= OwnerPrivs(type);
+      have |= ClassPrivs(type);
       if (done(have)) {
         return true;
       }
@@ -214,12 +235,10 @@ AclMode AclPrivsHeld(catalog::AclView acl, const RoleIdSet& roles) {
 
 void AclGrant(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
               AclMode privs, AclMode grant_option) {
-  for (auto& item : acl) {
-    if (item.grantee == grantee && item.grantor == grantor) {
-      item.privs |= privs;
-      item.grant_option |= (grant_option & privs);
-      return;
-    }
+  if (auto it = FindAclItem(acl, grantee, grantor); it != acl.end()) {
+    it->privs |= privs;
+    it->grant_option |= (grant_option & privs);
+    return;
   }
   acl.push_back(AclItem{
     .grantee = grantee,
@@ -231,27 +250,21 @@ void AclGrant(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
 
 void AclRevoke(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
                AclMode privs) {
-  for (auto it = acl.begin(); it != acl.end(); ++it) {
-    if (it->grantee != grantee || it->grantor != grantor) {
-      continue;
-    }
-    it->privs &= ~privs;
-    it->grant_option &= ~privs;
-    if (it->privs == AclMode::NoRights) {
-      acl.erase(it);
-    }
-    return;
+  auto it = FindAclItem(acl, grantee, grantor);
+  if (it == acl.end()) {
+    return;  // silent no-op, matching PostgreSQL
   }
-  // No matching (grantee, grantor): silent no-op, matching PostgreSQL.
+  it->privs &= ~privs;
+  it->grant_option &= ~privs;
+  if (it->privs == AclMode::NoRights) {
+    acl.erase(it);
+  }
 }
 
 void AclRemoveGrantOption(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
                           AclMode privs) {
-  for (auto& item : acl) {
-    if (item.grantee == grantee && item.grantor == grantor) {
-      item.grant_option &= ~privs;
-      return;
-    }
+  if (auto it = FindAclItem(acl, grantee, grantor); it != acl.end()) {
+    it->grant_option &= ~privs;
   }
   // No matching (grantee, grantor): silent no-op, matching PostgreSQL.
 }
@@ -289,8 +302,8 @@ void AclRevokeCascade(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
     // Revoke `bits` from every item granted BY `who` (i.e. grantor == who) and,
     // for the top of the chain, also from (grantee, grantor).
     for (auto it = acl.begin(); it != acl.end();) {
-      const bool top = it->grantee == grantee && it->grantor == grantor &&
-                       who == grantee;
+      const bool top =
+        it->grantee == grantee && it->grantor == grantor && who == grantee;
       if (it->grantor == who || top) {
         it->privs &= ~bits;
         it->grant_option &= ~bits;
@@ -318,9 +331,9 @@ AclMode ParseAclMode(std::string_view privileges, ObjectType type) {
       continue;
     }
     // PG accepts TEMP as a synonym for TEMPORARY.
-    const auto lookup =
-      absl::EqualsIgnoreCase(stripped, "TEMP") ? std::string_view{"temporary"}
-                                               : stripped;
+    const auto lookup = absl::EqualsIgnoreCase(stripped, "TEMP")
+                          ? std::string_view{"temporary"}
+                          : stripped;
     const auto mode = kPrivNames.TryFindICaseByFirst(lookup);
     if (!mode) {
       SDB_THROW(sdb::ERROR_BAD_PARAMETER, "unrecognized privilege type: \"",
@@ -362,13 +375,13 @@ struct PrivChar {
   char chr;
 };
 constexpr std::array kPrivChars{
-  PrivChar{AclMode::Insert, 'a'},     PrivChar{AclMode::Select, 'r'},
-  PrivChar{AclMode::Update, 'w'},     PrivChar{AclMode::Delete, 'd'},
-  PrivChar{AclMode::Truncate, 'D'},   PrivChar{AclMode::References, 'x'},
-  PrivChar{AclMode::Trigger, 't'},    PrivChar{AclMode::Maintain, 'm'},
-  PrivChar{AclMode::Execute, 'X'},    PrivChar{AclMode::Usage, 'U'},
-  PrivChar{AclMode::Create, 'C'},     PrivChar{AclMode::CreateTemp, 'T'},
-  PrivChar{AclMode::Connect, 'c'},    PrivChar{AclMode::Set, 's'},
+  PrivChar{AclMode::Insert, 'a'},      PrivChar{AclMode::Select, 'r'},
+  PrivChar{AclMode::Update, 'w'},      PrivChar{AclMode::Delete, 'd'},
+  PrivChar{AclMode::Truncate, 'D'},    PrivChar{AclMode::References, 'x'},
+  PrivChar{AclMode::Trigger, 't'},     PrivChar{AclMode::Maintain, 'm'},
+  PrivChar{AclMode::Execute, 'X'},     PrivChar{AclMode::Usage, 'U'},
+  PrivChar{AclMode::Create, 'C'},      PrivChar{AclMode::CreateTemp, 'T'},
+  PrivChar{AclMode::Connect, 'c'},     PrivChar{AclMode::Set, 's'},
   PrivChar{AclMode::AlterSystem, 'A'},
 };
 
@@ -414,34 +427,6 @@ std::string AclItemToText(
   }
   out.push_back('/');
   PutId(out, name_of(item.grantor));
-  return out;
-}
-
-std::string AclModeToString(AclMode mode) {
-  // Canonical PG order, uppercase verb spelling. Multi-bit masks join with '/'
-  // (e.g. MERGE requires INSERT/UPDATE/DELETE).
-  std::string out;
-  for (const auto& p : kPrivChars) {
-    if ((mode & p.mode) != p.mode) {
-      continue;
-    }
-    if (auto name = kPrivNames.TryFindBySecond(p.mode)) {
-      if (!out.empty()) {
-        out.push_back('/');
-      }
-      absl::StrAppend(&out, absl::AsciiStrToUpper(*name));
-    }
-  }
-  return out;
-}
-
-std::vector<std::string> AclToText(
-  catalog::AclView acl, absl::FunctionRef<std::string_view(ObjectId)> name_of) {
-  std::vector<std::string> out;
-  out.reserve(acl.size());
-  for (const auto& item : acl) {
-    out.push_back(AclItemToText(item, name_of));
-  }
   return out;
 }
 

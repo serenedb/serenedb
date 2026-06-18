@@ -33,17 +33,13 @@
 namespace {
 
 using sdb::ObjectId;
-using sdb::auth::AclCheck;
 using sdb::auth::AclCheckSorted;
 using sdb::auth::AclDefault;
 using sdb::auth::AclEffective;
 using sdb::auth::AclGrant;
 using sdb::auth::AclItemToText;
 using sdb::auth::AclRevoke;
-using sdb::auth::AclToText;
-using sdb::auth::OwnerPrivs;
 using sdb::auth::ParseAclMode;
-using sdb::auth::RoleIdSet;
 using sdb::auth::RoleIdSpan;
 using sdb::catalog::Acl;
 using sdb::catalog::AclItem;
@@ -54,14 +50,6 @@ using sdb::catalog::ObjectType;
 constexpr ObjectId kOwner{100};
 constexpr ObjectId kAlice{200};
 constexpr ObjectId kBob{300};
-
-RoleIdSet Roles(std::initializer_list<ObjectId> ids) {
-  RoleIdSet s;
-  for (auto id : ids) {
-    s.insert(id);
-  }
-  return s;
-}
 
 // A NULL (empty) ACL is not "no privileges": the owner holds all class
 // privileges with grant option, and class-specific PUBLIC defaults apply.
@@ -115,67 +103,12 @@ TEST(AclEffectiveTest, EmptyExpandsToDefault) {
   EXPECT_EQ(eff.size(), AclDefault(ObjectType::Table, kOwner).size());
 }
 
-TEST(AclCheckTest, OwnerDefaultGrantsOwnerEverything) {
-  auto acl = AclDefault(ObjectType::Table, kOwner);
-  EXPECT_TRUE(AclCheck(acl, Roles({kOwner}), AclMode::Select));
-  EXPECT_TRUE(AclCheck(acl, Roles({kOwner}), AclMode::Insert));
-  // A non-owner with no grant gets nothing from the default ACL.
-  EXPECT_FALSE(AclCheck(acl, Roles({kAlice}), AclMode::Select));
-}
-
-TEST(AclCheckTest, PublicGranteeAppliesToEveryone) {
-  Acl acl;
-  AclGrant(acl, kPublicGrantee, kOwner, AclMode::Select);
-  EXPECT_TRUE(AclCheck(acl, Roles({kAlice}), AclMode::Select));
-  EXPECT_TRUE(AclCheck(acl, Roles({kBob}), AclMode::Select));
-  EXPECT_FALSE(AclCheck(acl, Roles({kAlice}), AclMode::Insert));
-}
-
-TEST(AclCheckTest, PrivilegesAccumulateAcrossItems) {
-  Acl acl;
-  AclGrant(acl, kAlice, kOwner, AclMode::Select);
-  AclGrant(acl, kBob, kOwner, AclMode::Insert);
-  // Alice inheriting from a role set that includes bob accumulates both.
-  EXPECT_TRUE(
-    AclCheck(acl, Roles({kAlice, kBob}), AclMode::Select | AclMode::Insert));
-  // Alice alone has only Select.
-  EXPECT_FALSE(
-    AclCheck(acl, Roles({kAlice}), AclMode::Select | AclMode::Insert));
-}
-
 // REVOKE matches (grantee, grantor): a grant from a different grantor survives.
-TEST(AclGrantRevokeTest, GrantorKeyedItems) {
-  Acl acl;
-  AclGrant(acl, kAlice, kOwner, AclMode::Select);
-  AclGrant(acl, kAlice, kBob, AclMode::Select);
-  EXPECT_EQ(acl.size(), 2u);
-
-  AclRevoke(acl, kAlice, kOwner, AclMode::Select);
-  // Bob's grant survives -> alice still has Select.
-  EXPECT_TRUE(AclCheck(acl, Roles({kAlice}), AclMode::Select));
-}
-
-TEST(AclGrantRevokeTest, RevokeNonMatchingGrantorIsNoOp) {
-  Acl acl;
-  AclGrant(acl, kAlice, kOwner, AclMode::Select);
-  AclRevoke(acl, kAlice, kBob, AclMode::Select);  // bob never granted
-  EXPECT_TRUE(AclCheck(acl, Roles({kAlice}), AclMode::Select));
-}
-
 TEST(AclGrantRevokeTest, RevokingAllPrivilegesDropsItem) {
   Acl acl;
   AclGrant(acl, kAlice, kOwner, AclMode::Select | AclMode::Insert);
   AclRevoke(acl, kAlice, kOwner, AclMode::Select | AclMode::Insert);
   EXPECT_TRUE(acl.empty());
-}
-
-TEST(AclGrantTest, RegrantMergesIntoSameItem) {
-  Acl acl;
-  AclGrant(acl, kAlice, kOwner, AclMode::Select);
-  AclGrant(acl, kAlice, kOwner, AclMode::Insert);
-  EXPECT_EQ(acl.size(), 1u);
-  EXPECT_TRUE(
-    AclCheck(acl, Roles({kAlice}), AclMode::Select | AclMode::Insert));
 }
 
 TEST(ParseAclModeTest, ParsesTablePrivilegeList) {
@@ -249,38 +182,7 @@ TEST(ParseAclModeTest, DatabaseAndSchemaPrivileges) {
                sdb::basics::Exception);
 }
 
-// ---- OwnerPrivs / acldefault for every class ---------------------------
-
-TEST(OwnerPrivsTest, MatchesClassPrivilegeSet) {
-  // Owner holds every privilege defined for the class.
-  EXPECT_EQ(OwnerPrivs(ObjectType::Table),
-            AclMode::Select | AclMode::Insert | AclMode::Update |
-              AclMode::Delete | AclMode::Truncate | AclMode::References |
-              AclMode::Trigger | AclMode::Maintain);
-  EXPECT_EQ(OwnerPrivs(ObjectType::Sequence),
-            AclMode::Select | AclMode::Update | AclMode::Usage);
-  EXPECT_EQ(OwnerPrivs(ObjectType::PgSqlFunction), AclMode::Execute);
-  EXPECT_EQ(OwnerPrivs(ObjectType::PgSqlType), AclMode::Usage);
-}
-
-TEST(AclDefaultTest, OwnerSelfGrantStoresNoGrantOptionForEveryClass) {
-  for (auto type :
-       {ObjectType::Table, ObjectType::Sequence, ObjectType::Database,
-        ObjectType::Schema, ObjectType::PgSqlFunction, ObjectType::PgSqlType}) {
-    auto acl = AclDefault(type, kOwner);
-    bool found_owner = false;
-    for (const auto& item : acl) {
-      if (item.grantee == kOwner) {
-        found_owner = true;
-        EXPECT_EQ(item.grantor, kOwner);
-        // PG stores goptions = NO_RIGHTS; owner grantability is implicit.
-        EXPECT_EQ(item.grant_option, AclMode::NoRights);
-        EXPECT_EQ(item.privs, OwnerPrivs(type));
-      }
-    }
-    EXPECT_TRUE(found_owner) << "owner self-grant missing for a class";
-  }
-}
+// ---- acldefault for every class ---------------------------------------
 
 TEST(AclDefaultTest, TypeGrantsPublicUsage) {
   auto acl = AclDefault(ObjectType::PgSqlType, kOwner);
@@ -304,46 +206,6 @@ TEST(AclDefaultTest, SequenceAndSchemaHaveNoPublicEntry) {
 }
 
 // PUBLIC's database CONNECT default lets any role connect via the default ACL.
-TEST(AclCheckTest, DatabaseDefaultGrantsPublicConnect) {
-  auto acl = AclDefault(ObjectType::Database, kOwner);
-  EXPECT_TRUE(AclCheck(acl, Roles({kAlice}), AclMode::Connect));
-  EXPECT_TRUE(AclCheck(acl, Roles({kBob}), AclMode::CreateTemp));
-  // But not CREATE -- that is owner-only by default.
-  EXPECT_FALSE(AclCheck(acl, Roles({kAlice}), AclMode::Create));
-}
-
-TEST(AclCheckTest, FunctionDefaultGrantsPublicExecute) {
-  auto acl = AclDefault(ObjectType::PgSqlFunction, kOwner);
-  EXPECT_TRUE(AclCheck(acl, Roles({kAlice}), AclMode::Execute));
-}
-
-TEST(AclCheckTest, EmptyAclAndEmptyRoleSet) {
-  Acl empty;
-  EXPECT_FALSE(AclCheck(empty, Roles({kAlice}), AclMode::Select));
-  Acl acl;
-  AclGrant(acl, kAlice, kOwner, AclMode::Select);
-  EXPECT_FALSE(AclCheck(acl, RoleIdSet{}, AclMode::Select));
-}
-
-TEST(AclCheckTest, NoRightsNeverSatisfied) {
-  Acl acl;
-  AclGrant(acl, kAlice, kOwner, AclMode::Select);
-  // Asking for NoRights is not a meaningful grant and returns false.
-  EXPECT_FALSE(AclCheck(acl, Roles({kAlice}), AclMode::NoRights));
-}
-
-TEST(AclCheckTest, PublicAndDirectGrantCombine) {
-  Acl acl;
-  AclGrant(acl, kPublicGrantee, kOwner, AclMode::Select);
-  AclGrant(acl, kAlice, kOwner, AclMode::Insert);
-  // Alice gets Select from PUBLIC and Insert directly.
-  EXPECT_TRUE(
-    AclCheck(acl, Roles({kAlice}), AclMode::Select | AclMode::Insert));
-  // Bob only has Select (from PUBLIC).
-  EXPECT_TRUE(AclCheck(acl, Roles({kBob}), AclMode::Select));
-  EXPECT_FALSE(AclCheck(acl, Roles({kBob}), AclMode::Insert));
-}
-
 // ---- Grant option ------------------------------------------------------
 
 TEST(AclGrantTest, GrantOptionIsSubsetOfPrivs) {
@@ -372,14 +234,6 @@ TEST(AclGrantTest, RegrantAccumulatesGrantOption) {
 }
 
 // ---- Revoke partial ----------------------------------------------------
-
-TEST(AclRevokeTest, PartialRevokeKeepsRemaining) {
-  Acl acl;
-  AclGrant(acl, kAlice, kOwner, AclMode::Select | AclMode::Insert);
-  AclRevoke(acl, kAlice, kOwner, AclMode::Insert);
-  EXPECT_TRUE(AclCheck(acl, Roles({kAlice}), AclMode::Select));
-  EXPECT_FALSE(AclCheck(acl, Roles({kAlice}), AclMode::Insert));
-}
 
 TEST(AclRevokeTest, RevokeClearsGrantOptionBits) {
   Acl acl;
@@ -433,16 +287,7 @@ TEST(AclSerializeTest, EmptyRoundTripsToEmpty) {
   EXPECT_TRUE(SerializeRoundTrip(empty).empty());
 }
 
-TEST(AclSerializeTest, DefaultAclRoundTrips) {
-  // A materialized default ACL (owner + PUBLIC entries) survives a round-trip.
-  auto acl = AclDefault(ObjectType::Database, kOwner);
-  auto back = SerializeRoundTrip(acl);
-  EXPECT_EQ(back.size(), acl.size());
-  EXPECT_TRUE(AclCheck(back, Roles({kOwner}), AclMode::Create));
-  EXPECT_TRUE(AclCheck(back, Roles({kAlice}), AclMode::Connect));
-}
-
-// ---- aclitem text synthesis (AclItemToText / AclToText) ----------------
+// ---- aclitem text synthesis (AclItemToText) ----------------------------
 //
 // These render the typed ACL into PostgreSQL's aclitem text on the catalog
 // read path ("grantee=privs/grantor", '*' = grant option, "" grantee =
@@ -491,20 +336,6 @@ TEST(AclItemToTextTest, OwnerSelfGrantNoStars) {
   auto acl = AclDefault(ObjectType::Table, kOwner);
   ASSERT_EQ(acl.size(), 1u);  // table has no PUBLIC default
   EXPECT_EQ(AclItemToText(acl[0], TestName), "owner=arwdDxtm/owner");
-}
-
-TEST(AclToTextTest, OneStringPerItemInOrder) {
-  Acl acl;
-  AclGrant(acl, kOwner, kOwner, AclMode::Select, AclMode::Select);
-  AclGrant(acl, kAlice, kOwner, AclMode::Insert);
-  auto text = AclToText(acl, TestName);
-  ASSERT_EQ(text.size(), 2u);
-  EXPECT_EQ(text[0], "owner=r*/owner");
-  EXPECT_EQ(text[1], "alice=a/owner");
-}
-
-TEST(AclToTextTest, EmptyAclYieldsEmptyVector) {
-  EXPECT_TRUE(AclToText(Acl{}, TestName).empty());
 }
 
 // ---- AclCheckSorted (the DML hot-path test) ----------------------------
@@ -586,18 +417,6 @@ TEST(AclCheckSortedTest, NoRightsNeverSatisfied) {
                               AclMode::NoRights, /*any_of=*/false));
   EXPECT_FALSE(AclCheckSorted({}, ObjectType::Table, kOwner, roles,
                               AclMode::NoRights, /*any_of=*/true));
-}
-
-TEST(AclCheckSortedTest, MatchesUnsortedAclCheckOnDefault) {
-  // AclCheckSorted on an empty (default) ACL must agree with the legacy
-  // AclEffective+AclCheck path for the same inputs.
-  const auto type = ObjectType::Database;
-  auto eff = AclEffective({}, type, kOwner);
-  auto sorted = Sorted({kAlice});
-  // PUBLIC gets CONNECT on a database by default.
-  EXPECT_EQ(AclCheck(eff, Roles({kAlice}), AclMode::Connect),
-            AclCheckSorted({}, type, kOwner, sorted, AclMode::Connect,
-                           /*any_of=*/false));
 }
 
 }  // namespace

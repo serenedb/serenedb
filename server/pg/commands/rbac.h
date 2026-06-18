@@ -41,8 +41,8 @@ struct CreateRoleOptions {
   bool inherit = true;
   bool has_password = false;
   std::string password;
-  int conn_limit = -1;             // pg_authid.rolconnlimit (-1 = unlimited)
-  std::string valid_until;         // empty -> NULL (no expiry)
+  int conn_limit = -1;      // pg_authid.rolconnlimit (-1 = unlimited)
+  std::string valid_until;  // empty -> NULL (no expiry)
 };
 
 struct MemberOptions {
@@ -66,9 +66,9 @@ struct AlterRoleOptions {
   bool set_password = false;
   bool password_null = false;
   std::string password;
-  int conn_limit = -2;             // -2 unspecified (-1 = unlimited)
+  int conn_limit = -2;  // -2 unspecified (-1 = unlimited)
   bool set_valid_until = false;
-  std::string valid_until;         // empty + set_valid_until -> NULL
+  std::string valid_until;  // empty + set_valid_until -> NULL
 };
 
 void AlterRole(ConnectionContext& ctx, std::string_view name,

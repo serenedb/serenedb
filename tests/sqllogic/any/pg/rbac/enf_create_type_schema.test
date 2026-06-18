@@ -1,0 +1,63 @@
+# CREATE TYPE requires CREATE on the containing schema, like PostgreSQL: a role
+# without CREATE on public is refused ("permission denied for schema public");
+# once granted CREATE, it succeeds. (Regression guard: CREATE TYPE was ungated.)
+#
+# Lore: vedernikoff is refused until granted CREATE on public.
+
+statement ok
+DROP TYPE IF EXISTS enf_ct_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS enf_ct_vedernikoff;
+
+
+statement ok
+CREATE ROLE enf_ct_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# Without CREATE on the schema, CREATE TYPE is refused.
+connection c_ved user=enf_ct_vedernikoff
+statement error
+CREATE TYPE enf_ct_clickclack AS (id int, payload text);
+----
+db error: ERROR: permission denied for schema public<slt:ignore>
+
+
+# Nothing was created.
+connection default
+query
+SELECT count(*) AS n FROM pg_type WHERE typname = 'enf_ct_clickclack';
+----
+n
+0
+
+
+# Grant CREATE on public; now it succeeds.
+statement ok
+GRANT CREATE ON SCHEMA public TO enf_ct_vedernikoff;
+
+
+connection c_ved2 user=enf_ct_vedernikoff
+statement ok
+CREATE TYPE enf_ct_clickclack AS (id int, payload text);
+
+
+connection default
+query
+SELECT count(*) AS n FROM pg_type WHERE typname = 'enf_ct_clickclack';
+----
+n
+1
+
+
+statement ok
+DROP TYPE enf_ct_clickclack;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM enf_ct_vedernikoff;
+
+
+statement ok
+DROP ROLE enf_ct_vedernikoff;

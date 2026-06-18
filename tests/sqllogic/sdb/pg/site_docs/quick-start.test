@@ -55,6 +55,40 @@ Romance	2	7.85
 
 # DOCS_TEST: example_003
 
+# DOCS_TEST_RAW
+#| ALTER TABLE movies ADD COLUMN embedding FLOAT[4];
+#|
+#| UPDATE movies
+#| SET embedding = ai_embed(overview, 'text-embedding-3-small', 'openai');
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE movies ADD COLUMN embedding FLOAT[4];
+
+# Real embeddings come from ai_embed (shown above); here we attach small
+# illustrative vectors so the example is self-contained and deterministic.
+statement ok
+UPDATE movies AS m
+SET embedding = v.emb
+FROM (VALUES
+    (1,  [0.90, 0.10, 0.10, 0.00]::FLOAT[4]),
+    (2,  [0.88, 0.05, 0.10, 0.05]::FLOAT[4]),
+    (3,  [0.85, 0.10, 0.05, 0.05]::FLOAT[4]),
+    (4,  [0.55, 0.20, 0.40, 0.00]::FLOAT[4]),
+    (5,  [0.80, 0.10, 0.20, 0.00]::FLOAT[4]),
+    (6,  [0.75, 0.15, 0.10, 0.10]::FLOAT[4]),
+    (7,  [0.70, 0.20, 0.05, 0.60]::FLOAT[4]),
+    (8,  [0.10, 0.20, 0.10, 0.90]::FLOAT[4]),
+    (9,  [0.05, 0.95, 0.05, 0.05]::FLOAT[4]),
+    (10, [0.10, 0.90, 0.20, 0.00]::FLOAT[4]),
+    (11, [0.75, 0.00, 0.50, 0.00]::FLOAT[4]),
+    (12, [0.10, 0.10, 0.95, 0.00]::FLOAT[4])
+) AS v(id, emb)
+WHERE m.id = v.id;
+
+# DOCS_TEST: example_004
+
 # DOCS_TEST_BODY
 
 statement ok
@@ -70,7 +104,10 @@ CREATE TEXT SEARCH DICTIONARY english (
 
 statement ok
 CREATE INDEX movies_idx ON movies
-    USING inverted(id, title english, overview english);
+    USING inverted(id, title english, overview english, embedding hnsw (metric = 'cosine'));
+
+statement ok
+VACUUM (REFRESH_TABLE) movies;
 
 # DOCS_TEST: example_005
 
@@ -87,6 +124,30 @@ The Notebook	Romance	6.768
 Titanic	Romance	6.768
 
 # DOCS_TEST: example_006
+
+# DOCS_TEST_RAW
+#| SELECT title, genre
+#| FROM   movies_idx
+#| WHERE  overview @@ 'space'                                   -- lexical recall
+#| ORDER  BY embedding <=> ai_embed('space exploration',
+#|                                  'text-embedding-3-small', 'openai')
+#| LIMIT  3;                                                    -- semantic ranking
+
+# DOCS_TEST_BODY
+
+query
+SELECT title, genre
+FROM movies_idx
+WHERE overview @@ 'space'
+ORDER BY embedding <=> [0.90, 0.05, 0.10, 0.05]::FLOAT[4]
+LIMIT 3;
+----
+title	genre
+Interstellar	Science Fiction
+Gravity	Science Fiction
+Hidden Figures	Drama
+
+# DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 

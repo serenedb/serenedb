@@ -42,12 +42,12 @@ std::unique_ptr<MaterializeState> MakeMaterializeState(
     case duckdb::LogicalTypeId::LIST: {
       const auto* child = reader.Child();
       SDB_ASSERT(child);
-      state->children.push_back(MakeMaterializeState(*child, ctx));
+      state->children.emplace_back(MakeMaterializeState(*child, ctx));
     } break;
     case duckdb::LogicalTypeId::STRUCT: {
       state->children.reserve(reader.StructFieldCount());
       for (size_t fi = 0; fi < reader.StructFieldCount(); ++fi) {
-        state->children.push_back(
+        state->children.emplace_back(
           MakeMaterializeState(reader.StructField(fi), ctx));
       }
     } break;
@@ -77,9 +77,11 @@ MaterializeState::VariantRgState& EnsureVariantRgState(
   return slot;
 }
 
-const duckdb::ValidityMask* ScanVariantValidity(
-  MaterializeState& state, const ColumnReader& reader, uint64_t first_doc,
-  duckdb::idx_t count, duckdb::Vector& holder) {
+const duckdb::ValidityMask* ScanVariantValidity(MaterializeState& state,
+                                                const ColumnReader& reader,
+                                                uint64_t first_doc,
+                                                duckdb::idx_t count,
+                                                duckdb::Vector& holder) {
   if (!reader.HasValidity()) {
     return nullptr;
   }
@@ -137,7 +139,7 @@ size_t FindStructFieldIndex(const duckdb::LogicalType& struct_type,
 
 const ColumnReader* ResolveShreddedLeaf(
   const ColumnReader& shredded_node, std::span<const std::string_view> path) {
-  const ColumnReader* node = &shredded_node;
+  const auto* node = &shredded_node;
   if (!node->FullyShredded()) {
     return nullptr;
   }
@@ -145,7 +147,7 @@ const ColumnReader* ResolveShreddedLeaf(
     if (node->Type().id() != duckdb::LogicalTypeId::STRUCT) {
       return nullptr;
     }
-    const ColumnReader& typed = node->StructField(kShreddedTypedValueIndex);
+    const auto& typed = node->StructField(kShreddedTypedValueIndex);
     if (typed.Type().id() != duckdb::LogicalTypeId::STRUCT) {
       return nullptr;
     }
@@ -158,9 +160,9 @@ const ColumnReader* ResolveShreddedLeaf(
       return nullptr;
     }
   }
-  const ColumnReader* leaf = node->Type().id() == duckdb::LogicalTypeId::STRUCT
-                               ? &node->StructField(kShreddedTypedValueIndex)
-                               : node;
+  const auto* leaf = node->Type().id() == duckdb::LogicalTypeId::STRUCT
+                       ? &node->StructField(kShreddedTypedValueIndex)
+                       : node;
   return leaf->Type().IsNested() ? nullptr : leaf;
 }
 

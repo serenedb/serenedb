@@ -26,10 +26,10 @@
 #include <duckdb/common/types/vector_buffer.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
-#include <memory>
 #include <duckdb/storage/data_pointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+#include <memory>
 #include <span>
 #include <string>
 #include <utility>

@@ -403,11 +403,11 @@ void PushSlicedChunks(std::vector<Chunk>& out, duckdb::Vector& vec,
     const auto take =
       std::min<duckdb::idx_t>(count - off, STANDARD_VECTOR_SIZE);
     if (off == 0 && take == count) {
-      out.push_back(Chunk{duckdb::Vector::Ref(vec), take});
+      out.emplace_back(duckdb::Vector::Ref(vec), take);
     } else {
       duckdb::Vector owned{vec.GetType(), take};
       duckdb::VectorOperations::Copy(vec, owned, off + take, off, 0);
-      out.push_back(Chunk{std::move(owned), take});
+      out.emplace_back(std::move(owned), take);
     }
     off += take;
   }
@@ -418,8 +418,7 @@ std::vector<Chunk> StructChildChunks(ChunkSpan chunks, size_t child_index) {
   out.reserve(chunks.size());
   for (auto& chunk : chunks) {
     auto& entries = duckdb::StructVector::GetEntries(chunk.data);
-    out.push_back(
-      Chunk{duckdb::Vector::Ref(entries[child_index]), chunk.count});
+    out.emplace_back(duckdb::Vector::Ref(entries[child_index]), chunk.count);
   }
   return out;
 }
@@ -593,10 +592,10 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
         duckdb::UnifiedVectorFormat unshredded_fmt;
         shred_entries[0].ToUnifiedFormat(chunk.count, unshredded_fmt);
         unshredded_valid += unshredded_fmt.validity.CountValid(chunk.count);
-        unshredded_chunks.push_back(
-          Chunk{duckdb::Vector::Ref(shred_entries[0]), chunk.count});
-        shredded_chunks.push_back(
-          Chunk{duckdb::Vector::Ref(shred_entries[1]), chunk.count});
+        unshredded_chunks.emplace_back(duckdb::Vector::Ref(shred_entries[0]),
+                                       chunk.count);
+        shredded_chunks.emplace_back(duckdb::Vector::Ref(shred_entries[1]),
+                                     chunk.count);
       }
 
       layout.shred_state = unshredded_valid == 0 ? VariantShredState::Full
@@ -676,7 +675,7 @@ Chunk& ColumnWriter::OpenChunk() {
   }
   auto& alloc = duckdb::Allocator::Get(_write_ctx->Database());
   dc.chunk_caches.emplace_back(alloc, _type, cap);
-  dc.chunks.push_back(Chunk{duckdb::Vector(dc.chunk_caches.back()), 0});
+  dc.chunks.emplace_back(duckdb::Vector(dc.chunk_caches.back()), 0);
   return dc.chunks.back();
 }
 
@@ -688,7 +687,7 @@ Chunk& ColumnWriter::OpenNullChunk(size_t take) {
     return dc.chunks[idx];
   }
   dc.chunk_caches.emplace_back();
-  dc.chunks.push_back(Chunk{duckdb::Vector(_type), take});
+  dc.chunks.emplace_back(duckdb::Vector(_type), take);
   return dc.chunks.back();
 }
 
@@ -706,7 +705,7 @@ void ColumnWriter::FlushChunks(uint64_t count) {
   group.reserve(_data_ctx.used_chunks);
   for (size_t k = 0; k < _data_ctx.used_chunks; ++k) {
     auto& chunk = _data_ctx.chunks[k];
-    group.push_back(Chunk{duckdb::Vector::Ref(chunk.data), chunk.count});
+    group.emplace_back(duckdb::Vector::Ref(chunk.data), chunk.count);
   }
 
   if (_hyperloglog) {

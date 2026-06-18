@@ -88,7 +88,7 @@ std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,
     case duckdb::LogicalTypeId::STRUCT: {
       struct_children.reserve(node.child_columns.size());
       for (auto& child : node.child_columns) {
-        struct_children.push_back(
+        struct_children.emplace_back(
           MakeColumnReader(field_limits::invalid(), std::move(child)));
       }
       node.pointers.clear();

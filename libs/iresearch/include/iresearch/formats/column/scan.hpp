@@ -138,7 +138,7 @@ inline void ForEachVariantRgSlice(const ColumnReader& reader,
                                   const DocIds& doc_ids, Fn&& fn) {
   size_t i = 0;
   while (i < doc_ids.size()) {
-    const uint64_t doc0 = static_cast<uint64_t>(doc_ids[i]);
+    const auto doc0 = static_cast<uint64_t>(doc_ids[i]);
     state.variant_rg_hint = reader.LocateVariantRg(doc0, state.variant_rg_hint);
     const RgWindow& window = state.variant_rg_hint;
     const size_t run = ConsecutiveRunLength(doc_ids, i, window.end);
@@ -202,7 +202,7 @@ void MaterializeNode(const ColumnReader& reader, MaterializeState& state,
       auto& child_state = *state.children[0];
       size_t i = 0;
       while (i < doc_ids.size()) {
-        const uint64_t doc0 = static_cast<uint64_t>(doc_ids[i]);
+        const auto doc0 = static_cast<uint64_t>(doc_ids[i]);
         state.rg_hint = reader.Locate(doc0, state.rg_hint);
         const auto& window = state.rg_hint;
         const size_t run = ConsecutiveRunLength(doc_ids, i, window.end);
@@ -297,8 +297,8 @@ void MaterializeStructExtractNode(
   if (doc_ids.size() == 0) {
     return;
   }
-  const ColumnReader* leaf = &reader;
-  MaterializeState* leaf_state = &state;
+  const auto* leaf = &reader;
+  auto* leaf_state = &state;
   for (const auto& field : path) {
     if (leaf->Type().id() != duckdb::LogicalTypeId::STRUCT) {
       return;
@@ -330,9 +330,8 @@ void MaterializeVariantExtractNode(
   duckdb::vector<duckdb::VariantPathComponent> components;
   ForEachVariantRgSlice(
     reader, state, doc_ids, [&](const VariantRgSlice& slice) {
-      auto& slot =
-        EnsureExtractLeaf(state, slice.rg_index, slice.rg_reader, path,
-                          rg_count);
+      auto& slot = EnsureExtractLeaf(state, slice.rg_index, slice.rg_reader,
+                                     path, rg_count);
       if (slot.leaf != nullptr) {
         MaterializeExtractLeaf(
           *slot.leaf, *slot.state, IotaRange{slice.rg_offset, slice.count},

@@ -1,0 +1,198 @@
+# Cross-membership: a diamond closure. One member sits under two groups that
+# both lead to a common top group; privileges from every reachable group form a
+# UNION. Revoking one of the two paths still leaves the member covered via the
+# surviving path.
+#
+# Graph (-> reads "is a member of"):
+#   xmb_diu_vitalik -> xmb_diu_kryakva  -> xmb_diu_iceberg
+#   xmb_diu_vitalik -> xmb_diu_androed  -> xmb_diu_iceberg
+# Top group xmb_diu_iceberg holds SELECT on the table (reaches vitalik via BOTH
+# paths). kryakva additionally holds INSERT; androed additionally holds UPDATE.
+# vitalik inherits SELECT + INSERT + UPDATE (the union), not DELETE.
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_diu_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_diu_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_diu_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_diu_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_diu_clickclack;
+
+
+statement ok
+CREATE TABLE xmb_diu_clickclack (id int, payload text);
+
+
+statement ok
+INSERT INTO xmb_diu_clickclack VALUES (1, 'mop'), (2, 'babsky');
+
+
+statement ok
+CREATE ROLE xmb_diu_vitalik LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE xmb_diu_kryakva;
+
+
+statement ok
+CREATE ROLE xmb_diu_androed;
+
+
+statement ok
+CREATE ROLE xmb_diu_iceberg;
+
+
+# ---- Wire the diamond ----
+
+statement ok
+GRANT xmb_diu_kryakva TO xmb_diu_vitalik;
+
+
+statement ok
+GRANT xmb_diu_androed TO xmb_diu_vitalik;
+
+
+statement ok
+GRANT xmb_diu_iceberg TO xmb_diu_kryakva;
+
+
+statement ok
+GRANT xmb_diu_iceberg TO xmb_diu_androed;
+
+
+# ---- Privileges spread across the diamond ----
+
+statement ok
+GRANT SELECT ON xmb_diu_clickclack TO xmb_diu_iceberg;
+
+
+statement ok
+GRANT INSERT ON xmb_diu_clickclack TO xmb_diu_kryakva;
+
+
+statement ok
+GRANT UPDATE ON xmb_diu_clickclack TO xmb_diu_androed;
+
+
+# vitalik inherits the union; DELETE was never granted anywhere reachable.
+query
+SELECT has_table_privilege('xmb_diu_vitalik', 'xmb_diu_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_diu_vitalik', 'xmb_diu_clickclack', 'INSERT') AS ins,
+       has_table_privilege('xmb_diu_vitalik', 'xmb_diu_clickclack', 'UPDATE') AS upd,
+       has_table_privilege('xmb_diu_vitalik', 'xmb_diu_clickclack', 'DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	t	f
+
+
+# vitalik reaches the top group through both intermediate groups.
+query
+SELECT pg_has_role('xmb_diu_vitalik', 'xmb_diu_kryakva', 'USAGE') AS via_kryakva,
+       pg_has_role('xmb_diu_vitalik', 'xmb_diu_androed', 'USAGE') AS via_androed,
+       pg_has_role('xmb_diu_vitalik', 'xmb_diu_iceberg', 'USAGE') AS to_top;
+----
+via_kryakva	via_androed	to_top
+t	t	t
+
+
+# Real query path: SELECT (top), INSERT (kryakva), UPDATE (androed) all work.
+connection c_vitalik user=xmb_diu_vitalik
+query
+SELECT count(*) FROM xmb_diu_clickclack;
+----
+count
+2
+
+
+connection c_vitalik user=xmb_diu_vitalik
+statement ok
+INSERT INTO xmb_diu_clickclack VALUES (3, 'vedernikoff');
+
+
+connection c_vitalik user=xmb_diu_vitalik
+statement ok
+UPDATE xmb_diu_clickclack SET payload = 'iceberg' WHERE id = 1;
+
+
+# DELETE is not in the union -> denied for real.
+connection c_vitalik user=xmb_diu_vitalik
+statement error
+DELETE FROM xmb_diu_clickclack WHERE id = 2;
+----
+db error: ERROR: permission denied for table xmb_diu_clickclack<slt:ignore>
+
+
+# ---- Revoke ONE path (vitalik -> androed): SELECT survives via the kryakva
+# path; UPDATE (only via androed) is lost; INSERT (via kryakva) survives. ----
+
+statement ok
+REVOKE xmb_diu_androed FROM xmb_diu_vitalik;
+
+
+query
+SELECT has_table_privilege('xmb_diu_vitalik', 'xmb_diu_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_diu_vitalik', 'xmb_diu_clickclack', 'INSERT') AS ins,
+       has_table_privilege('xmb_diu_vitalik', 'xmb_diu_clickclack', 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# Still reaches the top group through the surviving kryakva path.
+query
+SELECT pg_has_role('xmb_diu_vitalik', 'xmb_diu_iceberg', 'USAGE') AS to_top,
+       pg_has_role('xmb_diu_vitalik', 'xmb_diu_androed', 'USAGE') AS to_androed;
+----
+to_top	to_androed
+t	f
+
+
+connection c_vitalik2 user=xmb_diu_vitalik
+query
+SELECT count(*) FROM xmb_diu_clickclack;
+----
+count
+3
+
+
+connection c_vitalik2 user=xmb_diu_vitalik
+statement error
+UPDATE xmb_diu_clickclack SET payload = 'gone' WHERE id = 1;
+----
+db error: ERROR: permission denied for table xmb_diu_clickclack<slt:ignore>
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_diu_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_diu_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_diu_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_diu_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_diu_iceberg;

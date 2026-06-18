@@ -1,0 +1,173 @@
+# Cross-product file H: a single role accumulates the UNION of three grant
+# sources on one table --
+#   direct  : UPDATE granted straight to the role
+#   public  : SELECT granted to PUBLIC
+#   inherit : INSERT held by a group the role belongs to (INHERIT)
+# The oracle is the union; real DML on an authenticated connection confirms each
+# source independently. Then each source is cut in turn and the union shrinks.
+#
+# Lore: xog_h_iceberg is the superuser-owned table; xog_h_grp is the group;
+# xog_h_negaimorit is the member that unions all three sources.
+
+statement ok
+DROP TABLE IF EXISTS xog_h_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_h_negaimorit;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_h_grp;
+
+
+statement ok
+CREATE TABLE xog_h_iceberg (id int, payload text);
+
+
+statement ok
+INSERT INTO xog_h_iceberg VALUES (1, 'clickclack');
+
+
+statement ok
+CREATE ROLE xog_h_grp;
+
+
+statement ok
+CREATE ROLE xog_h_negaimorit LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT UPDATE ON xog_h_iceberg TO xog_h_negaimorit;
+
+
+statement ok
+GRANT SELECT ON xog_h_iceberg TO PUBLIC;
+
+
+statement ok
+GRANT INSERT ON xog_h_iceberg TO xog_h_grp;
+
+
+statement ok
+GRANT xog_h_grp TO xog_h_negaimorit;
+
+
+# Oracle: the union is SELECT (public) + INSERT (inherited) + UPDATE (direct);
+# DELETE was never granted by any source.
+query
+SELECT has_table_privilege('xog_h_negaimorit','xog_h_iceberg','SELECT') AS sel,
+       has_table_privilege('xog_h_negaimorit','xog_h_iceberg','INSERT') AS ins,
+       has_table_privilege('xog_h_negaimorit','xog_h_iceberg','UPDATE') AS upd,
+       has_table_privilege('xog_h_negaimorit','xog_h_iceberg','DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	t	f
+
+
+# Real DML proves all three sources at once: SELECT (public), INSERT (inherit),
+# UPDATE (direct) all succeed on a real connection.
+connection c_n user=xog_h_negaimorit
+query
+SELECT count(*) AS n FROM xog_h_iceberg;
+----
+n
+1
+
+
+connection c_n user=xog_h_negaimorit
+statement ok
+INSERT INTO xog_h_iceberg VALUES (2, 'mop');
+
+
+connection c_n user=xog_h_negaimorit
+statement ok
+UPDATE xog_h_iceberg SET payload = 'reowned' WHERE id = 1;
+
+
+# DELETE is in no source -> denied for real.
+connection c_n user=xog_h_negaimorit
+statement error
+DELETE FROM xog_h_iceberg WHERE id = 1;
+----
+db error: ERROR: permission denied for table xog_h_iceberg<slt:ignore>
+
+
+# ---- Cut the inherited source (revoke membership): INSERT falls away, SELECT
+# (public) and UPDATE (direct) remain. ----
+statement ok
+REVOKE xog_h_grp FROM xog_h_negaimorit;
+
+
+query
+SELECT has_table_privilege('xog_h_negaimorit','xog_h_iceberg','SELECT') AS sel,
+       has_table_privilege('xog_h_negaimorit','xog_h_iceberg','INSERT') AS ins,
+       has_table_privilege('xog_h_negaimorit','xog_h_iceberg','UPDATE') AS upd;
+----
+sel	ins	upd
+t	f	t
+
+
+# INSERT now denied on the real path; SELECT still works.
+connection c_n user=xog_h_negaimorit
+statement error
+INSERT INTO xog_h_iceberg VALUES (3, 'gone');
+----
+db error: ERROR: permission denied for table xog_h_iceberg<slt:ignore>
+
+
+connection c_n user=xog_h_negaimorit
+query
+SELECT count(*) AS n FROM xog_h_iceberg;
+----
+n
+2
+
+
+# ---- Cut the public source: SELECT falls away, only the direct UPDATE remains. ----
+statement ok
+REVOKE SELECT ON xog_h_iceberg FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('xog_h_negaimorit','xog_h_iceberg','SELECT') AS sel,
+       has_table_privilege('xog_h_negaimorit','xog_h_iceberg','UPDATE') AS upd;
+----
+sel	upd
+f	t
+
+
+# SELECT now denied for real. (We do not run a real UPDATE here: an UPDATE that
+# reads or filters rows needs SELECT on the referenced columns, which the role
+# no longer has -- the oracle above already pins UPDATE=t at the privilege
+# level, which is the byte-identical surface.)
+connection c_n user=xog_h_negaimorit
+statement error
+SELECT * FROM xog_h_iceberg;
+----
+db error: ERROR: permission denied for table xog_h_iceberg<slt:ignore>
+
+
+# ---- Cut the last (direct) source: the role holds nothing. ----
+statement ok
+REVOKE UPDATE ON xog_h_iceberg FROM xog_h_negaimorit;
+
+
+query
+SELECT has_table_privilege('xog_h_negaimorit','xog_h_iceberg','SELECT') AS sel,
+       has_table_privilege('xog_h_negaimorit','xog_h_iceberg','UPDATE') AS upd;
+----
+sel	upd
+f	f
+
+
+statement ok
+DROP TABLE xog_h_iceberg;
+
+
+statement ok
+DROP ROLE xog_h_negaimorit;
+
+
+statement ok
+DROP ROLE xog_h_grp;

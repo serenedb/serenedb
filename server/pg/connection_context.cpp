@@ -28,7 +28,7 @@
 namespace sdb {
 
 ConnectionContext::ConnectionContext(
-  duckdb::ClientContext& duckdb_ctx, std::string_view user,
+  duckdb::ClientContext& duckdb_ctx, std::string_view user, ObjectId role_id,
   std::string_view dbname, ObjectId database_id,
   std::shared_ptr<catalog::Database> database, message::Buffer* send_buffer,
   pg::CopyMessagesQueue* copy_queue)
@@ -36,7 +36,8 @@ ConnectionContext::ConnectionContext(
     Transaction{duckdb_ctx},
     _database{std::move(database)},
     _send_buffer{send_buffer},
-    _copy_queue{copy_queue} {}
+    _copy_queue{copy_queue},
+    _role_id{role_id} {}
 
 std::string ConnectionContext::GetCurrentSchemaFromSnapshot(
   std::shared_ptr<const catalog::Snapshot> snapshot) const {

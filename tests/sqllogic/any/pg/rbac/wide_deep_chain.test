@@ -1,0 +1,272 @@
+# Deep membership chain of depth EIGHT. A privilege granted at the very bottom
+# of the chain flows all the way up to the top; severing one edge mid-chain cuts
+# every role above the break while leaving everything at or below it intact.
+# Asserted with has_table_privilege and pg_has_role (byte-identical on both).
+#
+# Chain (-> reads "is a member of"), 8 hops deep:
+#   wide_dc_clickclack -> wide_dc_kostya -> wide_dc_deadinside ->
+#   wide_dc_babsky -> wide_dc_androed -> wide_dc_abramov ->
+#   wide_dc_myasnig -> wide_dc_iceberg
+# wide_dc_iceberg (the leaf group) is granted SELECT on wide_dc_mop; the grant
+# propagates up the entire eight-link chain to wide_dc_clickclack.
+
+statement ok
+DROP TABLE IF EXISTS wide_dc_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_abramov;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_myasnig;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_iceberg;
+
+
+statement ok
+CREATE TABLE wide_dc_mop (id int);
+
+
+statement ok
+CREATE ROLE wide_dc_clickclack;
+
+
+statement ok
+CREATE ROLE wide_dc_kostya;
+
+
+statement ok
+CREATE ROLE wide_dc_deadinside;
+
+
+statement ok
+CREATE ROLE wide_dc_babsky;
+
+
+statement ok
+CREATE ROLE wide_dc_androed;
+
+
+statement ok
+CREATE ROLE wide_dc_abramov;
+
+
+statement ok
+CREATE ROLE wide_dc_myasnig;
+
+
+statement ok
+CREATE ROLE wide_dc_iceberg;
+
+
+# ---- Build the 7-edge / 8-node chain top -> ... -> leaf ----
+
+statement ok
+GRANT wide_dc_kostya TO wide_dc_clickclack;
+
+
+statement ok
+GRANT wide_dc_deadinside TO wide_dc_kostya;
+
+
+statement ok
+GRANT wide_dc_babsky TO wide_dc_deadinside;
+
+
+statement ok
+GRANT wide_dc_androed TO wide_dc_babsky;
+
+
+statement ok
+GRANT wide_dc_abramov TO wide_dc_androed;
+
+
+statement ok
+GRANT wide_dc_myasnig TO wide_dc_abramov;
+
+
+statement ok
+GRANT wide_dc_iceberg TO wide_dc_myasnig;
+
+
+# ---- Grant SELECT to the leaf; it flows up all eight nodes ----
+
+statement ok
+GRANT SELECT ON wide_dc_mop TO wide_dc_iceberg;
+
+
+# Top of the chain and three intermediate hops all inherit SELECT.
+query
+SELECT has_table_privilege('wide_dc_clickclack', 'wide_dc_mop', 'SELECT') AS top,
+       has_table_privilege('wide_dc_kostya', 'wide_dc_mop', 'SELECT') AS h1,
+       has_table_privilege('wide_dc_deadinside', 'wide_dc_mop', 'SELECT') AS h2,
+       has_table_privilege('wide_dc_babsky', 'wide_dc_mop', 'SELECT') AS h3;
+----
+top	h1	h2	h3
+t	t	t	t
+
+
+# The remaining hops down to the leaf also inherit SELECT.
+query
+SELECT has_table_privilege('wide_dc_androed', 'wide_dc_mop', 'SELECT') AS h4,
+       has_table_privilege('wide_dc_abramov', 'wide_dc_mop', 'SELECT') AS h5,
+       has_table_privilege('wide_dc_myasnig', 'wide_dc_mop', 'SELECT') AS h6,
+       has_table_privilege('wide_dc_iceberg', 'wide_dc_mop', 'SELECT') AS leaf;
+----
+h4	h5	h6	leaf
+t	t	t	t
+
+
+# No node has INSERT (only SELECT was granted to the leaf).
+query
+SELECT has_table_privilege('wide_dc_clickclack', 'wide_dc_mop', 'INSERT') AS top,
+       has_table_privilege('wide_dc_iceberg', 'wide_dc_mop', 'INSERT') AS leaf;
+----
+top	leaf
+f	f
+
+
+# ---- pg_has_role across the full depth ----
+# The top reaches every node below it, including the leaf eight links away.
+query
+SELECT pg_has_role('wide_dc_clickclack', 'wide_dc_kostya', 'USAGE') AS to_h1,
+       pg_has_role('wide_dc_clickclack', 'wide_dc_androed', 'USAGE') AS to_h4,
+       pg_has_role('wide_dc_clickclack', 'wide_dc_myasnig', 'USAGE') AS to_h6,
+       pg_has_role('wide_dc_clickclack', 'wide_dc_iceberg', 'USAGE') AS to_leaf;
+----
+to_h1	to_h4	to_h6	to_leaf
+t	t	t	t
+
+
+# Reachability is one-directional: the leaf reaches nothing above it.
+query
+SELECT pg_has_role('wide_dc_iceberg', 'wide_dc_clickclack', 'USAGE') AS leaf_to_top,
+       pg_has_role('wide_dc_iceberg', 'wide_dc_myasnig', 'USAGE') AS leaf_to_h6,
+       pg_has_role('wide_dc_iceberg', 'wide_dc_iceberg', 'USAGE') AS leaf_self;
+----
+leaf_to_top	leaf_to_h6	leaf_self
+f	f	t
+
+
+# A mid-chain node reaches what is below it but not what is above it.
+query
+SELECT pg_has_role('wide_dc_babsky', 'wide_dc_iceberg', 'USAGE') AS down_to_leaf,
+       pg_has_role('wide_dc_babsky', 'wide_dc_clickclack', 'USAGE') AS up_to_top,
+       pg_has_role('wide_dc_babsky', 'wide_dc_kostya', 'USAGE') AS up_one;
+----
+down_to_leaf	up_to_top	up_one
+t	f	f
+
+
+# ---- Sever a middle edge: drop androed out of babsky ----
+# This cuts the chain between h3 (babsky) and h4 (androed). Everything from
+# babsky UP (babsky, deadinside, kostya, clickclack) loses the inherited SELECT;
+# everything from androed DOWN (to the leaf) keeps it.
+
+statement ok
+REVOKE wide_dc_androed FROM wide_dc_babsky;
+
+
+query
+SELECT has_table_privilege('wide_dc_clickclack', 'wide_dc_mop', 'SELECT') AS top,
+       has_table_privilege('wide_dc_kostya', 'wide_dc_mop', 'SELECT') AS h1,
+       has_table_privilege('wide_dc_deadinside', 'wide_dc_mop', 'SELECT') AS h2,
+       has_table_privilege('wide_dc_babsky', 'wide_dc_mop', 'SELECT') AS h3;
+----
+top	h1	h2	h3
+f	f	f	f
+
+
+query
+SELECT has_table_privilege('wide_dc_androed', 'wide_dc_mop', 'SELECT') AS h4,
+       has_table_privilege('wide_dc_abramov', 'wide_dc_mop', 'SELECT') AS h5,
+       has_table_privilege('wide_dc_myasnig', 'wide_dc_mop', 'SELECT') AS h6,
+       has_table_privilege('wide_dc_iceberg', 'wide_dc_mop', 'SELECT') AS leaf;
+----
+h4	h5	h6	leaf
+t	t	t	t
+
+
+# Reachability reflects the cut precisely.
+query
+SELECT pg_has_role('wide_dc_clickclack', 'wide_dc_iceberg', 'USAGE') AS top_to_leaf,
+       pg_has_role('wide_dc_babsky', 'wide_dc_androed', 'USAGE') AS h3_to_h4,
+       pg_has_role('wide_dc_androed', 'wide_dc_iceberg', 'USAGE') AS h4_to_leaf;
+----
+top_to_leaf	h3_to_h4	h4_to_leaf
+f	f	t
+
+
+# ---- Reconnecting the edge restores the full chain ----
+
+statement ok
+GRANT wide_dc_androed TO wide_dc_babsky;
+
+
+query
+SELECT has_table_privilege('wide_dc_clickclack', 'wide_dc_mop', 'SELECT') AS top,
+       pg_has_role('wide_dc_clickclack', 'wide_dc_iceberg', 'USAGE') AS top_to_leaf;
+----
+top	top_to_leaf
+t	t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS wide_dc_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_abramov;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_myasnig;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_dc_iceberg;

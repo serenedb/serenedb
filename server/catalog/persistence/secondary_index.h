@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "catalog/object.h"
 #include "catalog/table_options.h"
 
 namespace sdb::catalog::persistence {

@@ -1,0 +1,131 @@
+# Owner-driven ALTER TABLE ... OWNER TO authorization matrix, on the actor x
+# new-owner cross-product. The table is created by the superuser and handed to a
+# non-superuser owner; that owner (and a non-owner) then attempt transfers over
+# a real connection. Every case here is an error or a no-op, so the result is
+# byte-identical on PostgreSQL and serenedb. (Owner-driven *successful*
+# transfers to a non-superuser in public diverge -- PG additionally demands the
+# new owner hold CREATE on the schema, which serenedb does not model -- so those
+# live in the sdb/ tree.)
+#
+# Lore: clickclack is the table. vedernikoff is the owner; it can SET ROLE to
+# the mop group but not to iceberg; babsky is an unrelated non-owner.
+
+statement ok
+DROP TABLE IF EXISTS xao_otn_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_otn_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_otn_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_otn_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_otn_babsky;
+
+
+statement ok
+CREATE ROLE xao_otn_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE xao_otn_mop;
+
+
+statement ok
+CREATE ROLE xao_otn_iceberg;
+
+
+statement ok
+CREATE ROLE xao_otn_babsky LOGIN PASSWORD 'pw';
+
+
+# vedernikoff can SET ROLE to mop (default GRANT carries the set option) but
+# only INHERITs iceberg (cannot SET ROLE to it).
+statement ok
+GRANT xao_otn_mop TO xao_otn_vedernikoff;
+
+
+statement ok
+GRANT xao_otn_iceberg TO xao_otn_vedernikoff WITH SET FALSE, INHERIT TRUE;
+
+
+statement ok
+CREATE TABLE xao_otn_clickclack (id int);
+
+
+# Superuser hands the table to vedernikoff (transferred once).
+statement ok
+ALTER TABLE xao_otn_clickclack OWNER TO xao_otn_vedernikoff;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_otn_clickclack';
+----
+owner
+xao_otn_vedernikoff
+
+
+# (a) non-owner (babsky) cannot transfer
+connection cbabsky user=xao_otn_babsky
+statement error
+ALTER TABLE xao_otn_clickclack OWNER TO xao_otn_babsky;
+----
+db error: ERROR: must be owner of table xao_otn_clickclack<slt:ignore>
+
+
+# (b) owner cannot transfer to a role it cannot SET ROLE to (iceberg)
+connection cowner user=xao_otn_vedernikoff
+statement error
+ALTER TABLE xao_otn_clickclack OWNER TO xao_otn_iceberg;
+----
+db error: ERROR: must be able to SET ROLE "xao_otn_iceberg"<slt:ignore>
+
+
+# (c) owner cannot transfer to a nonexistent role
+connection cowner2 user=xao_otn_vedernikoff
+statement error
+ALTER TABLE xao_otn_clickclack OWNER TO xao_otn_ghost;
+----
+db error: ERROR: role "xao_otn_ghost" does not exist<slt:ignore>
+
+
+# (d) owner -> CURRENT_USER is a no-op success (no real owner change, so the
+# new-owner schema check is skipped on both engines).
+connection cowner3 user=xao_otn_vedernikoff
+statement ok
+ALTER TABLE xao_otn_clickclack OWNER TO CURRENT_USER;
+
+
+# Ownership is unchanged after all the failures and the self no-op.
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_otn_clickclack';
+----
+owner
+xao_otn_vedernikoff
+
+
+statement ok
+DROP TABLE xao_otn_clickclack;
+
+
+statement ok
+DROP ROLE xao_otn_vedernikoff;
+
+
+statement ok
+DROP ROLE xao_otn_mop;
+
+
+statement ok
+DROP ROLE xao_otn_iceberg;
+
+
+statement ok
+DROP ROLE xao_otn_babsky;

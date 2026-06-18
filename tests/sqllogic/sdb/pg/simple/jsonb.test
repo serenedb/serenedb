@@ -1,0 +1,104 @@
+# Issue #613: jsonb is registered as an alias for json. The on-disk
+# distinction PG draws between json (verbatim text) and jsonb (parsed
+# binary) is not visible to SereneDB's analytical workload, so we use a
+# single backing type for both. This test pins the SereneDB-side
+# behaviour; pg_typeof returns "json" because Type2Oid collapses jsonb
+# onto the json OID, but the DuckDB binder preserves the user-typed
+# "jsonb" name for column headers and pg_type still exposes OID 3802.
+
+
+# ----------------------------------------------------------------------
+# Scalar casts via ::jsonb.
+# ----------------------------------------------------------------------
+
+query
+SELECT '42'::jsonb;
+----
+jsonb
+42
+
+
+query
+SELECT 'true'::jsonb, 'false'::jsonb, 'null'::jsonb;
+----
+jsonb	jsonb	jsonb
+true	false	null
+
+
+query
+SELECT '"Vedernikoff"'::jsonb;
+----
+jsonb
+"Vedernikoff"
+
+
+query
+SELECT '[1, 2, 3]'::jsonb;
+----
+jsonb
+[1, 2, 3]
+
+
+query
+SELECT '{"k": "v"}'::jsonb;
+----
+jsonb
+{"k": "v"}
+
+
+# ----------------------------------------------------------------------
+# Json operators apply to jsonb-cast values (same backing type).
+# ----------------------------------------------------------------------
+
+query
+SELECT '[10, 20, 30]'::jsonb -> 1;
+----
+?column?
+20
+
+
+query
+SELECT '{"a": 1, "b": 2}'::jsonb -> 'b';
+----
+?column?
+2
+
+
+query
+SELECT '{"a": [1, 2, 3]}'::jsonb -> 'a' -> 2;
+----
+?column?
+3
+
+
+# ----------------------------------------------------------------------
+# jsonb columns persist and round-trip.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE clickclack_log (id INTEGER, payload jsonb);
+
+
+statement ok
+INSERT INTO clickclack_log VALUES
+  (1, '{"event": "click"}'::jsonb),
+  (2, '{"event": "clack", "by": "vedernikoff"}'::jsonb);
+
+
+query
+SELECT id, payload -> 'event' FROM clickclack_log ORDER BY id;
+----
+id	?column?
+1	"click"
+2	"clack"
+
+
+# ----------------------------------------------------------------------
+# pg_type exposes jsonb (OID 3802).
+# ----------------------------------------------------------------------
+
+query
+SELECT oid, typname FROM pg_type WHERE typname = 'jsonb';
+----
+oid	typname
+3802	jsonb

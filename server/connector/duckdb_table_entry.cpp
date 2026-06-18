@@ -37,7 +37,9 @@
 
 #include "basics/assert.h"
 #include "catalog/store/store.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
+#include "pg/commands/rbac.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -97,6 +99,15 @@ duckdb::TableCatalogEntry& SereneDBTableEntry::ResolveStoreEntry(
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  // The write target of an UPDATE/DELETE is scanned to find rows, but
+  // PostgreSQL requires SELECT only when a column value is actually read. Defer
+  // the SELECT check to PlanUpdate/PlanDelete, which require it conditionally
+  // once the projected columns are known.
+  if (!GetSereneDBContext(context).BindingWriteTarget()) {
+    pg::RequirePrivilege(GetSereneDBContext(context), *_sdb_table,
+                         catalog::AclMode::Select);
+  }
+
   auto function =
     ResolveStoreEntry(context).GetScanFunction(context, bind_data);
   if (bind_data) {

@@ -1,0 +1,170 @@
+# Role attributes, observed through the read side of the role catalog. Every
+# value asserted here was dual-checked byte-identical on PostgreSQL 19beta1 and
+# serenedb. CREATE ROLE attribute flags (LOGIN/NOLOGIN, SUPERUSER/NOSUPERUSER)
+# surface as booleans in pg_roles and pg_authid; the password column is masked.
+#
+# The runner replays this file once per wire protocol against the same server,
+# so every object is dropped IF EXISTS first and dropped again at the end -- the
+# file is idempotent and order-independent.
+
+statement ok
+DROP ROLE IF EXISTS ra_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_vedernikoff;
+
+
+# ----------------------------------------------------------------------
+# CREATE ROLE attribute flags land in pg_roles. A LOGIN SUPERUSER role and a
+# NOLOGIN NOSUPERUSER role bracket the two booleans we can read identically.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE ra_clickclack LOGIN SUPERUSER PASSWORD 'clickclackclick';
+
+
+statement ok
+CREATE ROLE ra_iceberg NOLOGIN NOSUPERUSER;
+
+
+query
+SELECT rolname, rolsuper, rolcanlogin FROM pg_roles
+WHERE rolname IN ('ra_clickclack', 'ra_iceberg') ORDER BY rolname;
+----
+rolname	rolsuper	rolcanlogin
+ra_clickclack	t	t
+ra_iceberg	f	f
+
+
+# The same two flags read identically out of pg_authid.
+query
+SELECT rolname, rolsuper, rolcanlogin FROM pg_authid
+WHERE rolname IN ('ra_clickclack', 'ra_iceberg') ORDER BY rolname;
+----
+rolname	rolsuper	rolcanlogin
+ra_clickclack	t	t
+ra_iceberg	f	f
+
+
+# postgres is the bootstrap superuser and can log in.
+query
+SELECT rolsuper, rolcanlogin FROM pg_roles WHERE rolname = 'postgres';
+----
+rolsuper	rolcanlogin
+t	t
+
+
+# ----------------------------------------------------------------------
+# The remaining pg_roles attribute columns take their documented defaults for a
+# plainly-created role: INHERIT on, no CREATEROLE / CREATEDB / REPLICATION /
+# BYPASSRLS, and an unlimited (-1) connection limit.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE ra_mop LOGIN;
+
+
+query
+SELECT rolinherit, rolcreaterole, rolcreatedb, rolreplication, rolbypassrls, rolconnlimit
+FROM pg_roles WHERE rolname = 'ra_mop';
+----
+rolinherit	rolcreaterole	rolcreatedb	rolreplication	rolbypassrls	rolconnlimit
+t	f	f	f	f	-1
+
+
+# A SUPERUSER role still defaults to INHERIT and the same connection limit.
+query
+SELECT rolsuper, rolcanlogin, rolinherit, rolconnlimit
+FROM pg_roles WHERE rolname = 'ra_clickclack';
+----
+rolsuper	rolcanlogin	rolinherit	rolconnlimit
+t	t	t	-1
+
+
+# ----------------------------------------------------------------------
+# pg_authid.rolpassword is never exposed in plaintext. For a role created
+# WITHOUT a password the column is NULL on both engines. (For a role WITH a
+# password the engines diverge on whether the masked hash is visible, so that
+# case is intentionally not asserted here -- see the divergence report.)
+# ----------------------------------------------------------------------
+
+query
+SELECT rolname, rolpassword IS NULL AS pw_masked FROM pg_authid
+WHERE rolname IN ('ra_iceberg', 'ra_mop', 'postgres') ORDER BY rolname;
+----
+rolname	pw_masked
+postgres	t
+ra_iceberg	t
+ra_mop	t
+
+
+# ----------------------------------------------------------------------
+# A role is one object: its pg_authid and pg_roles rows share the same oid, and
+# joining the two views by oid recovers the same name. We assert the derived
+# equality (stable) rather than the raw oid (which differs between engines).
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE ra_vedernikoff NOLOGIN;
+
+
+query
+SELECT (a.oid = r.oid) AS same_oid, a.rolname = r.rolname AS same_name
+FROM pg_authid a JOIN pg_roles r ON a.oid = r.oid
+WHERE a.rolname = 'ra_vedernikoff';
+----
+same_oid	same_name
+t	t
+
+
+# ----------------------------------------------------------------------
+# ALTER ROLE ... PASSWORD runs and does not disturb the readable attributes.
+# ----------------------------------------------------------------------
+
+statement ok
+ALTER ROLE ra_vedernikoff PASSWORD 'newvedernikoff';
+
+
+query
+SELECT rolname, rolsuper, rolcanlogin FROM pg_roles WHERE rolname = 'ra_vedernikoff';
+----
+rolname	rolsuper	rolcanlogin
+ra_vedernikoff	f	f
+
+
+# ----------------------------------------------------------------------
+# Cleanup: every role this file created is removed, leaving the catalog as found.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE ra_clickclack;
+
+
+statement ok
+DROP ROLE ra_iceberg;
+
+
+statement ok
+DROP ROLE ra_mop;
+
+
+statement ok
+DROP ROLE ra_vedernikoff;
+
+
+# The roles are gone from pg_roles after DROP.
+query
+SELECT count(*) FROM pg_roles
+WHERE rolname IN ('ra_clickclack', 'ra_iceberg', 'ra_mop', 'ra_vedernikoff');
+----
+count
+0

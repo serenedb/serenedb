@@ -1,0 +1,135 @@
+# PUBLIC grants as seen through the has_table_privilege oracle in its various
+# argument forms (any-of comma list, owner independence) and across a table
+# DROP/CREATE cycle: re-creating a table gives it a fresh empty ACL, so a prior
+# PUBLIC grant does not survive. Owner privileges never depend on PUBLIC.
+
+statement ok
+DROP ROLE IF EXISTS pub_gul;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_salam;
+
+
+statement ok
+DROP TABLE IF EXISTS pub_deadinside;
+
+
+statement ok
+CREATE TABLE pub_deadinside (id int);
+
+
+statement ok
+CREATE ROLE pub_gul;
+
+
+statement ok
+CREATE ROLE pub_salam;
+
+
+# Comma-separated privilege text in has_table_privilege uses any-of semantics:
+# before any grant, neither SELECT nor INSERT is held, so the any-of is f.
+query
+SELECT has_table_privilege('pub_gul', 'pub_deadinside', 'SELECT, INSERT') AS any_of;
+----
+any_of
+f
+
+
+# GRANT SELECT TO PUBLIC: the any-of now matches (SELECT is held via PUBLIC),
+# but the all-required INSERT alone still is not.
+statement ok
+GRANT SELECT ON pub_deadinside TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('pub_gul', 'pub_deadinside', 'SELECT, INSERT') AS any_of,
+       has_table_privilege('pub_gul', 'pub_deadinside', 'INSERT') AS only_ins,
+       has_table_privilege('pub_salam', 'pub_deadinside', 'INSERT, SELECT') AS any_of_2;
+----
+any_of	only_ins	any_of_2
+t	f	t
+
+
+# Owner privileges are independent of PUBLIC: REVOKE FROM PUBLIC leaves the
+# owner (postgres) holding everything.
+statement ok
+REVOKE SELECT ON pub_deadinside FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('postgres', 'pub_deadinside', 'SELECT') AS owner_sel,
+       has_table_privilege('postgres', 'pub_deadinside', 'INSERT') AS owner_ins,
+       has_table_privilege('pub_gul', 'pub_deadinside', 'SELECT') AS cc_sel;
+----
+owner_sel	owner_ins	cc_sel
+t	t	f
+
+
+# Re-grant to PUBLIC, then DROP and re-CREATE the table: the new table has a
+# fresh empty ACL, so the prior PUBLIC grant does NOT resurrect.
+statement ok
+GRANT SELECT ON pub_deadinside TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('pub_gul', 'pub_deadinside', 'SELECT') AS before_drop;
+----
+before_drop
+t
+
+
+statement ok
+DROP TABLE pub_deadinside;
+
+
+statement ok
+CREATE TABLE pub_deadinside (id int);
+
+
+query
+SELECT has_table_privilege('pub_gul', 'pub_deadinside', 'SELECT') AS after_recreate,
+       has_table_privilege('pub_salam', 'pub_deadinside', 'SELECT') AS mop_after,
+       has_table_privilege('postgres', 'pub_deadinside', 'SELECT') AS owner_after;
+----
+after_recreate	mop_after	owner_after
+f	f	t
+
+
+# A second table that never received a PUBLIC grant: the PUBLIC grant on one
+# table does not leak to another table.
+statement ok
+DROP TABLE IF EXISTS pub_zhidky;
+
+
+statement ok
+CREATE TABLE pub_zhidky (id int);
+
+
+statement ok
+GRANT SELECT ON pub_deadinside TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('pub_gul', 'pub_deadinside', 'SELECT') AS deadinside_sel,
+       has_table_privilege('pub_gul', 'pub_zhidky', 'SELECT') AS zhidky_sel;
+----
+deadinside_sel	zhidky_sel
+t	f
+
+
+# Cleanup.
+statement ok
+DROP TABLE IF EXISTS pub_deadinside;
+
+
+statement ok
+DROP TABLE IF EXISTS pub_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_gul;
+
+
+statement ok
+DROP ROLE IF EXISTS pub_salam;

@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_authid.h"
 
+#include <duckdb/common/types/timestamp.hpp>
+
 #include "app/app_server.h"
 #include "catalog/catalog.h"
 #include "catalog/role.h"
@@ -30,8 +32,15 @@ namespace {
 
 constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgAuthid::rolpassword),
-  GetIndex(&PgAuthid::rolvaliduntil),
 });
+
+Timestamptz ParseValidUntil(std::string_view ts) {
+  if (ts.empty()) {
+    return {};  // is_null = true
+  }
+  auto parsed = duckdb::Timestamp::FromString(std::string{ts}, false);
+  return Timestamptz{.micros = parsed.value, .is_null = false};
+}
 
 }  // namespace
 
@@ -41,24 +50,27 @@ catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
 
   std::vector<PgAuthid> values;
   for (const auto& role : catalog->GetRoles()) {
+    using catalog::RoleOption;
     PgAuthid row{
       .oid = role->GetId().id(),
       .rolname = role->GetName(),
-      .rolsuper = true,  // No RBAC yet, all roles are superusers
-      .rolinherit = true,
-      .rolcreaterole = true,
-      .rolcreatedb = true,
-      .rolcanlogin = role->isActive(),
-      .rolreplication = true,
-      .rolbypassrls = true,
-      .rolconnlimit = -1,
+      .rolsuper = role->Has(RoleOption::Superuser),
+      .rolinherit = role->Has(RoleOption::Inherit),
+      .rolcreaterole = role->Has(RoleOption::CreateRole),
+      .rolcreatedb = role->Has(RoleOption::CreateDb),
+      .rolcanlogin = role->CanLogin(),
+      .rolreplication = role->Has(RoleOption::Replication),
+      .rolbypassrls = role->Has(RoleOption::BypassRls),
+      .rolconnlimit = role->ConnLimit(),
+      .rolvaliduntil = ParseValidUntil(role->ValidUntil()),
     };
     values.push_back(std::move(row));
   }
 
   auto result = CreateColumns<PgAuthid>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row,
+              *_config.EnsureCatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

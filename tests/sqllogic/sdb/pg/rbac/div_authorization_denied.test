@@ -1,0 +1,280 @@
+# Deny-path regression net: every authorization gate must actually REFUSE.
+# A regression in any of these is a privilege escalation, so each gate gets a
+# negative assertion (and a positive control where the deny would otherwise be
+# vacuous). Uses `connection ... user=` for the unprivileged role.
+
+statement ok
+DROP VIEW IF EXISTS clickclack_vault_v;
+
+
+statement ok
+DROP TABLE IF EXISTS clickclack_vault;
+
+
+statement ok
+DROP ROLE IF EXISTS vedernikoff_intern;
+
+
+statement ok
+DROP ROLE IF EXISTS mop_committee;
+
+
+statement ok
+CREATE TABLE clickclack_vault (id int, secret text);
+
+
+statement ok
+INSERT INTO clickclack_vault VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+
+
+statement ok
+CREATE VIEW clickclack_vault_v AS SELECT id, secret FROM clickclack_vault;
+
+
+statement ok
+CREATE INDEX clickclack_vault_v_idx ON clickclack_vault_v USING inverted (secret);
+
+
+statement ok
+CREATE ROLE vedernikoff_intern LOGIN PASSWORD 'pw';
+
+
+# ---- superuser-only role DDL must refuse a non-superuser ----
+
+connection c_intern user=vedernikoff_intern
+statement error
+CREATE ROLE sneaky;
+----
+db error: ERROR: permission denied to create role
+
+
+connection c_intern user=vedernikoff_intern
+statement error
+DROP ROLE postgres;
+----
+db error: ERROR: permission denied to drop role
+
+
+connection c_intern user=vedernikoff_intern
+statement error
+ALTER ROLE postgres PASSWORD 'pwned';
+----
+db error: ERROR: permission denied to alter role
+
+
+connection c_intern user=vedernikoff_intern
+statement error
+GRANT postgres TO vedernikoff_intern;
+----
+db error: ERROR: permission denied to grant role "postgres"<slt:ignore>
+
+
+# ---- GRANT/REVOKE on an unowned table must refuse (no self-service grants) ----
+
+connection c_intern user=vedernikoff_intern
+statement error
+GRANT SELECT ON clickclack_vault TO vedernikoff_intern;
+----
+db error: ERROR: permission denied for table clickclack_vault
+
+
+connection c_intern user=vedernikoff_intern
+statement error
+REVOKE SELECT ON clickclack_vault FROM PUBLIC;
+----
+db error: ERROR: permission denied for table clickclack_vault
+
+
+# ---- DML gates beyond plain SELECT/INSERT ----
+
+connection c_intern user=vedernikoff_intern
+statement error
+TRUNCATE clickclack_vault;
+----
+db error: ERROR: permission denied for table clickclack_vault
+
+
+connection c_intern user=vedernikoff_intern
+statement error
+MERGE INTO clickclack_vault USING (SELECT 1 AS id) s ON clickclack_vault.id = s.id WHEN MATCHED THEN DO NOTHING;
+----
+db error: ERROR: permission denied for table clickclack_vault
+
+
+connection c_intern user=vedernikoff_intern
+statement error
+COPY clickclack_vault TO '/tmp/rbac_authorization_denied_never_written.csv';
+----
+db error: ERROR: permission denied for table clickclack_vault
+
+
+# ---- view-backed inverted index: reading the index name reaches base rows ----
+# (regression guard for View*IndexScanEntry enforcement on the fast-path base
+# table; the table-backed twin is covered in enforcement.test)
+
+connection c_intern user=vedernikoff_intern
+statement error
+SELECT * FROM clickclack_vault_v_idx;
+----
+db error: ERROR: permission denied for table clickclack_vault
+
+
+# Positive control: with SELECT granted, the same scan works.
+
+statement ok
+GRANT SELECT ON clickclack_vault TO vedernikoff_intern;
+
+
+connection c_intern user=vedernikoff_intern
+query
+SELECT count(*) AS n FROM clickclack_vault_v_idx;
+----
+n
+3
+
+
+
+statement ok
+REVOKE SELECT ON clickclack_vault FROM vedernikoff_intern;
+
+
+connection c_intern user=vedernikoff_intern
+statement error
+SELECT * FROM clickclack_vault_v_idx;
+----
+db error: ERROR: permission denied for table clickclack_vault
+
+
+# ---- the is_superuser GUC must reflect the session role ----
+
+connection c_intern user=vedernikoff_intern
+query
+SHOW is_superuser;
+----
+is_superuser
+off
+
+
+
+query
+SHOW is_superuser;
+----
+is_superuser
+on
+
+
+# ---- DROP ROLE severs inherited privileges; re-CREATE must not resurrect ----
+
+
+statement ok
+CREATE ROLE mop_committee;
+
+
+
+statement ok
+GRANT SELECT ON clickclack_vault TO mop_committee;
+
+
+
+statement ok
+GRANT mop_committee TO vedernikoff_intern;
+
+
+# Positive control: inherited SELECT works.
+connection c_intern user=vedernikoff_intern
+query
+SELECT count(*) AS n FROM clickclack_vault;
+----
+n
+3
+
+
+# PG refuses to drop a role that still holds a grant; revoke it first (PG would
+# raise "cannot be dropped because some objects depend on it" otherwise).
+
+statement ok
+REVOKE SELECT ON clickclack_vault FROM mop_committee;
+
+
+
+statement ok
+DROP ROLE mop_committee;
+
+
+# Revoke + drop severed the inherited grant; the dangling membership edge must
+# not keep granting.
+connection c_intern user=vedernikoff_intern
+statement error
+SELECT * FROM clickclack_vault;
+----
+db error: ERROR: permission denied for table clickclack_vault
+
+
+# A recreated role with the same name has a new oid: neither the stale ACL
+# entry nor the stale membership edge may apply to it.
+
+statement ok
+CREATE ROLE mop_committee;
+
+
+connection c_intern user=vedernikoff_intern
+statement error
+SELECT * FROM clickclack_vault;
+----
+db error: ERROR: permission denied for table clickclack_vault
+
+
+# ---- pg_has_role real semantics (membership via the role graph) ----
+
+
+statement ok
+GRANT mop_committee TO vedernikoff_intern;
+
+
+query
+SELECT pg_has_role('vedernikoff_intern', 'mop_committee', 'USAGE') AS member,
+       pg_has_role('vedernikoff_intern', 'mop_committee', 'MEMBER') AS member2,
+       pg_has_role('mop_committee', 'vedernikoff_intern', 'USAGE') AS reversed,
+       pg_has_role('postgres', 'mop_committee', 'USAGE') AS superuser;
+----
+member	member2	reversed	superuser
+t	t	f	t
+
+
+# ---- has_table_privilege WITH GRANT OPTION string form ----
+
+
+statement ok
+GRANT SELECT ON clickclack_vault TO vedernikoff_intern;
+
+
+
+statement ok
+GRANT INSERT ON clickclack_vault TO vedernikoff_intern WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('vedernikoff_intern', 'clickclack_vault', 'SELECT WITH GRANT OPTION') AS sel_opt,
+       has_table_privilege('vedernikoff_intern', 'clickclack_vault', 'INSERT WITH GRANT OPTION') AS ins_opt,
+       has_table_privilege('postgres', 'clickclack_vault', 'SELECT WITH GRANT OPTION') AS owner_opt;
+----
+sel_opt	ins_opt	owner_opt
+f	t	t
+
+
+# ---- cleanup ----
+
+statement ok
+DROP VIEW clickclack_vault_v;
+
+
+statement ok
+DROP TABLE clickclack_vault;
+
+
+statement ok
+DROP ROLE vedernikoff_intern;
+
+
+statement ok
+DROP ROLE mop_committee;

@@ -1,0 +1,153 @@
+# Cross-product file E: REVOKE of a single privilege leaves every other
+# privilege intact, both in the oracle (has_table_privilege) and in the relacl
+# letter string. We grant all seven to a direct grantee, then peel them off one
+# at a time and confirm the surviving set after each REVOKE. The grantor is the
+# owner (postgres), so every grantee row ends in '/postgres'.
+#
+# Lore: xog_e_iceberg is the superuser-owned table; xog_e_vedernikoff is the
+# grantee whose ACL we whittle down.
+
+statement ok
+DROP TABLE IF EXISTS xog_e_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_e_vedernikoff;
+
+
+statement ok
+CREATE TABLE xog_e_iceberg (id int);
+
+
+statement ok
+CREATE ROLE xog_e_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON xog_e_iceberg TO xog_e_vedernikoff;
+
+
+# All seven held, full canonical letter string.
+query
+SELECT has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','SELECT')     AS sel,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','INSERT')     AS ins,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','UPDATE')     AS upd,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','DELETE')     AS del,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','TRUNCATE')   AS trc,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','REFERENCES') AS ref,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	t	t	t	t
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_e_iceberg'
+) g WHERE e LIKE 'xog_e_vedernikoff=%';
+----
+e
+xog_e_vedernikoff=arwdDxt/postgres
+
+
+# ---- Revoke just INSERT: 'a' disappears, the other six stay (letters rwdDxt). ----
+statement ok
+REVOKE INSERT ON xog_e_iceberg FROM xog_e_vedernikoff;
+
+
+query
+SELECT has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','SELECT')     AS sel,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','INSERT')     AS ins,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','UPDATE')     AS upd,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','TRUNCATE')   AS trc;
+----
+sel	ins	upd	trc
+t	f	t	t
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_e_iceberg'
+) g WHERE e LIKE 'xog_e_vedernikoff=%';
+----
+e
+xog_e_vedernikoff=rwdDxt/postgres
+
+
+# ---- Revoke TRUNCATE: 'D' disappears, leaving rwdxt. ----
+statement ok
+REVOKE TRUNCATE ON xog_e_iceberg FROM xog_e_vedernikoff;
+
+
+query
+SELECT has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','TRUNCATE')   AS trc,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','SELECT')     AS sel,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','REFERENCES') AS ref;
+----
+trc	sel	ref
+f	t	t
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_e_iceberg'
+) g WHERE e LIKE 'xog_e_vedernikoff=%';
+----
+e
+xog_e_vedernikoff=rwdxt/postgres
+
+
+# ---- Revoke the middle three (UPDATE, DELETE, REFERENCES) in one statement:
+# only SELECT (r) and TRIGGER (t) survive. ----
+statement ok
+REVOKE UPDATE, DELETE, REFERENCES ON xog_e_iceberg FROM xog_e_vedernikoff;
+
+
+query
+SELECT has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','SELECT')  AS sel,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','UPDATE')  AS upd,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','DELETE')  AS del,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','TRIGGER') AS trg;
+----
+sel	upd	del	trg
+t	f	f	t
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_e_iceberg'
+) g WHERE e LIKE 'xog_e_vedernikoff=%';
+----
+e
+xog_e_vedernikoff=rt/postgres
+
+
+# ---- Revoke the last two: the grantee row vanishes entirely (PG stores no
+# empty ACL entry) and the oracle is false for everything. ----
+statement ok
+REVOKE SELECT, TRIGGER ON xog_e_iceberg FROM xog_e_vedernikoff;
+
+
+query
+SELECT count(*) AS grantee_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_e_iceberg'
+) g WHERE e LIKE 'xog_e_vedernikoff=%';
+----
+grantee_rows
+0
+
+
+query
+SELECT has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','SELECT')  AS sel,
+       has_table_privilege('xog_e_vedernikoff','xog_e_iceberg','TRIGGER') AS trg;
+----
+sel	trg
+f	f
+
+
+statement ok
+DROP TABLE xog_e_iceberg;
+
+
+statement ok
+DROP ROLE xog_e_vedernikoff;

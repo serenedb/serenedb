@@ -58,7 +58,8 @@ SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData() {
 
   auto result = CreateColumns<SdbSearchTasksStatus>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row,
+              *_config.EnsureCatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

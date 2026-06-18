@@ -1,0 +1,74 @@
+# The GRANTED BY clause attributes a grant to the named grantor, for both the
+# table-privilege and the role-membership forms. As a superuser, postgres may
+# assert any grantor. Every assertion is byte-identical on PostgreSQL 19 and
+# serenedb.
+#
+# Lore: dgm_clickclack table; dgm_vedernikoff the grantee, dgm_mop the group.
+# Idempotent + self-clean.
+
+statement ok
+DROP TABLE IF EXISTS dgm_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dgm_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dgm_mop;
+
+
+statement ok
+CREATE TABLE dgm_clickclack (id int);
+
+
+statement ok
+CREATE ROLE dgm_vedernikoff;
+
+
+statement ok
+CREATE ROLE dgm_mop;
+
+
+# Table-privilege form: GRANTED BY postgres records postgres as the grantor.
+statement ok
+GRANT SELECT ON dgm_clickclack TO dgm_vedernikoff GRANTED BY postgres;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'dgm_clickclack'
+) g WHERE e LIKE 'dgm_vedernikoff=%';
+----
+e
+dgm_vedernikoff=r/postgres
+
+
+# Role-membership form: GRANTED BY postgres creates the membership edge.
+statement ok
+GRANT dgm_mop TO dgm_vedernikoff GRANTED BY postgres;
+
+
+query
+SELECT has_table_privilege('dgm_vedernikoff', 'dgm_clickclack', 'SELECT') AS sel,
+       pg_has_role('dgm_vedernikoff', 'dgm_mop', 'MEMBER')                AS member;
+----
+sel	member
+t	t
+
+
+# Cleanup.
+statement ok
+REVOKE dgm_mop FROM dgm_vedernikoff;
+
+
+statement ok
+DROP TABLE dgm_clickclack;
+
+
+statement ok
+DROP ROLE dgm_mop;
+
+
+statement ok
+DROP ROLE dgm_vedernikoff;

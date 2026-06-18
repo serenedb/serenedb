@@ -34,8 +34,9 @@ namespace sdb::catalog {
 
 class Table final : public Object {
  public:
-  Table(ObjectId schema_id, ObjectId id, std::string_view name,
-        std::vector<Column> columns, std::vector<Column::Id> pk_columns,
+  Table(Permissions perm, ObjectId schema_id, ObjectId id,
+        std::string_view name, std::vector<Column> columns,
+        std::vector<Column::Id> pk_columns,
         std::vector<CheckConstraint> check_constraints,
         ObjectId generated_pk_seq_id,
         TableEngine engine = TableEngine::Transactional,

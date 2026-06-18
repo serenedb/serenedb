@@ -1,0 +1,176 @@
+# pg_has_role cross-checked against real privilege inheritance and live DML, on
+# a small membership graph -- identical on real PostgreSQL and serenedb.
+#
+# The point: pg_has_role's role-reachability oracle must agree with what the
+# member can actually DO. We build a graph, grant a table privilege to a group,
+# and confirm (a) pg_has_role reports the membership and (b) has_table_privilege
+# plus a live query on a second connection confirm the inherited privilege.
+#
+# Graph (-> reads "is a member of"):
+#   phr_clickclack -> phr_graph_androed            (login user -> middle group)
+#   phr_graph_androed     -> phr_vedernikoff       (middle group -> top group)
+# phr_vedernikoff is granted SELECT on phr_iceberg; it flows down to clickclack.
+#
+# Prefixed phr_, clickclack/androed/vedernikoff/iceberg lore, idempotent and
+# self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS phr_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_graph_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_vedernikoff;
+
+
+statement ok
+CREATE TABLE phr_iceberg (id int, payload text);
+
+
+statement ok
+CREATE ROLE phr_clickclack LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE phr_graph_androed;
+
+
+statement ok
+CREATE ROLE phr_vedernikoff;
+
+
+# Build the two-hop chain clickclack -> androed -> vedernikoff.
+statement ok
+GRANT phr_graph_androed TO phr_clickclack;
+
+
+statement ok
+GRANT phr_vedernikoff TO phr_graph_androed;
+
+
+# ============================================================================
+# Role-reachability oracle: clickclack reaches both ancestors.
+# ============================================================================
+
+query
+SELECT pg_has_role('phr_clickclack', 'phr_graph_androed',     'USAGE') AS reaches_androed,
+       pg_has_role('phr_clickclack', 'phr_vedernikoff', 'USAGE') AS reaches_vedernikoff;
+----
+reaches_androed	reaches_vedernikoff
+t	t
+
+
+# ============================================================================
+# Tie the oracle to privilege inheritance: grant SELECT to the top group, then
+# show it flows down to the login user through the chain.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON phr_iceberg TO phr_vedernikoff;
+
+
+# pg_has_role still reports the path AND has_table_privilege confirms the
+# inherited SELECT -- the oracle and the privilege agree.
+query
+SELECT pg_has_role('phr_clickclack', 'phr_vedernikoff', 'USAGE')        AS in_group,
+       has_table_privilege('phr_clickclack', 'phr_iceberg', 'SELECT')   AS can_select,
+       has_table_privilege('phr_clickclack', 'phr_iceberg', 'INSERT')   AS can_insert;
+----
+in_group	can_select	can_insert
+t	t	f
+
+
+# ============================================================================
+# Live DML on a second connection mirrors the oracle: SELECT is allowed (it was
+# inherited), INSERT is denied (never granted anywhere in the chain).
+# ============================================================================
+
+connection c_phr user=phr_clickclack
+query
+SELECT count(*) FROM phr_iceberg;
+----
+count
+0
+
+
+connection c_phr user=phr_clickclack
+statement error
+INSERT INTO phr_iceberg VALUES (1, 'clickclack');
+----
+db error: ERROR: permission denied for table phr_iceberg<slt:ignore>
+
+
+# ============================================================================
+# Cut the middle edge: clickclack loses both the role reach AND the privilege.
+# Remove androed -> vedernikoff; clickclack no longer reaches vedernikoff and
+# loses the inherited SELECT, but still reaches androed.
+# ============================================================================
+
+statement ok
+REVOKE phr_vedernikoff FROM phr_graph_androed;
+
+
+query
+SELECT pg_has_role('phr_clickclack', 'phr_graph_androed',     'USAGE')      AS still_androed,
+       pg_has_role('phr_clickclack', 'phr_vedernikoff', 'USAGE')      AS lost_vedernikoff,
+       has_table_privilege('phr_clickclack', 'phr_iceberg', 'SELECT') AS lost_select;
+----
+still_androed	lost_vedernikoff	lost_select
+t	f	f
+
+
+# The live path agrees: SELECT is now denied on the second connection.
+connection c_phr user=phr_clickclack
+statement error
+SELECT * FROM phr_iceberg;
+----
+db error: ERROR: permission denied for table phr_iceberg<slt:ignore>
+
+
+# ============================================================================
+# Reconnect the edge: both the oracle and the privilege return.
+# ============================================================================
+
+statement ok
+GRANT phr_vedernikoff TO phr_graph_androed;
+
+
+query
+SELECT pg_has_role('phr_clickclack', 'phr_vedernikoff', 'USAGE')      AS reaches_again,
+       has_table_privilege('phr_clickclack', 'phr_iceberg', 'SELECT') AS select_again;
+----
+reaches_again	select_again
+t	t
+
+
+connection c_phr user=phr_clickclack
+query
+SELECT count(*) FROM phr_iceberg;
+----
+count
+0
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS phr_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_graph_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_vedernikoff;

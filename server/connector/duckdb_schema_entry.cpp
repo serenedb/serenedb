@@ -63,6 +63,7 @@
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
+#include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -89,7 +90,21 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   auto result = snapshot->GetDuckDBEntryCache().EnsureEntry(
     lookup_info.GetCatalogType(), catalog, *this, GetDatabaseId(), name,
     lookup_info.GetEntryName(), *snapshot);
-  if (result || name != StaticStrings::kPgCatalogSchema) {
+  if (result) {
+    const auto entry_type = lookup_info.GetCatalogType();
+    const bool is_function_entry =
+      entry_type == duckdb::CatalogType::MACRO_ENTRY ||
+      entry_type == duckdb::CatalogType::TABLE_MACRO_ENTRY ||
+      entry_type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY ||
+      entry_type == duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY;
+    if (is_function_entry && name != StaticStrings::kPgCatalogSchema) {
+      snapshot->GetFunction(
+        catalog::RequireAccess(conn_ctx.GetRoleId(), catalog::AclMode::Execute),
+        GetDatabaseId(), name, lookup_info.GetEntryName());
+    }
+    return result;
+  }
+  if (name != StaticStrings::kPgCatalogSchema) {
     return result;
   }
 
@@ -231,17 +246,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     bool is_serial = pg::IsSerial(sdb_col.type);
     bool is_bigserial = pg::IsBigserial(sdb_col.type);
     if (is_smallserial || is_serial || is_bigserial) {
-      catalog::SequenceOptions seq_opts;
+      catalog::SequenceOptions seq_config;
       if (is_smallserial) {
-        seq_opts.max_value = std::numeric_limits<int16_t>::max();
+        seq_config.max_value = std::numeric_limits<int16_t>::max();
       } else if (is_serial) {
-        seq_opts.max_value = std::numeric_limits<int32_t>::max();
+        seq_config.max_value = std::numeric_limits<int32_t>::max();
       } else {
         SDB_ASSERT(is_bigserial);
-        seq_opts.max_value = std::numeric_limits<int64_t>::max();
+        seq_config.max_value = std::numeric_limits<int64_t>::max();
       }
       sdb_col.type = duckdb::LogicalType{sdb_col.type.id()};
-      options.sequences.emplace_back(sdb_col.GetId(), seq_opts);
+      options.sequences.emplace_back(sdb_col.GetId(), seq_config);
       append_not_null(options.columns.size() - 1);
     } else if (col.Generated()) {
       sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
@@ -397,8 +412,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
 
-  auto r =
-    catalog_impl.CreateTable(database_id, name, std::move(options), op_options);
+  // Creator owns the table (and its generated serial/PK sequences).
+  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  options.owner = role;
+
+  auto r = catalog_impl.CreateTable(catalog::AccessContext{role}, database_id,
+                                    name, std::move(options), op_options);
+  if (r.is(ERROR_FORBIDDEN)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for schema ", name));
+  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;
@@ -418,6 +441,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   duckdb::TableCatalogEntry& table) {
   auto& sdb_table_entry = RequireBaseTable(table);
   auto sdb_table = sdb_table_entry.GetSereneDBTable();
+
+  // CREATE INDEX modifies the target table -> requires ownership (or
+  // superuser).
+  pg::EnforceRelationOwnership(GetSereneDBContext(transaction.GetContext()),
+                               name, table.name, "table");
 
   auto& catalog_impl = catalog::GetCatalog();
   auto snapshot = catalog_impl.GetCatalogSnapshot();
@@ -524,8 +552,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 
   // Start background tasks for inverted indexes
   auto new_snapshot = catalog_impl.GetCatalogSnapshot();
-  auto catalog_index =
-    new_snapshot->GetRelation(database_id, name, info.index_name);
+  auto catalog_index = new_snapshot->GetRelation(
+    catalog::NoAccessCheck(), database_id, name, info.index_name);
   if (catalog_index) {
     auto inverted =
       new_snapshot->GetObject<catalog::InvertedIndex>(catalog_index->GetId());
@@ -542,6 +570,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   duckdb::CatalogTransaction transaction, duckdb::CreateFunctionInfo& info) {
+  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   auto& catalog_impl = catalog::GetCatalog();
   auto database_id = GetDatabaseId();
 
@@ -558,7 +587,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   // CREATE OR REPLACE replaces only the matching overload, preserving
   // others.
   auto snapshot = catalog_impl.GetCatalogSnapshot();
-  auto existing = snapshot->GetFunction(database_id, name, info.name);
+  auto existing = snapshot->GetFunction(catalog::NoAccessCheck(), database_id,
+                                        name, info.name);
 
   if (existing) {
     // Clone the existing macros vector and merge the new overload(s).
@@ -568,32 +598,35 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
 
     for (auto& new_macro : new_macro_info->macros) {
       // Find an existing overload with the same parameter signature.
-      bool found = false;
-      for (size_t i = 0; i < merged_info->macros.size(); ++i) {
-        if (merged_info->macros[i]->types == new_macro->types) {
-          if (!replace) {
-            // Plain CREATE FUNCTION: duplicate signature is an error.
-            throw duckdb::CatalogException(
-              "function \"%s\" already exists with same argument types",
-              info.name);
-          }
-          // CREATE OR REPLACE: swap in the new overload.
-          merged_info->macros[i] = new_macro->Copy();
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
+      auto existing_overload = absl::c_find_if(
+        merged_info->macros,
+        [&](const auto& macro) { return macro->types == new_macro->types; });
+      if (existing_overload == merged_info->macros.end()) {
         // New signature -- append as a new overload.
         merged_info->macros.push_back(new_macro->Copy());
+        continue;
       }
+      if (!replace) {
+        // Plain CREATE FUNCTION: duplicate signature is an error.
+        throw duckdb::CatalogException(
+          "function \"%s\" already exists with same argument types", info.name);
+      }
+      // CREATE OR REPLACE: swap in the new overload.
+      *existing_overload = new_macro->Copy();
     }
 
     auto function = std::make_shared<catalog::PgSqlFunction>(
-      ObjectId{}, ObjectId{}, info.name, std::move(merged_info));
+      GetSereneDBContext(transaction.GetContext()).GetRoleId(), ObjectId{},
+      ObjectId{}, info.name, std::move(merged_info));
     // Always replace=true for the catalog layer since we're replacing
-    // the whole PgSqlFunction with the merged version.
-    auto r = catalog_impl.CreateFunction(database_id, name, function, true);
+    // the whole PgSqlFunction with the merged version. CreateFunction
+    // preserves the prior owner on replace (PG semantics).
+    auto r = catalog_impl.CreateFunction(catalog::AccessContext{role},
+                                         database_id, name, function, true);
+    if (r.is(ERROR_FORBIDDEN)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied for schema ", name));
+    }
     if (!r.ok()) {
       SDB_THROW(std::move(r));
     }
@@ -602,9 +635,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
 
   // No existing function -- create new.
   auto function = std::make_shared<catalog::PgSqlFunction>(
-    ObjectId{}, ObjectId{}, info.name, std::move(new_macro_info));
-  auto r = catalog_impl.CreateFunction(database_id, name, function, false);
-
+    GetSereneDBContext(transaction.GetContext()).GetRoleId(), ObjectId{},
+    ObjectId{}, info.name, std::move(new_macro_info));
+  auto r = catalog_impl.CreateFunction(catalog::AccessContext{role},
+                                       database_id, name, function, false);
+  if (r.is(ERROR_FORBIDDEN)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for schema ", name));
+  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
@@ -619,6 +657,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   duckdb::CatalogTransaction transaction, duckdb::CreateViewInfo& info) {
+  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   auto& catalog_impl = catalog::GetCatalog();
   auto database_id = GetDatabaseId();
 
@@ -626,12 +665,18 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
       info.Copy());
   auto view = std::make_shared<catalog::PgSqlView>(
-    ObjectId{}, ObjectId{}, info.view_name, std::move(view_info));
+    role, ObjectId{}, ObjectId{}, info.view_name, std::move(view_info));
 
   bool replace =
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
-  auto r = catalog_impl.CreateView(database_id, name, view, replace);
-
+  // CreateView preserves the prior owner on replace (PG: CREATE OR REPLACE
+  // keeps the original owner).
+  auto r = catalog_impl.CreateView(catalog::AccessContext{role}, database_id,
+                                   name, view, replace);
+  if (r.is(ERROR_FORBIDDEN)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for schema ", name));
+  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
@@ -670,23 +715,30 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
                     ERR_MSG("sequence START is out of range [MIN, MAX]"));
   }
 
-  catalog::SequenceOptions opts;
-  opts.start_value = static_cast<uint64_t>(info.start_value);
-  opts.increment = static_cast<uint64_t>(info.increment);
-  opts.min_value = static_cast<uint64_t>(info.min_value);
-  opts.max_value = static_cast<uint64_t>(info.max_value);
-  opts.cycle = info.cycle;
+  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  catalog::SequenceOptions options;
+  options.name = info.name;
+  options.start_value = static_cast<uint64_t>(info.start_value);
+  options.increment = static_cast<uint64_t>(info.increment);
+  options.min_value = static_cast<uint64_t>(info.min_value);
+  options.max_value = static_cast<uint64_t>(info.max_value);
+  options.cycle = info.cycle;
+  options.perm = catalog::Permissions{role};
 
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
-  opts.name = info.name;
   auto sequence = std::make_shared<catalog::Sequence>(ObjectId{}, ObjectId{},
-                                                      std::move(opts));
+                                                      std::move(options));
 
   auto& catalog_impl = catalog::GetCatalog();
-  auto r =
-    catalog_impl.CreateSequence(database_id, name, sequence, if_not_exists);
+  auto r = catalog_impl.CreateSequence(catalog::AccessContext{role},
+                                       database_id, name, sequence,
+                                       if_not_exists);
+  if (r.is(ERROR_FORBIDDEN)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for schema ", name));
+  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("relation \"", info.name, "\" already exists"));
@@ -735,7 +787,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
       info.Copy());
   auto type = std::make_shared<catalog::PgSqlType>(
-    ObjectId{}, ObjectId{}, info.name, std::move(type_info));
+    GetSereneDBContext(transaction.GetContext()).GetRoleId(), ObjectId{},
+    ObjectId{}, info.name, std::move(type_info));
   auto r = catalog_impl.CreateType(database_id, name, type);
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
@@ -794,6 +847,15 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
   auto& catalog_impl = catalog::GetCatalog();
   auto db = GetDatabaseId();
+
+  // ALTER requires ownership (or superuser) of the target relation.
+  if (info.type == duckdb::AlterType::ALTER_TABLE) {
+    pg::EnforceRelationOwnership(GetSereneDBContext(transaction.GetContext()),
+                                 name, info.name, "table");
+  } else if (info.type == duckdb::AlterType::ALTER_VIEW) {
+    pg::EnforceRelationOwnership(GetSereneDBContext(transaction.GetContext()),
+                                 name, info.name, "view");
+  }
 
   if (info.type == duckdb::AlterType::ALTER_SCALAR_FUNCTION) {
     auto& fn_info = info.Cast<duckdb::AlterScalarFunctionInfo>();

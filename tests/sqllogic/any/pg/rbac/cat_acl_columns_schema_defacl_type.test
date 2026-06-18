@@ -1,0 +1,96 @@
+# GRANT ON SCHEMA, ALTER DEFAULT PRIVILEGES, and GRANT ON a built-in TYPE each
+# populate their per-object ACL catalog column (pg_namespace.nspacl,
+# pg_default_acl.defaclacl, pg_type.typacl) exactly like PostgreSQL (verified on
+# PG18). ACL arrays are asserted per-element (LIKE / unnest) so the assertions
+# are portable across engines.
+#
+# Lore: the clickclack schema, the cast as roles. Idempotent + self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS catacl_vedernikoff;
+
+
+statement ok
+DROP SCHEMA IF EXISTS catacl_clickclack;
+
+
+statement ok
+CREATE ROLE catacl_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA catacl_clickclack;
+
+
+# GRANT ON SCHEMA sets pg_namespace.nspacl.
+statement ok
+GRANT USAGE ON SCHEMA catacl_clickclack TO catacl_vedernikoff;
+
+
+query
+SELECT e
+FROM pg_namespace n, LATERAL unnest(n.nspacl::text[]) AS e
+WHERE nspname = 'catacl_clickclack' AND e LIKE 'catacl_vedernikoff=%';
+----
+e
+catacl_vedernikoff=U/postgres
+
+
+# ALTER DEFAULT PRIVILEGES inserts a pg_default_acl row; its defaclacl carries
+# the owner self-grant first, then the granted entry (PG's acldefault seed).
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO catacl_vedernikoff;
+
+
+query
+SELECT count(*) AS n
+FROM pg_default_acl
+WHERE defaclrole = (SELECT oid FROM pg_authid WHERE rolname = 'postgres')
+  AND defaclobjtype = 'r';
+----
+n
+1
+
+
+query
+SELECT ord, e
+FROM pg_default_acl d, LATERAL unnest(d.defaclacl::text[]) WITH ORDINALITY u(e, ord)
+WHERE d.defaclobjtype = 'r'
+  AND d.defaclrole = (SELECT oid FROM pg_authid WHERE rolname = 'postgres')
+ORDER BY ord;
+----
+ord	e
+1	postgres=arwdDxtm/postgres
+2	catacl_vedernikoff=r/postgres
+
+
+# GRANT USAGE ON a built-in TYPE (int4) sets pg_type.typacl.
+statement ok
+GRANT USAGE ON TYPE int4 TO catacl_vedernikoff;
+
+
+query
+SELECT e
+FROM pg_type t, LATERAL unnest(t.typacl::text[]) AS e
+WHERE t.typname = 'int4' AND e LIKE 'catacl_vedernikoff=%';
+----
+e
+catacl_vedernikoff=U/postgres
+
+
+# Cleanup: revoke the default-priv and type grants so the global catalog is
+# left as found (the schema/role drops handle nspacl).
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM catacl_vedernikoff;
+
+
+statement ok
+REVOKE USAGE ON TYPE int4 FROM catacl_vedernikoff;
+
+
+statement ok
+DROP SCHEMA catacl_clickclack;
+
+
+statement ok
+DROP ROLE catacl_vedernikoff;

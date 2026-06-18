@@ -327,13 +327,15 @@ query
 SELECT spcname FROM pg_catalog.pg_tablespace ORDER BY spcname
 ----
 spcname
+pg_default
+pg_global
 
 
 query
 SELECT count(*) FROM pg_catalog.pg_tablespace
 ----
 count
-0
+2
 
 
 # pg_proc (functions)

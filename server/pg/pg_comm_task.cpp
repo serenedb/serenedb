@@ -55,6 +55,7 @@
 #include "basics/log.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "catalog/role.h"
 #include "connector/duckdb_client_state.h"
 #include "general_server/general_server_feature.h"
 #include "pg/connection_context.h"
@@ -312,9 +313,22 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
     _duckdb_conn = sdb::DuckDBEngine::Instance().CreateConnection();
 
+    // TODO(auth): the Trust stub accepts any username, including one that is
+    // not a catalog role. Until real authentication rejects unknown users at
+    // connect, fall back to the bootstrap superuser so the session always maps
+    // to a real role and downstream GetRole(user) never returns null. Remove
+    // this normalization once auth guarantees a valid role.
+    std::string_view user = UserName();
+    auto role = snapshot->GetRole(user);
+    if (!role) {
+      user = StaticStrings::kDefaultUser;
+      role = snapshot->GetRole(user);
+    }
+    SDB_ASSERT(role);
+
     _connection_ctx = std::make_shared<ConnectionContext>(
-      *_duckdb_conn->context, UserName(), DatabaseName(), database->GetId(),
-      std::move(database), &_send, &_copy_queue);
+      *_duckdb_conn->context, user, role->GetId(), DatabaseName(),
+      database->GetId(), std::move(database), &_send, &_copy_queue);
 
     const auto& ci = GetConnectionInfo();
     [[maybe_unused]] hba::Client client{
@@ -371,8 +385,12 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
       _connection_ctx->SetSetting("session_authorization",
                                   std::string{UserName()}, false);
-      // serened has no RBAC yet -- every catalog role has rolsuper = true
-      _connection_ctx->SetSetting("is_superuser", "on", false);
+      // psql's '#' prompt and pgAdmin read this GUC.
+      const auto session_role =
+        catalog::GetCatalog().GetCatalogSnapshot()->GetRole(UserName());
+      _connection_ctx->SetSetting(
+        "is_superuser",
+        session_role && session_role->IsSuperuser() ? "on" : "off", false);
 
       // Apply all user settings from startup packet
       for (const auto& user_setting : _client_parameters) {

@@ -83,7 +83,7 @@ struct PgProc {
   Text probin;
   PgNodeTree prosqlbody;
   Array<Text> proconfig;
-  Array<Aclitem> proacl;
+  AclColumn proacl;
 };
 // NOLINTEND
 

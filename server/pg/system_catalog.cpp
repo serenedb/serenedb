@@ -373,7 +373,8 @@ void InitSystemViews(duckdb::Parser& parser) {
         std::move(parser.statements[0]));
 
     auto entry = std::make_shared<catalog::PgSqlView>(
-      ObjectId{}, ObjectId{}, view.name, std::move(info));
+      catalog::Permissions{}, ObjectId{}, ObjectId{}, view.name,
+      std::move(info));
 
     auto& map = (view.schema == StaticStrings::kInformationSchema)
                   ? gInfoSchemaViews
@@ -434,7 +435,8 @@ void InitSystemFunctions(duckdb::Parser& parser) {
       }
     } else {
       map[macro.name] = std::make_shared<catalog::PgSqlFunction>(
-        ObjectId{}, ObjectId{}, macro.name, std::move(info));
+        catalog::Permissions{}, ObjectId{}, ObjectId{}, macro.name,
+        std::move(info));
     }
   }
 }

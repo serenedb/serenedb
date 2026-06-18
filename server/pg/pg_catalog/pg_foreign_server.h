@@ -41,7 +41,7 @@ struct PgForeignServer {
   Oid srvfdw;
   Text srvtype;
   Text srvversion;
-  Array<Aclitem> srvacl;
+  AclColumn srvacl;
   Array<Text> srvoptions;
 };
 // NOLINTEND

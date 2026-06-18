@@ -1,0 +1,129 @@
+# Cross-membership: privilege accumulation across two independent groups. The
+# member gets SELECT through one group and INSERT through another; the effective
+# set is the UNION. Revoking one group removes only that group's contribution.
+#
+# Graph (-> reads "is a member of"):
+#   xmb_atg_mop -> xmb_atg_kryakva  (holds SELECT on xmb_atg_clickclack)
+#   xmb_atg_mop -> xmb_atg_androed  (holds INSERT on xmb_atg_clickclack)
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_atg_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_atg_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_atg_androed;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_atg_clickclack;
+
+
+statement ok
+CREATE TABLE xmb_atg_clickclack (id int, payload text);
+
+
+statement ok
+INSERT INTO xmb_atg_clickclack VALUES (1, 'iceberg');
+
+
+statement ok
+CREATE ROLE xmb_atg_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE xmb_atg_kryakva;
+
+
+statement ok
+CREATE ROLE xmb_atg_androed;
+
+
+statement ok
+GRANT xmb_atg_kryakva TO xmb_atg_mop;
+
+
+statement ok
+GRANT xmb_atg_androed TO xmb_atg_mop;
+
+
+statement ok
+GRANT SELECT ON xmb_atg_clickclack TO xmb_atg_kryakva;
+
+
+statement ok
+GRANT INSERT ON xmb_atg_clickclack TO xmb_atg_androed;
+
+
+# Union: SELECT (kryakva) + INSERT (androed); no UPDATE/DELETE.
+query
+SELECT has_table_privilege('xmb_atg_mop', 'xmb_atg_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_atg_mop', 'xmb_atg_clickclack', 'INSERT') AS ins,
+       has_table_privilege('xmb_atg_mop', 'xmb_atg_clickclack', 'UPDATE') AS upd,
+       has_table_privilege('xmb_atg_mop', 'xmb_atg_clickclack', 'DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	f	f
+
+
+# Real query path: both SELECT and INSERT succeed.
+connection c_mop user=xmb_atg_mop
+query
+SELECT count(*) FROM xmb_atg_clickclack;
+----
+count
+1
+
+
+connection c_mop user=xmb_atg_mop
+statement ok
+INSERT INTO xmb_atg_clickclack VALUES (2, 'babsky');
+
+
+# ---- Revoke the SELECT group: INSERT (other group) survives ----
+
+statement ok
+REVOKE xmb_atg_kryakva FROM xmb_atg_mop;
+
+
+query
+SELECT has_table_privilege('xmb_atg_mop', 'xmb_atg_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_atg_mop', 'xmb_atg_clickclack', 'INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+connection c_mop2 user=xmb_atg_mop
+statement error
+SELECT * FROM xmb_atg_clickclack;
+----
+db error: ERROR: permission denied for table xmb_atg_clickclack<slt:ignore>
+
+
+connection c_mop2 user=xmb_atg_mop
+statement ok
+INSERT INTO xmb_atg_clickclack VALUES (3, 'kostya');
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_atg_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_atg_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_atg_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_atg_androed;

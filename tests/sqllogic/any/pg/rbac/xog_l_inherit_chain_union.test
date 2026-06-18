@@ -1,0 +1,168 @@
+# Cross-product file L: a two-level (transitive) membership chain crossed with a
+# direct grant and a PUBLIC grant. The leaf role inherits a privilege held by
+# its grandparent group through the chain top -> mid -> leaf, accumulates a
+# direct grant and a PUBLIC grant on top, and loses the inherited slice when the
+# middle edge is cut -- while the direct and PUBLIC slices survive.
+#
+# Lore: xog_l_pudge is the superuser-owned table. Chain: xog_l_top (holds
+# UPDATE) -> xog_l_mid -> xog_l_leaf. PUBLIC holds SELECT; leaf holds a direct
+# INSERT.
+
+statement ok
+DROP TABLE IF EXISTS xog_l_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_l_top;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_l_mid;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_l_leaf;
+
+
+statement ok
+CREATE TABLE xog_l_pudge (id int, payload text);
+
+
+statement ok
+INSERT INTO xog_l_pudge VALUES (1, 'clickclack');
+
+
+statement ok
+CREATE ROLE xog_l_top;
+
+
+statement ok
+CREATE ROLE xog_l_mid;
+
+
+statement ok
+CREATE ROLE xog_l_leaf LOGIN PASSWORD 'pw';
+
+
+# Build the chain and the three sources: UPDATE on the grandparent group,
+# SELECT to PUBLIC, INSERT direct to the leaf.
+statement ok
+GRANT UPDATE ON xog_l_pudge TO xog_l_top;
+
+
+statement ok
+GRANT xog_l_top TO xog_l_mid;
+
+
+statement ok
+GRANT xog_l_mid TO xog_l_leaf;
+
+
+statement ok
+GRANT SELECT ON xog_l_pudge TO PUBLIC;
+
+
+statement ok
+GRANT INSERT ON xog_l_pudge TO xog_l_leaf;
+
+
+# The leaf is transitively a member of the grandparent group.
+query
+SELECT pg_has_role('xog_l_leaf','xog_l_top','USAGE')  AS in_top,
+       pg_has_role('xog_l_leaf','xog_l_mid','USAGE')  AS in_mid;
+----
+in_top	in_mid
+t	t
+
+
+# Oracle union: SELECT (PUBLIC) + INSERT (direct) + UPDATE (inherited through
+# the two-level chain); DELETE from no source.
+query
+SELECT has_table_privilege('xog_l_leaf','xog_l_pudge','SELECT') AS sel,
+       has_table_privilege('xog_l_leaf','xog_l_pudge','INSERT') AS ins,
+       has_table_privilege('xog_l_leaf','xog_l_pudge','UPDATE') AS upd,
+       has_table_privilege('xog_l_leaf','xog_l_pudge','DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	t	f
+
+
+# Real DML proves the chain-inherited UPDATE and the direct INSERT both work.
+connection c_leaf user=xog_l_leaf
+statement ok
+INSERT INTO xog_l_pudge VALUES (2, 'mop');
+
+
+connection c_leaf user=xog_l_leaf
+statement ok
+UPDATE xog_l_pudge SET payload = 'reowned' WHERE id = 1;
+
+
+# DELETE is denied for real.
+connection c_leaf user=xog_l_leaf
+statement error
+DELETE FROM xog_l_pudge WHERE id = 1;
+----
+db error: ERROR: permission denied for table xog_l_pudge<slt:ignore>
+
+
+# ---- Cut the MIDDLE edge (mid removed from leaf): the entire chain to the
+# grandparent collapses -- UPDATE is gone -- but the direct INSERT and the
+# PUBLIC SELECT survive. ----
+statement ok
+REVOKE xog_l_mid FROM xog_l_leaf;
+
+
+# Transitive membership is gone.
+query
+SELECT pg_has_role('xog_l_leaf','xog_l_top','USAGE') AS in_top,
+       pg_has_role('xog_l_leaf','xog_l_mid','USAGE') AS in_mid;
+----
+in_top	in_mid
+f	f
+
+
+query
+SELECT has_table_privilege('xog_l_leaf','xog_l_pudge','SELECT') AS sel,
+       has_table_privilege('xog_l_leaf','xog_l_pudge','INSERT') AS ins,
+       has_table_privilege('xog_l_leaf','xog_l_pudge','UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# UPDATE now denied for real; INSERT (direct) and SELECT (PUBLIC) still work.
+connection c_leaf user=xog_l_leaf
+statement error
+UPDATE xog_l_pudge SET payload = 'nope' WHERE id = 2;
+----
+db error: ERROR: permission denied for table xog_l_pudge<slt:ignore>
+
+
+connection c_leaf user=xog_l_leaf
+statement ok
+INSERT INTO xog_l_pudge VALUES (3, 'babsky');
+
+
+connection c_leaf user=xog_l_leaf
+query
+SELECT count(*) AS n FROM xog_l_pudge;
+----
+n
+3
+
+
+statement ok
+DROP TABLE xog_l_pudge;
+
+
+statement ok
+DROP ROLE xog_l_top;
+
+
+statement ok
+DROP ROLE xog_l_mid;
+
+
+statement ok
+DROP ROLE xog_l_leaf;

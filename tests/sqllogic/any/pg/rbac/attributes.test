@@ -1,0 +1,83 @@
+# Role attributes surface through pg_authid and the pg_roles view.
+# All observed as the bootstrap superuser (the runner uses a single PGUSER).
+# Idempotent: the runner replays this file once per wire protocol.
+# Uses native PG RBAC syntax (CREATE ROLE / ALTER ROLE).
+
+statement ok
+DROP ROLE IF EXISTS attr_login;
+
+
+statement ok
+DROP ROLE IF EXISTS attr_super;
+
+
+statement ok
+DROP ROLE IF EXISTS attr_plain;
+
+
+statement ok
+CREATE ROLE attr_login LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE attr_super LOGIN SUPERUSER PASSWORD 'pw';
+
+
+# A role with neither LOGIN nor SUPERUSER, and no password.
+statement ok
+CREATE ROLE attr_plain;
+
+
+query
+SELECT rolname, rolsuper, rolcanlogin, rolinherit
+FROM pg_authid
+WHERE rolname LIKE 'attr_%'
+ORDER BY rolname;
+----
+rolname	rolsuper	rolcanlogin	rolinherit
+attr_login	f	t	t
+attr_plain	f	f	t
+attr_super	t	t	t
+
+
+# pg_roles is a view over pg_authid and must agree.
+query
+SELECT rolname, rolsuper, rolcanlogin
+FROM pg_roles
+WHERE rolname LIKE 'attr_%'
+ORDER BY rolname;
+----
+rolname	rolsuper	rolcanlogin
+attr_login	f	t
+attr_plain	f	f
+attr_super	t	t
+
+
+# The bootstrap superuser has superuser + create-role + create-db.
+query
+SELECT rolsuper, rolcreaterole, rolcreatedb
+FROM pg_authid WHERE rolname = 'postgres';
+----
+rolsuper	rolcreaterole	rolcreatedb
+t	t	t
+
+
+# pg_user and pg_shadow are views that also reflect login roles.
+query
+SELECT usename FROM pg_user WHERE usename = 'attr_login';
+----
+usename
+attr_login
+
+
+# ALTER ROLE password keeps the role and its attributes intact.
+statement ok
+ALTER ROLE attr_login PASSWORD 'rotated';
+
+
+query
+SELECT rolname, rolcanlogin, rolsuper
+FROM pg_authid WHERE rolname = 'attr_login';
+----
+rolname	rolcanlogin	rolsuper
+attr_login	t	f

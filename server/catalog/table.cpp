@@ -26,8 +26,10 @@
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <memory>
+#include <ranges>
 #include <utility>
 
+#include "auth/acl.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/serializer.h"
@@ -40,13 +42,15 @@ using persistence::TableData;
 
 }  // namespace
 
-Table::Table(ObjectId schema_id, ObjectId id, std::string_view name,
-             std::vector<Column> columns, std::vector<Column::Id> pk_columns,
+Table::Table(Permissions perm, ObjectId schema_id, ObjectId id,
+             std::string_view name, std::vector<Column> columns,
+             std::vector<Column::Id> pk_columns,
              std::vector<CheckConstraint> check_constraints,
              ObjectId generated_pk_seq_id, TableEngine engine,
              std::vector<std::vector<Column::Id>> unique_constraints,
              std::vector<TableForeignKey> foreign_keys)
-  : Object{schema_id, id, std::string{name}, ObjectType::Table},
+  : Object{std::move(perm), schema_id, id, std::string{name},
+           ObjectType::Table},
     _columns{std::move(columns)},
     _pk_columns{std::move(pk_columns)},
     _check_constraints{std::move(check_constraints)},
@@ -67,10 +71,10 @@ std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
   TableData data;
   basics::ReadTuple(src, data);
   return std::make_shared<Table>(
-    ctx.schema_id, ctx.id, data.name, std::move(data.columns),
-    std::move(data.pk_columns), std::move(data.check_constraints),
-    data.generated_pk_seq_id, data.engine, std::move(data.unique_constraints),
-    std::move(data.foreign_keys));
+    std::move(data.perm), ctx.schema_id, ctx.id, data.name,
+    std::move(data.columns), std::move(data.pk_columns),
+    std::move(data.check_constraints), data.generated_pk_seq_id, data.engine,
+    std::move(data.unique_constraints), std::move(data.foreign_keys));
 }
 
 void Table::Serialize(duckdb::Serializer& sink) const {
@@ -83,6 +87,7 @@ void Table::Serialize(duckdb::Serializer& sink) const {
     .engine = _engine,
     .unique_constraints = _unique_constraints,
     .foreign_keys = _foreign_keys,
+    .perm = GetPermissions(),
   };
   basics::WriteTuple(sink, data);
 }
@@ -155,7 +160,7 @@ Result Table::DropCheckConstraint(std::shared_ptr<Table>& result,
 
 std::shared_ptr<Object> Table::Clone() const {
   auto cloned = std::make_shared<Table>(
-    GetParentId(), GetId(), GetName(), _columns, _pk_columns,
+    GetPermissions(), GetParentId(), GetId(), GetName(), _columns, _pk_columns,
     _check_constraints, _generated_pk_seq_id, _engine, _unique_constraints,
     _foreign_keys);
   cloned->SetTombstoned(Tombstoned());

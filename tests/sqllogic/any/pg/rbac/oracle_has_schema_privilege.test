@@ -1,0 +1,60 @@
+# has_schema_privilege is a real oracle (not a stub that always answers t),
+# matching PostgreSQL: an ordinary role that was never granted anything reads f
+# on a foreign schema for both USAGE and CREATE; the schema owner (here the
+# bootstrap superuser) reads t for both.
+#
+# NOTE: only the has_schema_privilege oracle is exercised here. Schema-USAGE
+# enforcement on the scan path is out of scope, so this file does NOT assert
+# that reading a table in a no-USAGE schema is blocked. The PUBLIC-default USAGE
+# on the public schema is also not asserted: serenedb does not grant public-
+# schema USAGE to PUBLIC, so has_schema_privilege(<role>,'public','USAGE')
+# diverges (serenedb f / PostgreSQL t) and that case is left out.
+#
+# Lore: clickclack's schema is mop; vedernikoff is an ordinary role with no
+# rights on mop.
+
+statement ok
+DROP SCHEMA IF EXISTS osh_mop CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS osh_vedernikoff;
+
+
+statement ok
+CREATE ROLE osh_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE SCHEMA osh_mop;
+
+
+# Ordinary role, never granted anything: f for both USAGE and CREATE on the
+# foreign schema.
+query
+SELECT
+  has_schema_privilege('osh_vedernikoff','osh_mop','USAGE')  AS usage_priv,
+  has_schema_privilege('osh_vedernikoff','osh_mop','CREATE') AS create_priv;
+----
+usage_priv	create_priv
+f	f
+
+
+# The schema owner (the bootstrap superuser postgres) reads t for both.
+query
+SELECT
+  has_schema_privilege('postgres','osh_mop','USAGE')  AS owner_usage,
+  has_schema_privilege('postgres','osh_mop','CREATE') AS owner_create;
+----
+owner_usage	owner_create
+t	t
+
+
+# ---- cleanup ----
+
+statement ok
+DROP SCHEMA osh_mop CASCADE;
+
+
+statement ok
+DROP ROLE osh_vedernikoff;

@@ -1,0 +1,139 @@
+# Cross-membership: the SAME privilege reaching a member through two independent
+# groups. Revoking one source leaves the privilege intact via the other (the
+# effective set is a union, so duplicate sources are redundant, not additive in
+# a way that double-revokes). Only when BOTH sources are gone does the privilege
+# disappear.
+#
+# Graph (-> reads "is a member of"):
+#   xmb_sptp_mop -> xmb_sptp_kryakva  (holds SELECT on xmb_sptp_clickclack)
+#   xmb_sptp_mop -> xmb_sptp_androed  (holds SELECT on xmb_sptp_clickclack)
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_sptp_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_sptp_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_sptp_androed;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_sptp_clickclack;
+
+
+statement ok
+CREATE TABLE xmb_sptp_clickclack (id int);
+
+
+statement ok
+INSERT INTO xmb_sptp_clickclack VALUES (1), (2);
+
+
+statement ok
+CREATE ROLE xmb_sptp_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE xmb_sptp_kryakva;
+
+
+statement ok
+CREATE ROLE xmb_sptp_androed;
+
+
+statement ok
+GRANT xmb_sptp_kryakva TO xmb_sptp_mop;
+
+
+statement ok
+GRANT xmb_sptp_androed TO xmb_sptp_mop;
+
+
+statement ok
+GRANT SELECT ON xmb_sptp_clickclack TO xmb_sptp_kryakva;
+
+
+statement ok
+GRANT SELECT ON xmb_sptp_clickclack TO xmb_sptp_androed;
+
+
+# SELECT reachable via both groups.
+query
+SELECT has_table_privilege('xmb_sptp_mop', 'xmb_sptp_clickclack', 'SELECT') AS sel;
+----
+sel
+t
+
+
+connection c_mop user=xmb_sptp_mop
+query
+SELECT count(*) FROM xmb_sptp_clickclack;
+----
+count
+2
+
+
+# ---- Revoke ONE source group: SELECT survives via the other ----
+
+statement ok
+REVOKE xmb_sptp_kryakva FROM xmb_sptp_mop;
+
+
+query
+SELECT has_table_privilege('xmb_sptp_mop', 'xmb_sptp_clickclack', 'SELECT') AS sel,
+       pg_has_role('xmb_sptp_mop', 'xmb_sptp_kryakva', 'MEMBER') AS in_kryakva,
+       pg_has_role('xmb_sptp_mop', 'xmb_sptp_androed', 'MEMBER') AS in_androed;
+----
+sel	in_kryakva	in_androed
+t	f	t
+
+
+connection c_mop2 user=xmb_sptp_mop
+query
+SELECT count(*) FROM xmb_sptp_clickclack;
+----
+count
+2
+
+
+# ---- Revoke the SECOND source group: now SELECT is gone ----
+
+statement ok
+REVOKE xmb_sptp_androed FROM xmb_sptp_mop;
+
+
+query
+SELECT has_table_privilege('xmb_sptp_mop', 'xmb_sptp_clickclack', 'SELECT') AS sel;
+----
+sel
+f
+
+
+connection c_mop3 user=xmb_sptp_mop
+statement error
+SELECT * FROM xmb_sptp_clickclack;
+----
+db error: ERROR: permission denied for table xmb_sptp_clickclack<slt:ignore>
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_sptp_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_sptp_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_sptp_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_sptp_androed;

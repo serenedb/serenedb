@@ -1,0 +1,470 @@
+# A dense bipartite wide graph: FIVE privilege-bearing groups and TEN members,
+# each member wired into an overlapping subset of the groups. The point is
+# isolation in a wide graph: revoking exactly one (member -> group) edge changes
+# only that one member's privilege set; every other member is unaffected even
+# though they share groups. Asserted with has_table_privilege / pg_has_role.
+#
+# Groups and the single privilege each grants on wide_bp_iceberg:
+#   wide_bp_g_sel SELECT | wide_bp_g_ins INSERT | wide_bp_g_upd UPDATE
+#   wide_bp_g_del DELETE | wide_bp_g_trunc TRUNCATE
+# Ten members (clickclack..mop), each granted a chosen subset of the five groups.
+
+statement ok
+DROP TABLE IF EXISTS wide_bp_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_g_sel;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_g_ins;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_g_upd;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_g_del;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_g_trunc;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_abramov;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_myasnig;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_pavel;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_mop;
+
+
+statement ok
+CREATE TABLE wide_bp_iceberg (id int);
+
+
+statement ok
+CREATE ROLE wide_bp_g_sel;
+
+
+statement ok
+CREATE ROLE wide_bp_g_ins;
+
+
+statement ok
+CREATE ROLE wide_bp_g_upd;
+
+
+statement ok
+CREATE ROLE wide_bp_g_del;
+
+
+statement ok
+CREATE ROLE wide_bp_g_trunc;
+
+
+statement ok
+CREATE ROLE wide_bp_clickclack;
+
+
+statement ok
+CREATE ROLE wide_bp_kostya;
+
+
+statement ok
+CREATE ROLE wide_bp_deadinside;
+
+
+statement ok
+CREATE ROLE wide_bp_babsky;
+
+
+statement ok
+CREATE ROLE wide_bp_androed;
+
+
+statement ok
+CREATE ROLE wide_bp_abramov;
+
+
+statement ok
+CREATE ROLE wide_bp_myasnig;
+
+
+statement ok
+CREATE ROLE wide_bp_zhidky;
+
+
+statement ok
+CREATE ROLE wide_bp_pavel;
+
+
+statement ok
+CREATE ROLE wide_bp_mop;
+
+
+# ---- One privilege per group ----
+
+statement ok
+GRANT SELECT ON wide_bp_iceberg TO wide_bp_g_sel;
+
+
+statement ok
+GRANT INSERT ON wide_bp_iceberg TO wide_bp_g_ins;
+
+
+statement ok
+GRANT UPDATE ON wide_bp_iceberg TO wide_bp_g_upd;
+
+
+statement ok
+GRANT DELETE ON wide_bp_iceberg TO wide_bp_g_del;
+
+
+statement ok
+GRANT TRUNCATE ON wide_bp_iceberg TO wide_bp_g_trunc;
+
+
+# ---- Wire the bipartite edges (member -> subset of groups) ----
+# clickclack: all five groups.
+statement ok
+GRANT wide_bp_g_sel TO wide_bp_clickclack;
+
+statement ok
+GRANT wide_bp_g_ins TO wide_bp_clickclack;
+
+statement ok
+GRANT wide_bp_g_upd TO wide_bp_clickclack;
+
+statement ok
+GRANT wide_bp_g_del TO wide_bp_clickclack;
+
+statement ok
+GRANT wide_bp_g_trunc TO wide_bp_clickclack;
+
+
+# kostya: sel + ins
+statement ok
+GRANT wide_bp_g_sel TO wide_bp_kostya;
+
+statement ok
+GRANT wide_bp_g_ins TO wide_bp_kostya;
+
+
+# deadinside: sel + upd
+statement ok
+GRANT wide_bp_g_sel TO wide_bp_deadinside;
+
+statement ok
+GRANT wide_bp_g_upd TO wide_bp_deadinside;
+
+
+# babsky: ins + del
+statement ok
+GRANT wide_bp_g_ins TO wide_bp_babsky;
+
+statement ok
+GRANT wide_bp_g_del TO wide_bp_babsky;
+
+
+# androed: upd + trunc
+statement ok
+GRANT wide_bp_g_upd TO wide_bp_androed;
+
+statement ok
+GRANT wide_bp_g_trunc TO wide_bp_androed;
+
+
+# abramov: sel only
+statement ok
+GRANT wide_bp_g_sel TO wide_bp_abramov;
+
+
+# myasnig: del only
+statement ok
+GRANT wide_bp_g_del TO wide_bp_myasnig;
+
+
+# zhidky: sel + ins + upd
+statement ok
+GRANT wide_bp_g_sel TO wide_bp_zhidky;
+
+statement ok
+GRANT wide_bp_g_ins TO wide_bp_zhidky;
+
+statement ok
+GRANT wide_bp_g_upd TO wide_bp_zhidky;
+
+
+# pavel: trunc only
+statement ok
+GRANT wide_bp_g_trunc TO wide_bp_pavel;
+
+
+# mop: no groups at all (control).
+# (mop intentionally left ungranted.)
+
+
+# ---- The full membership-derived privilege matrix (10 members x 5 privs) ----
+
+query
+SELECT has_table_privilege('wide_bp_clickclack', 'wide_bp_iceberg', 'SELECT')   AS s,
+       has_table_privilege('wide_bp_clickclack', 'wide_bp_iceberg', 'INSERT')   AS i,
+       has_table_privilege('wide_bp_clickclack', 'wide_bp_iceberg', 'UPDATE')   AS u,
+       has_table_privilege('wide_bp_clickclack', 'wide_bp_iceberg', 'DELETE')   AS d,
+       has_table_privilege('wide_bp_clickclack', 'wide_bp_iceberg', 'TRUNCATE') AS t;
+----
+s	i	u	d	t
+t	t	t	t	t
+
+
+query
+SELECT has_table_privilege('wide_bp_kostya', 'wide_bp_iceberg', 'SELECT')   AS s,
+       has_table_privilege('wide_bp_kostya', 'wide_bp_iceberg', 'INSERT')   AS i,
+       has_table_privilege('wide_bp_kostya', 'wide_bp_iceberg', 'UPDATE')   AS u,
+       has_table_privilege('wide_bp_kostya', 'wide_bp_iceberg', 'DELETE')   AS d,
+       has_table_privilege('wide_bp_kostya', 'wide_bp_iceberg', 'TRUNCATE') AS t;
+----
+s	i	u	d	t
+t	t	f	f	f
+
+
+query
+SELECT has_table_privilege('wide_bp_deadinside', 'wide_bp_iceberg', 'SELECT')   AS s,
+       has_table_privilege('wide_bp_deadinside', 'wide_bp_iceberg', 'INSERT')   AS i,
+       has_table_privilege('wide_bp_deadinside', 'wide_bp_iceberg', 'UPDATE')   AS u,
+       has_table_privilege('wide_bp_deadinside', 'wide_bp_iceberg', 'DELETE')   AS d,
+       has_table_privilege('wide_bp_deadinside', 'wide_bp_iceberg', 'TRUNCATE') AS t;
+----
+s	i	u	d	t
+t	f	t	f	f
+
+
+query
+SELECT has_table_privilege('wide_bp_babsky', 'wide_bp_iceberg', 'SELECT')   AS s,
+       has_table_privilege('wide_bp_babsky', 'wide_bp_iceberg', 'INSERT')   AS i,
+       has_table_privilege('wide_bp_babsky', 'wide_bp_iceberg', 'UPDATE')   AS u,
+       has_table_privilege('wide_bp_babsky', 'wide_bp_iceberg', 'DELETE')   AS d,
+       has_table_privilege('wide_bp_babsky', 'wide_bp_iceberg', 'TRUNCATE') AS t;
+----
+s	i	u	d	t
+f	t	f	t	f
+
+
+query
+SELECT has_table_privilege('wide_bp_androed', 'wide_bp_iceberg', 'SELECT')   AS s,
+       has_table_privilege('wide_bp_androed', 'wide_bp_iceberg', 'INSERT')   AS i,
+       has_table_privilege('wide_bp_androed', 'wide_bp_iceberg', 'UPDATE')   AS u,
+       has_table_privilege('wide_bp_androed', 'wide_bp_iceberg', 'DELETE')   AS d,
+       has_table_privilege('wide_bp_androed', 'wide_bp_iceberg', 'TRUNCATE') AS t;
+----
+s	i	u	d	t
+f	f	t	f	t
+
+
+query
+SELECT has_table_privilege('wide_bp_abramov', 'wide_bp_iceberg', 'SELECT')   AS s,
+       has_table_privilege('wide_bp_abramov', 'wide_bp_iceberg', 'TRUNCATE') AS t;
+----
+s	t
+t	f
+
+
+query
+SELECT has_table_privilege('wide_bp_myasnig', 'wide_bp_iceberg', 'DELETE')   AS d,
+       has_table_privilege('wide_bp_myasnig', 'wide_bp_iceberg', 'SELECT')   AS s;
+----
+d	s
+t	f
+
+
+query
+SELECT has_table_privilege('wide_bp_zhidky', 'wide_bp_iceberg', 'SELECT')   AS s,
+       has_table_privilege('wide_bp_zhidky', 'wide_bp_iceberg', 'INSERT')   AS i,
+       has_table_privilege('wide_bp_zhidky', 'wide_bp_iceberg', 'UPDATE')   AS u,
+       has_table_privilege('wide_bp_zhidky', 'wide_bp_iceberg', 'DELETE')   AS d;
+----
+s	i	u	d
+t	t	t	f
+
+
+query
+SELECT has_table_privilege('wide_bp_pavel', 'wide_bp_iceberg', 'TRUNCATE') AS t,
+       has_table_privilege('wide_bp_pavel', 'wide_bp_iceberg', 'SELECT')   AS s;
+----
+t	s
+t	f
+
+
+# mop, in no group, holds nothing.
+query
+SELECT has_table_privilege('wide_bp_mop', 'wide_bp_iceberg', 'SELECT') AS s,
+       has_table_privilege('wide_bp_mop', 'wide_bp_iceberg', 'INSERT') AS i,
+       has_table_privilege('wide_bp_mop', 'wide_bp_iceberg', 'DELETE') AS d;
+----
+s	i	d
+f	f	f
+
+
+# ---- Isolation: revoke ONE edge (zhidky out of the SELECT group) ----
+# zhidky loses SELECT but keeps INSERT/UPDATE. Every other member of g_sel
+# (clickclack, kostya, deadinside, abramov) is unaffected.
+
+statement ok
+REVOKE wide_bp_g_sel FROM wide_bp_zhidky;
+
+
+query
+SELECT has_table_privilege('wide_bp_zhidky', 'wide_bp_iceberg', 'SELECT') AS s,
+       has_table_privilege('wide_bp_zhidky', 'wide_bp_iceberg', 'INSERT') AS i,
+       has_table_privilege('wide_bp_zhidky', 'wide_bp_iceberg', 'UPDATE') AS u;
+----
+s	i	u
+f	t	t
+
+
+# The other SELECT-group members still hold SELECT.
+query
+SELECT has_table_privilege('wide_bp_clickclack', 'wide_bp_iceberg', 'SELECT') AS cc,
+       has_table_privilege('wide_bp_kostya', 'wide_bp_iceberg', 'SELECT')     AS ko,
+       has_table_privilege('wide_bp_deadinside', 'wide_bp_iceberg', 'SELECT') AS de,
+       has_table_privilege('wide_bp_abramov', 'wide_bp_iceberg', 'SELECT')    AS ab;
+----
+cc	ko	de	ab
+t	t	t	t
+
+
+# pg_has_role corroborates: zhidky is out of g_sel, the rest are still in it.
+query
+SELECT pg_has_role('wide_bp_zhidky', 'wide_bp_g_sel', 'USAGE')     AS zhidky,
+       pg_has_role('wide_bp_clickclack', 'wide_bp_g_sel', 'USAGE') AS cc,
+       pg_has_role('wide_bp_abramov', 'wide_bp_g_sel', 'USAGE')    AS ab;
+----
+zhidky	cc	ab
+f	t	t
+
+
+# ---- Revoking the privilege from a group affects ALL its members at once ----
+# Strip INSERT from g_ins: clickclack, kostya, babsky, zhidky all lose INSERT.
+
+statement ok
+REVOKE INSERT ON wide_bp_iceberg FROM wide_bp_g_ins;
+
+
+query
+SELECT has_table_privilege('wide_bp_clickclack', 'wide_bp_iceberg', 'INSERT') AS cc,
+       has_table_privilege('wide_bp_kostya', 'wide_bp_iceberg', 'INSERT')     AS ko,
+       has_table_privilege('wide_bp_babsky', 'wide_bp_iceberg', 'INSERT')     AS ba,
+       has_table_privilege('wide_bp_zhidky', 'wide_bp_iceberg', 'INSERT')     AS zh;
+----
+cc	ko	ba	zh
+f	f	f	f
+
+
+# Members not in g_ins are untouched (androed still has UPDATE, myasnig DELETE).
+query
+SELECT has_table_privilege('wide_bp_androed', 'wide_bp_iceberg', 'UPDATE') AS an,
+       has_table_privilege('wide_bp_myasnig', 'wide_bp_iceberg', 'DELETE') AS my;
+----
+an	my
+t	t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS wide_bp_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_g_sel;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_g_ins;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_g_upd;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_g_del;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_g_trunc;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_abramov;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_myasnig;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_pavel;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bp_mop;

@@ -1080,9 +1080,8 @@ void CatalogStore::EnsureSystemDatabase() {
     return;
   }
 
-  Database database{
-    id::kSystemDB,
-    DatabaseOptions{std::string{StaticStrings::kDefaultDatabase}}};
+  Database database{catalog::Permissions{id::kRootUser}, id::kSystemDB,
+                    StaticStrings::kDefaultDatabase};
   duckdb::MemoryStream stream;
   auto database_bytes = SerializeObject(database, stream);
   auto r = CreateDefinition(id::kInstance, ObjectType::Database, id::kSystemDB,
@@ -1092,9 +1091,8 @@ void CatalogStore::EnsureSystemDatabase() {
   }
 
   const auto schema_id = NextId();
-  Schema schema{id::kSystemDB,
-                SchemaOptions{.id = schema_id,
-                              .name = std::string{StaticStrings::kPublic}}};
+  Schema schema{catalog::Permissions{id::kRootUser}, id::kSystemDB, schema_id,
+                StaticStrings::kPublic};
   auto schema_bytes = SerializeObject(schema, stream);
   r = CreateDefinition(id::kSystemDB, ObjectType::Schema, schema_id,
                        schema_bytes);

@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "basics/containers/node_hash_map.h"
+#include "catalog/object.h"
 #include "catalog/persistence/index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/table_options.h"

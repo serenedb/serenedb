@@ -1,0 +1,114 @@
+# Sequence privileges are enforced like PostgreSQL. has_sequence_privilege is a
+# real oracle: a role that was never granted anything reads f for USAGE/SELECT/
+# UPDATE on a fresh sequence, and nextval()/currval()/setval() are all refused
+# with "permission denied for sequence ...". After GRANT USAGE, SELECT, UPDATE
+# the oracle flips to t and all three operations succeed. Identical on both
+# engines.
+#
+# Lore: clickclack owns the mop counter; vedernikoff was never granted a thing
+# until the explicit grant below.
+
+statement ok
+DROP SEQUENCE IF EXISTS enf_sq_mop_counter;
+
+
+statement ok
+DROP ROLE IF EXISTS enf_sq_vedernikoff;
+
+
+statement ok
+CREATE ROLE enf_sq_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE SEQUENCE enf_sq_mop_counter;
+
+
+# Fresh sequence grants nothing to an arbitrary role: all three read f.
+query
+SELECT
+  has_sequence_privilege('enf_sq_vedernikoff','enf_sq_mop_counter','USAGE')  AS usage_priv,
+  has_sequence_privilege('enf_sq_vedernikoff','enf_sq_mop_counter','SELECT') AS select_priv,
+  has_sequence_privilege('enf_sq_vedernikoff','enf_sq_mop_counter','UPDATE') AS update_priv;
+----
+usage_priv	select_priv	update_priv
+f	f	f
+
+
+# Unprivileged nextval is refused.
+connection c_sq user=enf_sq_vedernikoff
+statement error
+SELECT nextval('enf_sq_mop_counter');
+----
+db error: ERROR: permission denied for sequence enf_sq_mop_counter<slt:ignore>
+
+
+# Unprivileged currval is refused.
+connection c_sq user=enf_sq_vedernikoff
+statement error
+SELECT currval('enf_sq_mop_counter');
+----
+db error: ERROR: permission denied for sequence enf_sq_mop_counter<slt:ignore>
+
+
+# Unprivileged setval is refused.
+connection c_sq user=enf_sq_vedernikoff
+statement error
+SELECT setval('enf_sq_mop_counter', 5);
+----
+db error: ERROR: permission denied for sequence enf_sq_mop_counter<slt:ignore>
+
+
+# Grant all three sequence privileges.
+connection default
+statement ok
+GRANT USAGE, SELECT, UPDATE ON SEQUENCE enf_sq_mop_counter TO enf_sq_vedernikoff;
+
+
+# The oracle now reads t for all three.
+connection default
+query
+SELECT
+  has_sequence_privilege('enf_sq_vedernikoff','enf_sq_mop_counter','USAGE')  AS usage_priv,
+  has_sequence_privilege('enf_sq_vedernikoff','enf_sq_mop_counter','SELECT') AS select_priv,
+  has_sequence_privilege('enf_sq_vedernikoff','enf_sq_mop_counter','UPDATE') AS update_priv;
+----
+usage_priv	select_priv	update_priv
+t	t	t
+
+
+# With USAGE granted the role advances the sequence; currval (same connection,
+# after nextval) reads it back with SELECT/USAGE.
+connection c_sq_ok user=enf_sq_vedernikoff
+query
+SELECT nextval('enf_sq_mop_counter') AS n1;
+----
+n1
+1
+
+
+connection c_sq_ok user=enf_sq_vedernikoff
+query
+SELECT currval('enf_sq_mop_counter') AS cur;
+----
+cur
+1
+
+
+# With UPDATE granted the role can setval.
+connection c_sq_ok user=enf_sq_vedernikoff
+query
+SELECT setval('enf_sq_mop_counter', 10) AS sv;
+----
+sv
+10
+
+
+# ---- cleanup ----
+
+statement ok
+DROP SEQUENCE enf_sq_mop_counter;
+
+
+statement ok
+DROP ROLE enf_sq_vedernikoff;

@@ -34,6 +34,7 @@
 #include "connector/duckdb_transaction.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
+#include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -100,6 +101,12 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
+  // User-initiated DROP DATABASE: only the owner or a superuser may drop it.
+  // Checked first, before any teardown, so an unauthorized drop is refused
+  // cleanly. Internal/lifecycle detach has no session state and is not gated.
+  if (state) {
+    pg::EnforceDatabaseOwnership(state->GetConnectionContext(), GetName());
+  }
   const auto& exec_ctx =
     state ? state->GetConnectionContext() : ExecContext::superuser();
   if (state) {

@@ -1,0 +1,150 @@
+# Role membership and transitive privilege inheritance. Privilege answers come
+# from has_table_privilege, so a member inheriting a grant through one or more
+# group roles must read as holding it.
+#
+# This file uses native PG RBAC syntax (CREATE ROLE / GRANT / REVOKE).
+#
+# Graph built (-> = "is a member of"):
+#   vedernikoff -> juniors -> analysts -> readers
+#   vedernikoff -> auditors
+# readers is granted SELECT on mop_ledger; auditors is granted INSERT.
+
+statement ok
+DROP ROLE IF EXISTS vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS juniors;
+
+
+statement ok
+DROP ROLE IF EXISTS analysts;
+
+
+statement ok
+DROP ROLE IF EXISTS readers;
+
+
+statement ok
+DROP ROLE IF EXISTS auditors;
+
+
+statement ok
+DROP TABLE IF EXISTS mop_ledger;
+
+
+statement ok
+CREATE TABLE mop_ledger (id int);
+
+
+statement ok
+CREATE ROLE vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE juniors;
+
+
+statement ok
+CREATE ROLE analysts;
+
+
+statement ok
+CREATE ROLE readers;
+
+
+statement ok
+CREATE ROLE auditors;
+
+
+# Build the chain and the side branch.
+statement ok
+GRANT juniors TO vedernikoff;
+
+
+statement ok
+GRANT analysts TO juniors;
+
+
+statement ok
+GRANT readers TO analysts;
+
+
+statement ok
+GRANT auditors TO vedernikoff;
+
+
+# Grant privileges to the leaf group roles.
+statement ok
+GRANT SELECT ON mop_ledger TO readers;
+
+
+statement ok
+GRANT INSERT ON mop_ledger TO auditors;
+
+
+# vedernikoff inherits SELECT through the 3-hop chain and INSERT through the
+# side branch.
+query
+SELECT
+  has_table_privilege('vedernikoff', 'mop_ledger', 'SELECT'),
+  has_table_privilege('vedernikoff', 'mop_ledger', 'INSERT'),
+  has_table_privilege('vedernikoff', 'mop_ledger', 'DELETE');
+----
+has_table_privilege	has_table_privilege	has_table_privilege
+t	t	f
+
+
+# An intermediate role inherits only what is below it.
+query
+SELECT
+  has_table_privilege('juniors', 'mop_ledger', 'SELECT'),
+  has_table_privilege('juniors', 'mop_ledger', 'INSERT');
+----
+has_table_privilege	has_table_privilege
+t	f
+
+
+# pg_auth_members reflects every edge with PG16 options. Scope the count to
+# this file's roles so parallel test files don't perturb it.
+query
+SELECT count(*) FROM pg_auth_members m
+JOIN pg_authid v ON v.oid = m.member
+WHERE v.rolname IN ('vedernikoff', 'juniors', 'analysts', 'readers', 'auditors');
+----
+count
+4
+
+
+# Revoking the top edge removes the whole inherited chain for vedernikoff,
+# but the chain itself (juniors->...->readers) still grants SELECT to juniors.
+statement ok
+REVOKE juniors FROM vedernikoff;
+
+
+query
+SELECT
+  has_table_privilege('vedernikoff', 'mop_ledger', 'SELECT'),
+  has_table_privilege('vedernikoff', 'mop_ledger', 'INSERT'),
+  has_table_privilege('juniors', 'mop_ledger', 'SELECT');
+----
+has_table_privilege	has_table_privilege	has_table_privilege
+f	t	t
+
+
+# Diamond: a role with two parents inherits the union of both.
+statement ok
+GRANT readers TO auditors;
+
+
+# auditors now -> readers (SELECT) and already has its own INSERT grant; so
+# auditors holds both, and vedernikoff (-> auditors) inherits both too.
+query
+SELECT
+  has_table_privilege('auditors', 'mop_ledger', 'SELECT'),
+  has_table_privilege('auditors', 'mop_ledger', 'INSERT'),
+  has_table_privilege('vedernikoff', 'mop_ledger', 'SELECT'),
+  has_table_privilege('vedernikoff', 'mop_ledger', 'INSERT');
+----
+has_table_privilege	has_table_privilege	has_table_privilege	has_table_privilege
+t	t	t	t

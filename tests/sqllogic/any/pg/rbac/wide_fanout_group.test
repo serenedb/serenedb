@@ -1,0 +1,364 @@
+# Wide fan-out: one group (wide_pudge) with TWELVE direct members. Granting a
+# privilege to the group reaches every member at once; revoking one edge affects
+# only that single member. Everything asserted with has_table_privilege and
+# pg_has_role, which are byte-identical on real PostgreSQL and serenedb.
+#
+# Graph (-> reads "is a member of"):
+#   wide_clickclack, wide_kostya, wide_deadinside, wide_babsky, wide_androed,
+#   wide_abramov, wide_myasnig, wide_zhidky, wide_gul, wide_pavel, wide_salam,
+#   wide_makak   ->   wide_pudge   (the single wide group)
+# wide_pudge is granted SELECT on wide_iceberg; the grant fans out to all twelve.
+
+statement ok
+DROP TABLE IF EXISTS wide_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_abramov;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_myasnig;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_gul;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_pavel;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_salam;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_makak;
+
+
+statement ok
+CREATE TABLE wide_iceberg (id int, payload text);
+
+
+statement ok
+CREATE ROLE wide_pudge;
+
+
+statement ok
+CREATE ROLE wide_clickclack;
+
+
+statement ok
+CREATE ROLE wide_kostya;
+
+
+statement ok
+CREATE ROLE wide_deadinside;
+
+
+statement ok
+CREATE ROLE wide_babsky;
+
+
+statement ok
+CREATE ROLE wide_androed;
+
+
+statement ok
+CREATE ROLE wide_abramov;
+
+
+statement ok
+CREATE ROLE wide_myasnig;
+
+
+statement ok
+CREATE ROLE wide_zhidky;
+
+
+statement ok
+CREATE ROLE wide_gul;
+
+
+statement ok
+CREATE ROLE wide_pavel;
+
+
+statement ok
+CREATE ROLE wide_salam;
+
+
+statement ok
+CREATE ROLE wide_makak;
+
+
+# ---- Wire all twelve members into the single group ----
+
+statement ok
+GRANT wide_pudge TO wide_clickclack;
+
+
+statement ok
+GRANT wide_pudge TO wide_kostya;
+
+
+statement ok
+GRANT wide_pudge TO wide_deadinside;
+
+
+statement ok
+GRANT wide_pudge TO wide_babsky;
+
+
+statement ok
+GRANT wide_pudge TO wide_androed;
+
+
+statement ok
+GRANT wide_pudge TO wide_abramov;
+
+
+statement ok
+GRANT wide_pudge TO wide_myasnig;
+
+
+statement ok
+GRANT wide_pudge TO wide_zhidky;
+
+
+statement ok
+GRANT wide_pudge TO wide_gul;
+
+
+statement ok
+GRANT wide_pudge TO wide_pavel;
+
+
+statement ok
+GRANT wide_pudge TO wide_salam;
+
+
+statement ok
+GRANT wide_pudge TO wide_makak;
+
+
+# ---- Before the grant: no member can SELECT ----
+
+query
+SELECT has_table_privilege('wide_clickclack', 'wide_iceberg', 'SELECT') AS a,
+       has_table_privilege('wide_kostya', 'wide_iceberg', 'SELECT') AS b,
+       has_table_privilege('wide_deadinside', 'wide_iceberg', 'SELECT') AS c,
+       has_table_privilege('wide_babsky', 'wide_iceberg', 'SELECT') AS d,
+       has_table_privilege('wide_androed', 'wide_iceberg', 'SELECT') AS e,
+       has_table_privilege('wide_abramov', 'wide_iceberg', 'SELECT') AS f;
+----
+a	b	c	d	e	f
+f	f	f	f	f	f
+
+
+# ---- One grant to the group reaches ALL twelve members at once ----
+
+statement ok
+GRANT SELECT ON wide_iceberg TO wide_pudge;
+
+
+query
+SELECT has_table_privilege('wide_clickclack', 'wide_iceberg', 'SELECT') AS a,
+       has_table_privilege('wide_kostya', 'wide_iceberg', 'SELECT') AS b,
+       has_table_privilege('wide_deadinside', 'wide_iceberg', 'SELECT') AS c,
+       has_table_privilege('wide_babsky', 'wide_iceberg', 'SELECT') AS d,
+       has_table_privilege('wide_androed', 'wide_iceberg', 'SELECT') AS e,
+       has_table_privilege('wide_abramov', 'wide_iceberg', 'SELECT') AS f;
+----
+a	b	c	d	e	f
+t	t	t	t	t	t
+
+
+query
+SELECT has_table_privilege('wide_myasnig', 'wide_iceberg', 'SELECT') AS g,
+       has_table_privilege('wide_zhidky', 'wide_iceberg', 'SELECT') AS h,
+       has_table_privilege('wide_gul', 'wide_iceberg', 'SELECT') AS i,
+       has_table_privilege('wide_pavel', 'wide_iceberg', 'SELECT') AS j,
+       has_table_privilege('wide_salam', 'wide_iceberg', 'SELECT') AS k,
+       has_table_privilege('wide_makak', 'wide_iceberg', 'SELECT') AS l;
+----
+g	h	i	j	k	l
+t	t	t	t	t	t
+
+
+# The group itself holds the privilege directly; INSERT was never granted, so
+# every member is still denied it.
+query
+SELECT has_table_privilege('wide_pudge', 'wide_iceberg', 'SELECT') AS grp_sel,
+       has_table_privilege('wide_clickclack', 'wide_iceberg', 'INSERT') AS a_ins,
+       has_table_privilege('wide_makak', 'wide_iceberg', 'INSERT') AS l_ins;
+----
+grp_sel	a_ins	l_ins
+t	f	f
+
+
+# ---- pg_has_role: every member reaches the group; the group reaches none ----
+
+query
+SELECT pg_has_role('wide_clickclack', 'wide_pudge', 'USAGE') AS a,
+       pg_has_role('wide_makak', 'wide_pudge', 'USAGE') AS l,
+       pg_has_role('wide_pudge', 'wide_clickclack', 'USAGE') AS rev_a,
+       pg_has_role('wide_pudge', 'wide_makak', 'USAGE') AS rev_l;
+----
+a	l	rev_a	rev_l
+t	t	f	f
+
+
+# Members do NOT reach each other through the shared group: siblings are not
+# members of one another.
+query
+SELECT pg_has_role('wide_clickclack', 'wide_kostya', 'USAGE') AS sib1,
+       pg_has_role('wide_kostya', 'wide_clickclack', 'USAGE') AS sib2;
+----
+sib1	sib2
+f	f
+
+
+# ---- A second grant to the group fans out the new bit to everyone ----
+
+statement ok
+GRANT UPDATE ON wide_iceberg TO wide_pudge;
+
+
+query
+SELECT has_table_privilege('wide_clickclack', 'wide_iceberg', 'UPDATE') AS a,
+       has_table_privilege('wide_zhidky', 'wide_iceberg', 'UPDATE') AS h,
+       has_table_privilege('wide_makak', 'wide_iceberg', 'UPDATE') AS l;
+----
+a	h	l
+t	t	t
+
+
+# ---- Revoking ONE edge affects only that member ----
+# Drop wide_zhidky out of the group: zhidky loses SELECT and UPDATE, the other
+# eleven members are untouched.
+
+statement ok
+REVOKE wide_pudge FROM wide_zhidky;
+
+
+query
+SELECT has_table_privilege('wide_zhidky', 'wide_iceberg', 'SELECT') AS zhidky_sel,
+       has_table_privilege('wide_zhidky', 'wide_iceberg', 'UPDATE') AS zhidky_upd,
+       pg_has_role('wide_zhidky', 'wide_pudge', 'USAGE') AS zhidky_in;
+----
+zhidky_sel	zhidky_upd	zhidky_in
+f	f	f
+
+
+# The eleven survivors keep both bits.
+query
+SELECT has_table_privilege('wide_clickclack', 'wide_iceberg', 'SELECT') AS a,
+       has_table_privilege('wide_kostya', 'wide_iceberg', 'SELECT') AS b,
+       has_table_privilege('wide_deadinside', 'wide_iceberg', 'UPDATE') AS c,
+       has_table_privilege('wide_makak', 'wide_iceberg', 'UPDATE') AS l;
+----
+a	b	c	l
+t	t	t	t
+
+
+# ---- Revoking the privilege from the group strips it from every survivor ----
+
+statement ok
+REVOKE SELECT ON wide_iceberg FROM wide_pudge;
+
+
+query
+SELECT has_table_privilege('wide_clickclack', 'wide_iceberg', 'SELECT') AS a,
+       has_table_privilege('wide_makak', 'wide_iceberg', 'SELECT') AS l,
+       has_table_privilege('wide_clickclack', 'wide_iceberg', 'UPDATE') AS a_upd;
+----
+a	l	a_upd
+f	f	t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS wide_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_abramov;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_myasnig;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_gul;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_pavel;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_salam;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_makak;

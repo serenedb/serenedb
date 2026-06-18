@@ -1,0 +1,182 @@
+# Cross-product of ownership x ACL grants, file A: a table owned by the
+# superuser (postgres). The owner holds ALL privileges IMPLICITLY (no relacl
+# row); a directly-granted grantee holds exactly the subset it was granted.
+# We sweep every table privilege letter through the has_table_privilege oracle
+# (identical on both engines) and confirm the grantee row text in relacl.
+#
+# Lore: xog_clickclack is the superuser-owned table; xog_a_vedernikoff is a
+# login role that only gets what the owner explicitly grants.
+
+statement ok
+DROP TABLE IF EXISTS xog_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_a_vedernikoff;
+
+
+statement ok
+CREATE TABLE xog_clickclack (id int, payload text);
+
+
+statement ok
+INSERT INTO xog_clickclack VALUES (1, 'iceberg'), (2, 'mop');
+
+
+statement ok
+CREATE ROLE xog_a_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# The owner is the superuser postgres -- asserted by joining relowner to
+# pg_authid by OID (a regrole cast renders differently across engines, so we
+# never cast; the OID join is byte-stable).
+query
+SELECT EXISTS(
+  SELECT 1 FROM pg_class c JOIN pg_authid a ON a.oid = c.relowner
+  WHERE c.relname = 'xog_clickclack' AND a.rolname = 'postgres'
+) AS owned_by_postgres;
+----
+owned_by_postgres
+t
+
+
+# Owner holds ALL seven table privileges implicitly, with NO ACL row of its own
+# that grantee tests would observe. (The owner's implicit grant is never in
+# relacl as a grantee entry.)
+query
+SELECT has_table_privilege('postgres','xog_clickclack','SELECT')     AS sel,
+       has_table_privilege('postgres','xog_clickclack','INSERT')     AS ins,
+       has_table_privilege('postgres','xog_clickclack','UPDATE')     AS upd,
+       has_table_privilege('postgres','xog_clickclack','DELETE')     AS del,
+       has_table_privilege('postgres','xog_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('postgres','xog_clickclack','REFERENCES') AS ref,
+       has_table_privilege('postgres','xog_clickclack','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	t	t	t	t
+
+
+# Before any grant, the grantee holds NONE of the seven privileges.
+query
+SELECT has_table_privilege('xog_a_vedernikoff','xog_clickclack','SELECT')     AS sel,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','INSERT')     AS ins,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','UPDATE')     AS upd,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','DELETE')     AS del,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','REFERENCES') AS ref,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+f	f	f	f	f	f	f
+
+
+# And there is no grantee row in relacl yet.
+query
+SELECT count(*) AS grantee_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_clickclack'
+) g WHERE e LIKE 'xog_a_vedernikoff=%';
+----
+grantee_rows
+0
+
+
+# Grant exactly SELECT + INSERT: the grantee now holds those two and nothing
+# else, and the ACL row carries exactly r (SELECT) and a (INSERT) with postgres
+# as grantor.
+statement ok
+GRANT SELECT, INSERT ON xog_clickclack TO xog_a_vedernikoff;
+
+
+query
+SELECT has_table_privilege('xog_a_vedernikoff','xog_clickclack','SELECT')   AS sel,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','INSERT')   AS ins,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','UPDATE')   AS upd,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','DELETE')   AS del,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','TRUNCATE') AS trc;
+----
+sel	ins	upd	del	trc
+t	t	f	f	f
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_clickclack'
+) g WHERE e LIKE 'xog_a_vedernikoff=%';
+----
+e
+xog_a_vedernikoff=ar/postgres
+
+
+# Grant the remaining five privileges: the grantee now matches the owner on the
+# oracle (it holds the same seven), yet it is STILL a grantee, not an owner --
+# its privileges live in relacl while the owner's do not.
+statement ok
+GRANT UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON xog_clickclack TO xog_a_vedernikoff;
+
+
+query
+SELECT has_table_privilege('xog_a_vedernikoff','xog_clickclack','SELECT')     AS sel,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','INSERT')     AS ins,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','UPDATE')     AS upd,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','DELETE')     AS del,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','TRUNCATE')   AS trc,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','REFERENCES') AS ref,
+       has_table_privilege('xog_a_vedernikoff','xog_clickclack','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	t	t	t	t
+
+
+# The full grantee row carries every privilege letter (a=INSERT r=SELECT
+# w=UPDATE d=DELETE D=TRUNCATE x=REFERENCES t=TRIGGER) in canonical order.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_clickclack'
+) g WHERE e LIKE 'xog_a_vedernikoff=%';
+----
+e
+xog_a_vedernikoff=arwdDxt/postgres
+
+
+# Even with the grantee holding all seven, it is not the owner: the owner is
+# still postgres.
+query
+SELECT EXISTS(
+  SELECT 1 FROM pg_class c JOIN pg_authid a ON a.oid = c.relowner
+  WHERE c.relname = 'xog_clickclack' AND a.rolname = 'postgres'
+) AS still_owned_by_postgres;
+----
+still_owned_by_postgres
+t
+
+
+# Revoke everything: the grantee row vanishes (PG stores no empty entry) and
+# the oracle returns false for all privileges -- while the owner is untouched.
+statement ok
+REVOKE ALL PRIVILEGES ON xog_clickclack FROM xog_a_vedernikoff;
+
+
+query
+SELECT count(*) AS grantee_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_clickclack'
+) g WHERE e LIKE 'xog_a_vedernikoff=%';
+----
+grantee_rows
+0
+
+
+query
+SELECT has_table_privilege('xog_a_vedernikoff','xog_clickclack','SELECT') AS grantee_sel,
+       has_table_privilege('postgres','xog_clickclack','SELECT')          AS owner_sel,
+       has_table_privilege('postgres','xog_clickclack','TRUNCATE')        AS owner_trc;
+----
+grantee_sel	owner_sel	owner_trc
+f	t	t
+
+
+statement ok
+DROP TABLE xog_clickclack;
+
+
+statement ok
+DROP ROLE xog_a_vedernikoff;

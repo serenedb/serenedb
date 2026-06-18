@@ -1,0 +1,102 @@
+# Cross-membership: the SET axis of an edge (the "can SET ROLE to the group"
+# right), observed through pg_has_role(..., 'SET'). The SET axis is orthogonal
+# to INHERIT: an edge can grant SET without INHERIT and vice versa.
+#
+# Only the agreeing surface is asserted cross-engine here:
+#   * default edge        -> SET true  (both engines agree)
+#   * WITH INHERIT FALSE, SET TRUE -> SET true, USAGE false (orthogonality)
+#
+# NOTE (serenedb divergence, intentionally NOT asserted here):
+#   * GRANT ... WITH SET FALSE leaves pg_has_role(..., 'SET') = t on serenedb
+#     (PostgreSQL returns f).
+#   * SET ROLE itself is accepted-but-not-enforced on serenedb (it warns and
+#     leaves current_user unchanged, and does not reject SET ROLE to a
+#     non-member), so the real SET ROLE enforcement path is omitted.
+# Both are covered in the serenedb-only companion xmb_set_divergence_sdb.test.
+#
+# The assertions below are byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_sax_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_sax_iceberg;
+
+
+statement ok
+CREATE ROLE xmb_sax_iceberg;
+
+
+statement ok
+CREATE ROLE xmb_sax_mop LOGIN PASSWORD 'pw';
+
+
+# ---- Default edge: MEMBER, USAGE, and SET all true ----
+
+statement ok
+GRANT xmb_sax_iceberg TO xmb_sax_mop;
+
+
+query
+SELECT pg_has_role('xmb_sax_mop', 'xmb_sax_iceberg', 'MEMBER') AS member,
+       pg_has_role('xmb_sax_mop', 'xmb_sax_iceberg', 'USAGE') AS usage,
+       pg_has_role('xmb_sax_mop', 'xmb_sax_iceberg', 'SET') AS setrole;
+----
+member	usage	setrole
+t	t	t
+
+
+# ---- SET is orthogonal to INHERIT: keep SET, drop INHERIT on the edge ----
+# WITH INHERIT FALSE, SET TRUE -> still a MEMBER that can SET ROLE, but wields
+# none of the group's privileges (USAGE false).
+
+statement ok
+GRANT xmb_sax_iceberg TO xmb_sax_mop WITH INHERIT FALSE, SET TRUE;
+
+
+query
+SELECT pg_has_role('xmb_sax_mop', 'xmb_sax_iceberg', 'MEMBER') AS member,
+       pg_has_role('xmb_sax_mop', 'xmb_sax_iceberg', 'USAGE') AS usage,
+       pg_has_role('xmb_sax_mop', 'xmb_sax_iceberg', 'SET') AS setrole;
+----
+member	usage	setrole
+t	f	t
+
+
+# ---- Re-grant with both TRUE: USAGE comes back, SET stays ----
+
+statement ok
+GRANT xmb_sax_iceberg TO xmb_sax_mop WITH INHERIT TRUE, SET TRUE;
+
+
+query
+SELECT pg_has_role('xmb_sax_mop', 'xmb_sax_iceberg', 'USAGE') AS usage,
+       pg_has_role('xmb_sax_mop', 'xmb_sax_iceberg', 'SET') AS setrole;
+----
+usage	setrole
+t	t
+
+
+# ---- Revoke membership: SET (and everything else) vanishes ----
+
+statement ok
+REVOKE xmb_sax_iceberg FROM xmb_sax_mop;
+
+
+query
+SELECT pg_has_role('xmb_sax_mop', 'xmb_sax_iceberg', 'MEMBER') AS member,
+       pg_has_role('xmb_sax_mop', 'xmb_sax_iceberg', 'SET') AS setrole;
+----
+member	setrole
+f	f
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP ROLE IF EXISTS xmb_sax_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_sax_iceberg;

@@ -1,0 +1,135 @@
+# Cross-membership: the per-edge option matrix on a single DIRECT edge.
+# One member (xmb_dem_mop), one group (xmb_dem_iceberg) holding SELECT on a table. We
+# walk the GRANT options that control how privileges flow:
+#   * default edge     -> follows member's rolinherit (INHERIT by default)
+#   * WITH INHERIT TRUE -> member wields the group's privileges
+#   * WITH INHERIT FALSE-> member is a MEMBER but wields nothing
+# pg_has_role MEMBER stays true through all of them (membership != inheritance);
+# pg_has_role USAGE and has_table_privilege track the INHERIT bit only.
+#
+# Everything here is byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_dem_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_dem_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_dem_clickclack;
+
+
+statement ok
+CREATE TABLE xmb_dem_clickclack (id int, payload text);
+
+
+statement ok
+CREATE ROLE xmb_dem_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE xmb_dem_iceberg;
+
+
+statement ok
+GRANT SELECT ON xmb_dem_clickclack TO xmb_dem_iceberg;
+
+
+# ---- Default edge: member inherits (roles are INHERIT by default) ----
+
+statement ok
+GRANT xmb_dem_iceberg TO xmb_dem_mop;
+
+
+query
+SELECT pg_has_role('xmb_dem_mop', 'xmb_dem_iceberg', 'MEMBER') AS member,
+       pg_has_role('xmb_dem_mop', 'xmb_dem_iceberg', 'USAGE') AS usage,
+       has_table_privilege('xmb_dem_mop', 'xmb_dem_clickclack', 'SELECT') AS sel;
+----
+member	usage	sel
+t	t	t
+
+
+# Real query path agrees: the member can SELECT through the inherited edge.
+connection c_mop user=xmb_dem_mop
+query
+SELECT count(*) FROM xmb_dem_clickclack;
+----
+count
+0
+
+
+# ---- WITH INHERIT FALSE: member, but wields nothing ----
+
+statement ok
+GRANT xmb_dem_iceberg TO xmb_dem_mop WITH INHERIT FALSE;
+
+
+query
+SELECT pg_has_role('xmb_dem_mop', 'xmb_dem_iceberg', 'MEMBER') AS member,
+       pg_has_role('xmb_dem_mop', 'xmb_dem_iceberg', 'USAGE') AS usage,
+       has_table_privilege('xmb_dem_mop', 'xmb_dem_clickclack', 'SELECT') AS sel;
+----
+member	usage	sel
+t	f	f
+
+
+# Real query path agrees: SELECT is now denied.
+connection c_mop2 user=xmb_dem_mop
+statement error
+SELECT * FROM xmb_dem_clickclack;
+----
+db error: ERROR: permission denied for table xmb_dem_clickclack<slt:ignore>
+
+
+# ---- WITH INHERIT TRUE: privilege flows again ----
+
+statement ok
+GRANT xmb_dem_iceberg TO xmb_dem_mop WITH INHERIT TRUE;
+
+
+query
+SELECT pg_has_role('xmb_dem_mop', 'xmb_dem_iceberg', 'USAGE') AS usage,
+       has_table_privilege('xmb_dem_mop', 'xmb_dem_clickclack', 'SELECT') AS sel;
+----
+usage	sel
+t	t
+
+
+connection c_mop3 user=xmb_dem_mop
+query
+SELECT count(*) FROM xmb_dem_clickclack;
+----
+count
+0
+
+
+# ---- REVOKE the membership: both MEMBER and inheritance vanish ----
+
+statement ok
+REVOKE xmb_dem_iceberg FROM xmb_dem_mop;
+
+
+query
+SELECT pg_has_role('xmb_dem_mop', 'xmb_dem_iceberg', 'MEMBER') AS member,
+       pg_has_role('xmb_dem_mop', 'xmb_dem_iceberg', 'USAGE') AS usage,
+       has_table_privilege('xmb_dem_mop', 'xmb_dem_clickclack', 'SELECT') AS sel;
+----
+member	usage	sel
+f	f	f
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_dem_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_dem_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_dem_iceberg;

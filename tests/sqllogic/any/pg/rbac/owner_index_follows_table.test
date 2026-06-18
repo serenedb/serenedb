@@ -1,0 +1,44 @@
+# PG: an index's relowner is its TABLE's owner (not the CREATE INDEX runner,
+# not root). Superuser-driven so it's byte-identical on PG and serenedb.
+
+statement ok
+DROP TABLE IF EXISTS oif_clickclack CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS oif_vedernikoff;
+
+
+statement ok
+CREATE ROLE oif_vedernikoff;
+
+
+statement ok
+CREATE TABLE oif_clickclack (id int);
+
+
+statement ok
+ALTER TABLE oif_clickclack OWNER TO oif_vedernikoff;
+
+
+statement ok
+CREATE INDEX oif_ix ON oif_clickclack (id);
+
+
+# The index follows the table's owner (oif_vedernikoff), not the superuser who
+# ran CREATE INDEX.
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('oif_clickclack','oif_ix') ORDER BY relname;
+----
+relname	owner
+oif_clickclack	oif_vedernikoff
+oif_ix	oif_vedernikoff
+
+
+statement ok
+DROP TABLE oif_clickclack CASCADE;
+
+
+statement ok
+DROP ROLE oif_vedernikoff;

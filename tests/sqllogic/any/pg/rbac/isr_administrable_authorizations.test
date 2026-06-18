@@ -1,0 +1,226 @@
+# information_schema.administrable_role_authorizations: the subset of role
+# memberships the current session may further administer -- i.e. only those
+# granted WITH ADMIN OPTION. A plain GRANT role TO member (the only role-grant
+# form serenedb supports) confers NO admin option, so every such edge is
+# applicable but NOT administrable. This file pins that invariant: across a
+# chain and a diamond, administrable_role_authorizations stays empty while
+# applicable_roles is fully populated, and the contrast holds both in the
+# superuser session and in the member's own session.
+#
+# administrable_role_authorizations and applicable_roles share the same three
+# columns (grantee, role_name, is_grantable); the difference is purely the WITH
+# ADMIN OPTION filter. Asserting the empty/non-empty pair is the byte-identical
+# surface here.
+#
+# Dual-checked byte-identical on PostgreSQL 19beta1 and serenedb. Roles prefixed
+# isr_ under the vedernikoff lore; idempotent and self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS isr_adm_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_adm_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_adm_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_adm_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_adm_babsky;
+
+
+# ----------------------------------------------------------------------
+# Three-hop chain, plain grants:
+#   isr_adm_androed -> isr_adm_kostya -> isr_adm_deadinside -> isr_adm_iceberg
+# androed is a login role so we can inspect its own session as well.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE isr_adm_androed LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE isr_adm_kostya;
+
+
+statement ok
+CREATE ROLE isr_adm_deadinside;
+
+
+statement ok
+CREATE ROLE isr_adm_iceberg;
+
+
+statement ok
+GRANT isr_adm_kostya TO isr_adm_androed;
+
+
+statement ok
+GRANT isr_adm_deadinside TO isr_adm_kostya;
+
+
+statement ok
+GRANT isr_adm_iceberg TO isr_adm_deadinside;
+
+
+# applicable_roles sees all three direct edges (the membership graph exists)...
+query
+SELECT grantee, role_name FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_adm_%' ORDER BY grantee, role_name;
+----
+grantee	role_name
+isr_adm_androed	isr_adm_kostya
+isr_adm_deadinside	isr_adm_iceberg
+isr_adm_kostya	isr_adm_deadinside
+
+
+# ...but NONE of them carries admin option, so the administrable view is empty.
+query
+SELECT count(*) AS n FROM information_schema.administrable_role_authorizations
+WHERE grantee LIKE 'isr_adm_%';
+----
+n
+0
+
+
+# Asserted as the empty row set directly (no rows under the header).
+query
+SELECT grantee, role_name, is_grantable FROM information_schema.administrable_role_authorizations
+WHERE grantee LIKE 'isr_adm_%' ORDER BY grantee, role_name;
+----
+grantee	role_name	is_grantable
+
+
+# Filtering administrable by a specific role still yields nothing.
+query
+SELECT count(*) AS n FROM information_schema.administrable_role_authorizations
+WHERE role_name = 'isr_adm_kostya';
+----
+n
+0
+
+
+# ----------------------------------------------------------------------
+# Diamond fan-out adds more edges -- the administrable view is still empty,
+# proving the emptiness is about admin option, not about graph shape.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE isr_adm_babsky;
+
+
+statement ok
+GRANT isr_adm_kostya TO isr_adm_babsky;
+
+
+statement ok
+GRANT isr_adm_deadinside TO isr_adm_babsky;
+
+
+# applicable_roles grew to five edges...
+query
+SELECT count(*) AS applicable FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_adm_%';
+----
+applicable
+5
+
+
+# ...administrable is unchanged at zero.
+query
+SELECT count(*) AS administrable FROM information_schema.administrable_role_authorizations
+WHERE grantee LIKE 'isr_adm_%';
+----
+administrable
+0
+
+
+# ----------------------------------------------------------------------
+# Same contrast from the MEMBER's own session. androed logs in: it has the
+# kostya edge applicable in its session, but cannot administer it.
+# ----------------------------------------------------------------------
+
+connection c_androed user=isr_adm_androed
+query
+SELECT grantee, role_name, is_grantable FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_adm_%' ORDER BY grantee, role_name;
+----
+grantee	role_name	is_grantable
+isr_adm_androed	isr_adm_kostya	NO
+isr_adm_deadinside	isr_adm_iceberg	NO
+isr_adm_kostya	isr_adm_deadinside	NO
+
+
+connection c_androed user=isr_adm_androed
+query
+SELECT count(*) AS administrable FROM information_schema.administrable_role_authorizations;
+----
+administrable
+0
+
+
+# administrable is a strict subset of applicable: every administrable row is
+# also applicable, and here the subset is empty -- so the count difference
+# equals the full applicable count (in androed's own session, three edges).
+connection c_androed user=isr_adm_androed
+query
+SELECT
+  (SELECT count(*) FROM information_schema.applicable_roles) AS applicable,
+  (SELECT count(*) FROM information_schema.administrable_role_authorizations) AS administrable;
+----
+applicable	administrable
+3	0
+
+
+# ----------------------------------------------------------------------
+# REVOKE shrinks applicable_roles but administrable stays empty throughout.
+# ----------------------------------------------------------------------
+
+statement ok
+REVOKE isr_adm_deadinside FROM isr_adm_babsky;
+
+
+query
+SELECT count(*) AS applicable FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_adm_%';
+----
+applicable
+4
+
+
+query
+SELECT count(*) AS administrable FROM information_schema.administrable_role_authorizations
+WHERE grantee LIKE 'isr_adm_%';
+----
+administrable
+0
+
+
+# ----------------------------------------------------------------------
+# Cleanup.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE isr_adm_androed;
+
+
+statement ok
+DROP ROLE isr_adm_kostya;
+
+
+statement ok
+DROP ROLE isr_adm_deadinside;
+
+
+statement ok
+DROP ROLE isr_adm_iceberg;
+
+
+statement ok
+DROP ROLE isr_adm_babsky;

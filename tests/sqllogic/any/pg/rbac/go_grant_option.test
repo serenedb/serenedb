@@ -1,0 +1,209 @@
+# WITH GRANT OPTION semantics, asserted through has_table_privilege using the
+# 'PRIV WITH GRANT OPTION' privilege strings. These boolean answers are
+# byte-identical on PostgreSQL and serenedb. Single superuser session; the
+# cross-role answer comes from the role argument to has_table_privilege.
+#
+# Vedernikoff lore: the clickclack table is owned by postgres; mop and iceberg
+# are downstream roles that may or may not hold the grant option.
+
+statement ok
+DROP TABLE IF EXISTS go_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS go_gopt_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS go_gopt_iceberg;
+
+
+statement ok
+CREATE TABLE go_clickclack (id int, payload text);
+
+
+statement ok
+CREATE ROLE go_gopt_mop;
+
+
+statement ok
+CREATE ROLE go_gopt_iceberg;
+
+
+# ---- The owner (postgres) implicitly holds the grant option on EVERY
+#      table privilege, even though relacl has no explicit owner entry yet. ----
+query
+SELECT has_table_privilege('postgres','go_clickclack','SELECT WITH GRANT OPTION')     AS s,
+       has_table_privilege('postgres','go_clickclack','INSERT WITH GRANT OPTION')     AS i,
+       has_table_privilege('postgres','go_clickclack','UPDATE WITH GRANT OPTION')     AS u,
+       has_table_privilege('postgres','go_clickclack','DELETE WITH GRANT OPTION')     AS d,
+       has_table_privilege('postgres','go_clickclack','TRUNCATE WITH GRANT OPTION')   AS t,
+       has_table_privilege('postgres','go_clickclack','REFERENCES WITH GRANT OPTION') AS r,
+       has_table_privilege('postgres','go_clickclack','TRIGGER WITH GRANT OPTION')    AS g;
+----
+s	i	u	d	t	r	g
+t	t	t	t	t	t	t
+
+
+# ---- A fresh non-owner role holds neither the privilege nor its option. ----
+query
+SELECT has_table_privilege('go_gopt_mop','go_clickclack','SELECT')                    AS s,
+       has_table_privilege('go_gopt_mop','go_clickclack','SELECT WITH GRANT OPTION')  AS sg;
+----
+s	sg
+f	f
+
+
+# ---- Plain GRANT: privilege held, but NO grant option. ----
+statement ok
+GRANT SELECT ON go_clickclack TO go_gopt_mop;
+
+
+query
+SELECT has_table_privilege('go_gopt_mop','go_clickclack','SELECT')                    AS s,
+       has_table_privilege('go_gopt_mop','go_clickclack','SELECT WITH GRANT OPTION')  AS sg;
+----
+s	sg
+t	f
+
+
+# ---- GRANT ... WITH GRANT OPTION: privilege held AND option held. ----
+statement ok
+GRANT SELECT ON go_clickclack TO go_gopt_iceberg WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('go_gopt_iceberg','go_clickclack','SELECT')                   AS s,
+       has_table_privilege('go_gopt_iceberg','go_clickclack','SELECT WITH GRANT OPTION') AS sg;
+----
+s	sg
+t	t
+
+
+# ---- Re-GRANT to go_gopt_mop WITH GRANT OPTION upgrades the existing plain grant:
+#      the privilege is unchanged but the option is now present. ----
+statement ok
+GRANT SELECT ON go_clickclack TO go_gopt_mop WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('go_gopt_mop','go_clickclack','SELECT')                   AS s,
+       has_table_privilege('go_gopt_mop','go_clickclack','SELECT WITH GRANT OPTION') AS sg;
+----
+s	sg
+t	t
+
+
+# ---- Re-GRANT WITHOUT the option does NOT remove an already-held option.
+#      (PG only ever ADDS the grant option on a re-grant.) ----
+statement ok
+GRANT SELECT ON go_clickclack TO go_gopt_iceberg;
+
+
+query
+SELECT has_table_privilege('go_gopt_iceberg','go_clickclack','SELECT WITH GRANT OPTION') AS sg;
+----
+sg
+t
+
+
+# ---- Mixed matrix: some privileges carry the option, some do not. mop is
+#      granted SELECT,INSERT plain and UPDATE with the option. ----
+statement ok
+DROP ROLE IF EXISTS go_gopt_vedernikoff;
+
+
+statement ok
+CREATE ROLE go_gopt_vedernikoff;
+
+
+statement ok
+GRANT SELECT, INSERT ON go_clickclack TO go_gopt_vedernikoff;
+
+
+statement ok
+GRANT UPDATE ON go_clickclack TO go_gopt_vedernikoff WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('go_gopt_vedernikoff','go_clickclack','SELECT')                   AS s,
+       has_table_privilege('go_gopt_vedernikoff','go_clickclack','SELECT WITH GRANT OPTION') AS sg,
+       has_table_privilege('go_gopt_vedernikoff','go_clickclack','INSERT')                   AS i,
+       has_table_privilege('go_gopt_vedernikoff','go_clickclack','INSERT WITH GRANT OPTION') AS ig,
+       has_table_privilege('go_gopt_vedernikoff','go_clickclack','UPDATE')                   AS u,
+       has_table_privilege('go_gopt_vedernikoff','go_clickclack','UPDATE WITH GRANT OPTION') AS ug;
+----
+s	sg	i	ig	u	ug
+t	f	t	f	t	t
+
+
+# ---- ALL PRIVILEGES WITH GRANT OPTION grants the option on every privilege. ----
+statement ok
+DROP ROLE IF EXISTS go_gopt_clickclackodactyl;
+
+
+statement ok
+CREATE ROLE go_gopt_clickclackodactyl;
+
+
+statement ok
+GRANT ALL PRIVILEGES ON go_clickclack TO go_gopt_clickclackodactyl WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('go_gopt_clickclackodactyl','go_clickclack','SELECT WITH GRANT OPTION')   AS s,
+       has_table_privilege('go_gopt_clickclackodactyl','go_clickclack','INSERT WITH GRANT OPTION')   AS i,
+       has_table_privilege('go_gopt_clickclackodactyl','go_clickclack','UPDATE WITH GRANT OPTION')   AS u,
+       has_table_privilege('go_gopt_clickclackodactyl','go_clickclack','DELETE WITH GRANT OPTION')   AS d,
+       has_table_privilege('go_gopt_clickclackodactyl','go_clickclack','TRUNCATE WITH GRANT OPTION') AS t;
+----
+s	i	u	d	t
+t	t	t	t	t
+
+
+# ---- A plain GRANT TO PUBLIC confers the privilege on every role (including
+#      one created afterwards) but NOT the grant option. ----
+statement ok
+DROP ROLE IF EXISTS go_gopt_babsky;
+
+
+statement ok
+GRANT DELETE ON go_clickclack TO PUBLIC;
+
+
+statement ok
+CREATE ROLE go_gopt_babsky;
+
+
+query
+SELECT has_table_privilege('go_gopt_babsky','go_clickclack','DELETE')                   AS d,
+       has_table_privilege('go_gopt_babsky','go_clickclack','DELETE WITH GRANT OPTION') AS dg;
+----
+d	dg
+t	f
+
+
+# ---- Cleanup. Drop the table first so the grants on it disappear; PG refuses
+#      to drop a role while it still holds privileges on a live object. ----
+statement ok
+DROP TABLE go_clickclack;
+
+
+statement ok
+DROP ROLE go_gopt_babsky;
+
+
+statement ok
+DROP ROLE go_gopt_clickclackodactyl;
+
+
+statement ok
+DROP ROLE go_gopt_vedernikoff;
+
+
+statement ok
+DROP ROLE go_gopt_iceberg;
+
+
+statement ok
+DROP ROLE go_gopt_mop;

@@ -1,0 +1,123 @@
+# Owner-driven ALTER VIEW ... OWNER TO authorization matrix. The view is created
+# by the superuser and handed to a non-superuser owner; that owner (and a
+# non-owner) then attempt transfers. Every case is an error or a no-op, so the
+# result is byte-identical on PostgreSQL and serenedb. Note the error noun for a
+# view is "view".
+#
+# Lore: iceberg is the view. mop is the owner; it can SET ROLE to the clickclack
+# group but not to babsky; vedernikoff is an unrelated non-owner.
+
+statement ok
+DROP VIEW IF EXISTS xao_ovn_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_ovn_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_ovn_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_ovn_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_ovn_vedernikoff;
+
+
+statement ok
+CREATE ROLE xao_ovn_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE xao_ovn_clickclack;
+
+
+statement ok
+CREATE ROLE xao_ovn_babsky;
+
+
+statement ok
+CREATE ROLE xao_ovn_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT xao_ovn_clickclack TO xao_ovn_mop;
+
+
+statement ok
+GRANT xao_ovn_babsky TO xao_ovn_mop WITH SET FALSE, INHERIT TRUE;
+
+
+statement ok
+CREATE VIEW xao_ovn_iceberg AS SELECT 1 AS x;
+
+
+statement ok
+ALTER VIEW xao_ovn_iceberg OWNER TO xao_ovn_mop;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_ovn_iceberg';
+----
+owner
+xao_ovn_mop
+
+
+# (a) non-owner cannot transfer
+connection cveder user=xao_ovn_vedernikoff
+statement error
+ALTER VIEW xao_ovn_iceberg OWNER TO xao_ovn_vedernikoff;
+----
+db error: ERROR: must be owner of view xao_ovn_iceberg<slt:ignore>
+
+
+# (b) owner cannot transfer to a role it cannot SET ROLE to
+connection cmop user=xao_ovn_mop
+statement error
+ALTER VIEW xao_ovn_iceberg OWNER TO xao_ovn_babsky;
+----
+db error: ERROR: must be able to SET ROLE "xao_ovn_babsky"<slt:ignore>
+
+
+# (c) owner cannot transfer to a nonexistent role
+connection cmop2 user=xao_ovn_mop
+statement error
+ALTER VIEW xao_ovn_iceberg OWNER TO xao_ovn_ghost;
+----
+db error: ERROR: role "xao_ovn_ghost" does not exist<slt:ignore>
+
+
+# (d) owner -> CURRENT_USER no-op success
+connection cmop3 user=xao_ovn_mop
+statement ok
+ALTER VIEW xao_ovn_iceberg OWNER TO CURRENT_USER;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname='xao_ovn_iceberg';
+----
+owner
+xao_ovn_mop
+
+
+statement ok
+DROP VIEW xao_ovn_iceberg;
+
+
+statement ok
+DROP ROLE xao_ovn_mop;
+
+
+statement ok
+DROP ROLE xao_ovn_clickclack;
+
+
+statement ok
+DROP ROLE xao_ovn_babsky;
+
+
+statement ok
+DROP ROLE xao_ovn_vedernikoff;

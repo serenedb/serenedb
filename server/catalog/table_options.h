@@ -76,12 +76,13 @@ class Column final : public Object {
     return duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
   }
 
-  Column() : Object{{}, {}, {}, ObjectType::Column} {}
+  Column() : Object{Permissions{}, {}, {}, {}, ObjectType::Column} {}
 
   Column(ObjectId owner_table_id, ObjectId id, std::string_view name,
          duckdb::LogicalType ty, std::shared_ptr<ColumnExpr> e = nullptr,
          GeneratedType gt = kNone)
-    : Object{owner_table_id, id, std::string{name}, ObjectType::Column},
+    : Object{Permissions{}, owner_table_id, id, std::string{name},
+             ObjectType::Column},
       type{std::move(ty)},
       expr{std::move(e)},
       generated_type{gt} {}
@@ -111,11 +112,12 @@ inline std::shared_ptr<Object> Column::Clone() const {
 // Persistent on-disk catalog format.
 class CheckConstraint final : public Object {
  public:
-  CheckConstraint() : Object{{}, {}, {}, ObjectType::CheckConstraint} {}
+  CheckConstraint()
+    : Object{Permissions{}, {}, {}, {}, ObjectType::CheckConstraint} {}
 
   CheckConstraint(ObjectId owner_table_id, ObjectId id, std::string_view name,
                   std::shared_ptr<ColumnExpr> e)
-    : Object{owner_table_id, id, std::string{name},
+    : Object{Permissions{}, owner_table_id, id, std::string{name},
              ObjectType::CheckConstraint},
       expr{std::move(e)} {}
 
@@ -166,6 +168,7 @@ struct CreateTableOptions {
   std::vector<std::vector<Column::Id>> unique_constraints;
   std::vector<TableForeignKey> foreign_keys;
   TableEngine engine = TableEngine::Transactional;
+  ObjectId owner;
 };
 // NOLINTEND
 

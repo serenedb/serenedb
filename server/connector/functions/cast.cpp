@@ -20,6 +20,8 @@
 
 #include "connector/functions/cast.h"
 
+#include <absl/strings/ascii.h>
+
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
@@ -27,6 +29,8 @@
 #include <duckdb/function/cast/default_casts.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
+#include <string>
+#include <string_view>
 
 #include "pg/parse_array.h"
 
@@ -136,6 +140,155 @@ duckdb::BoundCastInfo PgArrayCastBind(duckdb::BindCastInput& input,
   return duckdb::BoundCastInfo(chain_fn, std::move(cast_data));
 }
 
+// Append one element to a PG array literal, applying PG quoting rules.
+void AppendPgArrayElement(std::string& out, std::string_view value) {
+  bool needs_quotes = value.empty() || absl::EqualsIgnoreCase(value, "NULL");
+  if (!needs_quotes) {
+    for (char c : value) {
+      if (c == '{' || c == '}' || c == ',' || c == '"' || c == '\\' ||
+          absl::ascii_isspace(static_cast<unsigned char>(c))) {
+        needs_quotes = true;
+        break;
+      }
+    }
+  }
+
+  if (!needs_quotes) {
+    out += value;
+    return;
+  }
+
+  out += '"';
+  for (char c : value) {
+    if (c == '"' || c == '\\') {
+      out += '\\';
+    }
+    out += c;
+  }
+  out += '"';
+}
+
+struct PgArrayToTextCastData : public duckdb::BoundCastData {
+  PgArrayToTextCastData(bool child_is_nested, duckdb::BoundCastInfo child_cast)
+    : child_is_nested(child_is_nested), child_cast(std::move(child_cast)) {}
+  bool child_is_nested;
+  duckdb::BoundCastInfo child_cast;
+  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
+    return duckdb::make_uniq<PgArrayToTextCastData>(child_is_nested,
+                                                    child_cast.Copy());
+  }
+};
+
+// Emit a LIST(VARCHAR) row in PG array literal format into out.
+// When child_is_nested, child strings are already rendered nested arrays
+// ('{..}') and are emitted verbatim (PG does not quote nested array elements).
+void RenderPgArrayRow(std::string& out,
+                      const duckdb::UnifiedVectorFormat& child_data,
+                      const duckdb::string_t* child_strings,
+                      duckdb::list_entry_t entry, bool child_is_nested) {
+  out += '{';
+  for (duckdb::idx_t k = 0; k < entry.length; k++) {
+    if (k > 0) {
+      out += ',';
+    }
+    auto child_idx = child_data.sel->get_index(entry.offset + k);
+    if (!child_data.validity.RowIsValid(child_idx)) {
+      out += "NULL";
+    } else if (child_is_nested) {
+      out += child_strings[child_idx].GetString();
+    } else {
+      AppendPgArrayElement(out, child_strings[child_idx].GetString());
+    }
+  }
+  out += '}';
+}
+
+// Cast LIST(VARCHAR) -> VARCHAR by emitting PG array literal format.
+// Input:  ['1','2','3'] or ['hello',NULL]
+// Output: '{1,2,3}' or '{hello,NULL}'
+bool PgListToArrayText(duckdb::Vector& source, duckdb::Vector& result,
+                       duckdb::idx_t count,
+                       duckdb::CastParameters& parameters) {
+  bool child_is_nested = false;
+  if (parameters.cast_data) {
+    child_is_nested =
+      parameters.cast_data->Cast<PgArrayToTextCastData>().child_is_nested;
+  }
+
+  duckdb::UnifiedVectorFormat list_data;
+  source.ToUnifiedFormat(count, list_data);
+  auto list_entries =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(list_data);
+
+  auto& child = duckdb::ListVector::GetEntry(source);
+  auto child_size = duckdb::ListVector::GetListSize(source);
+  duckdb::UnifiedVectorFormat child_data;
+  child.ToUnifiedFormat(child_size, child_data);
+  auto child_strings =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(child_data);
+
+  auto result_data =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
+
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    auto list_idx = list_data.sel->get_index(i);
+    if (!list_data.validity.RowIsValid(list_idx)) {
+      result_validity.SetInvalid(i);
+      continue;
+    }
+
+    std::string out;
+    RenderPgArrayRow(out, child_data, child_strings, list_entries[list_idx],
+                     child_is_nested);
+    result_data[i] = duckdb::StringVector::AddString(result, out);
+  }
+
+  if (source.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
+    result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+  }
+  return true;
+}
+
+// Bind function: LIST(T) -> VARCHAR
+// Chains: LIST(T) -> LIST(VARCHAR) [DuckDB native cast] -> VARCHAR [our format]
+duckdb::BoundCastInfo PgArrayToTextCastBind(duckdb::BindCastInput& input,
+                                            const duckdb::LogicalType& source,
+                                            const duckdb::LogicalType& target) {
+  auto child_type = duckdb::ListType::GetChildType(source);
+  const bool child_is_nested = child_type.id() == duckdb::LogicalTypeId::LIST ||
+                               child_type.id() == duckdb::LogicalTypeId::ARRAY;
+
+  // Chain LIST(T) -> LIST(VARCHAR) (a no-op NopCast when T is already VARCHAR)
+  // -> our PG formatter.
+  auto varchar_list = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  duckdb::GetCastFunctionInput get_input(input.context);
+  auto cast_data = duckdb::make_uniq<PgArrayToTextCastData>(
+    child_is_nested,
+    input.function_set.GetCastFunction(source, varchar_list, get_input));
+
+  auto chain_fn = [](duckdb::Vector& source, duckdb::Vector& result,
+                     duckdb::idx_t count,
+                     duckdb::CastParameters& parameters) -> bool {
+    auto& data = parameters.cast_data->Cast<PgArrayToTextCastData>();
+
+    // Step 1: LIST(T) -> LIST(VARCHAR)
+    duckdb::Vector intermediate(
+      duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR), count);
+    duckdb::CastParameters child_params(
+      parameters, data.child_cast.GetCastData().get(), nullptr);
+    if (!data.child_cast.GetFunction()(source, intermediate, count,
+                                       child_params)) {
+      return false;
+    }
+
+    // Step 2: LIST(VARCHAR) -> VARCHAR via our PG formatter
+    return PgListToArrayText(intermediate, result, count, parameters);
+  };
+
+  return duckdb::BoundCastInfo(chain_fn, std::move(cast_data));
+}
+
 }  // namespace
 
 void RegisterPgCasts(duckdb::DatabaseInstance& db) {
@@ -148,6 +301,15 @@ void RegisterPgCasts(duckdb::DatabaseInstance& db) {
   casts.RegisterCastFunction(
     duckdb::LogicalType::VARCHAR,
     duckdb::LogicalType::LIST(duckdb::LogicalType::ANY), PgArrayCastBind, 100);
+
+  // Register PG-compatible LIST -> VARCHAR cast so that array::text renders in
+  // PostgreSQL brace format '{a,b,c}' instead of DuckDB's '[a, b, c]'.
+  casts.RegisterCastFunction(
+    duckdb::LogicalType::LIST(duckdb::LogicalType::ANY),
+    duckdb::LogicalType::VARCHAR, PgArrayToTextCastBind, 100);
+  casts.RegisterCastFunction(
+    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
+    duckdb::LogicalType::VARCHAR, PgArrayToTextCastBind, 100);
 }
 
 }  // namespace sdb::connector

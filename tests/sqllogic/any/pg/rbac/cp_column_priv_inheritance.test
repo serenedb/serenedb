@@ -1,0 +1,207 @@
+# Column-level privilege inheritance: re-grant cycles, combined privilege
+# lists, and inheritance THROUGH role membership.
+#
+# Companion to cp_column_priv_from_table.test. This file pins three further
+# byte-identical surfaces of has_column_privilege(role, table, column, priv):
+#
+#   1. A combined GRANT priv-list (SELECT, INSERT, UPDATE in one statement)
+#      lights up each of those column privileges on every column at once.
+#   2. A re-GRANT after a REVOKE restores the column privilege to t -- the
+#      grant cycle lands back on t identically on both engines.
+#   3. A member role inherits the granted role's column privileges: GRANT
+#      <role> TO <member> makes the member's has_column_privilege t for every
+#      column the role can reach.
+#
+# Every assertion lands on t (the positive direction), which is identical on
+# real PostgreSQL and serenedb. Objects are prefixed cp_ (clickclack /
+# vedernikoff lore); idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS cp_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_shlepach;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_lambda;
+
+
+statement ok
+DROP ROLE IF EXISTS cp_makak;
+
+
+statement ok
+CREATE TABLE cp_clickclack (id int, payload text, tagline text);
+
+
+# ============================================================================
+# Combined privilege list: GRANT SELECT, INSERT, UPDATE in a single statement
+# lights up all three column privileges on every column simultaneously.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_vitalik;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON cp_clickclack TO cp_vitalik;
+
+
+query
+SELECT has_column_privilege('cp_vitalik','cp_clickclack','id','SELECT')      AS id_sel,
+       has_column_privilege('cp_vitalik','cp_clickclack','id','INSERT')      AS id_ins,
+       has_column_privilege('cp_vitalik','cp_clickclack','id','UPDATE')      AS id_upd,
+       has_column_privilege('cp_vitalik','cp_clickclack','payload','SELECT')  AS pay_sel,
+       has_column_privilege('cp_vitalik','cp_clickclack','tagline','UPDATE')  AS tag_upd;
+----
+id_sel	id_ins	id_upd	pay_sel	tag_upd
+t	t	t	t	t
+
+
+# ============================================================================
+# Grant cycle: GRANT -> REVOKE -> GRANT again restores the column privilege.
+# We assert only the granted states (t), since those are identical on both
+# engines; the cycle proves a re-grant after a revoke is honoured at the
+# column level.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_shlepach;
+
+
+statement ok
+GRANT SELECT ON cp_clickclack TO cp_shlepach;
+
+
+# After the first grant: column SELECT is t.
+query
+SELECT has_column_privilege('cp_shlepach','cp_clickclack','payload','SELECT') AS c_sel;
+----
+c_sel
+t
+
+
+statement ok
+REVOKE SELECT ON cp_clickclack FROM cp_shlepach;
+
+
+statement ok
+GRANT SELECT ON cp_clickclack TO cp_shlepach;
+
+
+# After the re-grant: column SELECT is t again on every column.
+query
+SELECT has_column_privilege('cp_shlepach','cp_clickclack','id','SELECT')      AS id_sel,
+       has_column_privilege('cp_shlepach','cp_clickclack','payload','SELECT')  AS pay_sel,
+       has_column_privilege('cp_shlepach','cp_clickclack','tagline','SELECT')  AS tag_sel;
+----
+id_sel	pay_sel	tag_sel
+t	t	t
+
+
+# ============================================================================
+# Inheritance through role membership: the privilege lives on a role, and a
+# member of that role inherits the column privilege for every column.
+# ============================================================================
+
+statement ok
+CREATE ROLE cp_kryakva;
+
+
+statement ok
+GRANT INSERT, UPDATE ON cp_clickclack TO cp_kryakva;
+
+
+# The role itself carries the column privileges.
+query
+SELECT has_column_privilege('cp_kryakva','cp_clickclack','id','INSERT')     AS id_ins,
+       has_column_privilege('cp_kryakva','cp_clickclack','tagline','UPDATE') AS tag_upd;
+----
+id_ins	tag_upd
+t	t
+
+
+statement ok
+CREATE ROLE cp_lambda;
+
+
+# Before membership cp_lambda has its own grant only -- give it nothing yet,
+# then make it a member of cp_kryakva so it inherits both column privileges.
+statement ok
+GRANT cp_kryakva TO cp_lambda;
+
+
+query
+SELECT has_column_privilege('cp_lambda','cp_clickclack','id','INSERT')      AS id_ins,
+       has_column_privilege('cp_lambda','cp_clickclack','payload','INSERT')  AS pay_ins,
+       has_column_privilege('cp_lambda','cp_clickclack','tagline','UPDATE')  AS tag_upd;
+----
+id_ins	pay_ins	tag_upd
+t	t	t
+
+
+# A two-hop chain: cp_makak is a member of cp_lambda, which is a member of
+# cp_kryakva. The column privileges reach all the way down the chain.
+statement ok
+CREATE ROLE cp_makak;
+
+
+statement ok
+GRANT cp_lambda TO cp_makak;
+
+
+query
+SELECT has_column_privilege('cp_makak','cp_clickclack','id','INSERT')      AS id_ins,
+       has_column_privilege('cp_makak','cp_clickclack','payload','UPDATE')  AS pay_upd;
+----
+id_ins	pay_upd
+t	t
+
+
+# pg_has_role confirms the membership chain the column privileges rode in on
+# (USAGE = inherited membership), byte-identical on both engines.
+query
+SELECT pg_has_role('cp_lambda','cp_kryakva','USAGE') AS lambda_in_kryakva,
+       pg_has_role('cp_makak','cp_lambda','USAGE')   AS makak_in_lambda,
+       pg_has_role('cp_makak','cp_kryakva','USAGE')  AS makak_in_kryakva;
+----
+lambda_in_kryakva	makak_in_lambda	makak_in_kryakva
+t	t	t
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE cp_clickclack;
+
+
+statement ok
+DROP ROLE cp_vitalik;
+
+
+statement ok
+DROP ROLE cp_shlepach;
+
+
+statement ok
+DROP ROLE cp_makak;
+
+
+statement ok
+DROP ROLE cp_lambda;
+
+
+statement ok
+DROP ROLE cp_kryakva;

@@ -1,0 +1,198 @@
+control substitution on
+
+# RBAC pg_catalog SYNTHESIS must survive a crash + WAL recovery. The existing
+# rbac_recovery.test proves role/membership/ACL *state* reloads; this one proves
+# the read-path SYNTHESIS built on top of that state still works after recovery:
+#   - pg_class.relacl rendered as aclitem text + real relowner
+#   - aclexplode() parsing the synthesized relacl back into rows
+#   - acldefault() / pg_get_userbyid()
+#   - information_schema.table_privileges (the relacl -> aclexplode -> name chain)
+#   - WITH GRANT OPTION rendering ('*') on a delegated grant
+#
+# Vedernikoff audits the clickclack ledger: a non-superuser login role granted
+# SELECT,INSERT WITH GRANT OPTION, plus a PUBLIC SELECT grant. The synthesized
+# relacl carries the owner self-grant (all privs '*'), the grantee entry with
+# '*' on its delegated privileges, and a PUBLIC entry ('' grantee) -- all three
+# must re-synthesize identically after a crash + WAL recovery.
+
+statement ok
+CREATE TABLE clickclack_ledger (id INTEGER, payload TEXT);
+
+
+statement count 2
+INSERT INTO clickclack_ledger VALUES (1, 'iceberg'), (2, 'MOP');
+
+
+statement ok
+CREATE ROLE vedernikoff LOGIN PASSWORD 'mop';
+
+
+statement ok
+GRANT SELECT, INSERT ON clickclack_ledger TO vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+GRANT SELECT ON clickclack_ledger TO PUBLIC;
+
+
+# --- relacl text + relowner BEFORE the crash ---
+# Owner self-grant carries all table privs, NO '*' (PG: owner goptions are
+# implicit, not stored); vedernikoff has a*r* (grant
+# option); PUBLIC ('') has r. Sort the unnested elements for determinism.
+query
+SELECT relowner = (SELECT oid FROM pg_authid WHERE rolname = 'postgres')
+FROM pg_class WHERE relname = 'clickclack_ledger';
+----
+?column?
+t
+
+
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'clickclack_ledger' ORDER BY e;
+----
+e
+=r/postgres
+postgres=arwdDxtm/postgres
+vedernikoff=a*r*/postgres
+
+
+# aclexplode round-trips the synthesized text back to (grantee, priv, grantable).
+query
+SELECT pg_get_userbyid(grantee) AS grantee_name, privilege_type, is_grantable
+FROM pg_class c, aclexplode(c.relacl)
+WHERE c.relname = 'clickclack_ledger'
+  AND pg_get_userbyid(grantee) = 'vedernikoff'
+ORDER BY privilege_type;
+----
+grantee_name	privilege_type	is_grantable
+vedernikoff	INSERT	t
+vedernikoff	SELECT	t
+
+
+# information_schema chain (relacl -> aclexplode -> role names).
+query
+SELECT grantee, privilege_type FROM information_schema.table_privileges
+WHERE table_name = 'clickclack_ledger' AND grantee = 'vedernikoff'
+ORDER BY privilege_type;
+----
+grantee	privilege_type
+vedernikoff	INSERT
+vedernikoff	SELECT
+
+
+# acldefault + pg_get_userbyid resolve correctly.
+query
+SELECT pg_get_userbyid((SELECT oid FROM pg_authid WHERE rolname='vedernikoff'));
+----
+pg_get_userbyid
+vedernikoff
+
+
+# ====================== CRASH ======================
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# ====================== POST-RECOVERY ======================
+
+# relacl text is byte-identical after recovery (re-synthesized from reloaded ACL).
+connection after_crash
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'clickclack_ledger' ORDER BY e;
+----
+e
+=r/postgres
+postgres=arwdDxtm/postgres
+vedernikoff=a*r*/postgres
+
+
+# relowner survived.
+connection after_crash
+query
+SELECT relowner = (SELECT oid FROM pg_authid WHERE rolname = 'postgres')
+FROM pg_class WHERE relname = 'clickclack_ledger';
+----
+?column?
+t
+
+
+# aclexplode still parses the recovered relacl.
+connection after_crash
+query
+SELECT pg_get_userbyid(grantee) AS grantee_name, privilege_type
+FROM pg_class c, aclexplode(c.relacl)
+WHERE c.relname = 'clickclack_ledger'
+  AND pg_get_userbyid(grantee) = 'vedernikoff'
+ORDER BY privilege_type;
+----
+grantee_name	privilege_type
+vedernikoff	INSERT
+vedernikoff	SELECT
+
+
+# information_schema chain still works after recovery.
+connection after_crash
+query
+SELECT grantee, privilege_type FROM information_schema.table_privileges
+WHERE table_name = 'clickclack_ledger' AND grantee = 'vedernikoff'
+ORDER BY privilege_type;
+----
+grantee	privilege_type
+vedernikoff	INSERT
+vedernikoff	SELECT
+
+
+# The real RBAC check (cache-backed) gives the same answers post-recovery.
+connection after_crash
+query
+SELECT
+  has_table_privilege('vedernikoff', 'clickclack_ledger', 'SELECT'),
+  has_table_privilege('vedernikoff', 'clickclack_ledger', 'INSERT'),
+  has_table_privilege('vedernikoff', 'clickclack_ledger', 'DELETE');
+----
+has_table_privilege	has_table_privilege	has_table_privilege
+t	t	f
+
+
+# A post-recovery REVOKE re-synthesizes relacl (vedernikoff entry drops to
+# just the remaining priv).
+connection after_crash
+statement ok
+REVOKE INSERT ON clickclack_ledger FROM vedernikoff;
+
+
+connection after_crash
+query
+SELECT unnest(relacl::text[]) AS e FROM pg_class
+WHERE relname = 'clickclack_ledger' ORDER BY e;
+----
+e
+=r/postgres
+postgres=arwdDxtm/postgres
+vedernikoff=r*/postgres
+
+
+# A fresh GRANT after recovery is reflected too.
+connection after_crash
+statement ok
+GRANT DELETE ON clickclack_ledger TO vedernikoff;
+
+
+connection after_crash
+query
+SELECT has_table_privilege('vedernikoff', 'clickclack_ledger', 'DELETE');
+----
+has_table_privilege
+t

@@ -1,0 +1,263 @@
+# Session identity end-to-end with a quoted MixedCase login role. A single role
+# "ident_Pavel" logs in, sees its MixedCase name from current_user / session_user
+# / current_role, and every grant or revoke we make against the quoted name flips
+# both the has_table_privilege oracle AND the role's real query path in lock-step.
+# All assertions are byte-identical on real PostgreSQL and serenedb.
+#
+# Also covered: PUBLIC grants reach a MixedCase login role exactly like any other
+# grantee, and self-membership (pg_has_role on the role itself) is t.
+#
+# We do NOT assert SET ROLE changing current_user: SET ROLE is accepted but not
+# enforced on serenedb, so current_user would stay the login role there while PG
+# switches it -- a divergence reported separately, kept out of this file.
+#
+# Objects prefixed ident_; file is idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS ident_shlepach;
+
+
+statement ok
+DROP TABLE IF EXISTS ident_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS "ident_Pavel";
+
+
+statement ok
+CREATE TABLE ident_shlepach (id int, salam text);
+
+
+statement ok
+INSERT INTO ident_shlepach VALUES (1, 'mop'), (2, 'iceberg');
+
+
+statement ok
+CREATE TABLE ident_kryakva (id int);
+
+
+statement ok
+CREATE ROLE "ident_Pavel" LOGIN PASSWORD 'pw';
+
+
+# ============================================================================
+# Identity: on its own connection the MixedCase role reports its exact name.
+# ============================================================================
+
+connection c_pavel user=ident_Pavel
+query
+SELECT current_user AS cu, session_user AS su, current_role AS cr;
+----
+cu	su	cr
+ident_Pavel	ident_Pavel	ident_Pavel
+
+
+# Self-membership: a role is always a member of itself (case-exact).
+
+query
+SELECT pg_has_role('ident_Pavel','ident_Pavel','MEMBER') AS self_mem,
+       pg_has_role('ident_Pavel','ident_Pavel','USAGE')  AS self_usg;
+----
+self_mem	self_usg
+t	t
+
+
+# ============================================================================
+# No grants yet: oracle all-f for both tables, and the real read is denied on
+# the live MixedCase connection.
+# ============================================================================
+
+query
+SELECT has_table_privilege('ident_Pavel','ident_shlepach','SELECT') AS sel,
+       has_table_privilege('ident_Pavel','ident_shlepach','INSERT') AS ins;
+----
+sel	ins
+f	f
+
+
+connection c_pavel user=ident_Pavel
+statement error
+SELECT * FROM ident_shlepach;
+----
+db error: ERROR: permission denied for table ident_shlepach<slt:ignore>
+
+
+# ============================================================================
+# GRANT SELECT to the quoted name -> oracle flips, the real read works, the
+# implicit-self two-arg oracle on the live connection agrees, write denied.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON ident_shlepach TO "ident_Pavel";
+
+
+query
+SELECT has_table_privilege('ident_Pavel','ident_shlepach','SELECT') AS sel,
+       has_table_privilege('ident_Pavel','ident_shlepach','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+connection c_pavel user=ident_Pavel
+query
+SELECT has_table_privilege('ident_shlepach','SELECT') AS sel,
+       has_table_privilege('ident_shlepach','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+connection c_pavel user=ident_Pavel
+query
+SELECT id, salam FROM ident_shlepach ORDER BY id;
+----
+id	salam
+1	mop
+2	iceberg
+
+
+connection c_pavel user=ident_Pavel
+statement error
+INSERT INTO ident_shlepach VALUES (3, 'pudge');
+----
+db error: ERROR: permission denied for table ident_shlepach<slt:ignore>
+
+
+# ============================================================================
+# GRANT INSERT too -> the real insert now succeeds and is visible to its own
+# SELECT on the same MixedCase connection.
+# ============================================================================
+
+statement ok
+GRANT INSERT ON ident_shlepach TO "ident_Pavel";
+
+
+query
+SELECT has_table_privilege('ident_Pavel','ident_shlepach','SELECT') AS sel,
+       has_table_privilege('ident_Pavel','ident_shlepach','INSERT') AS ins;
+----
+sel	ins
+t	t
+
+
+connection c_pavel user=ident_Pavel
+statement ok
+INSERT INTO ident_shlepach VALUES (3, 'clickclack');
+
+
+connection c_pavel user=ident_Pavel
+query
+SELECT count(*) AS n FROM ident_shlepach;
+----
+n
+3
+
+
+# ============================================================================
+# REVOKE SELECT only -> oracle drops SELECT, keeps INSERT; the real read is
+# refused again while inserts still go through under the MixedCase identity.
+# ============================================================================
+
+statement ok
+REVOKE SELECT ON ident_shlepach FROM "ident_Pavel";
+
+
+query
+SELECT has_table_privilege('ident_Pavel','ident_shlepach','SELECT') AS sel,
+       has_table_privilege('ident_Pavel','ident_shlepach','INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+connection c_pavel user=ident_Pavel
+statement error
+SELECT * FROM ident_shlepach;
+----
+db error: ERROR: permission denied for table ident_shlepach<slt:ignore>
+
+
+connection c_pavel user=ident_Pavel
+statement ok
+INSERT INTO ident_shlepach VALUES (4, 'babsky');
+
+
+# ============================================================================
+# A PUBLIC grant on a SEPARATE table reaches the MixedCase login role exactly
+# like any other grantee: the oracle shows SELECT t / INSERT f.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON ident_kryakva TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('ident_Pavel','ident_kryakva','SELECT') AS sel,
+       has_table_privilege('ident_Pavel','ident_kryakva','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# The PUBLIC-derived read works on the live MixedCase connection too.
+
+connection c_pavel user=ident_Pavel
+query
+SELECT count(*) AS n FROM ident_kryakva;
+----
+n
+0
+
+
+# ============================================================================
+# REVOKE ALL on the first table -> oracle all-f, real read and write denied
+# again under the MixedCase identity.
+# ============================================================================
+
+statement ok
+REVOKE ALL ON ident_shlepach FROM "ident_Pavel";
+
+
+query
+SELECT has_table_privilege('ident_Pavel','ident_shlepach','SELECT') AS sel,
+       has_table_privilege('ident_Pavel','ident_shlepach','INSERT') AS ins,
+       has_table_privilege('ident_Pavel','ident_shlepach','UPDATE') AS upd,
+       has_table_privilege('ident_Pavel','ident_shlepach','DELETE') AS del;
+----
+sel	ins	upd	del
+f	f	f	f
+
+
+connection c_pavel user=ident_Pavel
+statement error
+INSERT INTO ident_shlepach VALUES (5, 'zhidky');
+----
+db error: ERROR: permission denied for table ident_shlepach<slt:ignore>
+
+
+# The superuser owner is never denied (positive control): the 4 rows pavel
+# inserted while it had INSERT are all still there.
+
+query
+SELECT count(*) AS n FROM ident_shlepach;
+----
+n
+4
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE ident_shlepach;
+
+
+statement ok
+DROP TABLE ident_kryakva;
+
+
+statement ok
+DROP ROLE "ident_Pavel";

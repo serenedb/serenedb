@@ -1,0 +1,228 @@
+# has_table_privilege, oid overloads and edge-case argument handling. The
+# focus here is the difference between the THREE ways a "missing" argument can
+# arrive, all byte-identical on PostgreSQL and serenedb:
+#   - a LITERAL unknown role oid (e.g. 9999999) EVALUATES to f -- it is simply a
+#     role that is neither owner nor grantee, not an error;
+#   - a NULL role/table oid (a catalog subquery that found nothing) yields NULL,
+#     never an error or f;
+#   - a missing role/relation NAME raises the same "does not exist" error on
+#     both engines.
+# It also drives the 2-arg current_user form across a real second connection so
+# the implicit-role spelling is exercised as a non-owner, then confirms the
+# oid forms agree with the canonical name form for membership-inherited grants.
+#
+# Objects prefixed htp_ (clickclack/vedernikoff/kostya/pudge lore); idempotent
+# and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS htp_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS htp_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS htp_babsky;
+
+
+statement ok
+CREATE TABLE htp_pudge (id int, clickclack text);
+
+
+statement ok
+INSERT INTO htp_pudge VALUES (1, 'iceberg'), (2, 'mop');
+
+
+statement ok
+CREATE ROLE htp_kostya LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON htp_pudge TO htp_kostya;
+
+
+# ============================================================================
+# A LITERAL unknown role oid evaluates rather than erroring. 9999999 is not the
+# owner and holds no grant, so every privilege is f -- and the same literal oid
+# against the relation BY NAME behaves identically.
+# ============================================================================
+
+query
+SELECT
+  has_table_privilege(9999999,(SELECT oid FROM pg_class WHERE relname='htp_pudge'),'SELECT') AS sel_oidtbl,
+  has_table_privilege(9999999,(SELECT oid FROM pg_class WHERE relname='htp_pudge'),'INSERT') AS ins_oidtbl,
+  has_table_privilege(9999999,'htp_pudge','SELECT')                                          AS sel_nametbl;
+----
+sel_oidtbl	ins_oidtbl	sel_nametbl
+f	f	f
+
+
+# ============================================================================
+# A NULL role oid (a pg_roles subquery that matched no row) propagates to NULL,
+# distinct from the literal-oid case above which evaluated to f.
+# ============================================================================
+
+query
+SELECT
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_no_such_role'),
+                      (SELECT oid FROM pg_class WHERE relname='htp_pudge'),'SELECT') IS NULL AS null_role_oid;
+----
+null_role_oid
+t
+
+
+# ============================================================================
+# A NULL table oid (a pg_class subquery that matched no row) also yields NULL,
+# even for a real grantee role -- the missing-relation oid short-circuits to
+# NULL before any privilege check.
+# ============================================================================
+
+query
+SELECT
+  has_table_privilege('htp_kostya',
+                      (SELECT oid FROM pg_class WHERE relname='htp_no_such_table'),'SELECT') IS NULL AS null_tbl_name,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_kostya'),
+                      (SELECT oid FROM pg_class WHERE relname='htp_no_such_table'),'SELECT') IS NULL AS null_tbl_oid;
+----
+null_tbl_name	null_tbl_oid
+t	t
+
+
+# ============================================================================
+# A missing role NAME (not an oid) raises the identical error on both engines.
+# Plain block: the message is byte-for-byte equal.
+# ============================================================================
+
+statement error
+SELECT has_table_privilege('htp_no_such_role','htp_pudge','SELECT');
+----
+db error: ERROR: role "htp_no_such_role" does not exist
+
+
+# ============================================================================
+# A missing relation NAME (not an oid) likewise raises the identical error on
+# both engines.
+# ============================================================================
+
+statement error
+SELECT has_table_privilege('htp_kostya','htp_no_such_table','SELECT');
+----
+db error: ERROR: relation "htp_no_such_table" does not exist
+
+
+# ============================================================================
+# The granted SELECT is seen by all four (role x table) name/oid forms, and
+# they all agree (every equality t). INSERT is not held, and that absence also
+# agrees across the oid and name spellings.
+# ============================================================================
+
+query
+SELECT
+  has_table_privilege('htp_kostya','htp_pudge','SELECT')                                            AS nn,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_kostya'),
+                      (SELECT oid FROM pg_class WHERE relname='htp_pudge'),'SELECT')                AS oo,
+  has_table_privilege('htp_kostya',(SELECT oid FROM pg_class WHERE relname='htp_pudge'),'SELECT')  AS no,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_kostya'),'htp_pudge','SELECT')  AS on_;
+----
+nn	oo	no	on_
+t	t	t	t
+
+
+query
+SELECT
+  (has_table_privilege('htp_kostya','htp_pudge','INSERT')
+   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_kostya'),
+                         (SELECT oid FROM pg_class WHERE relname='htp_pudge'),'INSERT')) AS ins_agree,
+  has_table_privilege('htp_kostya','htp_pudge','INSERT') AS ins;
+----
+ins_agree	ins
+t	f
+
+
+# ============================================================================
+# 2-arg current_user form over a real second connection. Authenticated AS
+# htp_kostya, has_table_privilege(table, priv) resolves to htp_kostya: SELECT
+# (granted) is t, INSERT is f -- and the relation arg works by name and by oid.
+# The query path agrees: SELECT succeeds, INSERT is denied.
+# ============================================================================
+
+connection c_kostya user=htp_kostya
+query
+SELECT has_table_privilege('htp_pudge','SELECT')                                          AS sel_name,
+       has_table_privilege('htp_pudge','INSERT')                                          AS ins_name,
+       has_table_privilege((SELECT oid FROM pg_class WHERE relname='htp_pudge'),'SELECT') AS sel_oid,
+       has_table_privilege('htp_pudge','SELECT, INSERT')                                  AS anyof;
+----
+sel_name	ins_name	sel_oid	anyof
+t	f	t	t
+
+
+connection c_kostya user=htp_kostya
+query
+SELECT id, clickclack FROM htp_pudge ORDER BY id;
+----
+id	clickclack
+1	iceberg
+2	mop
+
+
+connection c_kostya user=htp_kostya
+statement error
+INSERT INTO htp_pudge VALUES (3, 'pudge');
+----
+db error: ERROR: permission denied for table htp_pudge<slt:ignore>
+
+
+# ============================================================================
+# Membership-inherited grant probed through the oid form. htp_babsky inherits
+# SELECT through htp_kostya; the (role_oid, table_oid) overload reflects the
+# inheritance exactly as the name form does.
+# ============================================================================
+
+statement ok
+CREATE ROLE htp_babsky;
+
+
+# Before membership: htp_babsky holds nothing, by either spelling.
+query
+SELECT has_table_privilege('htp_babsky','htp_pudge','SELECT') AS by_name,
+       has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_babsky'),
+                           (SELECT oid FROM pg_class WHERE relname='htp_pudge'),'SELECT') AS by_oid;
+----
+by_name	by_oid
+f	f
+
+
+statement ok
+GRANT htp_kostya TO htp_babsky;
+
+
+# After membership: the inherited SELECT shows through both name and oid forms,
+# and they agree.
+query
+SELECT has_table_privilege('htp_babsky','htp_pudge','SELECT') AS by_name,
+       has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_babsky'),
+                           (SELECT oid FROM pg_class WHERE relname='htp_pudge'),'SELECT') AS by_oid,
+       (has_table_privilege('htp_babsky','htp_pudge','SELECT')
+        = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_babsky'),
+                              (SELECT oid FROM pg_class WHERE relname='htp_pudge'),'SELECT')) AS agree;
+----
+by_name	by_oid	agree
+t	t	t
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE htp_pudge;
+
+
+statement ok
+DROP ROLE htp_babsky;
+
+
+statement ok
+DROP ROLE htp_kostya;

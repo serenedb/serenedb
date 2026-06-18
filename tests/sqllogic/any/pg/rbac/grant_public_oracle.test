@@ -1,0 +1,72 @@
+# has_table_privilege resolves the literal role name 'public' to the PUBLIC
+# pseudo-role and returns a boolean: false on an owner-only table, true after a
+# GRANT ... TO PUBLIC. Every assertion is byte-identical on PostgreSQL 19 and
+# serenedb.
+#
+# Lore: dgm_clickclack table; dgm_vedernikoff a regular role that benefits from
+# the PUBLIC grant. Idempotent + self-clean.
+
+statement ok
+DROP TABLE IF EXISTS dgm_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dgm_vedernikoff;
+
+
+statement ok
+CREATE TABLE dgm_clickclack (id int);
+
+
+statement ok
+CREATE ROLE dgm_vedernikoff;
+
+
+# On an owner-only table, the PUBLIC pseudo-role holds no SELECT.
+query
+SELECT has_table_privilege('public', 'dgm_clickclack', 'SELECT') AS pub_sel;
+----
+pub_sel
+f
+
+
+# After GRANT ... TO PUBLIC, the oracle reports the privilege for PUBLIC...
+statement ok
+GRANT SELECT ON dgm_clickclack TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('public', 'dgm_clickclack', 'SELECT') AS pub_sel;
+----
+pub_sel
+t
+
+
+# ...and a regular role passes the oracle via the PUBLIC ACL.
+query
+SELECT has_table_privilege('dgm_vedernikoff', 'dgm_clickclack', 'SELECT') AS via_public;
+----
+via_public
+t
+
+
+# Revoking from PUBLIC removes it again, for both PUBLIC and the regular role.
+statement ok
+REVOKE SELECT ON dgm_clickclack FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('public', 'dgm_clickclack', 'SELECT')          AS pub_sel,
+       has_table_privilege('dgm_vedernikoff', 'dgm_clickclack', 'SELECT') AS via_public;
+----
+pub_sel	via_public
+f	f
+
+
+# Cleanup.
+statement ok
+DROP TABLE dgm_clickclack;
+
+
+statement ok
+DROP ROLE dgm_vedernikoff;

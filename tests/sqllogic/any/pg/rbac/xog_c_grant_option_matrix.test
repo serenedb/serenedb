@@ -1,0 +1,107 @@
+# Cross-product file C: WITH GRANT OPTION held vs not, owner vs grantee, across
+# SELECT/INSERT/UPDATE/DELETE. The oracle form 'X WITH GRANT OPTION' is true
+# only when the role can re-grant X; the relacl letter for a grantable
+# privilege is suffixed with '*'. The owner is always grantable on its own
+# table even though it has no relacl row.
+#
+# Lore: xog_mop is the superuser-owned table; xog_c_kostya is the grantee.
+
+statement ok
+DROP TABLE IF EXISTS xog_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_c_kostya;
+
+
+statement ok
+CREATE TABLE xog_mop (id int);
+
+
+statement ok
+CREATE ROLE xog_c_kostya LOGIN PASSWORD 'pw';
+
+
+# The owner (postgres) holds every privilege WITH GRANT OPTION implicitly --
+# an owner can always re-grant on its own table.
+query
+SELECT has_table_privilege('postgres','xog_mop','SELECT WITH GRANT OPTION') AS sel_go,
+       has_table_privilege('postgres','xog_mop','INSERT WITH GRANT OPTION') AS ins_go,
+       has_table_privilege('postgres','xog_mop','UPDATE WITH GRANT OPTION') AS upd_go,
+       has_table_privilege('postgres','xog_mop','DELETE WITH GRANT OPTION') AS del_go;
+----
+sel_go	ins_go	upd_go	del_go
+t	t	t	t
+
+
+# Grant SELECT WITH GRANT OPTION but UPDATE WITHOUT it. The grantee can re-grant
+# SELECT but not UPDATE; the plain-privilege oracle is true for both.
+statement ok
+GRANT SELECT ON xog_mop TO xog_c_kostya WITH GRANT OPTION;
+
+
+statement ok
+GRANT UPDATE ON xog_mop TO xog_c_kostya;
+
+
+# Plain privilege: both held.
+query
+SELECT has_table_privilege('xog_c_kostya','xog_mop','SELECT') AS sel,
+       has_table_privilege('xog_c_kostya','xog_mop','UPDATE') AS upd;
+----
+sel	upd
+t	t
+
+
+# Grant option: only on SELECT.
+query
+SELECT has_table_privilege('xog_c_kostya','xog_mop','SELECT WITH GRANT OPTION') AS sel_go,
+       has_table_privilege('xog_c_kostya','xog_mop','UPDATE WITH GRANT OPTION') AS upd_go;
+----
+sel_go	upd_go
+t	f
+
+
+# The ACL row shows '*' only on the grantable letter (r* = SELECT-grantable,
+# w = UPDATE-plain).
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_mop'
+) g WHERE e LIKE 'xog_c_kostya=%';
+----
+e
+xog_c_kostya=r*w/postgres
+
+
+# Re-granting the same privilege WITH GRANT OPTION upgrades the plain UPDATE to
+# grantable; the SELECT option is unchanged.
+statement ok
+GRANT UPDATE ON xog_mop TO xog_c_kostya WITH GRANT OPTION;
+
+
+query
+SELECT has_table_privilege('xog_c_kostya','xog_mop','UPDATE WITH GRANT OPTION') AS upd_go;
+----
+upd_go
+t
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_mop'
+) g WHERE e LIKE 'xog_c_kostya=%';
+----
+e
+xog_c_kostya=r*w*/postgres
+
+
+# NOTE: `REVOKE GRANT OPTION FOR ...` (stripping only the option, keeping the
+# privilege) is PG syntax SereneDB does not yet parse, so it is exercised as a
+# divergence in tests/sqllogic/sdb/pg/rbac/, not here.
+
+statement ok
+DROP TABLE xog_mop;
+
+
+statement ok
+DROP ROLE xog_c_kostya;

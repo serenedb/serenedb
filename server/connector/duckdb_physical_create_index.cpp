@@ -116,8 +116,8 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
     if (created && !finalized) {
       try {
         auto& catalog = catalog::GetCatalog();
-        std::ignore =
-          catalog.DropIndex(database_name, schema_name, index_name, true);
+        std::ignore = catalog.DropIndex(catalog::NoAccessCheck(), database_name,
+                                        schema_name, index_name, true);
       } catch (...) {
       }
     }
@@ -340,7 +340,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // Get fresh snapshot with the new index
   auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_index =
-    snapshot->GetRelation(_database_id, _schema_entry.name, _info->index_name);
+    snapshot->GetRelation(catalog::NoAccessCheck(), _database_id,
+                          _schema_entry.name, _info->index_name);
   SDB_ASSERT(catalog_index);
   if (state->progress) {
     state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
@@ -716,8 +717,8 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     // and synthesise a column list from its bound schema.
     auto& conn_ctx = GetSereneDBContext(input.context);
     auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    relation =
-      snapshot->GetRelation(database_id, schema_entry.name, op.table.name);
+    relation = snapshot->GetRelation(catalog::NoAccessCheck(), database_id,
+                                     schema_entry.name, op.table.name);
     if (!relation || relation->GetType() != catalog::ObjectType::PgSqlView) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

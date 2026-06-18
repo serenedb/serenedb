@@ -1,0 +1,358 @@
+# A bushy graph that is wide AND deep at once. A deep spine of depth six carries
+# privileges upward, while at each spine level a fan of side-groups injects extra
+# privileges. A single apex role sits at the top of the spine and must inherit
+# the UNION of everything reachable below it through every parallel path.
+# Revoking one side-edge removes only the privilege that arrived through it.
+# Asserted with has_table_privilege / pg_has_role (byte-identical on both).
+#
+# Spine (-> reads "is a member of"), 6 nodes deep:
+#   wide_bg_apex -> wide_bg_s1 -> wide_bg_s2 -> wide_bg_s3 -> wide_bg_s4 -> wide_bg_s5
+# Side-groups feeding privileges into spine nodes:
+#   wide_bg_side_sel   -> wide_bg_s5   (SELECT)
+#   wide_bg_side_ins   -> wide_bg_s4   (INSERT)
+#   wide_bg_side_upd   -> wide_bg_s3   (UPDATE)
+#   wide_bg_side_del   -> wide_bg_s2   (DELETE)
+#   wide_bg_side_trunc -> wide_bg_s1   (TRUNCATE)
+# Everything bubbles up to wide_bg_apex.
+
+statement ok
+DROP TABLE IF EXISTS wide_bg_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_apex;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_s1;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_s2;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_s3;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_s4;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_s5;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_side_sel;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_side_ins;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_side_upd;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_side_del;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_side_trunc;
+
+
+statement ok
+CREATE TABLE wide_bg_iceberg (id int, payload text);
+
+
+statement ok
+INSERT INTO wide_bg_iceberg VALUES (1, 'clickclack'), (2, 'mop');
+
+
+statement ok
+CREATE ROLE wide_bg_apex LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE wide_bg_s1;
+
+
+statement ok
+CREATE ROLE wide_bg_s2;
+
+
+statement ok
+CREATE ROLE wide_bg_s3;
+
+
+statement ok
+CREATE ROLE wide_bg_s4;
+
+
+statement ok
+CREATE ROLE wide_bg_s5;
+
+
+statement ok
+CREATE ROLE wide_bg_side_sel;
+
+
+statement ok
+CREATE ROLE wide_bg_side_ins;
+
+
+statement ok
+CREATE ROLE wide_bg_side_upd;
+
+
+statement ok
+CREATE ROLE wide_bg_side_del;
+
+
+statement ok
+CREATE ROLE wide_bg_side_trunc;
+
+
+# ---- Build the deep spine apex -> s1 -> s2 -> s3 -> s4 -> s5 ----
+
+statement ok
+GRANT wide_bg_s1 TO wide_bg_apex;
+
+
+statement ok
+GRANT wide_bg_s2 TO wide_bg_s1;
+
+
+statement ok
+GRANT wide_bg_s3 TO wide_bg_s2;
+
+
+statement ok
+GRANT wide_bg_s4 TO wide_bg_s3;
+
+
+statement ok
+GRANT wide_bg_s5 TO wide_bg_s4;
+
+
+# ---- Attach the side-groups so each spine node is a member of its side-group ----
+
+statement ok
+GRANT wide_bg_side_sel TO wide_bg_s5;
+
+
+statement ok
+GRANT wide_bg_side_ins TO wide_bg_s4;
+
+
+statement ok
+GRANT wide_bg_side_upd TO wide_bg_s3;
+
+
+statement ok
+GRANT wide_bg_side_del TO wide_bg_s2;
+
+
+statement ok
+GRANT wide_bg_side_trunc TO wide_bg_s1;
+
+
+# ---- Grant one privilege to each side-group ----
+
+statement ok
+GRANT SELECT ON wide_bg_iceberg TO wide_bg_side_sel;
+
+
+statement ok
+GRANT INSERT ON wide_bg_iceberg TO wide_bg_side_ins;
+
+
+statement ok
+GRANT UPDATE ON wide_bg_iceberg TO wide_bg_side_upd;
+
+
+statement ok
+GRANT DELETE ON wide_bg_iceberg TO wide_bg_side_del;
+
+
+statement ok
+GRANT TRUNCATE ON wide_bg_iceberg TO wide_bg_side_trunc;
+
+
+# ---- The apex inherits the UNION of all five privileges through the bushy graph ----
+
+query
+SELECT has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'SELECT')   AS sel,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'INSERT')   AS ins,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'UPDATE')   AS upd,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'DELETE')   AS del,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'TRUNCATE') AS trunc,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'TRIGGER')  AS trig;
+----
+sel	ins	upd	del	trunc	trig
+t	t	t	t	t	f
+
+
+# Each spine node sees only what is at or below its own level. s3 (which sits
+# above the UPDATE/INSERT/SELECT injections) has those, but not DELETE/TRUNCATE
+# which are injected lower-priority... actually injected at s2/s1 which are ABOVE
+# s3 in the spine, so s3 does NOT see them.
+query
+SELECT has_table_privilege('wide_bg_s3', 'wide_bg_iceberg', 'SELECT')   AS sel,
+       has_table_privilege('wide_bg_s3', 'wide_bg_iceberg', 'INSERT')   AS ins,
+       has_table_privilege('wide_bg_s3', 'wide_bg_iceberg', 'UPDATE')   AS upd,
+       has_table_privilege('wide_bg_s3', 'wide_bg_iceberg', 'DELETE')   AS del,
+       has_table_privilege('wide_bg_s3', 'wide_bg_iceberg', 'TRUNCATE') AS trunc;
+----
+sel	ins	upd	del	trunc
+t	t	t	f	f
+
+
+# The deepest spine node s5 sees only SELECT (its own side-group).
+query
+SELECT has_table_privilege('wide_bg_s5', 'wide_bg_iceberg', 'SELECT')   AS sel,
+       has_table_privilege('wide_bg_s5', 'wide_bg_iceberg', 'INSERT')   AS ins,
+       has_table_privilege('wide_bg_s5', 'wide_bg_iceberg', 'TRUNCATE') AS trunc;
+----
+sel	ins	trunc
+t	f	f
+
+
+# ---- pg_has_role: apex reaches every spine node and every side-group ----
+
+query
+SELECT pg_has_role('wide_bg_apex', 'wide_bg_s5', 'USAGE')        AS to_s5,
+       pg_has_role('wide_bg_apex', 'wide_bg_side_sel', 'USAGE')  AS to_side_sel,
+       pg_has_role('wide_bg_apex', 'wide_bg_side_trunc', 'USAGE') AS to_side_trunc;
+----
+to_s5	to_side_sel	to_side_trunc
+t	t	t
+
+
+# A deep spine node reaches only the side-groups at or below it.
+query
+SELECT pg_has_role('wide_bg_s4', 'wide_bg_side_sel', 'USAGE')   AS s4_to_sel,
+       pg_has_role('wide_bg_s4', 'wide_bg_side_ins', 'USAGE')   AS s4_to_ins,
+       pg_has_role('wide_bg_s4', 'wide_bg_side_upd', 'USAGE')   AS s4_to_upd;
+----
+s4_to_sel	s4_to_ins	s4_to_upd
+t	t	f
+
+
+# ---- Revoke ONE side-edge: detach the UPDATE side-group from s3 ----
+# UPDATE arrived only through wide_bg_side_upd -> s3. Removing that edge strips
+# UPDATE from the apex and from s3, but leaves every other privilege intact.
+
+statement ok
+REVOKE wide_bg_side_upd FROM wide_bg_s3;
+
+
+query
+SELECT has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'SELECT')   AS sel,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'INSERT')   AS ins,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'UPDATE')   AS upd,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'DELETE')   AS del,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'TRUNCATE') AS trunc;
+----
+sel	ins	upd	del	trunc
+t	t	f	t	t
+
+
+# s3 lost UPDATE; the lower nodes never had it anyway.
+query
+SELECT has_table_privilege('wide_bg_s3', 'wide_bg_iceberg', 'UPDATE') AS s3_upd,
+       pg_has_role('wide_bg_s3', 'wide_bg_side_upd', 'USAGE')         AS s3_in_upd_grp,
+       pg_has_role('wide_bg_apex', 'wide_bg_side_upd', 'USAGE')       AS apex_in_upd_grp;
+----
+s3_upd	s3_in_upd_grp	apex_in_upd_grp
+f	f	f
+
+
+# ---- Cut the spine at s2 -> s3: everything injected at s3 and below is lost ----
+# After this, apex/s1/s2 keep only DELETE (s2 side) and TRUNCATE (s1 side);
+# SELECT and INSERT (injected at s5/s4, below the cut) vanish from the apex.
+
+statement ok
+REVOKE wide_bg_s3 FROM wide_bg_s2;
+
+
+query
+SELECT has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'SELECT')   AS sel,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'INSERT')   AS ins,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'DELETE')   AS del,
+       has_table_privilege('wide_bg_apex', 'wide_bg_iceberg', 'TRUNCATE') AS trunc;
+----
+sel	ins	del	trunc
+f	f	t	t
+
+
+# Below the cut, s3 still reaches s4/s5 and keeps SELECT/INSERT.
+query
+SELECT has_table_privilege('wide_bg_s3', 'wide_bg_iceberg', 'SELECT') AS sel,
+       has_table_privilege('wide_bg_s3', 'wide_bg_iceberg', 'INSERT') AS ins,
+       pg_has_role('wide_bg_s3', 'wide_bg_s5', 'USAGE')               AS reaches_s5;
+----
+sel	ins	reaches_s5
+t	t	t
+
+
+# ---- Real enforcement at the apex: SELECT was cut above the spine break ----
+# apex is denied a real read (it lost SELECT when the s2 -> s3 edge was severed).
+
+connection c_apex user=wide_bg_apex
+statement error
+SELECT * FROM wide_bg_iceberg;
+----
+db error: ERROR: permission denied for table wide_bg_iceberg<slt:ignore>
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS wide_bg_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_apex;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_s1;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_s2;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_s3;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_s4;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_s5;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_side_sel;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_side_ins;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_side_upd;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_side_del;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_bg_side_trunc;

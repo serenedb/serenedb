@@ -1,0 +1,267 @@
+# has_table_privilege, ALL argument forms agree on one underlying grant.
+#
+# A single grant (SELECT WITH GRANT OPTION + INSERT, plain) is probed through
+# every overload PostgreSQL exposes and serenedb mirrors byte-for-byte:
+#   (name, name, priv)            -- the canonical text form
+#   (oid,  oid,  priv)            -- both args resolved via catalog subqueries
+#   (name, oid,  priv)            -- mixed: role name + relation oid
+#   (oid,  name, priv)            -- mixed: role oid + relation name
+#   (table, priv) 2-arg           -- implicit current_user (asserted as owner)
+#   comma-list any-of             -- 'SELECT, UPDATE' is true if ANY is held
+#   'PRIV WITH GRANT OPTION'      -- true only when the grant carries the option
+# Every form is asserted to AGREE with the others and to match the grant.
+#
+# Role/table oids come from (SELECT oid FROM pg_roles|pg_class WHERE ...).
+# Everything is prefixed htp_ under the clickclack/vedernikoff lore; the file
+# is idempotent (DROP IF EXISTS up front) and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS htp_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS htp_vedernikoff;
+
+
+statement ok
+CREATE TABLE htp_iceberg (id int, mop text);
+
+
+statement ok
+CREATE ROLE htp_vedernikoff;
+
+
+# SELECT carries the grant option; INSERT is granted plain. This asymmetry lets
+# the 'WITH GRANT OPTION' form distinguish the two underneath every overload.
+statement ok
+GRANT SELECT ON htp_iceberg TO htp_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+GRANT INSERT ON htp_iceberg TO htp_vedernikoff;
+
+
+# ============================================================================
+# Form 1: (name, name, priv) -- the canonical text form. SELECT and INSERT are
+# held; UPDATE is not. This is the baseline every other form must match.
+# ============================================================================
+
+query
+SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT') AS sel,
+       has_table_privilege('htp_vedernikoff','htp_iceberg','INSERT') AS ins,
+       has_table_privilege('htp_vedernikoff','htp_iceberg','UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# ============================================================================
+# Form 2: (oid, oid, priv) -- both arguments resolved from the catalog. Must
+# reproduce Form 1 exactly.
+# ============================================================================
+
+query
+SELECT
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                      (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'SELECT') AS sel,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                      (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'INSERT') AS ins,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                      (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# ============================================================================
+# Form 3: (name, oid, priv) -- role by name, relation by oid.
+# ============================================================================
+
+query
+SELECT
+  has_table_privilege('htp_vedernikoff',
+                      (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'SELECT') AS sel,
+  has_table_privilege('htp_vedernikoff',
+                      (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'INSERT') AS ins,
+  has_table_privilege('htp_vedernikoff',
+                      (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# ============================================================================
+# Form 4: (oid, name, priv) -- role by oid, relation by name.
+# ============================================================================
+
+query
+SELECT
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                      'htp_iceberg', 'SELECT') AS sel,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                      'htp_iceberg', 'INSERT') AS ins,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                      'htp_iceberg', 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# ============================================================================
+# All four forms agree at once: every equality holds (t), proving the overloads
+# share one underlying privilege computation rather than diverging by argument
+# type. Probed on SELECT (held) and UPDATE (not held).
+# ============================================================================
+
+query
+SELECT
+  (has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT')
+   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                         (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'SELECT')) AS nn_oo,
+  (has_table_privilege('htp_vedernikoff',
+                       (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'SELECT')
+   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                         'htp_iceberg', 'SELECT')) AS no_on,
+  (has_table_privilege('htp_vedernikoff','htp_iceberg','UPDATE')
+   = has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                         (SELECT oid FROM pg_class WHERE relname='htp_iceberg'), 'UPDATE')) AS upd_agree;
+----
+nn_oo	no_on	upd_agree
+t	t	t
+
+
+# ============================================================================
+# Comma-list ANY-OF form: a comma-separated privilege list is true when ANY one
+# member is held. Whitespace around commas is insignificant.
+# ============================================================================
+
+# SELECT held => 'SELECT, UPDATE' true; UPDATE+DELETE both absent => false.
+query
+SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT, UPDATE') AS sel_or_upd,
+       has_table_privilege('htp_vedernikoff','htp_iceberg','UPDATE, DELETE') AS upd_or_del;
+----
+sel_or_upd	upd_or_del
+t	f
+
+
+# No spaces vs. spaces around the comma are equivalent; SELECT,INSERT both held.
+query
+SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT,INSERT')  AS tight,
+       has_table_privilege('htp_vedernikoff','htp_iceberg','INSERT , UPDATE') AS loose;
+----
+tight	loose
+t	t
+
+
+# ============================================================================
+# 'PRIV WITH GRANT OPTION' form: true only when the underlying grant carries the
+# option. SELECT was granted WITH GRANT OPTION (=> t); INSERT was granted plain
+# (=> f). This is the bit the boolean forms above cannot see.
+# ============================================================================
+
+query
+SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT WITH GRANT OPTION') AS sel_wgo,
+       has_table_privilege('htp_vedernikoff','htp_iceberg','INSERT WITH GRANT OPTION') AS ins_wgo;
+----
+sel_wgo	ins_wgo
+t	f
+
+
+# The WITH GRANT OPTION suffix also resolves through the oid overload identically.
+query
+SELECT
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                      (SELECT oid FROM pg_class WHERE relname='htp_iceberg'),
+                      'SELECT WITH GRANT OPTION') AS sel_wgo_oid,
+  has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                      (SELECT oid FROM pg_class WHERE relname='htp_iceberg'),
+                      'INSERT WITH GRANT OPTION') AS ins_wgo_oid;
+----
+sel_wgo_oid	ins_wgo_oid
+t	f
+
+
+# ANY-OF combined with WITH GRANT OPTION: 'INSERT WITH GRANT OPTION, SELECT WITH
+# GRANT OPTION' is true because SELECT (the second member) carries the option,
+# even though INSERT does not.
+query
+SELECT has_table_privilege('htp_vedernikoff','htp_iceberg',
+                           'INSERT WITH GRANT OPTION, SELECT WITH GRANT OPTION') AS any_wgo;
+----
+any_wgo
+t
+
+
+# ============================================================================
+# Privilege keyword is case-insensitive across every form.
+# ============================================================================
+
+query
+SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','select') AS lower_sel,
+       has_table_privilege('htp_vedernikoff','htp_iceberg','Insert') AS mixed_ins,
+       has_table_privilege('htp_vedernikoff','htp_iceberg','UpDaTe') AS mixed_upd;
+----
+lower_sel	mixed_ins	mixed_upd
+t	t	f
+
+
+# ============================================================================
+# The grant option moves with REVOKE/re-GRANT, and every form tracks it. After
+# revoking SELECT entirely and re-granting it WITHOUT the option, the plain
+# SELECT bit is t again but 'SELECT WITH GRANT OPTION' flips to f.
+# ============================================================================
+
+statement ok
+REVOKE SELECT ON htp_iceberg FROM htp_vedernikoff;
+
+
+query
+SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT') AS sel,
+       has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT WITH GRANT OPTION') AS sel_wgo;
+----
+sel	sel_wgo
+f	f
+
+
+statement ok
+GRANT SELECT ON htp_iceberg TO htp_vedernikoff;
+
+
+# SELECT held again, but now WITHOUT the grant option -- the WGO form is f while
+# the plain form (and the oid overload of it) is t.
+query
+SELECT has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT') AS sel,
+       has_table_privilege((SELECT oid FROM pg_roles WHERE rolname='htp_vedernikoff'),
+                           'htp_iceberg','SELECT') AS sel_oid,
+       has_table_privilege('htp_vedernikoff','htp_iceberg','SELECT WITH GRANT OPTION') AS sel_wgo;
+----
+sel	sel_oid	sel_wgo
+t	t	f
+
+
+# ============================================================================
+# 2-arg form: has_table_privilege(table, priv) uses the CURRENT user implicitly.
+# This session is the owner (postgres), so every privilege is held -- both the
+# name and oid spellings of the relation argument, and a comma any-of list.
+# ============================================================================
+
+query
+SELECT has_table_privilege('htp_iceberg','SELECT')                          AS sel_name,
+       has_table_privilege('htp_iceberg','TRUNCATE')                        AS trunc_name,
+       has_table_privilege((SELECT oid FROM pg_class WHERE relname='htp_iceberg'),'DELETE') AS del_oid,
+       has_table_privilege('htp_iceberg','SELECT, UPDATE')                  AS anyof;
+----
+sel_name	trunc_name	del_oid	anyof
+t	t	t	t
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE htp_iceberg;
+
+
+statement ok
+DROP ROLE htp_vedernikoff;

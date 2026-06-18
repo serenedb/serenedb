@@ -1,0 +1,139 @@
+# table_privileges vs role_table_grants differ on PUBLIC. The two views share
+# columns, but their WHERE clauses differ: table_privileges shows a row if the
+# privilege is held by the current role OR by PUBLIC, while role_table_grants
+# shows a row only where the current role is itself the grantor or grantee
+# (PUBLIC rows are excluded). We grant SELECT to PUBLIC and INSERT to a login
+# role, then connect AS that role and observe: table_privileges shows both the
+# PUBLIC and the own row; role_table_grants shows only the own row. This
+# distinction is byte-identical on PostgreSQL 19beta1 and serenedb.
+#
+# Vedernikoff lore: the makak table is readable by the world but only writable
+# by lambda.
+
+statement ok
+DROP TABLE IF EXISTS isp_makak;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_lambda;
+
+
+statement ok
+CREATE TABLE isp_makak (id int, blob text);
+
+
+statement ok
+CREATE ROLE isp_lambda LOGIN PASSWORD 'mop';
+
+
+statement ok
+GRANT SELECT ON isp_makak TO PUBLIC;
+
+
+statement ok
+GRANT INSERT ON isp_makak TO isp_lambda;
+
+
+# ============================================================================
+# Owner connection: both views expose the PUBLIC row and lambda's row.
+# ============================================================================
+
+query
+SELECT grantee, privilege_type
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_makak' AND grantee IN ('PUBLIC', 'isp_lambda')
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type
+PUBLIC	SELECT
+isp_lambda	INSERT
+
+
+query
+SELECT grantee, privilege_type
+FROM information_schema.role_table_grants
+WHERE table_name = 'isp_makak' AND grantee IN ('PUBLIC', 'isp_lambda')
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type
+PUBLIC	SELECT
+isp_lambda	INSERT
+
+
+# ============================================================================
+# Connected AS lambda: table_privileges shows the PUBLIC SELECT row (lambda
+# benefits from it) AND lambda's own INSERT row.
+# ============================================================================
+
+connection c_lambda user=isp_lambda
+query
+SELECT grantee, privilege_type
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_makak'
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type
+PUBLIC	SELECT
+isp_lambda	INSERT
+
+
+# ============================================================================
+# Connected AS lambda: role_table_grants shows ONLY lambda's own INSERT row.
+# The PUBLIC SELECT row is excluded -- this is the defining difference between
+# the two views.
+# ============================================================================
+
+connection c_lambda user=isp_lambda
+query
+SELECT grantee, privilege_type
+FROM information_schema.role_table_grants
+WHERE table_name = 'isp_makak'
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type
+isp_lambda	INSERT
+
+
+# The PUBLIC row count differs by view from lambda's seat: 1 vs 0.
+connection c_lambda user=isp_lambda
+query
+SELECT
+  (SELECT count(*) FROM information_schema.table_privileges
+     WHERE table_name = 'isp_makak' AND grantee = 'PUBLIC') AS in_table_privileges,
+  (SELECT count(*) FROM information_schema.role_table_grants
+     WHERE table_name = 'isp_makak' AND grantee = 'PUBLIC') AS in_role_table_grants;
+----
+in_table_privileges	in_role_table_grants
+1	0
+
+
+# ============================================================================
+# Revoking the PUBLIC grant removes the PUBLIC row from table_privileges on
+# lambda's connection too; only the own INSERT row remains in both views.
+# ============================================================================
+
+statement ok
+REVOKE SELECT ON isp_makak FROM PUBLIC;
+
+
+connection c_lambda user=isp_lambda
+query
+SELECT grantee, privilege_type
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_makak'
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type
+isp_lambda	INSERT
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE isp_makak;
+
+
+statement ok
+DROP ROLE isp_lambda;

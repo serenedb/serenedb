@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_namespace.h"
 
+#include "auth/acl.h"
+#include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 
@@ -30,6 +32,7 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgNamespace::oid),
   GetIndex(&PgNamespace::nspname),
   GetIndex(&PgNamespace::nspowner),
+  GetIndex(&PgNamespace::nspacl),
 });
 
 void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
@@ -45,11 +48,11 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
     .nspowner = id::kRootUser.id(),
   });
   for (const auto& schema : snapshot.GetSchemas(database_id)) {
-    // RBAC isn't implemented yet -- every schema is rooted at kRootUser.
-    values.push_back({
+    values.push_back(PgNamespace{
       .oid = schema->GetId().id(),
       .nspname = schema->GetName(),
-      .nspowner = id::kRootUser.id(),
+      .nspowner = schema->GetOwner().id(),
+      .nspacl = {schema->GetAcl()},
     });
   }
 }
@@ -64,7 +67,8 @@ catalog::MaterializedData SystemTableSnapshot<PgNamespace>::GetTableData() {
 
   auto result = CreateColumns<PgNamespace>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row,
+              *_config.EnsureCatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

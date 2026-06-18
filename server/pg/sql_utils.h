@@ -52,6 +52,8 @@ constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
       return "index";
     case PgSqlFunction:
       return "function";
+    case Sequence:
+      return "sequence";
     case Schema:
       return "schema";
     case Database:
@@ -63,6 +65,8 @@ constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
     case PgSqlType:
       return "type";
     default:
+      // usually used for error messages, so we want to specify the type.
+      SDB_ASSERT(false);
       return "object";
   }
 }

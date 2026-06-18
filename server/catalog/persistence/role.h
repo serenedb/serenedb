@@ -22,12 +22,42 @@
 
 #include <absl/container/node_hash_map.h>
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "auth/common.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/object.h"
 
 namespace sdb::catalog::persistence {
+
+struct MembershipData {
+  ObjectId role;
+  bool admin_option = false;
+  bool inherit_option = true;
+  bool set_option = true;
+};
+
+// One ALTER DEFAULT PRIVILEGES target: privileges to apply to future objects of
+// `objtype` ('r'/'S'/'f'/'T'/'n') created by this role, optionally restricted
+// to `schema` (id::kInvalid = all schemas, PG's defaclnamespace = 0). `acl` is
+// the fully rendered pg_default_acl.defaclacl value (owner self-grant
+// included).
+struct DefaultAclData {
+  ObjectId schema;
+  char objtype = 'r';
+  Acl acl;
+};
+
+// A GRANT on a built-in/system type (which has no catalog object), keyed by its
+// fixed pg_type OID. Stored on the root role (the implicit owner of built-in
+// types) so pg_type can surface typacl for e.g. int4. `acl` is the stored
+// (non-default) grant set, exactly like a per-object relacl/proacl.
+struct TypeAclData {
+  uint64_t type_oid = 0;
+  Acl acl;
+};
 
 struct RoleData {
   ObjectId id;
@@ -37,6 +67,20 @@ struct RoleData {
   std::string password_salt;
   std::string password_hash;
   absl::node_hash_map<std::string, auth::Level> db_access;
+  uint32_t options = 0;
+  std::vector<MembershipData> member_of;
+  // pg_authid attributes that are stored & surfaced but not enforced at
+  // runtime.
+  int32_t conn_limit = -1;  // rolconnlimit (-1 = unlimited)
+  std::string valid_until;  // rolvaliduntil; empty -> NULL (no expiry)
+  // Per-role GUC settings (pg_db_role_setting / pg_roles.rolconfig), each
+  // rendered as "guc=value" exactly as PostgreSQL stores them.
+  std::vector<std::string> config;
+  // ALTER DEFAULT PRIVILEGES targets owned by this role (pg_default_acl rows).
+  std::vector<DefaultAclData> default_acls;
+  // GRANTs on built-in types (only the root role carries these). pg_type reads
+  // these to surface typacl for built-in types like int4.
+  std::vector<TypeAclData> builtin_type_acls;
 };
 
 }  // namespace sdb::catalog::persistence

@@ -64,8 +64,8 @@ struct CTASGlobalState final : public duckdb::GlobalSinkState {
     if (!finalized && !table_name.empty()) {
       try {
         auto& catalog = catalog::GetCatalog();
-        std::ignore =
-          catalog.DropTable(database_name, schema_name, table_name, true);
+        std::ignore = catalog.DropTable(catalog::NoAccessCheck(), database_name,
+                                        schema_name, table_name, true);
       } catch (...) {
       }
     }
@@ -104,6 +104,7 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   catalog::CreateTableOptions options;
   options.name = table_info.table;
+  options.owner = GetSereneDBContext(context).GetRoleId();
 
   for (auto& col : table_info.columns.Logical()) {
     catalog::Column sdb_col{{}, catalog::NextId(), col.Name(), col.Type()};
@@ -127,8 +128,14 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   catalog::CreateTableOperationOptions op_options;
   op_options.create_with_tombstone = true;
 
-  auto r = catalog_impl.CreateTable(database_id, _schema.name,
-                                    std::move(options), op_options);
+  const ObjectId role_id{GetSereneDBContext(context).GetRoleId()};
+  auto r =
+    catalog_impl.CreateTable(catalog::AccessContext{role_id}, database_id,
+                             _schema.name, std::move(options), op_options);
+  if (r.is(ERROR_FORBIDDEN)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for schema ", _schema.name));
+  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;
@@ -141,8 +148,9 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
 
   auto snapshot = catalog_impl.GetCatalogSnapshot();
-  auto catalog_table = snapshot->GetTable(database_id, _schema.name,
-                                          std::string{table_info.table});
+  auto catalog_table =
+    snapshot->GetTable(catalog::NoAccessCheck(), database_id, _schema.name,
+                       std::string{table_info.table});
   SDB_ASSERT(catalog_table);
   auto database = snapshot->GetDatabase(database_id);
   SDB_ASSERT(database);

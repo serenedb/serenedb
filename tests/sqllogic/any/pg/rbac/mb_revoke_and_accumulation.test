@@ -1,0 +1,147 @@
+# REVOKE-membership semantics, accumulation of a direct grant with an inherited
+# one, ALL-PRIVILEGES inheritance, and the pg_has_role 'SET' / 'MEMBER' /
+# 'USAGE' privilege-kinds -- all asserted on the byte-identical boolean surface.
+#
+#   mb_acc_abramov -> mb_acc_myasnig   (group)
+# mb_acc_myasnig is granted SELECT,INSERT on mb_acc_clickclack; abramov
+# additionally gets a DIRECT grant of DELETE.
+
+statement ok
+DROP ROLE IF EXISTS mb_acc_abramov;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_acc_myasnig;
+
+
+statement ok
+DROP TABLE IF EXISTS mb_acc_clickclack;
+
+
+statement ok
+CREATE TABLE mb_acc_clickclack (id int);
+
+
+statement ok
+CREATE ROLE mb_acc_abramov LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE mb_acc_myasnig;
+
+
+# Intentionally wrong direction first -- corrected below to show non-symmetry.
+statement ok
+GRANT mb_acc_abramov TO mb_acc_myasnig;
+
+
+# myasnig was made a member of abramov, NOT the reverse. So abramov does
+# NOT yet reach myasnig.
+query
+SELECT pg_has_role('mb_acc_abramov', 'mb_acc_myasnig', 'USAGE') AS abr_to_mya,
+       pg_has_role('mb_acc_myasnig', 'mb_acc_abramov', 'USAGE') AS mya_to_abr;
+----
+abr_to_mya	mya_to_abr
+f	t
+
+
+# Undo and wire it the intended way: abramov -> myasnig.
+statement ok
+REVOKE mb_acc_abramov FROM mb_acc_myasnig;
+
+
+statement ok
+GRANT mb_acc_myasnig TO mb_acc_abramov;
+
+
+query
+SELECT pg_has_role('mb_acc_abramov', 'mb_acc_myasnig', 'USAGE') AS abr_to_mya,
+       pg_has_role('mb_acc_myasnig', 'mb_acc_abramov', 'USAGE') AS mya_to_abr;
+----
+abr_to_mya	mya_to_abr
+t	f
+
+
+# ---- ALL PRIVILEGES granted to the group is inherited as the full set ----
+
+statement ok
+GRANT ALL PRIVILEGES ON mb_acc_clickclack TO mb_acc_myasnig;
+
+
+query
+SELECT has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'SELECT') AS sel,
+       has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'INSERT') AS ins,
+       has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'UPDATE') AS upd,
+       has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'DELETE') AS del,
+       has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'TRUNCATE') AS trunc,
+       has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'REFERENCES') AS refs,
+       has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'TRIGGER') AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# ---- pg_has_role kinds: USAGE, MEMBER, SET all agree for a plain member ----
+
+query
+SELECT pg_has_role('mb_acc_abramov', 'mb_acc_myasnig', 'USAGE') AS usage,
+       pg_has_role('mb_acc_abramov', 'mb_acc_myasnig', 'MEMBER') AS member,
+       pg_has_role('mb_acc_abramov', 'mb_acc_myasnig', 'SET') AS set_kind;
+----
+usage	member	set_kind
+t	t	t
+
+
+# ---- Accumulation: a direct grant survives REVOKE of the inherited path ----
+# Narrow the group to just SELECT, then give abramov DELETE directly.
+
+statement ok
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON mb_acc_clickclack FROM mb_acc_myasnig;
+
+
+statement ok
+GRANT DELETE ON mb_acc_clickclack TO mb_acc_abramov;
+
+
+# abramov now: SELECT (inherited) + DELETE (direct). Nothing else.
+query
+SELECT has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'SELECT') AS sel,
+       has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'INSERT') AS ins,
+       has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'DELETE') AS del;
+----
+sel	ins	del
+t	f	t
+
+
+# Revoke the membership: the inherited SELECT vanishes, the DIRECT DELETE stays.
+statement ok
+REVOKE mb_acc_myasnig FROM mb_acc_abramov;
+
+
+query
+SELECT has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'SELECT') AS sel,
+       has_table_privilege('mb_acc_abramov', 'mb_acc_clickclack', 'DELETE') AS del,
+       pg_has_role('mb_acc_abramov', 'mb_acc_myasnig', 'USAGE') AS still_member;
+----
+sel	del	still_member
+f	t	f
+
+
+# ---- Revoking a membership that does not exist is a no-op (PG: NOTICE, ok) ----
+
+statement ok
+REVOKE mb_acc_myasnig FROM mb_acc_abramov;
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS mb_acc_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_acc_abramov;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_acc_myasnig;

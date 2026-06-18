@@ -89,6 +89,13 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
   void QueryEnd(duckdb::ClientContext& context) final;
 
+  void CheckCatalogReadAccess(duckdb::ClientContext& context,
+                              duckdb::CatalogEntry& entry,
+                              bool inside_view) final;
+
+  void OnWriteTargetBindBegin(duckdb::ClientContext& context) final;
+  void OnWriteTargetBindEnd(duckdb::ClientContext& context) final;
+
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;
 };

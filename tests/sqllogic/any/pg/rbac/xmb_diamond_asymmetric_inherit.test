@@ -1,0 +1,168 @@
+# Cross-membership: an asymmetric diamond. The member reaches a common top group
+# through two branches, but ONE branch edge is WITH INHERIT FALSE. Privileges
+# from the top group flow only through the inheriting branch; the non-inheriting
+# branch still confers MEMBER reachability but no privilege.
+#
+# Graph (-> reads "is a member of"):
+#   xmb_dai_vitalik -> xmb_dai_kryakva  (INHERIT TRUE)  -> xmb_dai_iceberg
+#   xmb_dai_vitalik -> xmb_dai_androed  (INHERIT FALSE) -> xmb_dai_iceberg
+# Top group xmb_dai_iceberg holds SELECT; kryakva holds INSERT; androed holds UPDATE.
+# vitalik inherits SELECT (via kryakva path) + INSERT (kryakva direct), but NOT
+# UPDATE (only reachable via the non-inheriting androed branch).
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_dai_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_dai_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_dai_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_dai_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_dai_clickclack;
+
+
+statement ok
+CREATE TABLE xmb_dai_clickclack (id int, payload text);
+
+
+statement ok
+INSERT INTO xmb_dai_clickclack VALUES (1, 'mop');
+
+
+statement ok
+CREATE ROLE xmb_dai_vitalik LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE xmb_dai_kryakva;
+
+
+statement ok
+CREATE ROLE xmb_dai_androed;
+
+
+statement ok
+CREATE ROLE xmb_dai_iceberg;
+
+
+# Inheriting branch through kryakva; non-inheriting branch through androed.
+statement ok
+GRANT xmb_dai_kryakva TO xmb_dai_vitalik WITH INHERIT TRUE;
+
+
+statement ok
+GRANT xmb_dai_androed TO xmb_dai_vitalik WITH INHERIT FALSE;
+
+
+statement ok
+GRANT xmb_dai_iceberg TO xmb_dai_kryakva;
+
+
+statement ok
+GRANT xmb_dai_iceberg TO xmb_dai_androed;
+
+
+statement ok
+GRANT SELECT ON xmb_dai_clickclack TO xmb_dai_iceberg;
+
+
+statement ok
+GRANT INSERT ON xmb_dai_clickclack TO xmb_dai_kryakva;
+
+
+statement ok
+GRANT UPDATE ON xmb_dai_clickclack TO xmb_dai_androed;
+
+
+# SELECT (top, via inheriting kryakva path) and INSERT (kryakva) flow; UPDATE
+# (only via the non-inheriting androed branch) does NOT.
+query
+SELECT has_table_privilege('xmb_dai_vitalik', 'xmb_dai_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xmb_dai_vitalik', 'xmb_dai_clickclack', 'INSERT') AS ins,
+       has_table_privilege('xmb_dai_vitalik', 'xmb_dai_clickclack', 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# MEMBER reachability holds through BOTH branches; USAGE only through kryakva.
+query
+SELECT pg_has_role('xmb_dai_vitalik', 'xmb_dai_androed', 'MEMBER') AS member_androed,
+       pg_has_role('xmb_dai_vitalik', 'xmb_dai_androed', 'USAGE') AS usage_androed,
+       pg_has_role('xmb_dai_vitalik', 'xmb_dai_iceberg', 'USAGE') AS usage_top;
+----
+member_androed	usage_androed	usage_top
+t	f	t
+
+
+# Real query path: SELECT + INSERT succeed, UPDATE denied.
+connection c_vitalik user=xmb_dai_vitalik
+query
+SELECT count(*) FROM xmb_dai_clickclack;
+----
+count
+1
+
+
+connection c_vitalik user=xmb_dai_vitalik
+statement ok
+INSERT INTO xmb_dai_clickclack VALUES (2, 'babsky');
+
+
+connection c_vitalik user=xmb_dai_vitalik
+statement error
+UPDATE xmb_dai_clickclack SET payload = 'x' WHERE id = 1;
+----
+db error: ERROR: permission denied for table xmb_dai_clickclack<slt:ignore>
+
+
+# ---- Flip the androed branch to INHERIT TRUE: UPDATE now flows ----
+
+statement ok
+GRANT xmb_dai_androed TO xmb_dai_vitalik WITH INHERIT TRUE;
+
+
+query
+SELECT has_table_privilege('xmb_dai_vitalik', 'xmb_dai_clickclack', 'UPDATE') AS upd,
+       pg_has_role('xmb_dai_vitalik', 'xmb_dai_androed', 'USAGE') AS usage_androed;
+----
+upd	usage_androed
+t	t
+
+
+connection c_vitalik2 user=xmb_dai_vitalik
+statement ok
+UPDATE xmb_dai_clickclack SET payload = 'iceberg' WHERE id = 1;
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_dai_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_dai_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_dai_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_dai_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_dai_iceberg;

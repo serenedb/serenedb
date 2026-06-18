@@ -20,19 +20,27 @@
 
 #include "pg/pg_catalog/pg_database.h"
 
+#include <string>
+#include <vector>
+
 #include "app/app_server.h"
+#include "auth/acl.h"
+#include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
+#include "catalog/role.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
 namespace {
 
+// datacl excluded -> data-driven: WriteField renders an empty Array<Aclitem> as
+// SQL NULL (PG's default-privileges representation) and a non-empty one as the
+// aclitem[] array.
 constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgDatabase::datlocale),
   GetIndex(&PgDatabase::daticurules),
   GetIndex(&PgDatabase::datcollversion),
-  GetIndex(&PgDatabase::datacl),
 });
 
 }  // namespace
@@ -43,10 +51,10 @@ catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
 
   std::vector<PgDatabase> values;
   for (const auto& db : catalog->GetDatabases()) {
-    PgDatabase row{
+    values.push_back(PgDatabase{
       .oid = db->GetId().id(),
       .datname = db->GetName(),
-      .datdba = db->GetParentId().id(),
+      .datdba = db->GetOwner().id(),
       .encoding = 6,  // UTF8
       .datlocprovider = PgDatabase::Datlocprovider::Libc,
       .datistemplate = false,
@@ -55,16 +63,21 @@ catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
       .datconnlimit = -1,
       .datfrozenxid = 0,
       .datminmxid = 0,
-      .dattablespace = 0,
+      // pg_default; always 1663 (no CREATE TABLESPACE) and must be a real
+      // pg_tablespace oid -- \l inner-joins pg_tablespace and would otherwise
+      // drop the row. TODO: derive from a real tablespace once CREATE
+      // TABLESPACE exists.
+      .dattablespace = 1663,
       .datcollate = "C.UTF-8",
       .datctype = "C.UTF-8",
-    };
-    values.push_back(std::move(row));
+      .datacl = {db->GetAcl()},
+    });
   }
 
   auto result = CreateColumns<PgDatabase>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row,
+              *_config.EnsureCatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

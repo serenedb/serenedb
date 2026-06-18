@@ -36,6 +36,8 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/result_or.h"
+#include "auth/role_closure.h"
+#include "catalog/access_check.h"
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
@@ -109,6 +111,13 @@ struct Snapshot {
   std::shared_ptr<Snapshot> Clone() const;
 
   connector::DuckDBEntryCache& GetDuckDBEntryCache() const;
+
+  // Sorted inherit-closure of `role` ({role} + roles reachable via inherit
+  // edges) plus its superuser bit, memoized per snapshot. `resolved` is false
+  // for an unknown role -> deny. The reference is stable for the snapshot's
+  // lifetime.
+  const auth::RoleClosure& EffectiveRoleClosure(ObjectId role) const;
+
   std::vector<std::shared_ptr<Role>> GetRoles() const;
   std::vector<std::shared_ptr<Database>> GetDatabases() const;
   std::vector<std::shared_ptr<Schema>> GetSchemas(ObjectId database) const;
@@ -162,6 +171,31 @@ struct Snapshot {
   std::shared_ptr<Sequence> GetSequence(ObjectId database, ObjectId schema_id,
                                         std::string_view name) const;
 
+  // RBAC read-enforcement overloads: resolve as above, then throw 42501 when
+  // `ax.need != NoRights` and the role lacks the privilege. `NoAccessCheck()`
+  // (root) bypasses the check, matching the non-ax overloads.
+  std::shared_ptr<Object> GetRelation(const AccessContext& ax,
+                                      ObjectId database,
+                                      std::string_view schema,
+                                      std::string_view name) const;
+  std::shared_ptr<PgSqlFunction> GetFunction(const AccessContext& ax,
+                                             ObjectId database,
+                                             std::string_view schema,
+                                             std::string_view name) const;
+  std::shared_ptr<Tokenizer> GetTokenizer(const AccessContext& ax,
+                                          ObjectId database,
+                                          std::string_view schema,
+                                          std::string_view name) const;
+  std::shared_ptr<PgSqlType> GetType(const AccessContext& ax, ObjectId database,
+                                     std::string_view schema,
+                                     std::string_view name) const;
+  std::shared_ptr<Table> GetTable(const AccessContext& ax, ObjectId database_id,
+                                  std::string_view schema,
+                                  std::string_view name) const;
+  std::shared_ptr<Sequence> GetSequence(const AccessContext& ax,
+                                        ObjectId database, ObjectId schema_id,
+                                        std::string_view name) const;
+
   bool HasIndexes(ObjectId relation_id) const;
   std::shared_ptr<Object> GetObject(ObjectId id) const;
 
@@ -209,6 +243,21 @@ struct Snapshot {
   friend class Catalog;
 
   enum class EdgeAction : uint8_t { Add, Delete };
+
+  // Throws 42501 when `ax.need` is a real privilege and `ax.role` lacks any of
+  // it on `obj`; root (NoAccessCheck) and NoRights bypass. Returns `obj` so it
+  // can wrap a resolution inline. Defined in catalog.cpp (uses pg error macros).
+  template<typename T>
+  std::shared_ptr<T> EnforceRead(const AccessContext& ax,
+                                 std::shared_ptr<T> obj) const;
+
+  void ReplaceObjectBody(const std::shared_ptr<Object>& new_object);
+  // In-place body swap of a database/schema (name unchanged): swaps the
+  // _objects entry and rebinds the name-resolution key onto the new body,
+  // leaving child namespaces (keyed by the stable id) reachable.
+  void ReplaceDatabaseBody(const std::shared_ptr<Object>& new_database);
+  void ReplaceSchemaBody(ObjectId db_id,
+                         const std::shared_ptr<Object>& new_schema);
 
   void EndLoad() noexcept;
 
@@ -337,6 +386,7 @@ struct Snapshot {
   ObjectDependencies _deps;
   ObjectSetById<Object> _objects;
   mutable connector::DuckDBEntryCache _duckdb_cache;
+  mutable auth::RoleClosureCache _role_closure_cache;
   bool _in_load = true;
 };
 
@@ -366,15 +416,18 @@ class Catalog final {
 
   Result CreateDatabase(std::shared_ptr<Database> database);
   Result CreateRole(std::shared_ptr<Role> role);
-  Result CreateView(ObjectId database_id, std::string_view schema,
-                    std::shared_ptr<PgSqlView> view, bool replace);
-  Result CreateSequence(ObjectId database_id, std::string_view schema,
+  Result CreateView(const AccessContext& ax, ObjectId database_id,
+                    std::string_view schema, std::shared_ptr<PgSqlView> view,
+                    bool replace);
+  Result CreateSequence(const AccessContext& ax, ObjectId database_id,
+                        std::string_view schema,
                         std::shared_ptr<Sequence> sequence, bool if_not_exists);
   Result CreateSchema(ObjectId database_id, std::shared_ptr<Schema> schema);
-  Result CreateFunction(ObjectId database_id, std::string_view schema,
+  Result CreateFunction(const AccessContext& ax, ObjectId database_id,
+                        std::string_view schema,
                         std::shared_ptr<PgSqlFunction> function, bool replace);
-  Result CreateTable(ObjectId database_id, std::string_view schema,
-                     CreateTableOptions table,
+  Result CreateTable(const AccessContext& ax, ObjectId database_id,
+                     std::string_view schema, CreateTableOptions table,
                      CreateTableOperationOptions operation_options);
   Result CreateSecondaryIndex(ObjectId database_id, std::string_view schema,
                               std::string_view relation, std::string name,
@@ -409,25 +462,42 @@ class Catalog final {
                      std::string_view name, ChangeCallback<Table> callback);
   Result ChangeRole(std::string_view name, ChangeCallback<Role> callback);
 
+  // ALTER ... OWNER TO: restamp the object's (and, for a table, its owned
+  // sequences') owner and rewrite its ACL (drop the old owner's implicit
+  // self-grant, rewrite grantor old->new).
+  Result ChangeOwner(ObjectId database_id, std::string_view schema,
+                     std::string_view name, ObjectType type,
+                     ObjectId new_owner);
+
+  // GRANT/REVOKE: mutate the object's effective ACL (NULL/empty -> acldefault)
+  // under the catalog lock and persist the result.
+  Result ChangeAcl(ObjectId database_id, std::string_view schema,
+                   std::string_view name, ObjectType type,
+                   absl::FunctionRef<void(catalog::Acl&)> mutate);
+
   Result DropDatabase(std::string_view name,
                       duckdb::shared_ptr<void> keep_alive);
   Result DropRole(std::string_view role);
-  Result DropSchema(std::string_view database, std::string_view name,
-                    bool cascade);
-  Result DropView(std::string_view database, std::string_view schema,
-                  std::string_view name, bool cascade);
-  Result DropSequence(std::string_view database, std::string_view schema,
-                      std::string_view name, bool if_exists, bool cascade);
-  Result DropType(std::string_view database, std::string_view schema,
-                  std::string_view name, bool cascade);
-  Result DropFunction(std::string_view database, std::string_view schema,
-                      std::string_view name, bool cascade);
+  Result DropSchema(const AccessContext& ax, std::string_view database,
+                    std::string_view name, bool cascade);
+  Result DropView(const AccessContext& ax, std::string_view database,
+                  std::string_view schema, std::string_view name, bool cascade);
+  Result DropSequence(const AccessContext& ax, std::string_view database,
+                      std::string_view schema, std::string_view name,
+                      bool if_exists, bool cascade);
+  Result DropType(const AccessContext& ax, std::string_view database,
+                  std::string_view schema, std::string_view name, bool cascade);
+  Result DropFunction(const AccessContext& ax, std::string_view database,
+                      std::string_view schema, std::string_view name,
+                      bool cascade);
   Result DropTokenizer(std::string_view database, std::string_view schema,
                        std::string_view name, bool cascade);
-  Result DropTable(std::string_view database, std::string_view schema,
-                   std::string_view name, bool cascade);
-  Result DropIndex(std::string_view database, std::string_view schema,
-                   std::string_view name, bool cascade);
+  Result DropTable(const AccessContext& ax, std::string_view database,
+                   std::string_view schema, std::string_view name,
+                   bool cascade);
+  Result DropIndex(const AccessContext& ax, std::string_view database,
+                   std::string_view schema, std::string_view name,
+                   bool cascade);
   Result DropTableColumn(ObjectId database_id, std::string_view schema,
                          std::string_view table, std::string_view column,
                          bool if_exists);

@@ -1,0 +1,79 @@
+# After ALTER TABLE ... OWNER TO, the OLD owner holds no privilege on the table
+# and may no longer GRANT on it: PostgreSQL and serenedb both raise
+# "permission denied for table". (The any/ twin xao_acl_new_owner_grants asserts
+# the new owner *can* grant.)
+#
+# Lore: clickclack is the table; ownership passes from mop (the old owner) to
+# vedernikoff; babsky is the would-be grantee.
+
+statement ok
+DROP TABLE IF EXISTS xao_oog_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_oog_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_oog_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS xao_oog_babsky;
+
+
+statement ok
+CREATE ROLE xao_oog_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE xao_oog_vedernikoff;
+
+
+statement ok
+CREATE ROLE xao_oog_babsky;
+
+
+statement ok
+CREATE TABLE xao_oog_clickclack (id int);
+
+
+statement ok
+ALTER TABLE xao_oog_clickclack OWNER TO xao_oog_mop;
+
+
+statement ok
+ALTER TABLE xao_oog_clickclack OWNER TO xao_oog_vedernikoff;
+
+
+# The old owner mop no longer holds any privilege, so the GRANT is refused.
+connection cmop user=xao_oog_mop
+statement error
+GRANT INSERT ON xao_oog_clickclack TO xao_oog_babsky;
+----
+db error: ERROR: permission denied for table xao_oog_clickclack<slt:ignore>
+
+
+# babsky gained nothing.
+connection default
+query
+SELECT has_table_privilege('xao_oog_babsky','xao_oog_clickclack','INSERT') AS ins;
+----
+ins
+f
+
+
+statement ok
+DROP TABLE xao_oog_clickclack;
+
+
+statement ok
+DROP ROLE xao_oog_mop;
+
+
+statement ok
+DROP ROLE xao_oog_vedernikoff;
+
+
+statement ok
+DROP ROLE xao_oog_babsky;

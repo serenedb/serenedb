@@ -1,0 +1,89 @@
+# has_*_privilege oracles for object classes SereneDB does not implement
+# (foreign-data wrapper, foreign server, tablespace) match PostgreSQL 19beta1
+# exactly. PG's rule: a superuser bypasses the object lookup (-> true even for a
+# nonexistent oid); a non-superuser on a missing object gets NULL (is_missing);
+# tablespace pg_default (1663) grants nothing to PUBLIC so a non-superuser gets
+# false for CREATE. has_language_privilege is true (USAGE defaults to PUBLIC) and
+# row_security_active is false (no RLS) -- both correct on every reachable input.
+#
+# Lore: vedernikoff the unprivileged intern. Self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS htp_vedernikoff;
+
+
+statement ok
+CREATE ROLE htp_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# --- superuser bypasses the (missing) object lookup -> true ---
+query
+SELECT has_foreign_data_wrapper_privilege('postgres', 99999::oid, 'USAGE') AS ok;
+----
+ok
+t
+
+
+query
+SELECT has_server_privilege('postgres', 99999::oid, 'USAGE') AS ok;
+----
+ok
+t
+
+
+# --- non-superuser on a missing object -> NULL ---
+query
+SELECT has_foreign_data_wrapper_privilege('htp_vedernikoff', 99999::oid, 'USAGE') IS NULL AS is_null;
+----
+is_null
+t
+
+
+query
+SELECT has_server_privilege('htp_vedernikoff', 99999::oid, 'USAGE') IS NULL AS is_null;
+----
+is_null
+t
+
+
+# --- tablespace pg_default (1663): superuser true, non-superuser false ---
+query
+SELECT has_tablespace_privilege('postgres', 1663::oid, 'CREATE') AS ok;
+----
+ok
+t
+
+
+query
+SELECT has_tablespace_privilege('htp_vedernikoff', 1663::oid, 'CREATE') AS ok;
+----
+ok
+f
+
+
+# --- tablespace nonexistent oid: non-superuser -> NULL ---
+query
+SELECT has_tablespace_privilege('htp_vedernikoff', 99999::oid, 'CREATE') IS NULL AS is_null;
+----
+is_null
+t
+
+
+# --- language: USAGE is a PUBLIC default, so every role holds it ---
+query
+SELECT has_language_privilege('htp_vedernikoff', 14::oid, 'USAGE') AS ok;
+----
+ok
+t
+
+
+# --- no RLS -> row security never active ---
+query
+SELECT row_security_active('pg_class') AS active;
+----
+active
+f
+
+
+statement ok
+DROP ROLE htp_vedernikoff;

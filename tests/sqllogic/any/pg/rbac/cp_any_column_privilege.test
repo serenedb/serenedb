@@ -1,0 +1,80 @@
+# has_any_column_privilege must reflect the actual table-level privilege (a role
+# has "any column" privilege iff it holds the table privilege, since serenedb has
+# no column-level grants). It was a permissive stub that always returned true.
+# PG-identical.
+
+statement ok
+DROP TABLE IF EXISTS acp_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS acp_vedernikoff;
+
+
+statement ok
+CREATE TABLE acp_kostya (id int, payload text);
+
+
+statement ok
+CREATE ROLE acp_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# No grants: any-column privilege is FALSE for every privilege.
+query
+SELECT has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'SELECT') AS sel,
+       has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'INSERT') AS ins,
+       has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'UPDATE') AS upd;
+----
+sel	ins	upd
+f	f	f
+
+
+# Grant table SELECT -> any-column SELECT becomes true, others stay false.
+statement ok
+GRANT SELECT ON acp_kostya TO acp_vedernikoff;
+
+
+query
+SELECT has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'SELECT') AS sel,
+       has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# REVOKE drops it back to false.
+statement ok
+REVOKE SELECT ON acp_kostya FROM acp_vedernikoff;
+
+
+query
+SELECT has_any_column_privilege('acp_vedernikoff', 'acp_kostya', 'SELECT') AS sel;
+----
+sel
+f
+
+
+# Current-user 2-arg form: the owning superuser holds everything.
+query
+SELECT has_any_column_privilege('acp_kostya', 'SELECT') AS sel,
+       has_any_column_privilege('acp_kostya', 'INSERT') AS ins;
+----
+sel	ins
+t	t
+
+
+# A non-existent table raises (not a silent true).
+statement error
+SELECT has_any_column_privilege('acp_vedernikoff', 'acp_nosuch', 'SELECT');
+----
+db error: ERROR: relation "acp_nosuch" does not exist<slt:ignore>
+
+
+# ---- cleanup ----
+
+statement ok
+DROP TABLE acp_kostya;
+
+
+statement ok
+DROP ROLE acp_vedernikoff;

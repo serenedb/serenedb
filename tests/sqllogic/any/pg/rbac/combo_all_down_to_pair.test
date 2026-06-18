@@ -1,0 +1,337 @@
+# Combinatorial privilege grants, ALL-DOWN-TO-PAIR and high-cardinality combos:
+# grant every privilege, then revoke a multi-priv list in one shot to land on a
+# precise pair; grant four-, five-, and six-of-seven combinations directly;
+# and run a GRANT ALL / REVOKE ALL / regrant-pair cycle. A short enforcement
+# coda anchors the has_table_privilege oracle to the real query path.
+#
+# Column order in every block: SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES
+# TRIGGER.
+#
+# Deny blocks carry a TRAILING <slt:ignore> because serenedb appends a DETAIL
+# line PG does not; the marker swallows that tail so the same block is green on
+# both engines.
+#
+# All objects are prefixed combo_ (vedernikoff/clickclack/pudge lore). Roles
+# are cluster-global, so the combo_ tag keeps names unique across files. The
+# file is idempotent (DROP ... IF EXISTS up front) and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS combo_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_alltopair_a;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_alltopair_b;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_quad;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_quint;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_hexa;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_cycle;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_enforce;
+
+
+statement ok
+CREATE TABLE combo_pudge (id int, deadinside text);
+
+
+statement ok
+INSERT INTO combo_pudge VALUES (1, 'clickclack'), (2, 'vedernikoff');
+
+
+# ============================================================================
+# GRANT ALL, then a single multi-priv REVOKE leaving exactly a pair. Here we
+# revoke the five privileges UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER in one
+# statement, landing on the SELECT,INSERT pair.
+# ============================================================================
+
+statement ok
+CREATE ROLE combo_alltopair_a;
+
+
+statement ok
+GRANT ALL PRIVILEGES ON combo_pudge TO combo_alltopair_a;
+
+
+query
+SELECT has_table_privilege('combo_alltopair_a','combo_pudge','SELECT')     AS sel,
+       has_table_privilege('combo_alltopair_a','combo_pudge','INSERT')     AS ins,
+       has_table_privilege('combo_alltopair_a','combo_pudge','UPDATE')     AS upd,
+       has_table_privilege('combo_alltopair_a','combo_pudge','DELETE')     AS del,
+       has_table_privilege('combo_alltopair_a','combo_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_alltopair_a','combo_pudge','REFERENCES') AS refs,
+       has_table_privilege('combo_alltopair_a','combo_pudge','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+statement ok
+REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON combo_pudge FROM combo_alltopair_a;
+
+
+query
+SELECT has_table_privilege('combo_alltopair_a','combo_pudge','SELECT')     AS sel,
+       has_table_privilege('combo_alltopair_a','combo_pudge','INSERT')     AS ins,
+       has_table_privilege('combo_alltopair_a','combo_pudge','UPDATE')     AS upd,
+       has_table_privilege('combo_alltopair_a','combo_pudge','DELETE')     AS del,
+       has_table_privilege('combo_alltopair_a','combo_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_alltopair_a','combo_pudge','REFERENCES') AS refs,
+       has_table_privilege('combo_alltopair_a','combo_pudge','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	f	f	f	f	f
+
+
+# Same destination, a different pair: GRANT ALL then revoke the five that are
+# NOT REFERENCES,TRIGGER -- landing on the heavy-schema pair.
+statement ok
+CREATE ROLE combo_alltopair_b;
+
+
+statement ok
+GRANT ALL ON combo_pudge TO combo_alltopair_b;
+
+
+statement ok
+REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON combo_pudge FROM combo_alltopair_b;
+
+
+query
+SELECT has_table_privilege('combo_alltopair_b','combo_pudge','SELECT')     AS sel,
+       has_table_privilege('combo_alltopair_b','combo_pudge','INSERT')     AS ins,
+       has_table_privilege('combo_alltopair_b','combo_pudge','UPDATE')     AS upd,
+       has_table_privilege('combo_alltopair_b','combo_pudge','DELETE')     AS del,
+       has_table_privilege('combo_alltopair_b','combo_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_alltopair_b','combo_pudge','REFERENCES') AS refs,
+       has_table_privilege('combo_alltopair_b','combo_pudge','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	t	t
+
+
+# ============================================================================
+# High-cardinality direct combinations: four, five, six of seven in one grant.
+# ============================================================================
+
+# ---- four-of-seven: SELECT,INSERT,UPDATE,DELETE (all DML, no heavy) ----
+
+statement ok
+CREATE ROLE combo_quad;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON combo_pudge TO combo_quad;
+
+
+query
+SELECT has_table_privilege('combo_quad','combo_pudge','SELECT')     AS sel,
+       has_table_privilege('combo_quad','combo_pudge','INSERT')     AS ins,
+       has_table_privilege('combo_quad','combo_pudge','UPDATE')     AS upd,
+       has_table_privilege('combo_quad','combo_pudge','DELETE')     AS del,
+       has_table_privilege('combo_quad','combo_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_quad','combo_pudge','REFERENCES') AS refs,
+       has_table_privilege('combo_quad','combo_pudge','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	f	f	f
+
+
+# ---- five-of-seven: everything except REFERENCES,TRIGGER ----
+
+statement ok
+CREATE ROLE combo_quint;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON combo_pudge TO combo_quint;
+
+
+query
+SELECT has_table_privilege('combo_quint','combo_pudge','SELECT')     AS sel,
+       has_table_privilege('combo_quint','combo_pudge','INSERT')     AS ins,
+       has_table_privilege('combo_quint','combo_pudge','UPDATE')     AS upd,
+       has_table_privilege('combo_quint','combo_pudge','DELETE')     AS del,
+       has_table_privilege('combo_quint','combo_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_quint','combo_pudge','REFERENCES') AS refs,
+       has_table_privilege('combo_quint','combo_pudge','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	f	f
+
+
+# ---- six-of-seven: everything except TRUNCATE ----
+
+statement ok
+CREATE ROLE combo_hexa;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON combo_pudge TO combo_hexa;
+
+
+query
+SELECT has_table_privilege('combo_hexa','combo_pudge','SELECT')     AS sel,
+       has_table_privilege('combo_hexa','combo_pudge','INSERT')     AS ins,
+       has_table_privilege('combo_hexa','combo_pudge','UPDATE')     AS upd,
+       has_table_privilege('combo_hexa','combo_pudge','DELETE')     AS del,
+       has_table_privilege('combo_hexa','combo_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_hexa','combo_pudge','REFERENCES') AS refs,
+       has_table_privilege('combo_hexa','combo_pudge','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	f	t	t
+
+
+# ============================================================================
+# GRANT ALL -> REVOKE ALL -> regrant a pair: the bitset goes full, empty, then
+# exactly the regranted pair. Proves REVOKE ALL fully clears before the regrant.
+# ============================================================================
+
+statement ok
+CREATE ROLE combo_cycle;
+
+
+statement ok
+GRANT ALL ON combo_pudge TO combo_cycle;
+
+
+query
+SELECT has_table_privilege('combo_cycle','combo_pudge','SELECT')     AS sel,
+       has_table_privilege('combo_cycle','combo_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_cycle','combo_pudge','TRIGGER')    AS trig;
+----
+sel	trunc	trig
+t	t	t
+
+
+statement ok
+REVOKE ALL ON combo_pudge FROM combo_cycle;
+
+
+query
+SELECT has_table_privilege('combo_cycle','combo_pudge','SELECT')     AS sel,
+       has_table_privilege('combo_cycle','combo_pudge','INSERT')     AS ins,
+       has_table_privilege('combo_cycle','combo_pudge','UPDATE')     AS upd,
+       has_table_privilege('combo_cycle','combo_pudge','DELETE')     AS del,
+       has_table_privilege('combo_cycle','combo_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_cycle','combo_pudge','REFERENCES') AS refs,
+       has_table_privilege('combo_cycle','combo_pudge','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	f	f
+
+
+statement ok
+GRANT INSERT, REFERENCES ON combo_pudge TO combo_cycle;
+
+
+query
+SELECT has_table_privilege('combo_cycle','combo_pudge','SELECT')     AS sel,
+       has_table_privilege('combo_cycle','combo_pudge','INSERT')     AS ins,
+       has_table_privilege('combo_cycle','combo_pudge','UPDATE')     AS upd,
+       has_table_privilege('combo_cycle','combo_pudge','DELETE')     AS del,
+       has_table_privilege('combo_cycle','combo_pudge','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_cycle','combo_pudge','REFERENCES') AS refs,
+       has_table_privilege('combo_cycle','combo_pudge','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	t	f	f	f	t	f
+
+
+# ============================================================================
+# Enforcement coda: a SELECT,DELETE pair grant lets the real read and delete
+# through on a second connection, while INSERT (not in the pair) is denied.
+# ============================================================================
+
+statement ok
+CREATE ROLE combo_enforce LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT, DELETE ON combo_pudge TO combo_enforce;
+
+
+# Oracle: exactly SELECT and DELETE are t.
+query
+SELECT has_table_privilege('combo_enforce','combo_pudge','SELECT')     AS sel,
+       has_table_privilege('combo_enforce','combo_pudge','INSERT')     AS ins,
+       has_table_privilege('combo_enforce','combo_pudge','DELETE')     AS del;
+----
+sel	ins	del
+t	f	t
+
+
+# Real read works.
+connection c_enforce user=combo_enforce
+query
+SELECT count(*) AS n FROM combo_pudge;
+----
+n
+2
+
+
+# Real INSERT is denied -- it is not in the granted pair.
+connection c_enforce user=combo_enforce
+statement error
+INSERT INTO combo_pudge VALUES (3, 'pudge');
+----
+db error: ERROR: permission denied for table combo_pudge<slt:ignore>
+
+
+# Real DELETE works -- it is in the granted pair.
+connection c_enforce user=combo_enforce
+statement ok
+DELETE FROM combo_pudge WHERE id = 2;
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE combo_pudge;
+
+
+statement ok
+DROP ROLE combo_alltopair_a;
+
+
+statement ok
+DROP ROLE combo_alltopair_b;
+
+
+statement ok
+DROP ROLE combo_quad;
+
+
+statement ok
+DROP ROLE combo_quint;
+
+
+statement ok
+DROP ROLE combo_hexa;
+
+
+statement ok
+DROP ROLE combo_cycle;
+
+
+statement ok
+DROP ROLE combo_enforce;

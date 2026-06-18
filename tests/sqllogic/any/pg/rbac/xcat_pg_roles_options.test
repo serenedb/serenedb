@@ -1,0 +1,134 @@
+# Cross-catalog: role-option attributes surfaced in pg_roles. The
+# rolsuper/rolcanlogin/rolinherit booleans track the CREATE ROLE options
+# LOGIN/NOLOGIN, SUPERUSER/NOSUPERUSER, INHERIT/NOINHERIT. rolpassword is
+# always masked to the literal '********' in pg_roles (the real verifier lives
+# in pg_authid, which serenedb does not expose -- see the note below). Every
+# row is pinned by rolname and ORDER BY rolname. Identical on PG19 and serenedb.
+#
+# IMPORTANT divergence (kept out of the asserted set): pg_authid.rolpassword
+# returns the real SCRAM verifier on PostgreSQL but is empty/NULL on serenedb.
+# So password assertions read pg_roles.rolpassword (the masked view column),
+# which matches on both. We never SELECT pg_authid.rolpassword here.
+#
+# Vedernikoff lore: the cast become roles with assorted attributes.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS xcat_ro_login;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_ro_nologin;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_ro_super;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_ro_noinherit;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_ro_pw;
+
+
+# A plain LOGIN role: not super, can log in, inherits by default.
+statement ok
+CREATE ROLE xcat_ro_login LOGIN;
+
+
+# A NOLOGIN role (the default for CREATE ROLE without LOGIN): rolcanlogin false.
+statement ok
+CREATE ROLE xcat_ro_nologin NOLOGIN;
+
+
+# A SUPERUSER role: rolsuper true.
+statement ok
+CREATE ROLE xcat_ro_super SUPERUSER;
+
+
+# A NOINHERIT login role: rolinherit false.
+statement ok
+CREATE ROLE xcat_ro_noinherit LOGIN NOINHERIT;
+
+
+# A login role with a password: rolpassword is masked.
+statement ok
+CREATE ROLE xcat_ro_pw LOGIN PASSWORD 'icebergmop';
+
+
+# The attribute matrix for the four non-password roles, pinned and ordered.
+query
+SELECT rolname, rolsuper, rolcanlogin, rolinherit
+FROM pg_roles
+WHERE rolname IN ('xcat_ro_login', 'xcat_ro_nologin', 'xcat_ro_super', 'xcat_ro_noinherit')
+ORDER BY rolname;
+----
+rolname	rolsuper	rolcanlogin	rolinherit
+xcat_ro_login	f	t	t
+xcat_ro_noinherit	f	t	f
+xcat_ro_nologin	f	f	t
+xcat_ro_super	t	f	t
+
+
+# rolpassword in pg_roles is the MASKED view column: PG19 (and serenedb) render
+# the constant '********' for every role, whether or not a password is set --
+# the real verifier never leaves pg_authid. So both a password role and a
+# no-password role show '********' here. (Asserting NULL would be wrong: the
+# pg_roles view masks unconditionally on both engines.)
+query
+SELECT rolname, rolpassword
+FROM pg_roles
+WHERE rolname IN ('xcat_ro_pw', 'xcat_ro_login')
+ORDER BY rolname;
+----
+rolname	rolpassword
+xcat_ro_login	********
+xcat_ro_pw	********
+
+
+# A role created with multiple attributes at once carries all of them: a
+# SUPERUSER role implicitly bypasses login/inherit checks, but the stored
+# columns still reflect what was asked for. We assert the combined matrix at
+# CREATE time. (Attribute-changing ALTER ROLE -- e.g. ALTER ROLE ... INHERIT
+# or ... NOSUPERUSER -- is NOT exercised here: serenedb's parser rejects those
+# forms, so they are not a cross-engine surface.)
+statement ok
+DROP ROLE IF EXISTS xcat_ro_combo;
+
+
+statement ok
+CREATE ROLE xcat_ro_combo LOGIN NOINHERIT;
+
+
+query
+SELECT rolname, rolsuper, rolcanlogin, rolinherit
+FROM pg_roles WHERE rolname = 'xcat_ro_combo';
+----
+rolname	rolsuper	rolcanlogin	rolinherit
+xcat_ro_combo	f	t	f
+
+
+statement ok
+DROP ROLE xcat_ro_combo;
+
+
+statement ok
+DROP ROLE xcat_ro_login;
+
+
+statement ok
+DROP ROLE xcat_ro_nologin;
+
+
+statement ok
+DROP ROLE xcat_ro_super;
+
+
+statement ok
+DROP ROLE xcat_ro_noinherit;
+
+
+statement ok
+DROP ROLE xcat_ro_pw;

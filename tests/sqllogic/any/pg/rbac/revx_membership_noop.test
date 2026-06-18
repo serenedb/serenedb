@@ -1,0 +1,220 @@
+# REVOKE edge cases, role-membership family. The same no-op semantics that hold
+# for table privileges hold for role grants:
+#   - REVOKE a membership that was never granted is a no-op (PG: NOTICE, ok);
+#   - a double REVOKE of a membership denies the same way the first did;
+#   - REVOKE then re-GRANT a membership round-trips cleanly;
+#   - revoking a membership strips ONLY the inherited privileges, leaving any
+#     privilege the member also holds directly intact.
+# All asserted on the byte-identical pg_has_role / has_table_privilege oracle.
+#
+#   revx_gul (group) -> revx_salam (member)
+# Objects prefixed revx_; idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS revx_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_gul;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_salam;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_lambda;
+
+
+statement ok
+CREATE TABLE revx_mop (id int);
+
+
+statement ok
+CREATE ROLE revx_gul;
+
+
+statement ok
+CREATE ROLE revx_salam;
+
+
+statement ok
+CREATE ROLE revx_lambda;
+
+
+# ============================================================================
+# REVOKE a membership that was never granted: a no-op, statement ok. salam is
+# not a member of gul, so pg_has_role stays f before and after.
+# ============================================================================
+
+query
+SELECT pg_has_role('revx_salam', 'revx_gul', 'USAGE')  AS usage,
+       pg_has_role('revx_salam', 'revx_gul', 'MEMBER') AS member;
+----
+usage	member
+f	f
+
+
+statement ok
+REVOKE revx_gul FROM revx_salam;
+
+
+query
+SELECT pg_has_role('revx_salam', 'revx_gul', 'USAGE')  AS usage,
+       pg_has_role('revx_salam', 'revx_gul', 'MEMBER') AS member;
+----
+usage	member
+f	f
+
+
+# ============================================================================
+# GRANT the membership, then double REVOKE it. First drops it, second is a
+# no-op. pg_has_role is f after both, identically.
+# ============================================================================
+
+statement ok
+GRANT revx_gul TO revx_salam;
+
+
+query
+SELECT pg_has_role('revx_salam', 'revx_gul', 'USAGE')  AS usage,
+       pg_has_role('revx_salam', 'revx_gul', 'MEMBER') AS member,
+       pg_has_role('revx_salam', 'revx_gul', 'SET')    AS set_kind;
+----
+usage	member	set_kind
+t	t	t
+
+
+statement ok
+REVOKE revx_gul FROM revx_salam;
+
+
+query
+SELECT pg_has_role('revx_salam', 'revx_gul', 'USAGE')  AS usage,
+       pg_has_role('revx_salam', 'revx_gul', 'MEMBER') AS member;
+----
+usage	member
+f	f
+
+
+# Second revoke of the now-absent membership: no-op, ok, still f.
+statement ok
+REVOKE revx_gul FROM revx_salam;
+
+
+query
+SELECT pg_has_role('revx_salam', 'revx_gul', 'USAGE')  AS usage,
+       pg_has_role('revx_salam', 'revx_gul', 'MEMBER') AS member;
+----
+usage	member
+f	f
+
+
+# ============================================================================
+# REVOKE membership strips inherited privileges but keeps a direct grant.
+# gul gets SELECT,INSERT on revx_mop; salam joins gul (inherits both) AND gets
+# a DIRECT DELETE. Revoking the membership removes SELECT/INSERT, keeps DELETE.
+# ============================================================================
+
+statement ok
+GRANT SELECT, INSERT ON revx_mop TO revx_gul;
+
+
+statement ok
+GRANT revx_gul TO revx_salam;
+
+
+statement ok
+GRANT DELETE ON revx_mop TO revx_salam;
+
+
+# salam: SELECT+INSERT inherited, DELETE direct.
+query
+SELECT has_table_privilege('revx_salam', 'revx_mop', 'SELECT') AS sel,
+       has_table_privilege('revx_salam', 'revx_mop', 'INSERT') AS ins,
+       has_table_privilege('revx_salam', 'revx_mop', 'DELETE') AS del;
+----
+sel	ins	del
+t	t	t
+
+
+# Revoke the membership: inherited SELECT/INSERT vanish, direct DELETE stays.
+statement ok
+REVOKE revx_gul FROM revx_salam;
+
+
+query
+SELECT has_table_privilege('revx_salam', 'revx_mop', 'SELECT') AS sel,
+       has_table_privilege('revx_salam', 'revx_mop', 'INSERT') AS ins,
+       has_table_privilege('revx_salam', 'revx_mop', 'DELETE') AS del,
+       pg_has_role('revx_salam', 'revx_gul', 'USAGE')          AS still_member;
+----
+sel	ins	del	still_member
+f	f	t	f
+
+
+# ============================================================================
+# REVOKE then re-GRANT membership: the inherited privileges come back exactly,
+# the direct DELETE is unaffected (no double-counting on either path).
+# ============================================================================
+
+statement ok
+GRANT revx_gul TO revx_salam;
+
+
+query
+SELECT has_table_privilege('revx_salam', 'revx_mop', 'SELECT') AS sel,
+       has_table_privilege('revx_salam', 'revx_mop', 'INSERT') AS ins,
+       has_table_privilege('revx_salam', 'revx_mop', 'DELETE') AS del,
+       pg_has_role('revx_salam', 'revx_gul', 'MEMBER')         AS member;
+----
+sel	ins	del	member
+t	t	t	t
+
+
+# Revoke the group's INSERT: salam loses inherited INSERT but keeps inherited
+# SELECT and its own DELETE -- a partial revoke on the group propagates.
+statement ok
+REVOKE INSERT ON revx_mop FROM revx_gul;
+
+
+query
+SELECT has_table_privilege('revx_salam', 'revx_mop', 'SELECT') AS sel,
+       has_table_privilege('revx_salam', 'revx_mop', 'INSERT') AS ins,
+       has_table_privilege('revx_salam', 'revx_mop', 'DELETE') AS del;
+----
+sel	ins	del
+t	f	t
+
+
+# ============================================================================
+# A second, uninvolved role (revx_lambda) is unaffected by all of the above:
+# it is not a member of gul and was never granted anything.
+# ============================================================================
+
+query
+SELECT pg_has_role('revx_lambda', 'revx_gul', 'USAGE')        AS usage,
+       has_table_privilege('revx_lambda', 'revx_mop', 'SELECT') AS sel;
+----
+usage	sel
+f	f
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE revx_mop;
+
+
+statement ok
+DROP ROLE revx_gul;
+
+
+statement ok
+DROP ROLE revx_salam;
+
+
+statement ok
+DROP ROLE revx_lambda;

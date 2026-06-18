@@ -68,7 +68,8 @@ const catalog::PgSqlView* FindView(bool system, bool info_schema,
     auto view = info_schema ? pg::GetInfoSchemaView(name) : pg::GetView(name);
     return view.get();
   }
-  auto relation = snapshot.GetRelation(db_id, schema_name, name);
+  auto relation =
+    snapshot.GetRelation(catalog::NoAccessCheck(), db_id, schema_name, name);
   if (relation && relation->GetType() == catalog::ObjectType::PgSqlView) {
     return &basics::downCast<const catalog::PgSqlView>(*relation);
   }
@@ -101,7 +102,8 @@ std::shared_ptr<catalog::PgSqlFunction> FindFunctionByType(
   } else {
     f = pg::GetPgCatalogFunction(name);
     if (!f) {
-      f = snapshot.GetFunction(database, schema, name);
+      f =
+        snapshot.GetFunction(catalog::NoAccessCheck(), database, schema, name);
     }
   }
   if (f && f->GetInfo().type == expected_type) {
@@ -283,7 +285,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
   std::string_view schema_name, std::string_view table_name,
   const catalog::Snapshot& snapshot) {
-  auto table = snapshot.GetTable(db_id, schema_name, table_name);
+  auto table =
+    snapshot.GetTable(catalog::NoAccessCheck(), db_id, schema_name, table_name);
   if (!table) {
     return nullptr;
   }
@@ -586,7 +589,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
         return nullptr;
       }
       // Single snapshot lookup for tables, views, and indexes.
-      auto relation = snapshot.GetRelation(database, schema, name);
+      auto relation =
+        snapshot.GetRelation(catalog::NoAccessCheck(), database, schema, name);
       if (!relation) {
         // GetRelation doesn't find regular tables -- use GetTable.
         if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
@@ -662,7 +666,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
     } break;
     case TYPE_ENTRY: {
       if (!system) {
-        auto sdb_type = snapshot.GetType(database, schema, name);
+        auto sdb_type =
+          snapshot.GetType(catalog::NoAccessCheck(), database, schema, name);
         if (sdb_type) {
           auto type_info =
             duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
@@ -682,7 +687,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
       if (!schema_obj) {
         return nullptr;
       }
-      auto seq = snapshot.GetSequence(database, schema_obj->GetId(), name);
+      auto seq = snapshot.GetSequence(catalog::NoAccessCheck(), database,
+                                      schema_obj->GetId(), name);
       if (!seq) {
         return nullptr;
       }

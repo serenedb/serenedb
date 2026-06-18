@@ -25,6 +25,7 @@
 #include <initializer_list>
 #include <iresearch/utils/string.hpp>
 #include <span>
+#include <string>
 #include <type_traits>
 
 namespace sdb::pg {
@@ -60,7 +61,10 @@ struct Empty {};
 using PgNodeTree = Empty;
 struct Aclitem {};
 using Anyarray = Empty;
-using Timestamptz = Empty;
+struct Timestamptz {
+  int64_t micros = 0;
+  bool is_null = true;
+};
 using PgNdDistinct = Empty;
 using PgDependencies = Empty;
 using PgMcvList = Empty;
@@ -81,6 +85,25 @@ struct IsArray : std::false_type {};
 
 template<typename T>
 struct IsArray<Array<T>> : std::true_type {};
+
+}  // namespace sdb::pg
+namespace sdb::catalog {
+
+struct AclItem;
+struct Snapshot;
+
+}  // namespace sdb::catalog
+namespace sdb::pg {
+
+struct AclColumn {
+  std::span<const catalog::AclItem> items;
+};
+
+template<typename T>
+struct IsAclColumn : std::false_type {};
+
+template<>
+struct IsAclColumn<AclColumn> : std::true_type {};
 
 constexpr uint64_t MaskFromNulls(std::span<const size_t> indicies) {
   uint64_t mask = 0;

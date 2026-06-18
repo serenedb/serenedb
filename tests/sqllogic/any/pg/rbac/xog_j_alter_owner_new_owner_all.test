@@ -1,0 +1,158 @@
+# Cross-product file J: changing ownership with ALTER TABLE ... OWNER TO moves
+# the IMPLICIT all-privilege bundle onto the new owner. The new owner can read
+# and write its table over a real connection with no relacl row of its own,
+# while a pre-existing grantee's row continues to confer its granted privilege.
+# (We assert only the byte-identical surface: the new owner's implicit ALL and
+# the surviving grantee's privilege. The fate of the OLD owner's privileges and
+# the grantor field after a reown differs by engine and is covered in sdb/.)
+#
+# Lore: xog_j_iceberg is the table; xog_j_mop then xog_j_babsky are successive
+# owners; xog_j_kostya is a SELECT grantee that outlives the reown.
+
+statement ok
+DROP TABLE IF EXISTS xog_j_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_j_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_j_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_j_kostya;
+
+
+statement ok
+CREATE ROLE xog_j_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE xog_j_babsky LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE xog_j_kostya LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE TABLE xog_j_iceberg (id int, payload text);
+
+
+statement ok
+INSERT INTO xog_j_iceberg VALUES (1, 'clickclack');
+
+
+statement ok
+ALTER TABLE xog_j_iceberg OWNER TO xog_j_mop;
+
+
+statement ok
+GRANT SELECT ON xog_j_iceberg TO xog_j_kostya;
+
+
+# Initial owner mop holds implicit ALL.
+query
+SELECT has_table_privilege('xog_j_mop','xog_j_iceberg','SELECT')   AS sel,
+       has_table_privilege('xog_j_mop','xog_j_iceberg','TRUNCATE') AS trc;
+----
+sel	trc
+t	t
+
+
+# babsky is not the owner and has no grant -> nothing.
+query
+SELECT has_table_privilege('xog_j_babsky','xog_j_iceberg','SELECT') AS sel,
+       has_table_privilege('xog_j_babsky','xog_j_iceberg','INSERT') AS ins;
+----
+sel	ins
+f	f
+
+
+# ---- Reown to babsky: the NEW owner picks up the implicit all-privilege
+# bundle. We confirm every privilege for the new owner. ----
+statement ok
+ALTER TABLE xog_j_iceberg OWNER TO xog_j_babsky;
+
+
+# Ownership now sits on babsky (OID join, cross-engine stable).
+query
+SELECT EXISTS(
+  SELECT 1 FROM pg_class c JOIN pg_authid a ON a.oid = c.relowner
+  WHERE c.relname = 'xog_j_iceberg' AND a.rolname = 'xog_j_babsky'
+) AS owned_by_babsky;
+----
+owned_by_babsky
+t
+
+
+# New owner babsky now holds implicit ALL.
+query
+SELECT has_table_privilege('xog_j_babsky','xog_j_iceberg','SELECT')     AS sel,
+       has_table_privilege('xog_j_babsky','xog_j_iceberg','INSERT')     AS ins,
+       has_table_privilege('xog_j_babsky','xog_j_iceberg','UPDATE')     AS upd,
+       has_table_privilege('xog_j_babsky','xog_j_iceberg','DELETE')     AS del,
+       has_table_privilege('xog_j_babsky','xog_j_iceberg','TRUNCATE')   AS trc,
+       has_table_privilege('xog_j_babsky','xog_j_iceberg','REFERENCES') AS ref,
+       has_table_privilege('xog_j_babsky','xog_j_iceberg','TRIGGER')    AS trg;
+----
+sel	ins	upd	del	trc	ref	trg
+t	t	t	t	t	t	t
+
+
+# The new owner can read and write its table for real, with no relacl row.
+connection c_b user=xog_j_babsky
+query
+SELECT count(*) AS n FROM xog_j_iceberg;
+----
+n
+1
+
+
+connection c_b user=xog_j_babsky
+statement ok
+INSERT INTO xog_j_iceberg VALUES (2, 'reowned');
+
+
+# The pre-existing grantee kostya still holds SELECT through its surviving ACL
+# row, and can read for real -- the reown did not drop the grant.
+query
+SELECT has_table_privilege('xog_j_kostya','xog_j_iceberg','SELECT') AS sel,
+       has_table_privilege('xog_j_kostya','xog_j_iceberg','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+connection c_k user=xog_j_kostya
+query
+SELECT count(*) AS n FROM xog_j_iceberg;
+----
+n
+2
+
+
+# kostya still cannot INSERT (it only ever held SELECT).
+connection c_k user=xog_j_kostya
+statement error
+INSERT INTO xog_j_iceberg VALUES (3, 'nope');
+----
+db error: ERROR: permission denied for table xog_j_iceberg<slt:ignore>
+
+
+statement ok
+DROP TABLE xog_j_iceberg;
+
+
+statement ok
+DROP ROLE xog_j_mop;
+
+
+statement ok
+DROP ROLE xog_j_babsky;
+
+
+statement ok
+DROP ROLE xog_j_kostya;

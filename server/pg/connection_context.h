@@ -34,7 +34,8 @@ namespace sdb {
 class ConnectionContext final : public ExecContext, public query::Transaction {
  public:
   ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
-                    std::string_view dbname, ObjectId database_id,
+                    ObjectId role_id, std::string_view dbname,
+                    ObjectId database_id,
                     std::shared_ptr<catalog::Database> database,
                     message::Buffer* send_buffer,
                     pg::CopyMessagesQueue* copy_queue);
@@ -44,6 +45,20 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
   std::string GetCurrentSchema() const;
   std::string GetCurrentSchemaFromSnapshot(
     std::shared_ptr<const catalog::Snapshot> snapshot) const;
+
+  ObjectId GetRoleId() const { return _role_id; }
+
+  // True while the binder is binding the *write target* of an UPDATE or DELETE.
+  // The target relation is scanned to locate rows, but per PostgreSQL the
+  // SELECT privilege is required only when a column value is actually read --
+  // so the base-table scan's SELECT check is deferred to plan time, where the
+  // projected columns are known. See SereneDBCatalog::PlanUpdate / PlanDelete.
+  bool BindingWriteTarget() const { return _write_target_bind_depth > 0; }
+  void EnterWriteTargetBind() { ++_write_target_bind_depth; }
+  void ExitWriteTargetBind() {
+    SDB_ASSERT(_write_target_bind_depth > 0);
+    --_write_target_bind_depth;
+  }
 
   const auto& GetDatabasePtr() const { return _database; }
 
@@ -67,6 +82,8 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
   pg::CopyMessagesQueue* const _copy_queue;
   absl::Mutex _mutex;
   std::vector<pg::SqlErrorData> _notices;
+  const ObjectId _role_id;
+  uint32_t _write_target_bind_depth = 0;
 };
 
 }  // namespace sdb

@@ -1,0 +1,78 @@
+# Function EXECUTE is enforced like PostgreSQL. has_function_privilege is a real
+# oracle: EXECUTE is granted to PUBLIC by default, so a fresh function reads t
+# for an arbitrary role and an unprivileged role can CALL it. After REVOKE
+# EXECUTE ON FUNCTION ... FROM PUBLIC the oracle flips to f and a non-owner call
+# is denied with "permission denied for function ...". Identical on both
+# engines.
+#
+# NOTE: the REVOKE uses the bare function NAME (no argument signature), the form
+# serenedb's parser accepts; PostgreSQL accepts it too when the name is
+# unambiguous.
+#
+# Lore: clickclack owns the secret function; vedernikoff is the intern who
+# should not be able to run it once EXECUTE is revoked from PUBLIC.
+
+statement ok
+DROP FUNCTION IF EXISTS enf_fnx_secret(int);
+
+
+statement ok
+DROP ROLE IF EXISTS enf_fnx_vedernikoff;
+
+
+statement ok
+CREATE ROLE enf_fnx_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE FUNCTION enf_fnx_secret(x int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+# Fresh function: EXECUTE is held via the PUBLIC default, so the oracle reads t.
+query
+SELECT has_function_privilege('enf_fnx_vedernikoff','enf_fnx_secret(int)','EXECUTE') AS can_exec;
+----
+can_exec
+t
+
+
+# The unprivileged role can CALL the fresh function (PUBLIC default EXECUTE).
+connection c_fnx user=enf_fnx_vedernikoff
+query
+SELECT enf_fnx_secret(41) AS result;
+----
+result
+42
+
+
+# Revoke EXECUTE from PUBLIC.
+connection default
+statement ok
+REVOKE EXECUTE ON FUNCTION enf_fnx_secret FROM PUBLIC;
+
+
+# The oracle now reads f for the unprivileged role.
+connection default
+query
+SELECT has_function_privilege('enf_fnx_vedernikoff','enf_fnx_secret(int)','EXECUTE') AS can_exec;
+----
+can_exec
+f
+
+
+# The non-owner call is now denied.
+connection c_fnx2 user=enf_fnx_vedernikoff
+statement error
+SELECT enf_fnx_secret(41) AS result;
+----
+db error: ERROR: permission denied for function enf_fnx_secret<slt:ignore>
+
+
+# ---- cleanup ----
+
+statement ok
+DROP FUNCTION enf_fnx_secret(int);
+
+
+statement ok
+DROP ROLE enf_fnx_vedernikoff;

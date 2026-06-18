@@ -1,0 +1,215 @@
+# Role membership and privilege inheritance, asserted on the surface that is
+# byte-identical between real PostgreSQL and serenedb: the boolean privilege
+# functions has_table_privilege and pg_has_role, plus real DML on a second
+# connection.
+#
+# Story (-> reads "is a member of"):
+#   mop_negaimorit -> mop_zhidky         (single group)
+#   mop_negaimorit -> mop_babsky         (a second, independent group)
+# mop_zhidky is granted SELECT on mop_pudge; mop_babsky is granted INSERT.
+# A member inherits the union of every group it belongs to.
+
+statement ok
+DROP ROLE IF EXISTS mb_mop_negaimorit;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_mop_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_mop_babsky;
+
+
+statement ok
+DROP TABLE IF EXISTS mb_mop_pudge;
+
+
+statement ok
+CREATE TABLE mb_mop_pudge (id int, amount int);
+
+
+statement ok
+CREATE ROLE mb_mop_negaimorit LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE mb_mop_zhidky;
+
+
+statement ok
+CREATE ROLE mb_mop_babsky;
+
+
+# ---- Before any membership: negaimorit inherits nothing ----
+
+query
+SELECT has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'SELECT') AS sel,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'INSERT') AS ins;
+----
+sel	ins
+f	f
+
+
+# ---- Grant SELECT to one group, then make negaimorit a member ----
+
+statement ok
+GRANT SELECT ON mb_mop_pudge TO mb_mop_zhidky;
+
+
+# Still not a member yet: privilege does not leak.
+query
+SELECT has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'SELECT') AS sel;
+----
+sel
+f
+
+
+statement ok
+GRANT mb_mop_zhidky TO mb_mop_negaimorit;
+
+
+# Member can SELECT (inherited) but cannot INSERT (group never had INSERT).
+query
+SELECT has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'SELECT') AS sel,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'INSERT') AS ins,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'DELETE') AS del;
+----
+sel	ins	del
+t	f	f
+
+
+# The membership edge itself is visible through pg_has_role.
+query
+SELECT pg_has_role('mb_mop_negaimorit', 'mb_mop_zhidky', 'USAGE') AS usage,
+       pg_has_role('mb_mop_negaimorit', 'mb_mop_zhidky', 'MEMBER') AS member;
+----
+usage	member
+t	t
+
+
+# ---- Granting a NEW privilege to the group is immediately visible to members ----
+
+statement ok
+GRANT UPDATE ON mb_mop_pudge TO mb_mop_zhidky;
+
+
+# No re-grant of membership needed: negaimorit sees UPDATE at once.
+query
+SELECT has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'UPDATE') AS upd;
+----
+upd
+t
+
+
+# ---- A second, independent group accumulates with the first ----
+
+statement ok
+GRANT INSERT ON mb_mop_pudge TO mb_mop_babsky;
+
+
+statement ok
+GRANT mb_mop_babsky TO mb_mop_negaimorit;
+
+
+# negaimorit now holds SELECT+UPDATE (from zhidky) AND INSERT (from babsky): the
+# union of both memberships.
+query
+SELECT has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'SELECT') AS sel,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'INSERT') AS ins,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'UPDATE') AS upd,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	t	f
+
+
+# ---- A direct grant to the member adds on top of the inherited set ----
+
+statement ok
+GRANT DELETE ON mb_mop_pudge TO mb_mop_negaimorit;
+
+
+query
+SELECT has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'SELECT') AS sel,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'INSERT') AS ins,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'UPDATE') AS upd,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	t	t
+
+
+# ---- REVOKE membership removes the inherited privilege, keeps the direct one ----
+
+statement ok
+REVOKE mb_mop_zhidky FROM mb_mop_negaimorit;
+
+
+# SELECT and UPDATE came only through mb_mop_zhidky -> gone. INSERT still
+# arrives through mb_mop_babsky; DELETE was granted directly -> both remain.
+# (zhidky edge cut; babsky edge survives.)
+query
+SELECT has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'SELECT') AS sel,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'INSERT') AS ins,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'UPDATE') AS upd,
+       has_table_privilege('mb_mop_negaimorit', 'mb_mop_pudge', 'DELETE') AS del;
+----
+sel	ins	upd	del
+f	t	f	t
+
+
+# The zhidky edge is gone; the babsky edge survives.
+query
+SELECT pg_has_role('mb_mop_negaimorit', 'mb_mop_zhidky', 'USAGE') AS in_zhidky,
+       pg_has_role('mb_mop_negaimorit', 'mb_mop_babsky', 'USAGE') AS in_babsky;
+----
+in_zhidky	in_babsky
+f	t
+
+
+# ---- Real DML on a second connection mirrors the oracle ----
+# After the revoke negaimorit has INSERT (via babsky) and DELETE (direct), but
+# no SELECT. Inserting is allowed; selecting is denied.
+
+connection c_mop user=mb_mop_negaimorit
+statement ok
+INSERT INTO mb_mop_pudge VALUES (1, 100);
+
+
+connection c_mop user=mb_mop_negaimorit
+statement error
+SELECT * FROM mb_mop_pudge;
+----
+db error: ERROR: permission denied for table mb_mop_pudge<slt:ignore>
+
+
+# Re-grant the group; SELECT is restored on the real query path.
+statement ok
+GRANT mb_mop_zhidky TO mb_mop_negaimorit;
+
+
+connection c_mop user=mb_mop_negaimorit
+query
+SELECT count(*) FROM mb_mop_pudge;
+----
+count
+1
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS mb_mop_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_mop_negaimorit;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_mop_zhidky;
+
+
+statement ok
+DROP ROLE IF EXISTS mb_mop_babsky;

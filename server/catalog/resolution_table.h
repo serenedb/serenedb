@@ -119,7 +119,8 @@ class ResolutionTable {
           return {ERROR_USER_DUPLICATE};
         }
       } else {
-        roles.insert_or_assign(object_name, object_id);
+        roles.erase(object_name);
+        roles.emplace(object_name, object_id);
       }
       return {};
     } else {
@@ -135,13 +136,8 @@ class ResolutionTable {
           auto [_, inserted] = inner.try_emplace(object_name, object_id);
           return inserted;
         }
-        auto [v, inserted] = inner.insert_or_assign(object_name, object_id);
-        if (!inserted) {
-          SDB_ASSERT(v != inner.end());
-          SDB_ASSERT(object_name == v->first);
-          const_cast<std::string_view&>(v->first) = object_name;
-        }
-
+        inner.erase(object_name);
+        inner.emplace(object_name, object_id);
         return true;
       };
       if constexpr (Type == ResolveType::Function) {
@@ -250,6 +246,32 @@ class ResolutionTable {
         SDB_UNREACHABLE();
       }
     }
+  }
+
+  // Re-point a schema's name key onto fresh backing storage without touching
+  // its child namespaces (relations/functions/tokenizers/types). Used by an
+  // in-place schema body swap (GRANT/REVOKE ON SCHEMA, ALTER SCHEMA OWNER):
+  // the old schema object is freed, so its _name -- which the _schemas key is a
+  // string_view into -- would dangle; this rebinds the key to new_name.
+  void RefreshSchemaName(ObjectId db_id, std::string_view new_name,
+                         ObjectId schema_id) {
+    auto& outer = CloneData(_schemas);
+    auto it = outer.find(db_id);
+    SDB_ASSERT(it != outer.end());
+    auto& inner = CloneData(it->second);
+    inner.erase(new_name);
+    inner.emplace(new_name, schema_id);
+  }
+
+  // Re-point a database's name key onto fresh backing storage. Used by an
+  // in-place database body swap (GRANT/REVOKE ON DATABASE): the old database
+  // object is freed once no snapshot references it, so its _name -- which the
+  // _databases key is a string_view into -- would dangle; this rebinds the key
+  // to new_name.
+  void RefreshDatabaseName(std::string_view new_name, ObjectId database_id) {
+    auto& databases = CloneData(_databases);
+    databases.erase(new_name);
+    databases.emplace(new_name, database_id);
   }
 
   auto GetDatabaseIds() const { return *_databases | std::views::values; }

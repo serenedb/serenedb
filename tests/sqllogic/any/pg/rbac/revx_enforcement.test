@@ -1,0 +1,213 @@
+# REVOKE edge cases, enforcement half: prove the has_table_privilege oracle
+# matches the REAL query path across the REVOKE no-op shapes. A second
+# connection authenticates as a non-superuser role; with the privilege present
+# the DML is `statement ok`, and once revoked the denial fires.
+#
+# The focus is on REVOKE semantics that should NOT change behavior:
+#   - a no-op revoke (never-granted priv) leaves a held priv enforceable;
+#   - a double revoke denies the same way the first revoke did;
+#   - REVOKE more-than-granted strips only the held bit;
+#   - REVOKE then re-GRANT restores real access.
+#
+# Deny blocks carry a TRAILING <slt:ignore> because serenedb appends a DETAIL
+# line PostgreSQL does not; the marker swallows that tail so the block is green
+# on both engines. Objects prefixed revx_; idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS revx_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS revx_shlepach;
+
+
+statement ok
+CREATE TABLE revx_vitalik (id int, mop text);
+
+
+statement ok
+INSERT INTO revx_vitalik VALUES (1, 'iceberg'), (2, 'vedernikoff');
+
+
+statement ok
+CREATE ROLE revx_shlepach LOGIN PASSWORD 'pw';
+
+
+# ============================================================================
+# Grant SELECT + INSERT, then a no-op REVOKE of a never-granted privilege
+# (UPDATE). Real read/write must still work -- the no-op revoke changed nothing.
+# ============================================================================
+
+statement ok
+GRANT SELECT, INSERT ON revx_vitalik TO revx_shlepach;
+
+
+# No-op revoke: UPDATE was never granted.
+statement ok
+REVOKE UPDATE ON revx_vitalik FROM revx_shlepach;
+
+
+# Oracle: SELECT/INSERT still t, UPDATE still f.
+query
+SELECT has_table_privilege('revx_shlepach','revx_vitalik','SELECT') AS sel,
+       has_table_privilege('revx_shlepach','revx_vitalik','INSERT') AS ins,
+       has_table_privilege('revx_shlepach','revx_vitalik','UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# Real path agrees: the read works.
+connection c_shlepach user=revx_shlepach
+query
+SELECT id, mop FROM revx_vitalik ORDER BY id;
+----
+id	mop
+1	iceberg
+2	vedernikoff
+
+
+# And the insert works.
+connection c_shlepach user=revx_shlepach
+statement ok
+INSERT INTO revx_vitalik VALUES (3, 'pudge');
+
+
+# ============================================================================
+# REVOKE more than granted: revoke SELECT (held) together with UPDATE/DELETE
+# (never held). Only SELECT drops; INSERT survives. The real read is now denied
+# while the insert still succeeds.
+# ============================================================================
+
+statement ok
+REVOKE SELECT, UPDATE, DELETE ON revx_vitalik FROM revx_shlepach;
+
+
+query
+SELECT has_table_privilege('revx_shlepach','revx_vitalik','SELECT') AS sel,
+       has_table_privilege('revx_shlepach','revx_vitalik','INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+# Read denied now.
+connection c_shlepach user=revx_shlepach
+statement error
+SELECT * FROM revx_vitalik;
+----
+db error: ERROR: permission denied for table revx_vitalik<slt:ignore>
+
+
+# Insert still allowed -- only SELECT was actually held-and-stripped.
+connection c_shlepach user=revx_shlepach
+statement ok
+INSERT INTO revx_vitalik VALUES (4, 'babsky');
+
+
+# ============================================================================
+# Double REVOKE of INSERT: first drops it, second is a no-op. After both, the
+# real insert is denied exactly the same way.
+# ============================================================================
+
+statement ok
+REVOKE INSERT ON revx_vitalik FROM revx_shlepach;
+
+
+# Second revoke -- no-op, ok.
+statement ok
+REVOKE INSERT ON revx_vitalik FROM revx_shlepach;
+
+
+query
+SELECT has_table_privilege('revx_shlepach','revx_vitalik','SELECT') AS sel,
+       has_table_privilege('revx_shlepach','revx_vitalik','INSERT') AS ins;
+----
+sel	ins
+f	f
+
+
+# Both reads and writes are denied.
+connection c_shlepach user=revx_shlepach
+statement error
+SELECT * FROM revx_vitalik;
+----
+db error: ERROR: permission denied for table revx_vitalik<slt:ignore>
+
+
+connection c_shlepach user=revx_shlepach
+statement error
+INSERT INTO revx_vitalik VALUES (5, 'zhidky');
+----
+db error: ERROR: permission denied for table revx_vitalik<slt:ignore>
+
+
+# ============================================================================
+# REVOKE then re-GRANT: real access returns. Re-grant SELECT only; the read
+# works again, the write is still refused.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON revx_vitalik TO revx_shlepach;
+
+
+query
+SELECT has_table_privilege('revx_shlepach','revx_vitalik','SELECT') AS sel,
+       has_table_privilege('revx_shlepach','revx_vitalik','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# Read works again after the re-grant.
+connection c_shlepach user=revx_shlepach
+query
+SELECT count(*) AS n FROM revx_vitalik;
+----
+n
+4
+
+
+# Write still refused -- only SELECT was re-granted.
+connection c_shlepach user=revx_shlepach
+statement error
+INSERT INTO revx_vitalik VALUES (6, 'makak');
+----
+db error: ERROR: permission denied for table revx_vitalik<slt:ignore>
+
+
+# ============================================================================
+# REVOKE ALL when only SELECT is held: clears it, real read denied again.
+# ============================================================================
+
+statement ok
+REVOKE ALL ON revx_vitalik FROM revx_shlepach;
+
+
+query
+SELECT has_table_privilege('revx_shlepach','revx_vitalik','SELECT') AS sel,
+       has_table_privilege('revx_shlepach','revx_vitalik','INSERT') AS ins,
+       has_table_privilege('revx_shlepach','revx_vitalik','UPDATE') AS upd,
+       has_table_privilege('revx_shlepach','revx_vitalik','DELETE') AS del;
+----
+sel	ins	upd	del
+f	f	f	f
+
+
+connection c_shlepach user=revx_shlepach
+statement error
+SELECT * FROM revx_vitalik;
+----
+db error: ERROR: permission denied for table revx_vitalik<slt:ignore>
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE revx_vitalik;
+
+
+statement ok
+DROP ROLE revx_shlepach;

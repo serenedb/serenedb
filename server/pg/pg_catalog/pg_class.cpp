@@ -26,11 +26,14 @@
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <string>
+#include <vector>
 
 #include "app/app_server.h"
+#include "auth/acl.h"
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/role.h"
 #include "catalog/sequence.h"
 #include "catalog/store/store.h"
 #include "catalog/user_type.h"
@@ -73,19 +76,23 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgClass::relrewrite),
   GetIndex(&PgClass::relfrozenxid),
   GetIndex(&PgClass::relminmxid),
+  GetIndex(&PgClass::relacl),
   GetIndex(&PgClass::reloptions),
 });
 
 }  // namespace
 
-PgClass MakeBaseRow(ObjectId schema_id, const catalog::Object& object) {
+// Indexes have no owner of their own, so the caller passes the underlying
+// table's owner (PG semantics).
+PgClass MakeBaseRow(ObjectId schema_id, const catalog::Object& object,
+                    ObjectId owner) {
   return {
     .oid = object.GetId().id(),
     .relname = object.GetName(),
     .relnamespace = schema_id.id(),
     .reltype = 0,
     .reloftype = 0,
-    .relowner = id::kRootUser.id(),
+    .relowner = owner.id(),
     .relam = 0,
     .relfilenode = 0,
     .reltablespace = 0,
@@ -148,25 +155,30 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
 
     for (const auto& table :
          catalog.GetTables(database_id, schema->GetName())) {
-      auto row = MakeBaseRow(schema_id, *table);
+      auto row = MakeBaseRow(schema_id, *table, table->GetOwner());
       row.relkind = PgClass::Relkind::OrdinaryTable;
       row.relnatts = static_cast<int16_t>(table->Columns().size());
       row.relchecks = static_cast<int16_t>(table->CheckConstraints().size());
       row.relhasindex = catalog.HasIndexes(table->GetId());
       row.reltuples =
         count_store_rows(*table, database->GetName(), schema->GetName());
+      row.relacl = {table->GetAcl()};
       values.push_back(std::move(row));
     }
 
     for (const auto& view : catalog.GetViews(database_id, schema->GetName())) {
-      auto row = MakeBaseRow(schema_id, *view);
+      auto row = MakeBaseRow(schema_id, *view, view->GetOwner());
       row.relkind = PgClass::Relkind::View;
+      row.relacl = {view->GetAcl()};
       values.push_back(std::move(row));
     }
 
     for (const auto& index :
          catalog.GetIndexes(database_id, schema->GetName())) {
-      auto row = MakeBaseRow(schema_id, *index);
+      // An index has no owner of its own; PG gives it the underlying table's.
+      auto rel = catalog.GetObject(index->GetRelationId());
+      SDB_ASSERT(rel);
+      auto row = MakeBaseRow(schema_id, *index, rel->GetOwner());
       row.relkind = PgClass::Relkind::Index;
       row.relnatts = static_cast<int16_t>(index->GetColumnIds().size());
       values.push_back(std::move(row));
@@ -174,8 +186,9 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
 
     for (const auto& sequence :
          catalog.GetSequences(database_id, schema->GetName())) {
-      auto row = MakeBaseRow(schema_id, *sequence);
+      auto row = MakeBaseRow(schema_id, *sequence, sequence->GetOwner());
       row.relkind = PgClass::Relkind::Sequence;
+      row.relacl = {sequence->GetAcl()};
       values.push_back(std::move(row));
     }
 
@@ -184,7 +197,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       if (info.type.id() != duckdb::LogicalTypeId::STRUCT) {
         continue;
       }
-      auto row = MakeBaseRow(schema_id, *type);
+      auto row = MakeBaseRow(schema_id, *type, type->GetOwner());
       row.relkind = PgClass::Relkind::CompositeType;
       row.relnatts = static_cast<int16_t>(
         duckdb::StructType::GetChildTypes(info.type).size());
@@ -209,7 +222,8 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
         .relnamespace = schema_id.id(),
         .reltype = 0,
         .reloftype = 0,
-        .relowner = id::kRootUser.id(),
+        // PK index follows the table's owner, like any index.
+        .relowner = table->GetOwner().id(),
         .relam = 0,
         .relfilenode = 0,
         .reltablespace = 0,
@@ -335,7 +349,8 @@ catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   auto result = CreateColumns<PgClass>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row,
+              *_config.EnsureCatalogSnapshot());
   }
 
   return {std::move(result), values.size()};

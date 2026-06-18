@@ -1,0 +1,180 @@
+control substitution on
+
+# RBAC catalog state must survive a crash + WAL recovery: role attributes,
+# role membership edges, object ownership, and table ACL grants are all
+# persisted through the same catalog-definition path as other objects. After
+# recovery, pg_authid / pg_auth_members must reload and has_table_privilege
+# (the real RBAC check) must give the same answers as before the crash.
+#
+# Vedernikoff runs the clickclack iceberg audit: vedernikoff is an ordinary
+# login role (NOT superuser, so privilege checks are not bypassed), the readers
+# group is granted SELECT/INSERT on the ledger, and vedernikoff inherits it
+# through a two-hop membership chain.
+
+statement ok
+CREATE TABLE iceberg_ledger (id INTEGER, payload TEXT);
+
+
+statement ok
+INSERT INTO iceberg_ledger VALUES (1, 'clickclack'), (2, 'MOP');
+
+
+statement ok
+CREATE ROLE vedernikoff LOGIN PASSWORD 'iceberg';
+
+
+statement ok
+CREATE ROLE analysts;
+
+
+statement ok
+CREATE ROLE readers;
+
+
+# A direct grantee and a hierarchy: readers -> SELECT; analysts member of
+# readers; vedernikoff member of analysts (two hops).
+statement ok
+GRANT SELECT, INSERT ON iceberg_ledger TO readers;
+
+
+statement ok
+GRANT readers TO analysts;
+
+
+statement ok
+GRANT analysts TO vedernikoff;
+
+
+# Sanity before the crash.
+query
+SELECT rolname, rolsuper, rolcanlogin FROM pg_authid
+WHERE rolname IN ('vedernikoff', 'analysts', 'readers') ORDER BY rolname;
+----
+rolname	rolsuper	rolcanlogin
+analysts	f	f
+readers	f	f
+vedernikoff	f	t
+
+
+query
+SELECT count(*) FROM pg_auth_members m
+JOIN pg_authid v ON v.oid = m.member
+WHERE v.rolname IN ('analysts', 'vedernikoff');
+----
+count
+2
+
+
+query
+SELECT
+  has_table_privilege('readers', 'iceberg_ledger', 'SELECT'),
+  has_table_privilege('analysts', 'iceberg_ledger', 'SELECT'),
+  has_table_privilege('vedernikoff', 'iceberg_ledger', 'INSERT'),
+  has_table_privilege('vedernikoff', 'iceberg_ledger', 'DELETE');
+----
+has_table_privilege	has_table_privilege	has_table_privilege	has_table_privilege
+t	t	t	f
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Role attributes survived recovery.
+connection after_crash
+query
+SELECT rolname, rolsuper, rolcanlogin FROM pg_authid
+WHERE rolname IN ('vedernikoff', 'analysts', 'readers') ORDER BY rolname;
+----
+rolname	rolsuper	rolcanlogin
+analysts	f	f
+readers	f	f
+vedernikoff	f	t
+
+
+# Membership edges survived.
+connection after_crash
+query
+SELECT count(*) FROM pg_auth_members m
+JOIN pg_authid v ON v.oid = m.member
+WHERE v.rolname IN ('analysts', 'vedernikoff');
+----
+count
+2
+
+
+# The table data survived.
+connection after_crash
+query
+SELECT id, payload FROM iceberg_ledger ORDER BY id;
+----
+id	payload
+1	clickclack
+2	MOP
+
+
+# ACL grants + inheritance survived: vedernikoff still inherits SELECT/INSERT
+# through analysts -> readers, and still lacks DELETE.
+connection after_crash
+query
+SELECT
+  has_table_privilege('readers', 'iceberg_ledger', 'SELECT'),
+  has_table_privilege('analysts', 'iceberg_ledger', 'SELECT'),
+  has_table_privilege('vedernikoff', 'iceberg_ledger', 'INSERT'),
+  has_table_privilege('vedernikoff', 'iceberg_ledger', 'DELETE');
+----
+has_table_privilege	has_table_privilege	has_table_privilege	has_table_privilege
+t	t	t	f
+
+
+# Object ownership survived: the ledger is still owned by postgres.
+connection after_crash
+query
+SELECT (c.relowner = a.oid) AS owned_by_postgres
+FROM pg_class c, pg_authid a
+WHERE c.relname = 'iceberg_ledger' AND a.rolname = 'postgres';
+----
+owned_by_postgres
+t
+
+
+# Post-recovery mutations work and are consistent: revoke the top edge, and
+# vedernikoff loses the inherited privileges (but analysts keeps them).
+connection after_crash
+statement ok
+REVOKE analysts FROM vedernikoff;
+
+
+connection after_crash
+query
+SELECT
+  has_table_privilege('vedernikoff', 'iceberg_ledger', 'SELECT'),
+  has_table_privilege('analysts', 'iceberg_ledger', 'SELECT');
+----
+has_table_privilege	has_table_privilege
+f	t
+
+
+# A fresh grant after recovery also works.
+connection after_crash
+statement ok
+GRANT DELETE ON iceberg_ledger TO readers;
+
+
+connection after_crash
+query
+SELECT has_table_privilege('readers', 'iceberg_ledger', 'DELETE');
+----
+has_table_privilege
+t

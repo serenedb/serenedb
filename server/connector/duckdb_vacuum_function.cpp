@@ -292,7 +292,8 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
     }
     case Scope::Table: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
-      auto table = snapshot.GetTable(db_id, target.schema, target.object);
+      auto table = snapshot.GetTable(catalog::NoAccessCheck(), db_id,
+                                     target.schema, target.object);
       if (!table) {
         throw duckdb::CatalogException("relation '%s' not found.",
                                        target.object);
@@ -364,7 +365,8 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
   switch (scope) {
     case Scope::Table: {
       auto db_id = LookupDatabaseId(snapshot, target.database);
-      auto table = snapshot.GetTable(db_id, target.schema, target.object);
+      auto table = snapshot.GetTable(catalog::NoAccessCheck(), db_id,
+                                     target.schema, target.object);
       if (!table) {
         throw duckdb::CatalogException("relation '%s' not found.",
                                        target.object);

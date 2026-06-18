@@ -1,0 +1,315 @@
+# information_schema.applicable_roles: the role-membership edges that apply to
+# the querying session. As the postgres superuser every membership edge in the
+# cluster is "applicable", so this view exposes the full grant graph as one row
+# per direct edge (grantee = member, role_name = the group it belongs to). The
+# view does NOT pre-expand transitive edges into shortcut rows: a three-hop
+# chain a -> b -> c -> d yields exactly the three direct edges, never a -> c or
+# a -> d. The transitive reachability lives in enabled_roles, asserted in a
+# sibling file; here we pin the edge set, the is_grantable column, and how
+# GRANT / REVOKE add and remove individual rows.
+#
+# Every value below was dual-checked byte-identical on PostgreSQL 19beta1 and
+# serenedb. All roles are prefixed isr_ under the vedernikoff lore. The file is
+# idempotent: DROP ... IF EXISTS up front and a matching DROP block at the end.
+
+statement ok
+DROP ROLE IF EXISTS isr_ar_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_ar_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_ar_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_ar_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_ar_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_ar_pudge;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_ar_salam;
+
+
+# ----------------------------------------------------------------------
+# A straight three-hop chain (-> reads "is a member of"):
+#   isr_ar_clickclack -> isr_ar_kostya -> isr_ar_deadinside -> isr_ar_iceberg
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE isr_ar_clickclack;
+
+
+statement ok
+CREATE ROLE isr_ar_kostya;
+
+
+statement ok
+CREATE ROLE isr_ar_deadinside;
+
+
+statement ok
+CREATE ROLE isr_ar_iceberg;
+
+
+# No memberships yet: the view has no rows for any of these grantees.
+query
+SELECT count(*) AS n FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_ar_%';
+----
+n
+0
+
+
+statement ok
+GRANT isr_ar_kostya TO isr_ar_clickclack;
+
+
+# One edge granted, one row appears. is_grantable is NO (no admin option).
+query
+SELECT grantee, role_name, is_grantable FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_ar_%' ORDER BY grantee, role_name;
+----
+grantee	role_name	is_grantable
+isr_ar_clickclack	isr_ar_kostya	NO
+
+
+statement ok
+GRANT isr_ar_deadinside TO isr_ar_kostya;
+
+
+statement ok
+GRANT isr_ar_iceberg TO isr_ar_deadinside;
+
+
+# The full chain: three rows, one per DIRECT edge. No transitive shortcut rows
+# (no clickclack -> deadinside, no clickclack -> iceberg, no kostya -> iceberg).
+query
+SELECT grantee, role_name FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_ar_%' ORDER BY grantee, role_name;
+----
+grantee	role_name
+isr_ar_clickclack	isr_ar_kostya
+isr_ar_deadinside	isr_ar_iceberg
+isr_ar_kostya	isr_ar_deadinside
+
+
+# Confirming the absence of a transitive shortcut row explicitly.
+query
+SELECT count(*) AS shortcut FROM information_schema.applicable_roles
+WHERE grantee = 'isr_ar_clickclack' AND role_name = 'isr_ar_iceberg';
+----
+shortcut
+0
+
+
+# Filtering by role_name yields the single edge whose group is that role.
+query
+SELECT grantee, role_name FROM information_schema.applicable_roles
+WHERE role_name = 'isr_ar_deadinside' ORDER BY grantee;
+----
+grantee	role_name
+isr_ar_kostya	isr_ar_deadinside
+
+
+# A grantee in the middle of the chain has exactly one outgoing edge.
+query
+SELECT grantee, role_name FROM information_schema.applicable_roles
+WHERE grantee = 'isr_ar_kostya' ORDER BY role_name;
+----
+grantee	role_name
+isr_ar_kostya	isr_ar_deadinside
+
+
+# ----------------------------------------------------------------------
+# Diamond fan-out: one member belongs to two groups, which both lead to a
+# common ancestor. babsky -> {kostya, deadinside} share the chain above; we add
+# pudge as a second member of kostya to make kostya a two-in group.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE isr_ar_babsky;
+
+
+statement ok
+CREATE ROLE isr_ar_pudge;
+
+
+statement ok
+GRANT isr_ar_kostya TO isr_ar_babsky;
+
+
+statement ok
+GRANT isr_ar_deadinside TO isr_ar_babsky;
+
+
+statement ok
+GRANT isr_ar_kostya TO isr_ar_pudge;
+
+
+# babsky has two outgoing edges; both are direct, both is_grantable NO.
+query
+SELECT grantee, role_name, is_grantable FROM information_schema.applicable_roles
+WHERE grantee = 'isr_ar_babsky' ORDER BY role_name;
+----
+grantee	role_name	is_grantable
+isr_ar_babsky	isr_ar_deadinside	NO
+isr_ar_babsky	isr_ar_kostya	NO
+
+
+# kostya is now the group of three members; the view lists each in-edge once.
+query
+SELECT grantee FROM information_schema.applicable_roles
+WHERE role_name = 'isr_ar_kostya' ORDER BY grantee;
+----
+grantee
+isr_ar_babsky
+isr_ar_clickclack
+isr_ar_pudge
+
+
+# Whole graph snapshot: every direct edge, ordered. Six edges total.
+query
+SELECT grantee, role_name FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_ar_%' ORDER BY grantee, role_name;
+----
+grantee	role_name
+isr_ar_babsky	isr_ar_deadinside
+isr_ar_babsky	isr_ar_kostya
+isr_ar_clickclack	isr_ar_kostya
+isr_ar_deadinside	isr_ar_iceberg
+isr_ar_kostya	isr_ar_deadinside
+isr_ar_pudge	isr_ar_kostya
+
+
+# is_grantable is uniformly NO across the entire graph (no admin option exists).
+query
+SELECT DISTINCT is_grantable FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_ar_%';
+----
+is_grantable
+NO
+
+
+# ----------------------------------------------------------------------
+# REVOKE removes exactly the one row for the revoked edge; the rest survive.
+# ----------------------------------------------------------------------
+
+statement ok
+REVOKE isr_ar_deadinside FROM isr_ar_babsky;
+
+
+# babsky now keeps only its kostya edge.
+query
+SELECT grantee, role_name FROM information_schema.applicable_roles
+WHERE grantee = 'isr_ar_babsky' ORDER BY role_name;
+----
+grantee	role_name
+isr_ar_babsky	isr_ar_kostya
+
+
+# The kostya in-edges are unchanged by that revoke.
+query
+SELECT grantee FROM information_schema.applicable_roles
+WHERE role_name = 'isr_ar_kostya' ORDER BY grantee;
+----
+grantee
+isr_ar_babsky
+isr_ar_clickclack
+isr_ar_pudge
+
+
+statement ok
+REVOKE isr_ar_kostya FROM isr_ar_clickclack;
+
+
+# clickclack, now a member of nothing, vanishes from the view entirely.
+query
+SELECT count(*) AS n FROM information_schema.applicable_roles
+WHERE grantee = 'isr_ar_clickclack';
+----
+n
+0
+
+
+# ----------------------------------------------------------------------
+# A role that is a member of nothing never appears as a grantee. salam is
+# created with no memberships at all.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE isr_ar_salam;
+
+
+query
+SELECT count(*) AS n FROM information_schema.applicable_roles
+WHERE grantee = 'isr_ar_salam';
+----
+n
+0
+
+
+# Granting salam INTO a group makes it appear; revoking removes it again.
+statement ok
+GRANT isr_ar_iceberg TO isr_ar_salam;
+
+
+query
+SELECT grantee, role_name FROM information_schema.applicable_roles
+WHERE grantee = 'isr_ar_salam' ORDER BY role_name;
+----
+grantee	role_name
+isr_ar_salam	isr_ar_iceberg
+
+
+statement ok
+REVOKE isr_ar_iceberg FROM isr_ar_salam;
+
+
+query
+SELECT count(*) AS n FROM information_schema.applicable_roles
+WHERE grantee = 'isr_ar_salam';
+----
+n
+0
+
+
+# ----------------------------------------------------------------------
+# Cleanup.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE isr_ar_clickclack;
+
+
+statement ok
+DROP ROLE isr_ar_kostya;
+
+
+statement ok
+DROP ROLE isr_ar_deadinside;
+
+
+statement ok
+DROP ROLE isr_ar_iceberg;
+
+
+statement ok
+DROP ROLE isr_ar_babsky;
+
+
+statement ok
+DROP ROLE isr_ar_pudge;
+
+
+statement ok
+DROP ROLE isr_ar_salam;

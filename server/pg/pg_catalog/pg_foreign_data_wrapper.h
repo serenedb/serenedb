@@ -40,7 +40,7 @@ struct PgForeignDataWrapper {
   Oid fdwowner;
   Oid fdwhandler;
   Oid fdwvalidator;
-  Array<Aclitem> fdwacl;
+  AclColumn fdwacl;
   Array<Text> fdwoptions;
 };
 // NOLINTEND

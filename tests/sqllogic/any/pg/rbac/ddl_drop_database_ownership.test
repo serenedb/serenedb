@@ -1,0 +1,49 @@
+# DROP DATABASE requires ownership (or superuser), like PostgreSQL: a
+# non-owner, non-superuser role must NOT be able to drop a database it does not
+# own. (Regression guard for a destructive escalation: any LOGIN role could drop
+# any database.) The database is owned by the bootstrap superuser, so the
+# unprivileged role is refused; the owner drops it fine.
+
+statement ok
+DROP DATABASE IF EXISTS ddb_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS ddb_vedernikoff;
+
+
+statement ok
+CREATE DATABASE ddb_clickclack;
+
+
+statement ok
+CREATE ROLE ddb_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# Non-owner DROP DATABASE is refused (PG: "must be owner of database ...").
+connection c_ved user=ddb_vedernikoff
+statement error
+DROP DATABASE ddb_clickclack;
+----
+db error: ERROR: must be owner of database ddb_clickclack<slt:ignore>
+
+
+# The database still exists after the refused drop.
+connection default
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'ddb_clickclack';
+----
+n
+1
+
+
+# The owner (superuser) drops it fine.
+connection default
+statement ok
+DROP DATABASE ddb_clickclack;
+
+
+# ---- cleanup ----
+
+statement ok
+DROP ROLE ddb_vedernikoff;

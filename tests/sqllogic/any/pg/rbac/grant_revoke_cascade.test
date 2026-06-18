@@ -1,0 +1,138 @@
+# REVOKE ... RESTRICT / CASCADE over a re-grant chain. RESTRICT (the default)
+# refuses to revoke a grant-option holder's privilege while a dependent grant
+# exists; CASCADE tears the dependents down too. Every assertion is
+# byte-identical on PostgreSQL 19 and serenedb.
+#
+# The chain is built WITHOUT SET ROLE (serenedb has none): the owner grants
+# dgrc_alice SELECT WITH GRANT OPTION, then issues the dependent grant to
+# dgrc_bob attributed to alice via GRANTED BY (legal here because postgres is a
+# superuser and may assert any grantor).
+#   postgres -> GRANT SELECT WITH GRANT OPTION -> dgrc_alice  (relacl r*)
+#   GRANT SELECT TO dgrc_bob GRANTED BY dgrc_alice            (relacl r/dgrc_alice)
+#
+# Lore: dgrc_clickclack table; dgrc_alice the grant-option middleman, dgrc_bob
+# the downstream grantee. Both LOGIN so we can read from bob's session.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS dgrc_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS dgrc_alice;
+
+
+statement ok
+DROP ROLE IF EXISTS dgrc_bob;
+
+
+statement ok
+CREATE TABLE dgrc_clickclack (id int);
+
+
+statement ok
+INSERT INTO dgrc_clickclack VALUES (1), (2), (3);
+
+
+statement ok
+CREATE ROLE dgrc_alice LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE dgrc_bob LOGIN PASSWORD 'pw';
+
+
+# Owner grants alice SELECT WITH GRANT OPTION...
+statement ok
+GRANT SELECT ON dgrc_clickclack TO dgrc_alice WITH GRANT OPTION;
+
+
+# ...then records the dependent grant to bob attributed to alice.
+statement ok
+GRANT SELECT ON dgrc_clickclack TO dgrc_bob GRANTED BY dgrc_alice;
+
+
+# The chain is recorded: alice with the option (r*), bob granted BY alice.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'dgrc_clickclack'
+) g WHERE e LIKE 'dgrc_%' ORDER BY e;
+----
+e
+dgrc_alice=r*/postgres
+dgrc_bob=r/dgrc_alice
+
+
+# bob can read the table from his own session (the dependent grant is live).
+connection c_bob user=dgrc_bob
+query
+SELECT count(*) AS n FROM dgrc_clickclack;
+----
+n
+3
+
+
+# RESTRICT (the default) refuses while the dependent grant exists.
+connection default
+statement error
+REVOKE SELECT ON dgrc_clickclack FROM dgrc_alice RESTRICT;
+----
+db error: ERROR: dependent privileges exist<slt:ignore>
+
+
+# The refused revoke changed nothing: both rows survive.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'dgrc_clickclack'
+) g WHERE e LIKE 'dgrc_%' ORDER BY e;
+----
+e
+dgrc_alice=r*/postgres
+dgrc_bob=r/dgrc_alice
+
+
+# CASCADE succeeds and tears down the dependent grant too.
+statement ok
+REVOKE SELECT ON dgrc_clickclack FROM dgrc_alice CASCADE;
+
+
+# Both rows are gone.
+query
+SELECT count(*) AS n FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'dgrc_clickclack'
+) g WHERE e LIKE 'dgrc_%';
+----
+n
+0
+
+
+# Neither role holds SELECT anymore.
+query
+SELECT has_table_privilege('dgrc_alice','dgrc_clickclack','SELECT') AS alice_sel,
+       has_table_privilege('dgrc_bob','dgrc_clickclack','SELECT')   AS bob_sel;
+----
+alice_sel	bob_sel
+f	f
+
+
+# bob's read is now denied. serenedb appends a DETAIL line PG does not, so the
+# expected block ends with an ignore marker that matches both engines.
+connection c_bob2 user=dgrc_bob
+statement error
+SELECT count(*) FROM dgrc_clickclack;
+----
+db error: ERROR: permission denied for table dgrc_clickclack<slt:ignore>
+
+
+# Cleanup.
+connection default
+statement ok
+DROP TABLE dgrc_clickclack;
+
+
+statement ok
+DROP ROLE dgrc_alice;
+
+
+statement ok
+DROP ROLE dgrc_bob;

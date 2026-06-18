@@ -1,0 +1,240 @@
+# Multi-table isolation, enforcement half: a non-superuser login role gets a
+# DIFFERENT privilege on each of three tables, and we prove on a SECOND
+# connection (authenticated as that role) that the REAL query path honours the
+# per-table boundary -- the SELECT it holds on one table does not let it read a
+# sibling, the INSERT it holds elsewhere does not let it insert into the first,
+# and so on. The has_table_privilege oracle is checked alongside to show it
+# tracks behaviour exactly.
+#
+# Deny blocks use a trailing <slt:ignore> on the message line to absorb the
+# extra DETAIL line serenedb appends and PG does not.
+#
+# Tables: iso_zhidky (SELECT), iso_gul (INSERT), iso_pavel (DELETE).
+# Role: iso_negaimorit. All names prefixed iso_; idempotent, self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS iso_zhidky;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_gul;
+
+
+statement ok
+DROP TABLE IF EXISTS iso_pavel;
+
+
+statement ok
+DROP ROLE IF EXISTS iso_negaimorit;
+
+
+statement ok
+CREATE TABLE iso_zhidky (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_gul (id int, mop text);
+
+
+statement ok
+CREATE TABLE iso_pavel (id int, mop text);
+
+
+statement ok
+INSERT INTO iso_zhidky VALUES (1, 'iceberg'), (2, 'clickclack');
+
+
+statement ok
+INSERT INTO iso_gul VALUES (10, 'kostya');
+
+
+statement ok
+INSERT INTO iso_pavel VALUES (100, 'babsky'), (200, 'pudge');
+
+
+statement ok
+CREATE ROLE iso_negaimorit LOGIN PASSWORD 'pw';
+
+
+# ============================================================================
+# Grant SELECT on iso_zhidky, INSERT on iso_gul, DELETE on iso_pavel -- one
+# privilege per table, all on the same role.
+# ============================================================================
+
+statement ok
+GRANT SELECT ON iso_zhidky TO iso_negaimorit;
+
+
+statement ok
+GRANT INSERT ON iso_gul TO iso_negaimorit;
+
+
+statement ok
+GRANT DELETE ON iso_pavel TO iso_negaimorit;
+
+
+# Oracle confirms the isolated diagonal: the held privilege is t on its own
+# table, and the SAME privilege is f on the other two tables.
+query
+SELECT has_table_privilege('iso_negaimorit','iso_zhidky','SELECT') AS zh_sel,
+       has_table_privilege('iso_negaimorit','iso_gul','SELECT')    AS gu_sel,
+       has_table_privilege('iso_negaimorit','iso_pavel','SELECT')  AS pa_sel,
+       has_table_privilege('iso_negaimorit','iso_gul','INSERT')    AS gu_ins,
+       has_table_privilege('iso_negaimorit','iso_zhidky','INSERT') AS zh_ins,
+       has_table_privilege('iso_negaimorit','iso_pavel','DELETE')  AS pa_del,
+       has_table_privilege('iso_negaimorit','iso_zhidky','DELETE') AS zh_del;
+----
+zh_sel	gu_sel	pa_sel	gu_ins	zh_ins	pa_del	zh_del
+t	f	f	t	f	t	f
+
+
+# ============================================================================
+# Real query path: SELECT works on iso_zhidky (the table it was granted on).
+# ============================================================================
+
+connection c_neg user=iso_negaimorit
+query
+SELECT id, mop FROM iso_zhidky ORDER BY id;
+----
+id	mop
+1	iceberg
+2	clickclack
+
+
+# But SELECT on iso_gul is denied: the INSERT grant there does not imply read.
+connection c_neg user=iso_negaimorit
+statement error
+SELECT * FROM iso_gul;
+----
+db error: ERROR: permission denied for table iso_gul<slt:ignore>
+
+
+# And SELECT on iso_pavel is denied: the DELETE grant there does not imply read.
+connection c_neg user=iso_negaimorit
+statement error
+SELECT * FROM iso_pavel;
+----
+db error: ERROR: permission denied for table iso_pavel<slt:ignore>
+
+
+# ============================================================================
+# INSERT works on iso_gul (granted), but is denied on iso_zhidky (only SELECT
+# there) and on iso_pavel (only DELETE there).
+# ============================================================================
+
+connection c_neg user=iso_negaimorit
+statement ok
+INSERT INTO iso_gul VALUES (11, 'deadinside');
+
+
+connection c_neg user=iso_negaimorit
+statement error
+INSERT INTO iso_zhidky VALUES (3, 'androed');
+----
+db error: ERROR: permission denied for table iso_zhidky<slt:ignore>
+
+
+connection c_neg user=iso_negaimorit
+statement error
+INSERT INTO iso_pavel VALUES (300, 'abramov');
+----
+db error: ERROR: permission denied for table iso_pavel<slt:ignore>
+
+
+# ============================================================================
+# DELETE is denied on iso_zhidky (only SELECT there) and iso_gul (only INSERT
+# there): the DELETE privilege the role holds on iso_pavel does not reach its
+# siblings. A WHERE clause is included so the denial is the table-level DELETE
+# check, identical on both engines.
+# ============================================================================
+
+connection c_neg user=iso_negaimorit
+statement error
+DELETE FROM iso_zhidky WHERE id = 1;
+----
+db error: ERROR: permission denied for table iso_zhidky<slt:ignore>
+
+
+connection c_neg user=iso_negaimorit
+statement error
+DELETE FROM iso_gul WHERE id = 10;
+----
+db error: ERROR: permission denied for table iso_gul<slt:ignore>
+
+
+# ============================================================================
+# Revoking the INSERT on iso_gul closes that one door without opening or
+# closing any other: the real INSERT into iso_gul is now denied, while the
+# SELECT on iso_zhidky and the DELETE on iso_pavel keep working.
+# ============================================================================
+
+statement ok
+REVOKE INSERT ON iso_gul FROM iso_negaimorit;
+
+
+query
+SELECT has_table_privilege('iso_negaimorit','iso_gul','INSERT')    AS gu_ins,
+       has_table_privilege('iso_negaimorit','iso_zhidky','SELECT') AS zh_sel,
+       has_table_privilege('iso_negaimorit','iso_pavel','DELETE')  AS pa_del;
+----
+gu_ins	zh_sel	pa_del
+f	t	t
+
+
+connection c_neg user=iso_negaimorit
+statement error
+INSERT INTO iso_gul VALUES (12, 'myasnig');
+----
+db error: ERROR: permission denied for table iso_gul<slt:ignore>
+
+
+# iso_zhidky SELECT still works after the unrelated revoke on iso_gul.
+connection c_neg user=iso_negaimorit
+query
+SELECT count(*) AS n FROM iso_zhidky;
+----
+n
+2
+
+
+# The DELETE privilege on iso_pavel still reads t after the unrelated iso_gul
+# revoke -- the revoke was scoped to iso_gul/INSERT and left iso_pavel intact.
+query
+SELECT has_table_privilege('iso_negaimorit','iso_pavel','DELETE')  AS pa_del,
+       has_table_privilege('iso_negaimorit','iso_zhidky','DELETE') AS zh_del,
+       has_table_privilege('iso_negaimorit','iso_gul','DELETE')    AS gu_del;
+----
+pa_del	zh_del	gu_del
+t	f	f
+
+
+# The owner (superuser) sees the true state of every table regardless of grants.
+# iso_gul holds its original row plus the one iso_negaimorit inserted (the later
+# INSERT of id=12 was denied); iso_pavel is untouched by the denied deletes.
+query
+SELECT (SELECT count(*) FROM iso_zhidky) AS zh,
+       (SELECT count(*) FROM iso_gul)    AS gu,
+       (SELECT count(*) FROM iso_pavel)  AS pa;
+----
+zh	gu	pa
+2	2	2
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE iso_zhidky;
+
+
+statement ok
+DROP TABLE iso_gul;
+
+
+statement ok
+DROP TABLE iso_pavel;
+
+
+statement ok
+DROP ROLE iso_negaimorit;

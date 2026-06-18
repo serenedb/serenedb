@@ -33,10 +33,16 @@ Result CreateDatabase(const ExecContext& exec, std::string_view name) {
     return r;
   }
 
-  auto database = std::make_shared<catalog::Database>(
-    ObjectId{}, catalog::DatabaseOptions{std::string{name}});
+  // Creator owns the database (PG current_user); unset -> kRootUser.
+  auto& global = catalog::GetCatalog();
+  ObjectId owner = id::kRootUser;
+  if (auto role = global.GetCatalogSnapshot()->GetRole(exec.user())) {
+    owner = role->GetId();
+  }
 
-  return catalog::GetCatalog().CreateDatabase(std::move(database));
+  auto database = std::make_shared<catalog::Database>(owner, ObjectId{}, name);
+
+  return global.CreateDatabase(std::move(database));
 }
 
 Result DropDatabase(const ExecContext& exec, std::string_view db_name,

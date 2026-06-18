@@ -1,0 +1,258 @@
+# Cross-checking the three information_schema role views against ONE membership
+# graph. The point is the relationship between them:
+#   * applicable_roles            = one row per DIRECT membership edge applicable
+#                                   to the session (grantee -> role_name).
+#   * enabled_roles               = the NODE closure: self + every transitively
+#                                   reachable group, one row per role name.
+#   * administrable_role_authorizations = the admin-option subset of applicable,
+#                                   here always empty (plain grants only).
+# A transitive-only ancestor is therefore a role that appears in enabled_roles
+# but NOT as a role_name of any direct applicable edge of the session role.
+#
+# Graph (-> reads "is a member of"), with isr_vw_vitalik the login member:
+#         isr_vw_vitalik -> isr_vw_kostya -> isr_vw_deadinside ->\
+#                        \-> isr_vw_mop --------------------------> isr_vw_iceberg
+# Direct groups of vitalik: kostya, mop. Transitive-only ancestors reached
+# upward: deadinside, iceberg.
+#
+# Dual-checked byte-identical on PostgreSQL 19beta1 and serenedb. Roles prefixed
+# isr_ under the vedernikoff lore; idempotent and self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS isr_vw_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_vw_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_vw_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_vw_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS isr_vw_mop;
+
+
+statement ok
+CREATE ROLE isr_vw_vitalik LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE isr_vw_kostya;
+
+
+statement ok
+CREATE ROLE isr_vw_deadinside;
+
+
+statement ok
+CREATE ROLE isr_vw_iceberg;
+
+
+statement ok
+CREATE ROLE isr_vw_mop;
+
+
+statement ok
+GRANT isr_vw_kostya TO isr_vw_vitalik;
+
+
+statement ok
+GRANT isr_vw_mop TO isr_vw_vitalik;
+
+
+statement ok
+GRANT isr_vw_deadinside TO isr_vw_kostya;
+
+
+statement ok
+GRANT isr_vw_iceberg TO isr_vw_deadinside;
+
+
+statement ok
+GRANT isr_vw_iceberg TO isr_vw_mop;
+
+
+# ----------------------------------------------------------------------
+# applicable_roles (superuser session sees every edge): the five direct edges.
+# ----------------------------------------------------------------------
+
+query
+SELECT grantee, role_name FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_vw_%' ORDER BY grantee, role_name;
+----
+grantee	role_name
+isr_vw_deadinside	isr_vw_iceberg
+isr_vw_kostya	isr_vw_deadinside
+isr_vw_mop	isr_vw_iceberg
+isr_vw_vitalik	isr_vw_kostya
+isr_vw_vitalik	isr_vw_mop
+
+
+# The top ancestor: a role that is a group (appears as role_name) yet is a
+# member of nothing (never a grantee). iceberg is the single sink.
+query
+SELECT DISTINCT role_name FROM information_schema.applicable_roles a
+WHERE role_name LIKE 'isr_vw_%'
+  AND NOT EXISTS (SELECT 1 FROM information_schema.applicable_roles b
+                  WHERE b.grantee = a.role_name)
+ORDER BY role_name;
+----
+role_name
+isr_vw_iceberg
+
+
+# ----------------------------------------------------------------------
+# From vitalik's own session: applicable lists vitalik's reachable edges, the
+# transitive closure of grants. is_grantable is NO on every one.
+# ----------------------------------------------------------------------
+
+connection c_vitalik user=isr_vw_vitalik
+query
+SELECT grantee, role_name, is_grantable FROM information_schema.applicable_roles
+WHERE grantee LIKE 'isr_vw_%' ORDER BY grantee, role_name;
+----
+grantee	role_name	is_grantable
+isr_vw_deadinside	isr_vw_iceberg	NO
+isr_vw_kostya	isr_vw_deadinside	NO
+isr_vw_mop	isr_vw_iceberg	NO
+isr_vw_vitalik	isr_vw_kostya	NO
+isr_vw_vitalik	isr_vw_mop	NO
+
+
+# enabled_roles from vitalik's session: the node closure, self + four ancestors.
+connection c_vitalik user=isr_vw_vitalik
+query
+SELECT role_name FROM information_schema.enabled_roles
+WHERE role_name LIKE 'isr_vw_%' ORDER BY role_name;
+----
+role_name
+isr_vw_deadinside
+isr_vw_iceberg
+isr_vw_kostya
+isr_vw_mop
+isr_vw_vitalik
+
+
+# Direct groups of vitalik: the role_name of edges whose grantee IS vitalik.
+connection c_vitalik user=isr_vw_vitalik
+query
+SELECT role_name FROM information_schema.applicable_roles
+WHERE grantee = 'isr_vw_vitalik' ORDER BY role_name;
+----
+role_name
+isr_vw_kostya
+isr_vw_mop
+
+
+# Transitive-only ancestors = enabled nodes minus self minus direct groups.
+# These are reachable but only through intermediate hops: deadinside, iceberg.
+connection c_vitalik user=isr_vw_vitalik
+query
+SELECT e.role_name FROM information_schema.enabled_roles e
+WHERE e.role_name LIKE 'isr_vw_%'
+  AND e.role_name <> 'isr_vw_vitalik'
+  AND e.role_name NOT IN (SELECT a.role_name FROM information_schema.applicable_roles a
+                          WHERE a.grantee = 'isr_vw_vitalik')
+ORDER BY e.role_name;
+----
+role_name
+isr_vw_deadinside
+isr_vw_iceberg
+
+
+# Side-by-side cardinalities in vitalik's session: five applicable edges, five
+# enabled nodes, zero administrable.
+connection c_vitalik user=isr_vw_vitalik
+query
+SELECT
+  (SELECT count(*) FROM information_schema.applicable_roles) AS edges,
+  (SELECT count(*) FROM information_schema.enabled_roles WHERE role_name LIKE 'isr_vw_%') AS nodes,
+  (SELECT count(*) FROM information_schema.administrable_role_authorizations) AS administrable;
+----
+edges	nodes	administrable
+5	5	0
+
+
+# Every applicable role_name is also an enabled node (applicable groups are a
+# subset of the enabled closure). The set difference is empty.
+connection c_vitalik user=isr_vw_vitalik
+query
+SELECT count(*) AS applicable_not_enabled FROM (
+  SELECT role_name FROM information_schema.applicable_roles
+  EXCEPT
+  SELECT role_name FROM information_schema.enabled_roles
+) d;
+----
+applicable_not_enabled
+0
+
+
+# ----------------------------------------------------------------------
+# Mutate the graph: revoke the mop branch off vitalik. mop is then unreachable
+# and leaves the enabled closure; iceberg survives via kostya->deadinside.
+# ----------------------------------------------------------------------
+
+statement ok
+REVOKE isr_vw_mop FROM isr_vw_vitalik;
+
+
+# vitalik now has a single direct group (kostya); the mop edge is gone.
+connection c_vitalik2 user=isr_vw_vitalik
+query
+SELECT role_name FROM information_schema.applicable_roles
+WHERE grantee = 'isr_vw_vitalik' ORDER BY role_name;
+----
+role_name
+isr_vw_kostya
+
+
+# Enabled closure drops mop but keeps iceberg: self + kostya + deadinside + iceberg.
+connection c_vitalik2 user=isr_vw_vitalik
+query
+SELECT role_name FROM information_schema.enabled_roles
+WHERE role_name LIKE 'isr_vw_%' ORDER BY role_name;
+----
+role_name
+isr_vw_deadinside
+isr_vw_iceberg
+isr_vw_kostya
+isr_vw_vitalik
+
+
+# administrable stays empty after the revoke too.
+connection c_vitalik2 user=isr_vw_vitalik
+query
+SELECT count(*) AS administrable FROM information_schema.administrable_role_authorizations;
+----
+administrable
+0
+
+
+# ----------------------------------------------------------------------
+# Cleanup (control session owns the DROPs).
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE isr_vw_vitalik;
+
+
+statement ok
+DROP ROLE isr_vw_kostya;
+
+
+statement ok
+DROP ROLE isr_vw_deadinside;
+
+
+statement ok
+DROP ROLE isr_vw_iceberg;
+
+
+statement ok
+DROP ROLE isr_vw_mop;

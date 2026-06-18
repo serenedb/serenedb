@@ -1,0 +1,151 @@
+# Cross-membership: the full pg_has_role(MEMBER / USAGE / SET) matrix evaluated
+# over a diamond, with a non-member control role that reaches nothing. With
+# all-default edges the three predicates agree (every reachable group answers t
+# for all of MEMBER, USAGE, SET); a non-member answers f everywhere.
+#
+# Graph (-> reads "is a member of"):
+#   xmb_hrmd_vitalik -> xmb_hrmd_kryakva -> xmb_hrmd_iceberg
+#   xmb_hrmd_vitalik -> xmb_hrmd_androed -> xmb_hrmd_iceberg
+#   xmb_hrmd_babsky  : member of nothing (control)
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_hrmd_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_hrmd_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_hrmd_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_hrmd_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_hrmd_iceberg;
+
+
+statement ok
+CREATE ROLE xmb_hrmd_vitalik;
+
+
+statement ok
+CREATE ROLE xmb_hrmd_babsky;
+
+
+statement ok
+CREATE ROLE xmb_hrmd_kryakva;
+
+
+statement ok
+CREATE ROLE xmb_hrmd_androed;
+
+
+statement ok
+CREATE ROLE xmb_hrmd_iceberg;
+
+
+statement ok
+GRANT xmb_hrmd_kryakva TO xmb_hrmd_vitalik;
+
+
+statement ok
+GRANT xmb_hrmd_androed TO xmb_hrmd_vitalik;
+
+
+statement ok
+GRANT xmb_hrmd_iceberg TO xmb_hrmd_kryakva;
+
+
+statement ok
+GRANT xmb_hrmd_iceberg TO xmb_hrmd_androed;
+
+
+# vitalik -> top group: MEMBER, USAGE, SET all true (default edges).
+query
+SELECT pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_iceberg', 'MEMBER') AS member,
+       pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_iceberg', 'USAGE') AS usage,
+       pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_iceberg', 'SET') AS setrole;
+----
+member	usage	setrole
+t	t	t
+
+
+# vitalik reaches both intermediate groups too.
+query
+SELECT pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_kryakva', 'MEMBER') AS kryakva,
+       pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_androed', 'MEMBER') AS androed;
+----
+kryakva	androed
+t	t
+
+
+# self -> self is always true for all three predicates.
+query
+SELECT pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_vitalik', 'MEMBER') AS member,
+       pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_vitalik', 'USAGE') AS usage,
+       pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_vitalik', 'SET') AS setrole;
+----
+member	usage	setrole
+t	t	t
+
+
+# Top group does NOT reach down to its members (asymmetry).
+query
+SELECT pg_has_role('xmb_hrmd_iceberg', 'xmb_hrmd_vitalik', 'MEMBER') AS down_member,
+       pg_has_role('xmb_hrmd_iceberg', 'xmb_hrmd_kryakva', 'USAGE') AS down_usage;
+----
+down_member	down_usage
+f	f
+
+
+# Control role reaches nothing and is reached by no one.
+query
+SELECT pg_has_role('xmb_hrmd_babsky', 'xmb_hrmd_iceberg', 'MEMBER') AS babsky_to_top,
+       pg_has_role('xmb_hrmd_babsky', 'xmb_hrmd_kryakva', 'USAGE') AS babsky_to_kryakva,
+       pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_babsky', 'MEMBER') AS vitalik_to_babsky;
+----
+babsky_to_top	babsky_to_kryakva	vitalik_to_babsky
+f	f	f
+
+
+# ---- Revoke one diamond branch: vitalik still reaches the top via the other ----
+
+statement ok
+REVOKE xmb_hrmd_kryakva FROM xmb_hrmd_vitalik;
+
+
+query
+SELECT pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_iceberg', 'MEMBER') AS top_member,
+       pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_kryakva', 'MEMBER') AS kryakva_member,
+       pg_has_role('xmb_hrmd_vitalik', 'xmb_hrmd_androed', 'MEMBER') AS androed_member;
+----
+top_member	kryakva_member	androed_member
+t	f	t
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP ROLE IF EXISTS xmb_hrmd_vitalik;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_hrmd_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_hrmd_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_hrmd_androed;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_hrmd_iceberg;

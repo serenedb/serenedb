@@ -1,0 +1,85 @@
+# Cross-product (xog_ slice): GRANT ALL on a table grants the full PostgreSQL
+# privilege set INCLUDING MAINTAIN, so a grantee row renders arwdDxtm. This used
+# to be a serenedb divergence (ALL stopped at the seven classic privileges);
+# serenedb now synthesizes MAINTAIN exactly like PostgreSQL, so the row matches
+# byte-for-byte on both engines and lives in the any/ tree.
+#
+# Also pins has_table_privilege with the literal role name 'public': both
+# engines resolve it to the PUBLIC pseudo-role and return false (no PUBLIC grant
+# yet), rather than erroring.
+#
+# Lore: xog_ga_clickclack is the superuser-owned table; xog_ga_vedernikoff gets
+# GRANT ALL.
+
+statement ok
+DROP TABLE IF EXISTS xog_ga_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_ga_vedernikoff;
+
+
+statement ok
+CREATE TABLE xog_ga_clickclack (id int);
+
+
+statement ok
+CREATE ROLE xog_ga_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT ALL PRIVILEGES ON xog_ga_clickclack TO xog_ga_vedernikoff;
+
+
+# GRANT ALL yields all eight letters in canonical order: the seven classic
+# privileges plus the MAINTAIN bit 'm'.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_ga_clickclack'
+) g WHERE e LIKE 'xog_ga_vedernikoff=%';
+----
+e
+xog_ga_vedernikoff=arwdDxtm/postgres
+
+
+# GRANT ALL WITH GRANT OPTION stars exactly those eight letters.
+statement ok
+GRANT ALL PRIVILEGES ON xog_ga_clickclack TO xog_ga_vedernikoff WITH GRANT OPTION;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_ga_clickclack'
+) g WHERE e LIKE 'xog_ga_vedernikoff=%';
+----
+e
+xog_ga_vedernikoff=a*r*w*d*D*x*t*m*/postgres
+
+
+# has_table_privilege with the literal role name 'public' resolves to the
+# PUBLIC pseudo-role and returns false (nothing granted to PUBLIC yet).
+query
+SELECT has_table_privilege('public','xog_ga_clickclack','SELECT') AS via_public;
+----
+via_public
+f
+
+
+# A GRANT to PUBLIC then reaches every role through the oracle.
+statement ok
+GRANT SELECT ON xog_ga_clickclack TO PUBLIC;
+
+
+query
+SELECT has_table_privilege('xog_ga_vedernikoff','xog_ga_clickclack','SELECT') AS via_any;
+----
+via_any
+t
+
+
+statement ok
+DROP TABLE xog_ga_clickclack;
+
+
+statement ok
+DROP ROLE xog_ga_vedernikoff;

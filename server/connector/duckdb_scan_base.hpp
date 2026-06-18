@@ -113,6 +113,9 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
 struct CommonScanLocalState : public duckdb::LocalTableFunctionState {
   bool segments_exhausted = false;
 
+  irs::PrepareCollector* prepare_collector = nullptr;
+  bool prepared = false;
+
   std::vector<std::unique_ptr<ColumnstoreMaterializer>> cs_materializers;
 };
 
@@ -355,6 +358,30 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, Gstate& g, Lstate& l,
                    [&](auto& pk) { return PrimaryKeysSize(pk) == collected; }},
     l.pk_batch));
   return l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
+}
+
+template<typename Gstate, typename Lstate>
+void PreparePhase(duckdb::ClientContext& ctx, Gstate& g, Lstate& l) {
+  for (;;) {
+    const auto seg = g.prepare_segment.fetch_add(1, std::memory_order_relaxed);
+    if (seg >= g.total_segments) {
+      break;
+    }
+    SDB_ASSERT((*g.reader)[seg].live_docs_count() != 0);
+    l.OnSegmentPrepare(ctx, (*g.reader)[seg], seg, g);
+    if (g.prepare_count.fetch_add(1, std::memory_order_acq_rel) + 1 ==
+        g.total_segments) {
+      const uint32_t used = g.collector_slots.load(std::memory_order_relaxed);
+      auto& merged = *g.collectors[0];
+      for (uint32_t i = 1; i < used; ++i) {
+        merged.Merge(std::move(*g.collectors[i]));
+      }
+      g.stats.emplace(merged.Finish(irs::IResourceManager::gNoop));
+      g.prepare_finished.Notify();
+      return;
+    }
+  }
+  g.prepare_finished.WaitForNotification();
 }
 
 template<typename Gstate, typename Lstate>

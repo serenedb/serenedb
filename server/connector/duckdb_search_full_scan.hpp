@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/synchronization/notification.h>
+
 #include <cstdint>
 #include <duckdb.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -53,15 +55,15 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
     return std::max<duckdb::idx_t>(1, total_segments);
   }
 
-  // Per-segment prepared queries for this scan. PrepareSegment runs here at
-  // scan-init time for every segment so any scorer-attached IDF/norm stats
-  // are collected once into `stats` via the shared `collector` (an earlier
-  // optimizer-time prepare with a null scorer could break filters that mutate
-  // options(), e.g. GeoFilter). Indexed by segment ordinal; entries may be
-  // null. `stats` must outlive the iterators produced by Execute.
-  irs::PrepareCollector::ptr collector;
+  const irs::Filter* filter = nullptr;
+  std::vector<irs::PrepareCollector::ptr> collectors;
   std::vector<irs::QueryBuilder::ptr> queries;
   std::optional<irs::StatsBuffer> stats;
+
+  absl::Notification prepare_finished;
+  std::atomic_uint32_t prepare_segment = 0;
+  std::atomic_uint32_t prepare_count = 0;
+  std::atomic_uint32_t collector_slots = 0;
 
   // Scorer state. `scorer_obj` is non-null iff the plan attached BM25 /
   // TFIDF / DFI / LM-* via the projection or ORDER BY rewrite.
@@ -86,6 +88,8 @@ struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
 
   void OnSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                  uint32_t seg_idx, SearchFullScanGlobalState& g);
+  void OnSegmentPrepare(duckdb::ClientContext& ctx, const irs::SubReader& seg,
+                        uint32_t seg_idx, SearchFullScanGlobalState& g);
   bool OnSegmentsExhausted(duckdb::ClientContext& ctx,
                            SearchFullScanGlobalState& g,
                            duckdb::DataChunk& output);
@@ -112,6 +116,8 @@ struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
 
   void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                     uint32_t seg_idx, SearchFullScanGlobalState& g);
+  void OnSegmentPrepare(duckdb::ClientContext& ctx, const irs::SubReader& seg,
+                        uint32_t seg_idx, SearchFullScanGlobalState& g);
   duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
                           SearchFullScanGlobalState& g,
                           duckdb::DataChunk& output,

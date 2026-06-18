@@ -488,7 +488,7 @@ void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
       if (!p) {
         continue;
       }
-      auto docs = p->Execute({.stats = &stats});
+      auto docs = p->Execute({}, stats);
       while (docs->next()) {
         ++per_iter;
       }

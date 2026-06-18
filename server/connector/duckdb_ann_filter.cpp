@@ -33,7 +33,7 @@ TextScanFilter::TextScanFilter(const irs::Filter& filter,
 void TextScanFilter::Reset(const irs::SubReader& segment) {
   _query = _filter.PrepareSegment(segment, {.collector = &_collector});
   SDB_ASSERT(_query);
-  _it = _query->Execute({});
+  _it = _query->Execute({}, irs::StatsBuffer::Empty());
   SDB_ASSERT(_it);
 }
 

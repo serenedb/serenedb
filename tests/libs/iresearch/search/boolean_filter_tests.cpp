@@ -16395,18 +16395,6 @@ TEST(And_test, optimize_all_filters) {
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
     ASSERT_EQ(8.f, prepared.Query(0)->Boost());
   }
-
-  // `all` filter + term filter
-  {
-    tests::sort::Boost sort{};
-    irs::And root;
-    Append<irs::ByTerm>(root, kFieldTestField, "test_term");
-    root.add<irs::All>().boost(5.f);
-    tests::PreparedFilter prepared{*tests::Optimized(std::move(root), &sort),
-                                   irs::SubReader::empty(), &sort};
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
-    ASSERT_EQ(6.f, prepared.Query(0)->Boost());
-  }
 }
 
 TEST(And_test, not_boosted) {

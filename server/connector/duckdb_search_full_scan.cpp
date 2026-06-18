@@ -90,27 +90,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
                                    duckdb::GlobalTableFunctionState>(
       std::move(state));
   }
-
   if (ss.text_scorer) {
     state->scorer_obj = catalog::MakeScorer(*ss.text_scorer);
   }
-
-  // Per-segment prepare site for SearchScan. We pass the scorer here (or null
-  // when no BM25/TFIDF was attached by the planner) so any IDF/norm stats that
-  // the scorer requires are collected during this one prepare via the shared
-  // collector; an earlier optimizer-time prepare with a null scorer used to
-  // break filters that mutate options() (GeoFilter) when this scorer-aware
-  // re-prepare ran afterwards.
-  SDB_ASSERT(ss.snapshot);
-  const auto& filter = ss.stored_filter ? *ss.stored_filter : MatchAllFilter();
-  auto& prepare_reader = ss.snapshot->reader;
-  state->collector = filter.MakeCollector(state->scorer_obj.get());
-  state->queries.reserve(prepare_reader.size());
-  for (size_t i = 0; i < prepare_reader.size(); ++i) {
-    state->queries.emplace_back(filter.PrepareSegment(
-      prepare_reader[i], {.collector = state->collector.get()}));
-  }
-  state->stats = state->collector->Finish(irs::IResourceManager::gNoop);
+  state->filter = ss.stored_filter ? ss.stored_filter.get() : &MatchAllFilter();
+  state->queries.resize(ss.snapshot->reader.size());
+  state->collectors.resize(state->MaxThreads());
 
   if (state->count_only) {
     return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
@@ -130,6 +115,24 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 }
 
 namespace {
+
+const irs::QueryBuilder& EnsureSegmentQuery(SearchFullScanGlobalState& g,
+                                            CommonScanLocalState& l,
+                                            const irs::SubReader& seg,
+                                            uint32_t seg_idx) {
+  auto& q = g.queries[seg_idx];
+  if (!q) {
+    if (!l.prepare_collector) {
+      const uint32_t slot =
+        g.collector_slots.fetch_add(1, std::memory_order_relaxed);
+      SDB_ASSERT(slot < g.collectors.size());
+      g.collectors[slot] = g.filter->MakeCollector(g.scorer_obj.get());
+      l.prepare_collector = g.collectors[slot].get();
+    }
+    q = g.filter->PrepareSegment(seg, {.collector = l.prepare_collector});
+  }
+  return *q;
+}
 
 template<typename Lstate>
 void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
@@ -208,9 +211,21 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     RunCollectThenEmitScan(context, gstate, l, output);
   } else if (gstate.parallel_topk) {
     auto& l = data.local_state->Cast<SearchFullScanTopKLocalState>();
+    if (!l.prepared) {
+      if (gstate.total_segments != 0) {
+        PreparePhase(context, gstate, l);
+      }
+      l.prepared = true;
+    }
     RunCollectThenEmitScan(context, gstate, l, output);
   } else {
     auto& l = data.local_state->Cast<SearchFullScanScanLocalState>();
+    if (!l.prepared) {
+      if (gstate.scorer_obj && gstate.total_segments != 0) {
+        PreparePhase(context, gstate, l);
+      }
+      l.prepared = true;
+    }
     RunStreamingScan(context, gstate, l, output);
   }
 }
@@ -271,16 +286,12 @@ void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
     local_threshold = seen_global;
   }
 
-  const auto& seg_query = g.queries[seg_idx];
-  if (!seg_query) {
-    return;
-  }
+  const auto& seg_query = EnsureSegmentQuery(g, *this, seg, seg_idx);
   const bool wand_enabled =
     WandEnabled(bind_data->inverted_index.get(), search.text_scorer);
-  auto it = seg.mask(seg_query->Execute({
-    .stats = &*g.stats,
-    .wand = {.wand_enabled = wand_enabled},
-  }));
+  auto it =
+    seg.mask(seg_query.Execute({.wand = {.wand_enabled = wand_enabled}},
+                               g.stats ? *g.stats : irs::StatsBuffer::Empty()));
   auto score_func = it->PrepareScore({
     .scorer = g.scorer_obj.get(),
     .segment = &seg,
@@ -297,6 +308,12 @@ void SearchFullScanTopKLocalState::OnSegment(duckdb::ClientContext& ctx,
   while (kth > cur && !g.global_kth_score.compare_exchange_weak(
                         cur, kth, std::memory_order_relaxed)) {
   }
+}
+
+void SearchFullScanTopKLocalState::OnSegmentPrepare(
+  duckdb::ClientContext& /*ctx*/, const irs::SubReader& seg, uint32_t seg_idx,
+  SearchFullScanGlobalState& g) {
+  EnsureSegmentQuery(g, *this, seg, seg_idx);
 }
 
 bool SearchFullScanTopKLocalState::OnSegmentsExhausted(
@@ -354,14 +371,9 @@ void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   }
   bulk_doc_in_seg = 0;
   bulk_seg_doc_count = 0;
-  const auto& seg_query = g.queries[seg_idx];
-  if (!seg_query) {
-    streaming_doc.reset();
-    return;
-  }
-  streaming_doc = seg.mask(seg_query->Execute({
-    .stats = &*g.stats,
-  }));
+  const auto& seg_query = EnsureSegmentQuery(g, *this, seg, seg_idx);
+  streaming_doc = seg.mask(
+    seg_query.Execute({}, g.stats ? *g.stats : irs::StatsBuffer::Empty()));
   if (g.has_external_projections &&
       !SegmentPkColumn(*g.reader, seg_idx).second) {
     streaming_doc.reset();
@@ -375,6 +387,12 @@ void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
       .fetcher = &score_fetcher,
     });
   }
+}
+
+void SearchFullScanScanLocalState::OnSegmentPrepare(
+  duckdb::ClientContext& /*ctx*/, const irs::SubReader& seg, uint32_t seg_idx,
+  SearchFullScanGlobalState& g) {
+  EnsureSegmentQuery(g, *this, seg, seg_idx);
 }
 
 void SearchFullScanScanLocalState::AdvanceChunk(SearchFullScanGlobalState& g,
@@ -487,11 +505,8 @@ void SearchFullScanCountLocalState::OnSegment(duckdb::ClientContext& /*ctx*/,
                                               const irs::SubReader& seg,
                                               uint32_t seg_idx,
                                               SearchFullScanGlobalState& g) {
-  const auto& seg_query = g.queries[seg_idx];
-  if (!seg_query) {
-    return;
-  }
-  auto doc = seg.mask(seg_query->Execute({.stats = &*g.stats}));
+  const auto& seg_query = EnsureSegmentQuery(g, *this, seg, seg_idx);
+  auto doc = seg.mask(seg_query.Execute({}, irs::StatsBuffer::Empty()));
   local_count += doc->count();
 }
 

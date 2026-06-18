@@ -31,7 +31,8 @@ class SearchRemoveQuery : public irs::QueryBuilder {
                     const SearchRemoveFilterBase& filter)
     : irs::QueryBuilder{segment}, _filter{filter} {}
 
-  irs::DocIterator::ptr Execute(const irs::ExecutionContext& ctx) const final {
+  irs::DocIterator::ptr Execute(const irs::ExecutionContext& ctx,
+                                const irs::StatsBuffer&) const final {
     return _filter.MakeIterator(_segment, ctx);
   }
 

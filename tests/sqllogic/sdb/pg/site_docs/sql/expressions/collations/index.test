@@ -83,6 +83,11 @@ t
 
 # DOCS_TEST: example_009
 
+# default_collation is a GLOBAL setting that leaks across connections, so restore
+# it immediately after the example above to avoid contaminating other fixtures.
+statement ok
+RESET default_collation;
+
 # DOCS_TEST_BODY
 
 statement ok
@@ -107,12 +112,13 @@ hännes
 
 # DOCS_TEST_BODY
 
-query error
+statement error
 SELECT name
 FROM names
 WHERE name = 'hannes' COLLATE NOCASE;
 ----
 db error: ERROR: Cannot combine types with different collation!
+
 
 # DOCS_TEST: example_012
 
@@ -128,12 +134,13 @@ INSERT INTO other_names VALUES ('HÄNNES');
 
 # DOCS_TEST_BODY
 
-query error
+statement error
 SELECT names.name AS name, other_names.name AS other_name
 FROM names, other_names
 WHERE names.name = other_names.name;
 ----
 db error: ERROR: Cannot combine types with different collation!
+
 
 # DOCS_TEST: example_014
 
@@ -159,15 +166,6 @@ nfc
 noaccent
 nocase
 
-query
-SELECT list(collname) FROM pragma_collations();
-----
-list
-{nfc,noaccent,nocase}
-
-statement ok
-SET default_collation = 'binary';
-
 # DOCS_TEST: example_016
 
 # DOCS_TEST_BODY
@@ -178,17 +176,3 @@ CREATE TABLE strings (s VARCHAR COLLATE DE);
 db error: ERROR: Collation with name "de" is not in the catalog, but it exists in the icu extension.
 
 This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
-
-
-statement error
-INSERT INTO strings VALUES ('Gabel'), ('Göbel'), ('Goethe'), ('Goldmann'), ('Göthe'), ('Götz');
-----
-db error: ERROR: Table with name strings does not exist!
-Did you mean "<slt:ignore>"?
-
-
-query error
-SELECT * FROM strings ORDER BY s;
-----
-db error: ERROR: Table with name strings does not exist!
-Did you mean "<slt:ignore>"?

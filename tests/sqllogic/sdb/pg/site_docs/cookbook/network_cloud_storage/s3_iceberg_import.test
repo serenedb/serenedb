@@ -20,27 +20,6 @@ CREATE OR REPLACE SECRET (
     REGION 'us-east-1'
 );
 
-# DOCS_TEST: example_004
-
-# DOCS_TEST_RAW
-#| CREATE SECRET (
-#|     TYPE s3,
-#|     PROVIDER credential_chain
-#| );
-
-# DOCS_TEST_BODY
-
-statement error
-CREATE OR REPLACE SECRET (
-    TYPE s3,
-    PROVIDER credential_chain
-);
-----
-db error: ERROR: Secret provider 'credential_chain' for type 's3' does not exist, but it exists in the aws extension.
-
-This feature relies on the "aws" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
-
-
 # DOCS_TEST: example_005
 
 statement ok

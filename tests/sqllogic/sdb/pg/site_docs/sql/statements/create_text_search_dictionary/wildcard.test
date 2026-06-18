@@ -1,0 +1,11 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_dict (
+    template = 'wildcard',
+    ngramsize = 3,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);

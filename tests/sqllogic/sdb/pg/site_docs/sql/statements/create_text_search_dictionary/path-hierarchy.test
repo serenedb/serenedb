@@ -1,0 +1,36 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_dict (
+    template = 'path_hierarchy',
+    delimiter = '/'
+);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_lexize('path_dict', '/usr/local/bin');
+----
+ts_lexize
+{/usr,/usr/local,/usr/local/bin}
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY domain_dict (
+    template = 'path_hierarchy',
+    delimiter = '.',
+    reverse = true
+);
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_lexize('domain_dict', 'docs.serenedb.com');
+----
+ts_lexize
+{docs.serenedb.com,serenedb.com,com}

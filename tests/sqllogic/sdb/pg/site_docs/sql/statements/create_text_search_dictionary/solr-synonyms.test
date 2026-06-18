@@ -1,0 +1,30 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY solr_syn (
+    template = 'solr_synonyms',
+    synonyms = 'foo, bar
+baz => qux'
+);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_lexize('solr_syn', 'foo');
+----
+ts_lexize
+{bar,foo}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_lexize('solr_syn', 'baz');
+----
+ts_lexize
+{qux}

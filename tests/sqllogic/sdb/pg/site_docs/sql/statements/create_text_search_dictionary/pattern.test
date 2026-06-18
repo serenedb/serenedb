@@ -1,0 +1,37 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY caps (
+    template = 'pattern',
+    pattern = '[A-Z][A-Za-z0-9]{2,}',
+    group = 0
+);
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_lexize('caps', 'The Quick Brown fox jumps over Lazy Dog');
+----
+ts_lexize
+{The,Quick,Brown,Lazy,Dog}
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ws_split (
+    template = 'pattern',
+    pattern = '\s+',
+    group = -1
+);
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_lexize('ws_split', 'alpha  beta   gamma');
+----
+ts_lexize
+{alpha,beta,gamma}

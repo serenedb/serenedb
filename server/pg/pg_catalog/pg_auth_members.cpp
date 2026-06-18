@@ -31,20 +31,12 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData() {
   auto catalog = _config.EnsureCatalogSnapshot();
 
-  // Synthetic, order-dependent oid for an (member, roleid) edge. XOR collides
-  // for distinct pairs (1^2 == 4^7); PG requires pg_auth_members.oid unique, so
-  // mix the two ids non-commutatively instead.
-  const auto edge_oid = [](uint64_t member, uint64_t roleid) -> uint64_t {
-    uint64_t h = member * 0x9E3779B97F4A7C15ull;
-    h ^= roleid + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
-    return h;
-  };
-
   std::vector<PgAuthMembers> values;
+  uint64_t oid = 1;
   for (const auto& role : catalog->GetRoles()) {
     for (const auto& edge : role->MemberOf()) {
       values.push_back(PgAuthMembers{
-        .oid = edge_oid(role->GetId().id(), edge.role.id()),
+        .oid = oid++,
         .roleid = edge.role.id(),
         .member = role->GetId().id(),
         .grantor = id::kRootUser.id(),

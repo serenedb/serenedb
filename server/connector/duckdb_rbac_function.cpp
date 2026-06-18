@@ -27,39 +27,39 @@
 
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/rbac.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
 
 using duckdb::LogicalType;
 
-// Reject a NULL client-supplied pragma arg before GetValue<T>() (which would
-// throw or read uninitialized data).
+// Read a client-supplied pragma arg, rejecting NULL before GetValue<T>() (which
+// would throw or read uninitialized data).
+template<typename T>
+T Arg(const duckdb::FunctionParameters& params, size_t i, const char* name) {
+  if (params.values[i].IsNull()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                    ERR_MSG("serenedb RBAC pragma: argument '", name,
+                            "' must not be NULL"));
+  }
+  return params.values[i].GetValue<T>();
+}
+
 std::string ArgStr(const duckdb::FunctionParameters& params, size_t i,
                    const char* name) {
-  if (params.values[i].IsNull()) {
-    throw duckdb::InvalidInputException(
-      "serenedb RBAC pragma: argument '%s' must not be NULL", name);
-  }
-  return params.values[i].GetValue<std::string>();
+  return Arg<std::string>(params, i, name);
 }
 
 bool ArgBool(const duckdb::FunctionParameters& params, size_t i,
              const char* name) {
-  if (params.values[i].IsNull()) {
-    throw duckdb::InvalidInputException(
-      "serenedb RBAC pragma: argument '%s' must not be NULL", name);
-  }
-  return params.values[i].GetValue<bool>();
+  return Arg<bool>(params, i, name);
 }
 
 int32_t ArgInt(const duckdb::FunctionParameters& params, size_t i,
                const char* name) {
-  if (params.values[i].IsNull()) {
-    throw duckdb::InvalidInputException(
-      "serenedb RBAC pragma: argument '%s' must not be NULL", name);
-  }
-  return params.values[i].GetValue<int32_t>();
+  return Arg<int32_t>(params, i, name);
 }
 
 // PRAGMA serenedb_create_role('name', login, superuser, password, inherit,

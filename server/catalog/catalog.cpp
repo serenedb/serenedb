@@ -2676,11 +2676,13 @@ Result Catalog::ChangeOwner(ObjectId database_id, std::string_view schema,
     auto schema_id =
       _snapshot->GetObjectId<ResolveType::Schema>(database_id, name);
     if (!schema_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                      ERR_MSG("schema \"", name, "\" does not exist"));
     }
     auto obj = _snapshot->GetObject(*schema_id);
     if (!obj) {
-      return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                      ERR_MSG("schema \"", name, "\" does not exist"));
     }
     auto cloned = obj->Clone();
     auto perm = cloned->GetPermissions();
@@ -2709,16 +2711,21 @@ Result Catalog::ChangeOwner(ObjectId database_id, std::string_view schema,
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
   if (!schema_id) {
-    return Result{ERROR_SERVER_ILLEGAL_NAME};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                    ERR_MSG("schema \"", schema, "\" does not exist"));
   }
   auto object_id =
     _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
   if (!object_id) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name,
+                            "\" does not exist"));
   }
   auto obj = _snapshot->GetObject(*object_id);
   if (!obj) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name,
+                            "\" does not exist"));
   }
 
   std::vector<std::shared_ptr<Object>> cascade;
@@ -2789,7 +2796,8 @@ Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
     auto schema_id =
       _snapshot->GetObjectId<ResolveType::Schema>(database_id, name);
     if (!schema_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                      ERR_MSG("schema \"", name, "\" does not exist"));
     }
     obj = _snapshot->GetObject(*schema_id);
     parent = database_id;
@@ -2797,7 +2805,8 @@ Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
     auto schema_id =
       _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
     if (!schema_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                      ERR_MSG("schema \"", schema, "\" does not exist"));
     }
     // Functions and types live in their own per-schema namespaces; everything
     // else resolves in the relation namespace.
@@ -2812,13 +2821,17 @@ Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
         _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
     }
     if (!object_id) {
-      return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name,
+                              "\" does not exist"));
     }
     obj = _snapshot->GetObject(*object_id);
     parent = *schema_id;
   }
   if (!obj) {
-    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name,
+                            "\" does not exist"));
   }
 
   // Mutate the effective ACL (NULL/empty -> acldefault) under the lock.

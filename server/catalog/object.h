@@ -118,7 +118,6 @@ void SerdeRead(Context ctx, AclMode& mode) {
 // every role.
 inline constexpr ObjectId kPublicGrantee{0};
 
-// One grant: `grantor` gave `privs` on the object to `grantee`.
 struct AclItem {
   ObjectId grantee = id::kInvalid;  // who got the privileges
   ObjectId grantor = id::kInvalid;  // who granted them
@@ -188,9 +187,6 @@ class Object {
   ObjectId GetOwner() const noexcept { return _perm.owner; }
   const Permissions& GetPermissions() const noexcept { return _perm; }
 
-  // The only post-construction mutator. GRANT / ALTER OWNER do not edit the
-  // object in place -- they Clone() it and install a new Permissions, the COW
-  // analogue of PG writing a new catalog tuple.
   void SetPermissions(Permissions perm) { _perm = std::move(perm); }
 
   bool Tombstoned() const noexcept {

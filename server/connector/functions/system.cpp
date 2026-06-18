@@ -1423,6 +1423,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
+  // current_setting(name, missing_ok) -> text
   {
     duckdb::ScalarFunction func{
       "current_setting",
@@ -1434,15 +1435,6 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
   }
 
   // set_config(name, value, is_local) -> text
-  // version() -> text (overrides DuckDB's built-in)
-  // width_bucket(operand, low, high, count) -> int
-  // --- pg_*_size functions ---
-  // --- pg_*_size functions: all take regclass (implicit cast from text) ---
-  // pg_relation_size(regclass)
-  // pg_relation_size(regclass, text)
-  // pg_table_size(regclass)
-  // pg_total_relation_size(regclass)
-  // current_role is same as current_user in postgres
   loader.RegisterFunction(duckdb::ScalarFunction{
     "set_config",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
@@ -1456,9 +1448,11 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                                  duckdb::LogicalType::VARCHAR,
                                                  SearchPathCanonicalFunction});
 
+  // version() -> text (overrides DuckDB's built-in)
   loader.RegisterFunction(duckdb::ScalarFunction{
     "version", {}, duckdb::LogicalType::VARCHAR, VersionFunction});
 
+  // num_nonnulls(...) -> int
   {
     duckdb::ScalarFunction func{"num_nonnulls",
                                 {duckdb::LogicalType::ANY},
@@ -1469,6 +1463,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
+  // num_nulls(...) -> int
   {
     duckdb::ScalarFunction func{"num_nulls",
                                 {duckdb::LogicalType::ANY},
@@ -1479,6 +1474,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
+  // width_bucket(operand, low, high, count) -> int
   loader.RegisterFunction(duckdb::ScalarFunction{
     "width_bucket",
     {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE,
@@ -1515,6 +1511,9 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
         });
     }});
 
+  // --- pg_*_size functions ---
+  // --- pg_*_size functions: all take regclass (implicit cast from text) ---
+  // pg_relation_size(regclass)
   loader.RegisterFunction(duckdb::ScalarFunction{
     "pg_relation_size",
     {pg::REGCLASS()},
@@ -1530,6 +1529,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
         });
     }});
 
+  // pg_relation_size(regclass, text)
   loader.RegisterFunction(duckdb::ScalarFunction{
     "pg_relation_size",
     {pg::REGCLASS(), duckdb::LogicalType::VARCHAR},
@@ -1547,6 +1547,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
         });
     }});
 
+  // pg_table_size(regclass)
   loader.RegisterFunction(duckdb::ScalarFunction{
     "pg_table_size",
     {pg::REGCLASS()},
@@ -1562,6 +1563,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
         });
     }});
 
+  // pg_total_relation_size(regclass)
   loader.RegisterFunction(duckdb::ScalarFunction{
     "pg_total_relation_size",
     {pg::REGCLASS()},
@@ -1642,6 +1644,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
   loader.RegisterFunction(duckdb::ScalarFunction{
     "current_user", {}, duckdb::LogicalType::VARCHAR, CurrentUserFunction});
 
+  // current_role is same as current_user in postgres
   loader.RegisterFunction(duckdb::ScalarFunction{
     "current_role", {}, duckdb::LogicalType::VARCHAR, CurrentUserFunction});
 

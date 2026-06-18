@@ -475,3 +475,50 @@ DROP TABLE IF EXISTS t1;
 
 statement ok
 CREATE TABLE t1 (x FLOAT, two_x FLOAT GENERATED ALWAYS AS (2 * x) VIRTUAL);
+
+# DOCS_TEST: example_029
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS t1;
+
+statement ok
+CREATE TABLE t1 (x FLOAT, two_x FLOAT GENERATED ALWAYS AS (2 * x) STORED);
+
+statement ok
+INSERT INTO t1 (x) VALUES (5);
+
+# DOCS_TEST_BODY
+
+query
+SELECT x, two_x FROM t1;
+----
+x	two_x
+5	10
+
+# DOCS_TEST: example_030
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS fk_child;
+
+statement ok
+DROP TABLE IF EXISTS fk_parent;
+
+statement ok
+CREATE TABLE fk_parent (id INTEGER PRIMARY KEY);
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE TABLE fk_child (
+    id INTEGER,
+    pid INTEGER,
+    FOREIGN KEY (pid) REFERENCES fk_parent (id) ON DELETE CASCADE
+);
+----
+db error: ERROR: FOREIGN KEY constraints cannot use CASCADE, SET NULL or SET DEFAULT

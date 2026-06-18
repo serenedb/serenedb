@@ -71,12 +71,12 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   auto term = field->iterator(SeekMode::NORMAL);
   for (const auto& ngram : ngrams) {
     auto& term_state = state.terms.emplace_back();
+    auto& part = ngram_collector.Part(term_idx);
+    if (part.empty()) {
+      part.emplace_back();
+    }
     if (term->seek(ngram)) {
       term->read();
-      auto& part = ngram_collector.Part(term_idx);
-      if (part.empty()) {
-        part.emplace_back();
-      }
       part.front().Collect(*term);
       term_state = term->cookie();
       ++count_terms;

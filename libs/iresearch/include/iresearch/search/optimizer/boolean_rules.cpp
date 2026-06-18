@@ -302,7 +302,7 @@ bool AndEmptyRule::Apply(Filter::ptr& slot, const OptimizeContext& /*ctx*/) {
   const auto& node = sdb::basics::downCast<And>(*slot);
   const bool has_empty = absl::c_any_of(
     node, [](const auto& child) { return child->type() == Type<Empty>::id(); });
-  if (!has_empty) {
+  if (node.size() != 0 && !has_empty) {
     return false;
   }
   slot = std::make_unique<Empty>();

@@ -124,11 +124,14 @@ bool ByNGramSimilaritySimplifyRule::Apply(Filter::ptr& slot,
     auto term = std::make_unique<ByTerms>();
     *term->mutable_field_id() = ngram.field_id();
     auto& terms_opts = *term->mutable_options();
-    for (const auto& term : opts.ngrams) {
-      terms_opts.terms.emplace(term, kNoBoost);
+    for (const auto& ngram_term : opts.ngrams) {
+      terms_opts.terms.emplace(ngram_term, kNoBoost);
     }
+    term->boost(ngram.Boost());
+    slot = std::move(term);
+    return true;
   }
-  return true;
+  return false;
 }
 
 void InitTermsRules() {

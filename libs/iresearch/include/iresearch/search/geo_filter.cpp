@@ -712,8 +712,8 @@ PrepareCollector::ptr PrepareOpenIntervalCollector(
         break;
       case BoundType::Exclusive:
         if (greater) {
-          And root;
-          auto& excl = root.add<Not>().filter<GeoDistanceFilter>();
+          Exclusion root;
+          auto& excl = root.exclude<GeoDistanceFilter>();
           *excl.mutable_field_id() = id;
           auto& opts = *excl.mutable_options();
           opts = options;

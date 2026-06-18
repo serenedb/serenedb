@@ -22,6 +22,7 @@
 
 #include "boolean_filter.hpp"
 
+#include "all_filter.hpp"
 #include "conjunction.hpp"
 #include "disjunction.hpp"
 #include "exclusion.hpp"
@@ -108,7 +109,9 @@ QueryBuilder::ptr Or::PrepareSegment(const SubReader& segment,
 
 PrepareCollector::ptr Exclusion::MakeCollector(const Scorer* scorer) const {
   auto compound = std::make_unique<CompoundCollector>(scorer);
-  compound->Add(GetInclude()->MakeCollector(scorer));
+  const auto& include = GetInclude();
+  compound->Add(include ? include->MakeCollector(scorer)
+                        : All{}.MakeCollector(scorer));
   for (const auto& exclude : GetExcludes()) {
     compound->Add(exclude->MakeCollector(nullptr));
   }
@@ -125,7 +128,10 @@ QueryBuilder::ptr Exclusion::PrepareSegment(const SubReader& segment,
   PrepareContext incl_ctx = ctx;
   incl_ctx.boost = child_boost;
   incl_ctx.collector = &compound.Child(0);
-  auto include = GetInclude()->PrepareSegment(segment, incl_ctx);
+  const auto& include_filter = GetInclude();
+  auto include = include_filter
+                   ? include_filter->PrepareSegment(segment, incl_ctx)
+                   : All{}.PrepareSegment(segment, incl_ctx);
 
   std::vector<QueryBuilder::ptr> excludes;
   const auto exclude_filters = GetExcludes();

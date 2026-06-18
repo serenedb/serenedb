@@ -32,6 +32,7 @@
 #include <duckdb/execution/operator/persistent/physical_update.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
 #include <duckdb/execution/operator/scan/physical_table_scan.hpp>
+#include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -666,21 +667,22 @@ bool ScanReadsRealColumn(const duckdb::PhysicalTableScan& scan) {
 }
 
 // Walk the physical subtree feeding an UPDATE/DELETE and report whether the
-// write target's own scan reads a real column value. The target scan is the
-// SereneDB base-table scan of `target`; UPDATE ... FROM joins in other scans,
-// so we match on the relation id rather than taking the first scan.
+// write target's own scan reads a real column value. The target's rows are read
+// from its backing DuckDB store table, so the target scan is the store-table
+// scan whose name matches the target's composed store name; UPDATE ... FROM
+// joins in other scans, so we match on that name rather than the first scan.
 bool WriteTargetReadsColumn(const duckdb::PhysicalOperator& op,
-                            const catalog::Table& target) {
+                            std::string_view target_store_name) {
   if (op.type == duckdb::PhysicalOperatorType::TABLE_SCAN) {
     const auto& scan = op.Cast<duckdb::PhysicalTableScan>();
     if (const auto* bind =
-          dynamic_cast<const SereneDBScanBindData*>(scan.bind_data.get());
-        bind && bind->RelationId() == target.GetId()) {
+          dynamic_cast<const duckdb::TableScanBindData*>(scan.bind_data.get());
+        bind && bind->table.name == target_store_name) {
       return ScanReadsRealColumn(scan);
     }
   }
   return absl::c_any_of(op.children, [&](const auto& child) {
-    return WriteTargetReadsColumn(child.get(), target);
+    return WriteTargetReadsColumn(child.get(), target_store_name);
   });
 }
 
@@ -769,7 +771,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   // DELETE FROM t with no predicate and no RETURNING reads nothing and needs
   // only DELETE.
   if (!op.is_truncate &&
-      (op.return_chunk || WriteTargetReadsColumn(plan, *sdb_table))) {
+      (op.return_chunk || WriteTargetReadsColumn(plan, store_entry.name))) {
     pg::RequirePrivilege(GetSereneDBContext(context), *sdb_table,
                          catalog::AclMode::Select);
   }
@@ -802,7 +804,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   // clause. A constant SET with no column-reading predicate (SET c = 99) reads
   // nothing and needs only UPDATE. RETURNING reads the affected rows back, so
   // PG requires SELECT whenever it is present.
-  if (op.return_chunk || WriteTargetReadsColumn(plan, *sdb_table)) {
+  if (op.return_chunk || WriteTargetReadsColumn(plan, store_entry.name)) {
     pg::RequirePrivilege(GetSereneDBContext(context), *sdb_table,
                          catalog::AclMode::Select);
   }

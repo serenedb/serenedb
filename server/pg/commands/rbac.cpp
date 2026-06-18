@@ -951,8 +951,8 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
     }
     // PG: the new owner must hold CREATE on the relation's containing schema
     // (a schema itself has no containing schema, so this applies only to
-    // relations).
-    if (type != catalog::ObjectType::Schema) {
+    // relations). A no-op transfer to the current owner skips the check.
+    if (type != catalog::ObjectType::Schema && new_owner_id != real_owner) {
       auto schema = snapshot->GetSchema(ctx.GetDatabaseId(), schema_name);
       if (schema &&
           !auth::HasPrivilege(*snapshot, new_owner_id, *schema,

@@ -1,0 +1,175 @@
+# DOCS_TEST: example_001
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw (template = 'keyword');
+
+statement ok
+CREATE TABLE notes (
+    id INTEGER PRIMARY KEY,
+    s VARCHAR
+);
+
+statement ok
+INSERT INTO notes VALUES (1, 'HELLO'), (2, 'World');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX notes_idx ON notes
+    USING inverted (id, (lower(s)) kw);
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+query
+SELECT id FROM notes_idx WHERE lower(s) @@ 'hello' ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: example_002
+
+statement ok
+CREATE TABLE line_items (
+    id INTEGER PRIMARY KEY,
+    price INTEGER,
+    price_with_tax INTEGER GENERATED ALWAYS AS (price * 110 / 100) STORED
+);
+
+statement ok
+INSERT INTO line_items (id, price) VALUES (1, 100), (2, 200);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX line_items_idx ON line_items
+    USING inverted (id, price_with_tax);
+
+statement ok
+VACUUM (REFRESH_TABLE) line_items;
+
+query
+SELECT id, price_with_tax FROM line_items_idx
+WHERE price_with_tax @@ ts_le(150)
+ORDER BY id;
+----
+id	price_with_tax
+1	110
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY,
+    doc JSON
+);
+
+statement ok
+INSERT INTO events VALUES
+    (1, '{"host": "web-01"}'),
+    (2, '{"host": "web-02"}');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX events_idx ON events
+    USING inverted (id, (doc ->> 'host') kw);
+
+statement ok
+VACUUM (REFRESH_TABLE) events;
+
+query
+SELECT id FROM events_idx WHERE doc ->> 'host' @@ 'web-02' ORDER BY id;
+----
+id
+2
+
+# DOCS_TEST: example_004
+
+statement ok
+CREATE TABLE articles_tags (
+    id INTEGER PRIMARY KEY,
+    tags TEXT[]
+);
+
+statement ok
+INSERT INTO articles_tags VALUES
+    (1, ARRAY['red', 'blue']),
+    (2, ARRAY['green']);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX articles_tags_idx ON articles_tags
+    USING inverted (id, tags kw);
+
+statement ok
+VACUUM (REFRESH_TABLE) articles_tags;
+
+query
+SELECT id FROM articles_tags_idx WHERE tags @@ 'blue' ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE documents (
+    id INTEGER PRIMARY KEY,
+    body TEXT,
+    payload VARIANT
+);
+
+statement ok
+INSERT INTO documents VALUES
+    (1, 'alpha cat', '{"views": 42}'::JSON::VARIANT),
+    (2, 'beta dog', '{"views": 7}'::JSON::VARIANT);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX documents_idx ON documents
+    USING inverted (id, body en) INCLUDE (payload);
+
+statement ok
+VACUUM (REFRESH_TABLE) documents;
+
+query
+SELECT id, payload FROM documents_idx WHERE body @@ 'cat' ORDER BY id;
+----
+id	payload
+1	{"views":42}
+
+# DOCS_TEST: example_006
+
+statement ok
+CREATE TABLE metrics (id INTEGER PRIMARY KEY, n INTEGER);
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE INDEX metrics_idx ON metrics USING inverted (id, (sum(n)));
+----
+db error: ERROR: aggregate functions are not allowed in index expressions
+
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement error
+CREATE INDEX metrics_idx2 ON metrics USING inverted (id, (n + random()));
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.

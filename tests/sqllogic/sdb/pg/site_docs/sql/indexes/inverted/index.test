@@ -111,6 +111,42 @@ SELECT ts_lexize('english_dict', 'Running SHOES');
 ts_lexize
 {running,shoes}
 
+# DOCS_TEST: example_006
+
+statement ok
+CREATE TABLE catalog (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR,
+    category VARCHAR,
+    price INTEGER
+);
+
+statement ok
+INSERT INTO catalog VALUES
+    (1, 'Running shoes', 'footwear', 80),
+    (2, 'Trail shoes', 'footwear', 140),
+    (3, 'Leather belt', 'accessories', 45);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX catalog_idx ON catalog
+    USING inverted (id, name english_dict, category, price);
+
+statement ok
+VACUUM (REFRESH_TABLE) catalog;
+
+query
+SELECT id, name, price
+FROM catalog_idx
+WHERE name @@ 'shoes'
+  AND category @@ 'footwear'
+  AND price @@ ts_le(100)
+ORDER BY id;
+----
+id	name	price
+1	Running shoes	80
+
 # DOCS_TEST: example_005
 
 statement ok

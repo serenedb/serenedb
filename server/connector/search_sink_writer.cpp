@@ -842,11 +842,15 @@ void WriteChunkToSearchSink(
 
   // Build the FULL row keys up front (the sink extracts the row-key portion and
   // emits the PK term internally, on the first column). Generated-PK uses
-  // pk_base + row; explicit-PK reads the key from the columns.
-  std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+  // pk_base + row; explicit-PK reads the key from the columns. The key scratch
+  // lives on the sink so it is reused across chunks instead of reallocated.
+  auto& scratch = sink.GetKeyScratch();
+  auto& pk_formats = scratch.pk_formats;
+  auto& row_keys = scratch.row_keys;
+  auto& key_views = scratch.key_views;
   duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
-  std::vector<std::string> row_keys(num_rows);
-  std::vector<std::string_view> key_views;
+  row_keys.resize(num_rows);
+  key_views.clear();
   key_views.reserve(num_rows);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     const uint64_t generated_pk = uses_generated_pk ? pk_base + row : 0;

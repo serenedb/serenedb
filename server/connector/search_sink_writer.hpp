@@ -146,6 +146,15 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     _document.reset();
   }
 
+  // Per-chunk key scratch, reused across WriteChunkToSearchSink calls (the
+  // insert/replay hot path) so every chunk doesn't reallocate these.
+  struct KeyScratch {
+    std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+    std::vector<std::string> row_keys;
+    std::vector<std::string_view> key_views;
+  };
+  KeyScratch& GetKeyScratch() noexcept { return _key_scratch; }
+
  protected:
   struct Field {
     irs::field_id Id() const noexcept { return id; }
@@ -272,6 +281,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   std::string _json_buffer;
 
   duckdb::RecursiveUnifiedVectorFormat _vec_fmt;
+  KeyScratch _key_scratch;
 };
 
 class SearchSinkDeleteBaseImpl {

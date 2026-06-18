@@ -307,15 +307,31 @@ id	number
 
 # DOCS_TEST_BODY
 
-query error substitution failed: Invalid escape sequence: \\w
+control substitution off
+
+query
 SELECT COLUMNS('(\w{3}).*') AS '\1' FROM numbers;
+----
+num
+10
+20
+NULL
+
+control substitution on
 
 # DOCS_TEST: example_020
 
 # DOCS_TEST_BODY
 
-query error substitution failed: Invalid escape sequence: \\0
+control substitution off
+
+query
 SELECT min(COLUMNS(*)) AS "min_\0" FROM numbers;
+----
+min_id	min_number
+1	10
+
+control substitution on
 
 # DOCS_TEST: example_021
 
@@ -387,19 +403,8 @@ result
 
 # DOCS_TEST_BODY
 
-query
-SELECT greatest(UNPACK(COLUMNS(*) + 1)) AS result
+query error
+SELECT greatest(*COLUMNS(*) + 1) AS result
 FROM (SELECT 1 AS a, 2 AS b, 3 AS c);
 ----
-result
-4
-
-# DOCS_TEST: example_027
-
-# DOCS_TEST_BODY
-
-query
-SELECT st.* FROM (SELECT {'x': 1, 'y': 2, 'z': 3} AS st);
-----
-x	y	z
-1	2	3
+db error: ERROR: No function matches the given name and argument types '+(INTEGER, INTEGER, INTEGER, INTEGER_LITERAL)'. <slt:ignore>

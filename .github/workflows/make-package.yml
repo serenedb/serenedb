@@ -71,6 +71,7 @@ env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
+  CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
 
 jobs:
   package:

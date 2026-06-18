@@ -38,6 +38,7 @@ services:
       - "$WORKSPACE/out/logs:/logs"
       - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+      - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
     depends_on:
       - postgres
     environment:
@@ -45,7 +46,7 @@ services:
       - HOME=/sqllogic
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
-      - CARGO_HOME=/tmp/cargo
+      - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
       - PG_CHANGED_TESTS=${PG_CHANGED_TESTS:-}
     networks:

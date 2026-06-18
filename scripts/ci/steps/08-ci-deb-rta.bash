@@ -22,6 +22,8 @@ export DEB_PACKAGE="$(basename "$DEB_PACKAGE")"
 export DOCKER_UID="$(id -u)"
 export DOCKER_GID="$(id -g)"
 export CARGO_TARGET_CACHE="${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}"
+export CARGO_HOME_CACHE="${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}"
+mkdir -p "$CARGO_TARGET_CACHE" "$CARGO_HOME_CACHE"
 
 PREFIX="deb-rta-$$"
 COMPOSE_FILE="${CI_DIR}/docker-compose.deb-rta.yml"

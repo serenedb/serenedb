@@ -45,6 +45,7 @@ services:
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "${WORKSPACE}/out/logs:/logs"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+      - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
       - "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}:/timing-cache"
       - "sdb-test-tmp:/test-tmp"
       - /var/run/docker.sock:/var/run/docker.sock
@@ -57,7 +58,7 @@ services:
       - HOME=/sqllogic
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
-      - CARGO_HOME=/tmp/cargo
+      - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
       - SDB_TIMING_CACHE_DIR=/timing-cache
       - SDB_TIMING_KEY

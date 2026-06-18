@@ -126,6 +126,7 @@ env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
+  CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
   SDB_TIMING_CACHE: /mnt/data/sdb-ci/timing
 
 jobs:
@@ -197,7 +198,7 @@ jobs:
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
       # One-time per CI machine:
-      #   sudo install -d -m 2777 /mnt/data/sdb-ci /mnt/data/.ccache /mnt/data/.cargo-target-sqllogic /mnt/data/cores /mnt/data/searchbench
+      #   sudo install -d -m 2777 /mnt/data/sdb-ci /mnt/data/.ccache /mnt/data/.cargo-target-sqllogic /mnt/data/.cargo-home-sqllogic /mnt/data/cores /mnt/data/searchbench
       #   sudo snap install aws-cli --classic
       #   echo 'kernel.core_pattern=/mnt/data/cores/%e.%p.%t' | sudo tee /etc/sysctl.d/99-serenedb-ci.conf
       #   echo 'kernel.randomize_va_space=0' | sudo tee -a /etc/sysctl.d/99-serenedb-ci.conf

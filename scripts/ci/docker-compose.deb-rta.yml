@@ -41,11 +41,12 @@ services:
       - "${WORKSPACE}/out/logs:/logs"
       - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+      - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
     environment:
       - HOME=/sqllogic
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
-      - CARGO_HOME=/tmp/cargo
+      - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
     networks:
       - rta-network

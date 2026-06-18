@@ -625,11 +625,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           // We only need enough metadata for DropObject to route by name;
           // the actual storage cleanup happens in catalog.DropIndex.
           auto& index = basics::downCast<const catalog::Index>(*relation);
-          auto table =
-            snapshot.GetObject<catalog::Table>(index.GetRelationId());
+          // Resolve the indexed relation untyped: an index may be backed by a
+          // base table or a view, and a typed GetObject<catalog::Table> would
+          // return null (and leave the table name empty) for view-backed
+          // indexes, breaking duckdb_indexes() introspection.
+          auto index_relation = snapshot.GetObject(index.GetRelationId());
           auto info = duckdb::make_uniq<duckdb::CreateIndexInfo>();
           info->schema = schema;
-          info->table = table ? table->GetName() : std::string{};
+          info->table = index_relation ? std::string{index_relation->GetName()}
+                                        : std::string{};
           info->index_name = name;
           info->index_type =
             relation->GetType() == catalog::ObjectType::InvertedIndex

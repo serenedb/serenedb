@@ -134,10 +134,10 @@ INSERT INTO example VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT j.family FROM example;
+SELECT j['family'] FROM example;
 ----
-family
-NULL
+j
+"anatidae"
 
 # DOCS_TEST: example_009
 

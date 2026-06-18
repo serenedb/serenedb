@@ -77,6 +77,13 @@ auto StoreName() {
   };
 }
 
+irs::Filter::ptr Lower(std::unique_ptr<irs::ByPhrase> q,
+                       const irs::Scorer* scorer = nullptr) {
+  irs::Filter::ptr f = std::move(q);
+  irs::Optimize(f, {.scored = scorer != nullptr});
+  return f;
+}
+
 // Freq | Term
 // -----------
 // 4    | 0
@@ -414,9 +421,9 @@ TEST_P(TfidfTestCase, test_phrase) {
 
   // "cookies ca* p_e bisKuit meringue|marshmallows" with order
   {
-    irs::ByPhrase filter;
-    *filter.mutable_field_id() = kPhraseAnl;
-    auto& phrase = *filter.mutable_options();
+    auto filter = std::make_unique<irs::ByPhrase>();
+    *filter->mutable_field_id() = kPhraseAnl;
+    auto& phrase = *filter->mutable_options();
     phrase.push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("cookies"));
     phrase.push_back<irs::ByPrefixOptions>().term =
@@ -442,7 +449,8 @@ TEST_P(TfidfTestCase, test_phrase) {
       "SPWLC3"   // cookies cake pie biscuet marshmallows cake meringue
     };
 
-    tests::PreparedFilter prepared_filter{filter, *index, &scorer, counter};
+    tests::PreparedFilter prepared_filter{*Lower(std::move(filter), &scorer),
+                                          *index, &scorer, counter};
 
     fetcher.Clear();
     auto docs = prepared_filter.Execute(0);

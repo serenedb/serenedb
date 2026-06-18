@@ -152,7 +152,8 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
     {
       irs::ByNGramSimilarity q;
 
-      tests::PreparedFilter prepared{q, segment, nullptr, counter};
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -163,7 +164,8 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
     {
       irs::ByNGramSimilarity q = MakeFilter(kFieldFieldId, {"1", "2"}, 0.5f);
 
-      tests::PreparedFilter prepared{q, segment, nullptr, counter};
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -175,7 +177,8 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
       irs::ByNGramSimilarity q =
         MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
-      tests::PreparedFilter prepared{q, segment, nullptr, counter};
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -194,7 +197,8 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
       irs::ByNGramSimilarity q;
       q.boost(boost);
 
-      tests::PreparedFilter prepared{q, segment, nullptr, counter};
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -206,7 +210,8 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
       irs::ByNGramSimilarity q = MakeFilter(kFieldFieldId, {"1", "2"}, 0.5f);
       q.boost(boost);
 
-      tests::PreparedFilter prepared{q, segment, nullptr, counter};
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
       ASSERT_EQ(boost, prepared.Query(0)->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -219,7 +224,8 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
         MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
       q.boost(boost);
 
-      tests::PreparedFilter prepared{q, segment, nullptr, counter};
+      tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
+                                     nullptr, counter};
       ASSERT_EQ(boost, prepared.Query(0)->Boost());
     }
     EXPECT_EQ(counter.current, 0);
@@ -781,7 +787,8 @@ TEST_P(NGramSimilarityFilterTestCase, one_match_case) {
   Docs expected{1, 3, 5, 6, 7, 8, 9, 10, 12};
   const size_t expected_size = expected.size();
   {
-    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared{*tests::Optimized(std::move(filter)), rdr,
+                                   nullptr, counter};
     size_t count = 0;
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
@@ -1102,7 +1109,8 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
   std::vector<irs::score_t> expected_filter_boost{
     4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 0.5, 0.5, 0.5};
-  CheckQuery(filter, std::span{&order, 1}, expected, rdr);
+  CheckQuery(*tests::Optimized(std::move(filter), order.get()),
+             std::span{&order, 1}, expected, rdr);
   ASSERT_EQ(expected_frequency, frequency);
   ASSERT_EQ(expected_filter_boost.size(), filter_boost.size());
   for (size_t i = 0; i < expected_filter_boost.size(); ++i) {
@@ -1158,7 +1166,8 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
   std::vector<irs::score_t> expected_filter_boost{
     4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 4.f / 6.f, 0.5, 0.5, 0.5};
-  CheckQuery(filter, std::span{&order, 1}, expected, rdr);
+  CheckQuery(*tests::Optimized(std::move(filter), order.get()),
+             std::span{&order, 1}, expected, rdr);
   ASSERT_EQ(expected_frequency, frequency);
   ASSERT_EQ(expected_filter_boost.size(), filter_boost.size());
   for (size_t i = 0; i < expected_filter_boost.size(); ++i) {
@@ -1407,12 +1416,13 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
     return out;
   };
 
-  const auto ngram_hits = collect(ngram);
+  const auto ngram_hits = collect(*tests::Optimized(ngram));
   ASSERT_FALSE(ngram_hits.empty());
 
   irs::Exclusion not_ngram;
   not_ngram.exclude<irs::ByNGramSimilarity>() = ngram;
-  const auto not_hits = collect(not_ngram);
+  auto not_ngram_opt = tests::Optimized(std::move(not_ngram));
+  const auto not_hits = collect(*not_ngram_opt);
 
   // Complement must be non-empty and disjoint from the positive hits.
   ASSERT_FALSE(not_hits.empty());
@@ -1422,7 +1432,7 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
 
   // Drive seek() across positive hits -- mirrors the path that
   // surfaced the crash from the SQL side via Exclusion::converge.
-  tests::PreparedFilter prepared{not_ngram, rdr};
+  tests::PreparedFilter prepared{*not_ngram_opt, rdr};
   for (size_t i = 0, end = prepared.size(); i < end; ++i) {
     auto docs = prepared.Execute(i);
     for (auto doc : ngram_hits) {

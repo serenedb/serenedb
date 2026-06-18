@@ -55,22 +55,23 @@ void CollectTerms(const SubReader& segment, const TermReader& field,
     return;
   }
 
-  if (cmp(term->value)) {
-    // read attributes
-    terms.read();
-
-    visitor.Prepare(segment, field, terms);
-
-    do {
-      visitor.Visit(kNoBoost);
-
-      if (!terms.next()) {
-        break;
-      }
-
-      terms.read();
-    } while (cmp(term->value));
+  if (!cmp(term->value)) {
+    return;
   }
+
+  // read attributes
+  terms.read();
+  visitor.Prepare(segment, field, terms);
+
+  do {
+    visitor.Visit(kNoBoost);
+
+    if (!terms.next()) {
+      break;
+    }
+
+    terms.read();
+  } while (cmp(term->value));
 }
 
 template<typename Visitor>
@@ -127,15 +128,14 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.boost *= Boost();
-  return PrepareSegment(segment, sub_ctx, field_id(), options().range,
-                        options().scored_terms_limit);
+  return PrepareSegment(segment, sub_ctx, field_id(), options().range, Boost());
 }
 
 QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const irs::field_id field,
                                           const options_type::range_type& rng,
-                                          size_t /*scored_terms_limit*/) {
+                                          score_t boost) {
   // TODO: optimize unordered case
   //  - seek to min
   //  - get ordinal position of the term
@@ -169,7 +169,7 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
 
 PrepareCollector::ptr ByRange::MakeCollector(const Scorer* scorer) const {
   if (Classify(options().range) == RangeKind::Term) {
-    return std::make_unique<TermsCollector>(scorer, 1);
+    return std::make_unique<ByTermsCollector>(scorer, 1);
   }
   return std::make_unique<LimitedTermsCollector>(scorer,
                                                  options().scored_terms_limit);

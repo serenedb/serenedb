@@ -459,6 +459,7 @@ inline automaton MakeAll() {
 QueryBuilder::ptr PrepareAutomatonSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           irs::field_id field,
-                                          const automaton& acceptor);
+                                          const automaton& acceptor,
+                                          score_t boost);
 
 }  // namespace irs

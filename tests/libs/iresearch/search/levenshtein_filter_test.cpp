@@ -148,7 +148,8 @@ TEST(by_edit_distance_test, boost) {
     q.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
 
-    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+    irs::Filter::ptr lowered = Lower(std::move(q));
+    tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr,
                                    counter};
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
@@ -166,7 +167,8 @@ TEST(by_edit_distance_test, boost) {
       irs::ViewCast<irs::byte_type>(std::string_view("bar*"));
     q.boost(boost);
 
-    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
+    irs::Filter::ptr lowered = Lower(std::move(q));
+    tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr,
                                    counter};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
@@ -182,8 +184,8 @@ TEST(by_edit_distance_test, test_type_of_prepared_query) {
     const auto lhs_filter = MakeTermFilter("foo", "bar");
     tests::PreparedFilter lhs{lhs_filter, irs::SubReader::empty(), nullptr,
                               counter};
-    const auto rhs_filter = MakeFilter("foo", "bar");
-    tests::PreparedFilter rhs{rhs_filter, irs::SubReader::empty(), nullptr,
+    const auto rhs_filter = Lower(MakeFilter("foo", "bar"));
+    tests::PreparedFilter rhs{*rhs_filter, irs::SubReader::empty(), nullptr,
                               counter};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
@@ -571,7 +573,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    tests::PreparedFilter prepared{filter, *index, order.front().get(),
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -617,7 +622,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    tests::PreparedFilter prepared{filter, *index, order.front().get(),
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -663,7 +671,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    tests::PreparedFilter prepared{filter, *index, order.front().get(),
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -710,7 +721,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    tests::PreparedFilter prepared{filter, *index, order.front().get(),
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -777,7 +791,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    tests::PreparedFilter prepared{filter, *index, order.front().get(),
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 
@@ -846,7 +863,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     opts.provider = irs::DefaultPDP;
     opts.with_transpositions = true;
 
-    tests::PreparedFilter prepared{filter, *index, order.front().get(),
+    irs::Filter::ptr lowered =
+      std::make_unique<irs::ByEditDistance>(std::move(filter));
+    irs::Optimize(lowered, {.scored = true});
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
                                    counter};
     ASSERT_NE(nullptr, prepared.Query(0));
 

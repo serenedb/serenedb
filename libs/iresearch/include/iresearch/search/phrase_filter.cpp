@@ -42,13 +42,7 @@
 namespace irs {
 namespace {
 
-enum class PhraseQueryKind {
-  kEmpty,
-  kSingleTerm,
-  kSingleWord,
-  kFixed,
-  kVariadic
-};
+enum class PhraseQueryKind { kEmpty, kSingleWord, kFixed, kVariadic };
 
 // A phrase with a single non-term part (prefix/wildcard/range/...) reduces to
 // that part's own filter: position matching is a no-op for one word.
@@ -178,30 +172,19 @@ class PhraseTermVisitor final : public FilterVisitor,
     boost = std::max(0.f, boost);
 
     // Only if it has scorer
-    if (_collectors) {
-      if (_stats_size <= _term_offset) {
-        // variadic phrase case
-        _collectors->PushBack();
-        SDB_ASSERT(_stats_size == _term_offset);
-        ++_stats_size;
-        _volatile_boost |= (boost != kNoBoost);
-      }
-
-      _collectors->Collect(_term_offset++, *_terms);
+    if (_part) {
+      _part->emplace_back().Collect(*_terms);
+      _volatile_boost |= (boost != kNoBoost);
     }
     _phrase_states.emplace_back(_terms->cookie(), boost);
   }
 
   void Reset() noexcept { _volatile_boost = false; }
 
-  void Reset(FlatTermBuffer* collectors) noexcept {
+  void Reset(std::vector<TermCollector>* part) noexcept {
     _found = false;
     _terms = nullptr;
-    _term_offset = 0;
-    _collectors = collectors;
-    if (_collectors) {
-      _stats_size = collectors->Size();
-    }
+    _part = part;
   }
 
   bool Found() const noexcept { return _found; }
@@ -209,12 +192,10 @@ class PhraseTermVisitor final : public FilterVisitor,
   bool VolatileBoost() const noexcept { return _volatile_boost; }
 
  private:
-  size_t _term_offset = 0;
-  size_t _stats_size = 0;
   const SubReader* _segment{};
   const TermReader* _reader{};
   PhraseStates& _phrase_states;
-  FlatTermBuffer* _collectors = nullptr;
+  std::vector<TermCollector>* _part = nullptr;
   const SeekTermIterator* _terms = nullptr;
   bool _found = false;
   bool _volatile_boost = false;
@@ -235,9 +216,6 @@ PhraseQueryKind GetKind(irs::field_id field, const ByPhraseOptions& options) {
   }
   if (1 == options.size()) {
     const auto& part = options.begin()->part;
-    if (std::get_if<ByTermOptions>(&part)) {
-      return PhraseQueryKind::kSingleTerm;
-    }
     // a single multi-term part reduces to that part's own filter; a terms-set
     // part keeps the phrase machinery (its frequency exposure differs)
     if (!std::get_if<ByTermsOptions>(&part)) {
@@ -268,27 +246,25 @@ QueryBuilder::ptr FixedPrepareSegment(const SubReader& segment,
                                       const PrepareContext& ctx,
                                       irs::field_id field,
                                       const ByPhraseOptions& options) {
+  SDB_ASSERT(ctx.collector);
   const auto phrase_size = options.size();
-  const auto* scorer = ctx.collector
-                         ? sdb::basics::downCast<TermsCollector>(*ctx.collector)
-                             .Terms()
-                             .GetScorer()
-                         : nullptr;
+  const auto* scorer = ctx.collector->GetScorer();
   const auto is_ord_empty = !scorer;
 
   FixedPhraseState state{ctx.memory};
   state.terms.reserve(phrase_size);
 
   const auto* reader = segment.field(field);
-  if (Valid(reader) && ctx.collector) {
-    auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
+  if (Valid(reader)) {
+    auto& collector = sdb::basics::downCast<PhraseCollector>(*ctx.collector);
     collector.Field().Collect(*reader);
 
     PhraseTermVisitor<decltype(state.terms)> ptv(state.terms);
-    ptv.Reset(&collector.Terms());
 
+    size_t part = 0;
     for (const auto& word : options) {
       SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));
+      ptv.Reset(&collector.Part(part++));
       ByTerm::Visit(segment, *reader, std::get<ByTermOptions>(word.part).term,
                     ptv);
       if (!ptv.Found() && is_ord_empty) {
@@ -312,13 +288,9 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
                                          const PrepareContext& ctx,
                                          irs::field_id field,
                                          const ByPhraseOptions& options) {
+  SDB_ASSERT(ctx.collector);
   const auto phrase_size = options.size();
-  const auto* scorer =
-    ctx.collector
-      ? sdb::basics::downCast<VariadicTermsCollector>(*ctx.collector)
-          .Terms()
-          .GetScorer()
-      : nullptr;
+  const auto* scorer = ctx.collector->GetScorer();
   const auto is_ord_empty = !scorer;
 
   VariadicPhraseState state{ctx.memory};
@@ -326,9 +298,8 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
   ManagedVector<size_t> num_terms(phrase_size, {ctx.memory});
 
   const auto* reader = segment.field(field);
-  if (Valid(reader) && ctx.collector) {
-    auto& collector =
-      sdb::basics::downCast<VariadicTermsCollector>(*ctx.collector);
+  if (Valid(reader)) {
+    auto& collector = sdb::basics::downCast<PhraseCollector>(*ctx.collector);
     collector.Field().Collect(*reader);
 
     std::vector<field_visitor> phrase_part_visitors;
@@ -364,7 +335,7 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
     size_t found_parts = 0;
     for (auto& visitor : phrase_part_visitors) {
       const auto was_terms_count = state.terms.size();
-      ptv.Reset(collector.Terms().GetCollector(found_parts));
+      ptv.Reset(&collector.Part(found_parts));
       visitor(segment, *reader, ptv);
       const auto new_terms_count = state.terms.size() - was_terms_count;
       if (new_terms_count != 0) {
@@ -407,14 +378,11 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
 
 QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
-  const auto sub_ctx = ctx.Boost(Boost());
+  auto sub_ctx = ctx;
+  sub_ctx.Boost(Boost());
   switch (GetKind(field_id(), options())) {
     case PhraseQueryKind::kEmpty:
       return QueryBuilder::Empty();
-    case PhraseQueryKind::kSingleTerm:
-      return ByTerm::PrepareSegment(
-        segment, sub_ctx, field_id(),
-        std::get<ByTermOptions>(options().begin()->part).term);
     case PhraseQueryKind::kSingleWord:
       return MakeSinglePartFilter(field_id(), options())
         ->PrepareSegment(segment, sub_ctx);
@@ -430,14 +398,11 @@ PrepareCollector::ptr ByPhrase::MakeCollector(const Scorer* scorer) const {
   switch (GetKind(field_id(), options())) {
     case PhraseQueryKind::kEmpty:
       return std::make_unique<NoopCollector>();
-    case PhraseQueryKind::kSingleTerm:
-      return std::make_unique<TermsCollector>(scorer, 1);
     case PhraseQueryKind::kSingleWord:
       return MakeSinglePartFilter(field_id(), options())->MakeCollector(scorer);
     case PhraseQueryKind::kFixed:
-      return std::make_unique<TermsCollector>(scorer, options().size());
     case PhraseQueryKind::kVariadic:
-      return std::make_unique<VariadicTermsCollector>(scorer, options().size());
+      return std::make_unique<PhraseCollector>(scorer, options().size());
   }
   return std::make_unique<NoopCollector>();
 }

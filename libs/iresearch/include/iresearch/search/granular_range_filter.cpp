@@ -600,7 +600,7 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
 PrepareCollector::ptr ByGranularRange::MakeCollector(
   const Scorer* scorer) const {
   if (Classify(options()) == RangeKind::Term) {
-    return std::make_unique<TermsCollector>(scorer, 1);
+    return std::make_unique<ByTermsCollector>(scorer, 1);
   }
   return std::make_unique<LimitedTermsCollector>(scorer,
                                                  options().scored_terms_limit);

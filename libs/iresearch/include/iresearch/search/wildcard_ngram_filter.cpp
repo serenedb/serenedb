@@ -233,7 +233,7 @@ PrepareCollector::ptr ByWildcardNgram::MakeCollector(
   const auto& opts = options();
   switch (ClassifyKind(opts)) {
     case WildcardNgramKind::kTerm:
-      return std::make_unique<TermsCollector>(scorer, 1);
+      return std::make_unique<ByTermsCollector>(scorer, 1);
     case WildcardNgramKind::kPrefix:
       return std::make_unique<LimitedTermsCollector>(scorer,
                                                      kDefaultScoredTermsLimit);
@@ -265,7 +265,8 @@ PrepareCollector::ptr ByWildcardNgram::MakeCollector(
 QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   const auto& opts = options();
-  const auto sub_ctx = ctx.Boost(Boost());
+  auto sub_ctx = ctx;
+  sub_ctx.Boost(Boost());
 
   const auto wrap = [&](QueryBuilder::ptr&& approx) -> QueryBuilder::ptr {
     if (!approx || approx == QueryBuilder::Empty()) {

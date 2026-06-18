@@ -71,31 +71,24 @@ void ByTerms::visit(const SubReader& segment, const TermReader& field,
 QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           irs::field_id field,
-                                          const ByTermsOptions& options) {
+                                          const ByTermsOptions& options,
+                                          score_t boost) {
   const auto& [terms, min_match, merge_type] = options;
   const size_t size = terms.size();
-
-  if (0 == size || min_match > size) {
-    // Empty or unreachable search criteria
-    return QueryBuilder::Empty();
-  }
+  SDB_ASSERT(size);
+  SDB_ASSERT(min_match <= size);
+  SDB_ASSERT(size > 1);
   SDB_ASSERT(min_match != 0);
 
-  if (1 == size) {
-    const auto term = std::begin(terms);
-    return ByTerm::PrepareSegment(segment, ctx.Boost(term->boost), field,
-                                  term->term);
-  }
-
   auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, merge_type, min_match);
+    ctx.memory, segment, ctx.memory, ctx.boost * boost, merge_type, min_match);
 
   const auto* reader = segment.field(field);
   if (!reader) {
     return query;
   }
 
-  auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
+  auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
   AllTermsVisitor mtv{query->State(), collector.Field(), collector.Terms()};
   VisitImpl(segment, *reader, terms, mtv);
   return query;
@@ -103,11 +96,11 @@ QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
 
 QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx) const {
-  return PrepareSegment(segment, ctx.Boost(Boost()), field_id(), options());
+  return PrepareSegment(segment, ctx, field_id(), options(), Boost());
 }
 
 PrepareCollector::ptr ByTerms::MakeCollector(const Scorer* scorer) const {
-  return std::make_unique<TermsCollector>(scorer, options().terms.size());
+  return std::make_unique<ByTermsCollector>(scorer, options().terms.size());
 }
 
 }  // namespace irs

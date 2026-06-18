@@ -128,6 +128,7 @@ class FieldPrepareCollector : public PrepareCollector {
 
 class ByTermsCollector final : public FieldPrepareCollector {
  public:
+  using TermsData = absl::InlinedVector<TermCollector, 1>;
   ByTermsCollector(const Scorer* scorer, size_t size)
     : FieldPrepareCollector{scorer}, _terms(size) {}
 
@@ -138,7 +139,7 @@ class ByTermsCollector final : public FieldPrepareCollector {
   StatsBuffer Finish(IResourceManager& memory) final;
 
  private:
-  std::vector<TermCollector> _terms;
+  TermsData _terms;
 };
 
 class PhraseCollector final : public FieldPrepareCollector {

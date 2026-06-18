@@ -406,10 +406,12 @@ TEST(GeoDistanceFilterTest, query) {
   ASSERT_EQ(docs.size(), reader->docs_count());
   ASSERT_EQ(docs.size(), reader->live_docs_count());
 
-  auto execute_query = [&reader](const irs::Filter& q,
+  auto execute_query = [&reader](GeoDistanceFilter q,
                                  const std::vector<irs::CostAttr::Type>& costs,
                                  size_t at_least = 0) {
     std::set<std::string> actual_results;
+
+    auto optimized = ::tests::Optimized(std::move(q));
 
     struct MaxMemoryCounter final : irs::IResourceManager {
       void Reset() noexcept {
@@ -429,8 +431,8 @@ TEST(GeoDistanceFilterTest, query) {
     };
 
     MaxMemoryCounter counter;
-    std::optional<::tests::PreparedFilter> prepared{std::in_place, q, *reader,
-                                                    nullptr, counter};
+    std::optional<::tests::PreparedFilter> prepared{std::in_place, *optimized,
+                                                    *reader, nullptr, counter};
     auto expected_cost = costs.begin();
     for (size_t i = 0; auto& segment : *reader) {
       const auto* column = segment.Column(kName);

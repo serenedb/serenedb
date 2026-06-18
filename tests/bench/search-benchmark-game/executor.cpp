@@ -92,7 +92,7 @@ size_t Executor::ExecuteCount(std::string_view query) {
     if (!query) {
       continue;
     }
-    auto docs = query->Execute({.stats = &stats});
+    auto docs = query->Execute({}, stats);
     count += docs->count();
   }
   return count;

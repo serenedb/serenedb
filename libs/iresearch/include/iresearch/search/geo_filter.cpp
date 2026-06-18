@@ -71,7 +71,7 @@ PrepareCollector::ptr MatchAllCollector(const Scorer* scorer) {
 }
 
 PrepareCollector::ptr GeoCollector(const Scorer* scorer) {
-  return std::make_unique<FieldOnlyCollector>(scorer);
+  return std::make_unique<FieldPrepareCollector>(scorer);
 }
 
 // Returns singleton S2Cap that tolerates precision errors
@@ -553,7 +553,8 @@ GeoState PrepareState(const SubReader& segment, const PrepareContext& ctx,
     return state;
   }
 
-  auto& collector = sdb::basics::downCast<FieldOnlyCollector>(*ctx.collector);
+  auto& collector =
+    sdb::basics::downCast<FieldPrepareCollector>(*ctx.collector);
   collector.Field().Collect(*reader);
 
   ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
@@ -916,8 +917,8 @@ QueryBuilder::ptr GeoDistanceFilter::PrepareSegment(
   const auto& range = options.range;
   const auto lower_bound = BoundType::Unbounded != range.min_type;
   const auto upper_bound = BoundType::Unbounded != range.max_type;
-
-  auto sub_ctx = ctx.Boost(Boost());
+  auto sub_ctx = ctx;
+  sub_ctx.Boost(Boost());
 
   if (!lower_bound && !upper_bound) {
     return MatchAll(segment, sub_ctx);

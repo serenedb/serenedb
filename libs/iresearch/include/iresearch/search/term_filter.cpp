@@ -70,7 +70,9 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
   SDB_ASSERT(collector.Terms().size() == 1);
   collector.Field().Collect(*reader);
   auto terms = GetTermsIterator(*reader, term);
-  collector.Terms()[0].Collect(*terms);
+  if (terms) {
+    collector.Terms()[0].Collect(*terms);
+  }
   TermState state{reader, terms ? terms->cookie() : nullptr};
   return memory::make_tracked<TermQuery>(ctx.memory, segment, std::move(state),
                                          ctx.boost);

@@ -25,6 +25,7 @@
 
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
+#include "iresearch/search/ngram_similarity_filter.hpp"
 #include "iresearch/search/optimizer/common.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
@@ -43,6 +44,14 @@ struct ByTermsMinMatchZeroRule {
 struct ByTermsDegenerateRule {
   static constexpr std::string_view kName = "by_terms_degenerate";
   static constexpr std::array kTargets{Type<ByTerms>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+struct ByNGramSimilaritySimplifyRule {
+  static constexpr std::string_view kName = "by_ngram_similarity_simplify";
+  static constexpr std::array kTargets{Type<ByNGramSimilarity>::id()};
   static constexpr bool kEnable = true;
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
@@ -101,9 +110,31 @@ bool ByTermsDegenerateRule::Apply(Filter::ptr& slot,
   return true;
 }
 
+bool ByNGramSimilaritySimplifyRule::Apply(Filter::ptr& slot,
+                                          const OptimizeContext& ctx) {
+  auto& ngram = sdb::basics::downCast<ByNGramSimilarity>(*slot);
+  const auto& opts = ngram.options();
+  if (opts.ngrams.empty()) {
+    slot = Filter::empty();
+    return true;
+  }
+  const auto min_match_count =
+    MinMatchCount(opts.ngrams.size(), opts.threshold);
+  if (!ctx.scored && min_match_count == 1) {
+    auto term = std::make_unique<ByTerms>();
+    *term->mutable_field_id() = ngram.field_id();
+    auto& terms_opts = *term->mutable_options();
+    for (const auto& term : opts.ngrams) {
+      terms_opts.terms.emplace(term, kNoBoost);
+    }
+  }
+  return true;
+}
+
 void InitTermsRules() {
   RegisterRule<ByTermsMinMatchZeroRule>();
   RegisterRule<ByTermsDegenerateRule>();
+  RegisterRule<ByNGramSimilaritySimplifyRule>();
 }
 
 }  // namespace irs::optimizer

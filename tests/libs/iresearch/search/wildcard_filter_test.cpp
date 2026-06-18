@@ -147,7 +147,7 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>(kFooId, "bar"),
                               irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{MakeFilter(kFooId, "bar"),
+    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "bar")),
                               irs::SubReader::empty(), nullptr, counter};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
@@ -161,8 +161,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>(kFooId, ""),
                               irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{MakeFilter(kFooId, ""), irs::SubReader::empty(),
-                              nullptr, counter};
+    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "")),
+                              irs::SubReader::empty(), nullptr, counter};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
@@ -175,7 +175,7 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>(kFooId, "foo%"),
                               irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{MakeFilter(kFooId, "foo\\%"),
+    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "foo\\%")),
                               irs::SubReader::empty(), nullptr, counter};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
@@ -189,7 +189,7 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>(kFooId, "bar"),
                               irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{MakeFilter(kFooId, "bar%"),
+    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "bar%")),
                               irs::SubReader::empty(), nullptr, counter};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
@@ -203,7 +203,7 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>(kFooId, "bar"),
                               irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{MakeFilter(kFooId, "bar%%"),
+    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "bar%%")),
                               irs::SubReader::empty(), nullptr, counter};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
@@ -217,7 +217,7 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>(kFooId, "bar%"),
                               irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{MakeFilter(kFooId, "bar\\%"),
+    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "bar\\%")),
                               irs::SubReader::empty(), nullptr, counter};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
@@ -231,8 +231,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>(kFooId, ""),
                               irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{MakeFilter(kFooId, "%"), irs::SubReader::empty(),
-                              nullptr, counter};
+    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "%")),
+                              irs::SubReader::empty(), nullptr, counter};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
@@ -245,8 +245,8 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>(kFooId, ""),
                               irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{MakeFilter(kFooId, "%%"), irs::SubReader::empty(),
-                              nullptr, counter};
+    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "%%")),
+                              irs::SubReader::empty(), nullptr, counter};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
@@ -259,7 +259,7 @@ TEST(by_wildcard_test, test_type_of_prepared_query) {
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>(kFooId, "%"),
                               irs::SubReader::empty(), nullptr, counter};
-    tests::PreparedFilter rhs{MakeFilter(kFooId, "\\%"),
+    tests::PreparedFilter rhs{*tests::Optimized(MakeFilter(kFooId, "\\%")),
                               irs::SubReader::empty(), nullptr, counter};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);

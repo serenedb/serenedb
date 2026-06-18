@@ -34,9 +34,6 @@ struct FilterVisitor;
 struct ByRangeFilterOptions {
   using range_type = SearchRange<bstring>;
 
-  //////////////////////////////////////////////////////////////////////////////
-  /// @brief search range
-  //////////////////////////////////////////////////////////////////////////////
   range_type range;
 
   bool operator==(const ByRangeFilterOptions& rhs) const noexcept {
@@ -44,17 +41,10 @@ struct ByRangeFilterOptions {
   }
 };
 
-////////////////////////////////////////////////////////////////////////////////
-/// @struct ByPrefixOptions
-/// @brief options for prefix filter
-////////////////////////////////////////////////////////////////////////////////
 struct ByRangeOptions : ByRangeFilterOptions {
   using FilterType = ByRange;
   using filter_options = ByRangeFilterOptions;
 
-  //////////////////////////////////////////////////////////////////////////////
-  /// @brief the maximum number of most frequent terms to consider for scoring
-  //////////////////////////////////////////////////////////////////////////////
   size_t scored_terms_limit{1024};
 
   bool operator==(const ByRangeOptions& rhs) const noexcept {
@@ -63,10 +53,6 @@ struct ByRangeOptions : ByRangeFilterOptions {
   }
 };
 
-//////////////////////////////////////////////////////////////////////////////
-/// @class by_range
-/// @brief user-side term range filter
-//////////////////////////////////////////////////////////////////////////////
 class ByRange : public FilterWithField<ByRangeOptions> {
  public:
   static void visit(const SubReader& segment, const TermReader& reader,
@@ -79,7 +65,7 @@ class ByRange : public FilterWithField<ByRangeOptions> {
                                           const PrepareContext& ctx,
                                           const irs::field_id field,
                                           const options_type::range_type& rng,
-                                          size_t scored_terms_limit);
+                                          score_t boost);
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };

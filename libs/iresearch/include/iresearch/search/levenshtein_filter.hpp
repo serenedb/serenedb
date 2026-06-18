@@ -149,7 +149,7 @@ class LevenshteinAutomatonFilter final
  public:
   static QueryBuilder::ptr PrepareSegment(
     const SubReader& segment, const PrepareContext& ctx, irs::field_id id,
-    const LevenshteinAutomatonOptions& options);
+    const LevenshteinAutomatonOptions& options, score_t boost);
 
   static field_visitor visitor(const LevenshteinAutomatonOptions& options);
 

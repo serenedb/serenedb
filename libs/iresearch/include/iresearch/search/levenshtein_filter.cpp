@@ -102,7 +102,7 @@ uint32_t Utf8TargetSize(bytes_view prefix, bytes_view term) {
 QueryBuilder::ptr PrepareLevenshteinSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id field,
   const automaton& acceptor, uint32_t utf8_target_size, byte_type no_distance,
-  size_t terms_limit) {
+  size_t terms_limit, score_t boost) {
   if (!Validate(acceptor)) {
     return QueryBuilder::Empty();
   }
@@ -110,14 +110,15 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
   auto matcher = MakeAutomatonMatcher(acceptor);
 
   auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Max, size_t{1});
+    ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Max,
+    size_t{1});
 
   const auto* reader = segment.field(field);
   if (!reader) {
     return query;
   }
 
-  auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
+  auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
   AllTermsVisitor term_collector{query->State(), collector.Field(),
                                  collector.Terms()};
 
@@ -154,10 +155,10 @@ QueryBuilder::ptr ByEditDistance::PrepareSegment(const SubReader&,
 
 QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id id,
-  const LevenshteinAutomatonOptions& options) {
-  return PrepareLevenshteinSegment(segment, ctx, id, options.acceptor,
-                                   options.utf8_target_size,
-                                   options.no_distance, options.max_terms);
+  const LevenshteinAutomatonOptions& options, score_t boost) {
+  return PrepareLevenshteinSegment(
+    segment, ctx, id, options.acceptor, options.utf8_target_size,
+    options.no_distance, options.max_terms, boost);
 }
 
 field_visitor LevenshteinAutomatonFilter::visitor(
@@ -186,12 +187,12 @@ field_visitor LevenshteinAutomatonFilter::visitor(
 
 QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
-  return PrepareSegment(segment, ctx.Boost(Boost()), field_id(), options());
+  return PrepareSegment(segment, ctx, field_id(), options(), Boost());
 }
 
 PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollector(
   const Scorer* scorer) const {
-  return std::make_unique<TermsCollector>(scorer, 1);
+  return std::make_unique<ByTermsCollector>(scorer, 1);
 }
 
 LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(

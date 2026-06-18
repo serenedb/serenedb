@@ -35,7 +35,7 @@ template<typename State>
 class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
  public:
   AllTermsVisitor(State& state, FieldCollector& field_stats,
-                  TermCollectorsFlat& term_stats) noexcept
+                  ByTermsCollector::TermsData& term_stats) noexcept
     : _state{state}, _field_stats{field_stats}, _term_stats{term_stats} {}
 
   void Prepare(const SubReader& /*segment*/, const TermReader& field,
@@ -51,7 +51,7 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
 
   void Visit(score_t boost) final {
     SDB_ASSERT(_terms);
-    _term_stats.Collect(_stat_index, *_terms);
+    _term_stats[_stat_index].Collect(*_terms);
 
     _state.Push(typename State::Entry{
       .cookie = _terms->cookie(),
@@ -66,7 +66,7 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
  private:
   State& _state;
   FieldCollector& _field_stats;
-  TermCollectorsFlat& _term_stats;
+  ByTermsCollector::TermsData& _term_stats;
   const SeekTermIterator* _terms{};
   const uint32_t* _docs_count{};
   uint32_t _stat_index = 0;

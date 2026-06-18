@@ -195,7 +195,7 @@ QueryBuilder::ptr BySamePosition::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  auto& collector = sdb::basics::downCast<TermsCollector>(*ctx.collector);
+  auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
 
   SamePositionQuery::TermsStatesT term_states{
     SamePositionQuery::TermsStatesT::allocator_type{ctx.memory}};
@@ -228,7 +228,7 @@ QueryBuilder::ptr BySamePosition::PrepareSegment(
     }
 
     term->read();  // read term attributes
-    collector.Terms().Collect(term_idx, *term);
+    collector.Terms()[term_idx].Collect(*term);
     term_states.emplace_back(field, term->cookie());
   }
 
@@ -243,7 +243,7 @@ QueryBuilder::ptr BySamePosition::PrepareSegment(
 
 PrepareCollector::ptr BySamePosition::MakeCollector(
   const Scorer* scorer) const {
-  return std::make_unique<TermsCollector>(scorer, options().terms.size());
+  return std::make_unique<ByTermsCollector>(scorer, options().terms.size());
 }
 
 }  // namespace irs

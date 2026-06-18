@@ -38,8 +38,11 @@ using Mode = tests::PreparedFilter::CollectMode;
 void AnalyzedFieldFactory(tests::Document& doc, const std::string& name,
                           const tests::JsonDocGenerator::JsonValue& data) {
   if (data.is_string()) {
-    doc.indexed.push_back(std::make_shared<tests::TextField<std::string>>(
-      name + "_anl", std::string{data.str}));
+    const auto anl_name = name + "_anl";
+    auto field = std::make_shared<tests::TextField<std::string>>(
+      anl_name, std::string{data.str});
+    field->id = tests::FieldIdForRuntime(anl_name);
+    doc.indexed.push_back(std::move(field));
   }
 }
 
@@ -362,7 +365,8 @@ TEST_P(MergeConsistencyTestCase, edit_distance) {
     filter.mutable_options()->max_distance = 2;
     filter.mutable_options()->max_terms = max_terms;
 
-    CheckAllScorers(filter, rdr);
+    auto lowered = tests::Optimized(std::move(filter));
+    CheckAllScorers(*lowered, rdr);
   }
 }
 

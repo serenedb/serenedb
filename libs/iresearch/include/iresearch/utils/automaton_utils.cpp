@@ -210,7 +210,8 @@ void Utf8TransitionsBuilder::Finish(automaton& a, automaton::StateId from) {
 QueryBuilder::ptr PrepareAutomatonSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           irs::field_id field,
-                                          const automaton& acceptor) {
+                                          const automaton& acceptor,
+                                          score_t boost) {
   auto matcher = MakeAutomatonMatcher(acceptor);
 
   if (fst::kError == matcher.Properties(0)) {
@@ -225,7 +226,8 @@ QueryBuilder::ptr PrepareAutomatonSegment(const SubReader& segment,
   }
 
   auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum, size_t{1});
+    ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Sum,
+    size_t{1});
 
   const auto* reader = segment.field(field);
   if (!reader) {

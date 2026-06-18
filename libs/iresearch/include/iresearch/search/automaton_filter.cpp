@@ -50,8 +50,8 @@ field_visitor AutomatonFilter::visitor(const automaton& acceptor) {
 
 QueryBuilder::ptr AutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
-  return PrepareAutomatonSegment(segment, ctx.Boost(Boost()), field_id(),
-                                 options().acceptor);
+  return PrepareAutomatonSegment(segment, ctx, field_id(), options().acceptor,
+                                 Boost());
 }
 
 PrepareCollector::ptr AutomatonFilter::MakeCollector(

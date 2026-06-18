@@ -82,7 +82,8 @@ class ByTerms final : public FilterWithField<ByTermsOptions>,
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           irs::field_id field,
-                                          const ByTermsOptions& options);
+                                          const ByTermsOptions& options,
+                                          score_t boost);
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 };

@@ -38,6 +38,11 @@ products
 
 # DOCS_TEST: example_005
 
+# Earlier examples ran USE, which replaces search_path; reset it so the example
+# shows the default a fresh session sees.
+statement ok
+RESET search_path;
+
 # DOCS_TEST_BODY
 
 query

@@ -1,7 +1,19 @@
 services:
+  # Make the root:root 0755 named volume world-writable before the non-root
+  # services create their per-test dirs in /test-tmp.
+  test-tmp-init:
+    image: ${BUILD_IMAGE}
+    user: "0:0"
+    volumes:
+      - "sdb-test-tmp:/test-tmp"
+    command: ["sh", "-c", "chmod 0777 /test-tmp"]
+
   serenedb:
     image: ${BUILD_IMAGE}
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    depends_on:
+      test-tmp-init:
+        condition: service_completed_successfully
     tmpfs:
       - /var/lib/serenedb
       - /var/log/serenedb

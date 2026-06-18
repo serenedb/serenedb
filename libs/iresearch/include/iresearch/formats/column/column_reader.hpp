@@ -346,7 +346,6 @@ class ColumnReader final {
   // eagerly from each segment's stats (max stored cumulative offset).
   std::vector<uint64_t> _rg_element_starts;
   std::vector<VariantRgReader> _variant_rgs;
-  std::vector<uint64_t> _variant_rg_starts;
 };
 
 std::unique_ptr<ColumnReader> MakeColumnReader(field_id id,

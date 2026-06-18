@@ -27,6 +27,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "basics/assert.h"
@@ -49,7 +50,7 @@ namespace sdb::connector {
 struct ColumnstoreProjection {
   duckdb::idx_t output_slot;
   catalog::Column::Id column_id;
-  std::vector<std::string> extract_path;
+  std::vector<std::string_view> extract_path;
   duckdb::LogicalType extract_scan_type = duckdb::LogicalType::INVALID;
 
   bool IsExtract() const noexcept { return !extract_path.empty(); }
@@ -122,7 +123,7 @@ class ColumnstoreMaterializer {
     const irs::ColumnReader* reader;
     duckdb::idx_t output_slot;
     std::unique_ptr<irs::MaterializeState> state;
-    std::vector<std::string> extract_path;
+    std::span<const std::string_view> extract_path;
     duckdb::LogicalType extract_scan_type = duckdb::LogicalType::INVALID;
 
     bool IsExtract() const noexcept { return !extract_path.empty(); }

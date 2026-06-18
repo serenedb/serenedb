@@ -33,6 +33,7 @@
 #include <iresearch/store/directory.hpp>
 #include <numeric>
 #include <ranges>
+#include <string_view>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
@@ -146,7 +147,7 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
           proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
-          std::vector<std::string> path;
+          std::vector<std::string_view> path;
           const duckdb::ColumnIndex* node = &column_index.GetChildIndex(0);
           const duckdb::LogicalType* cur_type =
             &bind_data.column_types[bind_col];

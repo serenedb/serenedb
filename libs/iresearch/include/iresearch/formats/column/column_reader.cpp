@@ -244,19 +244,18 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     }
     _validity_offsets.push_back(vtotal);
   }
-  _variant_rg_starts.reserve(_variant_rgs.size() + 1);
+  _data_offsets.reserve(_variant_rgs.size() + 1);
   uint64_t total = 0;
   for (const auto& rg : _variant_rgs) {
     SDB_ASSERT(rg.unshredded);
     SDB_ASSERT(rg.unshredded->RowCount() == rg.row_count);
     SDB_ASSERT(rg.shred_state == VariantShredState::Unshredded ||
                rg.shredded_node->RowCount() == rg.row_count);
-    _variant_rg_starts.push_back(total);
+    _data_offsets.push_back(total);
     total += rg.row_count;
   }
-  _variant_rg_starts.push_back(total);
+  _data_offsets.push_back(total);
   _row_count = total;
-  _data_offsets.push_back(0);
 }
 
 RgWindow ColumnReader::Locate(uint64_t row_pos, RgWindow hint) const noexcept {
@@ -278,7 +277,7 @@ RgWindow ColumnReader::LocateVariantRg(uint64_t row,
                                        RgWindow hint) const noexcept {
   SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::VARIANT);
   SDB_ASSERT(row < _row_count);
-  return LocateInOffsets(row, _variant_rg_starts, hint);
+  return LocateInOffsets(row, _data_offsets, hint);
 }
 
 void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,

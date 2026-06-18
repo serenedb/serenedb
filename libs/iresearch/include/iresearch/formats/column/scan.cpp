@@ -164,17 +164,24 @@ const ColumnReader* ResolveShreddedLeaf(
   return leaf->Type().IsNested() ? nullptr : leaf;
 }
 
-MaterializeState& EnsureExtractLeafState(MaterializeState& state, size_t rg,
-                                         const ColumnReader& leaf,
-                                         size_t rg_count) {
-  if (state.extract_leaf_states.empty()) {
-    state.extract_leaf_states.resize(rg_count);
+MaterializeState::ExtractLeafSlot& EnsureExtractLeaf(
+  MaterializeState& state, size_t rg,
+  const ColumnReader::VariantRgReader& rg_reader,
+  std::span<const std::string_view> path, size_t rg_count) {
+  if (state.extract_leaf_slots.empty()) {
+    state.extract_leaf_slots.resize(rg_count);
   }
-  auto& slot = state.extract_leaf_states[rg];
-  if (!slot) {
-    slot = MakeMaterializeState(leaf, *state.ctx);
+  auto& slot = state.extract_leaf_slots[rg];
+  if (!slot.resolved) {
+    slot.resolved = true;
+    if (rg_reader.shred_state != VariantShredState::Unshredded) {
+      slot.leaf = ResolveShreddedLeaf(*rg_reader.shredded_node, path);
+    }
+    if (slot.leaf != nullptr) {
+      slot.state = MakeMaterializeState(*slot.leaf, *state.ctx);
+    }
   }
-  return *slot;
+  return slot;
 }
 
 void CastExtractInto(duckdb::ClientContext& context, duckdb::Vector& src,

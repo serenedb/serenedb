@@ -24,7 +24,9 @@
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector_buffer.hpp>
+#include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <memory>
 #include <duckdb/storage/data_pointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
@@ -70,6 +72,15 @@ inline size_t ConsecutiveRunLength(
   }
   return run;
 }
+
+class SharedPinHolder final : public duckdb::AuxiliaryDataHolder {
+ public:
+  explicit SharedPinHolder(std::shared_ptr<duckdb::BufferHandle> pin) noexcept
+    : _pin{std::move(pin)} {}
+
+ private:
+  std::shared_ptr<duckdb::BufferHandle> _pin;
+};
 
 class ColumnReader final {
  public:
@@ -127,9 +138,13 @@ class ColumnReader final {
   class ScanCursor {
    public:
     ScanCursor() noexcept = default;
-    explicit ScanCursor(duckdb::unique_ptr<duckdb::ColumnSegment> seg) noexcept
+    explicit ScanCursor(duckdb::unique_ptr<duckdb::ColumnSegment> seg)
       : _seg{std::move(seg)} {
       _seg->InitializeScan(_state);
+      if (auto& block = _seg->GetBlockHandle()) {
+        auto& bm = duckdb::BufferManager::GetBufferManager(_seg->GetDatabase());
+        _pin = std::make_shared<duckdb::BufferHandle>(bm.Pin(block));
+      }
     }
 
     ScanCursor(const ScanCursor&) = delete;
@@ -162,18 +177,16 @@ class ColumnReader final {
       _state.offset_in_column += count;
       _state.internal_index += count;
       _cursor += count;
-      // Pin the segment's block onto the output Vector for BOTH scan types.
-      // SCAN_FLAT_VECTOR can still reference segment memory for non-inline
-      // string_t payloads (PK blobs, VARCHAR > 12 bytes), so dropping the
-      // segment between Fetch and the caller consuming pk_data[k] is a
-      // heap-use-after-free (ASAN-confirmed via SearchFullScanFunction ->
-      // AppendPrimaryKey<PrimaryKeyI64I64>).
-      if (_seg->GetBlockHandle()) {
-        auto& bm = duckdb::BufferManager::GetBufferManager(_seg->GetDatabase());
-        auto& block = _seg->GetBlockHandle();
-        auto handle = bm.Pin(block);
+      // Keep the segment's pinned block alive on the output Vector for BOTH
+      // scan types. SCAN_FLAT_VECTOR can still reference segment memory for
+      // non-inline string_t payloads (PK blobs, VARCHAR > 12 bytes), so
+      // dropping the segment between Fetch and the caller consuming pk_data[k]
+      // is a heap-use-after-free (ASAN-confirmed via SearchFullScanFunction ->
+      // AppendPrimaryKey<PrimaryKeyI64I64>). The block is pinned once when the
+      // cursor opens the segment; each chunk just shares that pin.
+      if (_pin) {
         out_vec.BufferMutable().AddAuxiliaryData(
-          std::make_unique<duckdb::PinnedBufferHolder>(std::move(handle)));
+          std::make_unique<SharedPinHolder>(_pin));
       }
     }
 
@@ -183,6 +196,7 @@ class ColumnReader final {
    private:
     duckdb::unique_ptr<duckdb::ColumnSegment> _seg;
     duckdb::ColumnScanState _state{nullptr};
+    std::shared_ptr<duckdb::BufferHandle> _pin;
     uint64_t _cursor = 0;
   };
 

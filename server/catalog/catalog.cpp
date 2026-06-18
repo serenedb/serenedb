@@ -50,7 +50,6 @@
 #include <yaclib/async/when_all.hpp>
 
 #include "app/app_server.h"
-#include "app/name_validator.h"
 #include "auth/role_utils.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
@@ -2067,9 +2066,6 @@ Result Catalog::CreateFunction(ObjectId database_id, std::string_view schema,
 Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
                             CreateTableOptions options,
                             CreateTableOperationOptions operation_options) {
-  if (auto r = TableNameValidator::validateName(options.name); !r.ok()) {
-    return r;
-  }
   // Uniqueness keys are enforced by the store table's DuckDB ART, which cannot
   // index nested types. Reject a nested-type key column up front with a clear
   // error instead of silently creating the table with the constraint dropped

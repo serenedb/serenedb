@@ -25,7 +25,6 @@
 #include "basics/common.h"
 #include "basics/directories.h"
 #include "basics/string_utils.h"
-#include "basics/utf8_helper.h"
 #include "gtest/gtest.h"
 #include "icu-helper.h"
 

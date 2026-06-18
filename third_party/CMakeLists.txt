@@ -168,17 +168,29 @@ set(Boost_INCLUDE_DIRS "${Boost_INCLUDE_DIRS}" PARENT_SCOPE)
 add_library(Boost::headers ALIAS boost_boost)
 
 ################################################################################
-### icu library
+### icu library (provided by duckdb's bundled ICU 78.3)
 ################################################################################
 
-if(NOT TARGET ICU::uc)
-    sdb_update_module(${GIT_EXECUTABLE} "icu" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-    add_subdirectory(icu)
+# serenedb links a single ICU: the one vendored inside duckdb's icu extension
+# (compiled into icu_extension -> duckdb_static). This target only carries the
+# ICU 78 headers; the ICU symbols are resolved at final-executable link time
+# from icu_extension (pulled in via duckdb_static). We deliberately do NOT add a
+# link edge to duckdb_static here: duckdb links serenedb's shared `re2`, and re2
+# links ICU::uc, so a link edge would create a dependency cycle
+# (re2 -> ICU::uc -> duckdb_static -> re2). Header-only avoids that; every
+# executable that uses ICU already links duckdb_static.
+add_library(sdb_icu INTERFACE)
+target_include_directories(
+    sdb_icu
+    SYSTEM
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/third_party/icu/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/extension/icu/third_party/icu/i18n
+)
 
-    # For re2
-    add_library(icu-uc ALIAS _icuuc)
-    add_library(ICU::uc ALIAS _icuuc)
-endif()
+add_library(icu ALIAS sdb_icu)
+add_library(icu-uc ALIAS sdb_icu)
+add_library(ICU::uc ALIAS sdb_icu)
 
 ################################################################################
 ### abseil-cpp library
@@ -513,83 +525,10 @@ set(immer_BUILD_DOCS OFF CACHE BOOL "don't docs")
 add_subdirectory(immer)
 
 ################################################################################
-## DATE
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "date" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE.txt")
-add_library(date_interface INTERFACE)
-target_include_directories(
-    date_interface
-    SYSTEM
-    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/date/include
-)
-target_link_libraries(date_interface INTERFACE absl::base)
-
-################################################################################
 ## LINK_DIRECTORIES
 ################################################################################
 
 set(LINK_DIRECTORIES "${LINK_DIRECTORIES}" PARENT_SCOPE)
-
-################################################################################
-## tzdata
-################################################################################
-
-list(
-    APPEND TZ_DATA_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/africa"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/antarctica"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/asia"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/australasia"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/backward"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/backzone"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/calendars"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/etcetera"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/europe"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/NEWS"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/northamerica"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/southamerica"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/version"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/tzdata/windowsZones.xml"
-)
-
-set(TZ_DATA_FILES ${TZ_DATA_FILES} PARENT_SCOPE)
-
-add_custom_target(tzdata)
-
-if(MSVC)
-    add_custom_command(
-        TARGET tzdata
-        POST_BUILD
-        COMMAND
-            ${CMAKE_COMMAND} -E make_directory
-            ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E make_directory
-            ${CMAKE_BINARY_DIR}/tests/$<CONFIG>/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E copy ${TZ_DATA_FILES}
-            ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E copy ${TZ_DATA_FILES}
-            ${CMAKE_BINARY_DIR}/tests/$<CONFIG>/tzdata
-    )
-else()
-    add_custom_command(
-        TARGET tzdata
-        POST_BUILD
-        COMMAND
-            ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/bin/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/tests/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E copy ${TZ_DATA_FILES}
-            ${CMAKE_BINARY_DIR}/bin/tzdata
-        COMMAND
-            ${CMAKE_COMMAND} -E copy ${TZ_DATA_FILES}
-            ${CMAKE_BINARY_DIR}/tests/tzdata
-    )
-endif()
 
 ###############################################################################
 ## simdjson
@@ -743,7 +682,7 @@ set(LATEST_STORAGE TRUE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu"
     CACHE STRING
     ""
     FORCE
@@ -783,6 +722,7 @@ target_link_libraries(
         iceberg_extension
         postgres_scanner_extension
         autocomplete_extension
+        icu_extension
 )
 
 # !!! KEEP THIS LAST !!!

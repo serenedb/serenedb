@@ -223,7 +223,7 @@ jobs:
           # perf builds the server only (no asserts/FI/tests). Every other config
           # also builds the unit-test binaries; iresearch/unittest are added only
           # when their suite is in scope so a core-only diff doesn't build them.
-          TARGETS=(iresearch-examples serened tzdata)
+          TARGETS=(iresearch-examples serened)
           if [[ "${{ inputs.CONFIG }}" != "perf" ]]; then
             TARGETS+=(serenedb-tests_basics serenedb-tests_connector)
             [[ "$RUN_IRESEARCH" == "true" ]] && TARGETS+=(iresearch-tests iresearch-load-tests)

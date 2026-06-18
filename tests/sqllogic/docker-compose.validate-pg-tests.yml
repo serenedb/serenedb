@@ -12,7 +12,7 @@ services:
         target: /var/lib/postgresql
         tmpfs:
           size: 16G
-      - "$WORKSPACE/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
     networks:
       - test-network
     command: ["postgres", "-c", "max_connections=900"]
@@ -24,7 +24,7 @@ services:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "$WORKSPACE/out/logs:/logs"
-      - "$WORKSPACE/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
     depends_on:
       - postgres
@@ -51,3 +51,6 @@ networks:
   test-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_test-network
+
+volumes:
+  sdb-test-tmp:

@@ -8,7 +8,7 @@ services:
     volumes:
       - "${WORKSPACE}:/workspace:ro"
       - "${WORKSPACE}/out/logs:/logs"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
     environment:
       - HOME=/tmp
       - TARBALL_NAME
@@ -32,7 +32,7 @@ services:
       - "${WORKSPACE}/tests/sqllogic:/sqllogic"
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "${WORKSPACE}/out/logs:/logs"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
     environment:
       - HOME=/sqllogic
@@ -65,3 +65,6 @@ networks:
   rta-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_rta-network
+
+volumes:
+  sdb-test-tmp:

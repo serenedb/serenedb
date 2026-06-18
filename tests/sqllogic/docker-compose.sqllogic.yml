@@ -7,7 +7,7 @@ services:
     volumes:
       - "${WORKSPACE}:/serenedb"
       - "${WORKSPACE}/out/logs:/var/log/serenedb"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:
@@ -33,7 +33,7 @@ services:
       - "${WORKSPACE}/out/logs:/logs"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
       - "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}:/timing-cache"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - serenedb-single
@@ -66,3 +66,6 @@ networks:
   test-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_test-network
+
+volumes:
+  sdb-test-tmp:

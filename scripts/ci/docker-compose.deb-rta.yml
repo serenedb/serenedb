@@ -11,7 +11,7 @@ services:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - "${WORKSPACE}:/workspace:ro"
       - "${WORKSPACE}/scripts/ci/deb-rta-setup.sh:/deb-rta-setup.sh:ro"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
     environment:
       - DEB_PACKAGE
     networks:
@@ -27,7 +27,7 @@ services:
       - "${WORKSPACE}/tests/sqllogic:/sqllogic"
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "${WORKSPACE}/out/logs:/logs"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
     environment:
       - HOME=/sqllogic
@@ -53,3 +53,6 @@ networks:
   rta-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_rta-network
+
+volumes:
+  sdb-test-tmp:

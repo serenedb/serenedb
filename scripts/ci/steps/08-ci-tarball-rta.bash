@@ -15,7 +15,6 @@ fi
 
 echo "=== Tarball RTA: $(basename "$TARBALL") ==="
 mkdir -p "${WORKSPACE}/out/logs"
-mkdir -p "${WORKSPACE}/out/test-tmp"
 
 export TARBALL_NAME="$(basename "$TARBALL")"
 export DOCKER_UID="$(id -u)"

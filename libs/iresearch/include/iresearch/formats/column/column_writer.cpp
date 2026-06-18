@@ -406,7 +406,8 @@ std::vector<Chunk> StructChildChunks(ChunkSpan chunks, size_t child_index) {
   out.reserve(chunks.size());
   for (auto& chunk : chunks) {
     auto& entries = duckdb::StructVector::GetEntries(chunk.data);
-    out.push_back(Chunk{duckdb::Vector::Ref(entries[child_index]), chunk.count});
+    out.push_back(
+      Chunk{duckdb::Vector::Ref(entries[child_index]), chunk.count});
   }
   return out;
 }

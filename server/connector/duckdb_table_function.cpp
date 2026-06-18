@@ -586,8 +586,12 @@ bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
     return false;
   }
   const auto bind_col = col_idx.index;
-  if (bind_col >= bind.column_ids.size() ||
-      bind.column_types[bind_col].id() != duckdb::LogicalTypeId::VARIANT) {
+  if (bind_col >= bind.column_ids.size()) {
+    return false;
+  }
+  const auto type_id = bind.column_types[bind_col].id();
+  if (type_id != duckdb::LogicalTypeId::VARIANT &&
+      type_id != duckdb::LogicalTypeId::STRUCT) {
     return false;
   }
   const auto* info =

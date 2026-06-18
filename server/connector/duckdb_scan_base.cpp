@@ -148,19 +148,33 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
           std::vector<std::string> path;
           const duckdb::ColumnIndex* node = &column_index.GetChildIndex(0);
-          bool by_key_only = true;
+          const duckdb::LogicalType* cur_type =
+            &bind_data.column_types[bind_col];
+          bool valid_path = true;
           while (true) {
             if (node->HasPrimaryIndex()) {
-              by_key_only = false;
-              break;
+              if (cur_type->id() != duckdb::LogicalTypeId::STRUCT) {
+                valid_path = false;
+                break;
+              }
+              const auto idx = node->GetPrimaryIndex();
+              const auto& children =
+                duckdb::StructType::GetChildTypes(*cur_type);
+              if (idx >= children.size()) {
+                valid_path = false;
+                break;
+              }
+              path.emplace_back(children[idx].first);
+              cur_type = &children[idx].second;
+            } else {
+              path.emplace_back(node->GetFieldName());
             }
-            path.emplace_back(node->GetFieldName());
             if (!node->HasChildren()) {
               break;
             }
             node = &node->GetChildIndex(0);
           }
-          if (by_key_only && !path.empty()) {
+          if (valid_path && !path.empty()) {
             cp.extract_path = std::move(path);
             cp.extract_scan_type = column_index.GetScanType();
           }

@@ -33,6 +33,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace duckdb {
@@ -166,6 +167,17 @@ inline void ReconstructVariantRun(
 
 inline constexpr size_t kShreddedTypedValueIndex = 0;
 
+[[nodiscard]] inline size_t FindStructFieldIndex(
+  const duckdb::LogicalType& struct_type, std::string_view field) {
+  const auto& children = duckdb::StructType::GetChildTypes(struct_type);
+  for (size_t i = 0; i < children.size(); ++i) {
+    if (absl::EqualsIgnoreCase(field, children[i].first)) {
+      return i;
+    }
+  }
+  return children.size();
+}
+
 [[nodiscard]] inline const ColumnReader* ResolveShreddedLeaf(
   const ColumnReader& shredded_node, std::span<const std::string> path) {
   const ColumnReader* node = &shredded_node;
@@ -180,15 +192,8 @@ inline constexpr size_t kShreddedTypedValueIndex = 0;
     if (typed.Type().id() != duckdb::LogicalTypeId::STRUCT) {
       return nullptr;
     }
-    const auto& children = duckdb::StructType::GetChildTypes(typed.Type());
-    size_t idx = children.size();
-    for (size_t child_idx = 0; child_idx < children.size(); ++child_idx) {
-      if (absl::EqualsIgnoreCase(field, children[child_idx].first)) {
-        idx = child_idx;
-        break;
-      }
-    }
-    if (idx == children.size()) {
+    const size_t idx = FindStructFieldIndex(typed.Type(), field);
+    if (idx == duckdb::StructType::GetChildCount(typed.Type())) {
       return nullptr;
     }
     node = &typed.StructField(idx);
@@ -373,12 +378,57 @@ inline void CastExtractInto(duckdb::ClientContext& context, duckdb::Vector& src,
 }
 
 template<typename DocIds>
-void MaterializeExtractNode(const ColumnReader& reader, MaterializeState& state,
-                            const DocIds& doc_ids,
-                            std::span<const std::string> path,
+void MaterializeExtractLeaf(const ColumnReader& leaf,
+                            MaterializeState& leaf_state, const DocIds& rows,
                             const duckdb::LogicalType& scan_type,
-                            duckdb::Vector& out_vec, duckdb::idx_t output_start,
+                            duckdb::Vector& out_vec, duckdb::idx_t out_offset,
                             duckdb::ClientContext& context) {
+  if (leaf.Type() == scan_type) {
+    MaterializeNode(leaf, leaf_state, rows, out_vec, out_offset,
+                    /*may_use_entire=*/true);
+    return;
+  }
+  duckdb::Vector scratch{leaf.Type(), static_cast<duckdb::idx_t>(rows.size())};
+  MaterializeNode(leaf, leaf_state, rows, scratch, /*output_start=*/0,
+                  /*may_use_entire=*/true);
+  CastExtractInto(context, scratch, out_vec, rows.size(), out_offset);
+}
+
+template<typename DocIds>
+void MaterializeStructExtractNode(
+  const ColumnReader& reader, MaterializeState& state, const DocIds& doc_ids,
+  std::span<const std::string> path, const duckdb::LogicalType& scan_type,
+  duckdb::Vector& out_vec, duckdb::idx_t output_start,
+  duckdb::ClientContext& context) {
+  SDB_ASSERT(reader.Type().id() == duckdb::LogicalTypeId::STRUCT);
+  SDB_ASSERT(!path.empty());
+  if (doc_ids.size() == 0) {
+    return;
+  }
+  const ColumnReader* leaf = &reader;
+  MaterializeState* leaf_state = &state;
+  for (const auto& field : path) {
+    if (leaf->Type().id() != duckdb::LogicalTypeId::STRUCT) {
+      return;
+    }
+    const size_t idx = FindStructFieldIndex(leaf->Type(), field);
+    if (idx == leaf->StructFieldCount()) {
+      return;
+    }
+    SDB_ASSERT(idx < leaf_state->children.size());
+    leaf = &leaf->StructField(idx);
+    leaf_state = leaf_state->children[idx].get();
+  }
+  MaterializeExtractLeaf(*leaf, *leaf_state, doc_ids, scan_type, out_vec,
+                         output_start, context);
+}
+
+template<typename DocIds>
+void MaterializeVariantExtractNode(
+  const ColumnReader& reader, MaterializeState& state, const DocIds& doc_ids,
+  std::span<const std::string> path, const duckdb::LogicalType& scan_type,
+  duckdb::Vector& out_vec, duckdb::idx_t output_start,
+  duckdb::ClientContext& context) {
   SDB_ASSERT(reader.Type().id() == duckdb::LogicalTypeId::VARIANT);
   SDB_ASSERT(!path.empty());
   if (doc_ids.size() == 0) {
@@ -394,19 +444,9 @@ void MaterializeExtractNode(const ColumnReader& reader, MaterializeState& state,
       if (leaf != nullptr) {
         auto& leaf_state =
           EnsureExtractLeafState(state, slice.rg_index, *leaf, rg_count);
-        const IotaRange leaf_rows{slice.rg_offset, slice.count};
-        if (leaf->Type() == scan_type) {
-          MaterializeNode(*leaf, leaf_state, leaf_rows, out_vec,
-                          output_start + slice.out_offset,
-                          /*may_use_entire=*/true);
-        } else {
-          duckdb::Vector scratch{leaf->Type(),
-                                 static_cast<duckdb::idx_t>(slice.count)};
-          MaterializeNode(*leaf, leaf_state, leaf_rows, scratch,
-                          /*output_start=*/0, /*may_use_entire=*/true);
-          CastExtractInto(context, scratch, out_vec, slice.count,
-                          output_start + slice.out_offset);
-        }
+        MaterializeExtractLeaf(
+          *leaf, leaf_state, IotaRange{slice.rg_offset, slice.count}, scan_type,
+          out_vec, output_start + slice.out_offset, context);
         return;
       }
 
@@ -439,6 +479,22 @@ void MaterializeExtractNode(const ColumnReader& reader, MaterializeState& state,
       CastExtractInto(context, extracted, out_vec, slice.count,
                       output_start + slice.out_offset);
     });
+}
+
+template<typename DocIds>
+void MaterializeExtractNode(const ColumnReader& reader, MaterializeState& state,
+                            const DocIds& doc_ids,
+                            std::span<const std::string> path,
+                            const duckdb::LogicalType& scan_type,
+                            duckdb::Vector& out_vec, duckdb::idx_t output_start,
+                            duckdb::ClientContext& context) {
+  if (reader.Type().id() == duckdb::LogicalTypeId::STRUCT) {
+    MaterializeStructExtractNode(reader, state, doc_ids, path, scan_type,
+                                 out_vec, output_start, context);
+  } else {
+    MaterializeVariantExtractNode(reader, state, doc_ids, path, scan_type,
+                                  out_vec, output_start, context);
+  }
 }
 
 }  // namespace irs

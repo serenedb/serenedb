@@ -100,11 +100,12 @@ first
 
 # DOCS_TEST_BODY
 
-query error
-SELECT ⟨aggregate_function⟩(⟨arg⟩, ⟨sep⟩ ORDER BY ⟨ordering_criteria⟩);
+query
+SELECT string_agg(region, ', ' ORDER BY amount DESC) AS string_agg
+FROM sales;
 ----
-db error: ERROR: Scalar Function with name ⟨aggregate_function⟩ does not exist!
-Did you mean "<slt:ignore>"?
+string_agg
+east, north, south, north
 
 
 # DOCS_TEST: setup

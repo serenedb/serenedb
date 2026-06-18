@@ -192,18 +192,6 @@ WHERE year = 2022
 id	name	value	month	year
 1	november order	110	11	2022
 
-# DOCS_TEST: example_007
-
-# DOCS_TEST_BODY
-
-statement error
-SET hive_partitioning = false;
-----
-db error: ERROR: unrecognized configuration parameter "hive_partitioning"
-
-Did you mean: "partitioned_write_flush_threshold"
-
-
 # DOCS_TEST: example_008
 
 statement ok

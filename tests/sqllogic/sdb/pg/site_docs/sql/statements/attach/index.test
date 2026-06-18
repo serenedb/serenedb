@@ -131,21 +131,23 @@ ATTACH OR REPLACE '/tmp/${__DATABASE__}_sql_statements_attach_index_example_010_
 
 # DOCS_TEST: example_011
 
+statement ok
+DETACH IF EXISTS file;
+
+statement ok
+ATTACH ':memory:' AS file;
+
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CREATE TABLE file.new_table (i INTEGER);
-----
-(?i)Catalog with name .* does not exist!
 
 # DOCS_TEST: example_012
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 DETACH file;
-----
-db error: ERROR: Failed to detach database with name "file": database not found
 
 # DOCS_TEST: example_013
 
@@ -156,12 +158,24 @@ SHOW DATABASES;
 
 # DOCS_TEST: example_014
 
+statement ok
+DETACH IF EXISTS file;
+
+statement ok
+ATTACH ':memory:' AS file;
+
 # DOCS_TEST_BODY
 
 statement ok
 USE file;
 
 # DOCS_TEST: example_015
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DETACH IF EXISTS file;
 
 statement ok
 DETACH IF EXISTS stations_fixture;
@@ -246,7 +260,7 @@ ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_017_1_file_db.c
 # DOCS_TEST: example_018
 
 # DOCS_TEST_RAW
-#| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack');
+#| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'secret_key');
 
 # DOCS_TEST_BODY
 
@@ -254,7 +268,7 @@ statement ok
 DETACH IF EXISTS enc_db;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_018_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'quack_quack');
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_018_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'secret_key');
 
 statement ok
 DETACH enc_db;
@@ -262,23 +276,15 @@ DETACH enc_db;
 # DOCS_TEST: example_020
 
 # DOCS_TEST_RAW
-#| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CBC');
-#|
-#| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CTR');
+#| ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'secret_key', ENCRYPTION_CIPHER 'CTR');
 
 # DOCS_TEST_BODY
-
-statement error
-ATTACH 'encrypted.db' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CBC');
-----
-db error: ERROR: CBC encryption is disabled
-
 
 statement ok
 DETACH IF EXISTS enc_db;
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_020_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'quack_quack', ENCRYPTION_CIPHER 'CTR');
+ATTACH '/tmp/${__DATABASE__}_sql_statements_attach_index_example_020_1_encrypted_db.csv' AS enc_db (ENCRYPTION_KEY 'secret_key', ENCRYPTION_CIPHER 'CTR');
 
 statement ok
 DETACH enc_db;

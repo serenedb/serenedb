@@ -294,6 +294,11 @@ x
 
 # DOCS_TEST: example_031
 
+# Reduce the expression-depth limit so the recursive expansion fails fast instead
+# of expanding to the default 1000 (which takes seconds).
+statement ok
+SET max_expression_depth TO 50;
+
 # DOCS_TEST_BODY
 
 statement ok
@@ -310,10 +315,13 @@ CREATE OR REPLACE FUNCTION fibo(n) AS (
 query error
 SELECT fibo(3);
 ----
-db error: ERROR: Max expression depth limit of 1000 exceeded. Use "SET max_expression_depth TO x" to increase the maximum expression depth.
+db error: ERROR: Max expression depth limit of 50 exceeded. Use "SET max_expression_depth TO x" to increase the maximum expression depth.
 
 
 # DOCS_TEST: example_032
+
+statement ok
+RESET max_expression_depth;
 
 # DOCS_TEST_BODY
 
@@ -349,3 +357,15 @@ statement ok
 SELECT schema_name, function_name, function_type, parameters
 FROM duckdb_functions()
 WHERE function_type IN ('macro', 'table_macro');
+
+# DOCS_TEST: example_035
+
+statement ok
+CREATE MACRO scalar_sub() AS (SELECT 5);
+
+# DOCS_TEST_BODY
+
+statement error
+SELECT * FROM range(scalar_sub());
+----
+db error: ERROR: Table function cannot contain subqueries

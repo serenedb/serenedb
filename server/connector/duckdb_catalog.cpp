@@ -35,6 +35,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -53,6 +54,7 @@
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
+#include <duckdb/planner/operator/logical_simple.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/storage/database_size.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
@@ -832,6 +834,24 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
     op.return_chunk);
   merge.children.push_back(plan);
   return merge;
+}
+
+duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
+  duckdb::Binder& binder, duckdb::TableCatalogEntry& table_entry,
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan,
+  duckdb::unique_ptr<duckdb::CreateIndexInfo> create_info,
+  duckdb::unique_ptr<duckdb::AlterTableInfo> alter_info) {
+  // DuckCatalog implements ADD PRIMARY KEY by building a CREATE INDEX over an
+  // ART. SereneDB instead enforces the primary key in the underlying store, so
+  // we discard the index plan the binder prepared and route the ALTER through
+  // the regular LOGICAL_ALTER dispatch -- SereneDBSchemaEntry::Alter handles the
+  // ADD_CONSTRAINT case by mirroring the constraint to the store table.
+  (void)binder;
+  (void)table_entry;
+  (void)plan;
+  (void)create_info;
+  return duckdb::make_uniq<duckdb::LogicalSimple>(
+    duckdb::LogicalOperatorType::LOGICAL_ALTER, std::move(alter_info));
 }
 
 duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(

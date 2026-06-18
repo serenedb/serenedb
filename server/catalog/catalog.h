@@ -451,6 +451,14 @@ class Catalog final {
                            StructFieldOp op, const std::string& field_name,
                            duckdb::LogicalType field_type, bool if_exists);
 
+  // Adds a PRIMARY KEY over `column_names` to an existing table and mirrors it
+  // to the underlying store. The PK columns are made implicitly NOT NULL. Fails
+  // if the table already has a primary key or has dependent indexes (whose row
+  // identity would otherwise be invalidated).
+  Result AddPrimaryKey(ObjectId database_id, std::string_view schema,
+                       std::string_view table,
+                       const std::vector<std::string>& column_names);
+
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                          std::string_view name);
 

@@ -34,8 +34,10 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/function/scalar_macro_function.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <iostream>
@@ -3036,6 +3038,21 @@ std::string BuildStructFieldClause(Catalog::StructFieldOp op,
   return {};
 }
 
+// Builds the `<column> IS NOT NULL` check constraint used to model an implicit
+// NOT NULL, matching the CREATE TABLE path (see append_not_null in
+// duckdb_schema_entry.cpp).
+CheckConstraint MakeNotNullConstraint(std::string_view table_name,
+                                      std::string_view column_name) {
+  auto col_ref =
+    duckdb::make_uniq<duckdb::ColumnRefExpression>(std::string{column_name});
+  auto is_not_null = duckdb::make_uniq<duckdb::OperatorExpression>(
+    duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, std::move(col_ref));
+  return CheckConstraint{
+    ObjectId{}, NextId(),
+    absl::StrCat(table_name, "_", column_name, "_not_null"),
+    std::make_shared<ColumnExpr>(std::move(is_not_null))};
+}
+
 }  // namespace
 
 Result Catalog::ChangeStructField(
@@ -3155,6 +3172,118 @@ Result Catalog::ChangeStructField(
           ctx.AlterStoreColumnField(store_name, field_clause);
           for (auto& def : recreate) {
             ctx.CreateStoreIndex(std::move(def));
+          }
+        });
+      });
+    });
+}
+
+Result Catalog::AddPrimaryKey(ObjectId database_id, std::string_view schema,
+                              std::string_view table,
+                              const std::vector<std::string>& column_names) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto table_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, table);
+  if (!table_id) {
+    return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
+  }
+  auto object = _snapshot->GetObject(*table_id);
+  if (!object || object->GetType() != ObjectType::Table) {
+    return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                  object ? pg::ToPgObjectTypeName(object->GetType()) : ""};
+  }
+  auto table_ptr = basics::downCast<Table>(std::move(object));
+
+  if (!table_ptr->PKColumns().empty()) {
+    return Result{ERROR_BAD_PARAMETER, "multiple primary keys for table \"",
+                  std::string{table}, "\" are not allowed"};
+  }
+
+  // Adding a PK changes which columns provide row identity (see
+  // SereneDBTableEntry::BuildRowIdColumns: declared PK columns take over from
+  // the synthetic generated PK). Indexes built against the old identity would
+  // be left inconsistent, so refuse while any depend on the table.
+  if (auto td = _snapshot->GetDependency<TableDependency>(*table_id);
+      td && !td->indexes.empty()) {
+    std::string idx_name;
+    if (auto idx = _snapshot->GetObject<Index>(*td->indexes.begin())) {
+      idx_name = idx->GetName();
+    }
+    return Result{ERROR_BAD_PARAMETER, "cannot add a primary key to table \"",
+                  std::string{table}, "\" because index \"", idx_name,
+                  "\" depends on it; drop the index first"};
+  }
+
+  std::vector<Column::Id> pk_ids;
+  pk_ids.reserve(column_names.size());
+  std::vector<CheckConstraint> not_nulls;
+  for (const auto& cname : column_names) {
+    auto col_it = absl::c_find_if(
+      table_ptr->Columns(), [&](const Column& c) { return c.GetName() == cname; });
+    if (col_it == table_ptr->Columns().end()) {
+      return Result{ERROR_SERVER_ILLEGAL_NAME};
+    }
+    if (absl::c_contains(pk_ids, col_it->GetId())) {
+      return Result{ERROR_BAD_PARAMETER, "column \"", cname,
+                    "\" appears twice in primary key constraint"};
+    }
+    pk_ids.push_back(col_it->GetId());
+    const bool has_not_null =
+      absl::c_any_of(table_ptr->CheckConstraints(), [&](const CheckConstraint& c) {
+        auto idx = c.IsNotNull(table_ptr->Columns());
+        return idx && table_ptr->Columns()[*idx].GetId() == col_it->GetId();
+      });
+    if (!has_not_null) {
+      not_nulls.push_back(MakeNotNullConstraint(table, cname));
+    }
+  }
+
+  std::shared_ptr<Table> updated;
+  if (auto r = table_ptr->AddPrimaryKey(updated, std::move(pk_ids),
+                                        std::move(not_nulls));
+      !r.ok()) {
+    return r;
+  }
+
+  std::string store_name;
+  if (updated->GetEngine() == TableEngine::Transactional &&
+      !updated->Tombstoned()) {
+    auto database = _snapshot->GetObject<Database>(database_id);
+    SDB_ASSERT(database);
+    store_name = StoreTableName(database->GetName(), schema, table);
+  }
+
+  std::string clause = "ADD PRIMARY KEY (";
+  for (size_t i = 0; i < column_names.size(); ++i) {
+    if (i != 0) {
+      clause += ", ";
+    }
+    clause += duckdb::KeywordHelper::WriteOptionallyQuoted(column_names[i], '"');
+  }
+  clause += ")";
+
+  return Apply(
+    _snapshot, _snapshot_mutex,
+    [&](std::shared_ptr<Snapshot>& clone) -> Result {
+      auto rr =
+        clone->ReplaceObject<ResolveType::Relation>(*schema_id, table, updated);
+      if (!rr.ok()) {
+        return rr;
+      }
+      return basics::SafeCall([&] {
+        duckdb::MemoryStream stream;
+        auto bytes = catalog::SerializeObject(*updated, stream);
+        return _engine->Write([&](auto& ctx) {
+          ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
+                            bytes);
+          if (!store_name.empty()) {
+            ctx.AlterStoreColumnField(store_name, clause);
           }
         });
       });

@@ -1133,6 +1133,50 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       return;
     }
 
+    case duckdb::AlterTableType::ADD_CONSTRAINT: {
+      auto& constraint_info = table_info.Cast<duckdb::AddConstraintInfo>();
+      // Only ADD PRIMARY KEY is supported. ADD CONSTRAINT for UNIQUE / CHECK /
+      // FOREIGN KEY is rejected here, matching upstream DuckDB which also has
+      // no support for those ALTER TABLE clauses.
+      if (constraint_info.constraint->type != duckdb::ConstraintType::UNIQUE ||
+          !constraint_info.constraint->Cast<duckdb::UniqueConstraint>()
+             .IsPrimaryKey()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("this ALTER TABLE operation is not supported"));
+      }
+      auto& unique =
+        constraint_info.constraint->Cast<duckdb::UniqueConstraint>();
+      if (unique.HasIndex()) {
+        // A PK declared by column position rather than by name -- the parser
+        // only produces this for inline CREATE TABLE constraints, not ALTER.
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("this ALTER TABLE operation is not supported"));
+      }
+      Result r =
+        catalog_impl.AddPrimaryKey(db, name, table_name, unique.GetColumnNames());
+      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", table_name,
+                                "\" does not exist"));
+      }
+      if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                        ERR_MSG("\"", table_name, "\" is not a table"));
+      }
+      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                        ERR_MSG("column named in key does not exist in "
+                                "relation \"",
+                                table_name, "\""));
+      }
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      return;
+    }
+
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("this ALTER TABLE operation is not supported"));

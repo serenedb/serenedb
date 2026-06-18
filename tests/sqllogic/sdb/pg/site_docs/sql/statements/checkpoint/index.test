@@ -1,3 +1,5 @@
+control substitution on
+
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
@@ -6,6 +8,12 @@ statement ok
 CHECKPOINT;
 
 # DOCS_TEST: example_002
+
+statement ok
+DETACH IF EXISTS file_db;
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_sql_statements_checkpoint_example_002_file_db.db' AS file_db;
 
 # DOCS_TEST_BODY
 
@@ -31,3 +39,12 @@ ATTACH ':memory:' AS memory_compressed (COMPRESS);
 
 statement ok
 USE memory_compressed;
+
+statement ok
+USE postgres;
+
+statement ok
+DETACH IF EXISTS memory_compressed;
+
+statement ok
+DETACH IF EXISTS file_db;

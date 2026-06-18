@@ -10,6 +10,12 @@ CREATE TEXT SEARCH DICTIONARY norm_dict (
     accent = false
 );
 
+query ?
+SELECT ts_lexize('norm_dict', 'CAFÉ');
+----
+ts_lexize
+{cafe}
+
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
@@ -19,5 +25,11 @@ CREATE TEXT SEARCH DICTIONARY norm_upper (
     template = 'norm',
     locale = 'en_US.UTF-8',
     case = 'upper',
-    accent = false
+    accent = true
 );
+
+query ?
+SELECT ts_lexize('norm_upper', 'café');
+----
+ts_lexize
+{CAFÉ}

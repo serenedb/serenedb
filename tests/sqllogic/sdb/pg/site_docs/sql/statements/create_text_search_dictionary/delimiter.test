@@ -17,3 +17,35 @@ CREATE TEXT SEARCH DICTIONARY comma_delim (
     template = 'delimiter',
     delimiter = ','
 );
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_delim_comma (
+    template = 'delimiter',
+    delimiter = ','
+);
+
+query ?
+SELECT ts_lexize('tok_delim_comma', 'red,green,blue');
+----
+ts_lexize
+{red,green,blue}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_delim_dot (
+    template = 'delimiter',
+    delimiter = '.'
+);
+
+query ?
+SELECT ts_lexize('tok_delim_dot', 'com.example.app');
+----
+ts_lexize
+{com,example,app}

@@ -16,3 +16,18 @@ SELECT ts_lexize('verbatim', 'Hello World 42');
 ----
 ts_lexize
 {"Hello World 42"}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tok_keyword (
+    template = 'keyword'
+);
+
+query ?
+SELECT ts_lexize('tok_keyword', 'New York City');
+----
+ts_lexize
+{"New York City"}

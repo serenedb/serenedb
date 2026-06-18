@@ -7,3 +7,13 @@ CREATE TEXT SEARCH DICTIONARY collation_dict (
     template = 'collation',
     locale = 'en_US.UTF-8'
 );
+
+# A collation dictionary emits one opaque binary collation key per value.
+# The bytes are not human-readable, but comparing the keys reproduces the
+# locale's sort order, so `apple` orders before `banana`.
+
+query ?
+SELECT ts_lexize('collation_dict', 'apple') < ts_lexize('collation_dict', 'banana') AS apple_sorts_before_banana;
+----
+apple_sorts_before_banana
+t

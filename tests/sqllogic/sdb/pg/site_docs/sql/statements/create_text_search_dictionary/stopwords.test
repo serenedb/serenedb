@@ -8,7 +8,32 @@ CREATE TEXT SEARCH DICTIONARY stop_filter (
     stopwords = '"the","a","an","is"'
 );
 
+query ?
+SELECT ts_lexize('stop_filter', 'the');
+----
+ts_lexize
+{}
+
 # DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY stop_pipeline (
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = ' ',
+    step2_template = 'stopwords',
+    step2_stopwords = '"the","a","an","is"'
+);
+
+query ?
+SELECT ts_lexize('stop_pipeline', 'the cat is a animal');
+----
+ts_lexize
+{cat,animal}
+
+# DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 
@@ -18,3 +43,9 @@ CREATE TEXT SEARCH DICTIONARY hex_stop (
     stopwords = '"616263","6D6E6F"',
     HEX = true
 );
+
+query ?
+SELECT ts_lexize('hex_stop', 'abc');
+----
+ts_lexize
+{}

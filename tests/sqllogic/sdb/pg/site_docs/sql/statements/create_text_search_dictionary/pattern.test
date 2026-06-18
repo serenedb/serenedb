@@ -9,17 +9,15 @@ CREATE TEXT SEARCH DICTIONARY caps (
     group = 0
 );
 
-# DOCS_TEST: example_002
-
-# DOCS_TEST_BODY
-
-query
+query ?
 SELECT ts_lexize('caps', 'The Quick Brown fox jumps over Lazy Dog');
 ----
 ts_lexize
 {The,Quick,Brown,Lazy,Dog}
 
-# DOCS_TEST: example_003
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY ws_split (
@@ -28,10 +26,42 @@ CREATE TEXT SEARCH DICTIONARY ws_split (
     group = -1
 );
 
-# DOCS_TEST_BODY
-
-query
+query ?
 SELECT ts_lexize('ws_split', 'alpha  beta   gamma');
 ----
 ts_lexize
 {alpha,beta,gamma}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY id_split (
+    template = 'pattern',
+    pattern = '[-_.]',
+    group = -1
+);
+
+query ?
+SELECT ts_lexize('id_split', 'SereneDB-2024_v1.2');
+----
+ts_lexize
+{SereneDB,2024,v1,2}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY trailing_digits (
+    template = 'pattern',
+    pattern = '([a-zA-Z]+)(\d+)',
+    group = 2
+);
+
+query ?
+SELECT ts_lexize('trailing_digits', 'abc123def456ghi');
+----
+ts_lexize
+{123,456}

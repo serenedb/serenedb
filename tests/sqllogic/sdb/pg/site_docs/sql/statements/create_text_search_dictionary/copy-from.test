@@ -1,12 +1,5 @@
 # DOCS_TEST: example_001
 
-# DOCS_TEST_RAW
-#| CREATE TEXT SEARCH DICTIONARY english_upper (
-#|     template = 'copy_from',
-#|     from = 'english_dict',
-#|     case = 'upper'
-#| );
-
 # DOCS_TEST_BODY
 
 statement ok
@@ -17,20 +10,53 @@ CREATE TEXT SEARCH DICTIONARY english_dict (
     stemming = true
 );
 
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| CREATE TEXT SEARCH DICTIONARY english_no_stem (
+#|     template = 'copy_from',
+#|     from = 'english_dict',
+#|     -- inherit locale and case, override only stemming
+#|     stemming = false
+#| );
+
+# DOCS_TEST_BODY
+
 statement ok
-CREATE TEXT SEARCH DICTIONARY english_upper (
+CREATE TEXT SEARCH DICTIONARY english_no_stem (
     template = 'copy_from',
     from = 'english_dict',
-    case = 'upper'
+    stemming = false
 );
 
-# DOCS_TEST: example_002
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+-- the source dictionary stems each word to its root
+query ?
+SELECT ts_lexize('english_dict', 'running flies');
+----
+ts_lexize
+{run,fli}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+-- the copy inherits locale and case but keeps full words (stemming = false)
+query ?
+SELECT ts_lexize('english_no_stem', 'running flies');
+----
+ts_lexize
+{running,flies}
+
+# DOCS_TEST: example_005
 
 # DOCS_TEST_RAW
 #| CREATE TEXT SEARCH DICTIONARY pipe_variant (
 #|     template = 'copy_from',
 #|     from = 'pipe_dict',
-#|     STEP1_DELIMITER = '|',
 #|     STEP2_CASE = 'upper'
 #| );
 
@@ -50,12 +76,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY pipe_variant (
     template = 'copy_from',
     from = 'pipe_dict',
-    STEP1_DELIMITER = '|',
     STEP2_CASE = 'upper'
 );
 
-# DOCS_TEST: example_003
-
+# DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
@@ -67,7 +91,7 @@ CREATE TEXT SEARCH DICTIONARY pipe_extended (
     STEP3_STOPWORDS = '"bar","foo"'
 );
 
-# DOCS_TEST: example_004
+# DOCS_TEST: example_007
 
 # DOCS_TEST_RAW
 #| CREATE TEXT SEARCH DICTIONARY minhash_variant (

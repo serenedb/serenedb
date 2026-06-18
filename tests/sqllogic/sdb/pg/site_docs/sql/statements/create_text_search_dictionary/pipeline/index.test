@@ -67,3 +67,46 @@ CREATE TEXT SEARCH DICTIONARY nested_pipe (
     STEP3_TEMPLATE = 'stopwords',
     STEP3_STOPWORDS = '"A"'
 );
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_delim_norm (
+    template = 'pipeline',
+    -- step 1 splits on commas, step 2 lowercases each piece
+    STEP1_TEMPLATE = 'delimiter',
+    STEP1_DELIMITER = ',',
+    STEP2_TEMPLATE = 'norm',
+    STEP2_LOCALE = 'en_US.UTF-8',
+    STEP2_CASE = 'lower'
+);
+
+query ?
+SELECT ts_lexize('pipe_delim_norm', 'RED,Green,BLUE');
+----
+ts_lexize
+{red,green,blue}
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_delim_stem (
+    template = 'pipeline',
+    -- step 1 splits on commas, step 2 lowercases and stems each piece
+    STEP1_TEMPLATE = 'delimiter',
+    STEP1_DELIMITER = ',',
+    STEP2_TEMPLATE = 'text',
+    STEP2_LOCALE = 'en_US.UTF-8',
+    STEP2_CASE = 'lower',
+    STEP2_STEMMING = true
+);
+
+query ?
+SELECT ts_lexize('pipe_delim_stem', 'Cats,RUNNING');
+----
+ts_lexize
+{cat,run}

@@ -8,17 +8,15 @@ CREATE TEXT SEARCH DICTIONARY path_dict (
     delimiter = '/'
 );
 
-# DOCS_TEST: example_002
-
-# DOCS_TEST_BODY
-
-query
+query ?
 SELECT ts_lexize('path_dict', '/usr/local/bin');
 ----
 ts_lexize
 {/usr,/usr/local,/usr/local/bin}
 
-# DOCS_TEST: example_003
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY domain_dict (
@@ -27,10 +25,25 @@ CREATE TEXT SEARCH DICTIONARY domain_dict (
     reverse = true
 );
 
-# DOCS_TEST_BODY
-
-query
+query ?
 SELECT ts_lexize('domain_dict', 'docs.serenedb.com');
 ----
 ts_lexize
 {docs.serenedb.com,serenedb.com,com}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_skip (
+    template = 'path_hierarchy',
+    delimiter = '/',
+    skip = 1
+);
+
+query ?
+SELECT ts_lexize('path_skip', '/usr/local/bin');
+----
+ts_lexize
+{/local,/local/bin}

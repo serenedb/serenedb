@@ -8,3 +8,18 @@ CREATE TEXT SEARCH DICTIONARY geopoint_dict (
     latitude = 'lat',
     longitude = 'lng'
 );
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+-- The same physical point as the geojson example expands into an identical
+-- S2 cell covering, regardless of which template indexed it.
+query ?
+SELECT ts_lexize(
+    'geopoint_dict',
+    '{"lat":52.52,"lng":13.405}'
+);
+----
+ts_lexize
+{47b,47ac,47a9,47a84,47a85,47a854,47a851,47a851c,47a851d,47a851dc,47a851df,47a851dfc,47a851dff,47a851dfec,47a851dfed,47a851dfecc,47a851dfecd,47a851dfeccc,47a851dfecc9,47a851dfecc9c}

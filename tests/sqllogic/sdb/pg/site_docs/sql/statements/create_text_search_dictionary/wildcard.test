@@ -9,3 +9,27 @@ CREATE TEXT SEARCH DICTIONARY wildcard_dict (
     tokenizer_template = 'delimiter',
     tokenizer_delimiter = ' '
 );
+
+query ?
+SELECT ts_lexize('wildcard_dict', 'search');
+----
+ts_lexize
+{se,sea,ear,arc,rch,ch,h}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_min (
+    template = 'wildcard',
+    ngramsize = 2,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+query ?
+SELECT ts_lexize('wildcard_min', 'cat');
+----
+ts_lexize
+{c,ca,at,t}

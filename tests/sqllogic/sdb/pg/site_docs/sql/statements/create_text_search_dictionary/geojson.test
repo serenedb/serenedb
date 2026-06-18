@@ -16,3 +16,18 @@ CREATE TEXT SEARCH DICTIONARY geojson_s2 (
     template = 'geojson',
     coding = 's2point'
 );
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+-- A single GeoJSON point expands into an S2 cell covering, coarse to fine.
+-- GeoJSON coordinates are [longitude, latitude].
+query ?
+SELECT ts_lexize(
+    'geojson_s2',
+    '{"type":"Point","coordinates":[13.405,52.52]}'
+);
+----
+ts_lexize
+{47b,47ac,47a9,47a84,47a85,47a854,47a851,47a851c,47a851d,47a851dc,47a851df,47a851dfc,47a851dff,47a851dfec,47a851dfed,47a851dfecc,47a851dfecd,47a851dfeccc,47a851dfecc9,47a851dfecc9c}

@@ -5,16 +5,43 @@
 statement ok
 CREATE TEXT SEARCH DICTIONARY wordnet_syn (
     template = 'wordnet_synonyms',
-    synonyms = 's(100000002,1,''come'',v,1,0).
-s(100000002,2,''advance'',v,1,0).'
+    -- words sharing a synset id are synonyms; one s(...) record per line
+    synonyms = 's(100000001,1,''fast'',v,1,0).
+s(100000001,2,''quick'',v,1,0).
+s(100000001,3,''swift'',v,1,0).
+s(100000002,1,''car'',n,1,0).
+s(100000002,2,''automobile'',n,1,0).'
 );
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
-query
-SELECT ts_lexize('wordnet_syn', 'come');
+-- "fast" is mapped to the id of the synset it belongs to
+query ?
+SELECT ts_lexize('wordnet_syn', 'fast');
 ----
 ts_lexize
-{100000002}
+{100000001}
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+-- "quick" shares the same synset, so it maps to the same id
+query ?
+SELECT ts_lexize('wordnet_syn', 'quick');
+----
+ts_lexize
+{100000001}
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+-- a word in no record produces no tokens
+query ?
+SELECT ts_lexize('wordnet_syn', 'keyboard');
+----
+ts_lexize
+{}

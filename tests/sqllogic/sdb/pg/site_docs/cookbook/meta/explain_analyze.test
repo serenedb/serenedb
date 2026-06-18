@@ -27,14 +27,53 @@ INSERT INTO tbl VALUES
     (3, 'bookmark', 4, 5, 'beta', 2, 11, 21, 31, 20, 200, 2000),
     (7, 'other', 9, 16, 'gamma', 3, 12, 22, 32, NULL, 300, 3000);
 
+# DOCS_TEST_RAW
+#| EXPLAIN ANALYZE SELECT * FROM tbl;
+#| ----
+#| ┌─────────────────────────────────────┐
+#| │┌───────────────────────────────────┐│
+#| ││    Query Profiling Information    ││
+#| │└───────────────────────────────────┘│
+#| └─────────────────────────────────────┘
+#| EXPLAIN ANALYZE SELECT * FROM tbl;
+#| ┌────────────────────────────────────────────────┐
+#| │┌──────────────────────────────────────────────┐│
+#| ││              Total Time: 0.0029s             ││
+#| │└──────────────────────────────────────────────┘│
+#| └────────────────────────────────────────────────┘
+#| ┌───────────────────────────┐
+#| │      RESULT_COLLECTOR     │
+#| │    ────────────────────   │
+#| │           0 rows          │
+#| │           0.00s           │
+#| └─────────────┬─────────────┘
+#| ┌─────────────┴─────────────┐
+#| │      EXPLAIN_ANALYZE      │
+#| │    ────────────────────   │
+#| │           0 rows          │
+#| │           0.00s           │
+#| └─────────────┬─────────────┘
+#| ┌─────────────┴─────────────┐
+#| │         TABLE_SCAN        │
+#| │    ────────────────────   │
+#| │         Table: tbl        │
+#| │   Type: Sequential Scan   │
+#| │                           │
+#| │        Projections:       │
+#| │             id            │
+#| │            name           │
+#| │            col1           │
+#| │                           │
+#| │           3 rows          │
+#| │           0.00s           │
+#| └───────────────────────────┘
+
 # DOCS_TEST_BODY
 
 statement ok
 EXPLAIN ANALYZE SELECT * FROM tbl;
 
 # DOCS_TEST: example_002
-
-# DOCS_TEST_BODY
 
 statement ok
 CREATE TABLE students (name VARCHAR, sid INTEGER);
@@ -47,6 +86,71 @@ INSERT INTO students VALUES ('Mark', 1), ('Joe', 2), ('Matthew', 3);
 
 statement ok
 INSERT INTO exams VALUES (10, 'Physics', 1), (20, 'Chemistry', 2), (30, 'Literature', 3);
+
+# DOCS_TEST_RAW
+#| EXPLAIN ANALYZE
+#|     SELECT name
+#|     FROM students
+#|     JOIN exams USING (sid)
+#|     WHERE name LIKE 'Ma%';
+#| ----
+#| ┌─────────────────────────────────────┐
+#| │┌───────────────────────────────────┐│
+#| ││    Query Profiling Information    ││
+#| │└───────────────────────────────────┘│
+#| └─────────────────────────────────────┘
+#| EXPLAIN ANALYZE SELECT name FROM students JOIN exams USING (sid) WHERE name LIKE 'Ma%';
+#| ┌────────────────────────────────────────────────┐
+#| │┌──────────────────────────────────────────────┐│
+#| ││              Total Time: 0.0085s             ││
+#| │└──────────────────────────────────────────────┘│
+#| └────────────────────────────────────────────────┘
+#| ┌───────────────────────────┐
+#| │      RESULT_COLLECTOR     │
+#| │    ────────────────────   │
+#| │           0 rows          │
+#| │           0.00s           │
+#| └─────────────┬─────────────┘
+#| ┌─────────────┴─────────────┐
+#| │      EXPLAIN_ANALYZE      │
+#| │    ────────────────────   │
+#| │           0 rows          │
+#| │           0.00s           │
+#| └─────────────┬─────────────┘
+#| ┌─────────────┴─────────────┐
+#| │         PROJECTION        │
+#| │    ────────────────────   │
+#| │            name           │
+#| │                           │
+#| │           2 rows          │
+#| │           0.00s           │
+#| └─────────────┬─────────────┘
+#| ┌─────────────┴─────────────┐
+#| │         HASH_JOIN         │
+#| │    ────────────────────   │
+#| │      Join Type: INNER     │
+#| │   Conditions: sid = sid   │
+#| │                           ├──────────────┐
+#| │           2 rows          │              │
+#| │           0.00s           │              │
+#| └─────────────┬─────────────┘              │
+#| ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+#| │         TABLE_SCAN        ││         TABLE_SCAN        │
+#| │    ────────────────────   ││    ────────────────────   │
+#| │        Table: exams       ││      Table: students      │
+#| │   Type: Sequential Scan   ││   Type: Sequential Scan   │
+#| │      Projections: sid     ││        Projections:       │
+#| │                           ││            sid            │
+#| │      Dynamic Filters:     ││            name           │
+#| │ ((optional: (sid IN (1, 3)││                           │
+#| │ ) AND optional: (sid >= 1)││          Filters:         │
+#| │) AND optional: (sid <= 3))││ ((name >= 'Ma') AND (name │
+#| │                           ││          < 'Mb'))         │
+#| │           3 rows          ││           2 rows          │
+#| │           0.00s           ││           0.00s           │
+#| └───────────────────────────┘└───────────────────────────┘
+
+# DOCS_TEST_BODY
 
 statement ok
 EXPLAIN ANALYZE

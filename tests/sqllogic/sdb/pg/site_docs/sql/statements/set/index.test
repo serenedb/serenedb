@@ -56,3 +56,17 @@ SET GLOBAL default_order = 'desc';
 
 statement ok
 SET GLOBAL threads = 4;
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+RESET GLOBAL default_order;
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement ok
+RESET GLOBAL threads;

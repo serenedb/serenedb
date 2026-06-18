@@ -62,5 +62,11 @@ CREATE VIEW view1(a) AS SELECT 42;
 
 # DOCS_TEST_BODY
 
-statement ok
-SELECT definition FROM pg_views WHERE viewname = 'view1';
+query ?
+SELECT definition
+FROM pg_views
+WHERE viewname = 'view1'
+  AND schemaname = 'public';
+----
+definition
+SELECT 42;

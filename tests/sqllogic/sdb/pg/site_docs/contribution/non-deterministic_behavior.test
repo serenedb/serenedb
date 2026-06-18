@@ -59,4 +59,4 @@ SELECT list_sort(array_distinct(['A', 'A', 'B', NULL, NULL])) AS i
 ORDER BY i;
 ----
 i
-<slt:ignore>
+{A,B}

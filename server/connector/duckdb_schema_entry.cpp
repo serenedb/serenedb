@@ -72,8 +72,10 @@
 namespace sdb::connector {
 namespace {
 
-// Extracts column names from `[a, b, c]` -- the only accepted shape. Anything
-// else (row, single ref, string) throws.
+[[noreturn]] void ThrowCreateUnsupported(std::string_view what) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("CREATE ", what, " is not supported"));
+}
 
 }  // namespace
 
@@ -701,29 +703,25 @@ duckdb::optional_ptr<duckdb::CatalogEntry>
 SereneDBSchemaEntry::CreateTableFunction(
   duckdb::CatalogTransaction transaction,
   duckdb::CreateTableFunctionInfo& info) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  ERR_MSG("CREATE TABLE FUNCTION is not supported"));
+  ThrowCreateUnsupported("TABLE FUNCTION");
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry>
 SereneDBSchemaEntry::CreateCopyFunction(duckdb::CatalogTransaction transaction,
                                         duckdb::CreateCopyFunctionInfo& info) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  ERR_MSG("CREATE COPY FUNCTION is not supported"));
+  ThrowCreateUnsupported("COPY FUNCTION");
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry>
 SereneDBSchemaEntry::CreatePragmaFunction(
   duckdb::CatalogTransaction transaction,
   duckdb::CreatePragmaFunctionInfo& info) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  ERR_MSG("CREATE PRAGMA FUNCTION is not supported"));
+  ThrowCreateUnsupported("PRAGMA FUNCTION");
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateCollation(
   duckdb::CatalogTransaction transaction, duckdb::CreateCollationInfo& info) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                  ERR_MSG("CREATE COLLATION is not supported"));
+  ThrowCreateUnsupported("COLLATION");
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
@@ -817,6 +815,16 @@ void HandleStructFieldError(Result r, std::string_view table,
   SDB_THROW(std::move(r));
 }
 
+// Maps a "relation not found" result from a table-level catalog op to the PG
+// "relation does not exist" error. DuckDB's binder already enforces IF EXISTS,
+// so reaching here means a race with a concurrent DROP -- handle defensively.
+void ThrowIfTableMissing(const Result& r, std::string_view table_name) {
+  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", table_name, "\" does not exist"));
+  }
+}
+
 }  // namespace
 
 void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
@@ -902,13 +910,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
           ERR_DETAIL("This operation is not supported for ", actual_type, "."));
       }
 
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        // Table not found -- DuckDB's binder already handles IF EXISTS,
-        // so if we reach here the table should exist.
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
 
       if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
         if (!drop_info.if_constraint_not_found) {
@@ -956,11 +958,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                   table_name, "\" does not exist"));
       }
 
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
 
       if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
         THROW_SQL_ERROR(
@@ -992,11 +990,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
           ERR_MSG("cannot rename columns of a non-table relation"));
       }
 
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
 
       if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
         THROW_SQL_ERROR(
@@ -1041,11 +1035,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                         ERR_MSG("column \"", cd.Name(), "\" of relation \"",
                                 table_name, "\" already exists"));
       }
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
       if (!r.ok()) {
         SDB_THROW(std::move(r));
       }
@@ -1057,11 +1047,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       Result r = catalog_impl.DropTableColumn(db, name, table_name,
                                               remove_info.removed_column,
                                               remove_info.if_column_exists);
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
       if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
@@ -1083,11 +1069,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       Result r = catalog_impl.ChangeColumnType(
         db, name, table_name, type_info.column_name, type_info.target_type,
         std::move(using_sql));
-      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", table_name, "\" does not exist"));
-      }
+      ThrowIfTableMissing(r, table_name);
       if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
@@ -1135,9 +1117,6 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
 
     case duckdb::AlterTableType::ADD_CONSTRAINT: {
       auto& constraint_info = table_info.Cast<duckdb::AddConstraintInfo>();
-      // Only ADD PRIMARY KEY is supported. ADD CONSTRAINT for UNIQUE / CHECK /
-      // FOREIGN KEY is rejected here, matching upstream DuckDB which also has
-      // no support for those ALTER TABLE clauses.
       if (constraint_info.constraint->type != duckdb::ConstraintType::UNIQUE ||
           !constraint_info.constraint->Cast<duckdb::UniqueConstraint>()
              .IsPrimaryKey()) {

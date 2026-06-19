@@ -841,6 +841,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
   duckdb::unique_ptr<duckdb::LogicalOperator> plan,
   duckdb::unique_ptr<duckdb::CreateIndexInfo> create_info,
   duckdb::unique_ptr<duckdb::AlterTableInfo> alter_info) {
+  // ADD PRIMARY KEY records the PK in the table's catalog (the PK columns
+  // become the row identity), not ART index so discard the binder's
+  // index plan and route the ALTER through LOGICAL_ALTER.
   return duckdb::make_uniq<duckdb::LogicalSimple>(
     duckdb::LogicalOperatorType::LOGICAL_ALTER, std::move(alter_info));
 }

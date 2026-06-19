@@ -171,7 +171,10 @@ struct IndexField {
            irs::IndexFeatures::Offs;
   }
   irs::Tokenizer& GetTokens() const noexcept {
-    return sorter ? static_cast<irs::Tokenizer&>(*sorter) : *tokenizer;
+    if (sorter) {
+      return *sorter;
+    }
+    return *tokenizer;
   }
   bool Write(irs::DataOutput&) const noexcept { return false; }
   void SetValue(std::string_view value) const {
@@ -194,33 +197,35 @@ struct OffsetsLocalState final : duckdb::FunctionLocalState {
 
 auto& EnsureField(duckdb::ClientContext& context,
                   OffsetsLocalState& local_state, const OffsetsBindData& bind) {
-  if (!local_state.field.tokenizer) {
-    catalog::Tokenizer::TokenizerWrapper wrapper;
-    catalog::Column::Id column_id = kStandaloneSyntheticColumnId;
-    if (bind.IsStandalone()) {
-      auto wrapper_or = bind.dict_tokenizer->GetTokenizer();
-      SDB_ENSURE(wrapper_or.has_value(), ERROR_INTERNAL);
-      wrapper = std::move(*wrapper_or);
-    } else {
-      auto snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
-      auto column_tokenizer = bind.inverted_index->GetTokenizer(
-        snapshot, static_cast<irs::field_id>(bind.column_id));
-      wrapper = std::move(column_tokenizer.analyzer);
-      column_id = bind.column_id;
-    }
-
-    // Guard: a tokenizer that cannot produce offsets at all would index a
-    // field with positions but no offsets, then the offset read path decodes
-    // offset deltas that were never written -- a crash. Fail cleanly instead.
-    if (ClassifyOffsetSupport(*wrapper) == OffsetSupport::Unsupported) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("ts_offsets()/ts_highlight() is not supported for this "
-                "dictionary: its tokenizer does not produce text offsets"));
-    }
-
-    local_state.field.Reset(column_id, std::move(wrapper));
+  if (local_state.field.tokenizer) {
+    return local_state.field;
   }
+
+  auto column_id = kStandaloneSyntheticColumnId;
+  catalog::Tokenizer::TokenizerWrapper wrapper;
+  if (bind.IsStandalone()) {
+    auto wrapper_or = bind.dict_tokenizer->GetTokenizer();
+    SDB_ENSURE(wrapper_or.has_value(), ERROR_INTERNAL);
+    wrapper = std::move(*wrapper_or);
+  } else {
+    auto snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
+    auto column_tokenizer = bind.inverted_index->GetTokenizer(
+      snapshot, static_cast<irs::field_id>(bind.column_id));
+    wrapper = std::move(column_tokenizer.analyzer);
+    column_id = bind.column_id;
+  }
+
+  // Guard: a tokenizer that cannot produce offsets at all would index a field
+  // with positions but no offsets, then the offset read path decodes offset
+  // deltas that were never written -- a crash. Fail cleanly instead.
+  if (ClassifyOffsetSupport(*wrapper) == OffsetSupport::Unsupported) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("ts_offsets()/ts_highlight() is not supported for this "
+              "dictionary: its tokenizer does not produce text offsets"));
+  }
+
+  local_state.field.Reset(column_id, std::move(wrapper));
   return local_state.field;
 }
 

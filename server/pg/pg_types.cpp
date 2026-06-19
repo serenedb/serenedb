@@ -169,8 +169,6 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       return in_array ? kUuidArray : kUuid;
     case ENUM: {
       auto ext = type.GetExtensionInfo();
-      // null/property-less for anonymous enums (e.g. SELECT 'x'::ENUM('x', 'y'))
-      // that were never registered in the catalog and so carry no pg type oid.
       if (ext) {
         auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
         if (it != ext->properties.end()) {

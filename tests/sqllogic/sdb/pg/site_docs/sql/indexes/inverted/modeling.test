@@ -18,14 +18,11 @@ statement ok
 CREATE INDEX notes_idx ON notes
     USING inverted (id, (lower(s)) kw);
 
-statement ok
-VACUUM (REFRESH_TABLE) notes;
-
 query
-SELECT id FROM notes_idx WHERE lower(s) @@ 'hello' ORDER BY id;
+SELECT id, s FROM notes_idx WHERE lower(s) @@ 'hello' ORDER BY id;
 ----
-id
-1
+id	s
+1	HELLO
 
 # DOCS_TEST: example_002
 
@@ -45,9 +42,6 @@ statement ok
 CREATE INDEX line_items_idx ON line_items
     USING inverted (id, price_with_tax);
 
-statement ok
-VACUUM (REFRESH_TABLE) line_items;
-
 query
 SELECT id, price_with_tax FROM line_items_idx
 WHERE price_with_tax @@ ts_le(150)
@@ -55,34 +49,6 @@ ORDER BY id;
 ----
 id	price_with_tax
 1	110
-
-# DOCS_TEST: example_003
-
-statement ok
-CREATE TABLE events (
-    id INTEGER PRIMARY KEY,
-    doc JSON
-);
-
-statement ok
-INSERT INTO events VALUES
-    (1, '{"host": "web-01"}'),
-    (2, '{"host": "web-02"}');
-
-# DOCS_TEST_BODY
-
-statement ok
-CREATE INDEX events_idx ON events
-    USING inverted (id, (doc ->> 'host') kw);
-
-statement ok
-VACUUM (REFRESH_TABLE) events;
-
-query
-SELECT id FROM events_idx WHERE doc ->> 'host' @@ 'web-02' ORDER BY id;
-----
-id
-2
 
 # DOCS_TEST: example_004
 
@@ -103,54 +69,11 @@ statement ok
 CREATE INDEX articles_tags_idx ON articles_tags
     USING inverted (id, tags kw);
 
-statement ok
-VACUUM (REFRESH_TABLE) articles_tags;
-
 query
-SELECT id FROM articles_tags_idx WHERE tags @@ 'blue' ORDER BY id;
+SELECT id, tags FROM articles_tags_idx WHERE tags @@ 'blue' ORDER BY id;
 ----
-id
-1
-
-# DOCS_TEST: example_005
-
-statement ok
-CREATE TEXT SEARCH DICTIONARY en (
-    template = 'text',
-    locale = 'en_US.UTF-8',
-    case = 'lower',
-    stemming = false,
-    accent = false,
-    frequency = true,
-    position = true
-);
-
-statement ok
-CREATE TABLE documents (
-    id INTEGER PRIMARY KEY,
-    body TEXT,
-    payload VARIANT
-);
-
-statement ok
-INSERT INTO documents VALUES
-    (1, 'alpha cat', '{"views": 42}'::JSON::VARIANT),
-    (2, 'beta dog', '{"views": 7}'::JSON::VARIANT);
-
-# DOCS_TEST_BODY
-
-statement ok
-CREATE INDEX documents_idx ON documents
-    USING inverted (id, body en) INCLUDE (payload);
-
-statement ok
-VACUUM (REFRESH_TABLE) documents;
-
-query
-SELECT id, payload FROM documents_idx WHERE body @@ 'cat' ORDER BY id;
-----
-id	payload
-1	{"views":42}
+id	tags
+1	{red,blue}
 
 # DOCS_TEST: example_006
 

@@ -39,7 +39,7 @@
 #include "catalog/store/store.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
-#include "pg/commands/rbac.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -55,6 +55,33 @@ duckdb::virtual_column_map_t StoreScanVirtualColumns(
   cols.insert({kColumnIdentifierTableOid,
                duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
   return cols;
+}
+
+// Enforce SELECT on the table/view column the binder is reading. `column_index`
+// is the DuckDB logical index, which excludes the internal generated-PK column
+// (it is not part of CreateTableInfo) -- so it lines up with the i-th
+// user-visible catalog column. Fired per referenced read column at bind time
+// (the analogue of PostgreSQL markVarForSelectPriv); internal/bootstrap queries
+// have no client state and are skipped.
+void EnforceColumnRead(duckdb::ClientContext& context,
+                       const catalog::Table& table,
+                       duckdb::column_t column_index) {
+  auto* conn_ctx = TryGetSereneDBContext(context);
+  if (conn_ctx == nullptr) {
+    return;
+  }
+  std::size_t visible = 0;
+  for (const auto& col : table.Columns()) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    if (visible == column_index) {
+      conn_ctx->EnsureCatalogSnapshot()->RequireColumnAccess(
+        conn_ctx->GetRoleId(), table, catalog::AclMode::Select, col);
+      return;
+    }
+    ++visible;
+  }
 }
 
 }  // namespace
@@ -99,15 +126,6 @@ duckdb::TableCatalogEntry& SereneDBTableEntry::ResolveStoreEntry(
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  // The write target of an UPDATE/DELETE is scanned to find rows, but
-  // PostgreSQL requires SELECT only when a column value is actually read. Defer
-  // the SELECT check to PlanUpdate/PlanDelete, which require it conditionally
-  // once the projected columns are known.
-  if (!GetSereneDBContext(context).BindingWriteTarget()) {
-    pg::RequirePrivilege(GetSereneDBContext(context), *_sdb_table,
-                         catalog::AclMode::Select);
-  }
-
   auto function =
     ResolveStoreEntry(context).GetScanFunction(context, bind_data);
   if (bind_data) {
@@ -126,6 +144,11 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
 duckdb::Catalog& SereneDBTableEntry::GetStorageCatalog(
   duckdb::ClientContext& context) {
   return ResolveStoreEntry(context).ParentCatalog();
+}
+
+void SereneDBTableEntry::CheckColumnReadAccess(
+  duckdb::ClientContext& context, duckdb::column_t column_index) const {
+  EnforceColumnRead(context, *_sdb_table, column_index);
 }
 
 duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {

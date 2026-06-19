@@ -1,0 +1,162 @@
+# SELECT enforcement across the ways a role can hold the privilege: a direct
+# table grant, a PUBLIC grant, an inherited grant via role membership, and the
+# no-grant (refused) case. Also covers reads through joins and subqueries --
+# every referenced relation is checked, exactly like PostgreSQL.
+#
+# Lore: clickclack and mop are tables; vedernikoff/babsky/grp the roles.
+
+statement ok
+DROP TABLE IF EXISTS esm_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS esm_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS esm_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS esm_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS esm_grp;
+
+
+statement ok
+CREATE TABLE esm_clickclack (id int, payload int);
+
+
+statement ok
+CREATE TABLE esm_mop (id int, weight int);
+
+
+statement ok
+INSERT INTO esm_clickclack VALUES (1, 100), (2, 200);
+
+
+statement ok
+INSERT INTO esm_mop VALUES (1, 5), (2, 6);
+
+
+statement ok
+CREATE ROLE esm_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE esm_babsky LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE esm_grp;
+
+
+# No grant yet -> refused.
+connection c_ved user=esm_vedernikoff
+statement error
+SELECT id FROM esm_clickclack;
+----
+db error: ERROR: permission denied for table esm_clickclack<slt:ignore>
+
+
+# Direct grant -> allowed.
+connection default
+statement ok
+GRANT SELECT ON esm_clickclack TO esm_vedernikoff;
+
+
+connection c_ved2 user=esm_vedernikoff
+query
+SELECT id FROM esm_clickclack ORDER BY id;
+----
+id
+1
+2
+
+
+# Inherited via membership: grant to grp, make babsky a member.
+connection default
+statement ok
+GRANT SELECT ON esm_clickclack TO esm_grp;
+
+
+statement ok
+GRANT esm_grp TO esm_babsky;
+
+
+connection c_bab user=esm_babsky
+query
+SELECT count(*) AS n FROM esm_clickclack;
+----
+n
+2
+
+
+# PUBLIC grant on the second table: both roles read it without a direct grant.
+connection default
+statement ok
+GRANT SELECT ON esm_mop TO PUBLIC;
+
+
+connection c_bab2 user=esm_babsky
+query
+SELECT count(*) AS n FROM esm_mop;
+----
+n
+2
+
+
+# A join reads BOTH tables; babsky lacks nothing here (grp+PUBLIC), so it works.
+connection c_bab3 user=esm_babsky
+query
+SELECT count(*) AS n
+FROM esm_clickclack c JOIN esm_mop m ON c.id = m.id;
+----
+n
+2
+
+
+# vedernikoff has clickclack (direct) + mop (PUBLIC) -> join works.
+connection c_ved3 user=esm_vedernikoff
+query
+SELECT count(*) AS n
+FROM esm_clickclack c JOIN esm_mop m ON c.id = m.id;
+----
+n
+2
+
+
+# Revoke PUBLIC on mop: now a subquery reading mop is refused for vedernikoff
+# (it never had a direct mop grant).
+connection default
+statement ok
+REVOKE SELECT ON esm_mop FROM PUBLIC;
+
+
+connection c_ved4 user=esm_vedernikoff
+statement error
+SELECT id FROM esm_clickclack WHERE id IN (SELECT id FROM esm_mop);
+----
+db error: ERROR: permission denied for table esm_mop<slt:ignore>
+
+
+statement ok
+DROP TABLE esm_clickclack;
+
+
+statement ok
+DROP TABLE esm_mop;
+
+
+statement ok
+DROP ROLE esm_vedernikoff;
+
+
+statement ok
+DROP ROLE esm_babsky;
+
+
+statement ok
+DROP ROLE esm_grp;

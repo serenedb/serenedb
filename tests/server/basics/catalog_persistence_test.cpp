@@ -119,14 +119,19 @@ TEST(CatalogPersistence, secondary_index) {
 }
 
 TEST(CatalogPersistence, table) {
+  // Column "a" carries a per-column ACL (pg_attribute.attacl), so the golden
+  // bytes exercise column-level GRANT persistence; column "b" stays default.
+  Column col_a{ObjectId{}, ObjectId{1}, "a", duckdb::LogicalType::INTEGER};
+  col_a.SetPermissions(Permissions{ObjectId{},
+                                   {AclItem{.grantee = ObjectId{7},
+                                            .grantor = ObjectId{42},
+                                            .privs = AclMode::Select}}});
   CheckFixture(
     "table.bin",
     TableData{
       .name = "t",
-      .columns = {Column{ObjectId{}, ObjectId{1}, "a",
-                         duckdb::LogicalType::INTEGER},
-                  Column{ObjectId{}, ObjectId{2}, "b",
-                         duckdb::LogicalType::VARCHAR}},
+      .columns = {std::move(col_a), Column{ObjectId{}, ObjectId{2}, "b",
+                                           duckdb::LogicalType::VARCHAR}},
       .pk_columns = {ObjectId{1}},
       .check_constraints = {},
       .generated_pk_seq_id = ObjectId{9},

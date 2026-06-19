@@ -28,6 +28,7 @@
 #include <functional>
 #include <memory>
 #include <shared_mutex>
+#include <span>
 #include <vector>
 
 #include "auth/role_closure.h"
@@ -37,7 +38,6 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/result_or.h"
-#include "catalog/access_check.h"
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
@@ -104,6 +104,20 @@ constexpr ObjectType GetObjectType() noexcept {
   }
 }
 
+// RBAC read intent threaded into catalog getters. `need == NoRights` (the
+// default / NoAccessCheck) bypasses the check; `RequireAccess(role, need)`
+// asks the getter to enforce `need` for `role` and throw 42501 on failure.
+struct AccessContext {
+  ObjectId role;
+  AclMode need = AclMode::NoRights;
+};
+
+inline AccessContext RequireAccess(ObjectId role, AclMode need) {
+  return {role, need};
+}
+
+inline AccessContext NoAccessCheck() { return {id::kRootUser}; }
+
 struct Snapshot {
   Snapshot();
   ~Snapshot();
@@ -117,6 +131,39 @@ struct Snapshot {
   // for an unknown role -> deny. The reference is stable for the snapshot's
   // lifetime.
   const auth::RoleClosure& EffectiveRoleClosure(ObjectId role) const;
+
+  // RBAC enforcement, owned by the catalog (it holds the ACL data + closure
+  // cache). These throw the PG-exact SQL error (42501) directly on failure --
+  // there is no Result to inspect. `any_of` on HasAccess matches "any one of
+  // the bits in `need`" (the has_*_privilege oracle semantics); the default
+  // requires all bits. `RequireAccess` enforces all bits.
+
+  // True if `role` holds `need` on `object` (all bits, or any one bit if
+  // `any_of`). Pure query -- never throws. For the has_*_privilege functions
+  // and conditional grants.
+  bool HasAccess(ObjectId role, const Object& object, AclMode need,
+                 bool any_of = false) const;
+
+  // Throw "permission denied for <type> <name>" unless `role` holds `need` on
+  // `object`. `need == NoRights` is a no-op.
+  void RequireAccess(ObjectId role, const Object& object, AclMode need) const;
+
+  // Column-level (PG ExecCheckOneRelPerms): `need` on `table` satisfied
+  // table-wide, else per-column on every column in `columns`; empty `columns`
+  // means SELECT-on-any-one-column. Throws "permission denied for table
+  // <name>".
+  void RequireColumnAccess(ObjectId role, const Table& table, AclMode need,
+                           std::span<const Column* const> columns) const;
+
+  // Single-column convenience: `need` on `table` satisfied table-wide or on
+  // `column`. Throws "permission denied for table <name>".
+  void RequireColumnAccess(ObjectId role, const Table& table, AclMode need,
+                           const Column& column) const;
+
+  // Throw "must be owner of <obj_type> <name>" unless `role` owns `owner`
+  // (directly, via role membership, or as superuser). Unset `owner` is a no-op.
+  void RequireOwnership(ObjectId role, ObjectId owner,
+                        std::string_view obj_type, std::string_view name) const;
 
   std::vector<std::shared_ptr<Role>> GetRoles() const;
   std::vector<std::shared_ptr<Database>> GetDatabases() const;
@@ -462,6 +509,15 @@ class Catalog final {
   Result ChangeAcl(ObjectId database_id, std::string_view schema,
                    std::string_view name, ObjectType type,
                    absl::FunctionRef<void(catalog::Acl&)> mutate);
+
+  // Column-level GRANT/REVOKE: mutate the per-column ACL of `column` on the
+  // table (db, schema, table_name). The column ACL is stored raw (NOT expanded
+  // to acldefault -- columns have no implicit default grant), so an empty acl
+  // means "no column-level privileges". Throws if the table or column is
+  // missing.
+  Result ChangeColumnAcl(ObjectId database_id, std::string_view schema,
+                         std::string_view table_name, std::string_view column,
+                         absl::FunctionRef<void(catalog::Acl&)> mutate);
 
   Result DropDatabase(std::string_view name,
                       duckdb::shared_ptr<void> keep_alive);

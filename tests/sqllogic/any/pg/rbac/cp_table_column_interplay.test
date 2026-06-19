@@ -1,0 +1,323 @@
+# Table-level vs column-level grants of the SAME privilege: how they coexist and
+# how a REVOKE on one touches the other. PG keeps the table grant in relacl and
+# the column grant in attacl as INDEPENDENT entries, but a table-level REVOKE of
+# a privilege CASCADES to clear that privilege from every column grant too -- a
+# column entry cannot outlive its table-level counterpart. The inverse is NOT
+# symmetric: a column-level REVOKE leaves the table grant fully intact.
+# Mirrors PostgreSQL's pg_class.relacl + pg_attribute.attacl semantics exactly.
+#
+# Lore: vedernikoff/babsky/kalganov each hold one slice; clickclack/babsky/mop
+# columns. Idempotent + self-cleaning; roles are cluster-global so we prefix.
+
+statement ok
+DROP TABLE IF EXISTS tci_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS tci_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS tci_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS tci_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS tci_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS tci_kalganov;
+
+
+# === Case 1: table SELECT + column SELECT(clickclack) coexist ===
+
+statement ok
+CREATE TABLE tci_iceberg (clickclack int, babsky int, mop int);
+
+
+statement ok
+INSERT INTO tci_iceberg VALUES (1, 2, 3);
+
+
+statement ok
+CREATE ROLE tci_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON tci_iceberg TO tci_vedernikoff;
+
+
+statement ok
+GRANT SELECT (clickclack) ON tci_iceberg TO tci_vedernikoff;
+
+
+# The two grants are independent: the table grant lands in relacl, the column
+# grant in clickclack's attacl. Both are present at once.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'tci_iceberg'
+) g WHERE e LIKE 'tci_%';
+----
+e
+tci_vedernikoff=r/postgres
+
+
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'tci_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{tci_vedernikoff=r/postgres}
+babsky	(none)
+mop	(none)
+
+
+# The table grant covers EVERY column, including babsky/mop which have no column
+# grant of their own.
+connection c_ved user=tci_vedernikoff
+query
+SELECT clickclack, babsky, mop FROM tci_iceberg ORDER BY clickclack;
+----
+clickclack	babsky	mop
+1	2	3
+
+
+# === Case 1 cont.: REVOKE SELECT ON t (table) CASCADES to clear column a ===
+# PG: revoking the table-level SELECT strips SELECT from clickclack's column
+# grant too. With both gone the grantee can read NOTHING.
+connection default
+statement ok
+REVOKE SELECT ON tci_iceberg FROM tci_vedernikoff;
+
+
+# The table grant is gone from relacl.
+query
+SELECT count(*) AS n FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'tci_iceberg'
+) g WHERE e LIKE 'tci_%';
+----
+n
+0
+
+
+# The cascade also cleared clickclack's column ACL.
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'tci_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	(none)
+babsky	(none)
+mop	(none)
+
+
+# Even the once-column-granted clickclack is now refused.
+connection c_ved2 user=tci_vedernikoff
+statement error
+SELECT clickclack FROM tci_iceberg;
+----
+db error: ERROR: permission denied for table tci_iceberg<slt:ignore>
+
+
+# === Case 2 (inverse order): column SELECT(clickclack), THEN table SELECT, then
+# REVOKE the COLUMN grant -> the table grant survives untouched ===
+
+connection default
+statement ok
+CREATE TABLE tci_clickclack (clickclack int, babsky int, mop int);
+
+
+statement ok
+INSERT INTO tci_clickclack VALUES (10, 20, 30);
+
+
+statement ok
+CREATE ROLE tci_babsky LOGIN PASSWORD 'pw';
+
+
+# Column grant first: relacl carries no grantee element yet, only attacl does.
+statement ok
+GRANT SELECT (clickclack) ON tci_clickclack TO tci_babsky;
+
+
+query
+SELECT count(*) AS n FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'tci_clickclack'
+) g WHERE e LIKE 'tci_%';
+----
+n
+0
+
+
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'tci_clickclack' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{tci_babsky=r/postgres}
+babsky	(none)
+mop	(none)
+
+
+# Now add the table grant: relacl gains the element, attacl unchanged.
+statement ok
+GRANT SELECT ON tci_clickclack TO tci_babsky;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'tci_clickclack'
+) g WHERE e LIKE 'tci_%';
+----
+e
+tci_babsky=r/postgres
+
+
+# REVOKE the COLUMN grant only. PG: a column REVOKE does NOT touch the table
+# grant -- relacl is untouched and clickclack's attacl simply clears.
+statement ok
+REVOKE SELECT (clickclack) ON tci_clickclack FROM tci_babsky;
+
+
+# The table grant still stands in relacl.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'tci_clickclack'
+) g WHERE e LIKE 'tci_%';
+----
+e
+tci_babsky=r/postgres
+
+
+# Only the column ACL cleared.
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'tci_clickclack' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	(none)
+babsky	(none)
+mop	(none)
+
+
+# The surviving table grant still lets every column be read.
+connection c_bab user=tci_babsky
+query
+SELECT clickclack, babsky, mop FROM tci_clickclack ORDER BY clickclack;
+----
+clickclack	babsky	mop
+10	20	30
+
+
+# === Case 3: GRANT INSERT(clickclack) column + INSERT table, REVOKE INSERT ON t
+# CASCADES to clear the column INSERT too ===
+
+connection default
+statement ok
+CREATE TABLE tci_mop (clickclack int, babsky int, mop int);
+
+
+statement ok
+CREATE ROLE tci_kalganov LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT INSERT (clickclack) ON tci_mop TO tci_kalganov;
+
+
+statement ok
+GRANT INSERT ON tci_mop TO tci_kalganov;
+
+
+# Both grants coexist: INSERT (a = the INSERT letter) in relacl and in
+# clickclack's attacl.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'tci_mop'
+) g WHERE e LIKE 'tci_%';
+----
+e
+tci_kalganov=a/postgres
+
+
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'tci_mop' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{tci_kalganov=a/postgres}
+babsky	(none)
+mop	(none)
+
+
+# REVOKE the table-level INSERT: the cascade clears clickclack's column INSERT.
+statement ok
+REVOKE INSERT ON tci_mop FROM tci_kalganov;
+
+
+query
+SELECT count(*) AS n FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'tci_mop'
+) g WHERE e LIKE 'tci_%';
+----
+n
+0
+
+
+query
+SELECT a.attname, COALESCE(a.attacl::text, '(none)') AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'tci_mop' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	(none)
+babsky	(none)
+mop	(none)
+
+
+# With both INSERT grants gone, the grantee can no longer insert.
+connection c_kal user=tci_kalganov
+statement error
+INSERT INTO tci_mop (clickclack) VALUES (99);
+----
+db error: ERROR: permission denied for table tci_mop<slt:ignore>
+
+
+connection default
+statement ok
+DROP TABLE tci_iceberg;
+
+
+statement ok
+DROP TABLE tci_clickclack;
+
+
+statement ok
+DROP TABLE tci_mop;
+
+
+statement ok
+DROP ROLE tci_vedernikoff;
+
+
+statement ok
+DROP ROLE tci_babsky;
+
+
+statement ok
+DROP ROLE tci_kalganov;

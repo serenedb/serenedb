@@ -31,9 +31,7 @@
 #include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
 #include <duckdb/execution/operator/persistent/physical_update.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
-#include <duckdb/execution/operator/scan/physical_table_scan.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
-#include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -657,40 +655,22 @@ duckdb::unique_ptr<duckdb::LogicalOperator> InsertBackfillFilterProjection(
   return proj;
 }
 
-// True if the table scan reads any real (stored) column value -- as opposed to
-// only row-identity / virtual columns (PK virtuals, generated rowid, tableoid,
-// the empty placeholder). PostgreSQL requires SELECT on an UPDATE/DELETE target
-// exactly when such a value is read (a column in the SET RHS, the WHERE clause,
-// or RETURNING); a constant SET with no column-reading predicate reads nothing.
-bool ScanReadsRealColumn(const duckdb::PhysicalTableScan& scan) {
-  // A pushed-down filter reads the columns it tests.
-  if (scan.table_filters && scan.table_filters->HasFilters()) {
-    return true;
-  }
-  return absl::c_any_of(scan.column_ids, [](const duckdb::ColumnIndex& col) {
-    return !col.IsVirtualColumn() && !col.IsRowIdColumn() &&
-           !col.IsEmptyColumn() && !col.IsRowNumberColumn();
-  });
-}
-
-// Walk the physical subtree feeding an UPDATE/DELETE and report whether the
-// write target's own scan reads a real column value. The target's rows are read
-// from its backing DuckDB store table, so the target scan is the store-table
-// scan whose name matches the target's composed store name; UPDATE ... FROM
-// joins in other scans, so we match on that name rather than the first scan.
-bool WriteTargetReadsColumn(const duckdb::PhysicalOperator& op,
-                            std::string_view target_store_name) {
-  if (op.type == duckdb::PhysicalOperatorType::TABLE_SCAN) {
-    const auto& scan = op.Cast<duckdb::PhysicalTableScan>();
-    if (const auto* bind =
-          dynamic_cast<const duckdb::TableScanBindData*>(scan.bind_data.get());
-        bind && bind->table.name == target_store_name) {
-      return ScanReadsRealColumn(scan);
+// The i-th user-visible column of `table` (DuckDB column indices skip the
+// internal generated-PK column, mirroring BuildTableInfoAndIndices), or nullptr
+// if out of range.
+const catalog::Column* UserColumnAt(const catalog::Table& table,
+                                    std::size_t index) {
+  std::size_t visible = 0;
+  for (const auto& col : table.Columns()) {
+    if (col.GetId() == catalog::Column::kGeneratedPKId) {
+      continue;
     }
+    if (visible == index) {
+      return &col;
+    }
+    ++visible;
   }
-  return absl::c_any_of(op.children, [&](const auto& child) {
-    return WriteTargetReadsColumn(child.get(), target_store_name);
-  });
+  return nullptr;
 }
 
 }  // namespace
@@ -704,17 +684,31 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
   auto sdb_table = table_entry.GetSereneDBTable();
 
-  pg::RequirePrivilege(GetSereneDBContext(context), *sdb_table,
-                       catalog::AclMode::Insert);
-
-  // RETURNING reads the affected rows back, so PG requires SELECT on the
-  // projected columns in addition to INSERT. Enforce SELECT here -- otherwise
-  // an INSERT-only role both leaks column values it cannot read and can hit a
-  // crash on the return-chunk projection path.
-  if (op.return_chunk) {
-    pg::RequirePrivilege(GetSereneDBContext(context), *sdb_table,
-                         catalog::AclMode::Select);
+  // PostgreSQL requires INSERT on exactly the columns receiving a value (column
+  // privileges). `column_index_map` maps each table column to its source slot;
+  // an unset (INVALID_INDEX) entry means the column is not inserted (default).
+  // An empty map means every column is inserted (INSERT without a column list).
+  std::vector<const catalog::Column*> inserted;
+  if (op.column_index_map.empty()) {
+    for (const auto& col : sdb_table->Columns()) {
+      if (col.GetId() != catalog::Column::kGeneratedPKId) {
+        inserted.push_back(&col);
+      }
+    }
+  } else {
+    for (std::size_t i = 0; i < op.column_index_map.size(); ++i) {
+      if (op.column_index_map[duckdb::PhysicalIndex(i)] !=
+          duckdb::DConstants::INVALID_INDEX) {
+        inserted.push_back(UserColumnAt(*sdb_table, i));
+      }
+    }
   }
+  pg::RequireColumnPrivilege(GetSereneDBContext(context), *sdb_table,
+                             catalog::AclMode::Insert, inserted);
+
+  // RETURNING reads the affected rows back; PG requires SELECT on exactly the
+  // projected columns. That column-level check is enforced by the read-pass
+  // optimizer extension (it sees the RETURNING projection's column refs).
 
   // Two-pass projection: see ResolveDefaultsWithGenerated comment for why
   // we don't reuse upstream's single-pass ResolveDefaultsProjection here.
@@ -773,15 +767,10 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
     GetSereneDBContext(context), *sdb_table,
     op.is_truncate ? catalog::AclMode::Truncate : catalog::AclMode::Delete);
 
-  // PostgreSQL requires SELECT on a DELETE only when the statement reads a
-  // column value (e.g. a WHERE predicate) or returns rows via RETURNING.
-  // DELETE FROM t with no predicate and no RETURNING reads nothing and needs
-  // only DELETE.
-  if (!op.is_truncate &&
-      (op.return_chunk || WriteTargetReadsColumn(plan, store_entry.name))) {
-    pg::RequirePrivilege(GetSereneDBContext(context), *sdb_table,
-                         catalog::AclMode::Select);
-  }
+  // SELECT on the columns a DELETE reads (its WHERE predicate / RETURNING) is
+  // enforced by PlanGet on this delete's target scan -- the scan exposes
+  // exactly those columns. A blind DELETE's scan reads only the rowid, so
+  // PlanGet requires nothing beyond DELETE here.
 
   auto& bound_ref = op.expressions[0]->Cast<duckdb::BoundReferenceExpression>();
   auto store_constraints =
@@ -803,18 +792,20 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
   auto sdb_table = table_entry.GetSereneDBTable();
 
-  pg::RequirePrivilege(GetSereneDBContext(context), *sdb_table,
-                       catalog::AclMode::Update);
-
-  // PostgreSQL requires SELECT on an UPDATE only when the statement reads a
-  // column value -- a column in the SET RHS (SET c = c + 1) or the WHERE
-  // clause. A constant SET with no column-reading predicate (SET c = 99) reads
-  // nothing and needs only UPDATE. RETURNING reads the affected rows back, so
-  // PG requires SELECT whenever it is present.
-  if (op.return_chunk || WriteTargetReadsColumn(plan, store_entry.name)) {
-    pg::RequirePrivilege(GetSereneDBContext(context), *sdb_table,
-                         catalog::AclMode::Select);
+  // PostgreSQL requires UPDATE on exactly the columns being modified (column
+  // privileges). `op.columns` are the target columns of the SET clause.
+  std::vector<const catalog::Column*> modified;
+  for (auto col_idx : op.columns) {
+    modified.push_back(UserColumnAt(*sdb_table, col_idx.index));
   }
+  pg::RequireColumnPrivilege(GetSereneDBContext(context), *sdb_table,
+                             catalog::AclMode::Update, modified);
+
+  // SELECT on the columns an UPDATE reads -- a column in the SET RHS
+  // (SET c = c + 1), the WHERE clause, or RETURNING -- is enforced by PlanGet
+  // on this update's target scan, which exposes exactly those columns. A
+  // constant SET with no column-reading predicate reads nothing, so PlanGet
+  // requires nothing beyond UPDATE here.
 
   auto store_constraints =
     duckdb::Binder::BindConstraints(context, store_entry.GetConstraints(),

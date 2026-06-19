@@ -1119,18 +1119,6 @@ void PgHasRoleOid2Function(duckdb::DataChunk& args,
     });
 }
 
-bool ColumnExists(const catalog::Table& table, std::string_view col_name) {
-  for (const auto& c : table.Columns()) {
-    if (c.GetId() == catalog::Column::kGeneratedPKId) {
-      continue;
-    }
-    if (c.GetName() == col_name) {
-      return true;
-    }
-  }
-  return false;
-}
-
 bool AttnumExists(const catalog::Table& table, int64_t attnum) {
   if (attnum < 1) {
     return false;
@@ -1144,15 +1132,90 @@ bool AttnumExists(const catalog::Table& table, int64_t attnum) {
   return attnum <= n;
 }
 
+// Whether `role_id` holds `priv` on `column` of `table`. PG resolves a column
+// privilege via a table-level grant OR a per-column grant
+// (pg_attribute.attacl); the optional "WITH GRANT OPTION" suffix additionally
+// requires the grant-option bit on the column (or table).
+bool ColumnPrivHeld(const catalog::Snapshot& snapshot, ObjectId role_id,
+                    const catalog::Table& table, const catalog::Column& column,
+                    std::string_view priv) {
+  const auto modes = ParsePrivCheckText(priv, catalog::ObjectType::Table);
+  const catalog::Column* one[] = {&column};
+  if (modes.privs != catalog::AclMode::NoRights &&
+      auth::HasColumnPrivilege(snapshot, role_id, table, modes.privs, one)) {
+    return true;
+  }
+  if (modes.grant_options == catalog::AclMode::NoRights) {
+    return false;
+  }
+  if (auto role = snapshot.GetObject<catalog::Role>(role_id);
+      role && role->IsSuperuser()) {
+    return true;
+  }
+  const auto roles = auth::ComputeEffectiveRoles(snapshot, role_id);
+  const auto owner =
+    table.GetOwner().isSet() ? table.GetOwner() : id::kRootUser;
+  if (roles.contains(owner)) {
+    return true;
+  }
+  // Grant option held at table level OR on this column.
+  catalog::AclMode held = catalog::AclMode::NoRights;
+  for (const auto& item : table.GetAcl()) {
+    if (item.grantee == catalog::kPublicGrantee ||
+        roles.contains(item.grantee)) {
+      held |= item.grant_option;
+    }
+  }
+  for (const auto& item : column.GetAcl()) {
+    if (item.grantee == catalog::kPublicGrantee ||
+        roles.contains(item.grantee)) {
+      held |= item.grant_option;
+    }
+  }
+  return (held & modes.grant_options) != catalog::AclMode::NoRights;
+}
+
 bool HasColumnPrivByName(const catalog::Snapshot& snapshot, ObjectId role_id,
                          const catalog::Table& table, std::string_view col,
                          std::string_view priv) {
-  if (!ColumnExists(table, col)) {
+  const catalog::Column* column = nullptr;
+  for (const auto& c : table.Columns()) {
+    if (c.GetId() == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    if (c.GetName() == col) {
+      column = &c;
+      break;
+    }
+  }
+  if (column == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                     ERR_MSG("column \"", col, "\" of relation \"",
                             table.GetName(), "\" does not exist"));
   }
-  return HasAnyTablePrivilegeText(snapshot, role_id, table, priv);
+  return ColumnPrivHeld(snapshot, role_id, table, *column, priv);
+}
+
+// has_column_privilege(role, oid, attnum, priv): attnum is 1-based over the
+// user-visible columns (the internal generated-PK column is skipped).
+bool HasColumnPrivByAttnum(const catalog::Snapshot& snapshot, ObjectId role_id,
+                           const catalog::Table& table, int64_t attnum,
+                           std::string_view priv) {
+  const catalog::Column* column = nullptr;
+  int64_t n = 0;
+  for (const auto& c : table.Columns()) {
+    if (c.GetId() == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    if (++n == attnum) {
+      column = &c;
+      break;
+    }
+  }
+  if (column == nullptr) {
+    return false;
+  }
+  return ColumnPrivHeld(snapshot, role_id, table, *column, priv);
 }
 
 void HasColumnPrivilegeNameName4Function(duckdb::DataChunk& args,
@@ -1277,8 +1340,9 @@ void HasColumnPrivilegeOidAttnum3Function(duckdb::DataChunk& args,
       continue;
     }
     try {
-      out[i] = HasAnyTablePrivilegeText(*snapshot, current->GetId(), *table,
-                                        {p[pi].GetData(), p[pi].GetSize()});
+      out[i] =
+        HasColumnPrivByAttnum(*snapshot, current->GetId(), *table, attnum[ci],
+                              {p[pi].GetData(), p[pi].GetSize()});
     } catch (const basics::Exception& e) {
       ThrowInvalidPrivilege(e);
     }

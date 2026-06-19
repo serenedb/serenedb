@@ -22,9 +22,11 @@
 
 #include <algorithm>
 #include <deque>
+#include <span>
 
 #include "auth/role_closure.h"
 #include "catalog/role.h"
+#include "catalog/table.h"
 
 namespace sdb::auth {
 namespace {
@@ -152,6 +154,53 @@ bool HasPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
 bool HasAnyPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
                      const catalog::Object& object, catalog::AclMode need) {
   return CheckPrivilege(snapshot, role, object, need, /*any_of=*/true);
+}
+
+namespace {
+
+// A column carries the privilege if the table owner reaches it (the owner holds
+// every column privilege) or the column's own ACL grants it. Column privileges
+// use the Table privilege class (SELECT/INSERT/UPDATE share the relation bits).
+bool ColumnGrants(const catalog::Column& column, ObjectId owner,
+                  RoleIdSpan closure, catalog::AclMode need) {
+  if (std::ranges::binary_search(closure, owner)) {
+    return true;
+  }
+  return AclCheckSorted(column.GetAcl(), catalog::ObjectType::Table, owner,
+                        closure, need, /*any_of=*/false);
+}
+
+}  // namespace
+
+bool HasColumnPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
+                        const catalog::Table& table, catalog::AclMode need,
+                        std::span<const catalog::Column* const> columns) {
+  const auto& rc = snapshot.EffectiveRoleClosure(role);
+  if (rc.is_superuser) {
+    return true;
+  }
+  const auto owner =
+    table.GetOwner().isSet() ? table.GetOwner() : id::kRootUser;
+
+  // Relation-level grant satisfies the privilege for every column.
+  if (std::ranges::binary_search(rc.closure, owner) ||
+      AclCheckSorted(table.GetAcl(), catalog::ObjectType::Table, owner,
+                     rc.closure, need, /*any_of=*/false)) {
+    return true;
+  }
+
+  // No column referenced (e.g. SELECT count(*)): PG requires the privilege on
+  // ANY one column of the relation.
+  if (columns.empty()) {
+    return std::ranges::any_of(table.Columns(), [&](const catalog::Column& c) {
+      return ColumnGrants(c, owner, rc.closure, need);
+    });
+  }
+
+  // Otherwise EVERY accessed column must carry the privilege at column level.
+  return std::ranges::all_of(columns, [&](const catalog::Column* c) {
+    return c != nullptr && ColumnGrants(*c, owner, rc.closure, need);
+  });
 }
 
 }  // namespace sdb::auth

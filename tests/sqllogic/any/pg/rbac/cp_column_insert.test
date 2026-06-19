@@ -1,0 +1,72 @@
+# Column-level INSERT privileges: GRANT INSERT (a) ON t lets a role insert only
+# rows that assign column a (others default); naming an ungranted column is
+# refused. RETURNING additionally needs SELECT on the returned columns. Matches
+# PostgreSQL.
+#
+# Lore: babsky may insert only the clickclack column.
+
+statement ok
+DROP TABLE IF EXISTS cci_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cci_babsky;
+
+
+statement ok
+CREATE TABLE cci_iceberg (clickclack int, mop int);
+
+
+statement ok
+CREATE ROLE cci_babsky LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT INSERT (clickclack) ON cci_iceberg TO cci_babsky;
+
+
+# Insert assigning only the granted column succeeds (mop defaults to NULL).
+connection c_bab user=cci_babsky
+statement ok
+INSERT INTO cci_iceberg (clickclack) VALUES (1);
+
+
+# Insert assigning an ungranted column is refused.
+connection c_bab2 user=cci_babsky
+statement error
+INSERT INTO cci_iceberg (clickclack, mop) VALUES (1, 2);
+----
+db error: ERROR: permission denied for table cci_iceberg<slt:ignore>
+
+
+# INSERT without a column list targets every column -> needs INSERT on mop too.
+connection c_bab3 user=cci_babsky
+statement error
+INSERT INTO cci_iceberg VALUES (1, 2);
+----
+db error: ERROR: permission denied for table cci_iceberg<slt:ignore>
+
+
+# RETURNING reads the row back -> needs SELECT, which the insert-only role lacks.
+connection c_bab4 user=cci_babsky
+statement error
+INSERT INTO cci_iceberg (clickclack) VALUES (5) RETURNING clickclack;
+----
+db error: ERROR: permission denied for table cci_iceberg<slt:ignore>
+
+
+# Owner confirms the one allowed insert landed.
+connection default
+query
+SELECT count(*) AS n FROM cci_iceberg;
+----
+n
+1
+
+
+statement ok
+DROP TABLE cci_iceberg;
+
+
+statement ok
+DROP ROLE cci_babsky;

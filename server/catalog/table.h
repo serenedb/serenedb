@@ -21,6 +21,11 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
+#include <memory>
+#include <vector>
+
 #include "catalog/object.h"
 #include "catalog/table_options.h"
 
@@ -72,6 +77,11 @@ class Table final : public Object {
   Result ChangeColumnType(std::shared_ptr<Table>& result,
                           std::string_view column_name,
                           duckdb::LogicalType new_type) const;
+
+  // Clone the table with `mutate` applied to a mutable copy of its columns
+  // (used to rewrite per-column ACLs for column-level GRANT/REVOKE).
+  std::shared_ptr<Table> WithMutatedColumns(
+    absl::FunctionRef<void(std::vector<Column>&)> mutate) const;
 
  private:
   std::vector<Column> _columns;

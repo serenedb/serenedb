@@ -56,18 +56,21 @@ std::optional<size_t> CheckConstraint::IsNotNull(
 }
 
 void Column::Serialize(duckdb::Serializer& sink) const {
+  // The column's per-column ACL (pg_attribute.attacl analogue) rides last.
+  // Columns have no independent owner -- it is the table's owner.
   basics::WriteTuple(
     sink, std::forward_as_tuple(GetId(), type, std::string{GetName()}, expr,
-                                generated_type));
+                                generated_type, GetPermissions().acl));
 }
 
 Column Column::Deserialize(duckdb::Deserializer& src) {
   std::tuple<ObjectId, duckdb::LogicalType, std::string,
-             std::shared_ptr<ColumnExpr>, GeneratedType>
+             std::shared_ptr<ColumnExpr>, GeneratedType, Acl>
     tup;
   basics::ReadTuple(src, tup);
-  auto& [id, type, name, expr, gt] = tup;
-  return Column{ObjectId{}, id, name, std::move(type), std::move(expr), gt};
+  auto& [id, type, name, expr, gt, acl] = tup;
+  return Column{ObjectId{},      id, name,          std::move(type),
+                std::move(expr), gt, std::move(acl)};
 }
 
 void CheckConstraint::Serialize(duckdb::Serializer& sink) const {

@@ -48,18 +48,6 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
 
   ObjectId GetRoleId() const { return _role_id; }
 
-  // True while the binder is binding the *write target* of an UPDATE or DELETE.
-  // The target relation is scanned to locate rows, but per PostgreSQL the
-  // SELECT privilege is required only when a column value is actually read --
-  // so the base-table scan's SELECT check is deferred to plan time, where the
-  // projected columns are known. See SereneDBCatalog::PlanUpdate / PlanDelete.
-  bool BindingWriteTarget() const { return _write_target_bind_depth > 0; }
-  void EnterWriteTargetBind() { ++_write_target_bind_depth; }
-  void ExitWriteTargetBind() {
-    SDB_ASSERT(_write_target_bind_depth > 0);
-    --_write_target_bind_depth;
-  }
-
   const auto& GetDatabasePtr() const { return _database; }
 
   auto* GetSendBuffer() const { return _send_buffer; }
@@ -83,7 +71,6 @@ class ConnectionContext final : public ExecContext, public query::Transaction {
   absl::Mutex _mutex;
   std::vector<pg::SqlErrorData> _notices;
   const ObjectId _role_id;
-  uint32_t _write_target_bind_depth = 0;
 };
 
 }  // namespace sdb

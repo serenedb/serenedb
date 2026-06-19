@@ -61,4 +61,14 @@ bool HasPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
 bool HasAnyPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
                      const catalog::Object& object, catalog::AclMode need);
 
+// PG ExecCheckOneRelPerms column model: `need` is satisfied table-wide if the
+// role holds it on the relation; otherwise EACH accessed column must carry the
+// remaining bits at column level (pg_attribute.attacl). `columns` are the
+// specific columns accessed. An EMPTY `columns` means "no column referenced"
+// (e.g. SELECT count(*)) -- PG then requires the privilege on ANY one column.
+// Used for SELECT/INSERT/UPDATE column-level enforcement.
+bool HasColumnPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
+                        const catalog::Table& table, catalog::AclMode need,
+                        std::span<const catalog::Column* const> columns);
+
 }  // namespace sdb::auth

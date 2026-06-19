@@ -1,0 +1,99 @@
+# Standard introspection of column-level privileges: after GRANT SELECT (a),
+# UPDATE (b) ON t TO r the SQL-standard view information_schema.column_privileges
+# emits one row per (grantor, grantee, column, privilege) tuple, derived from
+# pg_attribute.attacl. A column granted WITH GRANT OPTION reports is_grantable
+# YES. The has_column_privilege oracle agrees t/f with the granted/ungranted
+# columns. All assertions filter by table_name + grantee and ORDER BY column_name,
+# privilege_type so row order and the owner/other rows never leak in. Rows are
+# byte-identical on PostgreSQL 18.4 and serenedb (both read attacl, which serenedb
+# fully implements -- information_schema.column_privileges is supported, not empty).
+#
+# Lore: vedernikoff gets column-scoped grants; clickclack/babsky/mop columns.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS cis_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cis_vedernikoff;
+
+
+statement ok
+CREATE TABLE cis_iceberg (clickclack int, babsky int, mop int);
+
+
+statement ok
+CREATE ROLE cis_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT (clickclack), UPDATE (babsky) ON cis_iceberg TO cis_vedernikoff;
+
+
+# A column WITH GRANT OPTION reports is_grantable YES.
+statement ok
+GRANT SELECT (mop) ON cis_iceberg TO cis_vedernikoff WITH GRANT OPTION;
+
+
+# attacl reflects the column grants, byte-identical to PG (mop's r* marks the
+# grant option).
+query
+SELECT a.attname, a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cis_iceberg' AND a.attnum > 0
+ORDER BY a.attnum;
+----
+attname	acl
+clickclack	{cis_vedernikoff=r/postgres}
+babsky	{cis_vedernikoff=w/postgres}
+mop	{cis_vedernikoff=r*/postgres}
+
+
+# information_schema.column_privileges: one row per granted (column, privilege).
+# grantor is the owner postgres; is_grantable is YES only for the WITH GRANT
+# OPTION column. The (SELECT,clickclack) and (UPDATE,babsky) grants surface as
+# their own rows.
+query
+SELECT grantor, grantee, table_name, column_name, privilege_type, is_grantable
+FROM information_schema.column_privileges
+WHERE table_name = 'cis_iceberg' AND grantee = 'cis_vedernikoff'
+ORDER BY column_name, privilege_type;
+----
+grantor	grantee	table_name	column_name	privilege_type	is_grantable
+postgres	cis_vedernikoff	cis_iceberg	babsky	UPDATE	NO
+postgres	cis_vedernikoff	cis_iceberg	clickclack	SELECT	NO
+postgres	cis_vedernikoff	cis_iceberg	mop	SELECT	YES
+
+
+# is_grantable filter: exactly the WITH GRANT OPTION column is reported YES.
+query
+SELECT column_name, privilege_type
+FROM information_schema.column_privileges
+WHERE table_name = 'cis_iceberg' AND grantee = 'cis_vedernikoff' AND is_grantable = 'YES'
+ORDER BY column_name, privilege_type;
+----
+column_name	privilege_type
+mop	SELECT
+
+
+# has_column_privilege agrees t/f with the column grants: SELECT(clickclack),
+# UPDATE(babsky) and SELECT(mop) are granted; the cross pairs are not.
+query
+SELECT
+  has_column_privilege('cis_vedernikoff','cis_iceberg','clickclack','SELECT') AS sel_click,
+  has_column_privilege('cis_vedernikoff','cis_iceberg','babsky','SELECT')     AS sel_babsky,
+  has_column_privilege('cis_vedernikoff','cis_iceberg','babsky','UPDATE')     AS upd_babsky,
+  has_column_privilege('cis_vedernikoff','cis_iceberg','clickclack','UPDATE') AS upd_click,
+  has_column_privilege('cis_vedernikoff','cis_iceberg','mop','SELECT')        AS sel_mop;
+----
+sel_click	sel_babsky	upd_babsky	upd_click	sel_mop
+t	f	t	f	t
+
+
+statement ok
+DROP TABLE cis_iceberg;
+
+
+statement ok
+DROP ROLE cis_vedernikoff;

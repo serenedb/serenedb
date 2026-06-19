@@ -1,0 +1,219 @@
+# Column-level SELECT grant on a SUBSET of columns: a focused cross-product of
+# SELECT projection shapes against one wide table. cpm_iceberg has four columns
+# (clickclack, babsky, mop, weight); the role is granted SELECT on (clickclack,
+# babsky) only -- mop and weight are ungranted. PG refuses any read that
+# references an ungranted column ANYWHERE in the statement (projection, WHERE,
+# ORDER BY, GROUP BY, aggregate arg) with "permission denied for table
+# cpm_iceberg", while a read touching only granted columns succeeds. count(*)
+# and a bare constant read no specific column, so the relation-level grant on
+# any one column suffices. Mirrors PostgreSQL's pg_attribute.attacl enforcement
+# (ExecCheckOneRelPerms) byte-for-byte.
+#
+# Lore: vedernikoff gets a column-scoped SELECT on the iceberg table;
+# clickclack/babsky are granted, mop/weight are not.
+#
+# NOTE: the literal `SELECT clickclack FROM cpm_iceberg GROUP BY mop` is NOT
+# asserted here: PG raises a grouping-analysis error ("column ... must appear in
+# the GROUP BY clause") BEFORE permission checking, and that error text diverges
+# from SereneDB's. The GROUP-BY-on-ungranted-column refusal is instead asserted
+# with the semantically-valid `SELECT count(*) ... GROUP BY mop`, which both
+# engines refuse byte-identically with "permission denied for table".
+
+statement ok
+DROP TABLE IF EXISTS cpm_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cpm_vedernikoff;
+
+
+statement ok
+CREATE TABLE cpm_iceberg (clickclack int, babsky int, mop int, weight int);
+
+
+statement ok
+INSERT INTO cpm_iceberg VALUES (1, 2, 3, 4), (5, 6, 7, 8);
+
+
+statement ok
+CREATE ROLE cpm_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# SELECT on (clickclack, babsky) only -- mop and weight stay ungranted.
+statement ok
+GRANT SELECT (clickclack, babsky) ON cpm_iceberg TO cpm_vedernikoff;
+
+
+# === PASS: projections that touch only granted columns (clickclack, babsky) ===
+
+# A single granted column.
+connection c_ved user=cpm_vedernikoff
+query
+SELECT clickclack FROM cpm_iceberg ORDER BY clickclack;
+----
+clickclack
+1
+5
+
+
+# The other granted column.
+connection c_ved2 user=cpm_vedernikoff
+query
+SELECT babsky FROM cpm_iceberg ORDER BY babsky;
+----
+babsky
+2
+6
+
+
+# Both granted columns.
+connection c_ved3 user=cpm_vedernikoff
+query
+SELECT clickclack, babsky FROM cpm_iceberg ORDER BY clickclack;
+----
+clickclack	babsky
+1	2
+5	6
+
+
+# An expression over two granted columns.
+connection c_ved4 user=cpm_vedernikoff
+query
+SELECT clickclack + babsky AS s FROM cpm_iceberg ORDER BY clickclack;
+----
+s
+3
+11
+
+
+# WHERE predicate on a granted column.
+connection c_ved5 user=cpm_vedernikoff
+query
+SELECT clickclack FROM cpm_iceberg WHERE babsky > 0 ORDER BY clickclack;
+----
+clickclack
+1
+5
+
+
+# ORDER BY a granted column.
+connection c_ved6 user=cpm_vedernikoff
+query
+SELECT clickclack FROM cpm_iceberg ORDER BY babsky;
+----
+clickclack
+1
+5
+
+
+# count(*) reads no specific column; a grant on any one column suffices.
+connection c_ved7 user=cpm_vedernikoff
+query
+SELECT count(*) AS n FROM cpm_iceberg;
+----
+n
+2
+
+
+# count over a granted column.
+connection c_ved8 user=cpm_vedernikoff
+query
+SELECT count(clickclack) AS n FROM cpm_iceberg;
+----
+n
+2
+
+
+# Aggregate over a granted column.
+connection c_ved9 user=cpm_vedernikoff
+query
+SELECT max(babsky) AS mx FROM cpm_iceberg;
+----
+mx
+6
+
+
+# A bare constant projection reads no specific column -> the relation-level
+# grant on any one column suffices.
+connection c_ved10 user=cpm_vedernikoff
+query
+SELECT 1 AS one FROM cpm_iceberg ORDER BY 1;
+----
+one
+1
+1
+
+
+# === REFUSED: any reference to an ungranted column (mop, weight) ===
+
+# An ungranted column in the projection.
+connection c_ved11 user=cpm_vedernikoff
+statement error
+SELECT mop FROM cpm_iceberg;
+----
+db error: ERROR: permission denied for table cpm_iceberg<slt:ignore>
+
+
+# SELECT * expands to all columns, touching mop and weight -> refused.
+connection c_ved12 user=cpm_vedernikoff
+statement error
+SELECT * FROM cpm_iceberg;
+----
+db error: ERROR: permission denied for table cpm_iceberg<slt:ignore>
+
+
+# A granted column plus an ungranted one -> refused.
+connection c_ved13 user=cpm_vedernikoff
+statement error
+SELECT clickclack, mop FROM cpm_iceberg;
+----
+db error: ERROR: permission denied for table cpm_iceberg<slt:ignore>
+
+
+# WHERE predicate on an ungranted column -> refused.
+connection c_ved14 user=cpm_vedernikoff
+statement error
+SELECT clickclack FROM cpm_iceberg WHERE mop > 0;
+----
+db error: ERROR: permission denied for table cpm_iceberg<slt:ignore>
+
+
+# ORDER BY an ungranted column -> refused.
+connection c_ved15 user=cpm_vedernikoff
+statement error
+SELECT clickclack FROM cpm_iceberg ORDER BY mop;
+----
+db error: ERROR: permission denied for table cpm_iceberg<slt:ignore>
+
+
+# GROUP BY an ungranted column -> refused (count(*) form keeps it grouping-valid
+# so the failure is the permission check, not a grouping-analysis error).
+connection c_ved16 user=cpm_vedernikoff
+statement error
+SELECT count(*) AS n FROM cpm_iceberg GROUP BY mop;
+----
+db error: ERROR: permission denied for table cpm_iceberg<slt:ignore>
+
+
+# Aggregate over an ungranted column -> refused.
+connection c_ved17 user=cpm_vedernikoff
+statement error
+SELECT sum(mop) FROM cpm_iceberg;
+----
+db error: ERROR: permission denied for table cpm_iceberg<slt:ignore>
+
+
+# An expression mixing a granted and an ungranted column -> refused.
+connection c_ved18 user=cpm_vedernikoff
+statement error
+SELECT clickclack + mop FROM cpm_iceberg;
+----
+db error: ERROR: permission denied for table cpm_iceberg<slt:ignore>
+
+
+statement ok
+DROP TABLE cpm_iceberg;
+
+
+statement ok
+DROP ROLE cpm_vedernikoff;

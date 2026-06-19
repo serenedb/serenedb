@@ -71,7 +71,18 @@ RoleClosure Compute(const catalog::Snapshot& snapshot, ObjectId role) {
 
 const RoleClosure& RoleClosureCache::Get(const catalog::Snapshot& snapshot,
                                          ObjectId role) const {
-  absl::MutexLock lock{&_mu};
+  // Hot path: every privilege check hits this. The closure for a (snapshot,
+  // role) is computed once and never changes (the snapshot is immutable COW),
+  // and NodeHashMap nodes are reference-stable across inserts, so a cache hit
+  // only needs a shared read lock -- no writer contention. The exclusive lock
+  // is taken solely to compute+insert on the first miss (double-checked).
+  {
+    absl::ReaderMutexLock lock{&_mu};
+    if (auto it = _by_role.find(role); it != _by_role.end()) {
+      return it->second;
+    }
+  }
+  absl::WriterMutexLock lock{&_mu};
   auto it = _by_role.find(role);
   if (it == _by_role.end()) {
     it = _by_role.emplace(role, Compute(snapshot, role)).first;

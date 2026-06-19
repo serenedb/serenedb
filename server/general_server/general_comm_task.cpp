@@ -24,7 +24,6 @@
 #include <simdjson.h>
 
 #include "app/app_server.h"
-#include "auth/role_utils.h"
 #include "basics/buffer.h"
 #include "basics/encoding_utils.h"
 #include "basics/lifecycle.h"

@@ -1,0 +1,119 @@
+# DELETE/UPDATE require SELECT only when the statement reads a column value; a
+# blind DELETE / constant UPDATE reads nothing and needs only DELETE / UPDATE.
+# TRUNCATE needs only TRUNCATE. RETURNING always needs SELECT. Mirrors
+# PostgreSQL (selectedCols / ExecCheckOneRelPerms) exactly.
+#
+# Lore: vedernikoff holds one write privilege at a time and we probe the SELECT
+# boundary around it.
+
+statement ok
+DROP TABLE IF EXISTS edm_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS edm_vedernikoff;
+
+
+statement ok
+CREATE TABLE edm_iceberg (clickclack int, mop int);
+
+
+statement ok
+INSERT INTO edm_iceberg VALUES (1, 10), (2, 20), (3, 30);
+
+
+statement ok
+CREATE ROLE edm_vedernikoff LOGIN PASSWORD 'pw';
+
+
+# === DELETE-only ===
+
+statement ok
+GRANT DELETE ON edm_iceberg TO edm_vedernikoff;
+
+
+# Blind DELETE (no WHERE) reads no column -> DELETE alone suffices.
+connection c_ved user=edm_vedernikoff
+statement ok
+DELETE FROM edm_iceberg WHERE false;
+
+
+# A constant-false predicate reads no column either.
+connection c_ved2 user=edm_vedernikoff
+statement ok
+DELETE FROM edm_iceberg WHERE 1 = 0;
+
+
+# A predicate that reads a column needs SELECT (which the role lacks).
+connection c_ved3 user=edm_vedernikoff
+statement error
+DELETE FROM edm_iceberg WHERE clickclack = 1;
+----
+db error: ERROR: permission denied for table edm_iceberg<slt:ignore>
+
+
+# RETURNING reads the deleted rows -> needs SELECT.
+connection c_ved4 user=edm_vedernikoff
+statement error
+DELETE FROM edm_iceberg WHERE false RETURNING clickclack;
+----
+db error: ERROR: permission denied for table edm_iceberg<slt:ignore>
+
+
+connection default
+statement ok
+REVOKE DELETE ON edm_iceberg FROM edm_vedernikoff;
+
+
+# === UPDATE-only ===
+
+statement ok
+GRANT UPDATE ON edm_iceberg TO edm_vedernikoff;
+
+
+# Constant SET with no predicate reads nothing -> UPDATE alone suffices.
+connection c_ved5 user=edm_vedernikoff
+statement ok
+UPDATE edm_iceberg SET mop = 99;
+
+
+# SET reading a column (mop = mop + 1) needs SELECT.
+connection c_ved6 user=edm_vedernikoff
+statement error
+UPDATE edm_iceberg SET mop = mop + 1;
+----
+db error: ERROR: permission denied for table edm_iceberg<slt:ignore>
+
+
+# WHERE reading a column needs SELECT.
+connection c_ved7 user=edm_vedernikoff
+statement error
+UPDATE edm_iceberg SET mop = 1 WHERE clickclack = 1;
+----
+db error: ERROR: permission denied for table edm_iceberg<slt:ignore>
+
+
+connection default
+statement ok
+REVOKE UPDATE ON edm_iceberg FROM edm_vedernikoff;
+
+
+# === TRUNCATE-only ===
+
+statement ok
+GRANT TRUNCATE ON edm_iceberg TO edm_vedernikoff;
+
+
+# TRUNCATE needs only TRUNCATE, never SELECT.
+connection c_ved8 user=edm_vedernikoff
+statement ok
+TRUNCATE edm_iceberg;
+
+
+connection default
+statement ok
+DROP TABLE edm_iceberg;
+
+
+statement ok
+DROP ROLE edm_vedernikoff;

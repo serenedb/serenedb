@@ -167,6 +167,18 @@ std::shared_ptr<Object> Table::Clone() const {
   return cloned;
 }
 
+std::shared_ptr<Table> Table::WithMutatedColumns(
+  absl::FunctionRef<void(std::vector<Column>&)> mutate) const {
+  std::vector<Column> columns = _columns;
+  mutate(columns);
+  auto cloned = std::make_shared<Table>(
+    GetPermissions(), GetParentId(), GetId(), GetName(), std::move(columns),
+    _pk_columns, _check_constraints, _generated_pk_seq_id, _engine,
+    _unique_constraints, _foreign_keys);
+  cloned->SetTombstoned(Tombstoned());
+  return cloned;
+}
+
 std::shared_ptr<Table> Table::DropColumnDefault(Column::Id column_id) const {
   auto cloned = basics::downCast<Table>(Clone());
   auto it = absl::c_find_if(

@@ -52,8 +52,8 @@
 #include "app/app_server.h"
 #include "app/name_validator.h"
 #include "auth/acl.h"
+#include "auth/privilege.h"
 #include "auth/role_closure.h"
-#include "auth/role_utils.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
 #include "basics/buffer.h"
@@ -72,7 +72,6 @@
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
-#include "catalog/access_check.h"
 #include "catalog/catalog.h"
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
@@ -978,15 +977,59 @@ const auth::RoleClosure& Snapshot::EffectiveRoleClosure(ObjectId role) const {
   return _role_closure_cache.Get(*this, role);
 }
 
+bool Snapshot::HasAccess(ObjectId role, const Object& object, AclMode need,
+                         bool any_of) const {
+  return any_of ? auth::HasAnyPrivilege(*this, role, object, need)
+                : auth::HasPrivilege(*this, role, object, need);
+}
+
+void Snapshot::RequireAccess(ObjectId role, const Object& object,
+                             AclMode need) const {
+  if (need == AclMode::NoRights ||
+      auth::HasAnyPrivilege(*this, role, object, need)) {
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(object.GetType()),
+            " ", object.GetName()));
+}
+
+void Snapshot::RequireColumnAccess(
+  ObjectId role, const Table& table, AclMode need,
+  std::span<const Column* const> columns) const {
+  if (auth::HasColumnPrivilege(*this, role, table, need, columns)) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied for table ", table.GetName()));
+}
+
+void Snapshot::RequireColumnAccess(ObjectId role, const Table& table,
+                                   AclMode need, const Column& column) const {
+  const Column* one[] = {&column};
+  RequireColumnAccess(role, table, need, one);
+}
+
+void Snapshot::RequireOwnership(ObjectId role, ObjectId owner,
+                                std::string_view obj_type,
+                                std::string_view name) const {
+  if (!owner.isSet()) {
+    return;
+  }
+  const auto& rc = EffectiveRoleClosure(role);
+  if (rc.is_superuser || std::ranges::binary_search(rc.closure, owner)) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("must be owner of ", obj_type, " ", name));
+}
+
 template<typename T>
 std::shared_ptr<T> Snapshot::EnforceRead(const AccessContext& ax,
                                          std::shared_ptr<T> obj) const {
-  if (obj && ax.need != AclMode::NoRights &&
-      CheckAnyAccess(*this, ax.role, *obj, ax.need).fail()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(obj->GetType()),
-              " ", obj->GetName()));
+  if (obj) {
+    RequireAccess(ax.role, *obj, ax.need);
   }
   return obj;
 }
@@ -1868,14 +1911,16 @@ ResultOr<ResolvedIndexRelation> ResolveIndexRelation(
 }
 
 // CREATE inside a schema requires CREATE on that schema. ok() if the schema is
-// gone (the mutation's own resolution reports the real error).
+// gone (the mutation's own resolution reports the real error). Returns
+// ERROR_FORBIDDEN for the Result-based mutation API; the connector maps it to
+// 42501.
 Result RequireSchemaCreate(const Snapshot& snapshot, ObjectId role,
                            ObjectId schema_id) {
   auto schema = snapshot.GetObject<Schema>(schema_id);
-  if (!schema) {
+  if (!schema || snapshot.HasAccess(role, *schema, AclMode::Create)) {
     return {};
   }
-  return CheckAccess(snapshot, role, *schema, AclMode::Create);
+  return Result{ERROR_FORBIDDEN};
 }
 
 // ALTER/DROP requires ownership of the target object. ok() if the object is
@@ -1886,7 +1931,15 @@ Result RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
   if (!obj) {
     return {};
   }
-  return CheckOwnership(snapshot, role, obj->GetOwner());
+  const auto owner = obj->GetOwner();
+  if (!owner.isSet()) {
+    return {};
+  }
+  const auto& rc = snapshot.EffectiveRoleClosure(role);
+  if (rc.is_superuser || std::ranges::binary_search(rc.closure, owner)) {
+    return {};
+  }
+  return Result{ERROR_FORBIDDEN};
 }
 
 }  // namespace
@@ -2848,6 +2901,62 @@ Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
                    return r;
                  }
                  return _engine->CreateDefinition(parent, cloned->GetType(),
+                                                  cloned->GetId(), bytes);
+               });
+}
+
+Result Catalog::ChangeColumnAcl(ObjectId database_id, std::string_view schema,
+                                std::string_view table_name,
+                                std::string_view column,
+                                absl::FunctionRef<void(catalog::Acl&)> mutate) {
+  absl::MutexLock lock{&_mutex};
+
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                    ERR_MSG("schema \"", schema, "\" does not exist"));
+  }
+  auto object_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, table_name);
+  if (!object_id) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("relation \"", table_name, "\" does not exist"));
+  }
+  auto table = _snapshot->GetObject<Table>(*object_id);
+  if (!table) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("relation \"", table_name, "\" does not exist"));
+  }
+
+  bool found = false;
+  auto cloned = table->WithMutatedColumns([&](std::vector<Column>& columns) {
+    for (auto& col : columns) {
+      if (col.GetName() == column) {
+        auto acl = col.GetPermissions().acl;
+        mutate(acl);
+        col.SetPermissions(Permissions{ObjectId{}, std::move(acl)});
+        found = true;
+        return;
+      }
+    }
+  });
+  if (!found) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", column, "\" of relation \"",
+                            table_name, "\" does not exist"));
+  }
+
+  return Apply(_snapshot, _snapshot_mutex,
+               [&](std::shared_ptr<Snapshot>& clone) -> Result {
+                 duckdb::MemoryStream stream;
+                 auto bytes = catalog::SerializeObject(*cloned, stream);
+                 if (auto r = clone->ReplaceObject<ResolveType::Relation>(
+                       *schema_id, cloned->GetName(), cloned);
+                     !r.ok()) {
+                   return r;
+                 }
+                 return _engine->CreateDefinition(*schema_id, cloned->GetType(),
                                                   cloned->GetId(), bytes);
                });
 }

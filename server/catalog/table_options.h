@@ -80,9 +80,9 @@ class Column final : public Object {
 
   Column(ObjectId owner_table_id, ObjectId id, std::string_view name,
          duckdb::LogicalType ty, std::shared_ptr<ColumnExpr> e = nullptr,
-         GeneratedType gt = kNone)
-    : Object{Permissions{}, owner_table_id, id, std::string{name},
-             ObjectType::Column},
+         GeneratedType gt = kNone, Acl acl = {})
+    : Object{Permissions{ObjectId{}, std::move(acl)}, owner_table_id, id,
+             std::string{name}, ObjectType::Column},
       type{std::move(ty)},
       expr{std::move(e)},
       generated_type{gt} {}

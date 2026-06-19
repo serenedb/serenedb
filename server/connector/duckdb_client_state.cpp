@@ -278,59 +278,18 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   _connection_ctx->OnNewStatement();
 }
 
-namespace {
-
-// Relations in pg_catalog that real PostgreSQL keeps superuser-only (no SELECT
-// grant to PUBLIC): pg_authid carries role passwords, pg_shadow is the password
-// view over it. Every other catalog view that reads pg_authid does so through a
-// view body, which runs with the view owner's rights in PG -- SereneDB has no
-// definer-rights views, so those reads arrive with inside_view set and bypass
-// this check.
-bool IsSuperuserOnlySystemRelation(const duckdb::CatalogEntry& entry) {
-  if (entry.type != duckdb::CatalogType::TABLE_ENTRY &&
-      entry.type != duckdb::CatalogType::VIEW_ENTRY) {
-    return false;
-  }
-  if (entry.ParentSchema().name != "pg_catalog") {
-    return false;
-  }
-  return entry.name == "pg_authid" || entry.name == "pg_shadow";
-}
-
-}  // namespace
-
-void SereneDBClientState::CheckCatalogReadAccess(duckdb::ClientContext& context,
-                                                 duckdb::CatalogEntry& entry,
-                                                 bool inside_view) {
-  if (inside_view || !IsSuperuserOnlySystemRelation(entry)) {
-    return;
-  }
-
-  auto snapshot = _connection_ctx->EnsureCatalogSnapshot();
-  auto role = snapshot->GetObject<catalog::Role>(_connection_ctx->GetRoleId());
-  if (role && role->IsSuperuser()) {
-    return;
-  }
-
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied for ",
-                          pg::ToPgObjectTypeName(entry.type), " ", entry.name));
-}
-
-void SereneDBClientState::OnWriteTargetBindBegin(duckdb::ClientContext&) {
-  _connection_ctx->EnterWriteTargetBind();
-}
-
-void SereneDBClientState::OnWriteTargetBindEnd(duckdb::ClientContext&) {
-  _connection_ctx->ExitWriteTargetBind();
-}
-
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
   SDB_ASSERT(state, "SereneDB client state not registered; active query: ",
              context.GetCurrentQuery());
   return state->GetConnectionContext();
+}
+
+ConnectionContext* TryGetSereneDBContext(duckdb::ClientContext& context) {
+  auto state =
+    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
+  return state ? &state->GetConnectionContext() : nullptr;
 }
 
 }  // namespace sdb::connector

@@ -89,18 +89,15 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
   void QueryEnd(duckdb::ClientContext& context) final;
 
-  void CheckCatalogReadAccess(duckdb::ClientContext& context,
-                              duckdb::CatalogEntry& entry,
-                              bool inside_view) final;
-
-  void OnWriteTargetBindBegin(duckdb::ClientContext& context) final;
-  void OnWriteTargetBindEnd(duckdb::ClientContext& context) final;
-
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;
 };
 
 // Helper to get the ConnectionContext from a DuckDB ClientContext.
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
+
+// Non-asserting variant: returns nullptr when no SereneDB client state is
+// registered (internal/bootstrap queries that have no user connection).
+ConnectionContext* TryGetSereneDBContext(duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

@@ -25,15 +25,19 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
 
 #include <algorithm>
 #include <ranges>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "app/app_server.h"
 #include "auth/acl.h"
 #include "auth/privilege.h"
 #include "catalog/catalog.h"
+#include "catalog/table.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
@@ -107,26 +111,19 @@ void RequireRoleAdmin(ConnectionContext& ctx, const catalog::Snapshot& snapshot,
 }
 
 }  // namespace
-namespace {
-
-[[noreturn]] void ThrowPermissionDenied(const catalog::Object& object) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-    ERR_MSG("permission denied for ", ToPgObjectTypeName(object.GetType()), " ",
-            object.GetName()));
-}
-
-}  // namespace
 
 void RequirePrivilege(ConnectionContext& ctx, const catalog::Object& object,
                       catalog::AclMode need) {
   auto snapshot = ctx.EnsureCatalogSnapshot();
   auto current = snapshot->GetObject(object.GetId());
-  const catalog::Object& target = current ? *current : object;
-  if (catalog::CheckAccess(*snapshot, ctx.GetRoleId(), target, need).ok()) {
-    return;
-  }
-  ThrowPermissionDenied(object);
+  snapshot->RequireAccess(ctx.GetRoleId(), current ? *current : object, need);
+}
+
+void RequireColumnPrivilege(ConnectionContext& ctx, const catalog::Table& table,
+                            catalog::AclMode need,
+                            std::span<const catalog::Column* const> columns) {
+  auto snapshot = ctx.EnsureCatalogSnapshot();
+  snapshot->RequireColumnAccess(ctx.GetRoleId(), table, need, columns);
 }
 
 namespace {
@@ -139,15 +136,8 @@ void EnforceOwnership(
   ConnectionContext& ctx, std::string_view obj_type, std::string_view name,
   absl::FunctionRef<ObjectId(const catalog::Snapshot&)> lookup) {
   auto snapshot = FreshSnapshot();
-  auto owner = lookup(*snapshot);
-  if (!owner.isSet()) {
-    return;  // missing object -> nothing to own (IF EXISTS, etc.)
-  }
-  if (catalog::CheckOwnership(*snapshot, ctx.GetRoleId(), owner).ok()) {
-    return;
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("must be owner of ", obj_type, " ", name));
+  snapshot->RequireOwnership(ctx.GetRoleId(), lookup(*snapshot), obj_type,
+                             name);
 }
 
 }  // namespace
@@ -478,6 +468,41 @@ catalog::AclMode ParseAclModeOrThrow(std::string_view privileges,
   }
 }
 
+// One parsed privilege from the GRANT pragma string: a keyword and an optional
+// column list. The transformer encodes columns inline as "SELECT(a:b)".
+struct ParsedPriv {
+  std::string keyword;               // e.g. "SELECT" / "ALL" / a bad name
+  std::vector<std::string> columns;  // empty => table-level (no '(...)')
+};
+
+// Parse the encoded privilege string ("SELECT(a:b),UPDATE(c)" or
+// "SELECT,INSERT" or "ALL") into its privileges + per-privilege column lists.
+std::vector<ParsedPriv> ParsePrivList(std::string_view privileges) {
+  std::vector<ParsedPriv> out;
+  for (std::string_view tok :
+       absl::StrSplit(privileges, ',', absl::SkipEmpty())) {
+    ParsedPriv p;
+    auto open = tok.find('(');
+    if (open == std::string_view::npos) {
+      p.keyword = std::string{tok};
+    } else {
+      p.keyword = std::string{tok.substr(0, open)};
+      auto close = tok.rfind(')');
+      auto inner = tok.substr(open + 1, close - open - 1);
+      for (std::string_view c : absl::StrSplit(inner, ':', absl::SkipEmpty())) {
+        p.columns.emplace_back(c);
+      }
+    }
+    out.push_back(std::move(p));
+  }
+  return out;
+}
+
+bool AnyColumnPrivs(const std::vector<ParsedPriv>& parsed) {
+  return std::ranges::any_of(
+    parsed, [](const ParsedPriv& p) { return !p.columns.empty(); });
+}
+
 // Resolve a grantee name to a role id, mapping PUBLIC to the public pseudo-id
 // and throwing on an unknown role.
 ObjectId ResolveGranteeId(const catalog::Snapshot& snap,
@@ -661,10 +686,138 @@ void ThrowNotADomain(std::string_view name) {
                   ERR_MSG("\"", name, "\" is not a domain"));
 }
 
+namespace {
+
+// Column-level GRANT/REVOKE (PG column privileges). Only tables carry
+// per-column ACLs; `privileges` is the parsed list, each entry naming its own
+// columns.
+void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
+                        const std::vector<ParsedPriv>& parsed,
+                        std::string_view obj_name, std::string_view grantee,
+                        bool revoke, const GrantObjectOptions& opts) {
+  auto& catalog = GlobalCatalog();
+  auto snapshot = FreshSnapshot();
+
+  std::string schema_name;
+  std::string rel_name;
+  auto target =
+    ResolveGrantTarget(ctx, *snapshot, type, obj_name, schema_name, rel_name);
+  if (!target || target->GetType() != catalog::ObjectType::Table) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", rel_name, "\" does not exist"));
+  }
+  const ObjectId owner = target->GetOwner();
+  auto current = CurrentRole(ctx);
+  const bool is_superuser = current->IsSuperuser();
+  const ObjectId current_id = current->GetId();
+  const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
+
+  ObjectId granted_by_id = id::kInvalid;
+  if (!opts.granted_by.empty()) {
+    auto gb = snapshot->GetRole(opts.granted_by);
+    if (!gb) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("role \"", opts.granted_by, "\" does not exist"));
+    }
+    granted_by_id = gb->GetId();
+  }
+
+  const auto roles = auth::ComputeEffectiveRoles(*snapshot, current_id);
+  const bool is_owner = is_superuser || roles.contains(owner);
+
+  bool no_authority = false;
+  bool nothing_applied = false;
+  bool dependents_block = false;
+  // PG column-applicable privileges: GRANT ALL (col) confers only these (a
+  // column has no DELETE/TRUNCATE/TRIGGER/MAINTAIN of its own).
+  constexpr catalog::AclMode kColumnPrivs =
+    catalog::AclMode::Select | catalog::AclMode::Insert |
+    catalog::AclMode::Update | catalog::AclMode::References;
+  for (const auto& p : parsed) {
+    catalog::AclMode privs =
+      ParseAclModeOrThrow(p.keyword, catalog::ObjectType::Table);
+    // PG: an explicit non-column-applicable privilege named with a column list
+    // (e.g. GRANT DELETE (a)) is a hard error; ALL silently narrows.
+    const bool is_all = absl::EqualsIgnoreCase(p.keyword, "ALL");
+    if (!is_all && (privs & ~kColumnPrivs) != catalog::AclMode::NoRights) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
+                      ERR_MSG("invalid privilege type ",
+                              absl::AsciiStrToUpper(p.keyword), " for column"));
+    }
+    privs &= kColumnPrivs;
+    for (const auto& column : p.columns) {
+      auto r = catalog.ChangeColumnAcl(
+        ctx.GetDatabaseId(), schema_name, rel_name, column,
+        [&](catalog::Acl& acl) {
+          // PG: the owner/superuser may grant anything; a non-owner may confer
+          // only the column privileges it holds WITH GRANT OPTION on this
+          // column. The grant is recorded under that grantor.
+          const ObjectId grantor = granted_by_id.isSet()
+                                     ? granted_by_id
+                                     : (is_owner ? owner : current_id);
+          catalog::AclMode allowed = privs;
+          if (!is_owner) {
+            allowed &= auth::AclGrantOptionHeld(acl, roles);
+          }
+          if (allowed == catalog::AclMode::NoRights) {
+            if (!is_owner &&
+                auth::AclPrivsHeld(acl, roles) == catalog::AclMode::NoRights) {
+              no_authority = true;
+            } else {
+              nothing_applied = true;
+            }
+            return;
+          }
+          if (!revoke) {
+            const auto grant_option =
+              opts.with_grant_option ? allowed : catalog::AclMode::NoRights;
+            auth::AclGrant(acl, grantee_id, grantor, allowed, grant_option);
+          } else if (opts.grant_option_only) {
+            auth::AclRemoveGrantOption(acl, grantee_id, grantor, allowed);
+          } else if (opts.cascade) {
+            auth::AclRevokeCascade(acl, grantee_id, grantor, allowed);
+          } else if (auth::AclDependentPrivs(acl, grantee_id, allowed) !=
+                     catalog::AclMode::NoRights) {
+            dependents_block = true;
+          } else {
+            auth::AclRevoke(acl, grantee_id, grantor, allowed);
+          }
+        });
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+    }
+  }
+  if (dependents_block) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                    ERR_MSG("dependent privileges exist"),
+                    ERR_HINT("Use CASCADE to revoke them too."));
+  }
+  if (no_authority) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for table ", rel_name));
+  }
+  if (nothing_applied) {
+    ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(revoke ? ERRCODE_WARNING_PRIVILEGE_NOT_REVOKED
+                      : ERRCODE_WARNING_PRIVILEGE_NOT_GRANTED),
+      ERR_MSG("no privileges were ", revoke ? "revoked" : "granted", " for \"",
+              rel_name, "\"")));
+  }
+}
+
+}  // namespace
+
 void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
                  std::string_view privileges, std::string_view obj_name,
                  std::string_view grantee, bool revoke,
                  const GrantObjectOptions& opts) {
+  // Column-level GRANT (SELECT (a,b) ON t) takes the per-column path.
+  if (auto parsed = ParsePrivList(privileges); AnyColumnPrivs(parsed)) {
+    GrantObjectColumns(ctx, type, parsed, obj_name, grantee, revoke, opts);
+    return;
+  }
+
   auto& catalog = GlobalCatalog();
   auto snapshot = FreshSnapshot();
 
@@ -790,6 +943,29 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
                       : ERRCODE_WARNING_PRIVILEGE_NOT_GRANTED),
       ERR_MSG("no privileges were ", revoke ? "revoked" : "granted", " for \"",
               rel_name, "\"")));
+  }
+
+  // PG: a table-level REVOKE of a privilege also strips that privilege from
+  // every column-level grant of the same grantee (the column entry cannot
+  // outlive its table-level counterpart). Cascade the revoke to each column.
+  if (revoke && type == catalog::ObjectType::Table) {
+    auto fresh = FreshSnapshot();
+    if (auto tbl = fresh->GetObject<catalog::Table>(target->GetId())) {
+      for (const auto& col : tbl->Columns()) {
+        if (col.GetId() == catalog::Column::kGeneratedPKId ||
+            col.GetAcl().empty()) {
+          continue;
+        }
+        auto cr = catalog.ChangeColumnAcl(
+          ctx.GetDatabaseId(), schema_name, rel_name, col.GetName(),
+          [&](catalog::Acl& acl) {
+            auth::AclRevoke(acl, grantee_id, owner, privs);
+          });
+        if (!cr.ok()) {
+          SDB_THROW(std::move(cr));
+        }
+      }
+    }
   }
 }
 

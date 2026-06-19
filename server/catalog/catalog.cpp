@@ -1188,7 +1188,7 @@ DropPlan Snapshot::ComputeDropPlan(ObjectId seed) const {
     for (auto idx_id : td->indexes) {
       auto idx = GetObject<Index>(idx_id);
       SDB_ASSERT(idx);
-      if (absl::c_contains(idx->GetColumnIds(), col_id)) {
+      if (absl::c_contains(idx->GetReferencedColumnIds(), col_id)) {
         result.push_back(idx_id);
       }
     }
@@ -1213,7 +1213,7 @@ DropPlan Snapshot::ComputeColumnDropPlan(ObjectId table_id,
   if (auto td = GetDependency<TableDependency>(table_id)) {
     for (auto idx_id : td->indexes) {
       auto idx = GetObject<Index>(idx_id);
-      if (idx && absl::c_contains(idx->GetColumnIds(), col_id)) {
+      if (idx && absl::c_contains(idx->GetReferencedColumnIds(), col_id)) {
         plan.index_drops.push_back(idx_id);
       }
     }
@@ -3084,11 +3084,13 @@ Result Catalog::ChangeStructField(
   const auto col_id = col_it->GetId();
 
   // The index stores values of the column's old struct layout; a field change
-  // would leave them inconsistent. Reject and let the user drop the index.
+  // would leave them inconsistent. GetReferencedColumnIds covers columns reached
+  // through an indexed expression too (e.g. inverted ((s['id']::INTEGER))), so a
+  // sub-field index is caught. Reject and let the user drop the index.
   if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
     for (auto idx_id : td->indexes) {
       auto idx = _snapshot->GetObject<Index>(idx_id);
-      if (idx && absl::c_contains(idx->GetColumnIds(), col_id)) {
+      if (idx && absl::c_contains(idx->GetReferencedColumnIds(), col_id)) {
         return Result{ERROR_BAD_PARAMETER,
                       "cannot alter a field of column \"",
                       column,
@@ -3322,7 +3324,7 @@ Result Catalog::ChangeColumnType(ObjectId database_id, std::string_view schema,
   if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
     for (auto idx_id : td->indexes) {
       auto idx = _snapshot->GetObject<Index>(idx_id);
-      if (idx && absl::c_contains(idx->GetColumnIds(), col_id)) {
+      if (idx && absl::c_contains(idx->GetReferencedColumnIds(), col_id)) {
         return Result{ERROR_BAD_PARAMETER,
                       "cannot alter type of column \"",
                       column,

@@ -166,3 +166,81 @@ DROP TABLE ati_t2;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY ati_dict;
+
+
+# An inverted index on a struct SUB-FIELD expression (e.g. (s['id']::INTEGER))
+# records the base struct column as a referenced dependency, so the index
+# covers it even though the column never appears directly. ADD / DROP / RENAME
+# FIELD and a whole-column type change are all rejected until the index is
+# dropped; dropping the struct column itself cascade-drops the expression index.
+
+
+statement ok
+CREATE TABLE ati_struct(pk INTEGER PRIMARY KEY, s STRUCT(id INTEGER, name VARCHAR));
+
+
+statement count 1
+INSERT INTO ati_struct VALUES (1, ROW(100, 'alice'));
+
+
+statement ok
+CREATE INDEX ati_struct_idx ON ati_struct USING inverted((s['id']::INTEGER));
+
+
+# ADD a field to the indexed struct column -- rejected.
+statement error
+ALTER TABLE ati_struct ADD COLUMN s.k INTEGER;
+----
+db error: ERROR: cannot alter a field of column "s" because index "ati_struct_idx" depends on it; drop the index first
+
+
+# RENAME the indexed sub-field -- rejected.
+statement error
+ALTER TABLE ati_struct RENAME COLUMN s.id TO ident;
+----
+db error: ERROR: cannot alter a field of column "s" because index "ati_struct_idx" depends on it; drop the index first
+
+
+# DROP the indexed sub-field -- rejected.
+statement error
+ALTER TABLE ati_struct DROP COLUMN s.id;
+----
+db error: ERROR: cannot alter a field of column "s" because index "ati_struct_idx" depends on it; drop the index first
+
+
+# A whole-column type change is rejected for the same reason.
+statement error
+ALTER TABLE ati_struct ALTER COLUMN s TYPE STRUCT(id BIGINT, name VARCHAR);
+----
+db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
+
+
+# Dropping the whole struct column cascade-drops the expression index.
+statement ok
+ALTER TABLE ati_struct DROP COLUMN s;
+
+
+statement error
+SELECT pk FROM ati_struct_idx;
+----
+db error: ERROR: Table with name ati_struct_idx does not exist!<slt:ignore>
+
+
+# With the index gone, struct field ops work again on a fresh struct column.
+statement ok
+ALTER TABLE ati_struct ADD COLUMN s2 STRUCT(a INTEGER);
+
+
+statement ok
+ALTER TABLE ati_struct ADD COLUMN s2.b INTEGER;
+
+
+query
+SELECT typeof(s2) FROM ati_struct LIMIT 1;
+----
+typeof
+STRUCT(a INTEGER, b INTEGER)
+
+
+statement ok
+DROP TABLE ati_struct;

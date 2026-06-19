@@ -97,14 +97,16 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto& create_info = _info->Base();
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
 
+  catalog::CreateTableOptions options;
+  options.name = table_info.table;
+
+  ApplyStorageKind(options, table_info.options);
+
   if (!table_info.options.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("unrecognized parameter \"",
                             table_info.options.begin()->first, "\""));
   }
-
-  catalog::CreateTableOptions options;
-  options.name = table_info.table;
 
   for (auto& col : table_info.columns.Logical()) {
     catalog::Column sdb_col{{}, catalog::NextId(), col.Name(), col.Type()};

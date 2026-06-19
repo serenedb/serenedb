@@ -488,9 +488,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
   {
     auto& table_info = op.info->Base().Cast<duckdb::CreateTableInfo>();
-    catalog::CreateTableOptions probe;
-    ApplyStorageKind(probe, table_info.options);
-    if (probe.engine == catalog::TableEngine::Fast) {
+    if (ReadStorageEngine(table_info.options) == catalog::TableEngine::Fast) {
       auto& search_ctas = planner.Make<SereneDBSearchInsert>(
         std::move(op.info), op.schema, op.estimated_cardinality);
       search_ctas.children.push_back(plan);

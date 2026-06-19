@@ -143,7 +143,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   // Consume the SereneDB-specific `storage` WITH option (selects the table
   // engine) before validating that no unknown options remain.
   ApplyStorageKind(options, table_info.options);
-  table_info.options.erase("storage");
 
   if (!table_info.options.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

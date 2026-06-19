@@ -56,7 +56,31 @@ std::optional<std::string> ExtractString(std::string_view option_key,
   }
 }
 
+constexpr std::string_view kStorageKey = "storage";
+
 }  // namespace
+
+catalog::TableEngine ReadStorageEngine(
+  const duckdb::case_insensitive_map_t<
+    duckdb::unique_ptr<duckdb::ParsedExpression>>& with_options) {
+  auto it = with_options.find(std::string{kStorageKey});
+  if (it == with_options.end() || !it->second) {
+    return catalog::TableEngine::Transactional;
+  }
+  auto value = ExtractString(kStorageKey, *it->second);
+  SDB_ASSERT(value);
+  auto lower = duckdb::StringUtil::Lower(*value);
+  if (lower == "transactional") {
+    return catalog::TableEngine::Transactional;
+  }
+  if (lower == "search") {
+    return catalog::TableEngine::Fast;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("WITH option \"", kStorageKey,
+            "\" must be 'transactional' or 'search', got \"", *value, "\""));
+}
 
 void RejectIfSearchTable(const catalog::Table& table,
                          std::string_view operation) {
@@ -69,26 +93,10 @@ void RejectIfSearchTable(const catalog::Table& table,
 
 void ApplyStorageKind(
   catalog::CreateTableOptions& options,
-  const duckdb::case_insensitive_map_t<
-    duckdb::unique_ptr<duckdb::ParsedExpression>>& with_options) {
-  static constexpr std::string_view kStorageKey = "storage";
-  auto it = with_options.find(std::string{kStorageKey});
-  if (it == with_options.end() || !it->second) {
-    return;  // default TableEngine::Transactional
-  }
-  auto value = ExtractString(kStorageKey, *it->second);
-  SDB_ASSERT(value);
-  auto lower = duckdb::StringUtil::Lower(*value);
-  if (lower == "transactional") {
-    options.engine = catalog::TableEngine::Transactional;
-  } else if (lower == "search") {
-    options.engine = catalog::TableEngine::Fast;
-  } else {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("WITH option \"", kStorageKey,
-              "\" must be 'transactional' or 'search', got \"", *value, "\""));
-  }
+  duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
+    with_options) {
+  options.engine = ReadStorageEngine(with_options);
+  with_options.erase(std::string{kStorageKey});
 }
 
 }  // namespace sdb::connector

@@ -2,17 +2,17 @@
 # Compare three tables built by CTAS over the ClickHouse `hits` parquet dataset,
 # none carrying any secondary index. The three CTAS paths exercise three write
 # engines:
-#   * default storage  -> SereneDBPhysicalCTAS (rocksdb SST bulk path)
+#   * storage='transactional' (default) -> the DuckDB store table in
+#                         __sdb_store (SereneDB's catalog-managed
+#                         engine_duckdb/store.db).
 #   * storage='search' -> SereneDBSearchInsert (CTAS mode, iresearch
 #                         columnstore via SearchTableSinkWriter)
-#   * ATTACH (TYPE duckdb) -> DuckDB-native columnar storage. This is the ONLY
-#                         way to get a native DuckDB table: serened replaces
-#                         DuckDB's default catalog, so its own CREATE TABLE only
-#                         ever produces rocksdb/search shards. The attached DB
-#                         runs on DuckDB's native operators with no serened code
-#                         in the per-row path (only bind-time name resolution
-#                         crosses the catalog boundary), so it's a fair
-#                         engine-vs-engine baseline.
+#   * ATTACH (TYPE duckdb) -> a standalone DuckDB database, isolated from
+#                         SereneDB's catalog. Same DuckDB columnar storage as the
+#                         transactional engine, but with no serened code in the
+#                         per-row path and in its own single file (only bind-time
+#                         name resolution crosses the catalog boundary), so it's
+#                         the raw-DuckDB baseline.
 #
 # The write is timed in two phases, reported separately:
 #   * insert -- the CTAS statement itself.
@@ -20,21 +20,22 @@
 #               forced by VACUUM (REFRESH_TABLE) (no background commit thread
 #               yet, and the scan can't read the rows until the segments land).
 #               native: CHECKPOINT (folds the .duckdb WAL into the main file).
-#               rocksdb: none -- the SST CTAS is atomic, so its data is on disk
-#               at statement end (reported n/a).
+#               transactional: none -- the CTAS transaction is durable in the
+#               store WAL at statement end; the checkpoint into store.db is
+#               deferred (reported n/a; the size sums store.db + store.db.wal).
 #
 # Workflow:
 #   1. Start serened (perf binary from build_perf/) against a fresh data dir.
 #   2. With PERF_ROW_LIMIT set, sample that many rows into a standalone parquet
 #      file once (off the clock); then create a view over the (sampled or full)
 #      hits parquet -- never with a SQL LIMIT (see the PERF_ROW_LIMIT note).
-#   3. CTAS the view into a default (rocksdb) table       -- insert.
-#   4. CTAS the view into a storage='search' table        -- insert + commit.
-#   5. ATTACH a fresh .duckdb file, CTAS the view into it  -- insert + commit.
+#   3. CTAS the view into a default (transactional) table  -- insert.
+#   4. CTAS the view into a storage='search' table         -- insert + commit.
+#   5. ATTACH a fresh .duckdb file, CTAS the view into it   -- insert + commit.
 #   6. Sanity COUNT("WatchID") over each table (one thread; see the scan note).
-#   7. Report on-disk size: parquet input vs the rocksdb table's engine_rocksdb
-#      delta vs the search table's engine_search subtree (with the iresearch
-#      per-extension breakdown) vs the native .duckdb file.
+#   7. Report on-disk size: parquet input vs the transactional table's
+#      engine_duckdb delta vs the search table's engine_search subtree (with the
+#      iresearch per-extension breakdown) vs the native .duckdb file.
 #
 # Run this AFTER scripts/perf/download_hits.sh and after the perf build is in
 # place. Output goes to scripts/perf/results/run-<timestamp>.log.
@@ -71,20 +72,20 @@ LOG="/tmp/${USER}-serened-search-perf.log"
 # and the measured CTAS reads that file -- we deliberately do NOT put a SQL
 # LIMIT in the view, because a LIMIT becomes a STREAMING_LIMIT operator that
 # serialises the whole scan -> CTAS pipeline and would mask the parallelism of
-# the rocksdb SST / native BatchInsert writers. Also keeps the search write
-# path's in-memory buffer bounded on a smaller machine.
+# the transactional store / native BatchInsert writers. Also keeps the search
+# write path's in-memory buffer bounded on a smaller machine.
 PERF_ROW_LIMIT="${PERF_ROW_LIMIT:-}"
 
 # CREATE TABLE AS parallelizes the source scan; the search sink Finalize runs
 # single-threaded. Scan benchmarks pin to 1 because the search full-scan does
-# not yet split segments across threads -- a multi-threaded rocksdb baseline
-# would be an unfair comparison until that lands.
+# not yet split segments across threads -- a multi-threaded transactional
+# baseline would be an unfair comparison until that lands.
 BUILD_THREADS="${PERF_BUILD_THREADS:-$(nproc)}"
 SCAN_THREADS="${PERF_SCAN_THREADS:-1}"
 
-# EXPLAIN each timed statement so the plan (SereneDBSearchInsert vs the SST
-# CTAS sink, SearchFullScan vs the rocksdb scan) sits next to its timing in the
-# log. Turn off with PERF_EXPLAIN=0.
+# EXPLAIN each timed statement so the plan (SereneDBSearchInsert vs the
+# transactional store insert, SearchFullScan vs the store table scan) sits next
+# to its timing in the log. Turn off with PERF_EXPLAIN=0.
 PERF_EXPLAIN="${PERF_EXPLAIN:-1}"
 
 if [[ ! -f "${PARQUET_FILE}" ]]; then
@@ -233,21 +234,24 @@ CREATE VIEW hits_view AS
 SELECT * FROM read_parquet('${PQ_SQL_PATH}');
 "
 
-ROCKS_DIR="${SERENED_DATA_DIR}/engine_rocksdb"
+TXN_DIR="${SERENED_DATA_DIR}/engine_duckdb"
 SEARCH_DIR="${SERENED_DATA_DIR}/engine_search"
 
-# Baseline catalog/engine footprint before any user table exists. The rocksdb
-# table's storage is the delta against this (engine_rocksdb also holds catalog
-# metadata + WAL for both tables, which is negligible next to the hits data).
-ROCKS_BASELINE=$(du_bytes "${ROCKS_DIR}")
+# Baseline catalog/engine footprint before any user table exists. The
+# transactional table's storage is the delta against this (engine_duckdb is the
+# shared store.db single-file database -- it also holds catalog metadata for
+# every table, negligible next to the hits data; store.db.wal under the dir is
+# summed in too).
+TXN_BASELINE=$(du_bytes "${TXN_DIR}")
 
-# --- 2. CTAS: rocksdb table (insert only -- SST CTAS is atomic) ---------------
-run_sql "rocksdb_insert" "${BUILD_THREADS}" "
-CREATE TABLE hits_rocksdb AS
+# --- 2. CTAS: transactional table (insert only; the CTAS txn lands in the
+#        store WAL, durable at statement end) ---------------------------------
+run_sql "transactional_insert" "${BUILD_THREADS}" "
+CREATE TABLE hits_transactional WITH (storage = 'transactional') AS
 SELECT * FROM hits_view;
 "
-ROCKS_AFTER=$(du_bytes "${ROCKS_DIR}")
-ROCKS_TABLE_BYTES=$((ROCKS_AFTER - ROCKS_BASELINE))
+TXN_AFTER=$(du_bytes "${TXN_DIR}")
+TXN_TABLE_BYTES=$((TXN_AFTER - TXN_BASELINE))
 
 # --- 3. CTAS: search table (insert, then commit) ------------------------------
 # insert: routes through SereneDBSearchInsert (CTAS mode). The rows are drained
@@ -292,14 +296,13 @@ CHECKPOINT native_db;
 NATIVE_BYTES=$(($(du_bytes "${NATIVE_DB}") + $(du_bytes "${NATIVE_DB}.wal")))
 
 # --- 5. Sanity scan -----------------------------------------------------------
-# COUNT(<col>), pinned to one thread. Two reasons it's COUNT("WatchID") and not
-# COUNT(*): (1) COUNT(*) on a search table plans as a scan of the rowid virtual
-# column, which the search scan rejects today ("Virtual columns (rowid,
-# tableoid, score) ... not yet supported"); (2) counting a real column verifies
-# every row is accounted for (== row count, since WatchID is non-null). The
-# result is a benchmark in itself: the search side answers from segment
-# metadata (no row read) while the rocksdb row store full-scans.
-run_sql "count_rocksdb" "${SCAN_THREADS}" "SELECT COUNT(\"WatchID\") FROM hits_rocksdb;"
+# COUNT(<col>), pinned to one thread. It's COUNT("WatchID"), not COUNT(*),
+# because COUNT(*) takes the search table's count-only fast path (answered from
+# segment metadata, no column read) -- counting a real, non-null column instead
+# forces an actual column scan, which is the comparison we want and also
+# verifies every row is accounted for. The search side still reads far less than
+# the transactional/native column stores' full scan.
+run_sql "count_transactional" "${SCAN_THREADS}" "SELECT COUNT(\"WatchID\") FROM hits_transactional;"
 run_sql "count_search" "${SCAN_THREADS}" "SELECT COUNT(\"WatchID\") FROM hits_search;"
 run_sql "count_native" "${SCAN_THREADS}" "SELECT COUNT(\"WatchID\") FROM native_db.main.hits_native;"
 
@@ -325,19 +328,23 @@ total=$(du_bytes "${SERENED_DATA_DIR}")
 	echo
 	echo "=== storage_size ==="
 	printf "parquet input:            %14d bytes (%s)\n" "${pq}" "$(human "${pq}")"
-	printf "rocksdb table (delta):    %14d bytes (%s)\n" \
-		"${ROCKS_TABLE_BYTES}" "$(human "${ROCKS_TABLE_BYTES}")"
+	printf "transactional (delta):    %14d bytes (%s)\n" \
+		"${TXN_TABLE_BYTES}" "$(human "${TXN_TABLE_BYTES}")"
 	printf "search table:             %14d bytes (%s)\n" \
 		"${SEARCH_BYTES}" "$(human "${SEARCH_BYTES}")"
 	printf "native duckdb table:      %14d bytes (%s)\n" \
 		"${NATIVE_BYTES}" "$(human "${NATIVE_BYTES}")"
 	printf "serened data dir (total): %14d bytes (%s)\n" "${total}" "$(human "${total}")"
-	# iresearch per-segment breakdown for the search table (engine_search only):
-	#   .doc postings doc-id stream     .cs  typed columnstore (this work)
-	#   .pos positions   .pay payloads  .tm  terms data   .ti  terms index
-	#   .sm  segment_meta               .csd/.csi legacy columnstore
-	echo "  search table iresearch breakdown:"
-	for ext in doc pos pay cs csd csi ti tm sm; do
+	# Per-file-type breakdown for the search table (engine_search). This
+	# iresearch version consolidates a segment into:
+	#   .col typed columnstore (the column values -- the bulk of the data)
+	#   .idx terms + postings index   .doc doc-id stream   .sm segment meta
+	# .swal is the search-table WAL (engine_search/<db>/wal) -- transient, holds
+	# the raw chunks until GC, so right after a load it can dwarf the committed
+	# index. (segments_N commit-metadata files have no extension and are not
+	# summed here; they're in the engine_search total above.)
+	echo "  search table file breakdown:"
+	for ext in col idx doc sm swal; do
 		s=$(sum_ext "${SEARCH_DIR}" "${ext}")
 		printf "    .%-5s %14d bytes (%s)\n" "${ext}" "${s}" "$(human "${s}")"
 	done
@@ -378,11 +385,12 @@ ratio() {
 	echo "row limit: ${PERF_ROW_LIMIT:-(none -- full file)}"
 	echo "build threads: ${BUILD_THREADS}    scan threads: ${SCAN_THREADS}"
 	echo
-	# insert / commit reported separately. rocksdb has no commit phase (atomic
-	# SST CTAS). search commit = the iresearch writer flush; native commit =
-	# CHECKPOINT (WAL -> main .duckdb file). The ratio columns are each engine's
-	# insert+commit total relative to rocksdb (>1x slower, <1x faster).
-	r_ins="${TIMINGS[rocksdb_insert]:-}"
+	# insert / commit reported separately. transactional has no separate commit
+	# phase here (the CTAS txn is durable in the store WAL; checkpoint deferred).
+	# search commit = the iresearch writer flush; native commit = CHECKPOINT
+	# (WAL -> main .duckdb file). The ratio columns are each engine's
+	# insert+commit total relative to transactional (>1x slower, <1x faster).
+	t_ins="${TIMINGS[transactional_insert]:-}"
 	s_ins="${TIMINGS[search_insert]:-}"
 	s_cmt="${TIMINGS[search_commit]:-}"
 	n_ins="${TIMINGS[native_insert]:-}"
@@ -392,27 +400,27 @@ ratio() {
 	}
 	s_total=$(sum2 "${s_ins}" "${s_cmt}")
 	n_total=$(sum2 "${n_ins}" "${n_cmt}")
-	c_r="${TIMINGS[count_rocksdb]:-}"
+	c_t="${TIMINGS[count_transactional]:-}"
 	c_s="${TIMINGS[count_search]:-}"
 	c_n="${TIMINGS[count_native]:-}"
 	row() { printf "%-16s %11s %11s %11s   %7s %7s\n" "$1" "$2" "$3" "$4" "$5" "$6"; }
-	row "phase" "rocksdb" "search" "native" "s/rocks" "n/rocks"
+	row "phase" "txn" "search" "native" "s/txn" "n/txn"
 	row "----------------" "-----------" "-----------" "-----------" "-------" "-------"
-	row "insert" "$(fmt_ms "${r_ins}")" "$(fmt_ms "${s_ins}")" "$(fmt_ms "${n_ins}")" "" ""
+	row "insert" "$(fmt_ms "${t_ins}")" "$(fmt_ms "${s_ins}")" "$(fmt_ms "${n_ins}")" "" ""
 	row "commit" "n/a" "$(fmt_ms "${s_cmt}")" "$(fmt_ms "${n_cmt}")" "" ""
-	row "total (ins+cmt)" "$(fmt_ms "${r_ins}")" "$(fmt_ms "${s_total}")" "$(fmt_ms "${n_total}")" \
-		"$(ratio "${s_total}" "${r_ins}")" "$(ratio "${n_total}" "${r_ins}")"
-	row "count(col)" "$(fmt_ms "${c_r}")" "$(fmt_ms "${c_s}")" "$(fmt_ms "${c_n}")" \
-		"$(ratio "${c_s}" "${c_r}")" "$(ratio "${c_n}" "${c_r}")"
+	row "total (ins+cmt)" "$(fmt_ms "${t_ins}")" "$(fmt_ms "${s_total}")" "$(fmt_ms "${n_total}")" \
+		"$(ratio "${s_total}" "${t_ins}")" "$(ratio "${n_total}" "${t_ins}")"
+	row "count(col)" "$(fmt_ms "${c_t}")" "$(fmt_ms "${c_s}")" "$(fmt_ms "${c_n}")" \
+		"$(ratio "${c_s}" "${c_t}")" "$(ratio "${c_n}" "${c_t}")"
 	echo
-	printf "%-26s %14s   %s\n" "storage" "bytes" "vs rocksdb"
+	printf "%-26s %14s   %s\n" "storage" "bytes" "vs txn"
 	printf "%-26s %14s   %s\n" "--------------------------" "--------------" "----------"
 	printf "%-26s %14d (%s)\n" "parquet input" "${pq}" "$(human "${pq}")"
-	printf "%-26s %14d (%s)\n" "rocksdb table" "${ROCKS_TABLE_BYTES}" "$(human "${ROCKS_TABLE_BYTES}")"
+	printf "%-26s %14d (%s)\n" "transactional table" "${TXN_TABLE_BYTES}" "$(human "${TXN_TABLE_BYTES}")"
 	printf "%-26s %14d (%s)   %s\n" "search table" "${SEARCH_BYTES}" "$(human "${SEARCH_BYTES}")" \
-		"$(ratio "${SEARCH_BYTES}" "${ROCKS_TABLE_BYTES}")"
+		"$(ratio "${SEARCH_BYTES}" "${TXN_TABLE_BYTES}")"
 	printf "%-26s %14d (%s)   %s\n" "native duckdb table" "${NATIVE_BYTES}" "$(human "${NATIVE_BYTES}")" \
-		"$(ratio "${NATIVE_BYTES}" "${ROCKS_TABLE_BYTES}")"
+		"$(ratio "${NATIVE_BYTES}" "${TXN_TABLE_BYTES}")"
 	echo "========================================="
 } | tee -a "${RUN_LOG}"
 

@@ -1,11 +1,22 @@
 services:
+  # Make the root:root 0755 named volume world-writable before the non-root
+  # services use /test-tmp (the release image's serenedb user can't create dirs
+  # in a fresh root-owned volume).
+  test-tmp-init:
+    image: ${BUILD_IMAGE}
+    user: "0:0"
+    volumes:
+      - "sdb-test-tmp:/test-tmp"
+    command: ["sh", "-c", "chmod 0777 /test-tmp"]
+
   serenedb:
     image: ${DOCKER_TEST_IMAGE}
-    # Only the shared __TEST_DIR__ is mounted (0777 via SLT_TEST_DIR_SHARED, so the
-    # image's serenedb user can write it). Logs still go via 'docker compose logs'.
+    depends_on:
+      test-tmp-init:
+        condition: service_completed_successfully
     command: serened
     volumes:
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
     networks:
       - rta-network
 
@@ -18,13 +29,14 @@ services:
       - "${WORKSPACE}/tests/sqllogic:/sqllogic"
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "${WORKSPACE}/out/logs:/logs"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+      - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
     environment:
       - HOME=/sqllogic
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
-      - CARGO_HOME=/tmp/cargo
+      - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
     networks:
       - rta-network
@@ -51,3 +63,6 @@ networks:
   rta-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_rta-network
+
+volumes:
+  sdb-test-tmp:

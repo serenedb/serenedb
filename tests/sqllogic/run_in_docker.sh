@@ -35,8 +35,8 @@ fi
 mkdir -p "$WORKSPACE"/out/sanitizers/{leak,undefined,address,memory,thread}
 mkdir -p "$WORKSPACE/out/coverage/profiles"
 mkdir -p "$WORKSPACE/out/logs"
-mkdir -p "$WORKSPACE/out/test-tmp"
 mkdir -p "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}"
+mkdir -p "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}"
 mkdir -p "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}"
 
 if test -z "$BUILD_IMAGE"; then

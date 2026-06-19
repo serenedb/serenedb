@@ -7,8 +7,7 @@ Rules-Requires-Root: no
 
 Package: serenedb
 Architecture: @ARCHITECTURE@
-# TODO: tzdata may be removable if timezone data is bundled into the binary
-Depends: tzdata, postgresql-client
+Depends: postgresql-client
 Description: SereneDB database server
  SereneDB is a real-time search and analytics database with Postgres wire protocol support.
 

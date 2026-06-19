@@ -1,6 +1,18 @@
 services:
+  # Make the root:root 0755 named volume world-writable before the non-root
+  # tests service tries to create its per-test dirs in /test-tmp.
+  test-tmp-init:
+    image: ${BUILD_IMAGE}
+    user: "0:0"
+    volumes:
+      - "sdb-test-tmp:/test-tmp"
+    command: ["sh", "-c", "chmod 0777 /test-tmp"]
+
   postgres:
     image: postgres:18-alpine
+    depends_on:
+      test-tmp-init:
+        condition: service_completed_successfully
     security_opt:
       - seccomp:unconfined
     environment:
@@ -12,7 +24,7 @@ services:
         target: /var/lib/postgresql
         tmpfs:
           size: 16G
-      - "$WORKSPACE/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
     networks:
       - test-network
     command: ["postgres", "-c", "max_connections=900"]
@@ -24,8 +36,9 @@ services:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "$WORKSPACE/out/logs:/logs"
-      - "$WORKSPACE/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+      - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
     depends_on:
       - postgres
     environment:
@@ -33,7 +46,7 @@ services:
       - HOME=/sqllogic
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
-      - CARGO_HOME=/tmp/cargo
+      - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
       - PG_CHANGED_TESTS=${PG_CHANGED_TESTS:-}
     networks:
@@ -51,3 +64,6 @@ networks:
   test-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_test-network
+
+volumes:
+  sdb-test-tmp:

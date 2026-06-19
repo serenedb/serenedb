@@ -1,7 +1,5 @@
 # DOCS_TEST: example_001
 
-# DOCS_TEST_BODY
-
 statement ok
 CREATE TEXT SEARCH DICTIONARY wildcard_dict (
     template = 'wildcard',
@@ -10,26 +8,38 @@ CREATE TEXT SEARCH DICTIONARY wildcard_dict (
     tokenizer_delimiter = ' '
 );
 
-query ?
-SELECT ts_lexize('wildcard_dict', 'search');
+statement ok
+CREATE TABLE terms (id INTEGER PRIMARY KEY, term VARCHAR);
+
+statement ok
+INSERT INTO terms VALUES
+    (1, 'search'),
+    (2, 'research'),
+    (3, 'seabird'),
+    (4, 'plain');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX terms_idx ON terms USING inverted (id, term wildcard_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) terms;
+
+query
+SELECT id, term FROM terms_idx WHERE term @@ ts_like('%ear%') ORDER BY id;
 ----
-ts_lexize
-{se,sea,ear,arc,rch,ch,h}
+id	term
+1	search
+2	research
 
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY
 
-statement ok
-CREATE TEXT SEARCH DICTIONARY wildcard_min (
-    template = 'wildcard',
-    ngramsize = 2,
-    tokenizer_template = 'delimiter',
-    tokenizer_delimiter = ' '
-);
-
-query ?
-SELECT ts_lexize('wildcard_min', 'cat');
+query
+SELECT id, term FROM terms_idx WHERE term @@ ts_like('sea%') ORDER BY id;
 ----
-ts_lexize
-{c,ca,at,t}
+id	term
+1	search
+3	seabird

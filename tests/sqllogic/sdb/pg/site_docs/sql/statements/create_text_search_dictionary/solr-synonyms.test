@@ -14,7 +14,6 @@ laptop => notebook'
 
 # DOCS_TEST_BODY
 
--- any member of a bidirectional class expands to the whole class
 query ?
 SELECT ts_lexize('solr_syn', 'car');
 ----
@@ -25,7 +24,6 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
--- "automobile" reaches the same class as "car"
 query ?
 SELECT ts_lexize('solr_syn', 'automobile');
 ----
@@ -36,7 +34,6 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
--- the left side of a one-way rule rewrites to its right side
 query ?
 SELECT ts_lexize('solr_syn', 'laptop');
 ----
@@ -47,7 +44,6 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
--- a term that matches no rule passes through unchanged
 query ?
 SELECT ts_lexize('solr_syn', 'keyboard');
 ----

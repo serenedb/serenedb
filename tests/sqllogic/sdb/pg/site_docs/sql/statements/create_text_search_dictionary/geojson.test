@@ -21,8 +21,6 @@ CREATE TEXT SEARCH DICTIONARY geojson_s2 (
 
 # DOCS_TEST_BODY
 
--- A single GeoJSON point expands into an S2 cell covering, coarse to fine.
--- GeoJSON coordinates are [longitude, latitude].
 query ?
 SELECT ts_lexize(
     'geojson_s2',

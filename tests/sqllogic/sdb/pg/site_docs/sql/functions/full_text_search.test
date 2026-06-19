@@ -1060,3 +1060,111 @@ id	score
 2	2.5223455
 1	1.8521354
 3	1.3192322
+
+# DOCS_TEST: ts_phrase_gap
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ts_phrase('quick', [0, 3], 'over')
+ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: ts_regexp_posix
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ts_regexp('gr[ae]y', 'posix')
+ORDER BY id;
+----
+id
+3
+
+# DOCS_TEST: ts_levenshtein_prefix
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ts_levenshtein('X', 1, true, 'quic')
+ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: ts_between_unbounded
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE id @@ ts_between(NULL, 2, true, true)
+ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: ts_any_min_match
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ts_any(['quick', 'grey', 'red'], 2)
+ORDER BY id;
+----
+id
+2
+
+# DOCS_TEST: ts_compound_min_should
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ts_compound(
+    ts_phrase('fox'),
+    NULL,
+    [ts_phrase('brown'), ts_phrase('jumps'), ts_phrase('lazy')],
+    3
+)
+ORDER BY id;
+----
+id
+1
+
+# DOCS_TEST: to_tsquery_advanced
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ to_tsquery('qui* AND f0x~1')
+ORDER BY id;
+----
+id
+1
+2
+
+# DOCS_TEST: a--factor-boost-score
+# DOCS_TEST_BODY
+query
+SELECT id, BM25(scored_idx.tableoid) AS score
+FROM scored_idx
+WHERE body @@ (ts_phrase('fox') || ts_phrase('quick') ^ 5.0)
+ORDER BY score DESC, id;
+----
+id	score
+1	5.6312833
+4	5.013905
+2	0.8407818
+3	0.43974406
+
+# DOCS_TEST: ts_lexize_ngram
+# DOCS_TEST_BODY
+query
+SELECT ts_lexize('bigram', 'help') AS ts_lexize;
+----
+ts_lexize
+{he,el,lp}

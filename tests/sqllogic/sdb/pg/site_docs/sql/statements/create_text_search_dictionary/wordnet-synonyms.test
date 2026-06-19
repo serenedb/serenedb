@@ -17,7 +17,6 @@ s(100000002,2,''automobile'',n,1,0).'
 
 # DOCS_TEST_BODY
 
--- "fast" is mapped to the id of the synset it belongs to
 query ?
 SELECT ts_lexize('wordnet_syn', 'fast');
 ----
@@ -28,7 +27,6 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
--- "quick" shares the same synset, so it maps to the same id
 query ?
 SELECT ts_lexize('wordnet_syn', 'quick');
 ----
@@ -39,7 +37,6 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
--- a word in no record produces no tokens
 query ?
 SELECT ts_lexize('wordnet_syn', 'keyboard');
 ----

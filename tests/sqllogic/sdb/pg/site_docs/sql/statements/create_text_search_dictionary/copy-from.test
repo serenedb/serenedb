@@ -33,7 +33,6 @@ CREATE TEXT SEARCH DICTIONARY english_no_stem (
 
 # DOCS_TEST_BODY
 
--- the source dictionary stems each word to its root
 query ?
 SELECT ts_lexize('english_dict', 'running flies');
 ----
@@ -44,7 +43,6 @@ ts_lexize
 
 # DOCS_TEST_BODY
 
--- the copy inherits locale and case but keeps full words (stemming = false)
 query ?
 SELECT ts_lexize('english_no_stem', 'running flies');
 ----

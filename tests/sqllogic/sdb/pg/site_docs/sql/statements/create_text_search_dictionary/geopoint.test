@@ -13,8 +13,6 @@ CREATE TEXT SEARCH DICTIONARY geopoint_dict (
 
 # DOCS_TEST_BODY
 
--- The same physical point as the geojson example expands into an identical
--- S2 cell covering, regardless of which template indexed it.
 query ?
 SELECT ts_lexize(
     'geopoint_dict',

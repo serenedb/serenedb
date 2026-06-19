@@ -287,6 +287,13 @@ void MaterializeExtractLeaf(const ColumnReader& leaf,
 }
 
 template<typename DocIds>
+void MaterializeVariantExtractNode(
+  const ColumnReader& reader, MaterializeState& state, const DocIds& doc_ids,
+  std::span<const std::string_view> path, const duckdb::LogicalType& scan_type,
+  duckdb::Vector& out_vec, duckdb::idx_t output_start,
+  duckdb::ClientContext& context);
+
+template<typename DocIds>
 void MaterializeStructExtractNode(
   const ColumnReader& reader, MaterializeState& state, const DocIds& doc_ids,
   std::span<const std::string_view> path, const duckdb::LogicalType& scan_type,
@@ -299,11 +306,20 @@ void MaterializeStructExtractNode(
   }
   const auto* leaf = &reader;
   auto* leaf_state = &state;
-  for (const auto& field : path) {
+  for (size_t pi = 0; pi < path.size(); ++pi) {
+    if (leaf->Type().id() == duckdb::LogicalTypeId::VARIANT) {
+      // The path descended from struct fields into a variant; the remaining
+      // components address into the variant, so hand them to the variant
+      // extractor (a struct walk can't resolve variant keys).
+      MaterializeVariantExtractNode(*leaf, *leaf_state, doc_ids,
+                                    path.subspan(pi), scan_type, out_vec,
+                                    output_start, context);
+      return;
+    }
     if (leaf->Type().id() != duckdb::LogicalTypeId::STRUCT) {
       return;
     }
-    const size_t idx = FindStructFieldIndex(leaf->Type(), field);
+    const size_t idx = FindStructFieldIndex(leaf->Type(), path[pi]);
     if (idx == leaf->StructFieldCount()) {
       return;
     }
@@ -348,9 +364,9 @@ void MaterializeVariantExtractNode(
       auto& rgstate = EnsureVariantRgState(reader, state, slice.rg_index);
       const auto count = static_cast<duckdb::idx_t>(slice.count);
       duckdb::Vector tmp_variant{duckdb::LogicalType::VARIANT(), count};
-      duckdb::Vector mask_holder{duckdb::LogicalType::BOOLEAN, count};
+      // duckdb::Vector mask_holder{duckdb::LogicalType::BOOLEAN, count};
       const auto* validity_mask =
-        ScanVariantValidity(state, reader, slice.first_doc, count, mask_holder);
+        ScanVariantValidity(state, reader, slice.first_doc, count, tmp_variant);
       ReconstructVariantRun(rgstate, slice.rg_reader, slice.rg_offset,
                             slice.count, validity_mask, tmp_variant, 0);
       duckdb::Vector extracted{duckdb::LogicalType::VARIANT(), count};

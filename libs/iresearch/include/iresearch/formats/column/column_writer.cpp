@@ -91,12 +91,19 @@ void ColumnWriter::PadNullsTo(uint64_t target_row) {
   uint64_t gap = target_row - first_not_present;
 
   while (gap > 0) {
-    const uint64_t to_boundary = _row_group_size - _data_ctx.filled;
-    const uint64_t take = std::min<uint64_t>(
-      gap, std::min<uint64_t>(STANDARD_VECTOR_SIZE, to_boundary));
-    auto& chunk = OpenNullChunk(take);
-    chunk.data.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-    duckdb::ConstantVector::SetNull(chunk.data, true);
+    auto& chunk = OpenChunk();
+    const duckdb::idx_t room =
+      duckdb::FlatVector::GetCapacity(chunk.data) - chunk.count;
+    const duckdb::idx_t to_boundary =
+      static_cast<duckdb::idx_t>(_row_group_size - _data_ctx.filled);
+    const auto take = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(gap, std::min<duckdb::idx_t>(room, to_boundary)));
+    auto& validity = duckdb::FlatVector::ValidityMutable(chunk.data);
+    validity.EnsureWritable();
+    for (duckdb::idx_t i = 0; i < take; ++i) {
+      validity.SetInvalid(chunk.count + i);
+    }
+    chunk.count += take;
     _data_ctx.filled += take;
     gap -= take;
     MaybeFlushRowGroup();
@@ -676,18 +683,6 @@ Chunk& ColumnWriter::OpenChunk() {
   auto& alloc = duckdb::Allocator::Get(_write_ctx->Database());
   dc.chunk_caches.emplace_back(alloc, _type, cap);
   dc.chunks.emplace_back(duckdb::Vector(dc.chunk_caches.back()), 0);
-  return dc.chunks.back();
-}
-
-Chunk& ColumnWriter::OpenNullChunk(size_t take) {
-  auto& dc = _data_ctx;
-  const size_t idx = dc.used_chunks++;
-  if (idx < dc.chunks.size()) {
-    dc.chunks[idx].count = take;
-    return dc.chunks[idx];
-  }
-  dc.chunk_caches.emplace_back();
-  dc.chunks.emplace_back(duckdb::Vector(_type), take);
   return dc.chunks.back();
 }
 

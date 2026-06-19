@@ -30,6 +30,7 @@
 #include <string>
 
 #include "basics/assert.h"
+#include "basics/log.h"
 
 namespace irs {
 
@@ -112,7 +113,6 @@ void ReconstructVariantRun(
     apply_nulls(out_variant, out_off);
     return;
   }
-  SDB_ASSERT(out_off == 0);
   duckdb::child_list_t<duckdb::LogicalType> children;
   children.emplace_back("unshredded", row_group_reader.unshredded->Type());
   children.emplace_back("shredded", row_group_reader.shredded_node->Type());
@@ -123,7 +123,13 @@ void ReconstructVariantRun(
   MaterializeNode(*row_group_reader.shredded_node, *rgstate.shredded,
                   IotaRange{local_start, run}, entries[1], /*output_start=*/0);
   apply_nulls(intermediate, 0);
-  duckdb::VariantUtils::UnshredVariantData(intermediate, out_variant, run);
+  // UnshredVariantData rebuilds its output from scratch at offset 0, so it
+  // can't write at out_off into a shared, accumulating out_variant. Always
+  // unshred into a fresh run-sized temp and copy it into place.
+  duckdb::Vector unshredded{out_variant.GetType(),
+                            static_cast<duckdb::idx_t>(run)};
+  duckdb::VariantUtils::UnshredVariantData(intermediate, unshredded, run);
+  duckdb::VectorOperations::Copy(unshredded, out_variant, run, 0, out_off);
 }
 
 size_t FindStructFieldIndex(const duckdb::LogicalType& struct_type,

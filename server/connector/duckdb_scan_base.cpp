@@ -131,6 +131,8 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
       [](auto p) { return p != duckdb::DConstants::INVALID_INDEX; });
     return;
   }
+
+  std::vector<std::string_view> path;
   for (duckdb::idx_t proj = 0; proj < state.projected_columns.size(); ++proj) {
     const auto bind_col = state.projected_columns[proj];
     if (bind_col == duckdb::DConstants::INVALID_INDEX) {
@@ -147,35 +149,34 @@ void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
           proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
-          std::vector<std::string_view> path;
+          // col->field1 -- exactly one child assumed
+          SDB_ASSERT(column_index.ChildIndexCount() == 1);
+          path.clear();
           const duckdb::ColumnIndex* node = &column_index.GetChildIndex(0);
           const duckdb::LogicalType* cur_type =
             &bind_data.column_types[bind_col];
-          bool valid_path = true;
           while (true) {
             if (node->HasPrimaryIndex()) {
-              if (cur_type->id() != duckdb::LogicalTypeId::STRUCT) {
-                valid_path = false;
-                break;
-              }
-              const auto idx = node->GetPrimaryIndex();
+              SDB_ASSERT(cur_type->id() == duckdb::LogicalTypeId::STRUCT,
+                         "Numeric identifiers are only in structs");
+              const auto node_index = node->GetPrimaryIndex();
               const auto& children =
                 duckdb::StructType::GetChildTypes(*cur_type);
-              if (idx >= children.size()) {
-                valid_path = false;
-                break;
-              }
-              path.emplace_back(children[idx].first);
-              cur_type = &children[idx].second;
+              SDB_ASSERT(node_index < children.size(), "Invalid index node");
+              path.emplace_back(children[node_index].first);
+              cur_type = &children[node_index].second;
             } else {
               path.emplace_back(node->GetFieldName());
             }
             if (!node->HasChildren()) {
               break;
             }
+            // col->field1->field2->... etc.
+            // Each indirection has the only one child
+            SDB_ASSERT(node->ChildIndexCount() == 1);
             node = &node->GetChildIndex(0);
           }
-          if (valid_path && !path.empty()) {
+          if (!path.empty()) {
             cp.extract_path = std::move(path);
             cp.extract_scan_type = column_index.GetScanType();
           }

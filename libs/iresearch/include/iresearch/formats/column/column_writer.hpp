@@ -102,7 +102,6 @@ class ColumnWriter final {
 
  private:
   Chunk& OpenChunk();
-  Chunk& OpenNullChunk(size_t take);
   void MaybeFlushRowGroup();
   void FlushChunks(uint64_t count);
 

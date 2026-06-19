@@ -57,10 +57,8 @@ tests/drivers/c/harness
 /package_all/
 
 # Matches the stuff that's gonna replace developers
-
 /.claude/*
 !/.claude/skills/
 
 # Local act secrets (fakes for local CI runs)
 .secrets
-scripts/perf/results

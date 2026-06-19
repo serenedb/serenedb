@@ -16,13 +16,14 @@ fi
 
 echo "=== Deb RTA: $(basename "$DEB_PACKAGE") ==="
 mkdir -p "${WORKSPACE}/out/logs"
-mkdir -p "${WORKSPACE}/out/test-tmp"
 
 # Export all env vars ONCE so compose sees consistent config across all calls
 export DEB_PACKAGE="$(basename "$DEB_PACKAGE")"
 export DOCKER_UID="$(id -u)"
 export DOCKER_GID="$(id -g)"
 export CARGO_TARGET_CACHE="${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}"
+export CARGO_HOME_CACHE="${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}"
+mkdir -p "$CARGO_TARGET_CACHE" "$CARGO_HOME_CACHE"
 
 PREFIX="deb-rta-$$"
 COMPOSE_FILE="${CI_DIR}/docker-compose.deb-rta.yml"

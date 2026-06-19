@@ -42,7 +42,6 @@
 
 ### [MIT license](https://opensource.org/licenses/MIT)
 
-* [date](https://github.com/HowardHinnant/date)
 * [FakeIt](https://github.com/eranpeer/FakeIt)
 * [llhttp](https://github.com/nodejs/llhttp)
 * [nghttp2](https://github.com/nghttp2/nghttp2)
@@ -95,7 +94,6 @@
 
 * [zlib-ng](https://github.com/zlib-ng/zlib-ng/blob/develop/LICENSE.md)
 * [minizip-ng](https://github.com/zlib-ng/minizip-ng/blob/develop/LICENSE)
-* [tzdata](https://www.iana.org/time-zones), public domain (a few files under BSD 3-clause)
 * [wyhash](https://github.com/wangyi-fudan/wyhash), Unlicense (vendored in `libs/vpack`)
 
 ## Programs

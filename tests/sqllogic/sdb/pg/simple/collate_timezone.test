@@ -1,0 +1,78 @@
+# ICU extension: COLLATE locale ordering, AT TIME ZONE conversions,
+# strptime %Z parsing, and local-time functions. The ICU extension is
+# statically linked, so these resolve without any INSTALL/LOAD step.
+
+
+# Pin the session zone to UTC so TIMESTAMPTZ renders identically under both the
+# simple and extended wire protocols (extended renders in the session zone).
+statement ok
+SET TimeZone = 'UTC';
+
+
+query
+SELECT loaded AS icu_loaded FROM duckdb_extensions() WHERE extension_name = 'icu';
+----
+icu_loaded
+t
+
+
+statement ok
+CREATE TABLE collate_t(s VARCHAR);
+
+
+statement ok
+INSERT INTO collate_t VALUES ('Goethe'), ('Götz'), ('Gabel'), ('Göbel');
+
+
+query
+SELECT s FROM collate_t ORDER BY s COLLATE de;
+----
+s
+Gabel
+Göbel
+Goethe
+Götz
+
+
+statement ok
+DROP TABLE collate_t;
+
+
+query
+SELECT '2001-02-16 20:38:40'::TIMESTAMP AT TIME ZONE 'America/Denver' AS ts;
+----
+ts
+2001-02-17 03:38:40+00
+
+
+query
+SELECT ('2001-02-16 20:38:40-05'::TIMESTAMPTZ) AT TIME ZONE 'America/Denver' AS ts;
+----
+ts
+2001-02-16 18:38:40
+
+
+query
+SELECT strptime('2022-03-05 17:59:17.877 CST', '%Y-%m-%d %H:%M:%S.%g %Z') AS ts;
+----
+ts
+2022-03-05 23:59:17.877+00
+
+
+query
+SELECT (count(*) > 0) AS has_de FROM pragma_collations() WHERE collname = 'de';
+----
+has_de
+t
+
+
+statement ok
+SELECT current_localtimestamp();
+
+
+statement ok
+SELECT current_localtime();
+
+
+statement ok
+RESET TimeZone;

@@ -664,14 +664,31 @@ mkdir -p "$SQLLOGIC_TARGET"
 # that surfaces as a passing test reported as a failure.
 if [[ "${SDB_SKIP_SQLLOGIC_BUILD:-0}" != "1" ]]; then
 	build_start=$(date +%s)
-	if [[ "$debug" == "true" ]]; then
-		cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --quiet
-	else
-		cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --release --quiet
-	fi
-	test_exit_code=$?
+	build_cmd=(cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --quiet)
+	[[ "$debug" != "true" ]] && build_cmd+=(--release)
+
+	# cargo's crates.io fetch flakes intermittently on the CI runners (HTTP/2
+	# framing errors, "unable to update registry"). It's transient, so retry a
+	# few times before giving up instead of failing the whole suite.
+	build_exit_code=0
+	build_attempts="${SDB_SQLLOGIC_BUILD_ATTEMPTS:-3}"
+	for attempt in $(seq 1 "$build_attempts"); do
+		"${build_cmd[@]}"
+		build_exit_code=$?
+		[[ $build_exit_code == 0 ]] && break
+		if [[ $attempt -lt $build_attempts ]]; then
+			echo "sqllogictest build failed (exit $build_exit_code); attempt $attempt/$build_attempts, retrying in 10s..." >&2
+			sleep 10
+		fi
+	done
 	echo "sqllogictest build: $(($(date +%s) - build_start))s"
-	[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
+
+	# Abort here on a failed build: falling through into the test loop runs a
+	# stale or missing binary and reports the build failure as a test failure.
+	if [[ $build_exit_code != 0 ]]; then
+		echo "ERROR: sqllogictest build failed after $build_attempts attempt(s); aborting before tests run." >&2
+		exit $build_exit_code
+	fi
 fi
 export PATH="${SQLLOGIC_TARGET}/${build_type}:${PATH}"
 

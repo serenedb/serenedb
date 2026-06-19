@@ -2,6 +2,7 @@ query
 SHOW ALL;
 ----
 name	setting	description
+Calendar	gregorian	The current calendar
 DateStyle	ISO, MDY	Sets the display format for date and time values.
 IntervalStyle	postgres	Sets the display format for interval values.
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
@@ -281,6 +282,7 @@ query
 SHOW ALL;
 ----
 name	setting	description
+Calendar	gregorian	The current calendar
 DateStyle	ISO, MDY	Sets the display format for date and time values.
 IntervalStyle	postgres	Sets the display format for interval values.
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.

@@ -21,18 +21,12 @@
 #include "databases.h"
 
 #include "app/app_server.h"
-#include "app/name_validator.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 
 namespace sdb::catalog {
 
 Result CreateDatabase(const ExecContext& exec, std::string_view name) {
-  if (auto r = DatabaseNameValidator::validateName(/*allowSystem*/ false, name);
-      r.fail()) {
-    return r;
-  }
-
   auto database = std::make_shared<catalog::Database>(
     ObjectId{}, catalog::DatabaseOptions{std::string{name}});
 

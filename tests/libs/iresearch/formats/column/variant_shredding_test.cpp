@@ -147,7 +147,8 @@ std::vector<duckdb::Value> QueryScalarColumn(duckdb::DatabaseInstance& db,
 
 std::vector<duckdb::Value> ReadVariantExtract(
   Reader& r, const ColumnReader& col, duckdb::ClientContext& context,
-  std::span<const std::string> path, const duckdb::LogicalType& scan_type) {
+  std::span<const std::string_view> path,
+  const duckdb::LogicalType& scan_type) {
   ReadContext ctx{r};
   auto state = irs::MakeMaterializeState(col, ctx);
   std::vector<duckdb::Value> out;
@@ -370,7 +371,7 @@ TEST_F(IRSVariantShreddingTest, ExtractFastPath) {
   duckdb::Connection con{Db()};
   const auto expected = QueryScalarColumn(
     Db(), "SELECT (" + obj + ").a::DOUBLE FROM range(500) t(i)");
-  const std::vector<std::string> path{"a"};
+  const std::vector<std::string_view> path{"a"};
   ExpectValuesEqual(expected, ReadVariantExtract(r, *col, *con.context, path,
                                                  duckdb::LogicalType::DOUBLE));
 }
@@ -393,7 +394,7 @@ TEST_F(IRSVariantShreddingTest, ExtractWithCast) {
   duckdb::Connection con{Db()};
   const auto expected = QueryScalarColumn(
     Db(), "SELECT (" + obj + ").a::BIGINT FROM range(400) t(i)");
-  const std::vector<std::string> path{"a"};
+  const std::vector<std::string_view> path{"a"};
   ExpectValuesEqual(expected, ReadVariantExtract(r, *col, *con.context, path,
                                                  duckdb::LogicalType::BIGINT));
 }
@@ -415,7 +416,7 @@ TEST_F(IRSVariantShreddingTest, ExtractNestedPath) {
   duckdb::Connection con{Db()};
   const auto expected = QueryScalarColumn(
     Db(), "SELECT (" + obj + ").a.b::DOUBLE FROM range(400) t(i)");
-  const std::vector<std::string> path{"a", "b"};
+  const std::vector<std::string_view> path{"a", "b"};
   ExpectValuesEqual(expected, ReadVariantExtract(r, *col, *con.context, path,
                                                  duckdb::LogicalType::DOUBLE));
 }
@@ -439,7 +440,7 @@ TEST_F(IRSVariantShreddingTest, ExtractNullRows) {
   duckdb::Connection con{Db()};
   const auto expected = QueryScalarColumn(
     Db(), "SELECT (" + obj + ").a::DOUBLE FROM range(400) t(i)");
-  const std::vector<std::string> path{"a"};
+  const std::vector<std::string_view> path{"a"};
   const auto actual = ReadVariantExtract(r, *col, *con.context, path,
                                          duckdb::LogicalType::DOUBLE);
   ExpectValuesEqual(expected, actual);
@@ -469,7 +470,7 @@ TEST_F(IRSVariantShreddingTest, ExtractFallbackNotFullyShredded) {
   duckdb::Connection con{Db()};
   const auto expected = QueryScalarColumn(
     Db(), "SELECT (" + obj + ").a::DOUBLE FROM range(400) t(i)");
-  const std::vector<std::string> path{"a"};
+  const std::vector<std::string_view> path{"a"};
   ExpectValuesEqual(expected, ReadVariantExtract(r, *col, *con.context, path,
                                                  duckdb::LogicalType::DOUBLE));
 }
@@ -500,7 +501,7 @@ TEST_F(IRSVariantShreddingTest, ExtractStructValuedFieldFallsBack) {
   const auto expected = QueryScalarColumn(
     Db(),
     "SELECT (" + obj + ").a::STRUCT(x DOUBLE, y INTEGER) FROM range(400) t(i)");
-  const std::vector<std::string> path{"a"};
+  const std::vector<std::string_view> path{"a"};
   ExpectValuesEqual(expected,
                     ReadVariantExtract(r, *col, *con.context, path, a_type));
 }
@@ -521,8 +522,8 @@ TEST_F(IRSVariantShreddingTest, ExtractCleanFieldFastPathInPartialRowGroup) {
   const auto* col = r.Column(21);
   ASSERT_NE(col, nullptr);
 
-  const std::vector<std::string> path_a{"a"};
-  const std::vector<std::string> path_b{"b"};
+  const std::vector<std::string_view> path_a{"a"};
+  const std::vector<std::string_view> path_b{"b"};
   bool checked_partial = false;
   for (size_t rg = 0; rg < col->VariantRgCount(); ++rg) {
     const auto& rg_reader = col->VariantRg(rg);

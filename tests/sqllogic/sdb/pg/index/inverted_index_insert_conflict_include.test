@@ -1,17 +1,12 @@
 hash-threshold 100
 
-# `SET sdb_write_conflict_policy = do_nothing` is the session-level
-# alternative to `ON CONFLICT DO NOTHING`. Unlike the clause form,
-# DuckDB's INSERT pipeline does NOT pre-filter conflict rows out of
-# the chunk that reaches SereneDBPhysicalInsert::Sink. Conflict rows
-# arrive with their value vector intact while only surviving rows
-# get doc ids in the segment. The cs writer's WriteFullColumn(vec,
-# num_rows) call must skip the conflict rows or the cs row position
-# stops aligning with the segment's doc_id space and INCLUDE values
-# decouple from the doc they belong to.
-
-statement ok
-SET sdb_write_conflict_policy = do_nothing;
+# ON CONFLICT DO NOTHING skips conflict rows. DuckDB's INSERT pipeline does NOT
+# pre-filter them out of the chunk that reaches SereneDBPhysicalInsert::Sink:
+# conflict rows arrive with their value vector intact while only the surviving
+# rows get doc ids in the segment. The cs writer's WriteFullColumn(vec,
+# num_rows) call must skip the conflict rows or the cs row position stops
+# aligning with the segment's doc_id space and INCLUDE values decouple from the
+# doc they belong to.
 
 statement ok
 CREATE TABLE t (id INT PRIMARY KEY, body VARCHAR, val INT);
@@ -43,7 +38,7 @@ VACUUM (REFRESH_TABLE) t;
 # arrives as [chunk[0]=conflict, chunk[1]=survivor, chunk[2]=survivor]
 # but the segment only allocates doc ids for chunk[1] and chunk[2].
 statement count 2
-INSERT INTO t VALUES (1, 'conflict', 99), (2, 'fox bird', 22), (3, 'fox cat', 33);
+INSERT INTO t VALUES (1, 'conflict', 99), (2, 'fox bird', 22), (3, 'fox cat', 33) ON CONFLICT DO NOTHING;
 
 statement ok
 VACUUM (REFRESH_TABLE) t;
@@ -67,7 +62,7 @@ statement ok
 VACUUM (REFRESH_TABLE) t;
 
 statement count 2
-INSERT INTO t VALUES (5, 'fox bee', 55), (1, 'conflict', 999), (6, 'fox jay', 66);
+INSERT INTO t VALUES (5, 'fox bee', 55), (1, 'conflict', 999), (6, 'fox jay', 66) ON CONFLICT DO NOTHING;
 
 statement ok
 VACUUM (REFRESH_TABLE) t;

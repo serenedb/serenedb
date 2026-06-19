@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_table_entry.h"
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/constraints/bound_check_constraint.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -35,6 +37,7 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "catalog/store/store.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/search_table_dispatch.h"
@@ -43,9 +46,20 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
+namespace {
+
+duckdb::virtual_column_map_t StoreScanVirtualColumns(
+  duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData> data) {
+  auto& bind_data = data->Cast<duckdb::TableScanBindData>();
+  auto cols = bind_data.table.GetVirtualColumns();
+  cols.insert({kColumnIdentifierTableOid,
+               duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
+  return cols;
+}
+
+}  // namespace
 
 SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table) {
   // RTTI is unavoidable here: the caller hands us a generic
@@ -74,49 +88,79 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
   return nullptr;
 }
 
+duckdb::TableCatalogEntry& SereneDBTableEntry::ResolveStoreEntry(
+  duckdb::ClientContext& context) const {
+  auto store_name = catalog::StoreTableName(ParentCatalog().GetName(),
+                                            ParentSchema().name, name);
+  return duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
+                                   std::string{catalog::kStoreDatabaseName},
+                                   "main", store_name)
+    .Cast<duckdb::TableCatalogEntry>();
+}
+
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  auto& conn_ctx = GetSereneDBContext(context);
-  auto shard =
-    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(_sdb_table->GetId());
-  SDB_ASSERT(shard);
-  auto data = duckdb::make_uniq<TableScanBindData>();
-  data->table = _sdb_table;
-  for (const auto& col : _sdb_table->Columns()) {
-    if (col.GetId() == catalog::Column::kGeneratedPKId) {
-      continue;  // Skip generated PK -- not stored as a value
+  // Fast (search) table: scan the iresearch store directly. The bind data
+  // carries the user columns (the generated PK is not stored as a value) plus
+  // the rowid (PK bytes) virtual that DELETE/UPDATE consume.
+  if (_sdb_table->GetEngine() == catalog::TableEngine::Fast) {
+    auto data = duckdb::make_uniq<TableScanBindData>();
+    data->table = _sdb_table;
+    for (const auto& col : _sdb_table->Columns()) {
+      if (col.GetId() == catalog::Column::kGeneratedPKId) {
+        continue;  // Skip generated PK -- not stored as a value
+      }
+      data->column_ids.push_back(col.GetId());
+      data->column_types.push_back(col.type);
     }
-    data->column_ids.push_back(col.GetId());
-    data->column_types.push_back(col.type);
-  }
-  // Always include rowid (PK bytes) as the last column for DELETE/UPDATE
-  data->table_entry = this;
-  data->entry_kind = ScanEntryKind::BaseTable;
-
-  bind_data = std::move(data);
-  if (shard->GetStorage() == catalog::StorageKind::kSearch) {
+    data->table_entry = this;
+    data->entry_kind = ScanEntryKind::BaseTable;
+    bind_data = std::move(data);
     return CreateSearchTableScanFunction();
   }
-  return CreateTableFullscanFunction();
+
+  auto function =
+    ResolveStoreEntry(context).GetScanFunction(context, bind_data);
+  if (bind_data) {
+    if (auto* table_bind =
+          dynamic_cast<duckdb::TableScanBindData*>(bind_data.get())) {
+      table_bind->display_name = name;
+    }
+  }
+  // tableoid binds on tables (scoring functions and PG compatibility take
+  // it as an argument); scoring rewrites consume the reference before any
+  // scan would have to materialize it.
+  function.get_virtual_columns = StoreScanVirtualColumns;
+  return function;
 }
 
-void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
-                                               duckdb::LogicalGet& get,
-                                               duckdb::LogicalProjection& proj,
-                                               duckdb::LogicalUpdate& update,
-                                               duckdb::ClientContext& context) {
-  // We deliberately do NOT call
-  // duckdb::TableCatalogEntry::BindUpdateConstraints. The base class also flips
-  // update_is_del_and_insert + projects every physical column when any SET
-  // column is indexed (or is a LIST). For our storage that's pure overhead
-  // (RocksDB does partial per-column updates; SereneDBPhysicalUpdate already
-  // does delete-and-insert at the secondary index level for every UPDATE) AND
-  // it would silently overwrite the gen col recompute below with stale "i=i"
-  // passthroughs.
-  //
-  // TODO: handle update.return_chunk (RETURNING *) when we add support.
+duckdb::Catalog& SereneDBTableEntry::GetStorageCatalog(
+  duckdb::ClientContext& context) {
+  // Fast (search) tables have no store table; a write against one is tracked
+  // (RegisterDBModify, called by the INSERT/UPDATE/DELETE binders) on the
+  // SereneDB catalog itself -- its transaction runs the iresearch commit.
+  if (_sdb_table->GetEngine() == catalog::TableEngine::Fast) {
+    return ParentCatalog();
+  }
+  return ResolveStoreEntry(context).ParentCatalog();
+}
 
+void SereneDBTableEntry::BindUpdateConstraints(
+  duckdb::Binder& binder, duckdb::LogicalGet& get,
+  duckdb::LogicalProjection& proj, duckdb::LogicalUpdate& update,
+  duckdb::ClientContext& context) {
+  // Transactional tables use DuckDB's default update-constraint binding against
+  // the store table (partial per-column updates + base index/LIST handling).
+  if (_sdb_table->GetEngine() != catalog::TableEngine::Fast) {
+    duckdb::TableCatalogEntry::BindUpdateConstraints(binder, get, proj, update,
+                                                     context);
+    return;
+  }
+
+  // Fast (search) table: deliberately do NOT call the base method -- search
+  // UPDATE is delete+insert at the index level, so we project every physical
+  // column (below) and recompute STORED gen-cols ourselves.
   auto user_set = update.columns;
 
   // CHECK passthroughs -- VerifyUpdateConstraints needs every CHECK input
@@ -163,19 +207,39 @@ void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
     update.columns.push_back(gen_col.Physical());
   }
 
-  auto& conn_ctx = GetSereneDBContext(context);
-  auto shard =
-    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(_sdb_table->GetId());
-  SDB_ASSERT(shard);
-  if (shard->GetStorage() == catalog::StorageKind::kSearch) {
-    duckdb::physical_index_set_t all_physical;
-    for (auto& col : cols.Physical()) {
-      all_physical.insert(col.Physical());
-    }
-    duckdb::LogicalUpdate::BindExtraColumns(*this, get, proj, update,
-                                            all_physical);
-    update.update_is_del_and_insert = true;
+  // Project every physical column so the deleted-then-reinserted row can be
+  // rebuilt in full from the update's input.
+  duckdb::physical_index_set_t all_physical;
+  for (auto& col : cols.Physical()) {
+    all_physical.insert(col.Physical());
   }
+  duckdb::LogicalUpdate::BindExtraColumns(*this, get, proj, update,
+                                          all_physical);
+  update.update_is_del_and_insert = true;
+}
+
+duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
+  // Fast (search) tables identify rows by their PK (or synthetic generated PK)
+  // virtual columns rather than a physical rowid; advertise the full set so the
+  // INSERT/UPDATE/DELETE binders (BindRowIdColumns) and the scan can resolve
+  // them. Transactional tables use the store table's native rowid.
+  if (_sdb_table->GetEngine() == catalog::TableEngine::Fast) {
+    return BuildVirtualColumns(*_sdb_table, _indexed_col_indices);
+  }
+  auto cols = duckdb::TableCatalogEntry::GetVirtualColumns();
+  cols.insert({kColumnIdentifierTableOid,
+               duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
+  return cols;
+}
+
+duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {
+  // Fast tables have no physical rowid: row identity is the PK (or synthetic
+  // generated PK) virtual columns. Transactional tables fall back to DuckDB's
+  // default store rowid.
+  if (_sdb_table->GetEngine() == catalog::TableEngine::Fast) {
+    return BuildRowIdColumns(*_sdb_table, _indexed_col_indices);
+  }
+  return duckdb::TableCatalogEntry::GetRowIdColumns();
 }
 
 duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
@@ -308,14 +372,6 @@ duckdb::TableStorageInfo SereneDBTableEntry::BuildStorageInfo(
   }
 
   return info;
-}
-
-duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {
-  return BuildRowIdColumns(*_sdb_table, _indexed_col_indices);
-}
-
-duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
-  return BuildVirtualColumns(*_sdb_table, _indexed_col_indices);
 }
 
 duckdb::column_t SereneDBTableEntry::VirtualToPKColumnIndex(

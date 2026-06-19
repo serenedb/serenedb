@@ -49,14 +49,11 @@ QUERY PLAN
 │           Index:          │
 │      wal_wild_ni_idx      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
 │  │┌───────────────────┐│  │
-│  ││        AND        ││  │
-│  │└─────────┬─────────┘│  │
-│  │┌─────────┴─────────┐│  │
 │  ││   WILDCARD_NGRAM  ││  │
 │  ││    ────────────   ││  │
 │  ││    b(string) ''   ││  │

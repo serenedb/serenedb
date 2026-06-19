@@ -63,7 +63,6 @@ static_assert(BOOST_PFR_ENABLED);
 #include "basics/containers/flat_hash_map.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/type_traits.h"
 
 namespace sdb::basics {
 namespace detail {

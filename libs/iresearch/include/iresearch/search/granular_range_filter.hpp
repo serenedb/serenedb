@@ -100,6 +100,8 @@ class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
                     const options_type& options, FilterVisitor& visitor);
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
+    SDB_ASSERT(options().range.min.empty() || options().range.max.empty() ||
+               options().range.min.front() != options().range.max.front());
     return prepare(ctx.Boost(Boost()), field_id(), options());
   }
 };

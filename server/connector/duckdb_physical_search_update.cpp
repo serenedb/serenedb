@@ -40,16 +40,14 @@
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
-#include "search/search_table_shard.h"
-#include "storage_engine/table_shard.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 namespace {
 
 struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
-  std::shared_ptr<TableShard> table_shard;
-  search::SearchTableShard* search_shard = nullptr;
+  std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
   std::string table_key;
 
@@ -97,11 +95,10 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
 
-  state->table_shard = snapshot->GetTableShard(state->table_id);
-  SDB_ASSERT(state->table_shard);
-  SDB_ASSERT(state->table_shard->GetStorage() == catalog::StorageKind::kSearch,
-             "SereneDBSearchUpdate dispatched against a non-search shard");
-  state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
+  state->search_table = _table->GetData();
+  SDB_ASSERT(state->search_table,
+             "SereneDBSearchUpdate dispatched against a non-Fast table");
+  state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
   const auto& columns = _table->Columns();
   const auto& pk_col_ids = _table->PKColumns();
@@ -156,8 +153,6 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
 
   state->sdb_txn = &conn_ctx;
-  state->search_shard =
-    &basics::downCast<search::SearchTableShard>(*state->table_shard);
   return state;
 }
 
@@ -171,7 +166,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   }
 
   auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
-    gstate.table_shard, [&] { return gstate.search_shard->GetTransaction(); });
+    gstate.search_table, [&] { return gstate.search_table->GetTransaction(); });
 
   SearchSinkDeleteBaseImpl remover{trx};
   remover.InitImpl(num_rows);
@@ -192,7 +187,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
       key_buffer);
   }
   remover.FinishImpl();
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.table_shard, wal_pks);
+  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, wal_pks);
 
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.chunk_types);
@@ -214,7 +209,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
                          gstate.new_pk_columns, gstate.table_key,
                          uses_generated_pk, pk_base);
   gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
-    gstate.table_shard, duckdb::BufferManager::GetBufferManager(context.client),
+    gstate.search_table, duckdb::BufferManager::GetBufferManager(context.client),
     gstate.chunk_types, new_row, uses_generated_pk, pk_base);
 
   gstate.update_count += num_rows;

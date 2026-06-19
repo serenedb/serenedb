@@ -169,39 +169,5 @@ IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, InputType& in,
   unpack(decoded, encoded, bits);
 }
 
-template<typename UnpackFunc, typename InputType>
-IRS_FORCE_INLINE void read_block_delta32(UnpackFunc&& unpack, InputType& in,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t size, uint32_t prev) {
-  static_assert(std::is_base_of_v<DataInput, InputType>);
-  SDB_ASSERT(encoded);
-  SDB_ASSERT(decoded);
-  SDB_ASSERT(size != 0);
-
-  const uint32_t bits = in.ReadByte();
-
-  if (kAllEqual == bits) [[unlikely]] {
-    const auto value = in.ReadV32();
-    for (uint32_t i = 0; i < size; ++i) {
-      decoded[i] = prev + value * (i + 1);
-    }
-    return;
-  }
-
-  const size_t required = packed::BytesRequired32(size, bits);
-  const auto* buf = in.ReadVolatile(required);
-  if constexpr (std::is_same_v<BytesViewInput, InputType>) {
-    SDB_ASSERT(buf);
-    encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
-  } else if (buf) [[likely]] {
-    encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
-  } else {
-    in.ReadData(reinterpret_cast<byte_type*>(encoded), required);
-  }
-
-  unpack(prev, decoded, encoded, bits);
-}
-
 }  // namespace bitpack
 }  // namespace irs

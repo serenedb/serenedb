@@ -20,12 +20,12 @@ COPY (
   SELECT s::INT AS id,
          CASE WHEN s % 2 = 0 THEN NULL ELSE 'red fox '||s::TEXT END AS body
   FROM generate_series(1, 2048) AS s
-) TO '/tmp/${__DATABASE__}_null_writer.jsonl' (FORMAT json);
+) TO '${__TEST_DIR__}/null_writer.jsonl' (FORMAT json);
 
 
 query
 SELECT count(*), count(*) FILTER (WHERE body IS NULL)
-FROM read_json('/tmp/${__DATABASE__}_null_writer.jsonl');
+FROM read_json('${__TEST_DIR__}/null_writer.jsonl');
 ----
 count	count
 2048	1024
@@ -43,7 +43,7 @@ CREATE INDEX rj_idx ON rj_t
 statement ok
 INSERT INTO rj_t
 SELECT id, body
-FROM read_json('/tmp/${__DATABASE__}_null_writer.jsonl');
+FROM read_json('${__TEST_DIR__}/null_writer.jsonl');
 
 
 statement ok

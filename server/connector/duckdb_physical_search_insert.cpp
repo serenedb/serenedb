@@ -56,17 +56,15 @@
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
 #include "search/search_table_changes.h"
-#include "search/search_table_shard.h"
-#include "storage_engine/table_shard.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 namespace {
 
 struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
-  std::shared_ptr<TableShard> table_shard;
+  std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
-  search::SearchTableShard* search_shard = nullptr;
   std::vector<catalog::Column::Id> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
@@ -90,7 +88,7 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   ~SearchInsertGlobalState() override {
     if (ctas_mode && !ctas_finalized && !ctas_table_name.empty()) {
       try {
-        auto& catalog = catalog::CatalogFeature::instance().Global();
+        auto& catalog = catalog::GetCatalog();
         auto r = catalog.DropTable(ctas_database_name, ctas_schema_name,
                                    ctas_table_name, true);
         if (!r.ok()) {
@@ -144,12 +142,11 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   }
   // CTAS has no PK/UNIQUE constraints, so the Table ctor wires up a generated
   // PK sequence.
-  ApplyColumnModes(options.columns, table_info.options);
   ApplyStorageKind(options, table_info.options);
-  SDB_ASSERT(options.storage == catalog::StorageKind::kSearch,
-             "SereneDBSearchInsert CTAS mode used for non-search storage");
+  SDB_ASSERT(options.engine == catalog::TableEngine::Fast,
+             "SereneDBSearchInsert CTAS mode used for non-Fast engine");
 
-  auto& catalog_impl = catalog::CatalogFeature::instance().Global();
+  auto& catalog_impl = catalog::GetCatalog();
   const bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
@@ -194,7 +191,7 @@ void RemoveCtasTombstoneIfNeeded(SearchInsertGlobalState& state) {
     return;
   }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
-  auto& catalog = catalog::CatalogFeature::instance().Global();
+  auto& catalog = catalog::GetCatalog();
   auto r = catalog.RemoveTombstone(
     state.ctas_database_id, state.ctas_schema_name, state.ctas_table_name);
   if (!r.ok()) {
@@ -236,7 +233,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
       return nullptr;  // IF NOT EXISTS hit an existing relation.
     }
     conn_ctx.DropCatalogSnapshot();
-    auto& catalog_impl = catalog::CatalogFeature::instance().Global();
+    auto& catalog_impl = catalog::GetCatalog();
     snapshot = catalog_impl.GetCatalogSnapshot();
   } else {
     table = _table;
@@ -246,11 +243,10 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_id = table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
 
-  state->table_shard = snapshot->GetTableShard(state->table_id);
-  SDB_ASSERT(state->table_shard);
-  SDB_ASSERT(state->table_shard->GetStorage() == catalog::StorageKind::kSearch,
-             "SereneDBSearchInsert dispatched against a non-search shard");
-  state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
+  state->search_table = table->GetData();
+  SDB_ASSERT(state->search_table,
+             "SereneDBSearchInsert dispatched against a non-Fast table");
+  state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
   if (table->PKColumns().empty()) {
     state->generated_pk_seq =
@@ -271,8 +267,6 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->pk_columns = duckdb_primary_key::BuildPKColumns(*table);
 
   state->sdb_txn = &conn_ctx;
-  state->search_shard =
-    &basics::downCast<search::SearchTableShard>(*state->table_shard);
 
   return state;
 }
@@ -284,7 +278,7 @@ SereneDBSearchInsert::GetLocalSinkState(
     sink_state ? &sink_state->Cast<SearchInsertGlobalState>() : nullptr;
   auto lstate = duckdb::make_uniq<SearchInsertLocalState>();
 
-  if (gstate == nullptr || gstate->search_shard == nullptr) {
+  if (gstate == nullptr || gstate->search_table == nullptr) {
     lstate->no_op = true;
     return lstate;
   }
@@ -293,7 +287,7 @@ SereneDBSearchInsert::GetLocalSinkState(
 
   if (lstate->bulk) {
     lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-      gstate->search_shard->GetTransaction());
+      gstate->search_table->GetTransaction());
     lstate->sink =
       MakeSearchTableInsertSink(*lstate->search_trx, gstate->column_ids);
   }
@@ -313,8 +307,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   if (!lstate->sink) {
     SDB_ASSERT(!lstate->bulk);
     auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
-      gstate.table_shard,
-      [&] { return gstate.search_shard->GetTransaction(); });
+      gstate.search_table,
+      [&] { return gstate.search_table->GetTransaction(); });
     lstate->sink = MakeSearchTableInsertSink(trx, gstate.column_ids);
   }
 
@@ -328,12 +322,12 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
 
   if (lstate->bulk) {
     if (!lstate->chunk_writer) {
-      lstate->chunk_writer.emplace(gstate.search_shard->NewChunkWriter());
+      lstate->chunk_writer.emplace(gstate.search_table->NewChunkWriter());
     }
     lstate->chunk_writer->Append(chunk, pk_base);
   } else {
     gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
-      gstate.table_shard,
+      gstate.search_table,
       duckdb::BufferManager::GetBufferManager(context.client),
       gstate.chunk_types, chunk, uses_generated_pk, pk_base);
   }
@@ -369,7 +363,7 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   if (lstate->bulk) {
     gstate.bulk_chunks.push_back(std::move(pending));
     gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
-      gstate.table_shard, std::move(lstate->search_trx));
+      gstate.search_table, std::move(lstate->search_trx));
   }
   return duckdb::SinkCombineResultType::FINISHED;
 }
@@ -386,7 +380,7 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   }
 
   if (!gstate.bulk_chunks.empty()) {
-    gstate.sdb_txn->SearchTxn().AddReferences(gstate.table_shard,
+    gstate.sdb_txn->SearchTxn().AddReferences(gstate.search_table,
                                               std::move(gstate.bulk_chunks));
   }
 

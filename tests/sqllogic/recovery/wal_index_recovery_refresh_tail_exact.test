@@ -1,0 +1,115 @@
+control substitution on
+
+# Refresh, then an un-checkpointed tail, then crash. The refresh makes batch 1
+# durable in the segments and stamps the EXACT durable WAL cursor (the WAL end
+# offset of the last flushed commit). Batch 2 is written post-refresh with the
+# index commit suppressed, so it lives only in the store WAL. After the crash,
+# recovery skips the durable batch by exact offset and streams the tail exactly
+# once -- every row searchable, none duplicated, counts exact.
+#
+# Under the exact cursor an under-claim would re-stream batch 1 (with no dedup,
+# duplicate postings -> inflated counts); this pins exact-once via per-token
+# COUNT checks.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rt_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE rt_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX rt_idx ON rt_t USING inverted(id, body rt_dict);
+
+statement ok
+INSERT INTO rt_t SELECT i, 'durable_' || i FROM range(0, 4000) AS t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rt_t;
+
+query
+SELECT COUNT(*) FROM rt_idx;
+----
+count
+4000
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO rt_t SELECT i, 'tail_' || i FROM range(4000, 5500) AS t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection rt_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) rt_t;
+
+connection rt_after
+query
+SELECT COUNT(*) FROM rt_t;
+----
+count
+5500
+
+connection rt_after
+query
+SELECT COUNT(*) FROM rt_idx;
+----
+count
+5500
+
+# Durable batch served from the segments (skipped on replay), each exactly once.
+connection rt_after
+query
+SELECT COUNT(*) FROM rt_idx WHERE body @@ ts_phrase('durable_0');
+----
+count
+1
+
+connection rt_after
+query
+SELECT COUNT(*) FROM rt_idx WHERE body @@ ts_phrase('durable_3999');
+----
+count
+1
+
+# Tail replayed from the WAL, each exactly once.
+connection rt_after
+query
+SELECT COUNT(*) FROM rt_idx WHERE body @@ ts_phrase('tail_4000');
+----
+count
+1
+
+connection rt_after
+query
+SELECT id FROM rt_idx WHERE body @@ ts_phrase('tail_5499');
+----
+id
+5499
+
+connection rt_after
+statement ok
+DROP INDEX rt_idx;
+
+connection rt_after
+statement ok
+DROP TABLE rt_t;
+
+connection rt_after
+statement ok
+DROP TEXT SEARCH DICTIONARY rt_dict;

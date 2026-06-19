@@ -287,14 +287,14 @@ INSERT INTO prim_types VALUES (7, '{"other":"x"}'::json);
 statement error
 INSERT INTO prim_types VALUES (8, '{"val":{"x":1}}'::json);
 ----
-db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
 
 
 # Array leaf -- rejected.
 statement error
 INSERT INTO prim_types VALUES (9, '{"val":["a","b"]}'::json);
 ----
-db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
 
 
 # Malformed JSON must fail loudly so we never end up with a row that's in
@@ -447,14 +447,11 @@ QUERY PLAN
 │           Index:          │
 │     num_str_split_idx     │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
 │  │┌───────────────────┐│  │
-│  ││        AND        ││  │
-│  │└─────────┬─────────┘│  │
-│  │┌─────────┴─────────┐│  │
 │  ││        Term       ││  │
 │  ││    ────────────   ││  │
 │  ││ ("content" -> 'val││  │
@@ -487,14 +484,11 @@ QUERY PLAN
 │           Index:          │
 │     num_str_split_idx     │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
 │  │┌───────────────────┐│  │
-│  ││        AND        ││  │
-│  │└─────────┬─────────┘│  │
-│  │┌─────────┴─────────┐│  │
 │  ││        Term       ││  │
 │  ││    ────────────   ││  │
 │  ││ ("content" -> 'val││  │
@@ -540,7 +534,7 @@ QUERY PLAN
 │           Index:          │
 │     num_str_split_idx     │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │        Projections:       │
 │          content          │
@@ -582,7 +576,7 @@ QUERY PLAN
 │           Index:          │
 │     num_str_split_idx     │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │        Projections:       │
 │          content          │

@@ -48,13 +48,9 @@ QUERY PLAN
 │          Filter:          │
 │  ┌─────────────────────┐  │
 │  │┌───────────────────┐│  │
-│  ││        AND        ││  │
-│  │└─────────┬─────────┘│  │
-│  │┌─────────┴─────────┐│  │
-│  ││       PHRASE      ││  │
+│  ││        Term       ││  │
 │  ││    ────────────   ││  │
-│  ││  notes(string) =  ││  │
-│  ││ <Term:one(0, 0); >││  │
+│  ││notes(string) = one││  │
 │  │└───────────────────┘│  │
 │  └─────────────────────┘  │
 │                           │
@@ -80,18 +76,14 @@ QUERY PLAN
 │           Index:          │
 │      src_inc_only_idx     │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
 │  │┌───────────────────┐│  │
-│  ││        AND        ││  │
-│  │└─────────┬─────────┘│  │
-│  │┌─────────┴─────────┐│  │
-│  ││       PHRASE      ││  │
+│  ││        Term       ││  │
 │  ││    ────────────   ││  │
-│  ││  notes(string) =  ││  │
-│  ││ <Term:one(0, 0); >││  │
+│  ││notes(string) = one││  │
 │  │└───────────────────┘│  │
 │  └─────────────────────┘  │
 │                           │
@@ -122,18 +114,14 @@ QUERY PLAN
 │           Index:          │
 │      src_inc_only_idx     │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │                           │
 │          Filter:          │
 │  ┌─────────────────────┐  │
 │  │┌───────────────────┐│  │
-│  ││        AND        ││  │
-│  │└─────────┬─────────┘│  │
-│  │┌─────────┴─────────┐│  │
-│  ││       PHRASE      ││  │
+│  ││        Term       ││  │
 │  ││    ────────────   ││  │
-│  ││  notes(string) =  ││  │
-│  ││ <Term:one(0, 0); >││  │
+│  ││notes(string) = one││  │
 │  │└───────────────────┘│  │
 │  └─────────────────────┘  │
 │                           │
@@ -214,7 +202,7 @@ QUERY PLAN
 │           Index:          │
 │  src_hnsw_only_idx (ANN)  │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 1          │
 │          Dims: 3          │
 │                           │
@@ -264,7 +252,7 @@ QUERY PLAN
 │           Index:          │
 │  src_hnsw_mixed_idx (ANN) │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 1          │
 │          Dims: 3          │
 │                           │

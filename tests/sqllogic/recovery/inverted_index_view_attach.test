@@ -1,0 +1,121 @@
+control substitution on
+
+# A view + inverted index over a table in a user-ATTACHed duckdb database
+# survive a restart, but the attach itself does not (catalog_attach.test).
+# After recovery, index-only queries keep working; materializing real
+# columns errors until the database is re-attached, then resolves the same
+# rowids against the untouched source file.
+
+statement ok
+DETACH DATABASE IF EXISTS iva_att;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/iva_src.db' AS iva_att;
+
+
+statement ok
+CREATE TABLE iva_att.main.docs(id INTEGER, body TEXT);
+
+
+statement ok
+INSERT INTO iva_att.main.docs VALUES
+  (1, 'alpha cat runs'),
+  (2, 'beta dog sleeps'),
+  (3, 'gamma cat jumps');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY iva_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE VIEW iva_view AS SELECT * FROM iva_att.main.docs;
+
+
+statement ok
+CREATE INDEX iva_idx ON iva_view USING inverted(body iva_en);
+
+
+query
+SELECT id, body FROM iva_idx WHERE body @@ ts_phrase('cat') ORDER BY id;
+----
+id	body
+1	alpha cat runs
+3	gamma cat jumps
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT count(*) FROM duckdb_databases() WHERE database_name = 'iva_att';
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT count(*) FROM iva_idx WHERE body @@ ts_phrase('cat');
+----
+count
+2
+
+
+connection after_crash
+statement error
+SELECT id, body FROM iva_idx WHERE body @@ ts_phrase('cat');
+----
+db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
+
+
+connection after_crash
+statement ok
+ATTACH '${__TEST_DIR__}/iva_src.db' AS iva_att;
+
+
+connection after_crash
+query
+SELECT id, body FROM iva_idx WHERE body @@ ts_phrase('cat') ORDER BY id;
+----
+id	body
+1	alpha cat runs
+3	gamma cat jumps
+
+
+connection after_crash
+statement ok
+DROP VIEW iva_view CASCADE;
+
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY iva_en;
+
+
+connection after_crash
+statement ok
+DETACH iva_att;

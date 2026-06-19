@@ -23,7 +23,7 @@
 #include "basics/assert.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
-#include "rocksdb_engine_catalog/concat.h"
+#include "connector/key_concat.h"
 
 namespace sdb::connector::key_utils {
 
@@ -36,37 +36,13 @@ std::string PrepareTableKey(ObjectId id) {
 std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid) {
   SDB_ASSERT(id.isSet());
   std::string key;
-  rocksutils::Concat(key, id, column_oid);
+  keyenc::Concat(key, id, column_oid);
   return key;
-}
-
-void AppendColumnKey(std::string& key, catalog::Column::Id column_oid) {
-  SDB_ASSERT(!key.empty());
-  rocksutils::Append(key, column_oid);
 }
 
 void AppendTableKey(std::string& key, ObjectId id) {
   SDB_ASSERT(id.isSet());
-  rocksutils::Concat(key, id);
-}
-
-std::pair<std::string, std::string> CreateTableRange(ObjectId id) {
-  SDB_ASSERT(id.isSet());
-  if (id.id() != std::numeric_limits<decltype(id.id())>::max()) {
-    return {PrepareTableKey(id), PrepareTableKey(ObjectId{id.id() + 1})};
-  }
-  return {PrepareTableKey(id),
-          PrepareColumnKey(
-            id, catalog::Column::Id{
-                  std::numeric_limits<catalog::Column::Id::BaseType>::max()})};
-}
-
-std::pair<std::string, std::string> CreateTableColumnRange(
-  ObjectId id, catalog::Column::Id column_oid) {
-  SDB_ASSERT(column_oid.id() !=
-             std::numeric_limits<catalog::Column::Id::BaseType>::max());
-  return {PrepareColumnKey(id, column_oid),
-          PrepareColumnKey(id, catalog::Column::Id{column_oid.id() + 1})};
+  keyenc::Concat(key, id);
 }
 
 }  // namespace sdb::connector::key_utils

@@ -24,7 +24,6 @@
 
 #include <filesystem>
 
-#include "iresearch/store/caching_directory.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 
@@ -72,16 +71,6 @@ class FSDirectory : public Directory {
   DirectoryAttributes _attrs;
   std::filesystem::path _dir;
   size_t _fd_pool_size;
-};
-
-class CachingFSDirectory : public CachingDirectoryBase<FSDirectory, uint64_t> {
- public:
-  using CachingDirectoryBase::CachingDirectoryBase;
-
-  bool length(uint64_t& result, std::string_view name) const noexcept final;
-
-  IndexInput::ptr open(std::string_view name,
-                       IOAdvice advice) const noexcept final;
 };
 
 }  // namespace irs

@@ -29,7 +29,7 @@
 
 namespace sdb::connector {
 
-// DELETE on a StorageKind::kSearch table. Single-threaded like the RocksDB
+// DELETE on a TableEngine::Fast table. Single-threaded like the RocksDB
 // delete operator (no ParallelSink / local sink state): each row's PK is
 // encoded and (1) handed to the shard's serial iresearch trx as a removal and
 // (2) recorded on the transaction as the WAL delete payload.

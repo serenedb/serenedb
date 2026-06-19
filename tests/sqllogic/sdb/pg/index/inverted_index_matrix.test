@@ -201,7 +201,7 @@ pk
 statement error
 INSERT INTO m_j_prim VALUES (99, '{"obj":1}');
 ----
-db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
 
 
 statement ok
@@ -948,7 +948,7 @@ QUERY PLAN
 │           Index:          │
 │    m_vec_hnsw_st (ANN)    │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 1          │
 │          Dims: 3          │
 │                           │
@@ -978,7 +978,7 @@ QUERY PLAN
 │           Index:          │
 │  m_vec_hnsw_expr_ns (ANN) │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │           Top: 1          │
 │          Dims: 3          │
 │                           │
@@ -1000,7 +1000,7 @@ QUERY PLAN
 │           Index:          │
 │ m_vec_hnsw_st (ANN range) │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │      Radius: 1.500000     │
 │          Dims: 3          │
 │      Projections: pk      │
@@ -1020,7 +1020,7 @@ QUERY PLAN
 │  m_vec_hnsw_expr_ns (ANN  │
 │           range)          │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │      Radius: 1.500000     │
 │          Dims: 3          │
 │      Projections: pk      │
@@ -1372,10 +1372,10 @@ COPY (SELECT * FROM (VALUES
       INTERVAL 10 DAY,
       200::HUGEINT)
 ) AS t(pk, u8, u16, u32, tt, ts_ms, ts_ns, ts_tz, u, d, iv, h))
-TO '/tmp/sdb_matrix_unsup.parquet' (FORMAT parquet);
+TO '${__TEST_DIR__}/sdb_matrix_unsup.parquet' (FORMAT parquet);
 
 statement ok
-CREATE VIEW m_unsup AS SELECT * FROM read_parquet('/tmp/sdb_matrix_unsup.parquet');
+CREATE VIEW m_unsup AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_matrix_unsup.parquet');
 
 statement ok
 CREATE INDEX m_unsup_u8    ON m_unsup USING inverted(pk, u8);
@@ -2239,10 +2239,10 @@ COPY (SELECT * FROM (VALUES
       TIMESTAMP_NS '2024-06-15 12:00:00',
       TIMESTAMPTZ  '2024-06-15 12:00:00+00')
 ) AS t(pk, u8, u16, u32, ts_ms, ts_ns, ts_tz))
-TO '/tmp/sdb_g6_unsup.parquet' (FORMAT parquet);
+TO '${__TEST_DIR__}/sdb_g6_unsup.parquet' (FORMAT parquet);
 
 statement ok
-CREATE VIEW g6_v_unsup AS SELECT * FROM read_parquet('/tmp/sdb_g6_unsup.parquet');
+CREATE VIEW g6_v_unsup AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g6_unsup.parquet');
 
 statement ok
 CREATE INDEX g6_idx_unsup ON g6_v_unsup USING inverted
@@ -2766,10 +2766,10 @@ COPY (SELECT * FROM (VALUES
   (1, TIMESTAMPTZ '2024-01-01 00:00:00+00', 'a'),
   (2, TIMESTAMPTZ '2024-06-15 12:00:00+00', 'b')
 ) AS t(pk, ts_tz, tag))
-TO '/tmp/sdb_g11_tz.parquet' (FORMAT parquet);
+TO '${__TEST_DIR__}/sdb_g11_tz.parquet' (FORMAT parquet);
 
 statement ok
-CREATE VIEW g11_a_v AS SELECT * FROM read_parquet('/tmp/sdb_g11_tz.parquet');
+CREATE VIEW g11_a_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g11_tz.parquet');
 
 statement ok
 CREATE INDEX g11_a_expr_st ON g11_a_v USING inverted(pk, (coalesce(ts_tz, NULL::TIMESTAMPTZ))) INCLUDE (tag);
@@ -2828,10 +2828,10 @@ COPY (SELECT * FROM (VALUES
   (1, 5::UTINYINT,   500::USMALLINT,   5000::UINTEGER,       'a'),
   (2, 250::UTINYINT, 60000::USMALLINT, 4000000000::UINTEGER, 'b')
 ) AS t(pk, u8, u16, u32, tag))
-TO '/tmp/sdb_g11_unsigned.parquet' (FORMAT parquet);
+TO '${__TEST_DIR__}/sdb_g11_unsigned.parquet' (FORMAT parquet);
 
 statement ok
-CREATE VIEW g11_d_v AS SELECT * FROM read_parquet('/tmp/sdb_g11_unsigned.parquet');
+CREATE VIEW g11_d_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g11_unsigned.parquet');
 
 statement ok
 CREATE INDEX g11_d_u8_expr_st  ON g11_d_v USING inverted(pk, (u8  + 1::UTINYINT))  INCLUDE (tag);
@@ -2873,10 +2873,10 @@ COPY (SELECT * FROM (VALUES
       TIMESTAMP_NS '2024-06-15 12:00:00',
       'b')
 ) AS t(pk, tt, ts_ms, ts_ns, tag))
-TO '/tmp/sdb_g11_temporal.parquet' (FORMAT parquet);
+TO '${__TEST_DIR__}/sdb_g11_temporal.parquet' (FORMAT parquet);
 
 statement ok
-CREATE VIEW g11_e_v AS SELECT * FROM read_parquet('/tmp/sdb_g11_temporal.parquet');
+CREATE VIEW g11_e_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g11_temporal.parquet');
 
 statement ok
 CREATE INDEX g11_e_tt_expr_st    ON g11_e_v USING inverted(pk, (tt    + INTERVAL '1 second')) INCLUDE (tag);
@@ -4996,10 +4996,10 @@ COPY (SELECT * FROM (VALUES
    '23:00:00+05'::TIMETZ,
    '23:00:00.987654321'::TIME_NS)
 ) AS t(pk, list_tstz, list_tt, list_tsms, list_tsns, ttz, tns))
-TO '/tmp/sdb_g19_temporal.parquet' (FORMAT parquet);
+TO '${__TEST_DIR__}/sdb_g19_temporal.parquet' (FORMAT parquet);
 
 statement ok
-CREATE VIEW g19_v AS SELECT * FROM read_parquet('/tmp/sdb_g19_temporal.parquet');
+CREATE VIEW g19_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g19_temporal.parquet');
 
 statement ok
 CREATE INDEX g19_acc_list_tstz ON g19_v USING inverted(pk, list_tstz);
@@ -5765,10 +5765,10 @@ COPY (SELECT * FROM (VALUES
       TIME_NS '12:34:56',
       TIMETZ '12:34:56+00')
 ) AS t(pk, ub, uh, tt, tn, ttz))
-TO '/tmp/sdb_g22_unsup.parquet' (FORMAT parquet);
+TO '${__TEST_DIR__}/sdb_g22_unsup.parquet' (FORMAT parquet);
 
 statement ok
-CREATE VIEW g22_v_unsup AS SELECT * FROM read_parquet('/tmp/sdb_g22_unsup.parquet');
+CREATE VIEW g22_v_unsup AS SELECT * FROM read_parquet('${__TEST_DIR__}/sdb_g22_unsup.parquet');
 
 statement ok
 CREATE INDEX g22_inc_ub ON g22_v_unsup USING inverted INCLUDE (ub);

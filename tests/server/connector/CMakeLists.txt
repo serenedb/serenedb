@@ -2,7 +2,7 @@ add_library(serene_tests_connector_deps INTERFACE)
 
 target_link_libraries(
     serene_tests_connector_deps
-    INTERFACE sereneserver serene_connector rocksdb
+    INTERFACE sereneserver serene_connector
 )
 
 add_executable(
@@ -10,9 +10,7 @@ add_executable(
     # Custom main (NOT gtest_main): brings up DuckDBEngine before any
     # SDB_* macro fires -- see tests_main.cpp comment.
     ${CMAKE_CURRENT_SOURCE_DIR}/tests_main.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_vector_builder.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_column_serializer_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_key_builder_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/index_lifecycle_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_search_filter_builder_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_search_sink_writer_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/search_db_wal_test.cpp

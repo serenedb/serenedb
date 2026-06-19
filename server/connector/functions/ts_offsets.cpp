@@ -30,6 +30,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filter_optimizer.hpp>
 #include <limits>
 #include <span>
 #include <vector>
@@ -273,7 +274,7 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
     return info;
   };
 
-  auto root = std::make_shared<irs::And>();
+  auto root = std::make_unique<irs::And>();
   duckdb::unique_ptr<duckdb::Expression> match_owner = std::move(match_expr);
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts{
     &match_owner, 1};
@@ -283,7 +284,9 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("failed to build filter from tsquery: ", result.errorMessage()));
   }
-  return root;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+  return filter;
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(

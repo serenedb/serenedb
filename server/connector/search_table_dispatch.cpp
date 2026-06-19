@@ -27,10 +27,10 @@
 #include <string>
 
 #include "basics/assert.h"
+#include "catalog/table.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
-#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 namespace {
@@ -58,8 +58,9 @@ std::optional<std::string> ExtractString(std::string_view option_key,
 
 }  // namespace
 
-void RejectIfSearchTable(const TableShard& shard, std::string_view operation) {
-  if (shard.GetStorage() == catalog::StorageKind::kSearch) {
+void RejectIfSearchTable(const catalog::Table& table,
+                         std::string_view operation) {
+  if (table.GetEngine() == catalog::TableEngine::Fast) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG(operation, " on a search-backed table is not yet supported"));
@@ -73,15 +74,15 @@ void ApplyStorageKind(
   static constexpr std::string_view kStorageKey = "storage";
   auto it = with_options.find(std::string{kStorageKey});
   if (it == with_options.end() || !it->second) {
-    return;  // default kRocksDB
+    return;  // default TableEngine::Transactional
   }
   auto value = ExtractString(kStorageKey, *it->second);
   SDB_ASSERT(value);
   auto lower = duckdb::StringUtil::Lower(*value);
   if (lower == "rocksdb") {
-    options.storage = catalog::StorageKind::kRocksDB;
+    options.engine = catalog::TableEngine::Transactional;
   } else if (lower == "search") {
-    options.storage = catalog::StorageKind::kSearch;
+    options.engine = catalog::TableEngine::Fast;
   } else {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

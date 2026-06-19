@@ -16,8 +16,7 @@ control substitution on
 # requested output slot.
 #
 # Notes:
-#   * `system ok` does not substitute ${VAR} (only $VAR). Use $__DATABASE__-NAME
-#     so the per-test prefix separates from the fixture suffix.
+#   * Fixtures live under ${__TEST_DIR__} (runner-managed per-run temp dir).
 #   * Expected-output blocks are NOT substituted. Project a stable slug
 #     (regexp_extract on the suffix) instead of the full path for assertions.
 
@@ -33,7 +32,7 @@ COPY (VALUES
   ('The inverted index is a fundamental structure in information retrieval.'),
   ('It maps each term to a posting list of documents that contain the term.'),
   ('Modern analyzers normalize text and lowercase tokens.'))
-TO '/tmp/${__DATABASE__}-alpha.md' (FORMAT csv, HEADER false);
+TO '${__TEST_DIR__}/rt-alpha.md' (FORMAT csv, HEADER false);
 
 statement ok
 COPY (VALUES
@@ -41,14 +40,14 @@ COPY (VALUES
   ('BM25 scores documents against a query by combining term frequency.'),
   ('Inverse document frequency and document length normalization apply.'),
   ('It is a probabilistic ranking function descended from Robertson analyzer work.'))
-TO '/tmp/${__DATABASE__}-bravo.md' (FORMAT csv, HEADER false);
+TO '${__TEST_DIR__}/rt-bravo.md' (FORMAT csv, HEADER false);
 
 statement ok
 COPY (VALUES
   ('Highlighting picks short snippets around matched terms.'),
   ('A common approach is sentence-aware passage extraction using a break iterator.'),
   ('Many systems retokenize the source at query time to produce snippets.'))
-TO '/tmp/${__DATABASE__}-charlie.txt' (FORMAT csv, HEADER false);
+TO '${__TEST_DIR__}/rt-charlie.txt' (FORMAT csv, HEADER false);
 
 
 statement ok
@@ -70,20 +69,20 @@ CREATE TEXT SEARCH DICTIONARY read_text_en(
 # ============================================================================
 
 query
-SELECT count(*) FROM read_text('/tmp/$__DATABASE__-alpha.md');
+SELECT count(*) FROM read_text('${__TEST_DIR__}/rt-alpha.md');
 ----
 count
 1
 
 query
-SELECT count(*) FROM read_text('/tmp/$__DATABASE__-*');
+SELECT count(*) FROM read_text('${__TEST_DIR__}/rt-*');
 ----
 count
 3
 
 # Empty glob: ALLOW_EMPTY -> zero rows, no error.
 query
-SELECT count(*) FROM read_text('/tmp/$__DATABASE__-no_such_*');
+SELECT count(*) FROM read_text('${__TEST_DIR__}/rt-no_such_*');
 ----
 count
 0
@@ -95,29 +94,29 @@ count
 
 # Same UTF-8 fixtures: read_blob returns BLOB-typed content, octet_length matches file size.
 query
-SELECT count(*) FROM read_blob('/tmp/$__DATABASE__-*');
+SELECT count(*) FROM read_blob('${__TEST_DIR__}/rt-*');
 ----
 count
 3
 
 query
-SELECT DISTINCT typeof(content) FROM read_blob('/tmp/$__DATABASE__-*');
+SELECT DISTINCT typeof(content) FROM read_blob('${__TEST_DIR__}/rt-*');
 ----
 typeof
 BLOB
 
 # Stage a non-UTF8 fixture by writing a parquet file (its magic + compressed
 # payload aren't valid UTF-8) and confirm the read_text/read_blob asymmetry.
-# Uses a distinct prefix so the later '/tmp/${__DATABASE__}-*' glob (over the
+# Uses a distinct prefix so the later '${__TEST_DIR__}/rt-*' glob (over the
 # .md / .txt fixtures) doesn't pick it up.
 statement ok
-COPY (SELECT 1 AS x) TO '/tmp/binfix_${__DATABASE__}.parquet' (FORMAT parquet);
+COPY (SELECT 1 AS x) TO '${__TEST_DIR__}/binfix.parquet' (FORMAT parquet);
 
 # read_blob succeeds on binary content.
 query
 SELECT octet_length(content) > 0 AS has_bytes,
        typeof(content) AS t
-FROM read_blob('/tmp/binfix_${__DATABASE__}.parquet');
+FROM read_blob('${__TEST_DIR__}/binfix.parquet');
 ----
 has_bytes	t
 t	BLOB
@@ -125,7 +124,7 @@ t	BLOB
 # read_text on the same file fails at the UTF-8 validation step when content is
 # actually projected (count(*) alone wouldn't trigger the read).
 statement error read_text: could not read content of file .* as valid UTF-8
-SELECT content FROM read_text('/tmp/binfix_${__DATABASE__}.parquet');
+SELECT content FROM read_text('${__TEST_DIR__}/binfix.parquet');
 
 
 # ============================================================================
@@ -153,7 +152,7 @@ CREATE TEXT SEARCH DICTIONARY pat_caps(
 statement ok
 CREATE TABLE blob_docs AS
   SELECT filename AS path, content AS body
-  FROM read_blob('/tmp/$__DATABASE__-*');
+  FROM read_blob('${__TEST_DIR__}/rt-*');
 
 
 query
@@ -245,7 +244,7 @@ CREATE TEXT SEARCH DICTIONARY blob_ng (
 statement ok
 CREATE TABLE blob_ng_docs AS
   SELECT filename AS path, content AS body
-  FROM read_blob('/tmp/$__DATABASE__-*');
+  FROM read_blob('${__TEST_DIR__}/rt-*');
 
 statement ok
 CREATE INDEX blob_ng_docs_idx ON blob_ng_docs USING inverted(body blob_ng);
@@ -513,7 +512,7 @@ id
 statement ok
 CREATE VIEW v_text AS
   SELECT filename AS path, content
-  FROM read_text('/tmp/$__DATABASE__-*');
+  FROM read_text('${__TEST_DIR__}/rt-*');
 
 statement ok
 CREATE INDEX v_text_idx ON v_text USING inverted(content read_text_en);
@@ -707,7 +706,7 @@ charlie	A common approach is sentence-aware <b>passage extraction</b> using a br
 statement ok
 CREATE TABLE t_text AS
   SELECT filename AS path, content
-  FROM read_text('/tmp/$__DATABASE__-*');
+  FROM read_text('${__TEST_DIR__}/rt-*');
 
 statement ok
 CREATE INDEX t_text_idx ON t_text USING inverted(content read_text_en);
@@ -745,12 +744,12 @@ bravo
 
 statement ok
 COPY (VALUES ('Disappearing payload mentions the unique token gargantuanpixie.'))
-TO '/tmp/${__DATABASE__}-vanish.txt' (FORMAT csv, HEADER false);
+TO '${__TEST_DIR__}/rt-vanish.txt' (FORMAT csv, HEADER false);
 
 statement ok
 CREATE VIEW v_vanish AS
   SELECT filename AS path, content
-  FROM read_text('/tmp/${__DATABASE__}-vanish.txt');
+  FROM read_text('${__TEST_DIR__}/rt-vanish.txt');
 
 statement ok
 CREATE INDEX v_vanish_idx ON v_vanish USING inverted(content read_text_en);
@@ -777,7 +776,7 @@ Disappearing payload mentions the unique token <b>gargantuanpixie</b>
 # COPY to mutate the file.)
 statement ok
 COPY (SELECT '' AS x)
-TO '/tmp/${__DATABASE__}-vanish.txt' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+TO '${__TEST_DIR__}/rt-vanish.txt' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
 
 # Posting lists are independent of the source: the index still returns 1 row.
 query
@@ -788,7 +787,7 @@ count
 
 # A fresh read_text of the now-empty file no longer contains the token.
 query
-SELECT count(*) FROM read_text('/tmp/${__DATABASE__}-vanish.txt')
+SELECT count(*) FROM read_text('${__TEST_DIR__}/rt-vanish.txt')
 WHERE content LIKE '%gargantuanpixie%';
 ----
 count
@@ -799,7 +798,7 @@ count
 # query that projects content forces the lookup TF to read the file and the
 # UTF-8 validation step errors.
 statement ok
-COPY (SELECT 1 AS x) TO '/tmp/${__DATABASE__}-vanish.txt' (FORMAT parquet);
+COPY (SELECT 1 AS x) TO '${__TEST_DIR__}/rt-vanish.txt' (FORMAT parquet);
 
 query
 SELECT count(*) FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
@@ -818,7 +817,7 @@ SELECT content FROM v_vanish_idx WHERE content @@ 'gargantuanpixie';
 # MultiFileList resolves the literal to an empty set, ALLOW_EMPTY swallows it,
 # and no lookup TF ever runs.
 query
-SELECT count(*) FROM read_text('/tmp/${__DATABASE__}-never_existed.txt');
+SELECT count(*) FROM read_text('${__TEST_DIR__}/rt-never_existed.txt');
 ----
 count
 0

@@ -53,7 +53,10 @@ class PhraseQuery : public Filter::Query {
     : states{std::move(states)},
       positions{std::move(positions)},
       stats{std::move(stats)},
-      boost{boost} {}
+      boost{boost},
+      has_intervals{absl::c_any_of(this->positions, [](const auto& pos) {
+        return pos.offs_max != pos.offs_min;
+      })} {}
 
   void visit(const SubReader& segment, PreparedStateVisitor& visitor,
              score_t boost) const final {
@@ -75,6 +78,7 @@ class PhraseQuery : public Filter::Query {
   positions_t positions;
   bstring stats;
   score_t boost;
+  bool has_intervals;
 };
 
 class FixedPhraseQuery : public PhraseQuery<FixedPhraseState> {

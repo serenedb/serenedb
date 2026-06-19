@@ -45,8 +45,6 @@ class Features final {
   // Return true if feature found, false otherwise
   bool Add(std::string_view name);
 
-  void Clear() noexcept { _index_features = irs::IndexFeatures::None; }
-
   constexpr irs::IndexFeatures GetIndexFeatures() const noexcept {
     return _index_features;
   }
@@ -54,8 +52,6 @@ class Features final {
   // Validate that features are supported by serened an ensure that
   // their dependencies are met.
   Result Validate(std::string_view type = {}) const;
-
-  void Visit(std::function<void(std::string_view)> visitor) const;
 
   bool HasFeatures(irs::IndexFeatures features) const noexcept {
     return (_index_features & features) == features;

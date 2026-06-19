@@ -5,7 +5,7 @@ statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body
       UNION ALL SELECT 2, 'anchin reads manga'
       UNION ALL SELECT 3, 'pudge plays again')
-TO '/tmp/${__DATABASE__}_view_iso.parquet' (FORMAT PARQUET);
+TO '${__TEST_DIR__}/view_iso.parquet' (FORMAT PARQUET);
 
 
 statement ok
@@ -21,16 +21,13 @@ CREATE TEXT SEARCH DICTIONARY view_iso_en(
 
 
 statement ok
-CREATE VIEW pq_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_iso.parquet');
+CREATE VIEW pq_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/view_iso.parquet');
 
 
 statement ok
 CREATE INDEX pq_idx ON pq_v USING inverted(id, body view_iso_en);
 
 connection reader
-statement ok
-SET sdb_read_your_own_writes = 0;
-
 
 connection reader
 statement ok

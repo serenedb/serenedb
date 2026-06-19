@@ -259,8 +259,12 @@ statement count 2
 DELETE FROM t WHERE r = 'aa';
 
 
+# reltuples is the stored DuckDB row-count statistic (GetTotalRows; no count(*)
+# query from pg_catalog). It counts appended rows incl. deleted-not-yet-reclaimed
+# tuples. CHECKPOINT reclaims deleted rows only when it merges row groups
+# (large, multi-row-group tables); this single-row-group table keeps all 6.
 query
 SELECT relname, reltuples FROM pg_class WHERE relname = 't';
 ----
 relname	reltuples
-t	4
+t	6

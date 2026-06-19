@@ -20,9 +20,6 @@
 
 #pragma once
 
-#include <rocksdb/snapshot.h>
-#include <rocksdb/utilities/transaction.h>
-
 #include <iresearch/index/index_writer.hpp>
 #include <optional>
 #include <vector>
@@ -33,30 +30,14 @@
 #include "basics/result.h"
 #include "catalog/catalog.h"
 #include "query/config.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "search/inverted_index_shard.h"
+#include "search/inverted_index_storage.h"
 #include "search/search_table_transaction.h"
 
-namespace sdb {
-
-class TableShard;
-
-}  // namespace sdb
 namespace sdb::query {
 
 class Transaction : public Config {
  public:
   using Config::Config;
-
-#ifdef SDB_GTEST
-  // Test-only: wrap a pre-built rocksdb::Transaction so unit tests can use
-  // query::Transaction without spinning up the storage engine.
-  Transaction(duckdb::ClientContext& client_ctx,
-              std::unique_ptr<rocksdb::Transaction> rocksdb_txn) noexcept
-    : Config{client_ctx} {
-    _rocksdb_transaction = std::move(rocksdb_txn);
-  }
-#endif
 
 #ifdef SDB_DEV
   virtual ~Transaction() {
@@ -65,19 +46,27 @@ class Transaction : public Config {
     // called. Otherwise we might have some unexpected data
     SDB_ASSERT(_search_transactions.empty());
     SDB_ASSERT(!_search_txn || _search_txn->Empty());
-    // RocksDB transactions aborts itself in destructor but just for consistency
-    // we should do Commit/Rollback explicitly
-    SDB_ASSERT(!_rocksdb_transaction);
   }
 #endif
 
   void OnNewStatement();
+  // Restarts a writeless explicit engine transaction under READ COMMITTED
+  // so the upcoming statement sees freshly committed changes. Must run
+  // outside the query lifecycle (before the statement starts).
+  void RefreshReadCommittedSnapshot();
 
   // Pre-commit work that needs an active transaction (revert SET LOCAL for
-  // custom-impl settings). Runs before the rocksdb commit.
+  // custom-impl settings). Runs before the engine commit.
   void PreCommit() noexcept;
   // Pre-rollback counterpart -- restores all SET values.
   void PreRollback() noexcept;
+
+  // Commit the search-index leg synchronously with the store table changes:
+  // called inside the engine commit, after store durability but before the
+  // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
+  // un-committed in-flight batch. Idempotent -- a no-op once the staged
+  // transactions have been committed (or when there were none).
+  void CommitSearch() noexcept;
 
   Result Commit();
 
@@ -87,57 +76,36 @@ class Transaction : public Config {
     _table_rows_deltas[table_id] += delta;
   }
 
-  bool HasRocksDBSnapshot() const noexcept {
-    return _rocksdb_snapshot != nullptr;
+  // True once any statement that reads or writes the current database ran
+  // inside the active explicit transaction; gates late SET TRANSACTION
+  // ISOLATION LEVEL changes.
+  bool HadQueryInTransaction() const noexcept {
+    return _had_query_in_transaction;
   }
-  bool HasRocksDBTransaction() const noexcept {
-    return _rocksdb_transaction != nullptr;
-  }
-
-  rocksdb::Transaction& GetRocksDBTransaction() const noexcept {
-    SDB_ASSERT(_rocksdb_transaction);
-    return *_rocksdb_transaction;
-  }
-
-  // Counts PutLogData blobs (marker-only writes) so the commit gate sees
-  // them as work -- rocksdb's own counters ignore PutLogData.
-  void RegisterLogDataMarker() noexcept { ++_num_log_data_markers; }
-  uint64_t GetNumLogDataMarkers() const noexcept {
-    return _num_log_data_markers;
-  }
-
-  const rocksdb::Snapshot& GetRocksDBSnapshot() const noexcept {
-    SDB_ASSERT(_rocksdb_snapshot);
-    return *_rocksdb_snapshot;
-  }
-
-  void EnsureRocksDBTransaction();
-  void EnsureRocksDBSnapshot();
+  void MarkQueryInTransaction() noexcept { _had_query_in_transaction = true; }
 
   search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(ObjectId index_id);
 
-  void EraseSearchTransaction(ObjectId shard_id) noexcept {
-    _search_transactions.erase(shard_id);
+  void EraseSearchTransaction(ObjectId index_id) noexcept {
+    _search_transactions.erase(index_id);
   }
 
-  // Single helper for ensuring an iresearch trx exists for any shard type
-  // (InvertedIndexShard or SearchTableShard). ObjectIds are catalog-wide
-  // unique via NextId(), so one trx-per-shard_id map serves both without
-  // collision. `make_trx` is invoked only on first call for a given
-  // shard_id; for either shard type pass [&]{ return shard.GetTransaction(); }.
-  // Lifetime of the returned trx is owned by the sdb txn (Commit/Rollback
-  // drains the map).
-  template<typename Factory>
-  irs::IndexWriter::Transaction& EnsureSearchTransaction(ObjectId shard_id,
-                                                         Factory&& make_trx) {
-    auto [it, inserted] = _search_transactions.try_emplace(shard_id, nullptr);
-    if (inserted) {
-      it->second = std::make_unique<irs::IndexWriter::Transaction>(make_trx());
+  // Pin every staged search transaction into the iresearch flush context so a
+  // concurrent refresh waits for it to settle before committing on tick. Call
+  // at feed time (after staging this batch, BEFORE the store WAL bytes are
+  // written) so the refresh's WAL-offset durable cursor never claims a
+  // transaction whose iresearch leg has not been flushed. RegisterFlush is a
+  // no-op until an active segment exists (docs staged) and idempotent after,
+  // so registering all transactions each feed is safe and cheap.
+  void RegisterSearchFlush() noexcept {
+    for (auto& [index_id, entry] : _search_transactions) {
+      if (entry.transaction) {
+        entry.transaction->RegisterFlush();
+      }
     }
-    return *it->second;
   }
 
-  // Lazily-created search-table (StorageKind::kSearch) transaction state +
+  // Lazily-created search-table (TableEngine::Fast) transaction state +
   // commit logic. Engaged on the first search-table write/scan; query::
   // Transaction just delegates RegisterFlush/Commit/Abort to it (see Commit /
   // Rollback). The operator and scan reach the per-shard mutators through here.
@@ -150,18 +118,6 @@ class Transaction : public Config {
 
   void Destroy() noexcept;
 
-  catalog::TableStats GetTableStats(ObjectId table_id) const;
-
-  // Must be called BEFORE the SST ingest so the IResearch background commit
-  // thread knows to wait for us before advancing _committed_tick.
-  void RegisterSearchFlushes() noexcept;
-
-  // Commit all IResearch transactions after an SST ingest.
-  // Uses Commit(post_ingest_seq + queries) so first_tick = post_ingest_seq,
-  // which is guaranteed > _committed_tick when RegisterSearchFlushes() was
-  // called before the ingest.
-  void CommitSearchTransactions(uint64_t post_ingest_seq) noexcept;
-
   template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
                                  Filter&& filter = nullptr) {
@@ -169,9 +125,7 @@ class Transaction : public Config {
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
                catalog::ObjectType::Table);
 
-    for (auto index_shard : snapshot->GetIndexShardsByRelation(table_id)) {
-      auto index =
-        snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
+    for (auto& index : snapshot->GetIndexesByRelation(table_id)) {
       SDB_ASSERT(index);
 
       if constexpr (!std::is_same_v<std::decay_t<Filter>, std::nullptr_t>) {
@@ -181,39 +135,44 @@ class Transaction : public Config {
         }
       }
 
-      if (index_shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
-        auto& inverted_index_shard =
-          basics::downCast<search::InvertedIndexShard>(*index_shard);
-        _search_transactions.try_emplace(inverted_index_shard.GetId(), nullptr);
-        auto& transaction = _search_transactions[inverted_index_shard.GetId()];
-        if (!transaction) {
-          transaction = std::make_unique<irs::IndexWriter::Transaction>(
-            inverted_index_shard.GetTransaction());
-        }
-        visit(*transaction, *index);
-      } else {
-        visit(GetRocksDBTransaction(), *index);
+      if (index->GetType() != catalog::ObjectType::InvertedIndex) {
+        // Secondary indexes are native ART on the store table; nothing to
+        // feed here.
+        continue;
       }
+      auto storage =
+        basics::downCast<const catalog::InvertedIndex>(*index).GetData();
+      SDB_ASSERT(storage);
+      auto& entry =
+        _search_transactions.try_emplace(index->GetId()).first->second;
+      if (!entry.transaction) {
+        entry.transaction = std::make_unique<irs::IndexWriter::Transaction>(
+          storage->GetTransaction());
+        // Keep the storage alive and reachable for Commit() without a catalog
+        // re-lookup.
+        entry.storage = storage;
+      }
+      visit(*entry.transaction, *index);
     }
   }
 
  private:
-  void ApplyTableStatsDiffs() noexcept;
+  struct SearchTransaction {
+    std::unique_ptr<irs::IndexWriter::Transaction> transaction;
+    std::shared_ptr<search::InvertedIndexStorage> storage;
+  };
 
-  std::shared_ptr<StorageSnapshot> _storage_snapshot;
-  std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
-  const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
-  containers::FlatHashMap<ObjectId,
-                          std::unique_ptr<irs::IndexWriter::Transaction>>
-    _search_transactions;
+  containers::FlatHashMap<ObjectId, SearchTransaction> _search_transactions;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
-  // All search-table (kSearch) state + WAL commit logic. Engaged lazily via
-  // SearchTxn(); reset in Destroy. The inverted-index trxs above stay here --
-  // they commit on the rocksdb seq, not the engine WAL tick.
+  void ApplyTableStatsDiffs() noexcept;
+  // All search-table (TableEngine::Fast) state + WAL commit logic. Engaged
+  // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
+  // stay here -- they commit on the store-table tick, not the engine WAL tick.
   std::optional<search::SearchTableTransaction> _search_txn;
   uint64_t _num_log_data_markers = 0;
+  bool _had_query_in_transaction = false;
 };
 
 }  // namespace sdb::query

@@ -6,7 +6,7 @@ control substitution on
 # DOES survive restart.
 
 statement ok
-ATTACH '/tmp/${__DATABASE__}_attach_recovery.duckdb' AS attach_probe;
+ATTACH '${__TEST_DIR__}/attach_recovery.duckdb' AS attach_probe;
 
 
 query

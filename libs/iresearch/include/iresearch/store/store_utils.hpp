@@ -46,14 +46,6 @@ StringType ToString(const byte_type* begin) {
   return StringType(reinterpret_cast<const char_type*>(begin), size);
 }
 
-struct EnumHash {
-  template<typename T>
-  size_t operator()(T value) const {
-    static_assert(std::is_enum_v<T>);
-    return static_cast<std::underlying_type_t<T>>(value);
-  }
-};
-
 IRS_FORCE_INLINE inline void WriteZV32(DataOutput& out, int32_t v) {
   out.WriteV32(sdb::ZigZagEncode32(v));
 }
@@ -125,42 +117,6 @@ size_t WriteBytes(OutputIterator& out, const T* value, size_t size) {
 template<typename OutputIterator, typename T>
 size_t WriteBytes(OutputIterator& out, const T& value) {
   return WriteBytes(out, &value, 1);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief read a value of the specified type from 'in'
-////////////////////////////////////////////////////////////////////////////////
-template<typename T>
-T& ReadRef(const byte_type*& in) {
-  auto& data = reinterpret_cast<T&>(*in);
-
-  in += sizeof(T);  // increment past value
-
-  return data;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief read an array of the specified type and length of 'size' from 'in'
-////////////////////////////////////////////////////////////////////////////////
-template<typename T>
-T* ReadRef(const byte_type*& in, size_t size) {
-  auto* data = reinterpret_cast<T*>(&(*in));
-
-  in += sizeof(T) * size;  // increment past value
-
-  return data;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief read a string + size into a value of type 'StringType' from 'in'
-////////////////////////////////////////////////////////////////////////////////
-template<typename StringType,
-         typename TraitsType = typename StringType::traits_type>
-StringType VReadString(const byte_type*& in) {
-  typedef typename TraitsType::char_type char_type;
-  const auto size = vread<uint64_t>(in);
-
-  return StringType(ReadRef<const char_type>(in, size), size);
 }
 
 IRS_FORCE_INLINE constexpr uint64_t ShiftPack64(uint64_t val, bool b) noexcept {

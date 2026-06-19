@@ -655,27 +655,4 @@ bool FSDirectory::sync(std::span<const std::string_view> files) noexcept {
   });
 }
 
-bool CachingFSDirectory::length(uint64_t& result,
-                                std::string_view name) const noexcept {
-  if (_cache.Visit(name, [&](const auto length) noexcept {
-        result = length;
-        return true;
-      })) {
-    return true;
-  }
-
-  return FSDirectory::length(result, name);
-}
-
-IndexInput::ptr CachingFSDirectory::open(std::string_view name,
-                                         IOAdvice advice) const noexcept {
-  auto stream = FSDirectory::open(name, advice);
-
-  if ((IOAdvice::READONCE != (advice & IOAdvice::READONCE)) && stream) {
-    _cache.Put(name, [&]() noexcept { return stream->Length(); });
-  }
-
-  return stream;
-}
-
 }  // namespace irs

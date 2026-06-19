@@ -257,8 +257,6 @@ uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name);
 std::string RegnamespaceOut(const catalog::Snapshot& snapshot, uint64_t oid);
 uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name);
 
-std::string ToPgTypeString(const duckdb::LogicalType& type);
-
 enum class VarFormat : int16_t;
 
 enum class DeserializeError { InvalidRepresentation };

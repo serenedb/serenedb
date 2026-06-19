@@ -24,7 +24,6 @@
 #include <duckdb/common/types/data_chunk.hpp>
 
 #include "basics/assert.h"
-#include "basics/down_cast.h"
 #include "basics/exceptions.h"
 #include "catalog/catalog.h"
 #include "catalog/table.h"
@@ -36,8 +35,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
-#include "search/search_table_shard.h"
-#include "storage_engine/table_shard.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 
@@ -51,15 +49,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
   auto state = duckdb::make_uniq<SearchTableScanGlobalState>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  auto shard = snapshot->GetTableShard(tbd.table->GetId());
-  SDB_ASSERT(shard);
-  SDB_ASSERT(shard->GetStorage() == catalog::StorageKind::kSearch,
-             "SearchTableScan dispatched against a non-search shard");
-  auto& search_shard = basics::downCast<search::SearchTableShard>(*shard);
+  const auto& search = tbd.table->GetData();
+  SDB_ASSERT(search, "SearchTableScan dispatched against a non-Fast table");
 
   state->reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
-    shard->GetId(), [&] { return search_shard.GetDirectoryReader(); });
+    tbd.table->GetId(), [&] { return search->GetDirectoryReader(); });
 
   // COUNT(*)-style scan projects no real columns -- answer with the live row
   // count instead of materialising columns.

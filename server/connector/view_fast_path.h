@@ -54,7 +54,6 @@ struct ViewFastPath {
   duckdb::vector<duckdb::Value> args;
   duckdb::named_parameter_map_t named_params;
   std::optional<CatalogTableRef> catalog_ref;
-  std::shared_ptr<const catalog::Table> base_table;
   // Source-side names post CAST-peel. Empty for `SELECT *`.
   std::vector<std::string> projection_columns;
   std::string function_name;

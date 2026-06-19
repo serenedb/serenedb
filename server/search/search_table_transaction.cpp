@@ -31,8 +31,7 @@
 #include "basics/log.h"
 #include "basics/system-compiler.h"
 #include "search/search_db_wal.h"
-#include "search/search_table_shard.h"
-#include "storage_engine/table_shard.h"
+#include "search/search_table.h"
 
 namespace sdb::search {
 namespace {
@@ -51,7 +50,7 @@ uint64_t ShardTickSpan(const SearchShardWrites& w) {
 }  // namespace
 
 void SearchTableTransaction::AddParallelSearchTransaction(
-  const std::shared_ptr<TableShard>& shard,
+  const std::shared_ptr<SearchTable>& shard,
   std::unique_ptr<irs::IndexWriter::Transaction> trx) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
@@ -61,13 +60,13 @@ void SearchTableTransaction::AddParallelSearchTransaction(
 }
 
 void SearchTableTransaction::AddReferences(
-  const std::shared_ptr<TableShard>& shard,
+  const std::shared_ptr<SearchTable>& shard,
   std::vector<SearchDbWal::PendingChunk>&& chunks) {
   _changes[shard->GetTableId()].AppendReference(std::move(chunks));
 }
 
 void SearchTableTransaction::AddInlineInsertChunk(
-  const std::shared_ptr<TableShard>& shard,
+  const std::shared_ptr<SearchTable>& shard,
   duckdb::BufferManager& buffer_manager,
   const duckdb::vector<duckdb::LogicalType>& types, duckdb::DataChunk& chunk,
   bool uses_generated_pk, uint64_t pk_base) {
@@ -77,7 +76,7 @@ void SearchTableTransaction::AddInlineInsertChunk(
 
 irs::IndexWriter::Transaction&
 SearchTableTransaction::EnsureSerialSearchTransaction(
-  const std::shared_ptr<TableShard>& shard,
+  const std::shared_ptr<SearchTable>& shard,
   absl::AnyInvocable<irs::IndexWriter::Transaction()> make_trx) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
@@ -91,7 +90,7 @@ SearchTableTransaction::EnsureSerialSearchTransaction(
 }
 
 void SearchTableTransaction::AddSearchDeletes(
-  const std::shared_ptr<TableShard>& shard, std::span<const std::string> pks) {
+  const std::shared_ptr<SearchTable>& shard, std::span<const std::string> pks) {
   // The destination shard + serial trx are recorded by
   // EnsureSerialSearchTransaction (the delete Sink runs it first); here we only
   // append the DELETE op, which seals the current insert run.
@@ -99,7 +98,7 @@ void SearchTableTransaction::AddSearchDeletes(
 }
 
 void SearchTableTransaction::AddSearchTruncate(
-  const std::shared_ptr<TableShard>& shard) {
+  const std::shared_ptr<SearchTable>& shard) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
     w.shard = shard;
@@ -148,7 +147,7 @@ void SearchTableTransaction::Commit() {
 
     auto cit = _changes.find(table_id);
     if (cit != _changes.end() && cit->second.HasTruncate()) {
-      basics::downCast<SearchTableShard>(*w.shard).Clear(record_tick);
+      w.shard->Clear(record_tick);
     }
   }
 }
@@ -161,10 +160,9 @@ uint64_t SearchTableTransaction::AppendCommit() {
   op_lists.reserve(_writes.size());
   // Widest shard band -> ticks this commit reserves; every shard tops out here.
   uint64_t tick_span = 0;
-  SearchDbWal* wal =
-    &basics::downCast<SearchTableShard>(*_writes.begin()->second.shard).Wal();
+  SearchDbWal* wal = &_writes.begin()->second.shard->Wal();
   for (auto& [table_id, w] : _writes) {
-    SDB_ASSERT(wal == &basics::downCast<SearchTableShard>(*w.shard).Wal(),
+    SDB_ASSERT(wal == &w.shard->Wal(),
                "all search shards in a txn must share one database WAL");
     auto cit = _changes.find(table_id);
     SDB_ASSERT(cit != _changes.end(),

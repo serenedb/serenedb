@@ -2,11 +2,10 @@ control substitution on
 
 hash-threshold 100
 
-# Secondary indexes on views. Static: DML on the source does not refresh
-# the index.
+# Plain (secondary) indexes on views are not supported; views are indexed
+# with inverted indexes instead. The inverted index is static: DML on the
+# source does not refresh it.
 
-
-# View over a serenedb rocksdb base table.
 
 statement ok
 CREATE TABLE base_sk (id INTEGER PRIMARY KEY, label TEXT, score INTEGER);
@@ -21,11 +20,26 @@ INSERT INTO base_sk VALUES
 statement ok
 CREATE VIEW v_sk_star AS SELECT * FROM base_sk;
 
-statement ok
+statement error
 CREATE INDEX v_sk_star_idx ON v_sk_star(score);
+----
+db error: ERROR: plain indexes on views are not supported; use an inverted index instead
+
+
+statement error
+CREATE UNIQUE INDEX v_sk_star_uniq ON v_sk_star(label);
+----
+db error: ERROR: plain indexes on views are not supported; use an inverted index instead
+
+
+# The inverted-index replacement covers the same shape: index a view's
+# column, scan the index as a table.
+
+statement ok
+CREATE INDEX v_sk_star_inv ON v_sk_star USING inverted(score);
 
 query
-SELECT id, label, score FROM v_sk_star_idx ORDER BY score, id;
+SELECT id, label, score FROM v_sk_star_inv ORDER BY score, id;
 ----
 id	label	score
 2	beta	25
@@ -33,98 +47,20 @@ id	label	score
 3	gamma	30
 4	delta	35
 
-# WHERE on view-backed SK isn't pushed down yet -- full scan + filter.
 query
-SELECT id, label FROM v_sk_star_idx WHERE score = 30 ORDER BY id;
+SELECT id, label FROM v_sk_star_inv WHERE score = 30 ORDER BY id;
 ----
 id	label
 1	alpha
 3	gamma
 
 
-statement ok
-CREATE VIEW v_sk_proj AS SELECT label, score, id FROM base_sk;
-
-statement ok
-CREATE INDEX v_sk_proj_idx ON v_sk_proj(score);
-
-query
-SELECT id, label, score FROM v_sk_proj_idx ORDER BY score, id;
-----
-id	label	score
-2	beta	25
-1	alpha	30
-3	gamma	30
-4	delta	35
-
-
-# Indexed columns must match base_t's type (label is TEXT in both); we
-# don't index id_b BIGINT because the cast would mismatch the SK encoding.
-statement ok
-CREATE VIEW v_sk_cast AS SELECT id::BIGINT AS id_b, label, score FROM base_sk;
-
-statement ok
-CREATE INDEX v_sk_cast_idx ON v_sk_cast(score);
-
-query
-SELECT id_b, label, score FROM v_sk_cast_idx ORDER BY score, id_b;
-----
-id_b	label	score
-2	beta	25
-1	alpha	30
-3	gamma	30
-4	delta	35
-
-
-statement ok
-CREATE VIEW v_sk_multi AS SELECT * FROM base_sk;
-
-statement ok
-CREATE INDEX v_sk_multi_idx ON v_sk_multi(score, label);
-
-query
-SELECT id, label, score FROM v_sk_multi_idx ORDER BY score, label;
-----
-id	label	score
-2	beta	25
-1	alpha	30
-3	gamma	30
-4	delta	35
-
-
-# Membership is static, but column values aren't isolated: SereneDB
-# stores columns under separate rocksdb keys, so UPDATE of an indexed
-# column rewrites the cell the view-backed lookup reads. SK -> PK
-# mapping is unchanged, but the row PK points at now carries score=99.
-# v_static_after_update below is a clean membership-only demo.
-statement ok
-UPDATE base_sk SET score = 99 WHERE id = 1;
-
-query
-SELECT id, score FROM v_sk_star_idx WHERE id = 1;
-----
-id	score
-1	99
-
-# Reads against the table itself also reflect the update -- same row.
-query
-SELECT score FROM base_sk WHERE id = 1;
-----
-score
-99
-
-# Restore for downstream tests.
-statement ok
-UPDATE base_sk SET score = 30 WHERE id = 1;
-
-
 # Static-index membership demo: view body is `... ORDER BY x LIMIT 4` so
 # the index captures only the lowest-x 4 rows at CREATE INDEX time. After
 # the index is built, mutate the ORDER BY key on a captured row so that
 # the live view body would now produce a DIFFERENT set of 4 rows -- but
-# the SK index still reflects the pre-update membership (it stores PK
-# bytes for the originally-captured rows; the unindexed 5th row is still
-# absent, and the now-bumped row is still present).
+# the index still reflects the pre-update membership (the unindexed 5th
+# row is still absent, and the now-bumped row is still present).
 statement ok
 CREATE TABLE base_sk_static (id INTEGER PRIMARY KEY, x INTEGER, label TEXT);
 
@@ -141,7 +77,8 @@ CREATE VIEW v_static_after_update AS
   SELECT id, x, label FROM base_sk_static ORDER BY x LIMIT 4;
 
 statement ok
-CREATE INDEX v_static_after_update_idx ON v_static_after_update(label);
+CREATE INDEX v_static_after_update_idx
+  ON v_static_after_update USING inverted(label);
 
 query
 SELECT id, x, label FROM v_static_after_update_idx ORDER BY id;
@@ -176,133 +113,8 @@ id
 4
 
 
-# View over a no-PK rocksdb table -- PK source is the hidden rowid.
+statement ok
+DROP TABLE base_sk CASCADE;
 
 statement ok
-CREATE TABLE base_sk_nopk (label TEXT, score INTEGER);
-
-statement ok
-INSERT INTO base_sk_nopk VALUES
-  ('alpha', 30),
-  ('beta', 25),
-  ('gamma', 30),
-  ('delta', 35);
-
-statement ok
-CREATE VIEW v_sk_nopk AS SELECT * FROM base_sk_nopk;
-
-statement ok
-CREATE INDEX v_sk_nopk_idx ON v_sk_nopk(score);
-
-query
-SELECT label, score FROM v_sk_nopk_idx ORDER BY score, label;
-----
-label	score
-beta	25
-alpha	30
-gamma	30
-delta	35
-
-query
-SELECT label FROM v_sk_nopk_idx WHERE score = 30 ORDER BY label;
-----
-label
-alpha
-gamma
-
-
-# ============================================================================
-# View over a single parquet file.
-
-statement count 4
-COPY (SELECT 1 AS id, 'alpha' AS label, 30 AS score
-      UNION ALL SELECT 2, 'beta', 25
-      UNION ALL SELECT 3, 'gamma', 30
-      UNION ALL SELECT 4, 'delta', 35)
-TO '/tmp/${__DATABASE__}_sk_pq.parquet' (FORMAT PARQUET);
-
-statement ok
-CREATE VIEW v_sk_pq AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_sk_pq.parquet');
-
-statement ok
-CREATE INDEX v_sk_pq_idx ON v_sk_pq(score);
-
-query
-SELECT id, label, score FROM v_sk_pq_idx ORDER BY score, id;
-----
-id	label	score
-2	beta	25
-1	alpha	30
-3	gamma	30
-4	delta	35
-
-query
-SELECT id, label FROM v_sk_pq_idx WHERE score = 30 ORDER BY id;
-----
-id	label
-1	alpha
-3	gamma
-
-
-# Parquet glob.
-
-statement count 2
-COPY (SELECT 10 AS id, 'one' AS label, 5 AS score
-      UNION ALL SELECT 11, 'two', 7)
-TO '/tmp/${__DATABASE__}_sk_glob_a.parquet' (FORMAT PARQUET);
-
-statement count 2
-COPY (SELECT 12 AS id, 'three' AS label, 5 AS score
-      UNION ALL SELECT 13, 'four', 9)
-TO '/tmp/${__DATABASE__}_sk_glob_b.parquet' (FORMAT PARQUET);
-
-statement ok
-CREATE VIEW v_sk_pq_glob AS
-  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_sk_glob_*.parquet');
-
-statement ok
-CREATE INDEX v_sk_pq_glob_idx ON v_sk_pq_glob(score);
-
-query
-SELECT id, label, score FROM v_sk_pq_glob_idx ORDER BY score, id;
-----
-id	label	score
-10	one	5
-12	three	5
-11	two	7
-13	four	9
-
-
-# UNIQUE on view -- backfill enforces across the view's emitted rows.
-
-statement ok
-CREATE TABLE base_sk_uniq (id INTEGER PRIMARY KEY, code TEXT);
-
-statement ok
-INSERT INTO base_sk_uniq VALUES (1, 'A'), (2, 'B'), (3, 'C');
-
-statement ok
-CREATE VIEW v_sk_uniq AS SELECT * FROM base_sk_uniq;
-
-statement ok
-CREATE UNIQUE INDEX v_sk_uniq_idx ON v_sk_uniq(code);
-
-query
-SELECT id, code FROM v_sk_uniq_idx ORDER BY code;
-----
-id	code
-1	A
-2	B
-3	C
-
-statement ok
-CREATE TABLE base_sk_dup (id INTEGER PRIMARY KEY, code TEXT);
-
-statement ok
-INSERT INTO base_sk_dup VALUES (1, 'X'), (2, 'X');
-
-statement ok
-CREATE VIEW v_sk_dup AS SELECT * FROM base_sk_dup;
-
-statement error
-CREATE UNIQUE INDEX v_sk_dup_idx ON v_sk_dup(code);
+DROP TABLE base_sk_static CASCADE;

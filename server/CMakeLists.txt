@@ -35,10 +35,8 @@ target_link_libraries(
         serene_connector
         # TODO
         date_interface
-        rocksdb_interface
         llhttp
         nghttp2::nghttp2
-        rocksdb
         duckdb_static
         Folly::folly
         zstd::zstd # search-table WAL chunk-file compression (search_db_wal.cpp)
@@ -57,6 +55,5 @@ add_subdirectory(pg)
 add_subdirectory(query)
 add_subdirectory(rest_server)
 add_subdirectory(storage_engine)
-add_subdirectory(rocksdb_engine_catalog)
 add_subdirectory(utils)
 add_subdirectory(search)

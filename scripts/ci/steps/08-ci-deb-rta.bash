@@ -16,6 +16,7 @@ fi
 
 echo "=== Deb RTA: $(basename "$DEB_PACKAGE") ==="
 mkdir -p "${WORKSPACE}/out/logs"
+mkdir -p "${WORKSPACE}/out/test-tmp"
 
 # Export all env vars ONCE so compose sees consistent config across all calls
 export DEB_PACKAGE="$(basename "$DEB_PACKAGE")"

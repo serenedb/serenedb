@@ -144,7 +144,7 @@ id	name
 
 
 statement count 5
-COPY clickclack TO '/tmp/${__DATABASE__}_local_clickclack.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY clickclack TO '${__TEST_DIR__}/local_clickclack.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 
 statement ok
@@ -156,11 +156,11 @@ CREATE TABLE local_csv_vedernikoff
 
 
 statement count 5
-COPY local_csv_vedernikoff FROM '/tmp/${__DATABASE__}_local_clickclack.csv' WITH (FORMAT CSV, HEADER TRUE);
+COPY local_csv_vedernikoff FROM '${__TEST_DIR__}/local_clickclack.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 
 statement count 5
-COPY clickclack TO '/tmp/${__DATABASE__}_local_clickclack.parquet' WITH (FORMAT PARQUET);
+COPY clickclack TO '${__TEST_DIR__}/local_clickclack.parquet' WITH (FORMAT PARQUET);
 
 
 statement ok
@@ -172,7 +172,7 @@ CREATE TABLE local_parquet_vedernikoff
 
 
 statement count 5
-COPY local_parquet_vedernikoff FROM '/tmp/${__DATABASE__}_local_clickclack.parquet' WITH (FORMAT PARQUET);
+COPY local_parquet_vedernikoff FROM '${__TEST_DIR__}/local_clickclack.parquet' WITH (FORMAT PARQUET);
 
 
 query

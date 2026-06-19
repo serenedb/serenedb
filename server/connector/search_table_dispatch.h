@@ -26,19 +26,20 @@
 
 #include "catalog/table_options.h"
 
-namespace sdb {
+namespace sdb::catalog {
 
-class TableShard;
+class Table;
 
-}  // namespace sdb
+}  // namespace sdb::catalog
 namespace sdb::connector {
 
 // Shared search-table integration helpers used across the connector catalog,
 // planner, and physical-operator files.
 
-// Throws ERRCODE_FEATURE_NOT_SUPPORTED when `shard` is a search-backed table.
-// Guards the DML/DDL paths not yet wired for kSearch shards.
-void RejectIfSearchTable(const TableShard& shard, std::string_view operation);
+// Throws ERRCODE_FEATURE_NOT_SUPPORTED when `table` is a TableEngine::Fast
+// table. Guards the DDL paths not yet wired for the Fast engine.
+void RejectIfSearchTable(const catalog::Table& table,
+                         std::string_view operation);
 
 // Reads `storage = 'rocksdb' | 'search'` from a CREATE TABLE WITH clause and
 // sets options.storage. Throws on unknown values or non-string shapes.

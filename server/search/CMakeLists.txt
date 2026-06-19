@@ -1,10 +1,10 @@
 target_sources(
     sereneserver
     PRIVATE
-        inverted_index_shard.cpp
+        inverted_index_storage.cpp
         search_db_wal.cpp
+        search_table.cpp
         search_table_recovery.cpp
-        search_table_shard.cpp
         search_table_transaction.cpp
         task.cpp
         wal_recovery.cpp

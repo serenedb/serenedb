@@ -62,7 +62,7 @@ QUERY PLAN
 │           Index:          │
 │      vecs_hnsw (ANN)      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │          Top: 10          │
 │          Dims: 8          │
 │                           │
@@ -112,7 +112,7 @@ QUERY PLAN
 │           Index:          │
 │      vecs_hnsw (ANN)      │
 │                           │
-│      Lookup: rocksdb      │
+│       Lookup: table       │
 │          Dims: 8          │
 │                           │
 │        Projections:       │

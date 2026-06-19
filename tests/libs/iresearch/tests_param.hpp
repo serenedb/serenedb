@@ -27,7 +27,6 @@
 #include <bit>
 #include <memory>
 
-#include "iresearch/store/caching_directory.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/ctr_encryption.hpp"

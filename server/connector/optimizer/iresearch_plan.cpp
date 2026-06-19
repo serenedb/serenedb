@@ -35,6 +35,7 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_top_n.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/search/proxy_filter.hpp>
 
 #include "basics/containers/trivial_map.h"
@@ -613,6 +614,10 @@ duckdb::unique_ptr<duckdb::Expression> RewriteCallInExpr(
       if (auto repl = PushdownScorerCall(func, root)) {
         return repl;
       }
+      // Native scans cannot materialize the tableoid argument, so the
+      // runtime stub would never be reached; raise its error here.
+      throw duckdb::InvalidInputException(
+        "%s() requires an inverted index scan in the same sub-query", name);
     } else if (name == connector::kOffsets) {
       if (auto repl = PushdownOffsetsCall(func, root)) {
         return repl;
@@ -849,22 +854,11 @@ bool TryClaimSearchFilter(
   };
 
   auto& scan = bind_data.scan_source->Cast<connector::SearchScan>();
-  auto [stored,
-        root_ptr] = [&] -> std::pair<std::shared_ptr<irs::Filter>, irs::And*> {
-    if (scan.vector_scorer) {
-      auto proxy = std::make_shared<irs::ProxyFilter>();
-      auto* root =
-        &proxy->set_filter<irs::And>(irs::IResourceManager::gNoop).first;
-      return {std::move(proxy), root};
-    }
-    auto and_filter = std::make_shared<irs::And>();
-    auto* root = and_filter.get();
-    return {std::move(and_filter), root};
-  }();
 
+  auto root_and = std::make_unique<irs::And>();
   bool any_claimed = false;
   for (size_t i = 0; i < filters.size();) {
-    if (TryClaimIResearchConjunct(*root_ptr, filters[i], getter, expr_getter,
+    if (TryClaimIResearchConjunct(*root_and, filters[i], getter, expr_getter,
                                   context)) {
       any_claimed = true;
       std::swap(filters[i], filters.back());
@@ -875,6 +869,18 @@ bool TryClaimSearchFilter(
   }
   if (!any_claimed) {
     return false;
+  }
+
+  irs::Filter::ptr root = std::move(root_and);
+  irs::Optimize(root, {.scored = scan.text_scorer || scan.EmitOffsets()});
+
+  std::shared_ptr<irs::Filter> stored;
+  if (scan.vector_scorer) {
+    auto proxy = std::make_shared<irs::ProxyFilter>();
+    proxy->set_filter(irs::IResourceManager::gNoop, std::move(root));
+    stored = std::move(proxy);
+  } else {
+    stored = std::move(root);
   }
 
   scan.stored_filter = std::move(stored);
@@ -902,9 +908,6 @@ void IResearchPushdownComplexFilter(
     return;
   }
   auto& conn_ctx = connector::GetSereneDBContext(context);
-  if (conn_ctx.GetReadYourOwnWrites() && conn_ctx.HasRocksDBTransaction()) {
-    return;
-  }
   auto& bind_data = bind_data_ptr->Cast<connector::SereneDBScanBindData>();
   if (bind_data.scan_source->Kind() != connector::ScanSourceKind::Search) {
     return;

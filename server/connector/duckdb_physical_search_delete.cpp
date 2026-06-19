@@ -28,7 +28,6 @@
 #include <vector>
 
 #include "basics/assert.h"
-#include "basics/down_cast.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
@@ -38,16 +37,14 @@
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
-#include "search/search_table_shard.h"
-#include "storage_engine/table_shard.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 namespace {
 
 struct SearchDeleteGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
-  std::shared_ptr<TableShard> table_shard;
-  search::SearchTableShard* search_shard = nullptr;
+  std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
   std::string table_key;
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
@@ -75,16 +72,14 @@ duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchDeleteGlobalState>();
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
 
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
 
-  state->table_shard = snapshot->GetTableShard(state->table_id);
-  SDB_ASSERT(state->table_shard);
-  SDB_ASSERT(state->table_shard->GetStorage() == catalog::StorageKind::kSearch,
-             "SereneDBSearchDelete dispatched against a non-search shard");
-  state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
+  state->search_table = _table->GetData();
+  SDB_ASSERT(state->search_table,
+             "SereneDBSearchDelete dispatched against a non-Fast table");
+  state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
   // Map each PK chunk position to its type (PlanDelete's layout): explicit-PK
   // columns by their declared type; the no-PK generated rowid as BIGINT.
@@ -107,8 +102,6 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
 
   state->sdb_txn = &conn_ctx;
-  state->search_shard =
-    &basics::downCast<search::SearchTableShard>(*state->table_shard);
   return state;
 }
 
@@ -121,7 +114,7 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
-    gstate.table_shard, [&] { return gstate.search_shard->GetTransaction(); });
+    gstate.search_table, [&] { return gstate.search_table->GetTransaction(); });
 
   // The PK term to remove is encoded exactly as the insert wrote it
   // (MakeColumnKey -> ExtractRowKey). For a no-PK table the rowid column holds
@@ -149,7 +142,7 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
       key_buffer);
   }
   remover.FinishImpl();  // hands the removal filter to the trx
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.table_shard, wal_pks);
+  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, wal_pks);
 
   gstate.delete_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;

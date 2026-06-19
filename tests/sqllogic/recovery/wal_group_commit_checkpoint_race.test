@@ -1,0 +1,384 @@
+control max-async-connections 16
+
+# Concurrency guard for the WAL group-commit use-after-free.
+#
+# GroupSync issues the grouped fsync with the WAL lock RELEASED (so committers
+# coalesce onto one physical fsync). An auto-checkpoint on another committer
+# resets and recreates the WriteAheadLog object (storage_manager wal.reset() +
+# make_shared_ptr) while holding the WAL lock. Before the shared_ptr lifetime
+# pin -- where CommitTransaction captures the WAL object under the WAL lock and
+# holds it across the unlocked GroupSync -- the leader thread inside
+# RunSyncLeader dereferenced a freed writer->handle and SIGSEGV'd within seconds.
+#
+# This drives the exact precondition: many concurrent committers stream sizable
+# INSERTs while a tiny checkpoint_threshold makes nearly every commit trigger an
+# auto-checkpoint teardown, so a WAL reset overlaps in-flight GroupSync fsyncs.
+# If the pin regresses, serened crashes mid-round and the async statements / the
+# COUNT below fail.
+#
+# This is a timing-race stress guard (like wal_index_recovery_concurrent_refresh):
+# the reset-vs-GroupSync window is an in-memory ordering window with no fault hook
+# to widen it, so it does not deterministically reproduce on every run -- it is
+# looped over several rounds of 16 writers to hit the window opportunistically.
+
+# Tiny threshold -> the WAL crosses it on essentially every commit (each writer's
+# round is ~510KB), so committers auto-checkpoint (reset the WAL) constantly while
+# their peers are mid-fsync.
+statement ok
+SET GLOBAL checkpoint_threshold = '256KB';
+
+statement ok
+CREATE TABLE wgc_t(id BIGINT, body TEXT);
+
+# Each writer/round owns a disjoint id range so the final count is exact: a lost
+# or duplicated commit (or a crash) makes COUNT(*) != 16 * 2500 * 5 = 200000.
+
+# round 1
+connection w1
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(110000000, 110002500) t(i);
+
+connection w2
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(210000000, 210002500) t(i);
+
+connection w3
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(310000000, 310002500) t(i);
+
+connection w4
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(410000000, 410002500) t(i);
+
+connection w5
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(510000000, 510002500) t(i);
+
+connection w6
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(610000000, 610002500) t(i);
+
+connection w7
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(710000000, 710002500) t(i);
+
+connection w8
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(810000000, 810002500) t(i);
+
+connection w9
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(910000000, 910002500) t(i);
+
+connection w10
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1010000000, 1010002500) t(i);
+
+connection w11
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1110000000, 1110002500) t(i);
+
+connection w12
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1210000000, 1210002500) t(i);
+
+connection w13
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1310000000, 1310002500) t(i);
+
+connection w14
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1410000000, 1410002500) t(i);
+
+connection w15
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1510000000, 1510002500) t(i);
+
+connection w16
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1610000000, 1610002500) t(i);
+
+wait
+
+# round 2
+connection w1
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(120000000, 120002500) t(i);
+
+connection w2
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(220000000, 220002500) t(i);
+
+connection w3
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(320000000, 320002500) t(i);
+
+connection w4
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(420000000, 420002500) t(i);
+
+connection w5
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(520000000, 520002500) t(i);
+
+connection w6
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(620000000, 620002500) t(i);
+
+connection w7
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(720000000, 720002500) t(i);
+
+connection w8
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(820000000, 820002500) t(i);
+
+connection w9
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(920000000, 920002500) t(i);
+
+connection w10
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1020000000, 1020002500) t(i);
+
+connection w11
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1120000000, 1120002500) t(i);
+
+connection w12
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1220000000, 1220002500) t(i);
+
+connection w13
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1320000000, 1320002500) t(i);
+
+connection w14
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1420000000, 1420002500) t(i);
+
+connection w15
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1520000000, 1520002500) t(i);
+
+connection w16
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1620000000, 1620002500) t(i);
+
+wait
+
+# round 3
+connection w1
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(130000000, 130002500) t(i);
+
+connection w2
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(230000000, 230002500) t(i);
+
+connection w3
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(330000000, 330002500) t(i);
+
+connection w4
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(430000000, 430002500) t(i);
+
+connection w5
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(530000000, 530002500) t(i);
+
+connection w6
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(630000000, 630002500) t(i);
+
+connection w7
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(730000000, 730002500) t(i);
+
+connection w8
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(830000000, 830002500) t(i);
+
+connection w9
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(930000000, 930002500) t(i);
+
+connection w10
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1030000000, 1030002500) t(i);
+
+connection w11
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1130000000, 1130002500) t(i);
+
+connection w12
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1230000000, 1230002500) t(i);
+
+connection w13
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1330000000, 1330002500) t(i);
+
+connection w14
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1430000000, 1430002500) t(i);
+
+connection w15
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1530000000, 1530002500) t(i);
+
+connection w16
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1630000000, 1630002500) t(i);
+
+wait
+
+# round 4
+connection w1
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(140000000, 140002500) t(i);
+
+connection w2
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(240000000, 240002500) t(i);
+
+connection w3
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(340000000, 340002500) t(i);
+
+connection w4
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(440000000, 440002500) t(i);
+
+connection w5
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(540000000, 540002500) t(i);
+
+connection w6
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(640000000, 640002500) t(i);
+
+connection w7
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(740000000, 740002500) t(i);
+
+connection w8
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(840000000, 840002500) t(i);
+
+connection w9
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(940000000, 940002500) t(i);
+
+connection w10
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1040000000, 1040002500) t(i);
+
+connection w11
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1140000000, 1140002500) t(i);
+
+connection w12
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1240000000, 1240002500) t(i);
+
+connection w13
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1340000000, 1340002500) t(i);
+
+connection w14
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1440000000, 1440002500) t(i);
+
+connection w15
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1540000000, 1540002500) t(i);
+
+connection w16
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1640000000, 1640002500) t(i);
+
+wait
+
+# round 5
+connection w1
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(150000000, 150002500) t(i);
+
+connection w2
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(250000000, 250002500) t(i);
+
+connection w3
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(350000000, 350002500) t(i);
+
+connection w4
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(450000000, 450002500) t(i);
+
+connection w5
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(550000000, 550002500) t(i);
+
+connection w6
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(650000000, 650002500) t(i);
+
+connection w7
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(750000000, 750002500) t(i);
+
+connection w8
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(850000000, 850002500) t(i);
+
+connection w9
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(950000000, 950002500) t(i);
+
+connection w10
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1050000000, 1050002500) t(i);
+
+connection w11
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1150000000, 1150002500) t(i);
+
+connection w12
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1250000000, 1250002500) t(i);
+
+connection w13
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1350000000, 1350002500) t(i);
+
+connection w14
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1450000000, 1450002500) t(i);
+
+connection w15
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1550000000, 1550002500) t(i);
+
+connection w16
+statement async ok
+INSERT INTO wgc_t SELECT i, repeat('y', 200) FROM range(1650000000, 1650002500) t(i);
+
+wait
+
+# Survived the race window without a crash, and every commit is accounted for:
+# 16 writers * 2500 rows * 5 rounds = 200000.
+connection check
+query
+SELECT COUNT(*) FROM wgc_t;
+----
+count
+200000
+
+statement ok
+SET GLOBAL checkpoint_threshold = '16MB';
+
+statement ok
+DROP TABLE wgc_t;

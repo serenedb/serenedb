@@ -1,0 +1,136 @@
+statement ok
+CREATE TABLE fo_sem (id INTEGER PRIMARY KEY, t VARCHAR, n INTEGER);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fo_sem_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE INDEX fo_sem_idx ON fo_sem USING inverted(id, t fo_sem_en, n);
+
+statement ok
+INSERT INTO fo_sem VALUES
+  (1, 'alpha beta',  1),
+  (2, 'beta gamma',  2),
+  (3, 'gamma delta', 3),
+  (4, 'delta alpha', 4),
+  (5, 'alpha gamma', 5);
+
+statement ok
+VACUUM (REFRESH_TABLE) fo_sem;
+
+query
+SELECT id FROM fo_sem_idx WHERE t @@ ts_phrase('alpha') ORDER BY id;
+----
+id
+1
+4
+5
+
+query
+SELECT id FROM fo_sem_idx WHERE NOT (NOT (t @@ ts_phrase('alpha'))) ORDER BY id;
+----
+id
+1
+4
+5
+
+query
+SELECT id FROM fo_sem_idx
+WHERE t @@ ts_phrase('alpha') AND NOT (t @@ ts_phrase('beta')) ORDER BY id;
+----
+id
+4
+5
+
+query
+SELECT id FROM fo_sem_idx
+WHERE t @@ ts_phrase('alpha') AND n @@ ts_between(NULL, NULL, true, true) ORDER BY id;
+----
+id
+1
+4
+5
+
+query
+SELECT id FROM fo_sem_idx
+WHERE t @@ ts_phrase('alpha') AND n @@ ts_between(2, 2, false, false) ORDER BY id;
+----
+id
+
+query
+SELECT id FROM fo_sem_idx
+WHERE t @@ ts_phrase('alpha') AND NOT (n @@ ts_between(NULL, NULL, true, true)) ORDER BY id;
+----
+id
+
+query
+SELECT id FROM fo_sem_idx
+WHERE t @@ ts_phrase('alpha') OR t @@ ts_phrase('gamma') ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+query
+SELECT id FROM fo_sem_idx WHERE t @@ ts_any(['alpha', 'gamma']) ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+query
+SELECT id FROM fo_sem_idx WHERE t @@ ts_all(['alpha', 'gamma']) ORDER BY id;
+----
+id
+5
+
+query
+SELECT id FROM fo_sem_idx WHERE NOT (NOT (NOT (t @@ ts_phrase('alpha')))) ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM fo_sem_idx
+WHERE t @@ ts_phrase('alpha') OR NOT (n @@ ts_between(NULL, NULL, true, true)) ORDER BY id;
+----
+id
+1
+4
+5
+
+query
+SELECT id FROM fo_sem_idx WHERE n @@ ts_gt(1) AND n @@ ts_lt(4) ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM fo_sem_idx WHERE n @@ ts_ge(2) AND n @@ ts_le(4) ORDER BY id;
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM fo_sem_idx WHERE n @@ ts_ge(3) AND n @@ ts_le(3) ORDER BY id;
+----
+id
+3
+
+query
+SELECT id FROM fo_sem_idx WHERE n @@ ts_gt(4) AND n @@ ts_lt(2) ORDER BY id;
+----
+id

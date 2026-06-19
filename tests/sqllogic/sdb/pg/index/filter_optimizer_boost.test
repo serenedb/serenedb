@@ -1,0 +1,64 @@
+statement ok
+CREATE TABLE fo_bst (id INTEGER PRIMARY KEY, w VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fo_bst_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE INDEX fo_bst_idx ON fo_bst USING inverted(id, w fo_bst_en);
+
+statement ok
+INSERT INTO fo_bst VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+
+statement ok
+VACUUM (REFRESH_TABLE) fo_bst;
+
+query
+SELECT id, BM25(fo_bst_idx.tableoid) AS s FROM fo_bst_idx
+WHERE w @@ 'alpha' OR w @@ 'beta' ORDER BY id;
+----
+id	s
+1	0.9808291
+2	0.9808291
+
+query
+SELECT id, BM25(fo_bst_idx.tableoid) AS s FROM fo_bst_idx
+WHERE (w @@ 'alpha')::boost(5.0) ORDER BY id;
+----
+id	s
+1	4.904146
+
+query
+SELECT id, BM25(fo_bst_idx.tableoid) AS s FROM fo_bst_idx
+WHERE (w @@ 'alpha')::boost(2.0) OR (w @@ 'alpha')::boost(3.0) ORDER BY id;
+----
+id	s
+1	4.904146
+
+query
+EXPLAIN SELECT id FROM fo_bst_idx
+WHERE (w @@ 'alpha')::boost(2.0) OR (w @@ 'alpha')::boost(3.0);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: fo_bst_idx     │
+│       Lookup: table       │
+│                           │
+│          Filter:          │
+│  ┌─────────────────────┐  │
+│  │┌───────────────────┐│  │
+│  ││        Term       ││  │
+│  ││    ────────────   ││  │
+│  ││ w(string) = alpha ││  │
+│  │└───────────────────┘│  │
+│  └─────────────────────┘  │
+│                           │
+│      Projections: id      │
+│                           │
+│           ~1 row          │
+└───────────────────────────┘

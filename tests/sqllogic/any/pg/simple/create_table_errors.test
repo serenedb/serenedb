@@ -92,11 +92,3 @@ CREATE TABLE babsky (
 
 statement ok
 DROP TABLE vedernikoff;
-
-
-statement ok
-DROP TABLE IF EXISTS complex_pk;
-
-
-statement ok
-CREATE TABLE complex_pk (a INTEGER, b INTEGER[] PRIMARY KEY);

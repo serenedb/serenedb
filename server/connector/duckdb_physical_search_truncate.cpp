@@ -30,7 +30,7 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
-#include "storage_engine/table_shard.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 
@@ -46,15 +46,13 @@ duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& /*chunk*/,
   duckdb::OperatorSourceInput& /*input*/) const {
   auto& conn_ctx = GetSereneDBContext(context.client);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  auto shard = snapshot->GetTableShard(_table->GetId());
-  SDB_ASSERT(shard);
-  SDB_ASSERT(shard->GetStorage() == catalog::StorageKind::kSearch,
-             "SereneDBSearchTruncate dispatched against a non-search shard");
+  const auto& search = _table->GetData();
+  SDB_ASSERT(search,
+             "SereneDBSearchTruncate dispatched against a non-Fast table");
 
-  conn_ctx.SearchTxn().AddSearchTruncate(shard);
+  conn_ctx.SearchTxn().AddSearchTruncate(search);
 
-  if (const int64_t current = shard->GetTableStats().num_rows; current > 0) {
+  if (const int64_t current = search->NumRows(); current > 0) {
     conn_ctx.UpdateNumRows(_table->GetId(), -current);
   }
   return duckdb::SourceResultType::FINISHED;

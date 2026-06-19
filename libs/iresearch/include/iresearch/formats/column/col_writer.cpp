@@ -95,6 +95,8 @@ void SerializeColumnData(duckdb::Serializer& obj,
                 });
   obj.WritePropertyWithDefault<bool>(5, "fully_shredded", node.fully_shredded,
                                      true);
+  obj.WritePropertyWithDefault<duckdb::shared_ptr<duckdb::HyperLogLog>>(
+    6, "hyperloglog", node.hyperloglog);
 }
 
 }  // namespace
@@ -165,8 +167,9 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   if (_impl->column_options && *_impl->column_options) {
     opts = (*_impl->column_options)(id);
   }
-  auto& cw = OpenColumn(id, std::move(type), opts.skip_validity,
-                        opts.row_group_size, opts.compression);
+  auto& cw =
+    OpenColumn(id, std::move(type), opts.skip_validity, opts.row_group_size,
+               opts.compression, opts.hyperloglog);
   if (opts.hnsw_info) {
     AttachHnsw(id, *opts.hnsw_info);
   }
@@ -175,23 +178,26 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
 
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                                     bool skip_validity, uint32_t row_group_size,
-                                    duckdb::CompressionType compression) {
+                                    duckdb::CompressionType compression,
+                                    bool hyperloglog) {
   SDB_ASSERT(row_group_size != 0);
   // Per-batch SearchSink may re-open the same id; return the existing
   // writer so batches accumulate into one footer entry.
   if (auto it = _impl->column_by_id.find(id); it != _impl->column_by_id.end()) {
     auto& existing = *it->second;
-    SDB_ASSERT(existing.Type() == type &&
-                 existing.RowGroupSize() == row_group_size &&
-                 existing.SkipValidity() == skip_validity &&
-                 existing.Compression() == compression,
-               "ColWriter::OpenColumn: re-opened id ", id,
-               " with mismatched settings (type ", type.ToString(), " vs ",
-               existing.Type().ToString(), ", row_group_size ", row_group_size,
-               " vs ", existing.RowGroupSize(), ", skip_validity ",
-               skip_validity, " vs ", existing.SkipValidity(), ", compression ",
-               duckdb::CompressionTypeToString(compression), " vs ",
-               duckdb::CompressionTypeToString(existing.Compression()), ")");
+    SDB_ASSERT(
+      existing.Type() == type && existing.RowGroupSize() == row_group_size &&
+        existing.SkipValidity() == skip_validity &&
+        existing.Compression() == compression &&
+        existing.HasHyperLogLog() == hyperloglog,
+      "ColWriter::OpenColumn: re-opened id ", id,
+      " with mismatched settings (type ", type.ToString(), " vs ",
+      existing.Type().ToString(), ", row_group_size ", row_group_size, " vs ",
+      existing.RowGroupSize(), ", skip_validity ", skip_validity, " vs ",
+      existing.SkipValidity(), ", compression ",
+      duckdb::CompressionTypeToString(compression), " vs ",
+      duckdb::CompressionTypeToString(existing.Compression()), ", hyperloglog ",
+      hyperloglog, " vs ", existing.HasHyperLogLog(), ")");
     return existing;
   }
   EnsureOut();
@@ -199,8 +205,9 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
   entry->id = id;
   entry->root.type = type;
   auto* entry_ptr = entry.get();
-  auto cw = std::make_unique<ColumnWriter>(
-    id, type, row_group_size, *_impl->write_ctx, *entry, skip_validity);
+  auto cw =
+    std::make_unique<ColumnWriter>(id, type, row_group_size, *_impl->write_ctx,
+                                   *entry, skip_validity, hyperloglog);
   cw->SetCompression(compression);
   _impl->column_entries.push_back(std::move(entry));
   _impl->column_entries_by_id.emplace(id, entry_ptr);

@@ -32,12 +32,7 @@ namespace sdb::connector {
 
 // Reads SereneDB-specific column-mode keys from a CREATE TABLE WITH-clause
 // options map and applies the corresponding flags to `columns`.
-// Recognized: sdb_indexonly = [col, ...] -> ColumnStoreMode::kIndexOnly.
 // Throws on unknown column names or unsupported value shapes.
-void ApplyColumnModes(std::vector<catalog::Column>& columns,
-                      const duckdb::case_insensitive_map_t<
-                        duckdb::unique_ptr<duckdb::ParsedExpression>>& options);
-
 class SereneDBSchemaEntry final : public duckdb::SchemaCatalogEntry {
  public:
   using SchemaCatalogEntry::SchemaCatalogEntry;

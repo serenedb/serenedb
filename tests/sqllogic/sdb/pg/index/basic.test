@@ -1,3 +1,5 @@
+control substitution on
+
 statement ok
 CREATE TABLE t(r text);
 
@@ -294,10 +296,6 @@ a	b
 1	1
 2	3
 
-# Commit (3,1),(7,3),(17,5) outside the error-producing transaction below —
-# under PG-style semantics, any error inside an explicit transaction aborts it
-# and the following COMMIT is treated as ROLLBACK, so these rows would never
-# land if they shared the transaction with the read_your_own_writes error.
 statement count 3
 INSERT INTO table_numeric_idx VALUES (3,1), (7,3), (17,5);
 
@@ -305,30 +303,28 @@ statement ok
 VACUUM (REFRESH_TABLE) table_numeric_idx;
 
 statement ok
-SET sdb_read_your_own_writes = 1;
-
-statement ok
 BEGIN;
 
-# With read_your_own_writes=on, a scan that would see uncommitted writes fails.
+# In-transaction search is allowed: postings hold committed rows only, so the
+# uncommitted inserts are not visible to the index scan. The legacy
+# read_your_own_writes opt-out is a no-op.
 statement count 3
 INSERT INTO table_numeric_idx VALUES (33,99), (77,99), (177,99);
 
-query error
+query
 SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 ORDER BY a;
 ----
-db error: ERROR: querying an index within a transaction is not supported when sdb_read_your_own_writes is enabled
+a	b
+1	1
+2	3
+7	3
+17	5
 
-
-# PG: the error aborts the txn; COMMIT here is silently treated as ROLLBACK.
 statement ok
-COMMIT;
+ROLLBACK;
 
 statement ok
 VACUUM (REFRESH_TABLE) table_numeric_idx;
-
-statement ok
-SET sdb_read_your_own_writes = 0;
 
 statement ok
 BEGIN;
@@ -349,9 +345,6 @@ statement ok
 COMMIT;
 
 # restore default
-statement ok
-SET sdb_read_your_own_writes = 1;
-
 statement ok
 DROP TABLE table_numeric_idx;
 
@@ -386,7 +379,7 @@ db error: ERROR: Can only delete from base table
 
 
 statement error
-COPY view_idx_view FROM '/tmp/nonexistent.parquet' (FORMAT PARQUET);
+COPY view_idx_view FROM '${__TEST_DIR__}/nonexistent.parquet' (FORMAT PARQUET);
 ----
 db error: ERROR: view_idx_view is not an table
 
@@ -428,9 +421,9 @@ DETAIL: This operation is not supported for indexes.
 
 
 statement error
-COPY idx_dml_idx FROM '/tmp/nonexistent.parquet' (FORMAT PARQUET);
+COPY idx_dml_idx FROM '${__TEST_DIR__}/nonexistent.parquet' (FORMAT PARQUET);
 ----
-db error: ERROR: No files found that match the pattern "/tmp/nonexistent.parquet"
+db error: ERROR: No files found that match the pattern "<slt:ignore>/nonexistent.parquet"
 
 
 statement error
@@ -591,12 +584,16 @@ connection conn1
 statement ok
 SELECT SUM(x) FROM generate_series(1, 1000000) t(x);
 
+# DROP TABLE removes storage immediately; it does not wait for open
+# transactions.
+wait
 
+# Native MVCC: writing into the dropped table is a transaction conflict.
 connection conn1
-statement ok
+statement error
 INSERT INTO t VALUES (3, 'lol');
 
-
+# The error aborted the transaction; COMMIT is treated as ROLLBACK.
 connection conn1
 statement ok
 COMMIT;

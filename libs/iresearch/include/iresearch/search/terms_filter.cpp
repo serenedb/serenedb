@@ -23,9 +23,7 @@
 #include "terms_filter.hpp"
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/all_terms_collector.hpp"
-#include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/multiterm_query.hpp"
@@ -155,30 +153,9 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx, irs::field_id id,
 }
 
 Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {
-  if (options().terms.empty() || options().min_match != 0) {
-    return Prepare(ctx.Boost(Boost()), field_id(), options());
-  }
-  if (!ctx.scorer) {
-    return MakeAllDocsFilter(kNoBoost)->prepare({
-      .index = ctx.index,
-      .memory = ctx.memory,
-    });
-  }
-  Or disj;
-  // Don't contribute to the score
-  disj.add(MakeAllDocsFilter(0.F));
-  // Reset min_match to 1
-  auto& terms = disj.add<ByTerms>();
-  terms.boost(Boost());
-  *terms.mutable_field_id() = field_id();
-  *terms.mutable_options() = options();
-  terms.mutable_options()->min_match = 1;
-  return disj.prepare({
-    .index = ctx.index,
-    .memory = ctx.memory,
-    .scorer = ctx.scorer,
-    .ctx = ctx.ctx,
-  });
+  SDB_ASSERT(options().terms.size() >= 2 && options().min_match >= 1 &&
+             options().min_match <= options().terms.size());
+  return Prepare(ctx.Boost(Boost()), field_id(), options());
 }
 
 }  // namespace irs

@@ -36,7 +36,6 @@
 
 #include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
-#include "basics/down_cast.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
@@ -46,9 +45,8 @@
 #include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
-#include "search/search_table_shard.h"
+#include "search/search_table.h"
 #include "storage_engine/search_engine.h"
-#include "storage_engine/table_shard.h"
 
 namespace sdb::search {
 
@@ -57,16 +55,15 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     return;
   }
   auto begin = std::chrono::steady_clock::now();
-  auto& catalog_feature = catalog::CatalogFeature::instance();
-  auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   SDB_ASSERT(snapshot);
   auto& engine = GetSearchEngine();
 
   // Per-shard replay metadata, built once from the catalog table so the
   // recovered key matches the written one.
   struct ShardInfo {
-    std::shared_ptr<TableShard> shard;  // keeps the shard alive
-    SearchTableShard* search = nullptr;
+    std::shared_ptr<SearchTable> shard;  // keeps the table store alive
+    SearchTable* search = nullptr;
     std::vector<catalog::Column::Id> column_ids;
     std::vector<connector::duckdb_primary_key::PKColumn> pk_columns;
     std::string table_key;
@@ -90,13 +87,13 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     containers::NodeHashMap<ObjectId, ShardInfo> shards;
     for (const auto& schema : snapshot->GetSchemas(db_id)) {
       for (const auto& table : snapshot->GetTables(db_id, schema->GetName())) {
-        auto ts = snapshot->GetTableShard(table->GetId());
-        if (!ts || ts->GetStorage() != catalog::StorageKind::kSearch) {
-          continue;
+        auto search = table->GetData();
+        if (!search) {
+          continue;  // Transactional table: no Fast-engine store to recover.
         }
         ShardInfo info;
-        info.search = &basics::downCast<SearchTableShard>(*ts);
-        info.shard = std::move(ts);
+        info.search = search.get();
+        info.shard = std::move(search);
         for (const auto& col : table->Columns()) {
           if (col.GetId() == catalog::Column::kGeneratedPKId) {
             continue;

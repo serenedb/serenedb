@@ -1,0 +1,186 @@
+# Static indexed data + mutable, transactional, non-indexed data: the classic
+# "index a body once, keep mutating a status column live" pattern. `body` is
+# text-indexed; `status` is NEITHER indexed NOR INCLUDE'd, so it never lives in
+# the inverted index -- it is read live from the store table by rowid at the
+# current snapshot.
+#
+# Inverted-index scans are eventually consistent (as-of-last-refresh), NOT MVCC:
+# they never drop a matched row for visibility, count(*) WHERE @@ returns the
+# last-refresh matched count, and non-INCLUDE columns are materialised live from
+# the table (NULL if the underlying row is gone). refresh_interval = 0 disables
+# the background refresh so the eventual state advances ONLY on an explicit
+# VACUUM (REFRESH_TABLE), making every observation below deterministic.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE doc(pk INT PRIMARY KEY, body TEXT, status TEXT);
+
+
+# `body` indexed; `status` left out entirely (no INCLUDE).
+statement ok
+CREATE INDEX doc_idx ON doc USING inverted(pk, body en) WITH (refresh_interval = 0);
+
+
+statement count 4
+INSERT INTO doc VALUES
+  (1, 'the quick brown fox', 'active'),
+  (2, 'lazy dog sleeps',      'active'),
+  (3, 'brown bear runs',      'pending'),
+  (4, 'fox and hound',        'active');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) doc;
+
+
+# Baseline: phrase 'quick' matches pk1, status read live from the table.
+query
+SELECT pk, status FROM doc_idx WHERE body @@ ts_phrase('quick') ORDER BY pk;
+----
+pk	status
+1	active
+
+
+# ---- Core property: mutate a NON-indexed column, no refresh ----
+# `status` is not indexed and not a LIST column, and we don't use RETURNING, so
+# DuckDB keeps the row in place with the SAME rowid. The inverted index is left
+# untouched (still matches pk1), and the projection reads the NEW status value
+# live by that stable rowid -- with NO refresh.
+statement ok
+UPDATE doc SET status = 'archived' WHERE pk = 1;
+
+
+query
+SELECT pk, status FROM doc_idx WHERE body @@ ts_phrase('quick') ORDER BY pk;
+----
+pk	status
+1	archived
+
+
+# ---- Contrast: mutate the INDEXED column, no refresh ----
+# Updating `body` touches an indexed column, so DuckDB converts it to
+# DELETE+INSERT and assigns a NEW rowid. The eventual index still carries the
+# OLD posting (search 'lazy' still matches one document) but the OLD rowid is
+# gone from the store, so the live-read projection comes back NULL. The NEW
+# body ('sleepy') is not yet in the eventual index, so it matches nothing.
+statement ok
+UPDATE doc SET body = 'sleepy cat purrs' WHERE pk = 2;
+
+
+query
+SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('lazy');
+----
+count
+1
+
+
+# Same matched document, projected: old rowid is gone, so pk AND status are
+# both read live as NULL.
+query
+SELECT pk, status FROM doc_idx WHERE body @@ ts_phrase('lazy');
+----
+pk	status
+NULL	NULL
+
+
+query
+SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('sleepy');
+----
+count
+0
+
+
+# Refresh: the index observes the DELETE+INSERT. Old body stops matching, new
+# body starts matching, and the new rowid materialises a live status.
+statement ok
+VACUUM (REFRESH_TABLE) doc;
+
+
+query
+SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('lazy');
+----
+count
+0
+
+
+query
+SELECT pk, status FROM doc_idx WHERE body @@ ts_phrase('sleepy') ORDER BY pk;
+----
+pk	status
+2	active
+
+
+# ---- null-on-miss: DELETE a matched row, committed, no refresh ----
+# Before delete: 'brown' matches pk1 (live status 'archived') and pk3 ('pending').
+query
+SELECT pk, status FROM doc_idx WHERE body @@ ts_phrase('brown') ORDER BY pk;
+----
+pk	status
+1	archived
+3	pending
+
+
+statement count 1
+DELETE FROM doc WHERE pk = 3;
+
+
+# Eventual count is preserved (the posting is still there until refresh)...
+query
+SELECT count(*) FROM doc_idx WHERE body @@ ts_phrase('brown');
+----
+count
+2
+
+
+# ...but the deleted row's non-INCLUDE status reads live as NULL (row gone from
+# the store), while the surviving row still materialises its live value.
+query
+SELECT count(*) FILTER (WHERE status IS NULL)     AS gone,
+       count(*) FILTER (WHERE status IS NOT NULL) AS live
+FROM doc_idx WHERE body @@ ts_phrase('brown');
+----
+gone	live
+1	1
+
+
+query
+SELECT pk, status FROM doc_idx
+WHERE body @@ ts_phrase('brown') AND status IS NOT NULL ORDER BY pk;
+----
+pk	status
+1	archived
+
+
+# After refresh the deleted posting is dropped; only pk1 remains.
+statement ok
+VACUUM (REFRESH_TABLE) doc;
+
+
+query
+SELECT pk, status FROM doc_idx WHERE body @@ ts_phrase('brown') ORDER BY pk;
+----
+pk	status
+1	archived
+
+
+statement ok
+DROP INDEX doc_idx;
+
+
+statement ok
+DROP TABLE doc;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY en;

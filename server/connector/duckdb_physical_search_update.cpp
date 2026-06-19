@@ -209,8 +209,9 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
                          gstate.new_pk_columns, gstate.table_key,
                          uses_generated_pk, pk_base);
   gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
-    gstate.search_table, duckdb::BufferManager::GetBufferManager(context.client),
-    gstate.chunk_types, new_row, uses_generated_pk, pk_base);
+    gstate.search_table,
+    duckdb::BufferManager::GetBufferManager(context.client), gstate.chunk_types,
+    new_row, uses_generated_pk, pk_base);
 
   gstate.update_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;

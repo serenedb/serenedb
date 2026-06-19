@@ -41,8 +41,8 @@ namespace sdb::connector {
 void RejectIfSearchTable(const catalog::Table& table,
                          std::string_view operation);
 
-// Reads `storage = 'rocksdb' | 'search'` from a CREATE TABLE WITH clause and
-// sets options.storage. Throws on unknown values or non-string shapes.
+// Reads `storage = 'transactional' | 'search'` from a CREATE TABLE WITH clause
+// and sets options.engine. Throws on unknown values or non-string shapes.
 void ApplyStorageKind(
   catalog::CreateTableOptions& options,
   const duckdb::case_insensitive_map_t<

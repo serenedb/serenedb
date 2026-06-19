@@ -159,8 +159,9 @@ std::shared_ptr<Object> Table::Clone() const {
     _check_constraints, _generated_pk_seq_id, _engine, _unique_constraints,
     _foreign_keys);
   cloned->SetTombstoned(Tombstoned());
-  // Carry the Fast-table iresearch store forward (mirrors InvertedIndex::Clone);
-  // every CoW schema mutator funnels through Clone(), so ALTER preserves it.
+  // Carry the Fast-table iresearch store forward (mirrors
+  // InvertedIndex::Clone); every CoW schema mutator funnels through Clone(), so
+  // ALTER preserves it.
   cloned->SetData(_data);
   return cloned;
 }

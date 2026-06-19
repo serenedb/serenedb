@@ -1,11 +1,11 @@
 
-# Explicit rocksdb -- equivalent to default.
+# Explicit transactional -- equivalent to default.
 statement ok
-CREATE TABLE storage_rocks (a INTEGER PRIMARY KEY, b TEXT)
-  WITH (storage = 'rocksdb');
+CREATE TABLE storage_txn (a INTEGER PRIMARY KEY, b TEXT)
+  WITH (storage = 'transactional');
 
 statement ok
-DROP TABLE storage_rocks;
+DROP TABLE storage_txn;
 
 
 # Headline smoke: kSearch shard creates iresearch directory + empty writer,
@@ -46,7 +46,7 @@ statement error
 CREATE TABLE storage_err1 (a INTEGER PRIMARY KEY)
   WITH (storage = 'invalid_storage_type');
 ----
-db error: ERROR: WITH option "storage" must be 'rocksdb' or 'search', got "invalid_storage_type"
+db error: ERROR: WITH option "storage" must be 'transactional' or 'search', got "invalid_storage_type"
 
 
 statement error

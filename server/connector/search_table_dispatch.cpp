@@ -79,7 +79,7 @@ void ApplyStorageKind(
   auto value = ExtractString(kStorageKey, *it->second);
   SDB_ASSERT(value);
   auto lower = duckdb::StringUtil::Lower(*value);
-  if (lower == "rocksdb") {
+  if (lower == "transactional") {
     options.engine = catalog::TableEngine::Transactional;
   } else if (lower == "search") {
     options.engine = catalog::TableEngine::Fast;
@@ -87,7 +87,7 @@ void ApplyStorageKind(
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("WITH option \"", kStorageKey,
-              "\" must be 'rocksdb' or 'search', got \"", *value, "\""));
+              "\" must be 'transactional' or 'search', got \"", *value, "\""));
   }
 }
 

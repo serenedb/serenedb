@@ -396,9 +396,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     }
   }
 
-  // Parse WITH (storage = 'search') into CreateTableOptions.engine (Fast).
-  ApplyStorageKind(options, table_info.options);
-
   auto& catalog_impl = catalog::GetCatalog();
   auto database_id = GetDatabaseId();
 

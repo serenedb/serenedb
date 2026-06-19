@@ -55,8 +55,8 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
-#include "search/search_table_changes.h"
 #include "search/search_table.h"
+#include "search/search_table_changes.h"
 
 namespace sdb::connector {
 namespace {

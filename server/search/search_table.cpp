@@ -66,9 +66,8 @@ Result SearchTable::DropArtifacts(ObjectId db_id, ObjectId table_id) {
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {
-    return Result{ERROR_INTERNAL,
-                  "Failed to remove search table directory '" + path.string() +
-                    "': " + ec.message()};
+    return Result{ERROR_INTERNAL, "Failed to remove search table directory '" +
+                                    path.string() + "': " + ec.message()};
   }
   auto chunk_dir = GetChunkDir(db_id, table_id);
   std::filesystem::remove_all(chunk_dir, ec);

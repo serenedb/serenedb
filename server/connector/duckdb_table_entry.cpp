@@ -146,10 +146,11 @@ duckdb::Catalog& SereneDBTableEntry::GetStorageCatalog(
   return ResolveStoreEntry(context).ParentCatalog();
 }
 
-void SereneDBTableEntry::BindUpdateConstraints(
-  duckdb::Binder& binder, duckdb::LogicalGet& get,
-  duckdb::LogicalProjection& proj, duckdb::LogicalUpdate& update,
-  duckdb::ClientContext& context) {
+void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
+                                               duckdb::LogicalGet& get,
+                                               duckdb::LogicalProjection& proj,
+                                               duckdb::LogicalUpdate& update,
+                                               duckdb::ClientContext& context) {
   // Transactional tables use DuckDB's default update-constraint binding against
   // the store table (partial per-column updates + base index/LIST handling).
   if (_sdb_table->GetEngine() != catalog::TableEngine::Fast) {

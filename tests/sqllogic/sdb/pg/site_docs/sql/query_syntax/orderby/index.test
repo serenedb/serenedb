@@ -81,14 +81,16 @@ Mercury	terrestrial	0
 
 # DOCS_TEST_BODY
 
-query error
-SELECT *
-FROM planets
-ORDER BY kind COLLATE DE;
+query
+SELECT word
+FROM (VALUES ('apfel'), ('zebra'), ('äpfel'), ('birne')) AS t(word)
+ORDER BY word COLLATE DE;
 ----
-db error: ERROR: Collation with name "de" is not in the catalog, but it exists in the icu extension.
-
-This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+word
+apfel
+äpfel
+birne
+zebra
 
 
 # DOCS_TEST: example_008

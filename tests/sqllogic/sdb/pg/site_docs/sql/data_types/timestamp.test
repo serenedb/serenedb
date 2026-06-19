@@ -78,19 +78,15 @@ timestamp with time zone
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT
     timezone('America/Denver', TIMESTAMP '2001-02-16 20:38:40') AS aware1,
     timezone('America/Denver', TIMESTAMPTZ '2001-02-16 04:38:40') AS naive1,
     timezone('UTC', TIMESTAMP '2001-02-16 20:38:40+00:00') AS aware2,
     timezone('UTC', TIMESTAMPTZ '2001-02-16 04:38:40 Europe/Berlin') AS naive2;
 ----
-db error: ERROR: An error occurred while trying to automatically install the required extension 'icu:
-Extension "<slt:ignore>icu.duckdb_extension" not found.
-Extension "icu" is an existing extension.
-
-Install it first using "INSTALL icu".
-
+aware1	naive1	aware2	naive2
+2001-02-17 03:38:40+00	2001-02-15 21:38:40	2001-02-16 20:38:40+00	2001-02-16 03:38:40
 
 # DOCS_TEST: example_008
 
@@ -145,27 +141,37 @@ UTC	UTC	00:00:00
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 SET Calendar = 'japanese';
-----
-db error: ERROR: Setting with name "calendar" is not in the catalog, but it exists in the icu extension.
-
-This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
-
 
 # DOCS_TEST: example_013
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT name
 FROM icu_calendar_names()
 ORDER BY 1;
 ----
-db error: ERROR: Table Function with name "icu_calendar_names" is not in the catalog, but it exists in the icu extension.
-
-This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
-
+name
+buddhist
+chinese
+coptic
+dangi
+ethiopic
+ethiopic-amete-alem
+gregorian
+hebrew
+indian
+islamic
+islamic-civil
+islamic-rgsa
+islamic-tbla
+islamic-umalqura
+iso8601
+japanese
+persian
+roc
 
 # DOCS_TEST: example_014
 

@@ -349,12 +349,11 @@ CREATE TEMP TABLE IF NOT EXISTS __docs_utility_getenv (i INTEGER);
 
 # DOCS_TEST: icu_sort_key
 # DOCS_TEST_BODY
-query error
-SELECT icu_sort_key('ö', 'DE');
+query
+SELECT icu_sort_key('a', 'DE') < icu_sort_key('b', 'DE') AS icu_sort_key;
 ----
-db error: ERROR: Scalar Function with name "icu_sort_key" is not in the catalog, but it exists in the icu extension.
-
-This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+icu_sort_key
+t
 
 
 # DOCS_TEST: md5_number

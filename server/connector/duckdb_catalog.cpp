@@ -841,15 +841,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
   duckdb::unique_ptr<duckdb::LogicalOperator> plan,
   duckdb::unique_ptr<duckdb::CreateIndexInfo> create_info,
   duckdb::unique_ptr<duckdb::AlterTableInfo> alter_info) {
-  // DuckCatalog implements ADD PRIMARY KEY by building a CREATE INDEX over an
-  // ART. SereneDB instead enforces the primary key in the underlying store, so
-  // we discard the index plan the binder prepared and route the ALTER through
-  // the regular LOGICAL_ALTER dispatch -- SereneDBSchemaEntry::Alter handles the
-  // ADD_CONSTRAINT case by mirroring the constraint to the store table.
-  (void)binder;
-  (void)table_entry;
-  (void)plan;
-  (void)create_info;
   return duckdb::make_uniq<duckdb::LogicalSimple>(
     duckdb::LogicalOperatorType::LOGICAL_ALTER, std::move(alter_info));
 }

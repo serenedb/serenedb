@@ -60,3 +60,11 @@ ORDER BY i;
 ----
 i
 {A,B}
+
+# DOCS_TEST: example_007
+
+# Reset the engine-wide thread count: on serened SET threads is global, so the
+# SET threads = 1 above would otherwise leak into every other test sharing this
+# server (and a 1-thread query pipeline can livelock). Not rendered in the docs.
+statement ok
+RESET threads;

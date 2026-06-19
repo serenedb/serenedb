@@ -36,14 +36,8 @@ duckdb::Logger* gLogger = nullptr;
 void SetLogger(duckdb::Logger* logger) noexcept { gLogger = logger; }
 
 bool IsEnabled(duckdb::LogLevel level, std::string_view topic) noexcept try {
-  // Every topic constant in topic.h is initialized from a string literal
-  // (.data() is NUL-terminated, see invariant in topic.h).
   return gLogger->ShouldLog(topic.data(), level);
 } catch (...) {
-  // ShouldLog can throw (e.g. DuckDB's MutableLogger throws on an internal
-  // mode/config desync after a logging-settings change). A log-enablement
-  // check must never abort the process: degrade to "not enabled". Mirrors the
-  // exception handling in Log() below.
   return false;
 }
 

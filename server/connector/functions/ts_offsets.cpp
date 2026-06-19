@@ -72,38 +72,23 @@ constexpr irs::field_id kStandaloneFieldId =
   catalog::Column::kMaxRealIdValue + 4;
 constexpr catalog::Column::Id kStandaloneSyntheticColumnId{kStandaloneFieldId};
 
-// How a tokenizer can supply the per-token offsets the offsets/highlight path
-// re-derives in memory:
-//   Direct      -- emits OffsAttr in non-decreasing start order; index as-is.
-//   Sorted      -- emits OffsAttr but out of start order (sparse_ngram); the
-//                  grams must be buffered and sorted before indexing.
-//   Unsupported -- cannot produce offsets at all (e.g. union interleaves
-//                  independent sub-tokenizers); offsets/highlight is not
-//                  available and must error instead of crashing.
-enum class OffsetSupport { Direct, Sorted, Unsupported };
-
-OffsetSupport ClassifyOffsetSupport(const irs::analysis::Analyzer& analyzer) {
-  const auto id = analyzer.type();
-  if (id == irs::Type<irs::analysis::SparseNGramTokenizer>::id()) {
-    return OffsetSupport::Sorted;
-  }
-  if (id == irs::Type<irs::analysis::UnionTokenizer>::id()) {
-    return OffsetSupport::Unsupported;
-  }
-  return OffsetSupport::Direct;
-}
-
 // Adapts a tokenizer that emits OffsAttr out of start order (sparse_ngram) into
 // a stream the indexer accepts: on reset it drains the inner tokenizer, buffers
 // each gram with its byte range, and replays them sorted by start offset so the
 // indexer's monotonic-offset invariant holds. Bounded per document, which is
 // fine for the in-memory highlight index (not the streaming on-disk indexer).
-class SortingOffsetTokenizer final : public irs::Tokenizer {
+class SortingOffsetTokenizer final
+  : public irs::analysis::TypedAnalyzer<SortingOffsetTokenizer> {
  public:
-  explicit SortingOffsetTokenizer(irs::analysis::Analyzer& inner) noexcept
-    : _inner{&inner} {}
+  static constexpr std::string_view type_name() noexcept {
+    return "sorting_offset_tokenizer";
+  }
 
-  bool Reset(std::string_view value) {
+  explicit SortingOffsetTokenizer(
+    catalog::Tokenizer::TokenizerWrapper inner) noexcept
+    : _inner{std::move(inner)} {}
+
+  bool reset(std::string_view value) final {
     _idx = 0;
     _buf.clear();
     if (!_inner->reset(value)) {
@@ -147,23 +132,34 @@ class SortingOffsetTokenizer final : public irs::Tokenizer {
     uint32_t end;
   };
 
-  irs::analysis::Analyzer* _inner;
+  catalog::Tokenizer::TokenizerWrapper _inner;
   // IncAttr defaults to 1, so replayed positions advance one per gram.
   std::tuple<irs::IncAttr, irs::TermAttr, irs::OffsAttr> _attrs;
   std::vector<Entry> _buf;
   size_t _idx{0};
 };
 
+catalog::Tokenizer::TokenizerWrapper EnsureOffsets(
+  catalog::Tokenizer::TokenizerWrapper tokenizer) {
+  const auto id = tokenizer->type();
+  if (id == irs::Type<irs::analysis::UnionTokenizer>::id()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("ts_offsets()/ts_highlight() is not supported for this "
+              "dictionary: its tokenizer does not produce text offsets"));
+  }
+  if (id == irs::Type<irs::analysis::SparseNGramTokenizer>::id()) {
+    return {new SortingOffsetTokenizer(std::move(tokenizer)),
+            catalog::Tokenizer::Deleter{}};
+  }
+  return tokenizer;
+}
+
 struct IndexField {
   void Reset(catalog::Column::Id column_id,
              catalog::Tokenizer::TokenizerWrapper analyzer) {
     id = static_cast<irs::field_id>(column_id);
-    tokenizer = std::move(analyzer);
-    if (ClassifyOffsetSupport(*tokenizer) == OffsetSupport::Sorted) {
-      sorter = std::make_unique<SortingOffsetTokenizer>(*tokenizer);
-    } else {
-      sorter.reset();
-    }
+    tokens = EnsureOffsets(std::move(analyzer));
   }
 
   irs::field_id Id() const noexcept { return id; }
@@ -171,24 +167,12 @@ struct IndexField {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
            irs::IndexFeatures::Offs;
   }
-  irs::Tokenizer& GetTokens() const noexcept {
-    if (sorter) {
-      return *sorter;
-    }
-    return *tokenizer;
-  }
+  irs::Tokenizer& GetTokens() const noexcept { return *tokens; }
   bool Write(irs::DataOutput&) const noexcept { return false; }
-  void SetValue(std::string_view value) const {
-    if (sorter) {
-      sorter->Reset(value);
-    } else {
-      tokenizer->reset(value);
-    }
-  }
+  void SetValue(std::string_view value) const { tokens->reset(value); }
 
   irs::field_id id{irs::field_limits::invalid()};
-  catalog::Tokenizer::TokenizerWrapper tokenizer;
-  std::unique_ptr<SortingOffsetTokenizer> sorter;
+  catalog::Tokenizer::TokenizerWrapper tokens;
 };
 
 struct OffsetsLocalState final : duckdb::FunctionLocalState {
@@ -198,7 +182,7 @@ struct OffsetsLocalState final : duckdb::FunctionLocalState {
 
 auto& EnsureField(duckdb::ClientContext& context,
                   OffsetsLocalState& local_state, const OffsetsBindData& bind) {
-  if (local_state.field.tokenizer) {
+  if (local_state.field.tokens) {
     return local_state.field;
   }
 
@@ -214,16 +198,6 @@ auto& EnsureField(duckdb::ClientContext& context,
       snapshot, static_cast<irs::field_id>(bind.column_id));
     wrapper = std::move(column_tokenizer.analyzer);
     column_id = bind.column_id;
-  }
-
-  // Guard: a tokenizer that cannot produce offsets at all would index a field
-  // with positions but no offsets, then the offset read path decodes offset
-  // deltas that were never written -- a crash. Fail cleanly instead.
-  if (ClassifyOffsetSupport(*wrapper) == OffsetSupport::Unsupported) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("ts_offsets()/ts_highlight() is not supported for this "
-              "dictionary: its tokenizer does not produce text offsets"));
   }
 
   local_state.field.Reset(column_id, std::move(wrapper));

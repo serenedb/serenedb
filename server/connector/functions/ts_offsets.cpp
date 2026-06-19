@@ -20,6 +20,8 @@
 
 #include "connector/functions/ts_offsets.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -29,7 +31,6 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <algorithm>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
@@ -72,11 +73,6 @@ constexpr irs::field_id kStandaloneFieldId =
   catalog::Column::kMaxRealIdValue + 4;
 constexpr catalog::Column::Id kStandaloneSyntheticColumnId{kStandaloneFieldId};
 
-// Adapts a tokenizer that emits OffsAttr out of start order (sparse_ngram) into
-// a stream the indexer accepts: on reset it drains the inner tokenizer, buffers
-// each gram with its byte range, and replays them sorted by start offset so the
-// indexer's monotonic-offset invariant holds. Bounded per document, which is
-// fine for the in-memory highlight index (not the streaming on-disk indexer).
 class SortingOffsetTokenizer final
   : public irs::analysis::TypedAnalyzer<SortingOffsetTokenizer> {
  public:
@@ -86,26 +82,20 @@ class SortingOffsetTokenizer final
 
   explicit SortingOffsetTokenizer(
     catalog::Tokenizer::TokenizerWrapper inner) noexcept
-    : _inner{std::move(inner)} {}
+    : _inner{std::move(inner)},
+      _term{irs::get<irs::TermAttr>(*_inner)},
+      _offs{irs::get<irs::OffsAttr>(*_inner)} {}
 
   bool reset(std::string_view value) final {
     _idx = 0;
     _buf.clear();
-    if (!_inner->reset(value)) {
-      return false;
-    }
-    const auto* term = irs::get<irs::TermAttr>(*_inner);
-    const auto* offs = irs::get<irs::OffsAttr>(*_inner);
-    if (!term || !offs) {
+    if (!_term || !_offs || !_inner->reset(value)) {
       return false;
     }
     while (_inner->next()) {
-      _buf.push_back({.term = term->value, .start = offs->start,
-                      .end = offs->end});
+      _buf.emplace_back(_offs->start, _offs->end, irs::bstring{_term->value});
     }
-    std::sort(_buf.begin(), _buf.end(), [](const Entry& a, const Entry& b) {
-      return a.start != b.start ? a.start < b.start : a.end < b.end;
-    });
+    absl::c_sort(_buf);
     return true;
   }
 
@@ -113,11 +103,9 @@ class SortingOffsetTokenizer final
     if (_idx >= _buf.size()) {
       return false;
     }
-    const auto& e = _buf[_idx++];
-    std::get<irs::TermAttr>(_attrs).value = e.term;
     auto& offs = std::get<irs::OffsAttr>(_attrs);
-    offs.start = e.start;
-    offs.end = e.end;
+    auto& term = std::get<irs::TermAttr>(_attrs);
+    std::tie(offs.start, offs.end, term.value) = _buf[_idx++];
     return true;
   }
 
@@ -126,16 +114,13 @@ class SortingOffsetTokenizer final
   }
 
  private:
-  struct Entry {
-    irs::bytes_view term;
-    uint32_t start;
-    uint32_t end;
-  };
+  using Gram = std::tuple<uint32_t, uint32_t, irs::bstring>;
 
   catalog::Tokenizer::TokenizerWrapper _inner;
-  // IncAttr defaults to 1, so replayed positions advance one per gram.
+  const irs::TermAttr* _term;
+  const irs::OffsAttr* _offs;
   std::tuple<irs::IncAttr, irs::TermAttr, irs::OffsAttr> _attrs;
-  std::vector<Entry> _buf;
+  std::vector<Gram> _buf;
   size_t _idx{0};
 };
 

@@ -156,23 +156,62 @@ hännes	HÄNNES
 
 # DOCS_TEST: example_015
 
+# The three non-ICU builtins (nfc, noaccent, nocase) are always present.
+# ICU locale collations (de, fr, ja, ...) are now included as well. We filter
+# to a stable known set instead of asserting the full list because the total
+# number of ICU collations varies between ICU versions.
+
 # DOCS_TEST_BODY
 
 query
-PRAGMA collations;
+SELECT collname
+FROM pragma_collations()
+WHERE collname IN ('nocase', 'noaccent', 'nfc', 'de', 'fr', 'ja')
+ORDER BY collname;
 ----
 collname
+de
+fr
+ja
 nfc
 noaccent
 nocase
 
 # DOCS_TEST: example_016
 
+# ICU collations follow region- and language-specific rules. The German (de)
+# collation orders the umlaut "ä" next to "a" rather than after "z".
+
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CREATE TABLE strings (s VARCHAR COLLATE DE);
-----
-db error: ERROR: Collation with name "de" is not in the catalog, but it exists in the icu extension.
 
-This feature relies on the "icu" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues if you need it.
+statement ok
+INSERT INTO strings VALUES ('z'), ('ä'), ('a');
+
+query
+SELECT s
+FROM strings
+ORDER BY s;
+----
+s
+a
+ä
+z
+
+# DOCS_TEST: example_017
+
+# A collation can also be applied per expression with COLLATE inside ORDER BY.
+
+# DOCS_TEST_BODY
+
+query
+SELECT s
+FROM (VALUES ('z'), ('ä'), ('a')) AS t(s)
+ORDER BY s COLLATE DE;
+----
+s
+a
+ä
+z

@@ -207,13 +207,9 @@ void Utf8TransitionsBuilder::Finish(automaton& a, automaton::StateId from) {
   a.EmplaceArc(_rho_states[3], kRhoLabel, _rho_states[2]);
 }
 
-QueryBuilder::ptr PrepareAutomatonSegment(const SubReader& segment,
-                                          const PrepareContext& ctx,
-                                          irs::field_id field,
-                                          const automaton& acceptor,
-                                          score_t boost) {
-  auto matcher = MakeAutomatonMatcher(acceptor);
-
+QueryBuilder::ptr PrepareAutomatonSegment(
+  const SubReader& segment, const PrepareContext& ctx, irs::field_id field,
+  const automaton_table_matcher& matcher, score_t boost) {
   if (fst::kError == matcher.Properties(0)) {
     SDB_ERROR(
       IRESEARCH,

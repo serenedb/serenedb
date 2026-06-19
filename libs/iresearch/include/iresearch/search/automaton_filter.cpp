@@ -27,6 +27,12 @@
 
 namespace irs {
 
+AutomatonOptions::AutomatonOptions(automaton acceptor, bytes_view pattern,
+                                   size_t scored_terms_limit)
+  : pattern{pattern},
+    compiled{std::make_shared<const CompiledAcceptor>(std::move(acceptor))},
+    scored_terms_limit{scored_terms_limit} {}
+
 field_visitor AutomatonFilter::visitor(const automaton& acceptor) {
   if (!Validate(acceptor)) {
     return [](const SubReader&, const TermReader&, FilterVisitor&) {};
@@ -50,8 +56,9 @@ field_visitor AutomatonFilter::visitor(const automaton& acceptor) {
 
 QueryBuilder::ptr AutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
-  return PrepareAutomatonSegment(segment, ctx, field_id(), options().acceptor,
-                                 Boost());
+  SDB_ASSERT(options().compiled);
+  return PrepareAutomatonSegment(segment, ctx, field_id(),
+                                 options().compiled->matcher, Boost());
 }
 
 PrepareCollector::ptr AutomatonFilter::MakeCollector(

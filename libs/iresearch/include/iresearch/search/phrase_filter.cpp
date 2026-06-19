@@ -38,6 +38,7 @@
 #include "iresearch/search/terms_filter.hpp"
 #include "iresearch/search/top_terms_selector.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 namespace {
@@ -122,7 +123,8 @@ struct GetVisitor {
   field_visitor operator()(const auto&) const { SDB_UNREACHABLE(); }
 
   field_visitor operator()(const AutomatonOptions& part) const {
-    return AutomatonFilter::visitor(part.acceptor);
+    SDB_ASSERT(part.compiled);
+    return AutomatonFilter::visitor(part.compiled->acceptor);
   }
 
   field_visitor operator()(const LevenshteinAutomatonOptions& part) const {

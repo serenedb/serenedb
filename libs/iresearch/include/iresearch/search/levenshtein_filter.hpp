@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <memory>
+
 #include "filter.hpp"
 #include "iresearch/utils/automaton.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
@@ -33,6 +35,7 @@ namespace irs {
 class ByEditDistance;
 class LevenshteinAutomatonFilter;
 struct FilterVisitor;
+struct CompiledAcceptor;
 
 struct ByEditDistanceAllOptions {
   //////////////////////////////////////////////////////////////////////////////
@@ -129,7 +132,7 @@ struct LevenshteinAutomatonOptions {
   using FilterType = LevenshteinAutomatonFilter;
 
   bstring target;
-  automaton acceptor;
+  std::shared_ptr<const CompiledAcceptor> compiled;
   uint32_t utf8_target_size{1};
   byte_type no_distance{1};
   size_t max_terms{};

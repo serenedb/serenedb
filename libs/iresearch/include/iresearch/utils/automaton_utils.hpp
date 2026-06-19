@@ -61,6 +61,14 @@ inline auto MakeAutomatonMatcher(const automaton& a,
   return automaton_table_matcher{a, test_props};
 }
 
+struct CompiledAcceptor {
+  explicit CompiledAcceptor(automaton a)
+    : acceptor{std::move(a)}, matcher{MakeAutomatonMatcher(acceptor)} {}
+
+  automaton acceptor;
+  automaton_table_matcher matcher;
+};
+
 template<typename Char, typename Matcher>
 inline automaton::Weight Match(Matcher& matcher,
                                basic_string_view<Char> target) {
@@ -385,7 +393,7 @@ inline bool Validate(const automaton& a,
 //////////////////////////////////////////////////////////////////////////////
 template<typename Visitor>
 void Visit(const SubReader& segment, const TermReader& reader,
-           automaton_table_matcher& matcher, Visitor& visitor) {
+           const automaton_table_matcher& matcher, Visitor& visitor) {
   SDB_ASSERT(fst::kError != matcher.Properties(0));
   auto terms = reader.iterator(matcher);
 
@@ -456,10 +464,8 @@ inline automaton MakeAll() {
 /// @param bool query boost
 /// @returns compiled filter
 //////////////////////////////////////////////////////////////////////////////
-QueryBuilder::ptr PrepareAutomatonSegment(const SubReader& segment,
-                                          const PrepareContext& ctx,
-                                          irs::field_id field,
-                                          const automaton& acceptor,
-                                          score_t boost);
+QueryBuilder::ptr PrepareAutomatonSegment(
+  const SubReader& segment, const PrepareContext& ctx, irs::field_id field,
+  const automaton_table_matcher& matcher, score_t boost);
 
 }  // namespace irs

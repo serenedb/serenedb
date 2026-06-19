@@ -101,14 +101,8 @@ uint32_t Utf8TargetSize(bytes_view prefix, bytes_view term) {
 
 QueryBuilder::ptr PrepareLevenshteinSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id field,
-  const automaton& acceptor, uint32_t utf8_target_size, byte_type no_distance,
-  size_t terms_limit, score_t boost) {
-  if (!Validate(acceptor)) {
-    return QueryBuilder::Empty();
-  }
-
-  auto matcher = MakeAutomatonMatcher(acceptor);
-
+  const automaton_table_matcher& matcher, uint32_t utf8_target_size,
+  byte_type no_distance, size_t terms_limit, score_t boost) {
   auto query = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Max,
     size_t{1});
@@ -156,33 +150,27 @@ QueryBuilder::ptr ByEditDistance::PrepareSegment(const SubReader&,
 QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id id,
   const LevenshteinAutomatonOptions& options, score_t boost) {
+  SDB_ASSERT(options.compiled);
   return PrepareLevenshteinSegment(
-    segment, ctx, id, options.acceptor, options.utf8_target_size,
+    segment, ctx, id, options.compiled->matcher, options.utf8_target_size,
     options.no_distance, options.max_terms, boost);
 }
 
 field_visitor LevenshteinAutomatonFilter::visitor(
   const LevenshteinAutomatonOptions& options) {
-  if (!Validate(options.acceptor)) {
+  if (!options.compiled ||
+      fst::kError == options.compiled->matcher.Properties(0)) {
     return [](const SubReader&, const TermReader&, FilterVisitor&) {};
   }
 
-  struct AutomatonContext : util::Noncopyable {
-    explicit AutomatonContext(const automaton& a)
-      : matcher{MakeAutomatonMatcher(a)} {}
-
-    automaton_table_matcher matcher;
-  };
-
-  auto ctx = AutomatonContext{options.acceptor};
-
-  return [context = std::move(ctx), utf8_target_size = options.utf8_target_size,
-          no_distance = options.no_distance](const SubReader& segment,
-                                             const TermReader& field,
-                                             FilterVisitor& visitor) mutable {
-    return VisitImpl(segment, field, no_distance, utf8_target_size,
-                     context.matcher, visitor);
-  };
+  return
+    [compiled = options.compiled, utf8_target_size = options.utf8_target_size,
+     no_distance = options.no_distance](const SubReader& segment,
+                                        const TermReader& field,
+                                        FilterVisitor& visitor) {
+      return VisitImpl(segment, field, no_distance, utf8_target_size,
+                       compiled->matcher, visitor);
+    };
 }
 
 QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
@@ -198,7 +186,8 @@ PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollector(
 LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
   const ParametricDescription& d, bytes_view prefix, bytes_view term,
   size_t max_terms)
-  : acceptor{MakeLevenshteinAutomaton(d, prefix, term)},
+  : compiled{std::make_shared<const CompiledAcceptor>(
+      MakeLevenshteinAutomaton(d, prefix, term))},
     utf8_target_size{Utf8TargetSize(prefix, term)},
     no_distance{static_cast<byte_type>(d.max_distance() + 1)},
     max_terms{max_terms} {
@@ -225,7 +214,7 @@ Filter::ptr LowerLevenshtein(irs::field_id id,
     [&](const ParametricDescription& d, const bytes_view prefix,
         const bytes_view term) -> Filter::ptr {
       LevenshteinAutomatonOptions lowered{d, prefix, term, opts.max_terms};
-      if (!Validate(lowered.acceptor)) {
+      if (fst::kError == lowered.compiled->matcher.Properties(0)) {
         return std::make_unique<Empty>();
       }
       auto filter = std::make_unique<LevenshteinAutomatonFilter>();

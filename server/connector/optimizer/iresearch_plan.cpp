@@ -872,7 +872,7 @@ bool TryClaimSearchFilter(
   }
 
   irs::Filter::ptr root = std::move(root_and);
-  irs::Optimize(root, {.scored = scan.text_scorer || scan.EmitOffsets()});
+  irs::Optimize(root, {.scored = scan.text_scorer.has_value()});
 
   std::shared_ptr<irs::Filter> stored;
   if (scan.vector_scorer) {

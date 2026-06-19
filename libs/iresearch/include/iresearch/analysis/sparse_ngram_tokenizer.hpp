@@ -68,10 +68,6 @@ class SparseNGramTokenizer final : public TypedAnalyzer<SparseNGramTokenizer>,
   bool reset(std::string_view data) final;
 
  private:
-  // Each gram carries its source byte range as an OffsAttr. The grams are
-  // emitted in monotonic-stack order, not sorted by start offset, so they
-  // cannot feed the persistent indexer (which requires non-decreasing
-  // offsets) -- the highlight path sorts them in memory first.
   using attributes = std::tuple<IncAttr, TermAttr, OffsAttr>;
 
   struct HashAndPos {

@@ -636,3 +636,10 @@ Success
 
 statement ok
 SET default_block_size = '16384';
+
+# DOCS_TEST: example_070
+
+# Reset engine-global thread count so SET threads above does not leak into
+# other tests sharing this server (not rendered in the docs).
+statement ok
+RESET threads;

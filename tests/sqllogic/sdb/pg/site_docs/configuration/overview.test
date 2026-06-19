@@ -134,3 +134,10 @@ FROM duckdb_settings();
 
 statement ok
 RESET memory_limit;
+
+# DOCS_TEST: example_017
+
+# Reset engine-global thread count so SET threads above does not leak into
+# other tests sharing this server (not rendered in the docs).
+statement ok
+RESET threads;

@@ -12,3 +12,10 @@ SET memory_limit = '4GB';
 
 statement ok
 SET preserve_insertion_order = false;
+
+# DOCS_TEST: example_002
+
+# Reset engine-global thread count so SET threads above does not leak into
+# other tests sharing this server (not rendered in the docs).
+statement ok
+RESET threads;

@@ -68,7 +68,7 @@ SELECT NULL::timestamp with time zone;
 statement error
 SELECT lastval();
 
-statement error
+statement ok
 SELECT make_timestamptz(2020, 1, 1, 0, 0, 0);
 
 # --- Geometric: PostgreSQL geometric types unsupported (spatial is a

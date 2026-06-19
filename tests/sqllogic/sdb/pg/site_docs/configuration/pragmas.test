@@ -639,7 +639,22 @@ SET default_block_size = '16384';
 
 # DOCS_TEST: example_070
 
-# Reset engine-global thread count so SET threads above does not leak into
-# other tests sharing this server (not rendered in the docs).
+# Reset engine-global settings so the SET/PRAGMA statements above do not leak
+# into other tests sharing this server (not rendered in the docs).
 statement ok
 RESET threads;
+
+statement ok
+RESET catalog_error_max_schemas;
+
+statement ok
+RESET force_compression;
+
+statement ok
+RESET disabled_compression_methods;
+
+statement ok
+RESET temp_directory;
+
+statement ok
+RESET default_block_size;

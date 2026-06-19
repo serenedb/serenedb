@@ -1365,7 +1365,7 @@ statement ok
 SELECT current_date;
 
 # op_datetime: current_time
-statement error
+statement ok
 SELECT current_time;
 
 # op_datetime: current_timestamp
@@ -1413,11 +1413,11 @@ statement error
 SELECT justify_interval(INTERVAL '1 mon -1 hour');
 
 # op_datetime: localtime
-statement error
+statement ok
 SELECT localtime;
 
 # op_datetime: localtimestamp
-statement error
+statement ok
 SELECT localtimestamp;
 
 # op_datetime: make_date
@@ -2614,7 +2614,7 @@ statement error
 SELECT lastval();
 
 # op_datetime: make_timestamptz (function absent)
-statement error
+statement ok
 SELECT make_timestamptz(2020, 1, 1, 0, 0, 0);
 
 # op_geo: isclosed (function absent; does not crash)

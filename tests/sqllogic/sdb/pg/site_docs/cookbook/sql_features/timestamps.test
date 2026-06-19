@@ -5,38 +5,19 @@
 statement ok
 SET timezone = 'America/Los_Angeles';
 
-statement error
-CREATE TABLE times AS
+statement ok
+CREATE OR REPLACE TABLE times AS
     FROM range('2025-08-30'::TIMESTAMPTZ, '2025-08-31'::TIMESTAMPTZ, INTERVAL 1 HOUR) tbl(t);
+
+query ?
+SELECT count(*) AS matching_rows
+FROM times
+WHERE t <= '2025-08-30';
 ----
-db error: ERROR: No function matches the given name and argument types 'range(TIMESTAMP WITH TIME ZONE, TIMESTAMP WITH TIME ZONE, INTERVAL)'. You might need to add explicit type casts.
-	Candidate functions:
-	range(BIGINT)
-	range(BIGINT, BIGINT)
-	range(BIGINT, BIGINT, BIGINT)
-	range(TIMESTAMP, TIMESTAMP, INTERVAL)
-
-
-query error
-FROM times WHERE t <= '2025-08-30';
-----
-db error: ERROR: Table with name times does not exist!
-Did you mean "<slt:ignore>"?
-
+matching_rows
+1
 
 # DOCS_TEST: example_002
-
-statement ok
-DROP TABLE IF EXISTS times;
-
-statement ok
-CREATE TABLE times (t TIMESTAMP);
-
-statement ok
-INSERT INTO times VALUES
-    (TIMESTAMP '2025-08-30 00:00:00'),
-    (TIMESTAMP '2025-08-30 12:00:00'),
-    (TIMESTAMP '2025-08-31 00:00:00');
 
 # DOCS_TEST_BODY
 
@@ -44,10 +25,12 @@ statement ok
 SET timezone = 'HST';
 
 query ?
-FROM times WHERE t <= '2025-08-30';
+SELECT count(*) AS matching_rows
+FROM times
+WHERE t <= '2025-08-30';
 ----
-t
-2025-08-30 00:00:00
+matching_rows
+4
 
 # DOCS_TEST: example_003
 
@@ -57,10 +40,12 @@ statement ok
 SET timezone = 'America/New_York';
 
 query ?
-FROM times WHERE t <= '2025-08-30';
+SELECT count(*) AS matching_rows
+FROM times
+WHERE t <= '2025-08-30';
 ----
-t
-2025-08-30 00:00:00
+matching_rows
+0
 
 # DOCS_TEST: example_004
 

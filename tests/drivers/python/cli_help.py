@@ -242,7 +242,6 @@ def parse_help(help_text: str) -> dict:
         "flagSources": _parse_list_section(lines, "Flag sources"),
         "helpVariants": _parse_list_section(lines, "Help variants"),
         "flagGroups": _parse_flag_groups(lines),
-        "rawHelp": help_text,
     }
 
 

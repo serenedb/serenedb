@@ -872,7 +872,14 @@ bool TryClaimSearchFilter(
   }
 
   irs::Filter::ptr root = std::move(root_and);
-  irs::Optimize(root, {.scored = scan.text_scorer.has_value()});
+  absl::InlinedVector<irs::field_id, 8> analyzed_fields;
+  for (const auto& [field_id, entry] : index.GetEntries()) {
+    if (entry.HasTextDictionary()) {
+      analyzed_fields.push_back(field_id);
+    }
+  }
+  irs::Optimize(root, {.scored = scan.text_scorer.has_value(),
+                       .analyzed_fields = analyzed_fields});
 
   std::shared_ptr<irs::Filter> stored;
   if (scan.vector_scorer) {

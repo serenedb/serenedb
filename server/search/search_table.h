@@ -35,8 +35,8 @@
 
 namespace sdb::search {
 
-// Per-table iresearch columnstore store for a Fast-engine (TableEngine::Fast)
-// table -- the Fast-engine sibling of InvertedIndexStorage. Attached to the
+// Per-table iresearch columnstore store for a TableEngine::Search table -- the
+// Search-engine sibling of InvertedIndexStorage. Attached to the
 // catalog::Table via GetData()/SetData(); the directory layout is derived from
 // (db_id, table_id), see GetPath.
 class SearchTable {

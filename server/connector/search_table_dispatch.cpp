@@ -74,7 +74,7 @@ catalog::TableEngine ReadStorageEngine(
     return catalog::TableEngine::Transactional;
   }
   if (lower == "search") {
-    return catalog::TableEngine::Fast;
+    return catalog::TableEngine::Search;
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -84,7 +84,7 @@ catalog::TableEngine ReadStorageEngine(
 
 void RejectIfSearchTable(const catalog::Table& table,
                          std::string_view operation) {
-  if (table.GetEngine() == catalog::TableEngine::Fast) {
+  if (table.GetEngine() == catalog::TableEngine::Search) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG(operation, " on a search-backed table is not yet supported"));

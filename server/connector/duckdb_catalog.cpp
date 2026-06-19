@@ -488,7 +488,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
   {
     auto& table_info = op.info->Base().Cast<duckdb::CreateTableInfo>();
-    if (ReadStorageEngine(table_info.options) == catalog::TableEngine::Fast) {
+    if (ReadStorageEngine(table_info.options) == catalog::TableEngine::Search) {
       auto& search_ctas = planner.Make<SereneDBSearchInsert>(
         std::move(op.info), op.schema, op.estimated_cardinality);
       search_ctas.children.push_back(plan);
@@ -644,9 +644,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     plan = &ResolveDefaultsWithGenerated(planner, op, *plan);
   }
 
-  // Fast (search) table: route to the iresearch insert operator. It has no
+  // Search table: route to the iresearch insert operator. It has no
   // store table, so resolve one only on the Transactional path below.
-  if (sdb_table->GetEngine() == catalog::TableEngine::Fast) {
+  if (sdb_table->GetEngine() == catalog::TableEngine::Search) {
     auto& insert = planner.Make<SereneDBSearchInsert>(
       std::move(sdb_table), std::move(op.types), op.estimated_cardinality);
     if (plan) {
@@ -702,7 +702,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   auto& table_entry = RequireBaseTable(op.table);
   auto sdb_table = table_entry.GetSereneDBTable();
 
-  if (sdb_table->GetEngine() == catalog::TableEngine::Fast) {
+  if (sdb_table->GetEngine() == catalog::TableEngine::Search) {
     // TRUNCATE (autocommit): fast iresearch Clear marker. In-transaction
     // TRUNCATE has is_truncate but is not autocommit, so it falls through to
     // the row-wise SereneDBSearchDelete below.
@@ -711,7 +711,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
                                                   op.estimated_cardinality);
     }
 
-    // A Fast table has no separate inverted indexes, so its scan appends only
+    // A Search table has no separate inverted indexes, so its scan appends only
     // the PK virtuals (BuildRowIdColumns): [real..., pk_0..pk_{n-1}] for
     // explicit-PK tables, or [real..., generated_pk] for generated-PK ones.
     const auto& pk_col_ids = sdb_table->PKColumns();
@@ -751,10 +751,10 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto& table_entry = RequireBaseTable(op.table);
   auto sdb_table = table_entry.GetSereneDBTable();
 
-  if (sdb_table->GetEngine() == catalog::TableEngine::Fast) {
+  if (sdb_table->GetEngine() == catalog::TableEngine::Search) {
     // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT (and
     // recomputes STORED gen-cols), passing the PK virtuals through, so
-    // SereneDBSearchUpdate only sees [resolved SET vals, pk_virtuals]. A Fast
+    // SereneDBSearchUpdate only sees [resolved SET vals, pk_virtuals]. A Search
     // table has no separate inverted indexes, so BuildRowIdColumns appends only
     // the PK virtuals: [real..., pk_0..pk_{n-1}] / [real..., generated_pk].
     const auto& pk_col_ids = sdb_table->PKColumns();

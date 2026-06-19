@@ -2218,11 +2218,7 @@ Result Catalog::CreateTable(ObjectId database_id, std::string_view schema,
       // renames to the public name (RemoveTombstone), failure drops by id.
       store_table->name = DroppedStoreTableName(table->GetId());
     }
-  } else if (table->GetEngine() == TableEngine::Fast) {
-    // Fast (search) tables have no store table; create the iresearch store and
-    // bind it onto the catalog Table (mirrors RegisterSearchTable at boot). On
-    // a failed CreateTable the table is dropped, which reclaims the directory
-    // via SearchTable::DropArtifacts.
+  } else if (table->GetEngine() == TableEngine::Search) {
     table->SetData(search::SearchTable::Create(database_id, table->GetId(),
                                                /*is_new=*/true));
   }
@@ -3771,10 +3767,6 @@ Result OpenDatabase::RegisterInvertedStorage(
 }
 
 Result OpenDatabase::RegisterSearchTable(ObjectId db_id, const Table& table) {
-  // A Fast-engine table's durable state is its iresearch segment directory;
-  // (re)open it here and bind it onto the catalog Table via SetData, mirroring
-  // RegisterInvertedStorage. The WAL tail is replayed later by
-  // RunSearchTableRecovery (SearchEngine::start).
   return basics::SafeCall([&] {
     table.SetData(search::SearchTable::Create(db_id, table.GetId(),
                                               /*is_new=*/false));
@@ -3797,7 +3789,7 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
         if (table->GetEngine() == TableEngine::Transactional) {
           GetCatalogStore().ValidateStoreTable(
             MakeStoreTableDef(_database_name, _schema_name, *table));
-        } else if (table->GetEngine() == TableEngine::Fast) {
+        } else if (table->GetEngine() == TableEngine::Search) {
           if (auto r = RegisterSearchTable(db_id, *table); !r.ok()) {
             return r;
           }

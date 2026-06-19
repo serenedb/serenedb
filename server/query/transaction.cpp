@@ -162,7 +162,7 @@ Result Transaction::Commit() {
   // not commit the store database.
   CommitSearch();
 
-  // Search-table (TableEngine::Fast) commit point (WAL_DESIGN.md §9): the §9
+  // Search-table (TableEngine::Search) commit point (WAL_DESIGN.md §9): the §9
   // crash boundaries + the single multi-shard WAL fsync that is the atomic
   // commit point live in SearchTableTransaction::Commit.
   if (_search_txn && !_search_txn->Empty()) {
@@ -228,12 +228,10 @@ void Transaction::ApplyTableStatsDiffs() noexcept {
     if (!table) {
       continue;  // table dropped mid-transaction
     }
-    // Only Fast tables track row counts here; Transactional store tables
-    // maintain their own statistics.
-    if (table->GetEngine() == catalog::TableEngine::Fast) {
-      if (const auto& search = table->GetData()) {
-        search->UpdateNumRows(delta);
-      }
+    // Only Search tables track row counts here; Transactional store tables
+    // maintain their own statistics. GetData() asserts the store is bound.
+    if (table->GetEngine() == catalog::TableEngine::Search) {
+      table->GetData()->UpdateNumRows(delta);
     }
   }
   _table_rows_deltas.clear();

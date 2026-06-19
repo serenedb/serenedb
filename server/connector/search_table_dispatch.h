@@ -36,8 +36,8 @@ namespace sdb::connector {
 // Shared search-table integration helpers used across the connector catalog,
 // planner, and physical-operator files.
 
-// Throws ERRCODE_FEATURE_NOT_SUPPORTED when `table` is a TableEngine::Fast
-// table. Guards the DDL paths not yet wired for the Fast engine.
+// Throws ERRCODE_FEATURE_NOT_SUPPORTED when `table` is a TableEngine::Search
+// table. Guards the DDL paths not yet wired for the Search engine.
 void RejectIfSearchTable(const catalog::Table& table,
                          std::string_view operation);
 

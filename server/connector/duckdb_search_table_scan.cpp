@@ -50,7 +50,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchTableScanInitGlobal(
 
   auto& conn_ctx = GetSereneDBContext(context);
   const auto& search = tbd.table->GetData();
-  SDB_ASSERT(search, "SearchTableScan dispatched against a non-Fast table");
 
   state->reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
     tbd.table->GetId(), [&] { return search->GetDirectoryReader(); });

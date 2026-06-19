@@ -143,8 +143,8 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
   // CTAS has no PK/UNIQUE constraints, so the Table ctor wires up a generated
   // PK sequence.
   ApplyStorageKind(options, table_info.options);
-  SDB_ASSERT(options.engine == catalog::TableEngine::Fast,
-             "SereneDBSearchInsert CTAS mode used for non-Fast engine");
+  SDB_ASSERT(options.engine == catalog::TableEngine::Search,
+             "SereneDBSearchInsert CTAS mode used for non-Search engine");
 
   auto& catalog_impl = catalog::GetCatalog();
   const bool if_not_exists =
@@ -244,8 +244,6 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_key = key_utils::PrepareTableKey(state->table_id);
 
   state->search_table = table->GetData();
-  SDB_ASSERT(state->search_table,
-             "SereneDBSearchInsert dispatched against a non-Fast table");
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
   if (table->PKColumns().empty()) {

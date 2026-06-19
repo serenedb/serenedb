@@ -87,10 +87,10 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     containers::NodeHashMap<ObjectId, ShardInfo> shards;
     for (const auto& schema : snapshot->GetSchemas(db_id)) {
       for (const auto& table : snapshot->GetTables(db_id, schema->GetName())) {
-        auto search = table->GetData();
-        if (!search) {
-          continue;  // Transactional table: no Fast-engine store to recover.
+        if (table->GetEngine() != catalog::TableEngine::Search) {
+          continue;  // Transactional table: no Search-engine store to recover.
         }
+        auto search = table->GetData();  // asserts the store is bound
         ShardInfo info;
         info.search = search.get();
         info.shard = std::move(search);

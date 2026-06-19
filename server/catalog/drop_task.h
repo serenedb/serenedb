@@ -155,11 +155,11 @@ struct TableDrop final : public DropTask {
       _fk_referenced_store_names{std::move(fk_referenced_store_names)},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
-      // Fast (search) table: capture db_id + the iresearch store (weak) so
+      // Search table: capture db_id + the iresearch store (weak) so
       // Execute drains every holder, then removes the directory + WAL chunks
       // (mirrors IndexDrop). _db_id stays unset for Transactional tables, so
       // their Execute skips iresearch cleanup.
-      _db_id{table->GetEngine() == TableEngine::Fast ? db_id : ObjectId{}},
+      _db_id{table->GetEngine() == TableEngine::Search ? db_id : ObjectId{}},
       _search_data{table->GetData()} {}
 
   // FK linkage entries must go before ANY table drop in the transaction:
@@ -179,7 +179,7 @@ struct TableDrop final : public DropTask {
   // Drops the store table synchronously in the same transaction that
   // tombstones the drop, freeing the public name immediately (renames are
   // unsafe for FK-involved tables: duckdb keeps back-references by name).
-  // No-op when the table has no store table (Fast engine) or lives under
+  // No-op when the table has no store table (Search engine) or lives under
   // the dropped name (CTAS); Finalize's drop-by-id covers the latter.
   void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
     if (!_store_name.empty()) {
@@ -209,7 +209,7 @@ struct TableDrop final : public DropTask {
   std::vector<std::string> _fk_referenced_store_names;
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
   std::vector<ObjectId> _owned_sequences;
-  // Set (db_id + iresearch store weak) only for Fast tables; see Execute.
+  // Set (db_id + iresearch store weak) only for Search tables; see Execute.
   ObjectId _db_id;
   std::weak_ptr<search::SearchTable> _search_data;
 };

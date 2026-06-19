@@ -46,7 +46,7 @@ struct SearchShardWrites {
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
 };
 
-// Holds a query::Transaction's search-table (TableEngine::Fast) state and
+// Holds a query::Transaction's search-table (TableEngine::Search) state and
 // commit logic.
 class SearchTableTransaction {
  public:

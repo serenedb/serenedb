@@ -135,11 +135,11 @@ class CheckConstraint final : public Object {
 
 // Which engine owns the table's row data. Both kinds are first-class and
 // coexist: Transactional tables live as store tables in the engine's
-// single-file database; Fast is reserved for the eventually-consistent
-// iresearch-only table engine.
+// single-file database; Search is the eventually-consistent iresearch-only
+// table engine.
 enum class TableEngine : uint8_t {
   Transactional = 0,
-  Fast = 1,
+  Search = 1,
 };
 
 // One FOREIGN KEY of a table: `columns` (on the owning table) reference

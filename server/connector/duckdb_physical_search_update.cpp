@@ -96,8 +96,6 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_key = key_utils::PrepareTableKey(state->table_id);
 
   state->search_table = _table->GetData();
-  SDB_ASSERT(state->search_table,
-             "SereneDBSearchUpdate dispatched against a non-Fast table");
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
   const auto& columns = _table->Columns();

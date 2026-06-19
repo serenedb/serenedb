@@ -24,7 +24,6 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <memory>
 
-#include "basics/assert.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
@@ -47,9 +46,6 @@ duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   duckdb::OperatorSourceInput& /*input*/) const {
   auto& conn_ctx = GetSereneDBContext(context.client);
   const auto& search = _table->GetData();
-  SDB_ASSERT(search,
-             "SereneDBSearchTruncate dispatched against a non-Fast table");
-
   conn_ctx.SearchTxn().AddSearchTruncate(search);
 
   if (const int64_t current = search->NumRows(); current > 0) {

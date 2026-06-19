@@ -105,7 +105,7 @@ class Transaction : public Config {
     }
   }
 
-  // Lazily-created search-table (TableEngine::Fast) transaction state +
+  // Lazily-created search-table (TableEngine::Search) transaction state +
   // commit logic. Engaged on the first search-table write/scan; query::
   // Transaction just delegates RegisterFlush/Commit/Abort to it (see Commit /
   // Rollback). The operator and scan reach the per-shard mutators through here.
@@ -167,7 +167,7 @@ class Transaction : public Config {
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
   void ApplyTableStatsDiffs() noexcept;
-  // All search-table (TableEngine::Fast) state + WAL commit logic. Engaged
+  // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
   // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
   // stay here -- they commit on the store-table tick, not the engine WAL tick.
   std::optional<search::SearchTableTransaction> _search_txn;

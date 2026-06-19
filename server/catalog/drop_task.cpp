@@ -178,9 +178,9 @@ Result TableDrop::Finalize() {
 
 AsyncResult TableDrop::Execute() {
   if (_db_id.isSet()) {
-    // Fast (search) table: wait until every holder of the iresearch store has
+    // Search table: wait until every holder of the iresearch store has
     // released it (mirrors IndexDrop's weak_ptr drain), then remove the
-    // directory + WAL chunks. _db_id is set only for Fast tables.
+    // directory + WAL chunks. _db_id is set only for Search tables.
     if (!_search_data.expired()) {
       co_return Result{ERROR_LOCKED};
     }

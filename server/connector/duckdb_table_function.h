@@ -284,7 +284,7 @@ inline bool IsSereneDBScan(const duckdb::LogicalGet& get) {
   return get.bind_data && get.function.bind == &SereneDBScanBind;
 }
 
-// Full-table scan for search-backed (TableEngine::Fast) tables. Selected by
+// Full-table scan for search-backed (TableEngine::Search) tables. Selected by
 // SereneDBTableEntry::GetScanFunction; iresearch columnstore -> DuckDB
 // DataChunk via ColumnstoreMaterializer::Scan.
 duckdb::TableFunction CreateSearchTableScanFunction();

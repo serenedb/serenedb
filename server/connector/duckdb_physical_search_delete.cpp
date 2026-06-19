@@ -27,7 +27,6 @@
 #include <string_view>
 #include <vector>
 
-#include "basics/assert.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
@@ -77,8 +76,6 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_key = key_utils::PrepareTableKey(state->table_id);
 
   state->search_table = _table->GetData();
-  SDB_ASSERT(state->search_table,
-             "SereneDBSearchDelete dispatched against a non-Fast table");
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
   // Map each PK chunk position to its type (PlanDelete's layout): explicit-PK

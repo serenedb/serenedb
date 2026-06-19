@@ -1361,7 +1361,7 @@ statement ok
 SELECT clock_timestamp();
 
 # op_datetime: current_date
-statement error
+statement ok
 SELECT current_date;
 
 # op_datetime: current_time

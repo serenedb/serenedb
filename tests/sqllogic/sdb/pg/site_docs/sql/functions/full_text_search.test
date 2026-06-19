@@ -82,6 +82,18 @@ statement ok
 VACUUM (REFRESH_TABLE) vecs_l;
 
 statement ok
+CREATE TABLE vecs_i (id INTEGER, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX vecs_ip ON vecs_i USING inverted (id, emb hnsw (metric = 'ip'));
+
+statement ok
+INSERT INTO vecs_i VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [2, 2, 2]::FLOAT[3]);
+
+statement ok
+VACUUM (REFRESH_TABLE) vecs_i;
+
+statement ok
 CREATE TABLE geo (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'));
 
 statement ok
@@ -126,6 +138,72 @@ INSERT INTO scored VALUES
 
 statement ok
 VACUUM (REFRESH_TABLE) scored;
+
+statement ok
+CREATE TABLE geo_demo (id INTEGER PRIMARY KEY, name VARCHAR, shape JSON);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geo_demo_dict (template = 'geojson');
+
+statement ok
+CREATE INDEX geo_demo_idx ON geo_demo USING inverted (id, name, shape geo_demo_dict);
+
+statement ok
+INSERT INTO geo_demo VALUES
+    (1, 'red_square',  '{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]]]}'),
+    (2, 'inner_point', '{"type":"Point","coordinates":[5,5]}'),
+    (3, 'edge_point',  '{"type":"Point","coordinates":[10,5]}'),
+    (4, 'far_point',   '{"type":"Point","coordinates":[50,50]}'),
+    (5, 'overlap_box', '{"type":"Polygon","coordinates":[[[5,5],[15,5],[15,15],[5,15],[5,5]]]}');
+
+statement ok
+VACUUM (REFRESH_TABLE) geo_demo;
+
+statement ok
+CREATE TABLE cities (id INTEGER PRIMARY KEY, name VARCHAR, loc GEOMETRY('OGC:CRS84'));
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cities_dict (template = 'geojson', coding = 's2point');
+
+statement ok
+CREATE INDEX cities_idx ON cities USING inverted (id, name, loc cities_dict);
+
+statement ok
+INSERT INTO cities VALUES
+    (1, 'kremlin',    'POINT(37.617499 55.752023)'::GEOMETRY('OGC:CRS84')),
+    (2, 'red_square', 'POINT(37.620795 55.753930)'::GEOMETRY('OGC:CRS84')),
+    (3, 'gorky_park', 'POINT(37.601111 55.731389)'::GEOMETRY('OGC:CRS84')),
+    (4, 'spb_palace', 'POINT(30.314611 59.939095)'::GEOMETRY('OGC:CRS84'));
+
+statement ok
+VACUUM (REFRESH_TABLE) cities;
+
+statement ok
+CREATE TABLE passages (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY passages_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement ok
+CREATE INDEX passages_idx ON passages USING inverted (id, body passages_en);
+
+statement ok
+INSERT INTO passages VALUES
+    (1, 'the quick brown fox jumps over the lazy dog'),
+    (2, 'a quick red fox runs fast'),
+    (3, 'First sentence here. The quick brown fox is in this sentence. Third one.');
+
+statement ok
+VACUUM (REFRESH_TABLE) passages;
 
 
 # DOCS_TEST: column--tsquery
@@ -581,6 +659,64 @@ id	offsets
 1	{12,15}
 2	{10,13}
 
+# DOCS_TEST: ts_highlight_pipeline
+# DOCS_TEST_BODY
+query
+SELECT id, ts_highlight(body, ts_offsets(body)) AS snippet
+FROM passages_idx
+WHERE body @@ ts_phrase('quick')
+ORDER BY id;
+----
+id	snippet
+1	the <b>quick</b> brown fox jumps over the lazy dog
+2	a <b>quick</b> red fox runs fast
+3	The <b>quick</b> brown fox is in this sentence
+
+# DOCS_TEST: ts_highlight_virtual_column
+# DOCS_TEST_BODY
+query
+SELECT id, ts_highlight(body, 'StartSel=<mark>, StopSel=</mark>') AS snippet
+FROM passages_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY id;
+----
+id	snippet
+1	the quick brown <mark>fox</mark> jumps over the lazy dog
+2	a quick red <mark>fox</mark> runs fast
+3	The quick brown <mark>fox</mark> is in this sentence
+
+# DOCS_TEST: ts_highlight_highlightall
+# DOCS_TEST_BODY
+query
+SELECT ts_highlight(
+    'First sentence here. The quick brown fox is in this sentence. Third one.',
+    [25, 30],
+    'HighlightAll=true'
+) AS snippet;
+----
+snippet
+First sentence here. The <b>quick</b> brown fox is in this sentence. Third one.
+
+# DOCS_TEST: ts_highlight_fragments
+# DOCS_TEST_BODY
+query
+SELECT ts_highlight(
+    'A quick fox runs. Slow turtle naps. Another quick fox.',
+    [2, 7, 8, 11, 44, 49, 50, 53],
+    'MaxFragments=2'
+) AS snippet;
+----
+snippet
+A <b>quick fox</b> runs ... Another <b>quick fox</b>
+
+# DOCS_TEST: ts_offsets_standalone
+# DOCS_TEST_BODY
+query
+SELECT ts_offsets('passages_en', 'the quick brown fox', 'quick'::TSQUERY) AS offsets;
+----
+offsets
+{4,9}
+
 # DOCS_TEST: l2_distance
 # DOCS_TEST_BODY
 query
@@ -681,6 +817,55 @@ id	distance
 1	1
 3	1
 
+# DOCS_TEST: a---b-range
+# DOCS_TEST_BODY
+query
+SELECT id, emb <-> [0, 0, 0]::FLOAT[3] AS distance
+FROM vecs_l2
+WHERE emb <-> [0, 0, 0]::FLOAT[3] < 2
+ORDER BY distance, id;
+----
+id	distance
+1	1
+3	1
+
+# DOCS_TEST: a-plus-b-distance
+# DOCS_TEST_BODY
+query
+SELECT id, emb <+> [0, 0, 0]::FLOAT[3] AS distance
+FROM vecs_l
+ORDER BY distance, id
+LIMIT 2;
+----
+id	distance
+1	1
+3	1
+
+# DOCS_TEST: a-eq-b-distance
+# DOCS_TEST_BODY
+query
+SELECT id, emb <=> [1, 0, 0]::FLOAT[3] AS distance
+FROM vecs_c
+ORDER BY distance, id
+LIMIT 2;
+----
+id	distance
+1	0
+3	0.29289323
+
+# DOCS_TEST: a-hash-b-distance
+# DOCS_TEST_BODY
+query
+SELECT id, emb <#> [1, 1, 1]::FLOAT[3] AS distance
+FROM vecs_i
+ORDER BY distance, id
+LIMIT 3;
+----
+id	distance
+3	-6
+2	-5
+1	-1
+
 # DOCS_TEST: st_intersects
 # DOCS_TEST_BODY
 query
@@ -747,6 +932,75 @@ ORDER BY id;
 id
 1
 
+# DOCS_TEST: st_intersects_matrix
+# DOCS_TEST_BODY
+query
+SELECT id, name
+FROM geo_demo_idx
+WHERE ST_Intersects(
+        shape,
+        '{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]]]}'
+     )
+ORDER BY id;
+----
+id	name
+1	red_square
+2	inner_point
+3	edge_point
+5	overlap_box
+
+# DOCS_TEST: st_contains_query_field
+# DOCS_TEST_BODY
+query
+SELECT id, name
+FROM geo_demo_idx
+WHERE ST_Contains(
+        '{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]]]}',
+        shape
+     )
+ORDER BY id;
+----
+id	name
+1	red_square
+2	inner_point
+3	edge_point
+
+# DOCS_TEST: st_contains_field_query
+# DOCS_TEST_BODY
+query
+SELECT id, name
+FROM geo_demo_idx
+WHERE ST_Contains(shape, '{"type":"Point","coordinates":[5,5]}')
+ORDER BY id;
+----
+id	name
+1	red_square
+2	inner_point
+
+# DOCS_TEST: st_distance_centroid_ring
+# DOCS_TEST_BODY
+query
+SELECT id, name
+FROM cities_idx
+WHERE ST_Distance_Centroid(loc, 'POINT(37.617499 55.752023)'::GEOMETRY('OGC:CRS84')) < 3000
+ORDER BY id;
+----
+id	name
+1	kremlin
+2	red_square
+3	gorky_park
+
+# DOCS_TEST: st_distance_between_ring
+# DOCS_TEST_BODY
+query
+SELECT id, name
+FROM cities_idx
+WHERE ST_Distance_Between(loc, 'POINT(37.617499 55.752023)'::GEOMETRY('OGC:CRS84'), 300, 3000)
+ORDER BY id;
+----
+id	name
+3	gorky_park
+
 # DOCS_TEST: ts_lexize
 # DOCS_TEST_BODY
 query
@@ -754,3 +1008,55 @@ SELECT ts_lexize('en', 'Quick BROWN') AS ts_lexize;
 ----
 ts_lexize
 {quick,brown}
+
+# DOCS_TEST: tfidf_norms
+# DOCS_TEST_BODY
+query
+SELECT id, TFIDF(scored_idx.tableoid, true) AS score
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+2	0.64791536
+1	0.45814538
+3	0.30543026
+
+# DOCS_TEST: dfi_saturated
+# DOCS_TEST_BODY
+query
+SELECT id, dfi(scored_idx.tableoid, 'saturated') AS score
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+2	1.321928
+1	0.32192808
+3	0
+
+# DOCS_TEST: dfi_chi_squared
+# DOCS_TEST_BODY
+query
+SELECT id, dfi(scored_idx.tableoid, 'chi_squared') AS score
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id;
+----
+id	score
+2	1.8875252
+1	0.070389315
+3	0
+
+# DOCS_TEST: bm25_boost
+# DOCS_TEST_BODY
+query
+SELECT id, BM25(scored_idx.tableoid) AS score
+FROM scored_idx
+WHERE body @@ (ts_phrase('fox') ^ 3.0)
+ORDER BY score DESC, id;
+----
+id	score
+2	2.5223455
+1	1.8521354
+3	1.3192322

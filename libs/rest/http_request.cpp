@@ -27,7 +27,6 @@
 #include "basics/number_utils.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
-#include "basics/utf8_helper.h"
 
 using namespace sdb;
 using namespace sdb::basics;
@@ -157,10 +156,6 @@ void HttpRequest::parseUrl(const char* path, size_t length) {
 
       SDB_ASSERT(q >= start);
       setDatabaseName(::UrlDecode(start, q));
-      if (_database_name != NormalizeUtf8ToNFC(_database_name)) {
-        SDB_THROW(ERROR_SERVER_ILLEGAL_NAME,
-                  "database name is not properly UTF-8 NFC-normalized");
-      }
       setFullUrl(std::string_view(q, end - q));
       start = q;
     } else {

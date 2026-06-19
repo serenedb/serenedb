@@ -245,7 +245,7 @@ Filter::Query::ptr ByWildcardNgram::Prepare(
     size = queries.size();
   }
   auto conjunction = memory::make_tracked<AndQuery>(ctx.memory);
-  conjunction->prepare(ctx, ScoreMergeType::Sum, std::move(queries), size);
+  conjunction->prepare(ctx, ScoreMergeType::Sum, std::move(queries));
   return memory::make_tracked<WildcardQuery>(
     ctx.memory, opts.matcher, std::move(conjunction), opts.store_field_id);
 }

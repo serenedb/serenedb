@@ -83,16 +83,17 @@ struct GetVisitor {
       return ByPrefix::visit(segment, field, term, visitor);
     };
   }
+  field_visitor operator()(const auto&) const { SDB_UNREACHABLE(); }
 
-  field_visitor operator()(const ByWildcardOptions& part) const {
-    return ByWildcard::visitor(part.acceptor);
+  field_visitor operator()(const AutomatonOptions& part) const {
+    return AutomatonFilter::visitor(part.acceptor);
   }
 
-  field_visitor operator()(const ByEditDistanceOptions& part) const {
+  field_visitor operator()(const LevenshteinAutomatonOptions& part) const {
     if (part.max_terms != 0) {
       return {};
     }
-    return ByEditDistance::visitor(part);
+    return LevenshteinAutomatonFilter::visitor(part);
   }
 
   field_visitor operator()(const ByTermsOptions& part) const {
@@ -110,10 +111,6 @@ struct GetVisitor {
         return ByRange::visit(segment, field, *range, visitor);
       };
   }
-
-  field_visitor operator()(const ByRegexpOptions& part) const {
-    return ByRegexp::visitor(part.acceptor);
-  }
 };
 
 struct PrepareVisitor : util::Noncopyable {
@@ -125,26 +122,21 @@ struct PrepareVisitor : util::Noncopyable {
     return ByPrefix::prepare(ctx, id, part.term, part.scored_terms_limit);
   }
 
-  auto operator()(const ByWildcardOptions& part) const {
+  Filter::Query::ptr operator()(const auto&) const { SDB_UNREACHABLE(); }
+
+  auto operator()(const AutomatonOptions& part) const {
     return PrepareAutomatonFilter(ctx, id, part.acceptor,
                                   part.scored_terms_limit);
   }
 
-  auto operator()(const ByEditDistanceOptions& part) const {
-    return ByEditDistance::prepare(ctx, id, part.term, part.max_terms,
-                                   part.max_distance, part.provider,
-                                   part.with_transpositions, part.prefix);
+  auto operator()(const LevenshteinAutomatonOptions& part) const {
+    return LevenshteinAutomatonFilter::prepare(ctx, id, part);
   }
 
   Filter::Query::ptr operator()(const ByTermsOptions&) const { return {}; }
 
   auto operator()(const ByRangeOptions& part) const {
     return ByRange::prepare(ctx, id, part.range, part.scored_terms_limit);
-  }
-
-  auto operator()(const ByRegexpOptions& part) const {
-    return PrepareAutomatonFilter(ctx, id, part.acceptor,
-                                  part.scored_terms_limit);
   }
 
   PrepareVisitor(const PrepareContext& ctx, irs::field_id id) noexcept
@@ -332,8 +324,8 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     auto& visitor =
       phrase_part_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
     if (!visitor) {
-      auto& opts = std::get<ByEditDistanceOptions>(word.part);
-      visitor = ByEditDistance::visitor(opts);
+      auto& opts = std::get<LevenshteinAutomatonOptions>(word.part);
+      visitor = LevenshteinAutomatonFilter::visitor(opts);
       all_terms_visitors.push_back(&visitor);
       top_terms_collectors.emplace_back(opts.max_terms);
     }
@@ -472,6 +464,74 @@ Filter::Query::ptr ByPhrase::Prepare(const PrepareContext& ctx,
   }
 
   return VariadicPrepareCollect(ctx, id, options);
+}
+
+bool ByPhraseOptions::LowerParts() {
+  bool changed = false;
+  for (auto& info : _phrase) {
+    if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {
+      bstring buf;
+      const auto lim = w->scored_terms_limit;
+      info.part = ExecuteWildcard(
+        buf, bytes_view{w->term},
+        [](bytes_view term) -> phrase_part {
+          ByTermOptions opts;
+          opts.term = term;
+          return opts;
+        },
+        [lim](bytes_view term) -> phrase_part {
+          ByPrefixOptions opts;
+          opts.term = term;
+          opts.scored_terms_limit = lim;
+          return opts;
+        },
+        [lim](bytes_view term) -> phrase_part {
+          return AutomatonOptions{FromWildcard(term), term, lim};
+        });
+      changed = true;
+    } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
+      bstring buf;
+      const auto lim = r->scored_terms_limit;
+      const auto syntax = r->syntax;
+      info.part = ExecuteRegexp(
+        buf, bytes_view{r->pattern},
+        [](bytes_view term) -> phrase_part {
+          ByTermOptions opts;
+          opts.term = term;
+          return opts;
+        },
+        [lim](bytes_view prefix) -> phrase_part {
+          ByPrefixOptions opts;
+          opts.term = prefix;
+          opts.scored_terms_limit = lim;
+          return opts;
+        },
+        [lim, syntax](bytes_view pattern) -> phrase_part {
+          return AutomatonOptions{
+            FromRegexp(pattern, kDefaultMaxDfaStates, syntax), pattern, lim};
+        });
+      changed = true;
+    } else if (const auto* e = std::get_if<ByEditDistanceOptions>(&info.part);
+               e) {
+      const auto max_terms = e->max_terms;
+      info.part = ExecuteLevenshtein(
+        e->max_distance, e->provider, e->with_transpositions, e->prefix,
+        e->term, [] -> phrase_part { return ByTermsOptions{}; },
+        [&] -> phrase_part {
+          ByTermOptions opts;
+          opts.term.reserve(e->prefix.size() + e->term.size());
+          opts.term += e->prefix;
+          opts.term += e->term;
+          return opts;
+        },
+        [max_terms](const ParametricDescription& d, bytes_view prefix,
+                    bytes_view term) -> phrase_part {
+          return LevenshteinAutomatonOptions{d, prefix, term, max_terms};
+        });
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 }  // namespace irs

@@ -49,6 +49,7 @@
 #include "index/doc_generator.hpp"
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/formats/formats.hpp"
+#include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/mmap_utils.hpp"
 #include "tests_config.hpp"
@@ -217,6 +218,7 @@ int TestEnv::initialize(int argc, char* argv[]) {
   ::testing::InitGoogleTest(&gArgc, gArgv);
 
   irs::formats::Init();
+  irs::InitOptimizeRules();
 
   return RUN_ALL_TESTS();
 }

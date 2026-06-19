@@ -103,6 +103,8 @@ class Filter {
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 
+  virtual std::span<Filter::ptr> GetChildren() { return {}; }
+
   // kludge for optimization in And::prepare
   virtual score_t BoostImpl() const noexcept { return kNoBoost; }
 

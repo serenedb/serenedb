@@ -31,6 +31,7 @@
 namespace duckdb {
 
 class DataChunk;
+class HyperLogLog;
 
 }  // namespace duckdb
 namespace irs {
@@ -42,7 +43,7 @@ class ColumnWriter final {
  public:
   ColumnWriter(field_id id, duckdb::LogicalType type, uint32_t row_group_size,
                WriteContext& write_ctx, FooterColumnEntry& entry,
-               bool skip_validity = false);
+               bool skip_validity, bool hyperloglog);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -67,6 +68,7 @@ class ColumnWriter final {
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   uint32_t RowGroupSize() const noexcept { return _row_group_size; }
   bool SkipValidity() const noexcept { return _skip_validity; }
+  bool HasHyperLogLog() const noexcept;
   duckdb::CompressionType Compression() const noexcept {
     return _forced_compression;
   }
@@ -76,6 +78,8 @@ class ColumnWriter final {
   }
 
   void Finalize();
+
+  void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
 
   // Pad `_filled` up to `target_row` with null entries. Used by merge to
   // span the doc-id range of a source that has no row in this column
@@ -94,6 +98,7 @@ class ColumnWriter final {
   uint64_t _filled = 0;
   uint64_t _row_group_first_doc = 0;
   bool _skip_validity = false;
+  bool _hyperloglog = false;
   duckdb::CompressionType _forced_compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
 };

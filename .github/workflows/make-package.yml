@@ -71,6 +71,7 @@ env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
+  CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
 
 jobs:
   package:
@@ -151,7 +152,7 @@ jobs:
             -e EXTRA_CMAKE_FLAGS="-DCMAKE_INSTALL_PREFIX=/usr${EXTRA_FLAGS:+ $EXTRA_FLAGS}" \
             -v "${WORKSPACE}:/serenedb" \
             -v /mnt/data/.ccache:/.ccache \
-            "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
+            "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb
 
       - name: Package
         id: package

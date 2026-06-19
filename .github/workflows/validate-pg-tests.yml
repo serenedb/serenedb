@@ -40,6 +40,7 @@ env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
+  CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
 
 jobs:
   validate:
@@ -64,7 +65,6 @@ jobs:
       - name: Prepare
         run: |
           mkdir -p out/logs
-          mkdir -p out/test-tmp
           mkdir -p "${HOME}/.cache/serenedb-cargo-target"
           for i in 1 2 3; do
             docker pull "${BUILD_IMAGE}" && break

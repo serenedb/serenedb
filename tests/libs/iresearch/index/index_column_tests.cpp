@@ -336,7 +336,7 @@ irs::ColumnWriter& OpenBlobColumnSmallRg(irs::ColWriter& w, irs::field_id id,
                                          uint32_t row_group_size) {
   return w.OpenColumn(id, duckdb::LogicalType::BLOB,
                       /*skip_validity=*/false, row_group_size,
-                      duckdb::CompressionType::COMPRESSION_AUTO);
+                      duckdb::CompressionType::COMPRESSION_AUTO, false);
 }
 
 }  // namespace

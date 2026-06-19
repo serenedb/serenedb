@@ -25,6 +25,7 @@
 #include <cstring>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -58,7 +59,8 @@ namespace irs {
 
 ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
                            uint32_t row_group_size, WriteContext& write_ctx,
-                           FooterColumnEntry& entry, bool skip_validity)
+                           FooterColumnEntry& entry, bool skip_validity,
+                           bool hyperloglog)
   : _id{id},
     _type{std::move(type)},
     _row_group_size{row_group_size},
@@ -66,8 +68,18 @@ ColumnWriter::ColumnWriter(field_id id, duckdb::LogicalType type,
     _entry{&entry},
     _staging{_type, _row_group_size,
              duckdb::VectorDataInitialization::UNINITIALIZED},
-    _skip_validity{skip_validity} {
+    _skip_validity{skip_validity},
+    _hyperloglog{hyperloglog} {
   SDB_ASSERT(_row_group_size != 0);
+  if (hyperloglog) {
+    _entry->root.hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
+  }
+}
+
+bool ColumnWriter::HasHyperLogLog() const noexcept { return _hyperloglog; }
+
+void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
+  _entry->root.hyperloglog = std::move(hll);
 }
 
 void ColumnWriter::PadNullsTo(uint64_t start_row) {
@@ -157,11 +169,7 @@ void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
   }
 }
 
-void ColumnWriter::Finalize() {
-  if (_filled > 0) {
-    FlushRowGroup();
-  }
-}
+void ColumnWriter::Finalize() { FlushRowGroup(); }
 
 namespace {
 
@@ -619,6 +627,12 @@ void FlushNode(WriteContext& write_ctx, const duckdb::LogicalType& type,
 void ColumnWriter::FlushRowGroup() {
   if (_filled == 0) {
     return;
+  }
+
+  if (_hyperloglog) {
+    duckdb::Vector hashes{duckdb::LogicalType::HASH, _filled};
+    duckdb::VectorOperations::Hash(_staging, hashes, _filled);
+    _entry->root.hyperloglog->Update(_staging, hashes);
   }
 
   FlushNode(*_write_ctx, _type, _staging, _filled, _row_group_first_doc,

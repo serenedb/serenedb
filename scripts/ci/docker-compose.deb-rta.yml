@@ -1,6 +1,18 @@
 services:
+  # Make the root:root 0755 named volume world-writable before the non-root
+  # tests service creates its per-test dirs in /test-tmp.
+  test-tmp-init:
+    image: ${BUILD_IMAGE}
+    user: "0:0"
+    volumes:
+      - "sdb-test-tmp:/test-tmp"
+    command: ["sh", "-c", "chmod 0777 /test-tmp"]
+
   serenedb:
     image: ${BUILD_IMAGE}
+    depends_on:
+      test-tmp-init:
+        condition: service_completed_successfully
     privileged: true
     cgroup: host
     stop_signal: SIGRTMIN+3
@@ -11,7 +23,7 @@ services:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - "${WORKSPACE}:/workspace:ro"
       - "${WORKSPACE}/scripts/ci/deb-rta-setup.sh:/deb-rta-setup.sh:ro"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
     environment:
       - DEB_PACKAGE
     networks:
@@ -27,13 +39,14 @@ services:
       - "${WORKSPACE}/tests/sqllogic:/sqllogic"
       - "${WORKSPACE}/third_party/sqllogictest-rs:/sqllogictest-rs"
       - "${WORKSPACE}/out/logs:/logs"
-      - "${WORKSPACE}/out/test-tmp:/test-tmp"
+      - "sdb-test-tmp:/test-tmp"
       - "${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}:/cargo-target"
+      - "${CARGO_HOME_CACHE:-${HOME}/.cache/serenedb-cargo-home}:/cargo-home"
     environment:
       - HOME=/sqllogic
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
-      - CARGO_HOME=/tmp/cargo
+      - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
     networks:
       - rta-network
@@ -53,3 +66,6 @@ networks:
   rta-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME}_rta-network
+
+volumes:
+  sdb-test-tmp:

@@ -35,11 +35,6 @@ file(MAKE_DIRECTORY ${SERENEDB_DB_DIRECTORY})
 # logs
 file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/var/log/${CMAKE_PROJECT_NAME}")
 
-set(INSTALL_ICU_DT_DEST "${CMAKE_INSTALL_DATAROOTDIR}/${CMAKE_PROJECT_NAME}")
-set(INSTALL_TZDATA_DEST
-    "${CMAKE_INSTALL_DATAROOTDIR}/${CMAKE_PROJECT_NAME}/tzdata"
-)
-
 set(CMAKE_TEST_DIRECTORY "tests")
 
 include(InstallMacros)
@@ -86,9 +81,7 @@ to_native_path("CMAKE_INSTALL_FULL_SYSCONFDIR_SERENE")
 to_native_path("PKGDATADIR")
 to_native_path("CMAKE_INSTALL_DATAROOTDIR_SERENE")
 to_native_path("CMAKE_INSTALL_BINDIR")
-to_native_path("INSTALL_ICU_DT_DEST")
 to_native_path("CMAKE_TEST_DIRECTORY")
-to_native_path("INSTALL_TZDATA_DEST")
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/libs/basics/directories.h.in"
@@ -100,5 +93,3 @@ install(
     FILES "${CMAKE_SOURCE_DIR}/libs/basics/exitcodes.dat"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}"
 )
-
-install(FILES ${TZ_DATA_FILES} DESTINATION "${INSTALL_TZDATA_DEST}")

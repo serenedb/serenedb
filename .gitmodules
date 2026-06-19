@@ -1,7 +1,3 @@
-[submodule "third_party/icu"]
-	path = third_party/icu
-	url = https://github.com/serenedb/icu.git
-	shallow = true
 [submodule "third_party/boost"]
 	path = third_party/boost
 	url = https://github.com/serenedb/boost.git
@@ -74,10 +70,6 @@
 [submodule "third_party/lz4"]
 	path = third_party/lz4
 	url = https://github.com/serenedb/lz4.git
-	shallow = true
-[submodule "third_party/date"]
-	path = third_party/date
-	url = https://github.com/serenedb/date.git
 	shallow = true
 [submodule "third_party/re2"]
 	path = third_party/re2

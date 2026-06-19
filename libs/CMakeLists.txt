@@ -29,7 +29,6 @@ add_library(
     basics/files.cpp
     basics/lockfile.cpp
     basics/signals.cpp
-    basics/utf8_helper.cpp
     basics/thread_utils.cpp
     basics/async_utils.cpp
     basics/dtoa.cpp
@@ -93,7 +92,6 @@ target_link_libraries(
         duckdb_static
         ${SYSTEM_LIBRARIES}
     PRIVATE
-        date_interface
         boost_boost
         absl::stacktrace
         absl::symbolize
@@ -133,16 +131,12 @@ target_compile_definitions(iresearch-static PRIVATE -DDISABLE_EXECINFO)
 
 set(LIB_SERVER_POSIX endpoint/endpoint_unix_domain.cpp)
 
-set(LIB_SERVER_DATE ${CMAKE_SOURCE_DIR}/third_party/date/src/tz.cpp)
-
 add_library(
     serene
     STATIC
     ${LIB_SERVER_POSIX}
-    ${LIB_SERVER_DATE}
     app/app_server.cpp
     app/init.cpp
-    app/name_validator.cpp
     endpoint/endpoint.cpp
     endpoint/endpoint_ip.cpp
     endpoint/endpoint_ip_v4.cpp
@@ -156,10 +150,7 @@ add_library(
     rest/version.cpp
 )
 
-target_link_libraries(
-    serene
-    PUBLIC s2 boost_boost serene_base date_interface simdjson
-)
+target_link_libraries(serene PUBLIC s2 boost_boost serene_base simdjson)
 
 # this is "."
 target_include_directories(serene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

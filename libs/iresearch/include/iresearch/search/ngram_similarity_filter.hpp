@@ -53,6 +53,7 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
                             float_t threshold, bool allow_phrase = true);
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
+    SDB_ASSERT(!options().ngrams.empty());
     return Prepare(ctx.Boost(Boost()), field_id(), options().ngrams,
                    options().threshold, options().allow_phrase);
   }

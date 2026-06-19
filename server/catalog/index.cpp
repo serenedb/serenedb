@@ -61,46 +61,46 @@ constexpr std::string_view kL1Metric = "l1";
 constexpr std::string_view kCosineMetric = "cosine";
 constexpr std::string_view kIPMetric = "ip";
 
+template<typename T>
+ResultOr<T> GetIndexOption(std::string_view index_kind,
+                           std::string_view column_name, std::string_view key,
+                           const duckdb::Value& v,
+                           duckdb::LogicalTypeId target_type,
+                           std::string_view type_name) {
+  auto value = v.Copy();
+  if (value.DefaultTryCastAs(target_type)) {
+    return value.GetValue<T>();
+  }
+  return std::unexpected<Result>{
+    std::in_place, ERROR_BAD_PARAMETER, "Column '", column_name,  "': ",
+    index_kind,    " option '",         key,        "' must be ", type_name,
+    ", got '",     v.ToString(),        "'"};
+}
+
 ResultOr<uint32_t> GetIndexIntOption(std::string_view index_kind,
                                      std::string_view column_name,
                                      std::string_view key,
                                      const duckdb::Value& v) {
-  auto int_value = v.Copy();
-  if (int_value.DefaultTryCastAs(duckdb::LogicalTypeId::UINTEGER)) {
-    return int_value.GetValueUnsafe<uint32_t>();
-  }
-  return std::unexpected<Result>{std::in_place,
-                                 ERROR_BAD_PARAMETER,
-                                 "Column '",
-                                 column_name,
-                                 "': ",
-                                 index_kind,
-                                 " option '",
-                                 key,
-                                 "' must be an integer, got '",
-                                 v.ToString(),
-                                 "'"};
+  return GetIndexOption<uint32_t>(index_kind, column_name, key, v,
+                                  duckdb::LogicalTypeId::UINTEGER,
+                                  "an integer");
 }
 
 ResultOr<std::string> GetIndexStringOption(std::string_view index_kind,
                                            std::string_view column_name,
                                            std::string_view key,
                                            const duckdb::Value& v) {
-  auto str_value = v.Copy();
-  if (str_value.DefaultTryCastAs(duckdb::LogicalTypeId::VARCHAR)) {
-    return str_value.GetValue<std::string>();
-  }
-  return std::unexpected<Result>{std::in_place,
-                                 ERROR_BAD_PARAMETER,
-                                 "Column '",
-                                 column_name,
-                                 "': ",
-                                 index_kind,
-                                 " option '",
-                                 key,
-                                 "' must be a string, got '",
-                                 v.ToString(),
-                                 "'"};
+  return GetIndexOption<std::string>(index_kind, column_name, key, v,
+                                     duckdb::LogicalTypeId::VARCHAR,
+                                     "a string");
+}
+
+ResultOr<bool> GetIndexBoolOption(std::string_view index_kind,
+                                  std::string_view column_name,
+                                  std::string_view key,
+                                  const duckdb::Value& v) {
+  return GetIndexOption<bool>(index_kind, column_name, key, v,
+                              duckdb::LogicalTypeId::BOOLEAN, "a boolean");
 }
 
 constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
@@ -109,6 +109,7 @@ constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
 };
 constexpr std::string_view kCompressionField = "compression";
 constexpr std::string_view kRowGroupSizeField = "row_group_size";
+constexpr std::string_view kHyperLogLogField = "hyperloglog";
 
 ResultOr<uint32_t> ParseRowGroupSize(std::string_view kind,
                                      std::string_view column_name,
@@ -518,6 +519,13 @@ Result ApplyIncludedOpclass(
         return std::move(parsed).error();
       }
       entry.row_group_size = *parsed;
+    } else if (key == kHyperLogLogField) {
+      auto parsed =
+        GetIndexBoolOption(kIncludedKind, owner_label, key, raw_val);
+      if (!parsed) {
+        return std::move(parsed).error();
+      }
+      entry.hyperloglog = *parsed;
     } else {
       return {ERROR_BAD_PARAMETER,
               "Column '",
@@ -525,7 +533,8 @@ Result ApplyIncludedOpclass(
               "': unknown included option '",
               key,
               "'. Accepted options: compression (string, default 'auto'), "
-              "row_group_size (int >= 1)"};
+              "row_group_size (int >= 1), hyperloglog (bool, default "
+              "false)"};
     }
   }
   return {};

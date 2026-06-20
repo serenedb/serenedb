@@ -26,36 +26,84 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/common/types/hyperloglog.hpp>
+#include <ranges>
+
 #include "basics/shared.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 
 namespace irs {
 
 struct DirectoryReaderImpl::Init {
-  Init(const Directory& dir, const DirectoryMeta& meta);
+  Init(const Directory& dir, const DirectoryMeta& meta,
+       const ReadersType& readers);
 
   FileRefs file_refs;
   uint64_t docs_count{};
   uint64_t live_docs_count{};
+  sdb::containers::FlatHashMap<field_id,
+                               duckdb::unique_ptr<duckdb::BaseStatistics>>
+    column_stats;
 };
 
-DirectoryReaderImpl::Init::Init(const Directory& dir,
-                                const DirectoryMeta& meta) {
+DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
+                                const ReadersType& readers) {
   const bool has_segments_file = !meta.filename.empty();
+  const auto& segments = meta.index_meta.segments;
+  SDB_ASSERT(segments.size() == readers.size());
 
-  file_refs.reserve(meta.index_meta.segments.size() +
-                    size_t{has_segments_file});
+  file_refs.reserve(segments.size() + size_t{has_segments_file});
+
+  struct Accumulator {
+    duckdb::unique_ptr<duckdb::BaseStatistics> stats;
+    duckdb::unique_ptr<duckdb::HyperLogLog> hyperloglog;
+  };
+  sdb::containers::FlatHashMap<field_id, Accumulator> col2stats;
 
   auto& refs = dir.attributes().refs();
-  for (const auto& [filename, segment] : meta.index_meta.segments) {
+  for (const auto& [index_segment, reader] :
+       std::views::zip(segments, readers)) {
+    const auto& [filename, segment] = index_segment;
     file_refs.emplace_back(refs.add(filename));
     docs_count += segment.docs_count;
     live_docs_count += segment.live_docs_count;
+
+    const auto* col_reader = reader.GetColReader();
+    if (!col_reader) {
+      continue;
+    }
+    for (const auto& column : col_reader->Columns()) {
+      auto& [stats, hyperloglog] = col2stats[column->Id()];
+      if (!stats) {
+        stats = column->MergedStatistics().ToUnique();
+      } else {
+        stats->Merge(column->MergedStatistics());
+      }
+      if (const auto* src_hyperloglog = column->HyperLogLog()) {
+        if (!hyperloglog) {
+          hyperloglog = src_hyperloglog->Copy();
+        } else {
+          hyperloglog->Merge(*src_hyperloglog);
+        }
+      }
+    }
   }
 
   if (has_segments_file) {
     file_refs.emplace_back(refs.add(meta.filename));
+  }
+
+  for (auto& [field, merged] : col2stats) {
+    auto& [stats, hyperloglog] = merged;
+    if (hyperloglog) {
+      const auto cnt =
+        std::min<uint64_t>(hyperloglog->Count(), live_docs_count);
+      stats->SetDistinctCount(cnt);
+    }
+    column_stats[field] = std::move(stats);
   }
 }
 
@@ -193,9 +241,9 @@ DirectoryReaderImpl::DirectoryReaderImpl(const Directory& dir,
                                          const IndexReaderOptions& opts,
                                          DirectoryMeta&& meta,
                                          ReadersType&& readers)
-  : DirectoryReaderImpl{Init{dir, meta},  dir,
-                        std::move(codec), opts,
-                        std::move(meta),  std::move(readers)} {}
+  : DirectoryReaderImpl{Init{dir, meta, readers}, dir,
+                        std::move(codec),         opts,
+                        std::move(meta),          std::move(readers)} {}
 
 DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const Directory& dir,
                                          Format::ptr&& codec,
@@ -208,7 +256,8 @@ DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const Directory& dir,
     _codec{std::move(codec)},
     _file_refs{std::move(init.file_refs)},
     _meta{std::move(meta)},
-    _opts{opts} {}
+    _opts{opts},
+    _column_stats{std::move(init.column_stats)} {}
 
 std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
   const Directory& dir, const IndexReaderOptions& opts, Format::ptr codec,

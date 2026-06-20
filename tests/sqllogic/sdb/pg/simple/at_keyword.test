@@ -160,16 +160,15 @@ DROP TABLE at_alias_test;
 
 
 # ----------------------------------------------------------------------
-# 5. AT TIME ZONE still parses correctly.  The binder needs the ICU
-#    extension, which is not yet installed in CI; the binder tries to
-#    auto-install it and fails with a known message but NOT parse error.
-# TODO(Dronplane): change to success if we have icu extension pre-installed
+# 5. AT TIME ZONE resolves the timezone via the statically-linked ICU
+#    extension (no install step needed).
 # ----------------------------------------------------------------------
 
-statement error
+query
 SELECT TIMESTAMP '2026-01-01 12:00:00' AT TIME ZONE 'UTC';
 ----
-db error: ERROR: An error occurred while trying to automatically install the required extension <slt:ignore>
+timezone
+2026-01-01 12:00:00+00
 
 
 # ----------------------------------------------------------------------

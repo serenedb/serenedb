@@ -1,0 +1,176 @@
+# Per-column `hyperloglog` option on INCLUDE columns. When enabled,
+# the columnstore writer tracks the column's NDV in a HyperLogLog that is
+# persisted per segment, unioned across segments at scan time, and exposed
+# to the optimizer as approx_unique (used for join-order cardinality
+# estimates). Off by default; the estimate is approximate by design, so
+# assertions use ranges instead of exact values.
+
+hash-threshold 100
+
+statement ok
+CREATE TABLE dc_t (
+  pk INTEGER PRIMARY KEY,
+  v BIGINT,
+  s VARCHAR,
+  plain BIGINT
+);
+
+statement ok
+INSERT INTO dc_t
+SELECT i, i % 100, 'tag-' || (i % 7)::VARCHAR, i FROM range(10000) t(i);
+
+statement ok
+CREATE INDEX dc_t_idx ON dc_t USING inverted(pk)
+  INCLUDE (v included (hyperloglog = true),
+           s included (hyperloglog = true),
+           plain);
+
+statement ok
+VACUUM (REFRESH_TABLE) dc_t
+
+# --- 1. NDV exposed for opted-in columns (true NDV: v=100, s=7) ----------
+query
+SELECT (stats(v)).approx_unique::BIGINT BETWEEN 80 AND 120 AS ok
+FROM dc_t_idx LIMIT 1;
+----
+ok
+t
+
+query
+SELECT (stats(s)).approx_unique::BIGINT BETWEEN 5 AND 9 AS ok
+FROM dc_t_idx LIMIT 1;
+----
+ok
+t
+
+# --- 2. Option off -> no approx_unique in the propagated statistics ------
+query
+SELECT stats(plain)::VARCHAR NOT LIKE '%approx_unique%' AS ok
+FROM dc_t_idx LIMIT 1;
+----
+ok
+t
+
+# min/max statistics are present regardless of the option.
+query
+SELECT stats(plain)::VARCHAR LIKE '%max%' AS ok FROM dc_t_idx LIMIT 1;
+----
+ok
+t
+
+# --- 3. Second segment -> NDV unioned across segments --------------------
+# New batch widens v to 1000 and s to 50 distinct values.
+statement ok
+INSERT INTO dc_t
+SELECT i, i % 1000, 'tag-' || (i % 50)::VARCHAR, i
+FROM range(10000, 30000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) dc_t
+
+query
+SELECT (stats(v)).approx_unique::BIGINT BETWEEN 700 AND 1300 AS ok
+FROM dc_t_idx LIMIT 1;
+----
+ok
+t
+
+query
+SELECT (stats(s)).approx_unique::BIGINT BETWEEN 40 AND 62 AS ok
+FROM dc_t_idx LIMIT 1;
+----
+ok
+t
+
+# --- 4. Reads through the index stay correct with the option on ----------
+query
+SELECT COUNT(*), COUNT(DISTINCT v) FROM dc_t_idx;
+----
+count	count
+30000	1000
+
+# --- 5. Non-boolean value rejected at parse time --------------------------
+statement error
+CREATE INDEX dc_bad ON dc_t USING inverted(pk)
+  INCLUDE (v included (hyperloglog = 'banana'));
+
+# --- 6. Unknown included option still rejected ----------------------------
+statement error
+CREATE INDEX dc_bad2 ON dc_t USING inverted(pk)
+  INCLUDE (v included (ndv = true));
+
+# --- 7. NDV survives consolidation. Clean segments reuse the persisted
+#       per-segment sketch (the merge writer unions the HyperLogLogs instead
+#       of re-hashing); a segment carrying deletes can't reuse its sketch
+#       (an HLL can't subtract), so the merge rebuilds it from survivors. ---
+statement ok
+CREATE TABLE dc_compact (pk INTEGER PRIMARY KEY, v BIGINT)
+
+statement ok
+CREATE INDEX dc_compact_idx ON dc_compact USING inverted(pk)
+  INCLUDE (v included (hyperloglog = true))
+
+# Three segments with overlapping values; union NDV = 7 ({1..7}).
+statement ok
+INSERT INTO dc_compact VALUES (1, 1), (2, 2), (3, 3)
+
+statement ok
+VACUUM (REFRESH_TABLE) dc_compact
+
+statement ok
+INSERT INTO dc_compact VALUES (4, 3), (5, 4), (6, 5)
+
+statement ok
+VACUUM (REFRESH_TABLE) dc_compact
+
+statement ok
+INSERT INTO dc_compact VALUES (7, 5), (8, 6), (9, 7)
+
+statement ok
+VACUUM (REFRESH_TABLE) dc_compact
+
+query
+SELECT (stats(v)).approx_unique::BIGINT AS ndv FROM dc_compact_idx LIMIT 1;
+----
+ndv
+7
+
+# Compacting clean segments takes the reuse path; NDV is unchanged.
+statement ok
+VACUUM (COMPACT_TABLE) dc_compact
+
+query
+SELECT (stats(v)).approx_unique::BIGINT AS ndv FROM dc_compact_idx LIMIT 1;
+----
+ndv
+7
+
+# Delete two whole values, add a new one in a fresh segment, then compact.
+# The masked source forces a rebuild from survivors: {1,2,3,4,5,8} = 6.
+statement ok
+DELETE FROM dc_compact WHERE v IN (6, 7)
+
+statement ok
+INSERT INTO dc_compact VALUES (10, 8)
+
+statement ok
+VACUUM (COMPACT_TABLE) dc_compact
+
+query
+SELECT (stats(v)).approx_unique::BIGINT AS ndv FROM dc_compact_idx LIMIT 1;
+----
+ndv
+6
+
+statement ok
+DROP INDEX dc_compact_idx
+
+statement ok
+DROP TABLE dc_compact
+
+# Cleanup
+statement ok
+DROP INDEX dc_t_idx
+
+statement ok
+DROP TABLE dc_t

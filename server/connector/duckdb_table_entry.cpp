@@ -57,12 +57,9 @@ duckdb::virtual_column_map_t StoreScanVirtualColumns(
   return cols;
 }
 
-// Enforce SELECT on the table/view column the binder is reading. `column_index`
-// is the DuckDB logical index, which excludes the internal generated-PK column
-// (it is not part of CreateTableInfo) -- so it lines up with the i-th
-// user-visible catalog column. Fired per referenced read column at bind time
-// (the analogue of PostgreSQL markVarForSelectPriv); internal/bootstrap queries
-// have no client state and are skipped.
+// SELECT on the read column. `column_index` is the DuckDB logical index (the
+// i-th user-visible catalog column; generated-PK excluded). Internal/bootstrap
+// queries have no client state and are skipped.
 void EnforceColumnRead(duckdb::ClientContext& context,
                        const catalog::Table& table,
                        duckdb::column_t column_index) {
@@ -136,6 +133,11 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
 duckdb::Catalog& SereneDBTableEntry::GetStorageCatalog(
   duckdb::ClientContext& context) {
   return ResolveStoreEntry(context).ParentCatalog();
+}
+
+void SereneDBTableEntry::CheckColumnReadAccess(
+  duckdb::ClientContext& context, duckdb::column_t column_index) const {
+  EnforceColumnRead(context, *_sdb_table, column_index);
 }
 
 duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {

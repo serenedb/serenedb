@@ -148,7 +148,7 @@ struct TermFrequency {
 template<typename Key>
 class SampledMultiTermVisitor {
  public:
-  SampledMultiTermVisitor(LimitedSampleSelector<Key>& collector,
+  SampledMultiTermVisitor(LimitedSampleSelector<Key>* collector,
                           MultiTermState& state)
     : _collector{collector}, _state{state} {}
 
@@ -179,14 +179,16 @@ class SampledMultiTermVisitor {
       .boost = boost,
     });
 
-    _collector.collect(_state, _state.TermsSize() - 1, *_terms,
-                       Key::Make(_offset, docs_count, boost));
+    if (_collector) {
+      _collector->collect(_state, _state.TermsSize() - 1, *_terms,
+                          Key::Make(_offset, docs_count, boost));
+    }
     ++_offset;
   }
 
  private:
   const decltype(TermMeta::docs_count) _no_docs = 0;
-  LimitedSampleSelector<Key>& _collector;
+  LimitedSampleSelector<Key>* _collector;
   MultiTermState& _state;
   const SeekTermIterator* _terms = nullptr;
   const decltype(TermMeta::docs_count)* _docs_count = nullptr;

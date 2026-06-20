@@ -254,9 +254,11 @@ QueryBuilder::ptr FixedPrepareSegment(const SubReader& segment,
                                       const PrepareContext& ctx,
                                       irs::field_id field,
                                       const ByPhraseOptions& options) {
-  SDB_ASSERT(ctx.collector);
   const auto phrase_size = options.size();
-  const auto* scorer = ctx.collector->GetScorer();
+  auto* collector = ctx.collector
+                      ? &sdb::basics::downCast<PhraseCollector>(*ctx.collector)
+                      : nullptr;
+  const auto* scorer = collector ? collector->GetScorer() : nullptr;
   const auto is_ord_empty = !scorer;
 
   FixedPhraseState state{ctx.memory};
@@ -264,15 +266,16 @@ QueryBuilder::ptr FixedPrepareSegment(const SubReader& segment,
 
   const auto* reader = segment.field(field);
   if (Valid(reader)) {
-    auto& collector = sdb::basics::downCast<PhraseCollector>(*ctx.collector);
-    collector.Field().Collect(*reader);
+    if (collector) {
+      collector->Field().Collect(*reader);
+    }
 
     PhraseTermVisitor<decltype(state.terms)> ptv(state.terms);
 
     size_t part = 0;
     for (const auto& word : options) {
       SDB_ASSERT(std::get_if<ByTermOptions>(&word.part));
-      ptv.Reset(&collector.Part(part++));
+      ptv.Reset(collector ? &collector->Part(part++) : nullptr);
       ByTerm::Visit(segment, *reader, std::get<ByTermOptions>(word.part).term,
                     ptv);
       if (!ptv.Found() && is_ord_empty) {
@@ -296,9 +299,11 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
                                          const PrepareContext& ctx,
                                          irs::field_id field,
                                          const ByPhraseOptions& options) {
-  SDB_ASSERT(ctx.collector);
   const auto phrase_size = options.size();
-  const auto* scorer = ctx.collector->GetScorer();
+  auto* collector = ctx.collector
+                      ? &sdb::basics::downCast<PhraseCollector>(*ctx.collector)
+                      : nullptr;
+  const auto* scorer = collector ? collector->GetScorer() : nullptr;
   const auto is_ord_empty = !scorer;
 
   VariadicPhraseState state{ctx.memory};
@@ -307,8 +312,9 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
 
   const auto* reader = segment.field(field);
   if (Valid(reader)) {
-    auto& collector = sdb::basics::downCast<PhraseCollector>(*ctx.collector);
-    collector.Field().Collect(*reader);
+    if (collector) {
+      collector->Field().Collect(*reader);
+    }
 
     std::vector<field_visitor> phrase_part_visitors;
     phrase_part_visitors.reserve(phrase_size);
@@ -343,7 +349,7 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
     size_t found_parts = 0;
     for (auto& visitor : phrase_part_visitors) {
       const auto was_terms_count = state.terms.size();
-      ptv.Reset(&collector.Part(found_parts));
+      ptv.Reset(collector ? &collector->Part(found_parts) : nullptr);
       visitor(segment, *reader, ptv);
       const auto new_terms_count = state.terms.size() - was_terms_count;
       if (new_terms_count != 0) {

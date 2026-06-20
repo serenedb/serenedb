@@ -82,18 +82,18 @@ QueryBuilder::ptr MixedBooleanFilter::PrepareSegment(
   }
 
   auto* compound = dynamic_cast<CompoundCollector*>(ctx.collector);
-  SDB_ASSERT(compound != nullptr);
+  SDB_ASSERT(ctx.collector == nullptr || compound != nullptr);
 
   size_t idx = 0;
   PrepareContext req_ctx = ctx;
-  req_ctx.collector = &compound->Child(idx++);
+  req_ctx.collector = compound ? &compound->Child(idx++) : nullptr;
   auto req_query = req->PrepareSegment(segment, req_ctx);
 
   std::vector<QueryBuilder::ptr> opt_queries;
   const auto add_clause = [&](const Filter& clause, score_t boost) {
     PrepareContext child = ctx;
     child.boost = ctx.boost * boost;
-    child.collector = &compound->Child(idx++);
+    child.collector = compound ? &compound->Child(idx++) : nullptr;
     opt_queries.emplace_back(clause.PrepareSegment(segment, child));
   };
   if (const auto* opt_or = AsOr(*opt)) {

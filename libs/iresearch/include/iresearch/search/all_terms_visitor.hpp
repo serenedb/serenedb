@@ -34,13 +34,15 @@ namespace irs {
 template<typename State>
 class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
  public:
-  AllTermsVisitor(State& state, FieldCollector& field_stats,
-                  ByTermsCollector::TermsData& term_stats) noexcept
+  AllTermsVisitor(State& state, FieldCollector* field_stats,
+                  ByTermsCollector::TermsData* term_stats) noexcept
     : _state{state}, _field_stats{field_stats}, _term_stats{term_stats} {}
 
   void Prepare(const SubReader& /*segment*/, const TermReader& field,
                const SeekTermIterator& terms) noexcept final {
-    _field_stats.Collect(field);
+    if (_field_stats) {
+      _field_stats->Collect(field);
+    }
     _state.Prepare(&field);
 
     _terms = &terms;
@@ -51,7 +53,9 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
 
   void Visit(score_t boost) final {
     SDB_ASSERT(_terms);
-    _term_stats[_stat_index].Collect(*_terms);
+    if (_term_stats) {
+      (*_term_stats)[_stat_index].Collect(*_terms);
+    }
 
     _state.Push(typename State::Entry{
       .cookie = _terms->cookie(),
@@ -65,8 +69,8 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
 
  private:
   State& _state;
-  FieldCollector& _field_stats;
-  ByTermsCollector::TermsData& _term_stats;
+  FieldCollector* _field_stats;
+  ByTermsCollector::TermsData* _term_stats;
   const SeekTermIterator* _terms{};
   const uint32_t* _docs_count{};
   uint32_t _stat_index = 0;

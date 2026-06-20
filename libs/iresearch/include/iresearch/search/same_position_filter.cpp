@@ -195,7 +195,9 @@ QueryBuilder::ptr BySamePosition::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
+  auto* collector = ctx.collector
+                      ? &sdb::basics::downCast<ByTermsCollector>(*ctx.collector)
+                      : nullptr;
 
   SamePositionQuery::TermsStatesT term_states{
     SamePositionQuery::TermsStatesT::allocator_type{ctx.memory}};
@@ -218,7 +220,9 @@ QueryBuilder::ptr BySamePosition::PrepareSegment(
     }
 
     // collect field statistics once per segment
-    collector.Field().Collect(*field);
+    if (collector) {
+      collector->Field().Collect(*field);
+    }
 
     // find terms
     SeekTermIterator::ptr term = field->iterator(SeekMode::NORMAL);
@@ -228,7 +232,9 @@ QueryBuilder::ptr BySamePosition::PrepareSegment(
     }
 
     term->read();  // read term attributes
-    collector.Terms()[term_idx].Collect(*term);
+    if (collector) {
+      collector->Terms()[term_idx].Collect(*term);
+    }
     term_states.emplace_back(field, term->cookie());
   }
 

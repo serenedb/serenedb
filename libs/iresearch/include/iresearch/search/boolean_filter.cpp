@@ -52,7 +52,9 @@ PrepareCollector::ptr And::MakeCollector(const Scorer* scorer) const {
 QueryBuilder::ptr And::PrepareSegment(const SubReader& segment,
                                       const PrepareContext& ctx) const {
   SDB_ASSERT(_filters.size() > 1);
-  auto& compound = sdb::basics::downCast<CompoundCollector>(*ctx.collector);
+  auto* compound = ctx.collector
+                     ? &sdb::basics::downCast<CompoundCollector>(*ctx.collector)
+                     : nullptr;
 
   const auto composite_boost = ctx.boost * Boost();
 
@@ -62,7 +64,7 @@ QueryBuilder::ptr And::PrepareSegment(const SubReader& segment,
   child.boost = composite_boost;
   size_t idx = 0;
   for (const auto& filter : _filters) {
-    child.collector = &compound.Child(idx++);
+    child.collector = compound ? &compound->Child(idx++) : nullptr;
     queries.emplace_back(filter->PrepareSegment(segment, child));
   }
   return memory::make_tracked<AndQuery>(ctx.memory, segment, std::move(queries),
@@ -81,7 +83,9 @@ QueryBuilder::ptr Or::PrepareSegment(const SubReader& segment,
                                      const PrepareContext& ctx) const {
   SDB_ASSERT(_filters.size() > 1);
   SDB_ASSERT(_min_match_count != 0);
-  auto& compound = sdb::basics::downCast<CompoundCollector>(*ctx.collector);
+  auto* compound = ctx.collector
+                     ? &sdb::basics::downCast<CompoundCollector>(*ctx.collector)
+                     : nullptr;
 
   const auto composite_boost = ctx.boost * Boost();
 
@@ -91,7 +95,7 @@ QueryBuilder::ptr Or::PrepareSegment(const SubReader& segment,
   child.boost = composite_boost;
   size_t idx = 0;
   for (const auto& filter : _filters) {
-    child.collector = &compound.Child(idx++);
+    child.collector = compound ? &compound->Child(idx++) : nullptr;
     queries.emplace_back(filter->PrepareSegment(segment, child));
   }
   if (_min_match_count <= 1) {
@@ -121,13 +125,15 @@ PrepareCollector::ptr Exclusion::MakeCollector(const Scorer* scorer) const {
 QueryBuilder::ptr Exclusion::PrepareSegment(const SubReader& segment,
                                             const PrepareContext& ctx) const {
   SDB_ASSERT(!GetExcludes().empty());
-  auto& compound = sdb::basics::downCast<CompoundCollector>(*ctx.collector);
+  auto* compound = ctx.collector
+                     ? &sdb::basics::downCast<CompoundCollector>(*ctx.collector)
+                     : nullptr;
 
   const auto child_boost = ctx.boost * Boost();
 
   PrepareContext incl_ctx = ctx;
   incl_ctx.boost = child_boost;
-  incl_ctx.collector = &compound.Child(0);
+  incl_ctx.collector = compound ? &compound->Child(0) : nullptr;
   const auto& include_filter = GetInclude();
   auto include = include_filter
                    ? include_filter->PrepareSegment(segment, incl_ctx)
@@ -140,7 +146,7 @@ QueryBuilder::ptr Exclusion::PrepareSegment(const SubReader& segment,
   for (const auto& filter : exclude_filters) {
     PrepareContext child = ctx;
     child.boost = child_boost;
-    child.collector = &compound.Child(idx++);
+    child.collector = compound ? &compound->Child(idx++) : nullptr;
     excludes.emplace_back(filter->PrepareSegment(segment, child));
   }
   return memory::make_tracked<ExclusionQuery>(

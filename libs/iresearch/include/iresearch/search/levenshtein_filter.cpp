@@ -53,20 +53,22 @@ IRS_FORCE_INLINE score_t Similarity(uint32_t distance, uint32_t size) noexcept {
 }
 
 struct AggregatedStatsVisitor : util::Noncopyable {
-  AggregatedStatsVisitor(MultiTermState& state, FieldCollector& field_stat,
-                         TermCollector& term_stat) noexcept
+  AggregatedStatsVisitor(MultiTermState& state, FieldCollector* field_stat,
+                         TermCollector* term_stat) noexcept
     : state{state}, field_stat{field_stat}, term_stat{term_stat} {}
 
   void operator()(const SubReader&, const TermReader& field, uint32_t) const {
-    if (!field_collected) {
-      field_stat.Collect(field);
+    if (field_stat && !field_collected) {
+      field_stat->Collect(field);
       field_collected = true;
     }
     state.Prepare(&field);
   }
 
   void operator()(SeekCookie::ptr& cookie) const {
-    term_stat.Collect(*cookie);
+    if (term_stat) {
+      term_stat->Collect(*cookie);
+    }
     uint32_t docs_count = 0;
     if (auto* meta = irs::get<TermMeta>(*cookie)) {
       docs_count = meta->docs_count;
@@ -80,8 +82,8 @@ struct AggregatedStatsVisitor : util::Noncopyable {
   }
 
   MultiTermState& state;
-  FieldCollector& field_stat;
-  TermCollector& term_stat;
+  FieldCollector* field_stat;
+  TermCollector* term_stat;
   score_t boost{kNoBoost};
   mutable bool field_collected{false};
 };
@@ -145,11 +147,14 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
     return query;
   }
 
-  auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
+  auto* collector = ctx.collector
+                      ? &sdb::basics::downCast<ByTermsCollector>(*ctx.collector)
+                      : nullptr;
 
   if (!terms_limit) {
-    AllTermsVisitor term_collector{query->State(), collector.Field(),
-                                   collector.Terms()};
+    AllTermsVisitor term_collector{query->State(),
+                                   collector ? &collector->Field() : nullptr,
+                                   collector ? &collector->Terms() : nullptr};
     VisitImpl(segment, *reader, no_distance, utf8_target_size, matcher,
               term_collector);
   } else {
@@ -157,8 +162,9 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
     VisitImpl(segment, *reader, no_distance, utf8_target_size, matcher,
               selector);
 
-    AggregatedStatsVisitor aggregate_stats{query->State(), collector.Field(),
-                                           collector.Terms()[0]};
+    AggregatedStatsVisitor aggregate_stats{
+      query->State(), collector ? &collector->Field() : nullptr,
+      collector ? &collector->Terms()[0] : nullptr};
     selector.Visit([&aggregate_stats](TopTermState<score_t>& s) {
       aggregate_stats.boost = std::max(0.f, s.key);
       s.Visit(aggregate_stats);

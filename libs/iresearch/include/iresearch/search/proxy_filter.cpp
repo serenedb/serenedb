@@ -278,9 +278,8 @@ QueryBuilder::ptr ProxyFilter::PrepareSegment(const SubReader& segment,
                                               *it->second);
     }
   }
-  auto collector = _cache->real_filter->MakeCollector(nullptr);
   auto inner_ctx = ctx;
-  inner_ctx.collector = collector.get();
+  inner_ctx.collector = nullptr;
   auto inner_query = _cache->real_filter->PrepareSegment(segment, inner_ctx);
   if (!inner_query) {
     return QueryBuilder::Empty();

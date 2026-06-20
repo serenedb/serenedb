@@ -673,13 +673,13 @@ QueryBuilder::ptr ByNestedFilter::PrepareSegment(
   }
 
   auto* compound = dynamic_cast<CompoundCollector*>(ctx.collector);
-  SDB_ASSERT(compound != nullptr);
+  SDB_ASSERT(ctx.collector == nullptr || compound != nullptr);
 
   const auto sub_boost = ctx.boost * Boost();
 
   PrepareContext child_ctx = ctx;
   child_ctx.boost = sub_boost;
-  child_ctx.collector = &compound->Child(0);
+  child_ctx.collector = compound ? &compound->Child(0) : nullptr;
 
   auto prepared_child = child->PrepareSegment(segment, child_ctx);
 

@@ -89,10 +89,15 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
     return query;
   }
 
-  auto& collector =
-    sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector);
-  collector.Field().Collect(*reader);
-  SampledMultiTermVisitor mtv{collector.Limited(), query->State()};
+  auto* collector =
+    ctx.collector
+      ? &sdb::basics::downCast<LimitedTermsCollector>(*ctx.collector)
+      : nullptr;
+  if (collector) {
+    collector->Field().Collect(*reader);
+  }
+  SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
+                              query->State()};
   VisitImpl(segment, *reader, prefix, mtv);
   return query;
 }

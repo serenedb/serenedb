@@ -46,8 +46,9 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   const auto terms_count = ngrams.size();
   const auto min_match_count = MinMatchCount(terms_count, threshold);
 
-  auto& ngram_collector =
-    sdb::basics::downCast<PhraseCollector>(*ctx.collector);
+  auto* ngram_collector =
+    ctx.collector ? &sdb::basics::downCast<PhraseCollector>(*ctx.collector)
+                  : nullptr;
 
   const TermReader* field = segment.field(field_name);
 
@@ -61,7 +62,9 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  ngram_collector.Field().Collect(*field);
+  if (ngram_collector) {
+    ngram_collector->Field().Collect(*field);
+  }
 
   NGramState state{ctx.memory};
   state.terms.reserve(terms_count);
@@ -71,13 +74,18 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   auto term = field->iterator(SeekMode::NORMAL);
   for (const auto& ngram : ngrams) {
     auto& term_state = state.terms.emplace_back();
-    auto& part = ngram_collector.Part(term_idx);
-    if (part.empty()) {
-      part.emplace_back();
+    std::vector<TermCollector>* part = nullptr;
+    if (ngram_collector) {
+      part = &ngram_collector->Part(term_idx);
+      if (part->empty()) {
+        part->emplace_back();
+      }
     }
     if (term->seek(ngram)) {
       term->read();
-      part.front().Collect(*term);
+      if (part) {
+        part->front().Collect(*term);
+      }
       term_state = term->cookie();
       ++count_terms;
     }

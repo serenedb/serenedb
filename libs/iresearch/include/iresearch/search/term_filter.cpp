@@ -66,12 +66,14 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
     return memory::make_tracked<TermQuery>(
       ctx.memory, segment, TermState{nullptr, nullptr}, ctx.boost);
   }
-  auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
-  SDB_ASSERT(collector.Terms().size() == 1);
-  collector.Field().Collect(*reader);
   auto terms = GetTermsIterator(*reader, term);
-  if (terms) {
-    collector.Terms()[0].Collect(*terms);
+  if (ctx.collector) {
+    auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
+    SDB_ASSERT(collector.Terms().size() == 1);
+    collector.Field().Collect(*reader);
+    if (terms) {
+      collector.Terms()[0].Collect(*terms);
+    }
   }
   TermState state{reader, terms ? terms->cookie() : nullptr};
   return memory::make_tracked<TermQuery>(ctx.memory, segment, std::move(state),

@@ -122,14 +122,18 @@ const irs::QueryBuilder& EnsureSegmentQuery(SearchFullScanGlobalState& g,
                                             uint32_t seg_idx) {
   auto& q = g.queries[seg_idx];
   if (!q) {
-    if (!l.prepare_collector) {
-      const uint32_t slot =
-        g.collector_slots.fetch_add(1, std::memory_order_relaxed);
-      SDB_ASSERT(slot < g.collectors.size());
-      g.collectors[slot] = g.filter->MakeCollector(g.scorer_obj.get());
-      l.prepare_collector = g.collectors[slot].get();
+    irs::PrepareCollector* collector = nullptr;
+    if (g.scorer_obj) {
+      if (!l.prepare_collector) {
+        const uint32_t slot =
+          g.collector_slots.fetch_add(1, std::memory_order_relaxed);
+        SDB_ASSERT(slot < g.collectors.size());
+        g.collectors[slot] = g.filter->MakeCollector(g.scorer_obj.get());
+        l.prepare_collector = g.collectors[slot].get();
+      }
+      collector = l.prepare_collector;
     }
-    q = g.filter->PrepareSegment(seg, {.collector = l.prepare_collector});
+    q = g.filter->PrepareSegment(seg, {.collector = collector});
   }
   return *q;
 }

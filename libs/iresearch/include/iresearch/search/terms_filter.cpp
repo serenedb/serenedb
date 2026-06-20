@@ -88,8 +88,11 @@ QueryBuilder::ptr ByTerms::PrepareSegment(const SubReader& segment,
     return query;
   }
 
-  auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
-  AllTermsVisitor mtv{query->State(), collector.Field(), collector.Terms()};
+  auto* collector = ctx.collector
+                      ? &sdb::basics::downCast<ByTermsCollector>(*ctx.collector)
+                      : nullptr;
+  AllTermsVisitor mtv{query->State(), collector ? &collector->Field() : nullptr,
+                      collector ? &collector->Terms() : nullptr};
   VisitImpl(segment, *reader, terms, mtv);
   return query;
 }

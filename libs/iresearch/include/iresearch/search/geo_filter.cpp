@@ -553,9 +553,11 @@ GeoState PrepareState(const SubReader& segment, const PrepareContext& ctx,
     return state;
   }
 
-  auto& collector =
-    sdb::basics::downCast<FieldPrepareCollector>(*ctx.collector);
-  collector.Field().Collect(*reader);
+  if (ctx.collector) {
+    auto& collector =
+      sdb::basics::downCast<FieldPrepareCollector>(*ctx.collector);
+    collector.Field().Collect(*reader);
+  }
 
   ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
   term_states.reserve(sorted_terms.size());

@@ -39,7 +39,16 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
   : _scorer{scorer} {
   _queries.reserve(index.size());
 
-  if (mode == CollectMode::Single) {
+  if (mode == CollectMode::NoCollector) {
+    for (const auto& sub : index) {
+      _queries.emplace_back(filter.PrepareSegment(sub, {
+                                                         .collector = nullptr,
+                                                         .memory = memory,
+                                                         .ctx = ctx,
+                                                       }));
+    }
+    _stats.emplace();
+  } else if (mode == CollectMode::Single) {
     _collector = filter.MakeCollector(scorer);
     for (const auto& sub : index) {
       _queries.emplace_back(
@@ -203,6 +212,15 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
   GetQueryResult(prepared, index, result, result_costs, source_location);
   ASSERT_EQ(expected, result);
   ASSERT_EQ(expected_costs, result_costs);
+
+  Docs nc_result;
+  Costs nc_costs;
+  PreparedFilter nc_prepared{filter,  index,
+                             nullptr, irs::IResourceManager::gNoop,
+                             nullptr, PreparedFilter::CollectMode::NoCollector};
+  GetQueryResult(nc_prepared, index, nc_result, nc_costs, source_location);
+  ASSERT_EQ(expected, nc_result);
+  ASSERT_EQ(expected_costs, nc_costs);
 }
 
 void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
@@ -290,6 +308,14 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
   PreparedFilter prepared{filter, index};
   GetQueryResult(prepared, index, result, result_costs, source_location);
   ASSERT_EQ(expected, result);
+
+  Docs nc_result;
+  Costs nc_costs;
+  PreparedFilter nc_prepared{filter,  index,
+                             nullptr, irs::IResourceManager::gNoop,
+                             nullptr, PreparedFilter::CollectMode::NoCollector};
+  GetQueryResult(nc_prepared, index, nc_result, nc_costs, source_location);
+  ASSERT_EQ(expected, nc_result);
 }
 
 void FilterTestCaseBase::MakeResult(const irs::Filter& filter,

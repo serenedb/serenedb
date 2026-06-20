@@ -294,14 +294,14 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
                     .PrepareSegment(segment, sub_ctx));
     case WildcardNgramKind::kConjunction: {
       auto* compound = dynamic_cast<CompoundCollector*>(ctx.collector);
-      SDB_ASSERT(compound != nullptr);
+      SDB_ASSERT(ctx.collector == nullptr || compound != nullptr);
 
       AndQuery::queries_t queries{{ctx.memory}};
       size_t idx = 0;
       if (opts.has_pos) {
         for (const auto& part : opts.parts) {
           auto child = sub_ctx;
-          child.collector = &compound->Child(idx++);
+          child.collector = compound ? &compound->Child(idx++) : nullptr;
           queries.emplace_back(
             MakePhraseFilter(field_id(), part).PrepareSegment(segment, child));
         }
@@ -309,7 +309,7 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
         for (const auto& part : opts.parts) {
           for (const auto& info : part) {
             auto child = sub_ctx;
-            child.collector = &compound->Child(idx++);
+            child.collector = compound ? &compound->Child(idx++) : nullptr;
             queries.emplace_back(
               MakeTermFilter(field_id(),
                              std::get<ByTermOptions>(info.part).term)

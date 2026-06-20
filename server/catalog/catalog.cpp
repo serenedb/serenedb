@@ -115,6 +115,10 @@ AccessContext RequireOwnership(duckdb::CatalogTransaction transaction) {
     connector::GetSereneDBContext(transaction.GetContext()).GetRoleId());
 }
 
+AccessContext RequireOwnership(duckdb::ClientContext& context) {
+  return RequireOwnership(connector::GetSereneDBContext(context).GetRoleId());
+}
+
 namespace {
 
 Result Apply(

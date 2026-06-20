@@ -317,16 +317,16 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
 
     create_result = catalog_impl.CreateInvertedIndex(
-      catalog::RequireOwnership(GetSereneDBContext(context).GetRoleId()),
-      context, _database_id, _schema_entry.name, _relation->GetName(),
+      catalog::RequireOwnership(context), context, _database_id,
+      _schema_entry.name, _relation->GetName(),
       _info->index_name, std::move(idx_columns), std::move(options),
       {.create_with_tombstone = true});
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      catalog::RequireOwnership(GetSereneDBContext(context).GetRoleId()),
-      _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,
+      catalog::RequireOwnership(context), _database_id, _schema_entry.name,
+      _relation->GetName(), _info->index_name,
       std::move(idx_columns), unique, {.create_with_tombstone = true});
   }
 

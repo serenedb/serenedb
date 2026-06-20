@@ -122,10 +122,11 @@ inline AccessContext RequireAccess(ObjectId role, AclMode need) {
 
 inline AccessContext RequireOwnership(ObjectId role) { return {role}; }
 
-// Ownership AccessContext for the role driving `transaction` (resolved from its
-// session context). Throws duckdb::InternalException if the transaction carries
-// no context -- an internal lifecycle path must never reach a privilege check.
+// Ownership AccessContext for the role driving `transaction` / `context`
+// (resolved from the session context). Throws duckdb::InternalException if no
+// session context is present -- an internal path must never reach a check.
 AccessContext RequireOwnership(duckdb::CatalogTransaction transaction);
+AccessContext RequireOwnership(duckdb::ClientContext& context);
 
 inline AccessContext RequireCreate(ObjectId role) { return {role}; }
 

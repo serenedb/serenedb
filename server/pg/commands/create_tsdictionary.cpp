@@ -960,10 +960,6 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
   auto r = catalog.CreateTokenizer(catalog::AccessContext{conn_ctx.GetRoleId()},
                                    db_id, schema, std::move(tokenizer));
 
-  if (r.is(ERROR_FORBIDDEN)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for schema ", schema));
-  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && !if_not_exists) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DUPLICATE_OBJECT),

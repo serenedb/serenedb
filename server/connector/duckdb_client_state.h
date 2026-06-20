@@ -31,7 +31,6 @@ namespace sdb {
 
 class ConnectionContext;
 }
-
 namespace sdb::connector {
 
 inline constexpr const char* kSereneDBClientStateKey = "serenedb";

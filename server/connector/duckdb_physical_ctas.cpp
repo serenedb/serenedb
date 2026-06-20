@@ -130,12 +130,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   const ObjectId role_id{GetSereneDBContext(context).GetRoleId()};
   auto r =
-    catalog_impl.CreateTable(catalog::AccessContext{role_id}, database_id,
+    catalog_impl.CreateTable(catalog::RequireCreate(role_id), database_id,
                              _schema.name, std::move(options), op_options);
-  if (r.is(ERROR_FORBIDDEN)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for schema ", _schema.name));
-  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;

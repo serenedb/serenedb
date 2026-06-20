@@ -412,15 +412,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   catalog::CreateTableOperationOptions op_options;
 
   // Creator owns the table (and its generated serial/PK sequences).
-  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  const ObjectId role{
+    GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   options.owner = role;
 
-  auto r = catalog_impl.CreateTable(catalog::AccessContext{role}, database_id,
+  auto r = catalog_impl.CreateTable(catalog::RequireCreate(role), database_id,
                                     name, std::move(options), op_options);
-  if (r.is(ERROR_FORBIDDEN)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for schema ", name));
-  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;
@@ -525,18 +522,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
     create_result = catalog_impl.CreateInvertedIndex(
-      catalog::RequireOwnership(
-        GetSereneDBContext(transaction.GetContext()).GetRoleId()),
-      context, database_id, name, sdb_table->GetName(), info.index_name,
-      std::move(idx_columns), std::move(options),
+      catalog::RequireOwnership(transaction), context, database_id, name,
+      sdb_table->GetName(), info.index_name, std::move(idx_columns),
+      std::move(options),
       /*operation_options=*/{});
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      catalog::RequireOwnership(
-        GetSereneDBContext(transaction.GetContext()).GetRoleId()),
-      database_id, name, sdb_table->GetName(), info.index_name,
-      std::move(idx_columns), unique, /*operation_options=*/{});
+      catalog::RequireOwnership(transaction), database_id, name,
+      sdb_table->GetName(), info.index_name, std::move(idx_columns), unique,
+      /*operation_options=*/{});
   }
 
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME)) {
@@ -570,7 +565,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   duckdb::CatalogTransaction transaction, duckdb::CreateFunctionInfo& info) {
-  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  const ObjectId role{
+    GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   auto& catalog_impl = catalog::GetCatalog();
   auto database_id = GetDatabaseId();
 
@@ -616,17 +612,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     }
 
     auto function = std::make_shared<catalog::PgSqlFunction>(
-      GetSereneDBContext(transaction.GetContext()).GetRoleId(), ObjectId{},
-      ObjectId{}, info.name, std::move(merged_info));
+      role, ObjectId{}, ObjectId{}, info.name, std::move(merged_info));
     // Always replace=true for the catalog layer since we're replacing
     // the whole PgSqlFunction with the merged version. CreateFunction
     // preserves the prior owner on replace (PG semantics).
-    auto r = catalog_impl.CreateFunction(catalog::AccessContext{role},
+    auto r = catalog_impl.CreateFunction(catalog::RequireCreate(role),
                                          database_id, name, function, true);
-    if (r.is(ERROR_FORBIDDEN)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied for schema ", name));
-    }
     if (!r.ok()) {
       SDB_THROW(std::move(r));
     }
@@ -635,14 +626,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
 
   // No existing function -- create new.
   auto function = std::make_shared<catalog::PgSqlFunction>(
-    GetSereneDBContext(transaction.GetContext()).GetRoleId(), ObjectId{},
-    ObjectId{}, info.name, std::move(new_macro_info));
-  auto r = catalog_impl.CreateFunction(catalog::AccessContext{role},
+    role, ObjectId{}, ObjectId{}, info.name, std::move(new_macro_info));
+  auto r = catalog_impl.CreateFunction(catalog::RequireCreate(role),
                                        database_id, name, function, false);
-  if (r.is(ERROR_FORBIDDEN)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for schema ", name));
-  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
@@ -657,7 +643,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   duckdb::CatalogTransaction transaction, duckdb::CreateViewInfo& info) {
-  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  const ObjectId role{
+    GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   auto& catalog_impl = catalog::GetCatalog();
   auto database_id = GetDatabaseId();
 
@@ -671,12 +658,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   // CreateView preserves the prior owner on replace (PG: CREATE OR REPLACE
   // keeps the original owner).
-  auto r = catalog_impl.CreateView(catalog::AccessContext{role}, database_id,
+  auto r = catalog_impl.CreateView(catalog::RequireCreate(role), database_id,
                                    name, view, replace);
-  if (r.is(ERROR_FORBIDDEN)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for schema ", name));
-  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
@@ -715,7 +698,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
                     ERR_MSG("sequence START is out of range [MIN, MAX]"));
   }
 
-  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  const ObjectId role{
+    GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   catalog::SequenceOptions options;
   options.name = info.name;
   options.start_value = static_cast<uint64_t>(info.start_value);
@@ -733,11 +717,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
 
   auto& catalog_impl = catalog::GetCatalog();
   auto r = catalog_impl.CreateSequence(
-    catalog::AccessContext{role}, database_id, name, sequence, if_not_exists);
-  if (r.is(ERROR_FORBIDDEN)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for schema ", name));
-  }
+    catalog::RequireCreate(role), database_id, name, sequence, if_not_exists);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("relation \"", info.name, "\" already exists"));
@@ -785,17 +765,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   auto type_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
       info.Copy());
-  const ObjectId role =
-    GetSereneDBContext(transaction.GetContext()).GetRoleId();
+  const ObjectId role{
+    GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   auto type = std::make_shared<catalog::PgSqlType>(
     role, ObjectId{}, ObjectId{}, info.name, std::move(type_info));
-  auto r = catalog_impl.CreateType(catalog::AccessContext{role}, database_id,
+  auto r = catalog_impl.CreateType(catalog::RequireCreate(role), database_id,
                                    name, type);
 
-  if (r.is(ERROR_FORBIDDEN)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for schema ", name));
-  }
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;

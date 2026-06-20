@@ -71,10 +71,9 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   // SELECT * FROM <index_name> resolves the base table here
-  RequirePrivilege(GetSereneDBContext(context), *_sdb_table,
-                   catalog::AclMode::Select);
-  auto snapshot =
-    GetSereneDBContext(context).EnsureSearchSnapshot(_inverted_index->GetId());
+  auto& sdb_ctx = GetSereneDBContext(context);
+  RequirePrivilege(sdb_ctx, *_sdb_table, catalog::AclMode::Select);
+  auto snapshot = sdb_ctx.EnsureSearchSnapshot(_inverted_index->GetId());
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
@@ -133,10 +132,12 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   if (fp && fp->catalog_ref) {
     // Index-as-table over a view's fast path bypasses the view binder; enforce
     // SELECT on the base table like the table-backed entries do.
-    if (auto base = sdb_ctx.EnsureCatalogSnapshot()->GetRelation(
-          catalog::NoAccessCheck(), sdb_ctx.GetDatabaseId(),
-          fp->catalog_ref->schema, fp->catalog_ref->table)) {
-      RequirePrivilege(sdb_ctx, *base, catalog::AclMode::Select);
+    auto snapshot = sdb_ctx.EnsureCatalogSnapshot();
+    if (auto base =
+          snapshot->GetRelation(catalog::NoAccessCheck(), sdb_ctx.GetDatabaseId(),
+                                fp->catalog_ref->schema, fp->catalog_ref->table)) {
+      snapshot->RequireAccess(sdb_ctx.GetRoleId(), *base,
+                              catalog::AclMode::Select);
     }
   }
   auto snapshot = sdb_ctx.EnsureSearchSnapshot(_inverted_index->GetId());

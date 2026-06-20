@@ -418,41 +418,35 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
       ERR_MSG("unacceptable schema name \"", info.schema, "\""),
       ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
   }
+  // SereneDBCatalog (unlike a DuckCatalog) has no SingleFileStorageManager, so
+  // it is never driven by WAL replay / checkpoint -- CreateSchema is only
+  // reached from a CREATE SCHEMA statement, which always carries a session.
+  auto& client = transaction.GetContext();
+
   // PG: schemas pre-populated by the system catalog (e.g. information_schema)
   // shadow the user catalog. Reject creation if a system schema with the same
   // name already exists.
-  if (transaction.HasContext()) {
-    auto& system = duckdb::Catalog::GetSystemCatalog(*transaction.context);
-    auto existing = system.GetSchema(*transaction.context, info.schema,
-                                     duckdb::OnEntryNotFound::RETURN_NULL);
-    bool if_not_exists =
-      info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-    if (existing) {
-      if (if_not_exists) {
-        return nullptr;
-      }
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
-                      ERR_MSG("schema \"", info.schema, "\" already exists"));
-    }
-  }
-  auto& catalog_impl = catalog::GetCatalog();
-  // PG: CREATE SCHEMA requires CREATE on the current database. Checked only for
-  // a real session; recovery/replay has no context and is not gated.
-  // Creator owns the schema (PG current_user); no session -> kRootUser.
-  ObjectId owner = id::kRootUser;
-  if (transaction.HasContext()) {
-    auto& sdb_ctx = GetSereneDBContext(*transaction.context);
-    owner = sdb_ctx.GetRoleId();
-    if (auto db =
-          catalog_impl.GetCatalogSnapshot()->GetDatabase(GetDatabaseId())) {
-      RequirePrivilege(sdb_ctx, *db, catalog::AclMode::Create);
-    }
-  }
-  auto schema = std::make_shared<catalog::Schema>(owner, GetDatabaseId(),
-                                                  ObjectId{}, info.schema);
-  auto r = catalog_impl.CreateSchema(GetDatabaseId(), std::move(schema));
+  auto& system = duckdb::Catalog::GetSystemCatalog(client);
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  if (system.GetSchema(client, info.schema,
+                       duckdb::OnEntryNotFound::RETURN_NULL)) {
+    if (if_not_exists) {
+      return nullptr;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
+                    ERR_MSG("schema \"", info.schema, "\" already exists"));
+  }
+
+  // PG: CREATE SCHEMA requires CREATE on the current database -- enforced
+  // inside Catalog::CreateSchema, which throws "permission denied for database
+  // <name>" directly. The creator owns the schema (PG current_user).
+  auto& catalog_impl = catalog::GetCatalog();
+  const ObjectId owner = GetSereneDBContext(client).GetRoleId();
+  auto schema = std::make_shared<catalog::Schema>(owner, GetDatabaseId(),
+                                                  ObjectId{}, info.schema);
+  auto r = catalog_impl.CreateSchema(catalog::RequireCreate(owner),
+                                     GetDatabaseId(), std::move(schema));
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;

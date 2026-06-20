@@ -93,11 +93,13 @@
 #include "catalog/types.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/sql_exception_macro.h"
@@ -107,6 +109,12 @@
 #include "utils/exec_context.h"
 
 namespace sdb::catalog {
+
+AccessContext RequireOwnership(duckdb::CatalogTransaction transaction) {
+  return RequireOwnership(
+    connector::GetSereneDBContext(transaction.GetContext()).GetRoleId());
+}
+
 namespace {
 
 Result Apply(
@@ -1755,9 +1763,19 @@ Result Catalog::CreateDatabase(std::shared_ptr<Database> database) {
     });
 }
 
-Result Catalog::CreateSchema(ObjectId database_id,
+namespace {
+
+// Defined below (with the other Create*/Drop* ownership helpers).
+void RequireCreateOn(const Snapshot& snapshot, ObjectId role,
+                     ObjectId parent_id);
+
+}  // namespace
+
+Result Catalog::CreateSchema(const AccessContext& ax, ObjectId database_id,
                              std::shared_ptr<Schema> schema) {
   absl::MutexLock lock{&_mutex};
+  // CREATE SCHEMA requires CREATE on the target database.
+  RequireCreateOn(*_snapshot, ax.role, database_id);
   return Apply(
     _snapshot, _snapshot_mutex,
     [&](auto& clone) {
@@ -1905,17 +1923,20 @@ ResultOr<ResolvedIndexRelation> ResolveIndexRelation(
                                  "Only table or view indexes are supported"};
 }
 
-// CREATE inside a schema requires CREATE on that schema. ok() if the schema is
-// gone (the mutation's own resolution reports the real error). Returns
-// ERROR_FORBIDDEN for the Result-based mutation API; the connector maps it to
-// 42501.
-Result RequireSchemaCreate(const Snapshot& snapshot, ObjectId role,
-                           ObjectId schema_id) {
-  auto schema = snapshot.GetObject<Schema>(schema_id);
-  if (!schema || auth::HasPrivilege(snapshot, role, *schema, AclMode::Create)) {
-    return {};
+// CREATE inside `parent_id` requires CREATE on it (a schema for relations, a
+// database for schemas). Throws 42501 "permission denied for <type> <name>"
+// (type/name from the parent) on a non-creator; a missing parent is a no-op
+// (the mutation's own resolution reports the real error).
+void RequireCreateOn(const Snapshot& snapshot, ObjectId role,
+                     ObjectId parent_id) {
+  auto parent = snapshot.GetObject(parent_id);
+  if (!parent || auth::HasPrivilege(snapshot, role, *parent, AclMode::Create)) {
+    return;
   }
-  return Result{ERROR_FORBIDDEN};
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(parent->GetType()),
+            " ", parent->GetName()));
 }
 
 // ALTER/DROP requires ownership of the target object. ok() if the object is
@@ -1938,8 +1959,8 @@ void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-    ERR_MSG("must be owner of ", pg::ToPgObjectTypeName(reported.GetType()), " ",
-            reported.GetName()));
+    ERR_MSG("must be owner of ", pg::ToPgObjectTypeName(reported.GetType()),
+            " ", reported.GetName()));
 }
 
 // Common case: the object that confers authority IS the one acted on. Resolves
@@ -2002,10 +2023,9 @@ Result Catalog::CreateSecondaryIndex(
 }
 
 Result Catalog::CreateInvertedIndex(
-  const AccessContext& ax, duckdb::ClientContext& context,
-  ObjectId database_id, std::string_view schema, std::string_view relation,
-  std::string name, std::vector<CreateIndexColumn>&& columns,
-  InvertedIndexOptions options,
+  const AccessContext& ax, duckdb::ClientContext& context, ObjectId database_id,
+  std::string_view schema, std::string_view relation, std::string name,
+  std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
   CreateIndexOperationOptions operation_options) {
   if (columns.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
@@ -2062,9 +2082,7 @@ Result Catalog::CreateView(const AccessContext& ax, ObjectId database_id,
   if (!schema_id) {
     return Result(ERROR_SERVER_ILLEGAL_NAME);
   }
-  if (auto r = RequireSchemaCreate(*_snapshot, ax.role, *schema_id); r.fail()) {
-    return r;
-  }
+  RequireCreateOn(*_snapshot, ax.role, *schema_id);
   view->SetParentId(*schema_id);
 
   ObjectId existed_id;
@@ -2129,9 +2147,7 @@ Result Catalog::CreateSequence(const AccessContext& ax, ObjectId database_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireSchemaCreate(*_snapshot, ax.role, *schema_id); r.fail()) {
-    return r;
-  }
+  RequireCreateOn(*_snapshot, ax.role, *schema_id);
   if (auto existed = _snapshot->GetObjectId<ResolveType::Relation>(
         *schema_id, sequence->GetName())) {
     if (if_not_exists) {
@@ -2170,9 +2186,7 @@ Result Catalog::CreateFunction(const AccessContext& ax, ObjectId database_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireSchemaCreate(*_snapshot, ax.role, *schema_id); r.fail()) {
-    return r;
-  }
+  RequireCreateOn(*_snapshot, ax.role, *schema_id);
   function->SetParentId(*schema_id);
 
   ObjectId existed_id;
@@ -2274,9 +2288,7 @@ Result Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireSchemaCreate(*_snapshot, ax.role, *schema_id); r.fail()) {
-    return r;
-  }
+  RequireCreateOn(*_snapshot, ax.role, *schema_id);
 
   // PG mangles `<table>_<col>_seq` with a numeric suffix on collision. Done
   // under the mutex so concurrent CREATE TABLEs can't race on it.
@@ -2449,9 +2461,7 @@ Result Catalog::CreateTokenizer(const AccessContext& ax, ObjectId database_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireSchemaCreate(*_snapshot, ax.role, *schema_id); r.fail()) {
-    return r;
-  }
+  RequireCreateOn(*_snapshot, ax.role, *schema_id);
   dict->SetParentId(*schema_id);
 
   return Apply(
@@ -2480,9 +2490,7 @@ Result Catalog::CreateType(const AccessContext& ax, ObjectId database_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireSchemaCreate(*_snapshot, ax.role, *schema_id); r.fail()) {
-    return r;
-  }
+  RequireCreateOn(*_snapshot, ax.role, *schema_id);
   type->SetParentId(*schema_id);
 
   return Apply(

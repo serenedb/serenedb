@@ -59,6 +59,10 @@
 #include "catalog/view.h"
 #include "connector/duckdb_entry_cache.h"
 
+namespace duckdb {
+struct CatalogTransaction;
+}  // namespace duckdb
+
 namespace sdb::catalog {
 
 template<typename T>
@@ -117,6 +121,13 @@ inline AccessContext RequireAccess(ObjectId role, AclMode need) {
 }
 
 inline AccessContext RequireOwnership(ObjectId role) { return {role}; }
+
+// Ownership AccessContext for the role driving `transaction` (resolved from its
+// session context). Throws duckdb::InternalException if the transaction carries
+// no context -- an internal lifecycle path must never reach a privilege check.
+AccessContext RequireOwnership(duckdb::CatalogTransaction transaction);
+
+inline AccessContext RequireCreate(ObjectId role) { return {role}; }
 
 inline AccessContext NoAccessCheck() { return {id::kRootUser}; }
 
@@ -447,7 +458,8 @@ class Catalog final {
   Result CreateSequence(const AccessContext& ax, ObjectId database_id,
                         std::string_view schema,
                         std::shared_ptr<Sequence> sequence, bool if_not_exists);
-  Result CreateSchema(ObjectId database_id, std::shared_ptr<Schema> schema);
+  Result CreateSchema(const AccessContext& ax, ObjectId database_id,
+                      std::shared_ptr<Schema> schema);
   Result CreateFunction(const AccessContext& ax, ObjectId database_id,
                         std::string_view schema,
                         std::shared_ptr<PgSqlFunction> function, bool replace);

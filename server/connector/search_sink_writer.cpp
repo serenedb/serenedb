@@ -30,7 +30,6 @@
 #include "basics/down_cast.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
-#include "connector/key_utils.hpp"
 #include "search_remove_filter.hpp"
 
 namespace sdb::connector {
@@ -117,18 +116,17 @@ void SearchSinkInsertBaseImpl::SetFieldValueFromVector(
   }
 }
 
-void SearchSinkInsertBaseImpl::MaybeEmitPk(std::string_view full_row_key) {
+void SearchSinkInsertBaseImpl::MaybeEmitPk(std::string_view pk_term) {
   if (!_emit_pk) {
     return;
   }
-  const auto row_key = key_utils::ExtractRowKey(full_row_key);
-  _pk_field.SetStringValue(row_key);
+  _pk_field.SetStringValue(pk_term);
   if (!_document->Insert(&_pk_field)) {
     SDB_THROW(ERROR_INTERNAL,
               "Failed to insert PK field into IResearch document");
   }
   if (_pk_blob_writer) {
-    AppendPkBlob(row_key);
+    AppendPkBlob(pk_term);
   }
 }
 
@@ -837,13 +835,13 @@ void WriteChunkToSearchSink(
   SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   std::span<const catalog::Column::Id> column_ids,
   std::span<const duckdb_primary_key::PKColumn> pk_columns,
-  std::string_view table_key, bool uses_generated_pk, uint64_t pk_base) {
+  bool uses_generated_pk, uint64_t pk_base) {
   const auto num_rows = chunk.size();
 
-  // Build the FULL row keys up front (the sink extracts the row-key portion and
-  // emits the PK term internally, on the first column). Generated-PK uses
-  // pk_base + row; explicit-PK reads the key from the columns. The key scratch
-  // lives on the sink so it is reused across chunks instead of reallocated.
+  // Build the bare PK terms up front; the sink emits each as the document's PK
+  // field on the first column. Generated-PK mints pk_base + row; explicit-PK
+  // encodes the key from the PK columns. The scratch lives on the sink so it is
+  // reused across chunks instead of reallocated.
   auto& scratch = sink.GetKeyScratch();
   auto& pk_formats = scratch.pk_formats;
   auto& row_keys = scratch.row_keys;
@@ -853,11 +851,14 @@ void WriteChunkToSearchSink(
   key_views.clear();
   key_views.reserve(num_rows);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    const uint64_t generated_pk = uses_generated_pk ? pk_base + row : 0;
-    duckdb_primary_key::MakeColumnKey(
-      pk_formats, pk_columns, row, generated_pk, table_key,
-      [](std::string_view) {}, row_keys[row]);
-    key_views.emplace_back(row_keys[row]);
+    auto& key = row_keys[row];
+    key.clear();
+    if (uses_generated_pk) {
+      duckdb_primary_key::AppendGenerated(key, pk_base + row);
+    } else {
+      duckdb_primary_key::Create(pk_formats, pk_columns, row, key);
+    }
+    key_views.emplace_back(key);
   }
 
   // Init's batch_size must be the exact row count -- iresearch pre-allocates

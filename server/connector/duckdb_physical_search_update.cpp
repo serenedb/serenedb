@@ -25,18 +25,15 @@
 #include <memory>
 #include <shared_mutex>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/down_cast.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_primary_key.h"
-#include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
@@ -49,7 +46,6 @@ struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
-  std::string table_key;
 
   // Insert half (the new-row image, in catalog order).
   std::vector<catalog::Column::Id> column_ids;
@@ -93,7 +89,6 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
 
   state->table_id = _table->GetId();
-  state->table_key = key_utils::PrepareTableKey(state->table_id);
 
   state->search_table = _table->GetData();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
@@ -173,16 +168,14 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
                                        old_pk_formats);
   std::vector<std::string> wal_pks;
   wal_pks.reserve(num_rows);
-  std::string key_buffer;
+  std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    duckdb_primary_key::MakeColumnKey(
-      old_pk_formats, gstate.old_pk_columns, row, gstate.table_key,
-      [&](std::string_view row_lock_key) {
-        const auto pk = row_lock_key.substr(sizeof(ObjectId));
-        remover.DeleteRowImpl(pk);
-        wal_pks.emplace_back(pk);
-      },
-      key_buffer);
+    // Bare old-PK term, encoded as the insert wrote it (Create matches the
+    // insert-side WriteChunkToSearchSink encoding).
+    pk.clear();
+    duckdb_primary_key::Create(old_pk_formats, gstate.old_pk_columns, row, pk);
+    remover.DeleteRowImpl(pk);
+    wal_pks.emplace_back(pk);
   }
   remover.FinishImpl();
   gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, wal_pks);
@@ -204,8 +197,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not
   // changed. Looks not big win now. But for future optimizations.
   WriteChunkToSearchSink(*gstate.insert_sink, new_row, gstate.column_ids,
-                         gstate.new_pk_columns, gstate.table_key,
-                         uses_generated_pk, pk_base);
+                         gstate.new_pk_columns, uses_generated_pk, pk_base);
   gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
     gstate.search_table,
     duckdb::BufferManager::GetBufferManager(context.client), gstate.chunk_types,

@@ -59,27 +59,13 @@ class Table final : public Object {
   const auto& UniqueConstraints() const noexcept { return _unique_constraints; }
   const auto& ForeignKeys() const noexcept { return _foreign_keys; }
 
-  // Id of the auto-generated PK sequence (created when the table has no
-  // explicit PK). Unset for tables with an explicit PK. Look it up via
-  // `Snapshot::GetObject<Sequence>(GetGeneratedPkSeqId())`.
   ObjectId GetGeneratedPkSeqId() const noexcept { return _generated_pk_seq_id; }
 
-  // Mutable iresearch runtime store for a Search-engine table, held
-  // behind a shared_ptr on the otherwise-immutable metadata: a COW snapshot
-  // clone shares it (Clone carries it forward), a row feed never clones the
-  // catalog. nullptr for Transactional tables and until a Search table is bound
-  // to its storage (CREATE TABLE / boot recovery).
   const std::shared_ptr<search::SearchTable>& GetData() const noexcept {
-    // The iresearch store is bound iff this is a Search-engine table: a Search
-    // table always carries one (bound at CREATE / boot before it's reachable),
-    // a Transactional table never does.
     SDB_ASSERT((_data != nullptr) == (_engine == TableEngine::Search));
     return _data;
   }
   void SetData(std::shared_ptr<search::SearchTable> data) const noexcept {
-    // Only Search-engine tables own an iresearch store. Transactional tables
-    // keep _data null -- Clone() still calls SetData(nullptr) to carry that
-    // forward, so guard on a non-null store rather than the engine alone.
     SDB_ASSERT(!data || _engine == TableEngine::Search);
     _data = std::move(data);
   }

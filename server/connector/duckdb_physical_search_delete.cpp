@@ -24,7 +24,6 @@
 #include <memory>
 #include <shared_mutex>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "catalog/identifiers/object_id.h"
@@ -32,7 +31,6 @@
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_primary_key.h"
-#include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
@@ -45,7 +43,6 @@ struct SearchDeleteGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
-  std::string table_key;
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
   std::shared_lock<std::shared_mutex> table_lock;
   duckdb::idx_t delete_count = 0;
@@ -73,7 +70,6 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto& conn_ctx = GetSereneDBContext(context);
 
   state->table_id = _table->GetId();
-  state->table_key = key_utils::PrepareTableKey(state->table_id);
 
   state->search_table = _table->GetData();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
@@ -113,9 +109,9 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
     gstate.search_table, [&] { return gstate.search_table->GetTransaction(); });
 
-  // The PK term to remove is encoded exactly as the insert wrote it
-  // (MakeColumnKey -> ExtractRowKey). For a no-PK table the rowid column holds
-  // the generated PK (materialised by the scan), so the same encoding matches.
+  // The removal term is the bare PK, encoded exactly as the insert wrote it
+  // (Create -> AppendPKValue). For a no-PK table the rowid column holds the
+  // generated PK (materialised by the scan), so the same encoding matches.
   SearchSinkDeleteBaseImpl remover{trx};
   remover.InitImpl(num_rows);
 
@@ -124,19 +120,12 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
 
   std::vector<std::string> wal_pks;
   wal_pks.reserve(num_rows);
-  std::string key_buffer;
+  std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    // The callback receives the row-lock key [ObjectId][PK]; stripping the
-    // ObjectId prefix yields the bare PK bytes -- the exact term the insert
-    // stored (insert stores ExtractRowKey([ObjectId][ColumnId][PK]) == [PK]).
-    duckdb_primary_key::MakeColumnKey(
-      pk_formats, gstate.pk_columns, row, gstate.table_key,
-      [&](std::string_view row_lock_key) {
-        const auto pk = row_lock_key.substr(sizeof(ObjectId));
-        remover.DeleteRowImpl(pk);  // live iresearch removal
-        wal_pks.emplace_back(pk);   // WAL delete payload
-      },
-      key_buffer);
+    pk.clear();
+    duckdb_primary_key::Create(pk_formats, gstate.pk_columns, row, pk);
+    remover.DeleteRowImpl(pk);  // live iresearch removal
+    wal_pks.emplace_back(pk);   // WAL delete payload
   }
   remover.FinishImpl();  // hands the removal filter to the trx
   gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, wal_pks);

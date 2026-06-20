@@ -174,10 +174,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id};
 
   const std::vector<std::string_view> pk{
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19},
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 19},
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x3pk3", 19},
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x4pk4", 19}};
+    {"pk1", 3}, {"pk2", 3}, {"pk3", 3}, {"pk4", 3}};
 
   // Indexed term values per row (per column).
   // VARCHAR: terms are exactly the string bytes -- no legacy kStringPrefix
@@ -393,10 +390,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   const std::vector<catalog::Column::Id> col_id{catalog::Column::Id{1},
                                                 catalog::Column::Id{2}};
   const std::vector<std::string_view> pk{
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19},
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 19},
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x3pk3", 19},
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x4pk4", 19}};
+    {"pk1", 3}, {"pk2", 3}, {"pk3", 3}, {"pk4", 3}};
 
   const std::vector<std::string_view> string_data{std::string_view{"foo", 3},
                                                   std::string_view{"bar", 3}};
@@ -585,8 +579,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {col_id}};
   sink.Init(1, _dummy_chunk);
 
-  const std::vector<std::string_view> pk{
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19}};
+  const std::vector<std::string_view> pk{{"pk1", 3}};
   std::vector<std::string_view> rk{pk[0]};
 
   // Literal 4-byte term: \x0 'f' 'o' 'o'.
@@ -676,10 +669,8 @@ void DeleteOnePk(irs::IndexWriter& writer, std::string_view pk,
 }  // namespace
 
 TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
-  constexpr std::string_view kPk = {
-    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
-  constexpr std::string_view kPk2 = {
-    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk2", 19};
+  constexpr std::string_view kPk = {"pk1", 3};
+  constexpr std::string_view kPk2 = {"pk2", 3};
 
   InsertTwoVarcharRows(*_data_writer, kPk, "value1", kPk2, "value9",
                        _dummy_chunk);
@@ -744,8 +735,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
 }
 
 TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
-  constexpr std::string_view kPk = {
-    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
+  constexpr std::string_view kPk = {"pk1", 3};
 
   InsertOneVarcharRow(*_data_writer, kPk, "value1", _dummy_chunk);
   // Intentionally do not commit data writer to force several same PKs in one
@@ -814,12 +804,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
   {
     auto limited_data_writer =
       irs::IndexWriter::Make(dir, _codec, irs::kOmCreate, options);
-    constexpr std::string_view kPk = {
-      "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
-    constexpr std::string_view kPk2 = {
-      "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk2", 19};
-    constexpr std::string_view kPk3 = {
-      "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk3", 19};
+    constexpr std::string_view kPk = {"pk1", 3};
+    constexpr std::string_view kPk2 = {"pk2", 3};
+    constexpr std::string_view kPk3 = {"pk3", 3};
 
     InsertTwoVarcharRows(*limited_data_writer, kPk, "value1", kPk3, "value8",
                          _dummy_chunk);
@@ -885,10 +872,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
 }
 
 TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
-  constexpr std::string_view kPk = {
-    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
-  constexpr std::string_view kPk2 = {
-    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk2", 19};
+  constexpr std::string_view kPk = {"pk1", 3};
+  constexpr std::string_view kPk2 = {"pk2", 3};
 
   InsertTwoVarcharRows(*_data_writer, kPk, "value1", kPk2, "value9",
                        _dummy_chunk);

@@ -48,7 +48,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_schema_entry.h"
-#include "connector/key_utils.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
@@ -68,7 +67,6 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   std::vector<catalog::Column::Id> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
-  std::string table_key;
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
   std::shared_lock<std::shared_mutex> table_lock;
 
@@ -241,7 +239,6 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
 
   state->table_id = table->GetId();
-  state->table_key = key_utils::PrepareTableKey(state->table_id);
 
   state->search_table = table->GetData();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
@@ -315,8 +312,7 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     uses_generated_pk ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
                       : 0;
   WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids,
-                         gstate.pk_columns, gstate.table_key, uses_generated_pk,
-                         pk_base);
+                         gstate.pk_columns, uses_generated_pk, pk_base);
 
   if (lstate->bulk) {
     if (!lstate->chunk_writer) {

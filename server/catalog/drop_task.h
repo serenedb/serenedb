@@ -155,10 +155,6 @@ struct TableDrop final : public DropTask {
       _fk_referenced_store_names{std::move(fk_referenced_store_names)},
       _indexes{std::move(indexes)},
       _owned_sequences{std::move(owned_sequences)},
-      // Search table: capture db_id + the iresearch store (weak) so
-      // Execute drains every holder, then removes the directory + WAL chunks
-      // (mirrors IndexDrop). _db_id stays unset for Transactional tables, so
-      // their Execute skips iresearch cleanup.
       _db_id{table->GetEngine() == TableEngine::Search ? db_id : ObjectId{}},
       _search_data{table->GetData()} {}
 

@@ -235,7 +235,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   void InsertNullValue();
 
   irs::ColumnWriter* EnsurePerRowBlobWriter(irs::field_id field_id);
-  void MaybeEmitPk(std::string_view full_row_key);
+  void MaybeEmitPk(std::string_view pk_term);
   void AppendPkBlob(std::string_view row_key);
   void AppendPerRowBlob(irs::field_id field_id, irs::bytes_view bytes);
 
@@ -329,6 +329,6 @@ void WriteChunkToSearchSink(
   SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   std::span<const catalog::Column::Id> column_ids,
   std::span<const duckdb_primary_key::PKColumn> pk_columns,
-  std::string_view table_key, bool uses_generated_pk, uint64_t pk_base);
+  bool uses_generated_pk, uint64_t pk_base);
 
 }  // namespace sdb::connector

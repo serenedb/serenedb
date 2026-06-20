@@ -28,10 +28,13 @@
 #include <duckdb/main/database.hpp>
 #include <iresearch/utils/index_utils.hpp>
 
+#include "auth/privilege.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -246,7 +249,20 @@ void ForEachInvertedStorage(
   }
 }
 
-void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
+bool MayMaintain(ConnectionContext& conn_ctx, const catalog::Snapshot& snapshot,
+                 const catalog::Table& table, std::string_view verb) {
+  if (auth::HasPrivilege(snapshot, conn_ctx.GetRoleId(), table,
+                         catalog::AclMode::Maintain)) {
+    return true;
+  }
+  conn_ctx.AddNotice(SQL_ERROR_DATA(
+    ERR_CODE(ERRCODE_WARNING), ERR_MSG("permission denied to ", verb, " \"",
+                                       table.GetName(), "\", skipping it")));
+  return false;
+}
+
+void DispatchInverted(ConnectionContext& conn_ctx,
+                      const catalog::Snapshot& snapshot, Action action,
                       Scope scope, const ResolvedName& target) {
   auto apply = [action](search::InvertedIndexStorage& s) {
     if (action == Action::Refresh) {
@@ -256,8 +272,13 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
     }
   };
 
+  const std::string_view verb =
+    action == Action::Refresh ? "refresh" : "compact";
   auto walk_schema = [&](ObjectId db_id, std::string_view schema) {
     for (auto& table : snapshot.GetTables(db_id, schema)) {
+      if (!MayMaintain(conn_ctx, snapshot, *table, verb)) {
+        continue;
+      }
       ForEachInvertedStorage(snapshot, table->GetId(), apply);
     }
   };
@@ -279,6 +300,11 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
             index->GetName() != target.object) {
           continue;
         }
+        // An index has no owner of its own; maintenance rides on its table.
+        auto table = snapshot.GetObject<catalog::Table>(index->GetRelationId());
+        if (table && !MayMaintain(conn_ctx, snapshot, *table, verb)) {
+          return;
+        }
         auto storage =
           basics::downCast<const catalog::InvertedIndex>(*index).GetData();
         if (!storage) {
@@ -297,6 +323,9 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
       if (!table) {
         throw duckdb::CatalogException("relation '%s' not found.",
                                        target.object);
+      }
+      if (!MayMaintain(conn_ctx, snapshot, *table, verb)) {
+        return;
       }
       ForEachInvertedStorage(snapshot, table->GetId(), apply);
     } break;
@@ -324,6 +353,7 @@ void DispatchInverted(const catalog::Snapshot& snapshot, Action action,
 // serenedb tables in scope, by running DuckDB's `VACUUM ANALYZE` on each store
 // table. The user names serenedb tables; the hidden store is never exposed.
 void DispatchRecomputeStats(duckdb::ClientContext& context,
+                            ConnectionContext& conn_ctx,
                             const catalog::Snapshot& snapshot, Scope scope,
                             const ResolvedName& target) {
   duckdb::Connection conn(*context.db);
@@ -332,6 +362,9 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
                      std::string_view column = {}) {
     if (table.GetEngine() != catalog::TableEngine::Transactional ||
         table.Tombstoned()) {
+      return;
+    }
+    if (!MayMaintain(conn_ctx, snapshot, table, "analyze")) {
       return;
     }
     auto store_name =
@@ -434,10 +467,10 @@ void VacuumExecute(duckdb::ClientContext& context,
   switch (verb->action) {
     case Action::Refresh:
     case Action::Compact:
-      DispatchInverted(*snapshot, verb->action, verb->scope, target);
+      DispatchInverted(conn_ctx, *snapshot, verb->action, verb->scope, target);
       break;
     case Action::RecomputeStats:
-      DispatchRecomputeStats(context, *snapshot, verb->scope, target);
+      DispatchRecomputeStats(context, conn_ctx, *snapshot, verb->scope, target);
       break;
   }
 

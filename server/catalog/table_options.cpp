@@ -60,7 +60,7 @@ void Column::Serialize(duckdb::Serializer& sink) const {
   // Columns have no independent owner -- it is the table's owner.
   basics::WriteTuple(
     sink, std::forward_as_tuple(GetId(), type, std::string{GetName()}, expr,
-                                generated_type, GetPermissions().acl));
+                                generated_type, GetAcl()));
 }
 
 Column Column::Deserialize(duckdb::Deserializer& src) {

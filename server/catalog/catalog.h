@@ -165,6 +165,13 @@ struct Snapshot {
   void RequireColumnAccess(ObjectId role, const Table& table, AclMode need,
                            const Column& column) const;
 
+  // By logical (DuckDB) column index: maps `logical_index` to the i-th
+  // user-visible catalog column (skipping the internal generated-PK column,
+  // which is not part of the DuckDB column model) and enforces `need` on it.
+  // Out-of-range indices are ignored. Used by the binder's per-column read hook.
+  void RequireColumnAccess(ObjectId role, const Table& table, AclMode need,
+                           uint64_t logical_index) const;
+
   void RequireOwnership(ObjectId role, const Object& object) const;
 
   std::vector<std::shared_ptr<Role>> GetRoles() const;

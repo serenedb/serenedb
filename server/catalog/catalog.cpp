@@ -1013,6 +1013,21 @@ void Snapshot::RequireColumnAccess(ObjectId role, const Table& table,
   RequireColumnAccess(role, table, need, one);
 }
 
+void Snapshot::RequireColumnAccess(ObjectId role, const Table& table,
+                                   AclMode need, uint64_t logical_index) const {
+  uint64_t visible = 0;
+  for (const auto& col : table.Columns()) {
+    if (col.GetId() == Column::kGeneratedPKId) {
+      continue;
+    }
+    if (visible == logical_index) {
+      RequireColumnAccess(role, table, need, col);
+      return;
+    }
+    ++visible;
+  }
+}
+
 void Snapshot::RequireOwnership(ObjectId role, const Object& object) const {
   const auto& rc = EffectiveRoleClosure(role);
   // Superuser owns everything. Otherwise the role must own the object directly

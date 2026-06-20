@@ -74,18 +74,8 @@ void EnforceColumnRead(duckdb::ClientContext& context,
     return;
   }
   auto& conn_ctx = state->GetConnectionContext();
-  std::size_t visible = 0;
-  for (const auto& col : table.Columns()) {
-    if (col.GetId() == catalog::Column::kGeneratedPKId) {
-      continue;
-    }
-    if (visible == column_index) {
-      conn_ctx.EnsureCatalogSnapshot()->RequireColumnAccess(
-        conn_ctx.GetRoleId(), table, catalog::AclMode::Select, col);
-      return;
-    }
-    ++visible;
-  }
+  conn_ctx.EnsureCatalogSnapshot()->RequireColumnAccess(
+    conn_ctx.GetRoleId(), table, catalog::AclMode::Select, column_index);
 }
 
 }  // namespace

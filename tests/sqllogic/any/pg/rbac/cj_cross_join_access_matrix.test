@@ -1,0 +1,149 @@
+# Cross-join / multi-relation SELECT enforcement: every relation whose COLUMNS
+# are referenced is privilege-checked independently, exactly like PostgreSQL.
+# This pins the access x no-access combinations across a cross join, an explicit
+# JOIN, a self-join, and a denied-column-in-join. Identical on PG and serenedb.
+#
+# (The zero-referenced-column corner -- a join table contributing no column to
+# the query, e.g. `FROM a, b` where b is never read -- is a SEPARATE documented
+# divergence and lives in sdb/pg/rbac/div_zero_column_read.test, not here.)
+#
+# Lore: clickclack and mop are the tables; vedernikoff is the partially-granted
+# role.
+
+statement ok
+DROP TABLE IF EXISTS cj_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS cj_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS cj_vedernikoff;
+
+
+statement ok
+CREATE ROLE cj_vedernikoff LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE TABLE cj_clickclack (id int, payload text, secret text);
+
+
+statement ok
+CREATE TABLE cj_mop (id int, label text);
+
+
+statement ok
+INSERT INTO cj_clickclack VALUES (1, 'p1', 's1'), (2, 'p2', 's2');
+
+
+statement ok
+INSERT INTO cj_mop VALUES (1, 'm1'), (2, 'm2');
+
+
+# Partial access: column SELECT on (id, payload) of clickclack only. Nothing on
+# mop, nothing on clickclack.secret.
+statement ok
+GRANT SELECT (id, payload) ON cj_clickclack TO cj_vedernikoff;
+
+
+# Oracle snapshot of the grant state (identical on both engines).
+query
+SELECT
+  has_column_privilege('cj_vedernikoff','cj_clickclack','payload','SELECT') AS cc_payload,
+  has_column_privilege('cj_vedernikoff','cj_clickclack','secret','SELECT')  AS cc_secret,
+  has_table_privilege('cj_vedernikoff','cj_mop','SELECT')                   AS mop_tbl;
+----
+cc_payload	cc_secret	mop_tbl
+t	f	f
+
+
+# ---- As cj_vedernikoff ----
+
+# Reading only granted columns of the one accessible table: allowed.
+connection c_cj user=cj_vedernikoff
+query
+SELECT id, payload FROM cj_clickclack ORDER BY id;
+----
+id	payload
+1	p1
+2	p2
+
+
+# Cross join referencing BOTH tables' columns: denied on the un-granted mop.
+connection c_cj user=cj_vedernikoff
+statement error
+SELECT a.payload, b.label FROM cj_clickclack a, cj_mop b;
+----
+db error: ERROR: permission denied for table cj_mop<slt:ignore>
+
+
+# Explicit JOIN whose ON references mop.id: denied on mop.
+connection c_cj user=cj_vedernikoff
+statement error
+SELECT a.payload FROM cj_clickclack a JOIN cj_mop b ON a.id = b.id;
+----
+db error: ERROR: permission denied for table cj_mop<slt:ignore>
+
+
+# Self cross join over only the granted columns: allowed.
+connection c_cj user=cj_vedernikoff
+query
+SELECT x.payload FROM cj_clickclack x, cj_clickclack y WHERE x.id = y.id ORDER BY x.payload;
+----
+payload
+p1
+p2
+
+
+# A join that references a DENIED COLUMN (secret) of an otherwise-accessible
+# table: denied on that table.
+connection c_cj user=cj_vedernikoff
+statement error
+SELECT a.secret FROM cj_clickclack a, cj_clickclack y;
+----
+db error: ERROR: permission denied for table cj_clickclack<slt:ignore>
+
+
+# Subquery referencing mop's column: denied on mop.
+connection c_cj user=cj_vedernikoff
+statement error
+SELECT a.payload FROM cj_clickclack a WHERE a.id IN (SELECT id FROM cj_mop);
+----
+db error: ERROR: permission denied for table cj_mop<slt:ignore>
+
+
+# After granting full SELECT on mop, the cross join referencing both succeeds.
+
+statement ok
+GRANT SELECT ON cj_mop TO cj_vedernikoff;
+
+
+connection c_cj2 user=cj_vedernikoff
+query
+SELECT a.payload, b.label FROM cj_clickclack a JOIN cj_mop b ON a.id = b.id ORDER BY a.payload;
+----
+payload	label
+p1	m1
+p2	m2
+
+
+# clickclack.secret is still denied even with mop fully granted (column-level).
+connection c_cj2 user=cj_vedernikoff
+statement error
+SELECT a.secret, b.label FROM cj_clickclack a, cj_mop b;
+----
+db error: ERROR: permission denied for table cj_clickclack<slt:ignore>
+
+
+statement ok
+DROP TABLE cj_clickclack;
+
+
+statement ok
+DROP TABLE cj_mop;
+
+
+statement ok
+DROP ROLE cj_vedernikoff;

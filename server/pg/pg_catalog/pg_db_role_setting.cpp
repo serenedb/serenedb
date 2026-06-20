@@ -20,8 +20,6 @@
 
 #include "pg/pg_catalog/pg_db_role_setting.h"
 
-#include <deque>
-
 #include "app/app_server.h"
 #include "catalog/catalog.h"
 #include "catalog/role.h"
@@ -33,27 +31,20 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
   auto catalog = _config.EnsureCatalogSnapshot();
 
-  // setconfig is text[]: a span of string_view into the role's stored config
-  // strings. Hold the role shared_ptrs for the whole call so the strings the
-  // views point at stay alive through WriteData; the per-row view vectors are
-  // owned by `views` (a deque so the spans stay valid across pushes).
+  // setconfig is text[]: a span straight into the role's owned config strings.
+  // Hold the role shared_ptrs for the whole call so those strings stay alive
+  // through WriteData.
   auto roles = catalog->GetRoles();
   std::vector<PgDbRoleSetting> values;
-  std::deque<std::vector<std::string_view>> views;
   for (const auto& role : roles) {
     auto config = role->Config();
     if (config.empty()) {
       continue;  // PG inserts a pg_db_role_setting row only when a GUC is set.
     }
-    auto& view = views.emplace_back();
-    view.reserve(config.size());
-    for (const auto& entry : config) {
-      view.push_back(entry);
-    }
     values.push_back(PgDbRoleSetting{
       .setdatabase = 0,  // role-wide (all databases) -> pg_roles.rolconfig join
       .setrole = role->GetId().id(),
-      .setconfig = view,
+      .setconfig = config,
     });
   }
 

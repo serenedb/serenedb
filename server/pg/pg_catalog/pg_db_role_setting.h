@@ -32,7 +32,7 @@ struct PgDbRoleSetting {
 
   Oid setdatabase;
   Oid setrole;
-  Array<Text> setconfig;
+  Array<std::string> setconfig;
 };
 // NOLINTEND
 

@@ -857,6 +857,34 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
   auto& table_info = info.Cast<duckdb::AlterTableInfo>();
   auto table_name = info.name;
 
+  // Search-backed tables have a fixed iresearch schema, so structural ALTERs
+  // are rejected. Renames (table/column/constraint) are catalog-only metadata
+  // -- iresearch fields and the scan are keyed by column id, not name -- so
+  // they stay allowed.
+  std::string_view unsupported_search_op;
+  switch (table_info.alter_table_type) {
+    case duckdb::AlterTableType::ADD_COLUMN:
+      unsupported_search_op = "ALTER TABLE ADD COLUMN";
+      break;
+    case duckdb::AlterTableType::REMOVE_COLUMN:
+      unsupported_search_op = "ALTER TABLE DROP COLUMN";
+      break;
+    case duckdb::AlterTableType::DROP_CONSTRAINT:
+      unsupported_search_op = "ALTER TABLE DROP CONSTRAINT";
+      break;
+    case duckdb::AlterTableType::ALTER_COLUMN_TYPE:
+      unsupported_search_op = "ALTER TABLE ALTER COLUMN TYPE";
+      break;
+    default:
+      break;
+  }
+  if (!unsupported_search_op.empty()) {
+    auto snapshot = catalog_impl.GetCatalogSnapshot();
+    if (auto sdb_table = snapshot->GetTable(db, name, table_name)) {
+      RejectIfSearchTable(*sdb_table, unsupported_search_op);
+    }
+  }
+
   switch (table_info.alter_table_type) {
     case duckdb::AlterTableType::DROP_CONSTRAINT: {
       auto& drop_info = table_info.Cast<duckdb::DropConstraintInfo>();

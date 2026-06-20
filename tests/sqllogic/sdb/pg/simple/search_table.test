@@ -206,8 +206,51 @@ CREATE INDEX search_dml_inv_idx ON search_dml USING inverted (b);
 db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
 
 
+# Search tables have a fixed iresearch schema: structural ALTERs are rejected.
+# The guard runs before column/constraint resolution, so even a missing
+# constraint name reports the search-table rejection.
+statement error
+ALTER TABLE search_dml ADD COLUMN c INTEGER;
+----
+db error: ERROR: ALTER TABLE ADD COLUMN on a search-backed table is not yet supported
+
+
+statement error
+ALTER TABLE search_dml DROP COLUMN b;
+----
+db error: ERROR: ALTER TABLE DROP COLUMN on a search-backed table is not yet supported
+
+
+statement error
+ALTER TABLE search_dml ALTER COLUMN b TYPE VARCHAR;
+----
+db error: ERROR: ALTER TABLE ALTER COLUMN TYPE on a search-backed table is not yet supported
+
+
+statement error
+ALTER TABLE search_dml DROP CONSTRAINT search_dml_pkey;
+----
+db error: ERROR: ALTER TABLE DROP CONSTRAINT on a search-backed table is not yet supported
+
+
+# Renames are catalog-only metadata -- iresearch and the scan are keyed by
+# column id, not name -- so column/table renames stay allowed and queries see
+# the new names.
 statement ok
-DROP TABLE search_dml;
+ALTER TABLE search_dml RENAME COLUMN b TO b2;
+
+statement ok
+ALTER TABLE search_dml RENAME TO search_dml_renamed;
+
+query
+SELECT a, b2 FROM search_dml_renamed ORDER BY a;
+----
+a	b2
+9	nine
+
+
+statement ok
+DROP TABLE search_dml_renamed;
 
 
 ## Generated-PK search table -- INSERT path reserves the sequence range

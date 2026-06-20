@@ -107,8 +107,7 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
     auto& conn_ctx = state->GetConnectionContext();
     auto snapshot = conn_ctx.EnsureCatalogSnapshot();
     if (auto db = snapshot->GetDatabase(GetName())) {
-      snapshot->RequireOwnership(conn_ctx.GetRoleId(), *db, "database",
-                                 GetName());
+      snapshot->RequireOwnership(conn_ctx.GetRoleId(), *db);
     }
   }
   const auto& exec_ctx =

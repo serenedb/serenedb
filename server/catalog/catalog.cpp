@@ -1005,9 +1005,7 @@ void Snapshot::RequireColumnAccess(ObjectId role, const Table& table,
   RequireColumnAccess(role, table, need, one);
 }
 
-void Snapshot::RequireOwnership(ObjectId role, const Object& object,
-                                std::string_view obj_type,
-                                std::string_view name) const {
+void Snapshot::RequireOwnership(ObjectId role, const Object& object) const {
   const auto& rc = EffectiveRoleClosure(role);
   // Superuser owns everything. Otherwise the role must own the object directly
   // or via role membership. An unset owner is not matchable by any real role,
@@ -1016,8 +1014,10 @@ void Snapshot::RequireOwnership(ObjectId role, const Object& object,
       std::ranges::binary_search(rc.closure, object.GetOwner())) {
     return;
   }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("must be owner of ", obj_type, " ", name));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("must be owner of ", pg::ToPgObjectTypeName(object.GetType()), " ",
+            object.GetName()));
 }
 
 template<typename T>

@@ -154,12 +154,7 @@ struct Snapshot {
   void RequireColumnAccess(ObjectId role, const Table& table, AclMode need,
                            const Column& column) const;
 
-  // Throw "must be owner of <obj_type> <name>" unless `role` owns `object`
-  // (directly, via role membership, or as superuser). `object` is expected to
-  // carry an owner; an object that derives ownership elsewhere (e.g. an index,
-  // owned by its table) must pass that relation instead.
-  void RequireOwnership(ObjectId role, const Object& object,
-                        std::string_view obj_type, std::string_view name) const;
+  void RequireOwnership(ObjectId role, const Object& object) const;
 
   std::vector<std::shared_ptr<Role>> GetRoles() const;
   std::vector<std::shared_ptr<Database>> GetDatabases() const;

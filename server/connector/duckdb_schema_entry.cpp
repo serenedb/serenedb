@@ -856,14 +856,11 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
   // ALTER requires ownership (or superuser) of the target relation.
   if (info.type == duckdb::AlterType::ALTER_TABLE ||
       info.type == duckdb::AlterType::ALTER_VIEW) {
-    const auto* obj_type =
-      info.type == duckdb::AlterType::ALTER_TABLE ? "table" : "view";
     auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
     auto snapshot = conn_ctx.EnsureCatalogSnapshot();
     if (auto rel = snapshot->GetRelation(catalog::NoAccessCheck(), db, name,
                                          info.name)) {
-      snapshot->RequireOwnership(conn_ctx.GetRoleId(), *rel, obj_type,
-                                 info.name);
+      snapshot->RequireOwnership(conn_ctx.GetRoleId(), *rel);
     }
   }
 

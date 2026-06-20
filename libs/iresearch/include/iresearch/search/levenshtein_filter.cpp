@@ -31,7 +31,6 @@
 #include "iresearch/search/filter_visitor.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/search/terms_filter.hpp"
 #include "iresearch/search/top_terms_selector.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/hash_utils.hpp"
@@ -52,6 +51,40 @@ IRS_FORCE_INLINE score_t Similarity(uint32_t distance, uint32_t size) noexcept {
 
   return 1.f - static_cast<score_t>(distance) / static_cast<score_t>(size);
 }
+
+struct AggregatedStatsVisitor : util::Noncopyable {
+  AggregatedStatsVisitor(MultiTermState& state, FieldCollector& field_stat,
+                         TermCollector& term_stat) noexcept
+    : state{state}, field_stat{field_stat}, term_stat{term_stat} {}
+
+  void operator()(const SubReader&, const TermReader& field, uint32_t) const {
+    if (!field_collected) {
+      field_stat.Collect(field);
+      field_collected = true;
+    }
+    state.Prepare(&field);
+  }
+
+  void operator()(SeekCookie::ptr& cookie) const {
+    term_stat.Collect(*cookie);
+    uint32_t docs_count = 0;
+    if (auto* meta = irs::get<TermMeta>(*cookie)) {
+      docs_count = meta->docs_count;
+    }
+    state.Push(MultiTermState::Entry{
+      .cookie = std::move(cookie),
+      .docs_count = docs_count,
+      .boost = boost,
+      .stat_offset = 0,
+    });
+  }
+
+  MultiTermState& state;
+  FieldCollector& field_stat;
+  TermCollector& term_stat;
+  score_t boost{kNoBoost};
+  mutable bool field_collected{false};
+};
 
 //////////////////////////////////////////////////////////////////////////////
 /// @brief visitation logic for levenshtein filter
@@ -113,22 +146,23 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
   }
 
   auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
-  AllTermsVisitor term_collector{query->State(), collector.Field(),
-                                 collector.Terms()};
 
   if (!terms_limit) {
+    AllTermsVisitor term_collector{query->State(), collector.Field(),
+                                   collector.Terms()};
     VisitImpl(segment, *reader, no_distance, utf8_target_size, matcher,
               term_collector);
   } else {
-    TopTermsSelector<TopTerm<score_t>> selector{terms_limit};
+    TopTermsSelector<TopTermState<score_t>> selector{terms_limit};
     VisitImpl(segment, *reader, no_distance, utf8_target_size, matcher,
               selector);
 
-    ByTermsOptions::search_terms terms;
-    selector.Visit([&](TopTerm<score_t>& candidate) {
-      terms.emplace(std::move(candidate.term), candidate.key);
+    AggregatedStatsVisitor aggregate_stats{query->State(), collector.Field(),
+                                           collector.Terms()[0]};
+    selector.Visit([&aggregate_stats](TopTermState<score_t>& s) {
+      aggregate_stats.boost = std::max(0.f, s.key);
+      s.Visit(aggregate_stats);
     });
-    ByTerms::visit(segment, *reader, terms, term_collector);
   }
 
   return query;

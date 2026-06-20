@@ -16392,8 +16392,13 @@ TEST(And_test, optimize_all_filters) {
 
     tests::sort::Boost sort{};
     tests::PreparedFilter prepared{*f, irs::SubReader::empty(), &sort};
-    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.Query(0)));
-    ASSERT_EQ(8.f, prepared.Query(0)->Boost());
+    ASSERT_NE(nullptr, dynamic_cast<const irs::AndQuery*>(prepared.Query(0)));
+    auto& and_query = sdb::basics::downCast<irs::AndQuery>(*prepared.Query(0));
+    ASSERT_EQ(and_query.size(), 2);
+    auto it = and_query.begin();
+    ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(it->get()));
+    it++;
+    ASSERT_EQ(7.f, (*it)->Boost());
   }
 }
 

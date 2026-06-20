@@ -16632,6 +16632,52 @@ TEST(Or_test, boosted_not) {
   ASSERT_FALSE(docs->next());
 }
 
+TEST_P(BooleanFilterTestCase, and_or_no_collector) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  const auto collect = [&](const irs::Filter& filter,
+                           PreparedFilter::CollectMode mode) {
+    PreparedFilter prepared{filter,  rdr, nullptr, irs::IResourceManager::gNoop,
+                            nullptr, mode};
+    Docs docs;
+    for (size_t i = 0, n = prepared.size(); i < n; ++i) {
+      auto it = prepared.Execute(i);
+      while (it->next()) {
+        docs.push_back(it->value());
+      }
+    }
+    return docs;
+  };
+
+  const auto check = [&](const irs::Filter& filter) {
+    const auto with_collector =
+      collect(filter, PreparedFilter::CollectMode::Single);
+    const auto without_collector =
+      collect(filter, PreparedFilter::CollectMode::NoCollector);
+    ASSERT_FALSE(without_collector.empty());
+    ASSERT_EQ(with_collector, without_collector);
+  };
+
+  {
+    irs::And root;
+    Append<irs::ByTerm>(root, kFieldSame, "xyz");
+    Append<irs::ByTerm>(root, kFieldName, "A");
+    check(root);
+  }
+
+  {
+    irs::Or root;
+    Append<irs::ByTerm>(root, kFieldName, "A");
+    Append<irs::ByTerm>(root, kFieldName, "B");
+    check(root);
+  }
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(boolean_filter_test, BooleanFilterTestCase,

@@ -606,6 +606,38 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     // address to the [SDD-179]
     CheckQuery(MakeFilter(kNameSchemaId, "Product"), Docs{32}, rdr);
   }
+
+  void ByTermNoCollector() {
+    {
+      tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+      add_segment(gen);
+    }
+
+    auto rdr = open_reader();
+
+    const irs::ByTerm q = MakeFilter(kSameId, "xyz");
+
+    const auto collect = [&](tests::PreparedFilter::CollectMode mode) {
+      tests::PreparedFilter prepared{
+        q, rdr, nullptr, irs::IResourceManager::gNoop, nullptr, mode};
+      Docs docs;
+      for (size_t i = 0, n = prepared.size(); i < n; ++i) {
+        auto it = prepared.Execute(i);
+        while (it->next()) {
+          docs.push_back(it->value());
+        }
+      }
+      return docs;
+    };
+
+    const auto with_collector =
+      collect(tests::PreparedFilter::CollectMode::Single);
+    const auto without_collector =
+      collect(tests::PreparedFilter::CollectMode::NoCollector);
+    ASSERT_FALSE(without_collector.empty());
+    ASSERT_EQ(with_collector, without_collector);
+  }
 };
 
 TEST_P(TermFilterTestCase, by_term) {
@@ -620,6 +652,8 @@ TEST_P(TermFilterTestCase, by_term_order) { ByTermSequentialOrder(); }
 TEST_P(TermFilterTestCase, by_term_boost) { ByTermSequentialBoost(); }
 
 TEST_P(TermFilterTestCase, by_term_cost) { ByTermSequentialCost(); }
+
+TEST_P(TermFilterTestCase, by_term_no_collector) { ByTermNoCollector(); }
 
 TEST_P(TermFilterTestCase, visit) {
   // add segment

@@ -465,6 +465,37 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
   CheckQuery(MakeFilter(kNameId, "a"), std::span{&scorer, 1}, expected, rdr);
 }
 
+TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  const irs::ByPrefix q = MakeFilter(kPrefixId, "ab");
+
+  const auto collect = [&](tests::PreparedFilter::CollectMode mode) {
+    tests::PreparedFilter prepared{
+      q, rdr, nullptr, irs::IResourceManager::gNoop, nullptr, mode};
+    Docs docs;
+    for (size_t i = 0, n = prepared.size(); i < n; ++i) {
+      auto it = prepared.Execute(i);
+      while (it->next()) {
+        docs.push_back(it->value());
+      }
+    }
+    return docs;
+  };
+
+  const auto with_collector =
+    collect(tests::PreparedFilter::CollectMode::Single);
+  const auto without_collector =
+    collect(tests::PreparedFilter::CollectMode::NoCollector);
+  ASSERT_FALSE(without_collector.empty());
+  ASSERT_EQ(with_collector, without_collector);
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(prefix_filter_test, PrefixFilterTestCase,

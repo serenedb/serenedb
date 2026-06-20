@@ -122,10 +122,10 @@ void PhraseCollector::Merge(PrepareCollector&& other) {
   for (size_t i = 0, size = _parts.size(); i < size; ++i) {
     auto& dst = _parts[i];
     auto& src = rhs._parts[i];
-    if (dst.size() != src.size()) {
-      continue;
+    if (dst.size() < src.size()) {
+      dst.resize(src.size());
     }
-    for (size_t j = 0, n = dst.size(); j < n; ++j) {
+    for (size_t j = 0, n = src.size(); j < n; ++j) {
       TermCollector::Merge(dst[j], src[j]);
     }
   }

@@ -45,10 +45,14 @@ class AllQuery : public QueryBuilder {
   score_t _boost;
 };
 
+QueryBuilder::ptr MakeAllQuery(const SubReader& segment,
+                               const PrepareContext& ctx, score_t boost) {
+  return memory::make_tracked<AllQuery>(ctx.memory, segment, ctx.boost * boost);
+}
+
 QueryBuilder::ptr All::PrepareSegment(const SubReader& segment,
                                       const PrepareContext& ctx) const {
-  return memory::make_tracked<AllQuery>(ctx.memory, segment,
-                                        ctx.boost * Boost());
+  return MakeAllQuery(segment, ctx, Boost());
 }
 
 PrepareCollector::ptr All::MakeCollector(const Scorer* scorer) const {

@@ -58,10 +58,10 @@ QueryBuilder::ptr And::PrepareSegment(const SubReader& segment,
 
   BooleanQuery::queries_t queries{{ctx.memory}};
   queries.reserve(_filters.size());
+  PrepareContext child = ctx;
+  child.boost = composite_boost;
   size_t idx = 0;
   for (const auto& filter : _filters) {
-    PrepareContext child = ctx;
-    child.boost = composite_boost;
     child.collector = &compound.Child(idx++);
     queries.emplace_back(filter->PrepareSegment(segment, child));
   }
@@ -87,10 +87,10 @@ QueryBuilder::ptr Or::PrepareSegment(const SubReader& segment,
 
   BooleanQuery::queries_t queries{{ctx.memory}};
   queries.reserve(_filters.size());
+  PrepareContext child = ctx;
+  child.boost = composite_boost;
   size_t idx = 0;
   for (const auto& filter : _filters) {
-    PrepareContext child = ctx;
-    child.boost = composite_boost;
     child.collector = &compound.Child(idx++);
     queries.emplace_back(filter->PrepareSegment(segment, child));
   }
@@ -131,7 +131,7 @@ QueryBuilder::ptr Exclusion::PrepareSegment(const SubReader& segment,
   const auto& include_filter = GetInclude();
   auto include = include_filter
                    ? include_filter->PrepareSegment(segment, incl_ctx)
-                   : All{}.PrepareSegment(segment, incl_ctx);
+                   : MakeAllQuery(segment, incl_ctx, kNoBoost);
 
   std::vector<QueryBuilder::ptr> excludes;
   const auto exclude_filters = GetExcludes();

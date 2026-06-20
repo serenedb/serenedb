@@ -175,7 +175,11 @@ class PhraseTermVisitor final : public FilterVisitor,
 
     // Only if it has scorer
     if (_part) {
-      _part->emplace_back().Collect(*_terms);
+      if (_term_offset >= _part->size()) {
+        _part->emplace_back();
+      }
+      (*_part)[_term_offset].Collect(*_terms);
+      ++_term_offset;
       _volatile_boost |= (boost != kNoBoost);
     }
     _phrase_states.emplace_back(_terms->cookie(), boost);
@@ -187,6 +191,7 @@ class PhraseTermVisitor final : public FilterVisitor,
     _found = false;
     _terms = nullptr;
     _part = part;
+    _term_offset = 0;
   }
 
   bool Found() const noexcept { return _found; }
@@ -199,6 +204,7 @@ class PhraseTermVisitor final : public FilterVisitor,
   PhraseStates& _phrase_states;
   std::vector<TermCollector>* _part = nullptr;
   const SeekTermIterator* _terms = nullptr;
+  size_t _term_offset = 0;
   bool _found = false;
   bool _volatile_boost = false;
 };

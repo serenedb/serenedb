@@ -37,4 +37,7 @@ class All : public FilterWithBoost {
   TypeInfo::type_id type() const noexcept final { return irs::Type<All>::id(); }
 };
 
+QueryBuilder::ptr MakeAllQuery(const SubReader& segment,
+                               const PrepareContext& ctx, score_t boost);
+
 }  // namespace irs

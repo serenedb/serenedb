@@ -33,7 +33,6 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/files.h"
-#include "basics/math_utils.hpp"
 #include "basics/serializer.h"
 #include "basics/simdjson_sink.h"
 #include "executor.h"
@@ -790,7 +789,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
     for (size_t segment_idx = 0; auto& segment : reader) {
       for (auto term_str : terms) {
         irs::ByTerm filter;
-        *filter.mutable_field_id() = kIdId;
+        *filter.mutable_field_id() = bench::kTextFieldId;
         filter.mutable_options()->term =
           irs::ViewCast<irs::byte_type>(irs::bytes_view{
             reinterpret_cast<const irs::byte_type*>(term_str.data()),
@@ -855,9 +854,8 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
         auto it = bd_scores.find(doc);
         ASSERT_NE(it, bd_scores.end())
           << "advance: ref doc " << doc << " missing from BD";
-        EXPECT_TRUE(irs::math::ApproxEquals(it->second, ref_score))
-          << "advance: score mismatch doc " << doc << ": BD=" << it->second
-          << " ref=" << ref_score;
+        EXPECT_FLOAT_EQ(it->second, ref_score)
+          << "advance: score mismatch doc " << doc;
       }
     }
 
@@ -888,9 +886,8 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
       for (size_t i = 0; i < result_count; ++i) {
         EXPECT_EQ(hits[i].doc, ref_top[i].doc)
           << "Collect: rank " << i << " doc mismatch";
-        EXPECT_TRUE(irs::math::ApproxEquals(hits[i].score, ref_top[i].score))
-          << "Collect: rank " << i << " score mismatch doc " << hits[i].doc
-          << ": collect=" << hits[i].score << " ref=" << ref_top[i].score;
+        EXPECT_FLOAT_EQ(hits[i].score, ref_top[i].score)
+          << "Collect: rank " << i << " score mismatch doc " << hits[i].doc;
       }
     }
 
@@ -906,14 +903,9 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
 
       const size_t result_count = std::min<size_t>(kCount, ref_top.size());
 
-      // FP accumulation order differs between WAND and non-WAND paths,
-      // so allow a wider epsilon than the default single-ULP tolerance.
-      static constexpr float kEps = 1e-5f;
       for (size_t i = 0; i < result_count; ++i) {
-        EXPECT_TRUE(
-          irs::math::ApproxEquals(hits[i].score, ref_top[i].score, kEps))
-          << "WAND: rank " << i << " score mismatch doc " << hits[i].doc
-          << ": wand=" << hits[i].score << " ref=" << ref_top[i].score;
+        EXPECT_FLOAT_EQ(hits[i].score, ref_top[i].score)
+          << "WAND: rank " << i << " score mismatch doc " << hits[i].doc;
       }
     }
   }

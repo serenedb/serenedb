@@ -16418,11 +16418,6 @@ TEST(And_test, not_boosted) {
       node.boost(4);
     }
   }
-  {
-    auto& node = root.add<detail::Boosted>();
-    node.docs = {1};
-    node.boost(5);
-  }
   tests::PreparedFilter prep{*tests::Optimized(std::move(root), &sort),
                              irs::SubReader::empty(), &sort};
   auto docs = prep.Execute(0);

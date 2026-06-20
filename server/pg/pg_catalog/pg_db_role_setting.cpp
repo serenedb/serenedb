@@ -31,9 +31,6 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgDbRoleSetting>::GetTableData() {
   auto catalog = _config.EnsureCatalogSnapshot();
 
-  // setconfig is text[]: a span straight into the role's owned config strings.
-  // Hold the role shared_ptrs for the whole call so those strings stay alive
-  // through WriteData.
   auto roles = catalog->GetRoles();
   std::vector<PgDbRoleSetting> values;
   for (const auto& role : roles) {

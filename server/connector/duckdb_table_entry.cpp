@@ -66,8 +66,6 @@ duckdb::virtual_column_map_t StoreScanVirtualColumns(
 void EnforceColumnRead(duckdb::ClientContext& context,
                        const catalog::Table& table,
                        duckdb::column_t column_index) {
-  // Internal/bootstrap queries have no SereneDB client state -> nothing to
-  // gate.
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
   if (!state) {
@@ -138,11 +136,6 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
 duckdb::Catalog& SereneDBTableEntry::GetStorageCatalog(
   duckdb::ClientContext& context) {
   return ResolveStoreEntry(context).ParentCatalog();
-}
-
-void SereneDBTableEntry::CheckColumnReadAccess(
-  duckdb::ClientContext& context, duckdb::column_t column_index) const {
-  EnforceColumnRead(context, *_sdb_table, column_index);
 }
 
 duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {

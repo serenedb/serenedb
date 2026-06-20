@@ -168,20 +168,6 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
   const auto& pk_col_ids = table.PKColumns();
   const auto& columns = table.Columns();
 
-  // Collect unique column indices: PK columns + indexed columns
-  containers::FlatHashSet<size_t> needed;
-  for (auto pk_id : pk_col_ids) {
-    for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].GetId() == pk_id) {
-        needed.insert(i);
-        break;
-      }
-    }
-  }
-  for (auto idx : indexed_col_indices) {
-    needed.insert(idx);
-  }
-
   // Register as virtual columns in stable order (PK first, then indexed)
   for (auto pk_id : pk_col_ids) {
     for (size_t i = 0; i < columns.size(); ++i) {
@@ -192,9 +178,6 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
     }
   }
   for (auto idx : indexed_col_indices) {
-    if (!needed.contains(idx)) {
-      continue;  // already added as PK
-    }
     // Only add if not already in the PK set
     bool is_pk = false;
     for (auto pk_id : pk_col_ids) {

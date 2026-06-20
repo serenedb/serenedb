@@ -83,7 +83,6 @@ namespace {
 // Fetches the existing PgSqlFunction, finds the matching overload by
 // parameter signature, and either removes just that overload (updating the
 // stored function) or drops the whole function if it was the last one.
-// DROP FUNCTION name(type, ...) -- selective overload removal.
 Result DropFunctionOverload(ObjectId role, catalog::Catalog& catalog,
                             duckdb::ClientContext& context,
                             duckdb::DropInfo& info) {

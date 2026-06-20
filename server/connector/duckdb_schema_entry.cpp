@@ -70,12 +70,6 @@
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
-namespace {
-
-// Extracts column names from `[a, b, c]` -- the only accepted shape. Anything
-// else (row, single ref, string) throws.
-
-}  // namespace
 
 ObjectId SereneDBSchemaEntry::GetDatabaseId() const {
   return catalog.Cast<SereneDBCatalog>().GetDatabaseId();

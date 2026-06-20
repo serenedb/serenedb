@@ -20,10 +20,9 @@
 
 #include "auth/role_closure.h"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 
+#include "auth/privilege.h"
 #include "catalog/catalog.h"
 #include "catalog/role.h"
 
@@ -35,35 +34,17 @@ RoleClosure Compute(const catalog::Snapshot& snapshot, ObjectId role) {
   if (!role.isSet()) {
     return out;
   }
-  // Seed the closure with the queried id even when it does not resolve to a
-  // real Role: the PUBLIC pseudo-grantee (kPublicGrantee) and dangling grantee
-  // ids must still reach the ACL walk, where PUBLIC entries are matched. Only
-  // a real Role contributes a superuser bit / inherit edges.
-  out.closure.push_back(role);
-  auto start = snapshot.GetObject<catalog::Role>(role);
-  if (!start) {
-    return out;
-  }
-  out.is_superuser = start->IsSuperuser();
-  for (std::size_t i = 0; i < out.closure.size(); ++i) {
-    auto cur = snapshot.GetObject<catalog::Role>(out.closure[i]);
-    if (!cur) {
-      continue;
-    }
-    for (const auto& edge : cur->MemberOf()) {
-      if (!edge.inherit_option) {
-        continue;
-      }
-      const ObjectId parent = edge.role;
-      if (absl::c_contains(out.closure, parent)) {
-        continue;
-      }
-      if (snapshot.GetObject<catalog::Role>(parent)) {
-        out.closure.push_back(parent);
-      }
-    }
-  }
+  // The membership set comes from the one canonical inherit-closure BFS
+  // (ComputeEffectiveRoles): it seeds with `role` even when that id does not
+  // resolve to a real Role -- the PUBLIC pseudo-grantee and dangling grantee
+  // ids must still reach the ACL walk, where PUBLIC entries are matched.
+  const RoleIdSet set = ComputeEffectiveRoles(snapshot, role);
+  out.closure.assign(set.begin(), set.end());
   std::ranges::sort(out.closure);
+  // The superuser bit is the start role's own attribute -- never inherited.
+  if (auto start = snapshot.GetObject<catalog::Role>(role)) {
+    out.is_superuser = start->IsSuperuser();
+  }
   return out;
 }
 

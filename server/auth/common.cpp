@@ -21,9 +21,6 @@
 
 #include "auth/common.h"
 
-#include "basics/errors.h"
-#include "basics/exceptions.h"
-
 using namespace sdb;
 
 static_assert(auth::Level::Undefined < auth::Level::None, "undefined < none");

@@ -130,7 +130,8 @@ bool CheckPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
   }
   // Note: a non-resolvable id (PUBLIC pseudo-grantee, dangling grantee) still
   // runs the ACL walk below -- its closure is seeded with the id itself, so
-  // PUBLIC entries match. `resolved` only gates the superuser/inherit edges.
+  // PUBLIC entries match. Only a real Role contributes a superuser bit or
+  // inherit edges to the closure.
 
   // Ownercheck short-circuits the ACL. An unset owner (e.g. an index, which
   // derives ownership from its table) is in no role's closure and grants no

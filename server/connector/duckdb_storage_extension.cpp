@@ -34,7 +34,6 @@
 #include "connector/duckdb_transaction.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
-#include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -105,7 +104,12 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   // Checked first, before any teardown, so an unauthorized drop is refused
   // cleanly. Internal/lifecycle detach has no session state and is not gated.
   if (state) {
-    pg::EnforceDatabaseOwnership(state->GetConnectionContext(), GetName());
+    auto& conn_ctx = state->GetConnectionContext();
+    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+    if (auto db = snapshot->GetDatabase(GetName())) {
+      snapshot->RequireOwnership(conn_ctx.GetRoleId(), *db, "database",
+                                 GetName());
+    }
   }
   const auto& exec_ctx =
     state ? state->GetConnectionContext() : ExecContext::superuser();

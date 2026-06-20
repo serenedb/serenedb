@@ -72,7 +72,6 @@
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/view_fast_path.h"
-#include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -140,7 +139,7 @@ Result DropFunctionOverload(ObjectId role, catalog::Catalog& catalog,
 
   if (macro_info.macros.size() == 1) {
     // Last overload -- drop the whole function.
-    return catalog.DropFunction(catalog::AccessContext{role}, info.catalog,
+    return catalog.DropFunction(catalog::RequireOwnership(role), info.catalog,
                                 info.schema, info.name, info.cascade);
   }
 
@@ -204,7 +203,7 @@ Result DropFunctionByKind(ObjectId role, catalog::Catalog& catalog,
       ERR_MSG("could not find a ", kind, " named \"", info.name, "\""));
   }
   if (all_match) {
-    return catalog.DropFunction(catalog::AccessContext{role}, info.catalog,
+    return catalog.DropFunction(catalog::RequireOwnership(role), info.catalog,
                                 info.schema, info.name, info.cascade);
   }
   // Mixed: remove only matching overloads, keep the rest.
@@ -238,25 +237,17 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
   auto& catalog = catalog::GetCatalog();
 
   // DROP requires ownership (or superuser): a non-owner must not drop another
-  // role's object. The catalog mutations enforce this against `role`; we map
-  // the returned ERROR_FORBIDDEN to the PG "must be owner of <type> <name>"
-  // error. No-op for missing objects (the mutation returns a not-found Result).
+  // role's object. The catalog mutations enforce this against `role` and throw
+  // 42501 "must be owner of <type> <name>" directly on a non-owner. No-op for
+  // missing objects (the mutation's own resolution reports not-found).
   const ObjectId role{GetSereneDBContext(context).GetRoleId()};
-  const auto deny_if_forbidden = [&](const Result& r,
-                                     std::string_view obj_type) {
-    if (r.is(ERROR_FORBIDDEN)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("must be owner of ", obj_type, " ", info.name));
-    }
-  };
 
   Result r;
   switch (info.type) {
     using enum duckdb::CatalogType;
     case TABLE_ENTRY:
-      r = catalog.DropTable(catalog::AccessContext{role}, info.catalog,
+      r = catalog.DropTable(catalog::RequireOwnership(role), info.catalog,
                             info.schema, info.name, info.cascade);
-      deny_if_forbidden(r, "table");
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -267,14 +258,12 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       }
       break;
     case INDEX_ENTRY:
-      r = catalog.DropIndex(catalog::AccessContext{role}, info.catalog,
+      r = catalog.DropIndex(catalog::RequireOwnership(role), info.catalog,
                             info.schema, info.name, info.cascade);
-      deny_if_forbidden(r, "index");
       break;
     case VIEW_ENTRY:
-      r = catalog.DropView(catalog::AccessContext{role}, info.catalog,
+      r = catalog.DropView(catalog::RequireOwnership(role), info.catalog,
                            info.schema, info.name, info.cascade);
-      deny_if_forbidden(r, "view");
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -291,7 +280,6 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       } else {
         r = DropFunctionByKind(role, catalog, info);
       }
-      deny_if_forbidden(r, "function");
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -302,9 +290,8 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       }
       break;
     case TYPE_ENTRY:
-      r = catalog.DropType(catalog::AccessContext{role}, info.catalog,
+      r = catalog.DropType(catalog::RequireOwnership(role), info.catalog,
                            info.schema, info.name, info.cascade);
-      deny_if_forbidden(r, "type");
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -317,9 +304,8 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
     case SEQUENCE_ENTRY: {
       bool if_exists =
         info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
-      r = catalog.DropSequence(catalog::AccessContext{role}, info.catalog,
+      r = catalog.DropSequence(catalog::RequireOwnership(role), info.catalog,
                                info.schema, info.name, if_exists, info.cascade);
-      deny_if_forbidden(r, "sequence");
       if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
@@ -338,9 +324,8 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
           ERR_MSG("cannot drop schema ", info.name,
                   " because it is required by the database system"));
       } else {
-        r = catalog.DropSchema(catalog::AccessContext{role}, info.catalog,
+        r = catalog.DropSchema(catalog::RequireOwnership(role), info.catalog,
                                info.name, info.cascade);
-        deny_if_forbidden(r, "schema");
         // TODO(mbkkt) better error handling
         if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
           THROW_SQL_ERROR(
@@ -460,7 +445,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
     owner = sdb_ctx.GetRoleId();
     if (auto db =
           catalog_impl.GetCatalogSnapshot()->GetDatabase(GetDatabaseId())) {
-      pg::RequirePrivilege(sdb_ctx, *db, catalog::AclMode::Create);
+      RequirePrivilege(sdb_ctx, *db, catalog::AclMode::Create);
     }
   }
   auto schema = std::make_shared<catalog::Schema>(owner, GetDatabaseId(),
@@ -655,22 +640,19 @@ duckdb::unique_ptr<duckdb::LogicalOperator> InsertBackfillFilterProjection(
   return proj;
 }
 
-// The i-th user-visible column of `table` (DuckDB column indices skip the
-// internal generated-PK column, mirroring BuildTableInfoAndIndices), or nullptr
-// if out of range.
-const catalog::Column* UserColumnAt(const catalog::Table& table,
-                                    std::size_t index) {
-  std::size_t visible = 0;
+// The user-visible columns of `table` in DuckDB column order -- i.e. the
+// internal generated-PK column removed (mirroring BuildTableInfoAndIndices), so
+// the i-th element is the i-th DuckDB column. Built in a single pass; callers
+// index into it in O(1) instead of re-scanning the table per column.
+std::vector<const catalog::Column*> UserColumns(const catalog::Table& table) {
+  std::vector<const catalog::Column*> cols;
+  cols.reserve(table.Columns().size());
   for (const auto& col : table.Columns()) {
-    if (col.GetId() == catalog::Column::kGeneratedPKId) {
-      continue;
+    if (col.GetId() != catalog::Column::kGeneratedPKId) {
+      cols.push_back(&col);
     }
-    if (visible == index) {
-      return &col;
-    }
-    ++visible;
   }
-  return nullptr;
+  return cols;
 }
 
 }  // namespace
@@ -688,23 +670,21 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   // privileges). `column_index_map` maps each table column to its source slot;
   // an unset (INVALID_INDEX) entry means the column is not inserted (default).
   // An empty map means every column is inserted (INSERT without a column list).
+  auto user_columns = UserColumns(*sdb_table);
   std::vector<const catalog::Column*> inserted;
   if (op.column_index_map.empty()) {
-    for (const auto& col : sdb_table->Columns()) {
-      if (col.GetId() != catalog::Column::kGeneratedPKId) {
-        inserted.push_back(&col);
-      }
-    }
+    inserted = user_columns;
   } else {
     for (std::size_t i = 0; i < op.column_index_map.size(); ++i) {
       if (op.column_index_map[duckdb::PhysicalIndex(i)] !=
           duckdb::DConstants::INVALID_INDEX) {
-        inserted.push_back(UserColumnAt(*sdb_table, i));
+        inserted.push_back(user_columns[i]);
       }
     }
   }
-  pg::RequireColumnPrivilege(GetSereneDBContext(context), *sdb_table,
-                             catalog::AclMode::Insert, inserted);
+  auto& conn_ctx = GetSereneDBContext(context);
+  conn_ctx.EnsureCatalogSnapshot()->RequireColumnAccess(
+    conn_ctx.GetRoleId(), *sdb_table, catalog::AclMode::Insert, inserted);
 
   // RETURNING reads the affected rows back; PG requires SELECT on exactly the
   // projected columns. That column-level check is enforced by the read-pass
@@ -763,7 +743,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
     table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
   auto sdb_table = table_entry.GetSereneDBTable();
 
-  pg::RequirePrivilege(
+  RequirePrivilege(
     GetSereneDBContext(context), *sdb_table,
     op.is_truncate ? catalog::AclMode::Truncate : catalog::AclMode::Delete);
 
@@ -794,12 +774,15 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
 
   // PostgreSQL requires UPDATE on exactly the columns being modified (column
   // privileges). `op.columns` are the target columns of the SET clause.
+  auto user_columns = UserColumns(*sdb_table);
   std::vector<const catalog::Column*> modified;
+  modified.reserve(op.columns.size());
   for (auto col_idx : op.columns) {
-    modified.push_back(UserColumnAt(*sdb_table, col_idx.index));
+    modified.push_back(user_columns[col_idx.index]);
   }
-  pg::RequireColumnPrivilege(GetSereneDBContext(context), *sdb_table,
-                             catalog::AclMode::Update, modified);
+  auto& conn_ctx = GetSereneDBContext(context);
+  conn_ctx.EnsureCatalogSnapshot()->RequireColumnAccess(
+    conn_ctx.GetRoleId(), *sdb_table, catalog::AclMode::Update, modified);
 
   // SELECT on the columns an UPDATE reads -- a column in the SET RHS
   // (SET c = c + 1), the WHERE clause, or RETURNING -- is enforced by PlanGet
@@ -920,9 +903,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
 
   // MERGE / INSERT ON CONFLICT may insert, update, and delete rows; require all
   // three privileges conservatively (per-action checks are deferred).
-  pg::RequirePrivilege(GetSereneDBContext(context), *sdb_table,
-                       catalog::AclMode::Insert | catalog::AclMode::Update |
-                         catalog::AclMode::Delete);
+  RequirePrivilege(GetSereneDBContext(context), *sdb_table,
+                   catalog::AclMode::Insert | catalog::AclMode::Update |
+                     catalog::AclMode::Delete);
 
   std::map<duckdb::MergeActionCondition,
            duckdb::vector<duckdb::unique_ptr<duckdb::MergeIntoOperator>>>

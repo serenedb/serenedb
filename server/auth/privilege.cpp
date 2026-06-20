@@ -132,10 +132,10 @@ bool CheckPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
   // runs the ACL walk below -- its closure is seeded with the id itself, so
   // PUBLIC entries match. `resolved` only gates the superuser/inherit edges.
 
-  // Ownercheck short-circuits the ACL. Unset owner -> kRootUser (a
-  // non-superuser session never matches it).
-  const auto owner =
-    object.GetOwner().isSet() ? object.GetOwner() : id::kRootUser;
+  // Ownercheck short-circuits the ACL. An unset owner (e.g. an index, which
+  // derives ownership from its table) is in no role's closure and grants no
+  // implicit access -- the correct default, so it is passed through as-is.
+  const auto owner = object.GetOwner();
   if (std::ranges::binary_search(rc.closure, owner)) {
     return true;
   }
@@ -179,8 +179,7 @@ bool HasColumnPrivilege(const catalog::Snapshot& snapshot, ObjectId role,
   if (rc.is_superuser) {
     return true;
   }
-  const auto owner =
-    table.GetOwner().isSet() ? table.GetOwner() : id::kRootUser;
+  const auto owner = table.GetOwner();
 
   // Relation-level grant satisfies the privilege for every column.
   if (std::ranges::binary_search(rc.closure, owner) ||

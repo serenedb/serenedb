@@ -285,6 +285,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   bool if_not_exists =
     _info->on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
+  // CREATE INDEX requires ownership of the target relation; the mutation
+  // enforces it and throws "must be owner of table <name>" on a non-owner.
   Result create_result;
   if (state->index_type == catalog::ObjectType::InvertedIndex) {
     auto find_with = [&](std::string_view name) -> const duckdb::Value* {
@@ -315,6 +317,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
 
     create_result = catalog_impl.CreateInvertedIndex(
+      catalog::RequireOwnership(GetSereneDBContext(context).GetRoleId()),
       context, _database_id, _schema_entry.name, _relation->GetName(),
       _info->index_name, std::move(idx_columns), std::move(options),
       {.create_with_tombstone = true});
@@ -322,8 +325,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,
-      std::move(idx_columns), unique, {.create_with_tombstone = true});
+      catalog::RequireOwnership(GetSereneDBContext(context).GetRoleId()),
+      _database_id, _schema_entry.name, _relation->GetName(),
+      _info->index_name, std::move(idx_columns), unique,
+      {.create_with_tombstone = true});
   }
 
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {

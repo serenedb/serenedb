@@ -29,7 +29,6 @@
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/view_fast_path.h"
-#include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 
 namespace sdb::connector {
@@ -72,8 +71,8 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   // SELECT * FROM <index_name> resolves the base table here
-  pg::RequirePrivilege(GetSereneDBContext(context), *_sdb_table,
-                       catalog::AclMode::Select);
+  RequirePrivilege(GetSereneDBContext(context), *_sdb_table,
+                   catalog::AclMode::Select);
   auto snapshot =
     GetSereneDBContext(context).EnsureSearchSnapshot(_inverted_index->GetId());
   auto data = duckdb::make_uniq<TableScanBindData>();
@@ -137,7 +136,7 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
     if (auto base = sdb_ctx.EnsureCatalogSnapshot()->GetRelation(
           catalog::NoAccessCheck(), sdb_ctx.GetDatabaseId(),
           fp->catalog_ref->schema, fp->catalog_ref->table)) {
-      pg::RequirePrivilege(sdb_ctx, *base, catalog::AclMode::Select);
+      RequirePrivilege(sdb_ctx, *base, catalog::AclMode::Select);
     }
   }
   auto snapshot = sdb_ctx.EnsureSearchSnapshot(_inverted_index->GetId());
@@ -216,8 +215,8 @@ duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   // SELECT on the base table is required even when reached via the index name.
-  pg::RequirePrivilege(GetSereneDBContext(context), *_sdb_table,
-                       catalog::AclMode::Select);
+  RequirePrivilege(GetSereneDBContext(context), *_sdb_table,
+                   catalog::AclMode::Select);
   // Scanning a secondary index by name reads the table: the index itself
   // is a native ART on the store table.
   auto store_name = catalog::StoreTableName(

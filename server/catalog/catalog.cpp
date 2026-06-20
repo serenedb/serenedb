@@ -977,12 +977,6 @@ const auth::RoleClosure& Snapshot::EffectiveRoleClosure(ObjectId role) const {
   return _role_closure_cache.Get(*this, role);
 }
 
-bool Snapshot::HasAccess(ObjectId role, const Object& object, AclMode need,
-                         bool any_of) const {
-  return any_of ? auth::HasAnyPrivilege(*this, role, object, need)
-                : auth::HasPrivilege(*this, role, object, need);
-}
-
 void Snapshot::RequireAccess(ObjectId role, const Object& object,
                              AclMode need) const {
   if (need == AclMode::NoRights ||
@@ -1011,14 +1005,15 @@ void Snapshot::RequireColumnAccess(ObjectId role, const Table& table,
   RequireColumnAccess(role, table, need, one);
 }
 
-void Snapshot::RequireOwnership(ObjectId role, ObjectId owner,
+void Snapshot::RequireOwnership(ObjectId role, const Object& object,
                                 std::string_view obj_type,
                                 std::string_view name) const {
-  if (!owner.isSet()) {
-    return;
-  }
   const auto& rc = EffectiveRoleClosure(role);
-  if (rc.is_superuser || std::ranges::binary_search(rc.closure, owner)) {
+  // Superuser owns everything. Otherwise the role must own the object directly
+  // or via role membership. An unset owner is not matchable by any real role,
+  // so only superuser passes -- the safe default (no implicit owner access).
+  if (rc.is_superuser ||
+      std::ranges::binary_search(rc.closure, object.GetOwner())) {
     return;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -1917,7 +1912,7 @@ ResultOr<ResolvedIndexRelation> ResolveIndexRelation(
 Result RequireSchemaCreate(const Snapshot& snapshot, ObjectId role,
                            ObjectId schema_id) {
   auto schema = snapshot.GetObject<Schema>(schema_id);
-  if (!schema || snapshot.HasAccess(role, *schema, AclMode::Create)) {
+  if (!schema || auth::HasPrivilege(snapshot, role, *schema, AclMode::Create)) {
     return {};
   }
   return Result{ERROR_FORBIDDEN};
@@ -1925,28 +1920,44 @@ Result RequireSchemaCreate(const Snapshot& snapshot, ObjectId role,
 
 // ALTER/DROP requires ownership of the target object. ok() if the object is
 // gone (the mutation's own resolution reports the real error).
-Result RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
-                          ObjectId object_id) {
-  auto obj = snapshot.GetObject(object_id);
-  if (!obj) {
-    return {};
-  }
-  const auto owner = obj->GetOwner();
-  if (!owner.isSet()) {
-    return {};
+// Throw 42501 "must be owner of <type> <name>" unless `role` owns `owner_id`
+// (directly, via membership, or as superuser). The error names `reported` --
+// the object the user acted on -- and its type/name come straight from it
+// (ToPgObjectTypeName + GetName), so callers don't repeat them. A missing
+// owner object is a no-op (the mutation's own resolution reports not-found).
+void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
+                        ObjectId owner_id, const Object& reported) {
+  auto owner_obj = snapshot.GetObject(owner_id);
+  if (!owner_obj) {
+    return;
   }
   const auto& rc = snapshot.EffectiveRoleClosure(role);
-  if (rc.is_superuser || std::ranges::binary_search(rc.closure, owner)) {
-    return {};
+  if (rc.is_superuser ||
+      std::ranges::binary_search(rc.closure, owner_obj->GetOwner())) {
+    return;
   }
-  return Result{ERROR_FORBIDDEN};
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("must be owner of ", pg::ToPgObjectTypeName(reported.GetType()), " ",
+            reported.GetName()));
+}
+
+// Common case: the object that confers authority IS the one acted on. Resolves
+// `object_id` once; a missing object is a no-op (the mutation reports
+// not-found).
+void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
+                        ObjectId object_id) {
+  if (auto obj = snapshot.GetObject(object_id)) {
+    RequireObjectOwner(snapshot, role, object_id, *obj);
+  }
 }
 
 }  // namespace
 
 Result Catalog::CreateSecondaryIndex(
-  ObjectId database_id, std::string_view schema, std::string_view relation,
-  std::string name, std::vector<CreateIndexColumn>&& columns, bool unique,
+  const AccessContext& ax, ObjectId database_id, std::string_view schema,
+  std::string_view relation, std::string name,
+  std::vector<CreateIndexColumn>&& columns, bool unique,
   CreateIndexOperationOptions operation_options) {
   if (columns.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
@@ -1964,6 +1975,9 @@ Result Catalog::CreateSecondaryIndex(
     return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation,
             "\" does not exist"};
   }
+  // CREATE INDEX requires ownership of the target relation (an index has no
+  // independent owner -- it derives from the table).
+  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
   auto resolved = ResolveIndexRelation(rel);
   if (!resolved) {
     return std::move(resolved).error();
@@ -1988,9 +2002,10 @@ Result Catalog::CreateSecondaryIndex(
 }
 
 Result Catalog::CreateInvertedIndex(
-  duckdb::ClientContext& context, ObjectId database_id, std::string_view schema,
-  std::string_view relation, std::string name,
-  std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
+  const AccessContext& ax, duckdb::ClientContext& context,
+  ObjectId database_id, std::string_view schema, std::string_view relation,
+  std::string name, std::vector<CreateIndexColumn>&& columns,
+  InvertedIndexOptions options,
   CreateIndexOperationOptions operation_options) {
   if (columns.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
@@ -2008,6 +2023,9 @@ Result Catalog::CreateInvertedIndex(
     return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation,
             "\" does not exist"};
   }
+  // CREATE INDEX requires ownership of the target relation (an index has no
+  // independent owner -- it derives from the table).
+  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
   auto resolved = ResolveIndexRelation(rel);
   if (!resolved) {
     return std::move(resolved).error();
@@ -2863,7 +2881,7 @@ Result Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
   }
 
   // Mutate the effective ACL (NULL/empty -> acldefault) under the lock.
-  const auto owner = obj->GetOwner().isSet() ? obj->GetOwner() : id::kRootUser;
+  const auto owner = obj->GetOwner();
   auto acl = auth::AclEffective(obj->GetAcl(), type, owner);
   mutate(acl);
 
@@ -3215,9 +3233,7 @@ Result Catalog::DropSchema(const AccessContext& ax, std::string_view database,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireObjectOwner(*_snapshot, ax.role, *schema_id); r.fail()) {
-    return r;
-  }
+  RequireObjectOwner(*_snapshot, ax.role, *schema_id);
 
   if (!cascade && !_snapshot->CheckSchemaEmptyDependency(*schema_id)) {
     return Result{ERROR_BAD_PARAMETER};
@@ -3269,9 +3285,7 @@ Result Catalog::DropTable(const AccessContext& ax, std::string_view database,
   if (!table_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireObjectOwner(*_snapshot, ax.role, *table_id); r.fail()) {
-    return r;
-  }
+  RequireObjectOwner(*_snapshot, ax.role, *table_id);
 
   auto plan = _snapshot->ComputeDropPlan(*table_id);
   if (!cascade && plan.IsCascade()) {
@@ -3539,11 +3553,8 @@ Result Catalog::DropIndex(const AccessContext& ax, std::string_view database,
   // table). Drop authority therefore belongs to the underlying table's owner,
   // so check that, not the index's own (unset) owner.
   if (auto index = _snapshot->GetObject<Index>(*index_id)) {
-    if (auto r =
-          RequireObjectOwner(*_snapshot, ax.role, index->GetRelationId());
-        r.fail()) {
-      return r;
-    }
+    // Check the parent table's owner, but report the index in the error.
+    RequireObjectOwner(*_snapshot, ax.role, index->GetRelationId(), *index);
   }
 
   return Apply(
@@ -3597,9 +3608,7 @@ Result Catalog::DropView(const AccessContext& ax, std::string_view database,
   if (!view_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireObjectOwner(*_snapshot, ax.role, *view_id); r.fail()) {
-    return r;
-  }
+  RequireObjectOwner(*_snapshot, ax.role, *view_id);
 
   auto plan = _snapshot->ComputeDropPlan(*view_id);
   if (!cascade && plan.IsCascade()) {
@@ -3651,9 +3660,7 @@ Result Catalog::DropSequence(const AccessContext& ax, std::string_view database,
   if (!seq_id) {
     return if_exists ? Result{} : Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireObjectOwner(*_snapshot, ax.role, *seq_id); r.fail()) {
-    return r;
-  }
+  RequireObjectOwner(*_snapshot, ax.role, *seq_id);
 
   auto plan = _snapshot->ComputeDropPlan(*seq_id);
   if (!cascade && plan.IsCascade()) {
@@ -3706,9 +3713,7 @@ Result Catalog::DropType(const AccessContext& ax, std::string_view database,
   if (!type_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireObjectOwner(*_snapshot, ax.role, *type_id); r.fail()) {
-    return r;
-  }
+  RequireObjectOwner(*_snapshot, ax.role, *type_id);
 
   auto plan = _snapshot->ComputeDropPlan(*type_id);
   if (!cascade && plan.IsCascade()) {
@@ -3760,10 +3765,7 @@ Result Catalog::DropFunction(const AccessContext& ax, std::string_view database,
   if (!function_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  if (auto r = RequireObjectOwner(*_snapshot, ax.role, *function_id);
-      r.fail()) {
-    return r;
-  }
+  RequireObjectOwner(*_snapshot, ax.role, *function_id);
 
   auto plan = _snapshot->ComputeDropPlan(*function_id);
   if (!cascade && plan.IsCascade()) {

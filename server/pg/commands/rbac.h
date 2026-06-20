@@ -20,35 +20,11 @@
 
 #pragma once
 
-#include <span>
 #include <string_view>
 
 #include "catalog/object.h"
 #include "pg/connection_context.h"
-
-namespace sdb::catalog {
-
-class Table;
-class Column;
-
-}  // namespace sdb::catalog
 namespace sdb::pg {
-
-void RequirePrivilege(ConnectionContext& ctx, const catalog::Object& object,
-                      catalog::AclMode need);
-
-// Column-level privilege check (PG ExecCheckOneRelPerms): `need` on `table`,
-// satisfied table-wide or per-column on each of `columns`. An empty `columns`
-// means "no specific column" -> requires `need` on any one column (SELECT
-// count(*)). Throws 42501 "permission denied for table X" on failure.
-void RequireColumnPrivilege(ConnectionContext& ctx, const catalog::Table& table,
-                            catalog::AclMode need,
-                            std::span<const catalog::Column* const> columns);
-
-void EnforceRelationOwnership(ConnectionContext& ctx, std::string_view schema,
-                              std::string_view name, std::string_view obj_type);
-
-void EnforceDatabaseOwnership(ConnectionContext& ctx, std::string_view name);
 
 struct CreateRoleOptions {
   bool login = false;

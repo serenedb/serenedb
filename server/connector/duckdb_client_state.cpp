@@ -286,10 +286,11 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   return state->GetConnectionContext();
 }
 
-ConnectionContext* TryGetSereneDBContext(duckdb::ClientContext& context) {
-  auto state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  return state ? &state->GetConnectionContext() : nullptr;
+void RequirePrivilege(ConnectionContext& ctx, const catalog::Object& object,
+                      catalog::AclMode need) {
+  auto snapshot = ctx.EnsureCatalogSnapshot();
+  auto current = snapshot->GetObject(object.GetId());
+  snapshot->RequireAccess(ctx.GetRoleId(), current ? *current : object, need);
 }
 
 }  // namespace sdb::connector

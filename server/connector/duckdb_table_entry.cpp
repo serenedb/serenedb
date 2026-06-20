@@ -66,18 +66,21 @@ duckdb::virtual_column_map_t StoreScanVirtualColumns(
 void EnforceColumnRead(duckdb::ClientContext& context,
                        const catalog::Table& table,
                        duckdb::column_t column_index) {
-  auto* conn_ctx = TryGetSereneDBContext(context);
-  if (conn_ctx == nullptr) {
+  // Internal/bootstrap queries have no SereneDB client state -> nothing to gate.
+  auto state = context.registered_state->Get<SereneDBClientState>(
+    kSereneDBClientStateKey);
+  if (!state) {
     return;
   }
+  auto& conn_ctx = state->GetConnectionContext();
   std::size_t visible = 0;
   for (const auto& col : table.Columns()) {
     if (col.GetId() == catalog::Column::kGeneratedPKId) {
       continue;
     }
     if (visible == column_index) {
-      conn_ctx->EnsureCatalogSnapshot()->RequireColumnAccess(
-        conn_ctx->GetRoleId(), table, catalog::AclMode::Select, col);
+      conn_ctx.EnsureCatalogSnapshot()->RequireColumnAccess(
+        conn_ctx.GetRoleId(), table, catalog::AclMode::Select, col);
       return;
     }
     ++visible;

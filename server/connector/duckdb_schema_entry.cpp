@@ -63,7 +63,6 @@
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/pg_logical_types.h"
-#include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -442,13 +441,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   auto& sdb_table_entry = RequireBaseTable(table);
   auto sdb_table = sdb_table_entry.GetSereneDBTable();
 
-  // CREATE INDEX modifies the target table -> requires ownership (or
-  // superuser).
-  pg::EnforceRelationOwnership(GetSereneDBContext(transaction.GetContext()),
-                               name, table.name, "table");
-
+  // CREATE INDEX requires ownership of the target table -- enforced inside the
+  // catalog mutation (CreateSecondaryIndex/CreateInvertedIndex), which throws
+  // "must be owner of table <name>" directly on a non-owner.
   auto& catalog_impl = catalog::GetCatalog();
-  auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto database_id = GetDatabaseId();
 
   // Map DuckDB index type to SereneDB IndexType
@@ -529,12 +525,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
     create_result = catalog_impl.CreateInvertedIndex(
+      catalog::RequireOwnership(
+        GetSereneDBContext(transaction.GetContext()).GetRoleId()),
       context, database_id, name, sdb_table->GetName(), info.index_name,
       std::move(idx_columns), std::move(options),
       /*operation_options=*/{});
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
+      catalog::RequireOwnership(
+        GetSereneDBContext(transaction.GetContext()).GetRoleId()),
       database_id, name, sdb_table->GetName(), info.index_name,
       std::move(idx_columns), unique, /*operation_options=*/{});
   }
@@ -854,12 +854,17 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
   auto db = GetDatabaseId();
 
   // ALTER requires ownership (or superuser) of the target relation.
-  if (info.type == duckdb::AlterType::ALTER_TABLE) {
-    pg::EnforceRelationOwnership(GetSereneDBContext(transaction.GetContext()),
-                                 name, info.name, "table");
-  } else if (info.type == duckdb::AlterType::ALTER_VIEW) {
-    pg::EnforceRelationOwnership(GetSereneDBContext(transaction.GetContext()),
-                                 name, info.name, "view");
+  if (info.type == duckdb::AlterType::ALTER_TABLE ||
+      info.type == duckdb::AlterType::ALTER_VIEW) {
+    const auto* obj_type =
+      info.type == duckdb::AlterType::ALTER_TABLE ? "table" : "view";
+    auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
+    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+    if (auto rel = snapshot->GetRelation(catalog::NoAccessCheck(), db, name,
+                                         info.name)) {
+      snapshot->RequireOwnership(conn_ctx.GetRoleId(), *rel, obj_type,
+                                 info.name);
+    }
   }
 
   if (info.type == duckdb::AlterType::ALTER_SCALAR_FUNCTION) {

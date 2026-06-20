@@ -112,53 +112,6 @@ void RequireRoleAdmin(ConnectionContext& ctx, const catalog::Snapshot& snapshot,
 
 }  // namespace
 
-void RequirePrivilege(ConnectionContext& ctx, const catalog::Object& object,
-                      catalog::AclMode need) {
-  auto snapshot = ctx.EnsureCatalogSnapshot();
-  auto current = snapshot->GetObject(object.GetId());
-  snapshot->RequireAccess(ctx.GetRoleId(), current ? *current : object, need);
-}
-
-void RequireColumnPrivilege(ConnectionContext& ctx, const catalog::Table& table,
-                            catalog::AclMode need,
-                            std::span<const catalog::Column* const> columns) {
-  auto snapshot = ctx.EnsureCatalogSnapshot();
-  snapshot->RequireColumnAccess(ctx.GetRoleId(), table, need, columns);
-}
-
-namespace {
-
-ObjectId OwnerOrRoot(const catalog::Object& obj) {
-  return obj.GetOwner().isSet() ? obj.GetOwner() : id::kRootUser;
-}
-
-void EnforceOwnership(
-  ConnectionContext& ctx, std::string_view obj_type, std::string_view name,
-  absl::FunctionRef<ObjectId(const catalog::Snapshot&)> lookup) {
-  auto snapshot = FreshSnapshot();
-  snapshot->RequireOwnership(ctx.GetRoleId(), lookup(*snapshot), obj_type,
-                             name);
-}
-
-}  // namespace
-
-void EnforceRelationOwnership(ConnectionContext& ctx, std::string_view schema,
-                              std::string_view name,
-                              std::string_view obj_type) {
-  EnforceOwnership(ctx, obj_type, name, [&](const catalog::Snapshot& s) {
-    auto rel = s.GetRelation(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
-                             schema, name);
-    return rel ? OwnerOrRoot(*rel) : id::kInvalid;
-  });
-}
-
-void EnforceDatabaseOwnership(ConnectionContext& ctx, std::string_view name) {
-  EnforceOwnership(ctx, "database", name, [&](const catalog::Snapshot& s) {
-    auto db = s.GetDatabase(name);
-    return db ? OwnerOrRoot(*db) : id::kInvalid;
-  });
-}
-
 void CreateRole(ConnectionContext& ctx, std::string_view name,
                 const CreateRoleOptions& options) {
   RequireCreateRole(ctx, "create role");
@@ -626,7 +579,10 @@ std::shared_ptr<catalog::Object> ResolveGrantTarget(
     out_name = std::string{raw_name};
     return snap.GetSchema(ctx.GetDatabaseId(), raw_name);
   }
-  const auto parsed = ParseObjectName(raw_name, ctx.GetCurrentSchema());
+  // Keep the current-schema string alive: ParseObjectName returns string_views,
+  // and an unqualified name's schema view points into `current_schema`.
+  const std::string current_schema = ctx.GetCurrentSchema();
+  const auto parsed = ParseObjectName(raw_name, current_schema);
   out_schema = parsed.schema;
   out_name = parsed.relation;
   if (type == catalog::ObjectType::PgSqlFunction) {
@@ -1153,7 +1109,10 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
     rel_name = std::string{name};
     cur_owner = schema->GetOwner();
   } else {
-    const auto parsed = ParseObjectName(name, ctx.GetCurrentSchema());
+    // Keep the current-schema string alive: ParseObjectName returns
+    // string_views; an unqualified name's schema view points into it.
+    const std::string current_schema = ctx.GetCurrentSchema();
+    const auto parsed = ParseObjectName(name, current_schema);
     auto rel =
       snapshot->GetRelation(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
                             parsed.schema, parsed.relation);

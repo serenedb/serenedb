@@ -483,20 +483,17 @@ bool HasAnyObjectPrivilegeText(const catalog::Snapshot& snapshot,
   if (modes.grant_options == catalog::AclMode::NoRights) {
     return false;
   }
-  if (auto role = snapshot.GetObject<catalog::Role>(role_id);
-      role && role->IsSuperuser()) {
-    return true;
-  }
-  const auto roles = auth::ComputeEffectiveRoles(snapshot, role_id);
-  const auto owner =
-    object.GetOwner().isSet() ? object.GetOwner() : id::kRootUser;
-  if (roles.contains(owner)) {
+  // Grant-option check: reuse the cached inherit-closure (superuser bit +
+  // sorted role ids) instead of recomputing it.
+  const auto& rc = snapshot.EffectiveRoleClosure(role_id);
+  if (rc.is_superuser ||
+      std::ranges::binary_search(rc.closure, object.GetOwner())) {
     return true;
   }
   catalog::AclMode held = catalog::AclMode::NoRights;
   for (const auto& item : object.GetAcl()) {
     if (item.grantee == catalog::kPublicGrantee ||
-        roles.contains(item.grantee)) {
+        std::ranges::binary_search(rc.closure, item.grantee)) {
       held |= item.grant_option;
     }
   }
@@ -1148,30 +1145,26 @@ bool ColumnPrivHeld(const catalog::Snapshot& snapshot, ObjectId role_id,
   if (modes.grant_options == catalog::AclMode::NoRights) {
     return false;
   }
-  if (auto role = snapshot.GetObject<catalog::Role>(role_id);
-      role && role->IsSuperuser()) {
-    return true;
-  }
-  const auto roles = auth::ComputeEffectiveRoles(snapshot, role_id);
-  const auto owner =
-    table.GetOwner().isSet() ? table.GetOwner() : id::kRootUser;
-  if (roles.contains(owner)) {
+  // Grant-option check: reuse the cached inherit-closure (superuser bit +
+  // sorted role ids) instead of recomputing it.
+  const auto& rc = snapshot.EffectiveRoleClosure(role_id);
+  if (rc.is_superuser ||
+      std::ranges::binary_search(rc.closure, table.GetOwner())) {
     return true;
   }
   // Grant option held at table level OR on this column.
-  catalog::AclMode held = catalog::AclMode::NoRights;
-  for (const auto& item : table.GetAcl()) {
-    if (item.grantee == catalog::kPublicGrantee ||
-        roles.contains(item.grantee)) {
-      held |= item.grant_option;
+  const auto held_grant_option = [&](catalog::AclView acl) {
+    catalog::AclMode held = catalog::AclMode::NoRights;
+    for (const auto& item : acl) {
+      if (item.grantee == catalog::kPublicGrantee ||
+          std::ranges::binary_search(rc.closure, item.grantee)) {
+        held |= item.grant_option;
+      }
     }
-  }
-  for (const auto& item : column.GetAcl()) {
-    if (item.grantee == catalog::kPublicGrantee ||
-        roles.contains(item.grantee)) {
-      held |= item.grant_option;
-    }
-  }
+    return held;
+  };
+  const auto held =
+    held_grant_option(table.GetAcl()) | held_grant_option(column.GetAcl());
   return (held & modes.grant_options) != catalog::AclMode::NoRights;
 }
 

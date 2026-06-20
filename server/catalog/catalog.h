@@ -116,6 +116,8 @@ inline AccessContext RequireAccess(ObjectId role, AclMode need) {
   return {role, need};
 }
 
+inline AccessContext RequireOwnership(ObjectId role) { return {role}; }
+
 inline AccessContext NoAccessCheck() { return {id::kRootUser}; }
 
 struct Snapshot {
@@ -134,15 +136,7 @@ struct Snapshot {
 
   // RBAC enforcement, owned by the catalog (it holds the ACL data + closure
   // cache). These throw the PG-exact SQL error (42501) directly on failure --
-  // there is no Result to inspect. `any_of` on HasAccess matches "any one of
-  // the bits in `need`" (the has_*_privilege oracle semantics); the default
-  // requires all bits. `RequireAccess` enforces all bits.
-
-  // True if `role` holds `need` on `object` (all bits, or any one bit if
-  // `any_of`). Pure query -- never throws. For the has_*_privilege functions
-  // and conditional grants.
-  bool HasAccess(ObjectId role, const Object& object, AclMode need,
-                 bool any_of = false) const;
+  // there is no Result to inspect.
 
   // Throw "permission denied for <type> <name>" unless `role` holds `need` on
   // `object`. `need == NoRights` is a no-op.
@@ -160,9 +154,11 @@ struct Snapshot {
   void RequireColumnAccess(ObjectId role, const Table& table, AclMode need,
                            const Column& column) const;
 
-  // Throw "must be owner of <obj_type> <name>" unless `role` owns `owner`
-  // (directly, via role membership, or as superuser). Unset `owner` is a no-op.
-  void RequireOwnership(ObjectId role, ObjectId owner,
+  // Throw "must be owner of <obj_type> <name>" unless `role` owns `object`
+  // (directly, via role membership, or as superuser). `object` is expected to
+  // carry an owner; an object that derives ownership elsewhere (e.g. an index,
+  // owned by its table) must pass that relation instead.
+  void RequireOwnership(ObjectId role, const Object& object,
                         std::string_view obj_type, std::string_view name) const;
 
   std::vector<std::shared_ptr<Role>> GetRoles() const;
@@ -463,12 +459,14 @@ class Catalog final {
   Result CreateTable(const AccessContext& ax, ObjectId database_id,
                      std::string_view schema, CreateTableOptions table,
                      CreateTableOperationOptions operation_options);
-  Result CreateSecondaryIndex(ObjectId database_id, std::string_view schema,
+  Result CreateSecondaryIndex(const AccessContext& ax, ObjectId database_id,
+                              std::string_view schema,
                               std::string_view relation, std::string name,
                               std::vector<CreateIndexColumn>&& columns,
                               bool unique,
                               CreateIndexOperationOptions operation_options);
-  Result CreateInvertedIndex(duckdb::ClientContext& context,
+  Result CreateInvertedIndex(const AccessContext& ax,
+                             duckdb::ClientContext& context,
                              ObjectId database_id, std::string_view schema,
                              std::string_view relation, std::string name,
                              std::vector<CreateIndexColumn>&& columns,
